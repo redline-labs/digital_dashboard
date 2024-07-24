@@ -1,0 +1,20 @@
+width_px: 800
+height_px: 640
+fps: 20
+dpi: 160
+format: 5
+i_box_version: 2
+phone_work_mode: 2
+packet_max: 49152
+box_name: 'nodePlay'
+night_mode: false
+drive_type: HandDriveType.LHD
+media_delay: 300
+audio_transfer_mode: false
+wifi_type: '5ghz'
+mic_type: 'os'
+phone_config:
+  car_play:
+    frame_interval: 5000
+  android_auto:
+    frame_interval: null
