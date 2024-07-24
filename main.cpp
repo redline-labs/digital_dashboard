@@ -49,7 +49,14 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("Failed to find CarPlay dongle.");
     }
 
-    Message msg{{4u, MessageType::CloseDongle}};
-    SPDLOG_INFO("Message type = {} ({}).", static_cast<uint32_t>(msg.get_type()), msg_type_to_string(msg.get_type()));
+    std::vector<uint8_t> buffer = {160u, 0u, 0u, 0u};
 
+    auto cmd = SendFile(DongleConfig::DPI, buffer);
+
+    auto ret = cmd.serialize();
+
+    for (const auto& byte : ret)
+    {
+        printf("%d ", byte);
+    }
 }
