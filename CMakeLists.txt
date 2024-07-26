@@ -71,9 +71,13 @@ include_directories(
     cxxopts-3.2.0/include
 )
 
+include_directories(
+    include
+)
+
 add_executable(${PROJECT_NAME}
     main.cpp
-    config.cpp
+    app_config.cpp
     dongle_driver.cpp
 
     messages/message.cpp

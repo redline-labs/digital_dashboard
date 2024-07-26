@@ -3,9 +3,11 @@
 
 #include "audio_type.h"
 #include "command_mapping.h"
-#include "dongle_config.h"
+#include "dongle_config_file.h"
 #include "message_type.h"
 #include "phone_type.h"
+
+#include "app_config.h"
 
 #include <array>
 #include <string>
@@ -318,15 +320,32 @@ class Heartbeat : public Message
     void write_payload(uint8_t* buffer) final;
 };
 
+
+class SendOpen : public Message
+{
+  public:
+    constexpr static std::string_view name = "SendOpen";
+    constexpr static uint16_t kPayloadBytes = 28;
+
+    SendOpen(const app_config_t& config);
+
+  private:
+    app_config_t _config;
+
+    uint16_t get_payload_size() final;
+    void write_payload(uint8_t* buffer) final;
+};
+
+
 class SendFile : public Message
 {
   public:
     constexpr static std::string_view name = "SendFile";
 
-    SendFile(DongleConfig config, const std::vector<uint8_t>& buffer);
+    SendFile(DongleConfigFile file, const std::vector<uint8_t>& buffer);
 
   private:
-    DongleConfig _config;
+    DongleConfigFile _file;
     std::vector<uint8_t> _buffer;
 
     uint16_t get_payload_size() final;
@@ -334,7 +353,28 @@ class SendFile : public Message
 };
 
 
+class SendBoolean : public SendFile
+{
+  public:
+    constexpr static std::string_view name = "SendBoolean";
 
+    SendBoolean(DongleConfigFile file, bool value);
+};
 
+class SendNumber : public SendFile
+{
+  public:
+    constexpr static std::string_view name = "SendNumber";
+
+    SendNumber(DongleConfigFile file, uint32_t value);
+};
+
+class SendString : public SendFile
+{
+  public:
+    constexpr static std::string_view name = "SendString";
+
+    SendString(DongleConfigFile file, std::string value);
+};
 
 #endif  // MESSAGE_H_

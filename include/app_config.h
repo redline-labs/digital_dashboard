@@ -1,5 +1,5 @@
-#ifndef CONFIG_H_
-#define CONFIG_H_
+#ifndef APP_CONFIG_H_
+#define APP_CONFIG_H_
 
 #include <string>
 
@@ -43,15 +43,16 @@ struct phone_config_t
     android_auto_phone_config_t android_auto;
 };
 
-struct config_t {
+struct app_config_t {
 
-    config_t() :
+    app_config_t() :
         width_px{800},
         height_px{640},
         fps{20},
         dpi{160},
         format{5},
         i_box_version{2},
+        phone_work_mode{2},
         packet_max{49152},
         box_name("nodePlay"),
         night_mode{false},
@@ -69,6 +70,7 @@ struct config_t {
     uint16_t dpi;
     uint8_t format;
     uint8_t i_box_version;
+    uint16_t phone_work_mode;
     uint32_t packet_max;
     std::string box_name;
     bool night_mode;
@@ -81,7 +83,7 @@ struct config_t {
 };
 
 
-config_t load_config(const std::string& config_filepath);
+app_config_t load_app_config(const std::string& config_filepath);
 
 
-#endif  // CONFIG_H_
+#endif  // APP_CONFIG_H_

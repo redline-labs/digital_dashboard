@@ -2,7 +2,7 @@
 #include <spdlog/spdlog.h>
 
 
-#include "config.h"
+#include "app_config.h"
 #include "dongle_driver.h"
 #include "messages/message.h"
 
@@ -34,7 +34,7 @@ int main(int argc, char** argv)
     spdlog::set_level(args_result["debug"].as<bool>() ? spdlog::level::debug : spdlog::level::info);
 
 
-    auto cfg = load_config("/Users/ryan/src/carplay_cpp/config.yaml");
+    auto cfg = load_app_config("/Users/ryan/src/carplay_cpp/config.yaml");
 
     SPDLOG_DEBUG("Using libusb: {}", DongleDriver::libusb_version());
 
@@ -49,9 +49,7 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("Failed to find CarPlay dongle.");
     }
 
-    std::vector<uint8_t> buffer = {160u, 0u, 0u, 0u};
-
-    auto cmd = SendFile(DongleConfig::DPI, buffer);
+    auto cmd = SendOpen(cfg);
 
     auto ret = cmd.serialize();
 

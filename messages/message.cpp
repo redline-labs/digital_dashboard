@@ -417,16 +417,16 @@ void Heartbeat::write_payload(uint8_t* /*buffer*/)
 /* ---------------------------------------------------------------------------- */
 /* SendFile                                                                     */
 /* ---------------------------------------------------------------------------- */
-SendFile::SendFile(DongleConfig config, const std::vector<uint8_t>& buffer) :
+SendFile::SendFile(DongleConfigFile file, const std::vector<uint8_t>& buffer) :
   Message({0u, MessageType::SendFile}),
-  _config{config},
+  _file{file},
   _buffer{buffer}
 {
 }
 
 uint16_t SendFile::get_payload_size()
 {
-    uint16_t filename_length = get_filepath_for_dongle_config(_config).size() + 1;  // Add null terminator.
+    uint16_t filename_length = get_filepath_for_dongle_config(_file).size() + 1;  // Add null terminator.
     uint16_t content_length = _buffer.size();
 
     return 4u + filename_length + 4u + content_length;
@@ -434,7 +434,7 @@ uint16_t SendFile::get_payload_size()
 
 void SendFile::write_payload(uint8_t* buffer)
 {
-    std::string_view filename_str = get_filepath_for_dongle_config(_config);
+    std::string_view filename_str = get_filepath_for_dongle_config(_file);
     uint16_t filename_str_size = filename_str.size() + 1u;  // Add null terminator.
 
     write_uint32_t_little_endian(filename_str_size, &buffer[0]);
@@ -444,4 +444,66 @@ void SendFile::write_payload(uint8_t* buffer)
     write_uint32_t_little_endian(_buffer.size(), &buffer[filename_str_size + 4]);
 
     std::copy(_buffer.begin(), _buffer.end(), &buffer[filename_str.size() + 1 + 4 + 4]);
+}
+
+
+/* ---------------------------------------------------------------------------- */
+/* SendBoolean                                                                  */
+/* ---------------------------------------------------------------------------- */
+SendBoolean::SendBoolean(DongleConfigFile file, bool value) :
+  SendFile(file, {value, 0u, 0u, 0u})
+{
+}
+
+
+/* ---------------------------------------------------------------------------- */
+/* SendNumber                                                                   */
+/* ---------------------------------------------------------------------------- */
+SendNumber::SendNumber(DongleConfigFile file, uint32_t value) :
+  SendFile(
+    file,
+    {
+        static_cast<uint8_t>((value >>  0) & 0xFF),
+        static_cast<uint8_t>((value >>  8) & 0xFF),
+        static_cast<uint8_t>((value >> 16) & 0xFF),
+        static_cast<uint8_t>((value >> 24) & 0xFF)
+    })
+{
+}
+
+
+/* ---------------------------------------------------------------------------- */
+/* SendString                                                                   */
+/* ---------------------------------------------------------------------------- */
+SendString::SendString(DongleConfigFile file, std::string value) :
+  SendFile(file, {value.begin(), value.end()})
+{
+}
+
+
+/* ---------------------------------------------------------------------------- */
+/* SendOpen                                                                     */
+/* ---------------------------------------------------------------------------- */
+SendOpen::SendOpen(const app_config_t& config) :
+  Message({0u, MessageType::Open}),
+  _config{config}
+{
+}
+
+uint16_t SendOpen::get_payload_size()
+{
+    return SendOpen::kPayloadBytes;
+}
+
+void SendOpen::write_payload(uint8_t* buffer)
+{
+    write_uint32_t_little_endian(_config.width_px,          &buffer[ 0]);
+    write_uint32_t_little_endian(_config.height_px,         &buffer[ 4]);
+    write_uint32_t_little_endian(_config.fps,               &buffer[ 8]);
+    write_uint32_t_little_endian(_config.format,            &buffer[12]);
+    write_uint32_t_little_endian(_config.packet_max,        &buffer[16]);
+    write_uint32_t_little_endian(_config.i_box_version,     &buffer[20]);
+    write_uint32_t_little_endian(_config.phone_work_mode,   &buffer[24]);
+
+    return;
 }

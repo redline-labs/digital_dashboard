@@ -1,4 +1,4 @@
-#include "config.h"
+#include "app_config.h"
 
 #include <string>
 
@@ -8,8 +8,8 @@
 namespace YAML {
 
 template<>
-struct convert<config_t> {
-    static Node encode(const config_t& rhs)
+struct convert<app_config_t> {
+    static Node encode(const app_config_t& rhs)
     {
         Node node = {};
 
@@ -18,7 +18,7 @@ struct convert<config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, config_t& rhs)
+    static bool decode(const Node& node, app_config_t& rhs)
     {
         rhs.width_px = node["width_px"].as<uint16_t>();
         return true;
@@ -28,7 +28,7 @@ struct convert<config_t> {
 }   // namespace yaml
 
 
-config_t load_config(const std::string& config_filepath)
+app_config_t load_app_config(const std::string& config_filepath)
 {
-    return YAML::LoadFile(config_filepath).as<config_t>();
+    return YAML::LoadFile(config_filepath).as<app_config_t>();
 }

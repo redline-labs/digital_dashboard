@@ -1,8 +1,8 @@
-#ifndef DONGLE_CONFIG_H_
-#define DONGLE_CONFIG_H_
+#ifndef DONGLE_CONFIG_FILE_H_
+#define DONGLE_CONFIG_FILE_H_
 
 
-enum class DongleConfig
+enum class DongleConfigFile
 {
     DPI,
     NightMode,
@@ -17,41 +17,41 @@ enum class DongleConfig
     AndroidWorkMode
 };
 
-constexpr std::string_view get_filepath_for_dongle_config(DongleConfig cfg)
+constexpr std::string_view get_filepath_for_dongle_config(DongleConfigFile cfg)
 {
     switch (cfg)
     {
-        case(DongleConfig::DPI):
+        case(DongleConfigFile::DPI):
             return "/tmp/screen_dpi";
 
-        case(DongleConfig::NightMode):
+        case(DongleConfigFile::NightMode):
             return "/tmp/night_mode";
 
-        case(DongleConfig::HandDriveMode):
+        case(DongleConfigFile::HandDriveMode):
             return "/tmp/hand_drive_mode";
 
-        case(DongleConfig::ChargeMode):
+        case(DongleConfigFile::ChargeMode):
             return "/tmp/charge_mode";
 
-        case(DongleConfig::BoxName):
+        case(DongleConfigFile::BoxName):
             return "/etc/box_name";
 
-        case(DongleConfig::OEMIcon):
+        case(DongleConfigFile::OEMIcon):
             return "/etc/oem_icon.png";
 
-        case(DongleConfig::AirplayConfig):
+        case(DongleConfigFile::AirplayConfig):
             return "/etc/airplay.conf";
 
-        case(DongleConfig::Icon120):
+        case(DongleConfigFile::Icon120):
             return "/etc/icon_120x120.png";
 
-        case(DongleConfig::Icon180):
+        case(DongleConfigFile::Icon180):
             return "/etc/icon_180x180.png";
 
-        case(DongleConfig::Icon250):
+        case(DongleConfigFile::Icon250):
             return "/etc/icon_256x256.png";
 
-        case(DongleConfig::AndroidWorkMode):
+        case(DongleConfigFile::AndroidWorkMode):
             return "/etc/android_work_mode";
 
         default:
