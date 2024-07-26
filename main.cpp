@@ -1,19 +1,24 @@
-#include <cxxopts.hpp>
-#include <spdlog/spdlog.h>
-
-
 #include "app_config.h"
 #include "dongle_driver.h"
 #include "messages/message.h"
 
-// Patches:
+#include <cxxopts.hpp>
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/rotating_file_sink.h>
+
+// Patches to third party:
 // LibUSB core for debug messages.
 // spdlog tweakme to lower the default log level.
-
 
 int main(int argc, char** argv)
 {
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+
+    auto max_size = 1048576 * 5;
+    auto max_files = 3;
+    auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("logs/rotating.txt", max_size, max_files, true);
+    spdlog::default_logger()->sinks().push_back(file_sink);
+
 
     cxxopts::Options options("carplay_app", "Spin up a CarPlay instance.");
     options.add_options()
