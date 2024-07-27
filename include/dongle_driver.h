@@ -1,10 +1,11 @@
 #ifndef DONGLE_DRIVER_H_
 #define DONGLE_DRIVER_H_
 
+#include <atomic>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string_view>
-
+#include <thread>
 
 // Forward declaration from libusb to keep things tidy.
 struct libusb_device_handle;
@@ -22,12 +23,22 @@ class DongleDriver
     DongleDriver(bool debug = false);
     ~DongleDriver();
 
+    void stop();
+
     bool find_dongle();
 
     static std::string_view libusb_version();
 
+    void tear_down();
+
   private:
     libusb_device_handle* _device_handle;
+    int _hotplug_callback_handle;
+
+    std::thread _event_thread;
+    std::atomic<bool> _should_run;
+
+    void libusb_event_thread();
 };
 
 

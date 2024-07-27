@@ -6,24 +6,28 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
+#include <condition_variable>
+#include <csignal>
+
 // Patches to third party:
 // LibUSB core for debug messages.
 // spdlog tweakme to lower the default log level.
 
+std::condition_variable cv;
+std::mutex cv_m;
+
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
     auto max_size = 1048576 * 5;
     auto max_files = 3;
     auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("logs/rotating.txt", max_size, max_files, true);
     spdlog::default_logger()->sinks().push_back(file_sink);
-
+    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
     cxxopts::Options options("carplay_app", "Spin up a CarPlay instance.");
     options.add_options()
-        ("debug", "Enable Debugging.",cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-        ("libusb_debug", "Enable LibUSB Debugging.",cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
+        ("debug", "Enable debug logging.",cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("libusb_debug", "Enable LibUSB debugging logging.",cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
     cxxopts::ParseResult args_result;
 
     try
@@ -41,19 +45,10 @@ int main(int argc, char** argv)
 
     auto cfg = load_app_config("/Users/ryan/src/carplay_cpp/config.yaml");
 
-    SPDLOG_DEBUG("Using libusb: {}", DongleDriver::libusb_version());
-
     DongleDriver driver(args_result["libusb_debug"].as<bool>());
 
-    if (driver.find_dongle() == true)
-    {
-        SPDLOG_INFO("Found CarPlay dongle.");
-    }
-    else
-    {
-        SPDLOG_ERROR("Failed to find CarPlay dongle.");
-    }
 
+    /*
     auto cmd = SendOpen(cfg);
 
     auto ret = cmd.serialize();
@@ -61,5 +56,18 @@ int main(int argc, char** argv)
     for (const auto& byte : ret)
     {
         printf("%d ", byte);
-    }
+    }*/
+
+
+    std::signal(SIGINT, [](int /* signum */)
+        {
+            SPDLOG_INFO("SIGINT received.");
+            cv.notify_one();
+        });
+
+    std::unique_lock<std::mutex> lk(cv_m);
+    cv.wait(lk);
+
+
+    return 0u;
 }
