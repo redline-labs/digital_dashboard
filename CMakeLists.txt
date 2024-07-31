@@ -60,6 +60,16 @@ add_compile_options(
     #-flto
 )
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+    libavcodec
+    libswscale
+    libavutil
+)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+qt_standard_project_setup()
+
 
 include_directories(
     SYSTEM
@@ -69,13 +79,16 @@ include_directories(
     libusb-cmake-1.0.27/libusb
 
     cxxopts-3.2.0/include
+
+    nlohmann-json-3.11.3
 )
 
 include_directories(
     include
+    messages
 )
 
-add_executable(${PROJECT_NAME}
+qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     dongle_driver.cpp
@@ -113,7 +126,10 @@ add_executable(${PROJECT_NAME}
     yaml-cpp-0.8.0/src/tag.cpp
 )
 
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PRIVATE
     usb-1.0
+    PkgConfig::LIBAV
+    Qt6::Core
+    Qt6::Widgets
 )
 

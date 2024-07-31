@@ -1,4 +1,7 @@
 #include "message.h"
+#include "json.hpp"
+
+#include <chrono>
 
 static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
 {
@@ -24,8 +27,14 @@ MessageHeader::MessageHeader(size_t length, MessageType type) :
 {
 };
 
+MessageHeader::MessageHeader() :
+    _length{0},
+    _type{MessageType::Invalid}
+{
+};
 
-MessageHeader MessageHeader::from_buffer(const std::array<uint8_t, kDataLength>& buffer)
+
+MessageHeader MessageHeader::from_buffer(const uint8_t* buffer)
 {
     MessageHeader ret{0u, MessageType::Invalid};
 
@@ -49,6 +58,11 @@ MessageType MessageHeader::get_message_type()
     return _type;
 }
 
+size_t MessageHeader::get_message_length()
+{
+    return _length;
+}
+
 uint32_t MessageHeader::get_message_type_check()
 {
     return (static_cast<uint32_t>(_type) ^ -1) & 0xffffffff;
@@ -57,6 +71,11 @@ uint32_t MessageHeader::get_message_type_check()
 
 Message::Message(MessageHeader header) :
   _header{header}
+{
+}
+
+Message::Message() :
+  _header{}
 {
 }
 
@@ -82,6 +101,20 @@ std::vector<uint8_t> Message::serialize()
     return ret;
 }
 
+uint16_t Message::get_payload_size()
+{
+    return 0u;
+}
+
+void Message::write_payload(uint8_t* /*buffer*/)
+{
+}
+
+std::string Message::to_string()
+{
+    return std::string(name);
+}
+
 /* ---------------------------------------------------------------------------- */
 /* Command                                                                      */
 /* ---------------------------------------------------------------------------- */
@@ -91,14 +124,30 @@ Command::Command(const uint8_t* buffer) :
     _value = static_cast<CommandMapping>(read_uint32_t_little_endian(&buffer[0]));
 }
 
-uint16_t Command::get_payload_size()
+Command::Command(CommandMapping value) :
+  Message({0u, MessageType::Command}),
+  _value{value}
 {
-    return 0u;
 }
 
-void Command::write_payload(uint8_t* /*buffer*/)
+uint16_t Command::get_payload_size()
 {
-    return;
+    return 4u;
+}
+
+void Command::write_payload(uint8_t* buffer)
+{
+    write_uint32_t_little_endian(static_cast<uint32_t>(_value), &buffer[0]);
+}
+
+std::string Command::to_string()
+{
+    return std::string("Command::");
+}
+
+CommandMapping Command::get_value()
+{
+    return _value;
 }
 
 /* ---------------------------------------------------------------------------- */
@@ -478,6 +527,38 @@ SendNumber::SendNumber(DongleConfigFile file, uint32_t value) :
 SendString::SendString(DongleConfigFile file, std::string value) :
   SendFile(file, {value.begin(), value.end()})
 {
+}
+
+
+/* ---------------------------------------------------------------------------- */
+/* SendBoxSettings                                                              */
+/* ---------------------------------------------------------------------------- */
+SendBoxSettings::SendBoxSettings(const app_config_t& cfg) :
+  Message({0u, MessageType::BoxSettings})
+{
+    nlohmann::json j;
+
+    j["mediaDelay"] = cfg.media_delay;
+    j["syncTime"] = 0;  //std::chrono::steady_clock::now();
+    j["androidAutoSizeW"] = cfg.width_px;
+    j["androidAutoSizeH"] = cfg.height_px;
+
+    _output = j.dump();
+}
+
+uint16_t SendBoxSettings::get_payload_size()
+{
+    return _output.size();
+}
+
+void SendBoxSettings::write_payload(uint8_t* buffer)
+{
+    std::copy(_output.begin(), _output.end(), &buffer[0]);
+}
+
+const std::string& SendBoxSettings::get_string()
+{
+    return _output;
 }
 
 

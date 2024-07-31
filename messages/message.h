@@ -20,11 +20,14 @@ class MessageHeader
     constexpr static uint32_t kMagic = 0x55aa55aa;
 
     MessageHeader(size_t length, MessageType type);
+    MessageHeader();
 
-    static MessageHeader from_buffer(const std::array<uint8_t, kDataLength>& buffer);
+    static MessageHeader from_buffer(const uint8_t* buffer);
 
     MessageType get_message_type();
     uint32_t get_message_type_check();
+
+    size_t get_message_length();
 
   private:
     size_t _length;
@@ -38,16 +41,19 @@ class Message
     constexpr static std::string_view name = "Message";
 
     Message(MessageHeader header);
+    Message();
 
     MessageType get_type();
 
     std::vector<uint8_t> serialize();
 
+    virtual std::string to_string();
+
   private:
     MessageHeader _header;
 
-    virtual uint16_t get_payload_size() = 0;
-    virtual void write_payload(uint8_t* buffer) = 0;
+    virtual uint16_t get_payload_size();
+    virtual void write_payload(uint8_t* buffer);
 };
 
 class Command : public Message
@@ -56,6 +62,11 @@ class Command : public Message
     constexpr static std::string_view name = "Command";
 
     Command(const uint8_t* buffer);
+    Command(CommandMapping value);
+
+    std::string to_string() final;
+
+    CommandMapping get_value();
 
   private:
     CommandMapping _value;
@@ -375,6 +386,22 @@ class SendString : public SendFile
     constexpr static std::string_view name = "SendString";
 
     SendString(DongleConfigFile file, std::string value);
+};
+
+class SendBoxSettings : public Message
+{
+  public:
+    constexpr static std::string_view name = "SendBoxSettings";
+
+    SendBoxSettings(const app_config_t& cfg);
+
+    const std::string& get_string();
+
+  private:
+    std::string _output;
+
+    uint16_t get_payload_size() final;
+    void write_payload(uint8_t* buffer) final;
 };
 
 #endif  // MESSAGE_H_

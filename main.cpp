@@ -9,6 +9,13 @@
 #include <condition_variable>
 #include <csignal>
 
+#include <QApplication>
+#include <QLabel>
+#include <QGraphicsScene>
+#include <QPixmap>
+#include <QGraphicsView>
+#include <QGraphicsItem>
+
 // Patches to third party:
 // LibUSB core for debug messages.
 // spdlog tweakme to lower the default log level.
@@ -45,7 +52,7 @@ int main(int argc, char** argv)
 
     auto cfg = load_app_config("/Users/ryan/src/carplay_cpp/config.yaml");
 
-    DongleDriver driver(args_result["libusb_debug"].as<bool>());
+    DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
 
 
     /*
@@ -59,14 +66,49 @@ int main(int argc, char** argv)
     }*/
 
 
-    std::signal(SIGINT, [](int /* signum */)
-        {
-            SPDLOG_INFO("SIGINT received.");
-            cv.notify_one();
-        });
+    //std::signal(SIGINT, [](int /* signum */)
+    //    {
+    //        SPDLOG_WARN("SIGINT received.");
+    //        cv.notify_one();
+    //    });
 
-    std::unique_lock<std::mutex> lk(cv_m);
-    cv.wait(lk);
+
+    //std::unique_lock<std::mutex> lk(cv_m);
+    //cv.wait(lk);
+
+
+
+    QApplication app(argc, argv);
+    int imageHeight = 600;
+    int imageWidth = 800;
+
+
+    QGraphicsScene scene(0, 0, imageWidth, imageHeight);
+    scene.addText("Hello, world!");
+
+    QGraphicsView view(&scene);
+    view.show();
+
+    QImage image(imageWidth, imageHeight, QImage::Format_RGB32);
+
+    driver.register_frame_ready_callback([&image, &scene, &view](const uint8_t* buffer, uint32_t buffer_len)
+    {
+        image.loadFromData(&buffer[0], buffer_len);
+        scene.clear();
+        scene.addPixmap(QPixmap::fromImage(image));
+        view.update();
+    });
+
+
+
+    app.exec();  // Blocking.
+
+
+
+
+
+    SPDLOG_WARN("Tearing down driver.");
+    driver.stop();
 
 
     return 0u;
