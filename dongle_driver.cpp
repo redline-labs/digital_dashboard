@@ -1,13 +1,6 @@
 #include "dongle_driver.h"
 #include "dongle_config_file.h"
 
-extern "C"
-{
-#include <libavcodec/avcodec.h>
-#include <libswscale/swscale.h>
-#include <libavutil/imgutils.h>
-}
-
 #include <libusb/libusb.h>
 #include <libusb/version.h>
 
@@ -139,7 +132,6 @@ DongleDriver::DongleDriver(app_config_t cfg, bool libusb_debug):
   _frame_ready_callback{nullptr}
 {
     SPDLOG_DEBUG("Using libusb {}.", libusb_version());
-    SPDLOG_DEBUG("Using libavcodec {}.", libavcodec_version());
 
     libusb_init_context(nullptr, nullptr, /*num_options=*/0);
 
@@ -163,43 +155,6 @@ DongleDriver::DongleDriver(app_config_t cfg, bool libusb_debug):
         this,
         &_hotplug_callback_handle
     );
-
-
-    // Get set up for libavcodec.
-    _pkt = av_packet_alloc();
-    if (_pkt == nullptr)
-    {
-        SPDLOG_ERROR("Failed to find allocate packet.");
-    }
-
-    _codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (_codec == nullptr)
-    {
-        SPDLOG_ERROR("Failed to find libavcodec codec.");
-    }
-
-    _parser = av_parser_init(_codec->id);
-    if (_parser == nullptr)
-    {
-        SPDLOG_ERROR("Failed to init parser.");
-    }
-
-     _codec_context = avcodec_alloc_context3(_codec);
-    if (_codec_context == nullptr)
-    {
-        SPDLOG_ERROR("Failed to init codec context.");
-    }
-
-    if (avcodec_open2(_codec_context, _codec, nullptr) < 0)
-    {
-        SPDLOG_ERROR("Could not open codec.");
-    }
-
-    _frame = av_frame_alloc();
-    if (_frame == nullptr)
-    {
-        SPDLOG_ERROR("Could not allocate frame.");
-    }
 }
 
 void DongleDriver::register_frame_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb)
@@ -404,11 +359,6 @@ std::string_view DongleDriver::libusb_version()
     return {STR(LIBUSB_MAJOR) "." STR(LIBUSB_MINOR) "." STR(LIBUSB_MICRO)};
 }
 
-uint32_t DongleDriver::libavcodec_version()
-{
-    return avcodec_version();
-}
-
 DongleDriver::~DongleDriver()
 {
     libusb_hotplug_deregister_callback(nullptr, _hotplug_callback_handle);
@@ -428,11 +378,6 @@ DongleDriver::~DongleDriver()
     }
 
     libusb_exit(nullptr);
-
-    av_parser_close(_parser);
-    avcodec_free_context(&_codec_context);
-    av_frame_free(&_frame);
-    av_packet_free(&_pkt);
 }
 
 void DongleDriver::libusb_event_thread()
@@ -493,6 +438,7 @@ void DongleDriver::read_thread()
         else if (ret != 0)
         {
             SPDLOG_ERROR("Read failed with {}.", libusb_error_name(ret));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
@@ -534,114 +480,6 @@ void DongleDriver::read_thread()
 }
 
 
-//Save RGB image as PPM file format
-static void ppm_save(unsigned char* buf, int wrap, int xsize, int ysize)
-{
-    FILE* f;
-    int i;
-
-    f = fopen("output.ppm", "wb");
-    fprintf(f, "P6\n%d %d\n%d\n", xsize, ysize, 255);
-
-    for (i = 0; i < ysize; i++)
-    {
-        fwrite(buf + i * wrap, 1, xsize*3, f);
-    }
-
-    fclose(f);
-}
-
-void DongleDriver::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
-{
-    struct SwsContext* sws_ctx = NULL;
-
-    int ret = avcodec_send_packet(dec_ctx, pkt);
-    if (ret < 0) {
-        SPDLOG_ERROR("Error sending a packet for decoding.");
-        return;
-    }
-
-
-    //Create SWS Context for converting from decode pixel format (like YUV420) to RGB
-    ////////////////////////////////////////////////////////////////////////////
-    sws_ctx = sws_getContext(dec_ctx->width,
-                             dec_ctx->height,
-                             dec_ctx->pix_fmt,
-                             dec_ctx->width,
-                             dec_ctx->height,
-                             AV_PIX_FMT_RGB24,
-                             SWS_BICUBIC,
-                             NULL,
-                             NULL,
-                             NULL);
-
-    if (sws_ctx == nullptr)
-    {
-        SPDLOG_ERROR("Failed to get SWS context.");
-        return;
-    }
-
-    AVFrame* pRGBFrame = av_frame_alloc();
-
-    pRGBFrame->format = AV_PIX_FMT_RGB24;
-    pRGBFrame->width = dec_ctx->width;
-    pRGBFrame->height = dec_ctx->height;
-
-    int sts = av_frame_get_buffer(pRGBFrame, 0);
-
-    if (sts < 0)
-    {
-        SPDLOG_ERROR("Failed to AV frame buffer.");
-        return;  //Error!
-    }
-
-
-    while (ret >= 0) {
-        ret = avcodec_receive_frame(dec_ctx, frame);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-        {
-            return;
-        }
-        else if (ret < 0)
-        {
-            SPDLOG_ERROR("Error during decoding");
-            return;
-        }
-
-        //Convert from input format (e.g YUV420) to RGB and save to PPM:
-        ////////////////////////////////////////////////////////////////////////////
-        sts = sws_scale(sws_ctx,                //struct SwsContext* c,
-                        frame->data,            //const uint8_t* const srcSlice[],
-                        frame->linesize,        //const int srcStride[],
-                        0,                      //int srcSliceY,
-                        frame->height,          //int srcSliceH,
-                        pRGBFrame->data,        //uint8_t* const dst[],
-                        pRGBFrame->linesize);   //const int dstStride[]);
-
-        if (sts != frame->height)
-        {
-            SPDLOG_ERROR("STS does not match frame height.");
-            return;  //Error!
-        }
-
-        /* the picture is allocated by the decoder. no need to
-           free it */
-        //ppm_save(pRGBFrame->data[0], pRGBFrame->linesize[0], pRGBFrame->width, pRGBFrame->height);
-        if (nullptr != _frame_ready_callback)
-        {
-            _frame_ready_callback(
-                pRGBFrame->data[0],
-                av_image_get_buffer_size(AV_PIX_FMT_RGB24, pRGBFrame->width, pRGBFrame->height, 1)
-            );
-        }
-    }
-
-    //Free
-    sws_freeContext(sws_ctx);
-    av_frame_free(&pRGBFrame);
-}
-
-
 void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* buffer)
 {
     switch (header.get_message_type())
@@ -654,41 +492,7 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
             break;
 
         case (MessageType::VideoData):
-            SPDLOG_DEBUG("Received video data. {} bytes.", header.get_message_length());
-            {
-                const uint8_t* data = buffer;
-                uint32_t data_len = header.get_message_length();
-
-                while (data_len > 0)
-                {
-                    int ret = av_parser_parse2(
-                        _parser,
-                        _codec_context,
-                        &_pkt->data,
-                        &_pkt->size,
-                        data,
-                        data_len,
-                        AV_NOPTS_VALUE,
-                        AV_NOPTS_VALUE,
-                        0);
-
-                    if (ret < 0)
-                    {
-                        SPDLOG_ERROR("Failed to parse data.");
-                        break;
-                    }
-                    else
-                    {
-                        data += ret;
-                        data_len -= ret;
-                    }
-
-                    if (_pkt->size)
-                    {
-                        decode(_codec_context, _frame, _pkt);
-                    }
-                }
-            }
+            _frame_ready_callback(&buffer[0], header.get_message_length());
             break;
 
         default:

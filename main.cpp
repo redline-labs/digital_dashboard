@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "decode_thread.h"
 #include "dongle_driver.h"
 #include "messages/message.h"
 
@@ -11,17 +12,14 @@
 
 #include <QApplication>
 #include <QLabel>
-#include <QGraphicsScene>
-#include <QPixmap>
-#include <QGraphicsView>
-#include <QGraphicsItem>
 
 // Patches to third party:
 // LibUSB core for debug messages.
 // spdlog tweakme to lower the default log level.
 
-std::condition_variable cv;
-std::mutex cv_m;
+
+
+
 
 int main(int argc, char** argv)
 {
@@ -54,23 +52,15 @@ int main(int argc, char** argv)
 
     DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
 
-
-    /*
-    auto cmd = SendOpen(cfg);
-
-    auto ret = cmd.serialize();
-
-    for (const auto& byte : ret)
-    {
-        printf("%d ", byte);
-    }*/
+    DecodeThread decode_thread;
+    decode_thread.start();
 
 
-    //std::signal(SIGINT, [](int /* signum */)
-    //    {
-    //        SPDLOG_WARN("SIGINT received.");
-    //        cv.notify_one();
-    //    });
+    std::signal(SIGINT, [](int /* signum */)
+        {
+            SPDLOG_WARN("SIGINT received.");
+            QCoreApplication::quit();
+        });
 
 
     //std::unique_lock<std::mutex> lk(cv_m);
@@ -79,26 +69,17 @@ int main(int argc, char** argv)
 
 
     QApplication app(argc, argv);
-    int imageHeight = 600;
-    int imageWidth = 800;
+    QLabel label("Waiting....");
+    label.show();
 
 
-    QGraphicsScene scene(0, 0, imageWidth, imageHeight);
-    scene.addText("Hello, world!");
-
-    QGraphicsView view(&scene);
-    view.show();
-
-    QImage image(imageWidth, imageHeight, QImage::Format_RGB32);
-
-    driver.register_frame_ready_callback([&image, &scene, &view](const uint8_t* buffer, uint32_t buffer_len)
-    {
-        image.loadFromData(&buffer[0], buffer_len);
-        scene.clear();
-        scene.addPixmap(QPixmap::fromImage(image));
-        view.update();
+    driver.register_frame_ready_callback([&decode_thread] (const uint8_t* buffer, uint32_t buffer_len){
+        decode_thread.accept_new_data(buffer, buffer_len);
     });
 
+
+     QObject::connect(&decode_thread,   &DecodeThread::imageReady,
+                     &label,            &QLabel::setPixmap);
 
 
     app.exec();  // Blocking.
@@ -108,8 +89,11 @@ int main(int argc, char** argv)
 
 
     SPDLOG_WARN("Tearing down driver.");
+
+    decode_thread.requestInterruption();
     driver.stop();
 
+    decode_thread.wait();
 
     return 0u;
 }

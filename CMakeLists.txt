@@ -67,7 +67,7 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavutil
 )
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
 qt_standard_project_setup()
 
 
@@ -91,6 +91,7 @@ include_directories(
 qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
+    decode_thread.cpp
     dongle_driver.cpp
 
     messages/message.cpp
@@ -126,10 +127,15 @@ qt_add_executable(${PROJECT_NAME}
     yaml-cpp-0.8.0/src/tag.cpp
 )
 
+set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
     usb-1.0
     PkgConfig::LIBAV
+
     Qt6::Core
     Qt6::Widgets
+    Qt6::Multimedia
+    Qt6::MultimediaWidgets
 )
 

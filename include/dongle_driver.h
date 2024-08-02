@@ -13,16 +13,6 @@
 // Forward declaration from libusb to keep things tidy.
 struct libusb_device_handle;
 
-// Fordward declaration from libavcodec from leaking out.
-extern "C"
-{
-struct AVPacket;
-struct AVCodec;
-struct AVCodecParserContext;
-struct AVCodecContext;
-struct AVFrame;
-}
-
 enum class DeviceStep
 {
   Init,
@@ -65,7 +55,6 @@ class DongleDriver
     void stop();
 
     static std::string_view libusb_version();
-    static uint32_t libavcodec_version();
 
     void register_frame_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
 
@@ -74,12 +63,6 @@ class DongleDriver
     libusb_device_handle* _device_handle;
     int _hotplug_callback_handle;
     DeviceStep _current_step;
-
-    const AVCodec* _codec;
-    AVCodecParserContext* _parser;
-    AVCodecContext* _codec_context;
-    AVFrame* _frame;
-    AVPacket* _pkt;
 
     std::thread _event_thread;
     std::thread _read_thread;
@@ -97,7 +80,6 @@ class DongleDriver
     void heartbeat_thread();
 
     void decode_dongle_response(MessageHeader header, const uint8_t* buffer);
-    void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt);
 };
 
 
