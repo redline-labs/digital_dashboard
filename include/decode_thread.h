@@ -38,7 +38,7 @@ class DecodeThread : public QThread
     AVFrame* _frame;
     AVPacket* _pkt;
 
-    uint8_t _receive_buffer[64u * 1024u];
+    uint8_t _receive_buffer[512u * 1024u];
     uint32_t _receive_length;
 
     std::mutex _m;

@@ -27,6 +27,7 @@ enum class DeviceStep
   SendWiFiType,
   SendMicType,
   SendAudioTransferMode,
+  SendWiFiConnect,
 
   Done,
   Fail,
@@ -58,6 +59,8 @@ class DongleDriver
 
     void register_frame_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
 
+    void send_touch_event(TouchAction action, uint32_t x, uint32_t y);
+
   private:
     app_config_t _app_cfg;
     libusb_device_handle* _device_handle;
@@ -70,6 +73,8 @@ class DongleDriver
     std::atomic<bool> _event_thread_should_run;
     std::atomic<bool> _read_thread_should_run;
     std::atomic<bool> _heartbeat_thread_should_run;
+
+    uint8_t _rx_data[512u * 1024u];
 
     std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _frame_ready_callback;
 

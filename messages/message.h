@@ -6,6 +6,7 @@
 #include "dongle_config_file.h"
 #include "message_type.h"
 #include "phone_type.h"
+#include "touch_action.h"
 
 #include "app_config.h"
 
@@ -399,6 +400,22 @@ class SendBoxSettings : public Message
 
   private:
     std::string _output;
+
+    uint16_t get_payload_size() final;
+    void write_payload(uint8_t* buffer) final;
+};
+
+class SendTouch : public Message
+{
+  public:
+    constexpr static std::string_view name = "SendTouch";
+
+    SendTouch(TouchAction action, uint32_t x, uint32_t y);
+
+  private:
+    TouchAction _action;
+    uint32_t _x;
+    uint32_t _y;
 
     uint16_t get_payload_size() final;
     void write_payload(uint8_t* buffer) final;

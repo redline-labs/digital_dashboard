@@ -588,3 +588,27 @@ void SendOpen::write_payload(uint8_t* buffer)
 
     return;
 }
+
+
+SendTouch::SendTouch(TouchAction action, uint32_t x, uint32_t y) :
+  Message({0u, MessageType::Touch}),
+  _action{action},
+  _x{x},
+  _y{y}
+{
+}
+
+uint16_t SendTouch::get_payload_size()
+{
+    return 16u;
+}
+
+void SendTouch::write_payload(uint8_t* buffer)
+{
+    write_uint32_t_little_endian(static_cast<uint32_t>(_action),    &buffer[ 0]);
+    write_uint32_t_little_endian(_x,                                &buffer[ 4]);
+    write_uint32_t_little_endian(_y,                                &buffer[ 8]);
+    write_uint32_t_little_endian(0,                                 &buffer[12]);
+
+    return;
+}

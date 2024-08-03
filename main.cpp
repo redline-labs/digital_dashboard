@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "carplay_widget.h"
 #include "decode_thread.h"
 #include "dongle_driver.h"
 #include "messages/message.h"
@@ -63,14 +64,10 @@ int main(int argc, char** argv)
         });
 
 
-    //std::unique_lock<std::mutex> lk(cv_m);
-    //cv.wait(lk);
-
-
-
     QApplication app(argc, argv);
-    QLabel label("Waiting....");
-    label.show();
+    CarPlayWidget carplay_widget;
+    carplay_widget.setSize(cfg.width_px, cfg.height_px);
+    carplay_widget.show();
 
 
     driver.register_frame_ready_callback([&decode_thread] (const uint8_t* buffer, uint32_t buffer_len){
@@ -78,22 +75,24 @@ int main(int argc, char** argv)
     });
 
 
-     QObject::connect(&decode_thread,   &DecodeThread::imageReady,
-                     &label,            &QLabel::setPixmap);
+    QObject::connect(&decode_thread,   &DecodeThread::imageReady,
+                     &carplay_widget,  &CarPlayWidget::setPixmap);
 
+    QObject::connect(&carplay_widget,  &CarPlayWidget::touchEvent, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
+        driver.send_touch_event(action, x, y);
+    });
 
+    SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.
 
 
 
 
 
-    SPDLOG_WARN("Tearing down driver.");
+    SPDLOG_WARN("Exit received, tearing down.");
 
     decode_thread.requestInterruption();
     driver.stop();
-
-    decode_thread.wait();
 
     return 0u;
 }

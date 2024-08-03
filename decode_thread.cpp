@@ -10,9 +10,11 @@ extern "C"
 }
 
 
-DecodeThread::DecodeThread()
+DecodeThread::DecodeThread() :
+    QThread()
 {
-    SPDLOG_INFO("Hello from the decode thread!");
+    // Silence!
+    av_log_set_level(AV_LOG_ERROR);
 
 
     // Get set up for libavcodec.
@@ -54,6 +56,9 @@ DecodeThread::DecodeThread()
 
 DecodeThread::~DecodeThread()
 {
+    requestInterruption();
+    wait();
+
     av_parser_close(_parser);
     avcodec_free_context(&_codec_context);
     av_frame_free(&_frame);
@@ -62,6 +67,8 @@ DecodeThread::~DecodeThread()
 
 void DecodeThread::run()
 {
+    SPDLOG_DEBUG("Starting decode thread.");
+
     auto endTime = std::chrono::steady_clock::now();
 
     while (isInterruptionRequested() == false)
@@ -108,6 +115,8 @@ void DecodeThread::run()
             }
         }
     }
+
+    SPDLOG_DEBUG("Exiting decode thread.");
 };
 
 void DecodeThread::accept_new_data(const uint8_t* buffer, uint32_t buffer_len)
