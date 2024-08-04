@@ -533,13 +533,13 @@ SendString::SendString(DongleConfigFile file, std::string value) :
 /* ---------------------------------------------------------------------------- */
 /* SendBoxSettings                                                              */
 /* ---------------------------------------------------------------------------- */
-SendBoxSettings::SendBoxSettings(const app_config_t& cfg) :
+SendBoxSettings::SendBoxSettings(const app_config_t& cfg, uint64_t sync_time) :
   Message({0u, MessageType::BoxSettings})
 {
-    nlohmann::json j;
+    nlohmann::ordered_json j;   // Probably doesn't have to be ordered, but makes it easier to test.
 
     j["mediaDelay"] = cfg.media_delay;
-    j["syncTime"] = 0;  //std::chrono::steady_clock::now();
+    j["syncTime"] = sync_time;
     j["androidAutoSizeW"] = cfg.width_px;
     j["androidAutoSizeH"] = cfg.height_px;
 

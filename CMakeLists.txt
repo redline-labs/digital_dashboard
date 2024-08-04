@@ -140,3 +140,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::MultimediaWidgets
 )
 
+add_executable(test_messages
+    test_messages.cpp
+    messages/message.cpp
+)
+

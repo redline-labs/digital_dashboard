@@ -394,7 +394,7 @@ class SendBoxSettings : public Message
   public:
     constexpr static std::string_view name = "SendBoxSettings";
 
-    SendBoxSettings(const app_config_t& cfg);
+    SendBoxSettings(const app_config_t& cfg, uint64_t sync_time = 8u);
 
     const std::string& get_string();
 

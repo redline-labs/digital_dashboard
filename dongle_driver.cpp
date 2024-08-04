@@ -284,7 +284,7 @@ void DongleDriver::step()
 
         case (DeviceStep::SendWiFiType):
             SPDLOG_DEBUG("Sending config (WiFi type).");
-            usb_request = Command(CommandMapping::Wifi24g).serialize();
+            usb_request = Command(CommandMapping::Wifi5g).serialize();
             _current_step = DeviceStep::SendMicType;  // Next step on success;
             break;
 

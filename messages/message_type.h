@@ -1,7 +1,7 @@
 #ifndef MESSAGE_TYPE_H_
 #define MESSAGE_TYPE_H_
 
-#include <stdint.h>
+#include <cstdint>
 
 enum class MessageType
 {

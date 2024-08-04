@@ -5,8 +5,8 @@
 #include "message.h"
 
 #include <atomic>
-#include <stdbool.h>
-#include <stdint.h>
+#include <cstdbool>
+#include <cstdint>
 #include <string_view>
 #include <thread>
 
