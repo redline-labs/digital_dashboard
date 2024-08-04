@@ -212,11 +212,6 @@ bool DongleDriver::find_dongle()
 
 void DongleDriver::step()
 {
-    std::vector<uint8_t> usb_request = {};
-
-    // Slow our roll so we don't bomb the dongle all at once.
-    std::this_thread::sleep_for(std::chrono::milliseconds(kUsbConfigDelayMs));
-
     switch (_current_step)
     {
         case (DeviceStep::Init):
@@ -236,91 +231,94 @@ void DongleDriver::step()
 
         case (DeviceStep::SendDPI):
             SPDLOG_DEBUG("Sending config (DPI).");
-            usb_request = SendNumber(DongleConfigFile::DPI, _app_cfg.dpi).serialize();
+            _usb_request = SendNumber(DongleConfigFile::DPI, _app_cfg.dpi).serialize();
             _current_step = DeviceStep::SendOpen;  // Next step on success;
             break;
 
         case (DeviceStep::SendOpen):
             SPDLOG_DEBUG("Sending config (Open).");
-            usb_request = SendOpen(_app_cfg).serialize();
+            _usb_request = SendOpen(_app_cfg).serialize();
             _current_step = DeviceStep::SendNightMode;  // Next step on success;
             break;
 
         case (DeviceStep::SendNightMode):
             SPDLOG_DEBUG("Sending config (Night Mode).");
-            usb_request = SendBoolean(DongleConfigFile::NightMode, _app_cfg.night_mode).serialize();
+            _usb_request = SendBoolean(DongleConfigFile::NightMode, _app_cfg.night_mode).serialize();
             _current_step = DeviceStep::SendDriveHand;  // Next step on success;
             break;
 
         case (DeviceStep::SendDriveHand):
             SPDLOG_DEBUG("Sending config (drive side).");
-            usb_request = SendNumber(DongleConfigFile::HandDriveMode, static_cast<uint32_t>(_app_cfg.drive_type)).serialize();
+            _usb_request = SendNumber(DongleConfigFile::HandDriveMode, static_cast<uint32_t>(_app_cfg.drive_type)).serialize();
             _current_step = DeviceStep::SendChargeMode;  // Next step on success;
             break;
 
         case (DeviceStep::SendChargeMode):
             SPDLOG_DEBUG("Sending config (charge mode).");
-            usb_request = SendBoolean(DongleConfigFile::ChargeMode, true).serialize();
+            _usb_request = SendBoolean(DongleConfigFile::ChargeMode, true).serialize();
             _current_step = DeviceStep::SendBoxName;  // Next step on success;
             break;
 
         case (DeviceStep::SendBoxName):
             SPDLOG_DEBUG("Sending config (box name).");
-            usb_request = SendString(DongleConfigFile::BoxName, _app_cfg.box_name).serialize();
+            _usb_request = SendString(DongleConfigFile::BoxName, _app_cfg.box_name).serialize();
             _current_step = DeviceStep::SendBoxSettings;  // Next step on success;
             break;
 
         case (DeviceStep::SendBoxSettings):
             SPDLOG_DEBUG("Sending config (box settings).");
-            usb_request = SendBoxSettings(_app_cfg).serialize();
+            _usb_request = SendBoxSettings(_app_cfg).serialize();
             _current_step = DeviceStep::SendWiFiEnable;  // Next step on success;
             break;
 
         case (DeviceStep::SendWiFiEnable):
             SPDLOG_DEBUG("Sending config (WiFi enable).");
-            usb_request = Command(CommandMapping::WifiEnable).serialize();
+            _usb_request = Command(CommandMapping::WifiEnable).serialize();
             _current_step = DeviceStep::SendWiFiType;  // Next step on success;
             break;
 
         case (DeviceStep::SendWiFiType):
             SPDLOG_DEBUG("Sending config (WiFi type).");
-            usb_request = Command(CommandMapping::Wifi5g).serialize();
+            _usb_request = Command(CommandMapping::Wifi5g).serialize();
             _current_step = DeviceStep::SendMicType;  // Next step on success;
             break;
 
         case (DeviceStep::SendMicType):
             SPDLOG_DEBUG("Sending config (Mic type).");
-            usb_request = Command(CommandMapping::Mic).serialize();
+            _usb_request = Command(CommandMapping::Mic).serialize();
             _current_step = DeviceStep::SendAudioTransferMode;  // Next step on success;
             break;
 
         case (DeviceStep::SendAudioTransferMode):
             SPDLOG_DEBUG("Sending config (audio transfer mode).");
-            usb_request = Command(CommandMapping::AudioTransferOff).serialize();
+            _usb_request = Command(CommandMapping::AudioTransferOff).serialize();
             _current_step = DeviceStep::SendWiFiConnect;  // Next step on success;
             break;
 
         case (DeviceStep::SendWiFiConnect):
-            usb_request = Command(CommandMapping::WifiConnect).serialize();
+            _usb_request = Command(CommandMapping::WifiConnect).serialize();
             _current_step = DeviceStep::Done;  // Next step on success;
             break;
 
         case (DeviceStep::Done):
+            _usb_request = {};
             _heartbeat_thread_should_run = true;
             _heartbeat_thread = std::thread(std::bind(&DongleDriver::heartbeat_thread, this));
             break;
 
         case (DeviceStep::Fail):
             SPDLOG_ERROR("FUCK!");
+            _usb_request = {};
             break;
 
         default:
             SPDLOG_ERROR("Invalid initialization.");
+            _usb_request = {};
             break;
     }
 
 
-    if (usb_request.empty() == false)
+    if (_usb_request.empty() == false)
     {
         bool success = false;
 
@@ -337,8 +335,8 @@ void DongleDriver::step()
                 transfer,
                 _device_handle,
                 kEndpointOutAddress,
-                &usb_request[0],
-                usb_request.size(),
+                &_usb_request[0],
+                _usb_request.size(),
                 libusb_transfer_callback,
                 this,
                 kUsbDefaultTimeoutMs
@@ -464,7 +462,7 @@ void DongleDriver::read_thread()
         {
             expecting_header = true;
 
-            if (rx_header.get_message_length() != transfer_len)
+            if (rx_header.get_message_length() != static_cast<size_t>(transfer_len))
             {
                 SPDLOG_ERROR("Expecting to receive {} bytes, but actually received {}.",
                     rx_header.get_message_length(),

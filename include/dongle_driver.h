@@ -74,6 +74,8 @@ class DongleDriver
     std::atomic<bool> _read_thread_should_run;
     std::atomic<bool> _heartbeat_thread_should_run;
 
+    std::vector<uint8_t> _usb_request;
+
     uint8_t _rx_data[512u * 1024u];
 
     std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _frame_ready_callback;
