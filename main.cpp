@@ -91,7 +91,7 @@ int main(int argc, char** argv)
 
     SPDLOG_WARN("Exit received, tearing down.");
 
-    decode_thread.requestInterruption();
+    decode_thread.stop();
     driver.stop();
 
     return 0u;

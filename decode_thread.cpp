@@ -11,7 +11,8 @@ extern "C"
 
 
 DecodeThread::DecodeThread() :
-    QThread()
+    QThread(),
+    _should_terminate{false}
 {
     // Silence!
     av_log_set_level(AV_LOG_ERROR);
@@ -56,7 +57,7 @@ DecodeThread::DecodeThread() :
 
 DecodeThread::~DecodeThread()
 {
-    requestInterruption();
+    _should_terminate = true;
     wait();
 
     av_parser_close(_parser);
@@ -71,7 +72,7 @@ void DecodeThread::run()
 
     auto endTime = std::chrono::steady_clock::now();
 
-    while (isInterruptionRequested() == false)
+    while (_should_terminate == false)
     {
         endTime += std::chrono::milliseconds(250);
 
@@ -130,6 +131,10 @@ void DecodeThread::accept_new_data(const uint8_t* buffer, uint32_t buffer_len)
     _cv.notify_one();
 }
 
+void DecodeThread::stop()
+{
+    _should_terminate = true;
+}
 
 //Save RGB image as PPM file format
 static void ppm_save(unsigned char* buf, int wrap, int xsize, int ysize)

@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QPixmap>
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 
@@ -26,6 +27,8 @@ class DecodeThread : public QThread
 
     void accept_new_data(const uint8_t* buffer, uint32_t buffer_len);
 
+    void stop();
+
   signals:
     void imageReady(const QPixmap &);
 
@@ -43,6 +46,8 @@ class DecodeThread : public QThread
 
     std::mutex _m;
     std::condition_variable _cv;
+
+    std::atomic<bool> _should_terminate;
 };
 
 
