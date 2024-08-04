@@ -108,14 +108,18 @@ static std::string_view lookup_libusb_transfer_status_string(libusb_transfer_sta
 
 static void libusb_transfer_callback(struct libusb_transfer *transfer)
 {
-    SPDLOG_DEBUG("{} : transferred {} bytes (expected {}).",
-        lookup_libusb_transfer_status_string(transfer->status),
-        transfer->actual_length,
-        transfer->length);
+
 
     if (transfer->status == LIBUSB_TRANSFER_COMPLETED)
     {
         static_cast<DongleDriver*>(transfer->user_data)->step();
+    }
+    else
+    {
+        SPDLOG_ERROR("{} : transferred {} bytes (expected {}).",
+            lookup_libusb_transfer_status_string(transfer->status),
+            transfer->actual_length,
+            transfer->length);
     }
 
     libusb_free_transfer(transfer);

@@ -2,12 +2,28 @@
 #define APP_CONFIG_H_
 
 #include <string>
+#include <string_view>
 
 enum class DriveType
 {
     LHD = 0u,
     RHD
 };
+
+static constexpr std::string_view drive_type_to_string(DriveType type)
+{
+    switch (type)
+    {
+        case (DriveType::LHD):
+            return "LHD";
+
+        case (DriveType::RHD):
+            return "RHD";
+
+        default:
+            return "INVALID";
+    }
+}
 
 enum class WiFiType
 {
