@@ -72,11 +72,9 @@ void DecodeThread::run()
 {
     SPDLOG_DEBUG("Starting decode thread.");
 
-    auto endTime = std::chrono::steady_clock::now();
-
     while (_should_terminate == false)
     {
-        endTime += std::chrono::milliseconds(1000);
+        auto endTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
 
         std::unique_lock lk(_m);
         auto res = _cv.wait_until(lk, endTime);

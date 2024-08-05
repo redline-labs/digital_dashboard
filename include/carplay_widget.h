@@ -14,13 +14,15 @@ class CarPlayWidget : public QLabel
     CarPlayWidget();
     ~CarPlayWidget();
 
-    void mousePressEvent(QMouseEvent* e) override;
-    void mouseReleaseEvent(QMouseEvent* e) override;
-
     void setSize(uint32_t width_px, uint32_t height_px);
 
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
+
+  private:
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
 };
 
 

@@ -31,4 +31,11 @@ void CarPlayWidget::mouseReleaseEvent(QMouseEvent* e)
     );
 }
 
+void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
+{
+    emit (
+        touchEvent(TouchAction::Move, static_cast<uint32_t>(e->pos().x()), static_cast<uint32_t>(e->pos().y()))
+    );
+}
+
 #include "moc_carplay_widget.cpp"
