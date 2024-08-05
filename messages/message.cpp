@@ -173,10 +173,15 @@ void ManufacturerInfo::write_payload(uint8_t* /*buffer*/)
 /* ---------------------------------------------------------------------------- */
 /* SoftwareVersion                                                              */
 /* ---------------------------------------------------------------------------- */
-SoftwareVersion::SoftwareVersion(MessageHeader header, const uint8_t* /*buffer*/) :
+SoftwareVersion::SoftwareVersion(MessageHeader header, const uint8_t* buffer) :
   Message(header),
-  _version{} // buffer
+  _version{&buffer[0], &buffer[header.get_message_length()]} // buffer
 {
+}
+
+std::string SoftwareVersion::version()
+{
+    return _version;
 }
 
 uint16_t SoftwareVersion::get_payload_size()

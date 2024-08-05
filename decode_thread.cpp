@@ -11,7 +11,7 @@ extern "C"
 
 
 DecodeThread::DecodeThread() :
-    QThread(),
+    QObject(),
     _should_terminate{false}
 {
     // Silence!
@@ -53,12 +53,14 @@ DecodeThread::DecodeThread() :
     {
         SPDLOG_ERROR("Could not allocate frame.");
     }
+
+    // Start the thread.
+     _decode_thread = std::thread(std::bind(&DecodeThread::run, this));
 };
 
 DecodeThread::~DecodeThread()
 {
-    _should_terminate = true;
-    wait();
+    stop();
 
     av_parser_close(_parser);
     avcodec_free_context(&_codec_context);
@@ -74,7 +76,7 @@ void DecodeThread::run()
 
     while (_should_terminate == false)
     {
-        endTime += std::chrono::milliseconds(250);
+        endTime += std::chrono::milliseconds(1000);
 
         std::unique_lock lk(_m);
         auto res = _cv.wait_until(lk, endTime);
@@ -134,25 +136,11 @@ void DecodeThread::accept_new_data(const uint8_t* buffer, uint32_t buffer_len)
 void DecodeThread::stop()
 {
     _should_terminate = true;
-}
-
-//Save RGB image as PPM file format
-static void ppm_save(unsigned char* buf, int wrap, int xsize, int ysize)
-{
-    FILE* f;
-    int i;
-
-    f = fopen("output.ppm", "wb");
-    fprintf(f, "P6\n%d %d\n%d\n", xsize, ysize, 255);
-
-    for (i = 0; i < ysize; i++)
+    if (_decode_thread.joinable() == true)
     {
-        fwrite(buf + i * wrap, 1, xsize*3, f);
+        _decode_thread.join();
     }
-
-    fclose(f);
 }
-
 
 static void ppm_save_to_buffer(unsigned char* buf, int wrap, int xsize, int ysize, uint8_t* output_buffer, uint32_t output_len)
 {

@@ -45,7 +45,7 @@ static int hotplug_callback(libusb_context* /*ctx*/, libusb_device* /*device*/, 
     }
     else
     {
-        SPDLOG_INFO("Removed!");
+        SPDLOG_INFO("Dongle was removed!");
         static_cast<DongleDriver*>(driver_instance)->stop();
     }
 
@@ -176,7 +176,6 @@ void DongleDriver::stop()
     _read_thread_should_run = false;
     if (_read_thread.joinable() == true)
     {
-        SPDLOG_DEBUG("Stopping read thread.");
         _read_thread.join();
     }
 
@@ -184,7 +183,6 @@ void DongleDriver::stop()
     _heartbeat_thread_should_run = false;
     if (_heartbeat_thread.joinable() == true)
     {
-        SPDLOG_DEBUG("Stopping heartbeat thread.");
         _heartbeat_thread.join();
     }
 
@@ -484,6 +482,16 @@ void DongleDriver::read_thread()
 }
 
 
+/*static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
+{
+    return
+        (static_cast<uint32_t>(buffer[0]) <<  0) |
+        (static_cast<uint32_t>(buffer[1]) <<  8) |
+        (static_cast<uint32_t>(buffer[2]) << 16) |
+        (static_cast<uint32_t>(buffer[3]) << 24);
+}*/
+
+
 void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* buffer)
 {
     switch (header.get_message_type())
@@ -491,12 +499,33 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
         case (MessageType::Command):
             {
                 auto cmd = Command(&buffer[0]);
-                SPDLOG_DEBUG("Received Command::{}.", command_mapping_to_string(cmd.get_value()));
+                SPDLOG_DEBUG("Received Command::{} ({}).", command_mapping_to_string(cmd.get_value()),
+                    static_cast<uint32_t>(cmd.get_value()));
             }
             break;
 
         case (MessageType::VideoData):
-            _frame_ready_callback(&buffer[0], header.get_message_length());
+            // TODO: Add bounds checks here to make sure we're not gonna shoot ourselves in the foot.
+            //(self.width, self.height, self.flags, self.unknown1, self.unknown2) = struct.unpack("<LLLLL", data[:20])
+            /*{
+                uint32_t rx_width = read_uint32_t_little_endian(&buffer[0]);
+                uint32_t rx_height = read_uint32_t_little_endian(&buffer[4]);
+                uint32_t rx_flags = read_uint32_t_little_endian(&buffer[8]);
+                uint32_t rx_unknown1 = read_uint32_t_little_endian(&buffer[12]);
+                uint32_t rx_unknown2 = read_uint32_t_little_endian(&buffer[16]);
+
+                SPDLOG_DEBUG("rx_width = {}, rx_height = {}, rx_flags = {}, rx_unknown1 = {}, rx_unknown2 = {}",
+                    rx_width, rx_height, rx_flags, rx_unknown1, rx_unknown2);
+            }*/
+
+            _frame_ready_callback(&buffer[20], header.get_message_length() - 20);
+            break;
+
+        case (MessageType::SoftwareVersion):
+            {
+                auto cmd = SoftwareVersion(header, &buffer[0]);
+                SPDLOG_DEBUG("Dongle software version: {}", cmd.version());
+            }
             break;
 
         default:

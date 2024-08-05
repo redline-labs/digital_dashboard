@@ -1,12 +1,13 @@
 #ifndef DECODE_THREAD_H_
 #define DECODE_THREAD_H_
 
-#include <QThread>
+#include <QObject>
 #include <QPixmap>
 
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 
 // Forward declarations for libavcodec stuff.
 struct AVCodec;
@@ -15,15 +16,13 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 
-class DecodeThread : public QThread
+class DecodeThread : public QObject
 {
     Q_OBJECT
 
   public:
     DecodeThread();
     ~DecodeThread();
-
-    void run() override;
 
     void accept_new_data(const uint8_t* buffer, uint32_t buffer_len);
 
@@ -33,6 +32,7 @@ class DecodeThread : public QThread
     void imageReady(const QPixmap &);
 
   private:
+    void run();
     void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt);
 
     const AVCodec* _codec;
@@ -48,6 +48,7 @@ class DecodeThread : public QThread
     std::condition_variable _cv;
 
     std::atomic<bool> _should_terminate;
+    std::thread _decode_thread;
 };
 
 

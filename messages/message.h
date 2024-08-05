@@ -99,6 +99,8 @@ class SoftwareVersion : Message
 
     SoftwareVersion(MessageHeader header, const uint8_t* buffer);
 
+    std::string version();
+
   private:
     std::string _version;
 

@@ -54,8 +54,6 @@ int main(int argc, char** argv)
     DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
 
     DecodeThread decode_thread;
-    decode_thread.start();
-
 
     std::signal(SIGINT, [](int /* signum */)
         {
