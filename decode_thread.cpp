@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <QImage>
+
 extern "C"
 {
 #include <libavcodec/avcodec.h>
@@ -140,25 +142,9 @@ void DecodeThread::stop()
     }
 }
 
-static void ppm_save_to_buffer(unsigned char* buf, int wrap, int xsize, int ysize, uint8_t* output_buffer, uint32_t output_len)
-{
-    FILE* f = fmemopen(output_buffer, output_len, "w");
-    int i;
-
-    fprintf(f, "P6\n%d %d\n%d\n", xsize, ysize, 255);
-
-    for (i = 0; i < ysize; i++)
-    {
-        fwrite(buf + i * wrap, 1, xsize*3, f);
-    }
-
-    fclose(f);
-}
-
 void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
 {
     struct SwsContext* sws_ctx = NULL;
-    static uint8_t ppm_image[5u * 1024u * 1024u] = {};
 
     int ret = avcodec_send_packet(dec_ctx, pkt);
     if (ret < 0) {
@@ -232,17 +218,17 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
         }
 
         /* the picture is allocated by the decoder. no need to free it */
-        ppm_save_to_buffer(pRGBFrame->data[0], pRGBFrame->linesize[0], pRGBFrame->width, pRGBFrame->height, &ppm_image[0], sizeof(ppm_image));
+        //ppm_save_to_buffer(pRGBFrame->data[0], pRGBFrame->linesize[0], pRGBFrame->width, pRGBFrame->height, &ppm_image[0], sizeof(ppm_image));
 
+        QImage img(pRGBFrame->data[0], pRGBFrame->width, pRGBFrame->height, pRGBFrame->linesize[0], QImage::Format_RGB888);
 
-        QPixmap pix_map;
-        if (pix_map.loadFromData(ppm_image, sizeof(ppm_image), "PPM") == false)
+        /*if (pix_map.loadFromData(ppm_image, sizeof(ppm_image), "PPM") == false)
         {
             SPDLOG_ERROR("Failed to convert to pixmap.");
-        }
+        }*/
 
         emit (
-            imageReady(pix_map)
+            imageReady(QPixmap::fromImage(img))
         );
     }
 

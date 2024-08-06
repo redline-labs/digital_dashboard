@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "carplay_widget.h"
+#include "carplay_stream.h"
 #include "decode_thread.h"
 #include "dongle_driver.h"
 #include "messages/message.h"
@@ -13,14 +14,12 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QMediaPlayer>
+#include <QVideoWidget>
 
 // Patches to third party:
 // LibUSB core for debug messages.
 // spdlog tweakme to lower the default log level.
-
-
-
-
 
 int main(int argc, char** argv)
 {
@@ -66,6 +65,17 @@ int main(int argc, char** argv)
     CarPlayWidget carplay_widget;
     carplay_widget.setSize(cfg.width_px, cfg.height_px);
     carplay_widget.show();
+
+    /*CarPlayStream video_stream;
+
+
+    QMediaPlayer player;
+    QVideoWidget video_widget;
+    player.setVideoOutput(&video_widget);
+
+    player.setSourceDevice(&video_stream);
+    video_widget.show();*/
+
 
 
     driver.register_frame_ready_callback([&decode_thread] (const uint8_t* buffer, uint32_t buffer_len){
