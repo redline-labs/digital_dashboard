@@ -55,10 +55,10 @@ int main(int argc, char** argv)
     DecodeThread decode_thread;
 
     std::signal(SIGINT, [](int /* signum */)
-        {
-            SPDLOG_WARN("SIGINT received.");
-            QCoreApplication::quit();
-        });
+    {
+        SPDLOG_WARN("SIGINT received.");
+        QCoreApplication::quit();
+    });
 
 
     QApplication app(argc, argv);
@@ -82,6 +82,12 @@ int main(int argc, char** argv)
         decode_thread.accept_new_data(buffer, buffer_len);
     });
 
+    //std::ofstream audio_output;
+    //audio_output.open("output.audio", std::ios::trunc | std::ios::binary | std::ios::out);
+    driver.register_audio_ready_callback([] (const uint8_t* buffer, uint32_t buffer_len){
+        //audio_output.write(reinterpret_cast<const char*>(buffer), buffer_len);
+    });
+
 
     QObject::connect(&decode_thread,   &DecodeThread::imageReady,
                      &carplay_widget,  &CarPlayWidget::setPixmap);
@@ -94,7 +100,7 @@ int main(int argc, char** argv)
     app.exec();  // Blocking.
 
 
-
+    //audio_output.close();
 
 
     SPDLOG_WARN("Exit received, tearing down.");

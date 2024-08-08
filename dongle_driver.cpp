@@ -166,6 +166,11 @@ void DongleDriver::register_frame_ready_callback(std::function<void(const uint8_
     _frame_ready_callback = cb;
 }
 
+void DongleDriver::register_audio_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb)
+{
+    _audio_ready_callback = cb;
+}
+
 
 void DongleDriver::stop()
 {
@@ -482,14 +487,14 @@ void DongleDriver::read_thread()
 }
 
 
-/*static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
+static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
 {
     return
         (static_cast<uint32_t>(buffer[0]) <<  0) |
         (static_cast<uint32_t>(buffer[1]) <<  8) |
         (static_cast<uint32_t>(buffer[2]) << 16) |
         (static_cast<uint32_t>(buffer[3]) << 24);
-}*/
+}
 
 
 void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* buffer)
@@ -518,7 +523,37 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
                     rx_width, rx_height, rx_flags, rx_unknown1, rx_unknown2);
             }*/
 
-            _frame_ready_callback(&buffer[20], header.get_message_length() - 20);
+            if (_frame_ready_callback != nullptr)
+            {
+                _frame_ready_callback(&buffer[20], header.get_message_length() - 20);
+            }
+            break;
+
+        case (MessageType::AudioData):
+            {
+                //uint32_t decode_type = read_uint32_t_little_endian(&buffer[0]);
+                //float volume = static_cast<float>(read_uint32_t_little_endian(&buffer[4]));
+                //uint32_t audio_type = read_uint32_t_little_endian(&buffer[8]);
+
+                if (header.get_message_length() == 13)
+                {
+                    AudioCommand cmd = static_cast<AudioCommand>(buffer[12]);
+                    SPDLOG_DEBUG("Audio Command {}", audio_command_to_string(cmd));
+                }
+                else if (header.get_message_length() == 16)
+                {
+                    uint32_t volume_duration = read_uint32_t_little_endian(&buffer[12]);
+                    SPDLOG_DEBUG("volume_duration = {}", volume_duration);
+                }
+                else
+                {
+                    // Audio data!
+                    if (_audio_ready_callback != nullptr)
+                    {
+                        _audio_ready_callback(&buffer[12], header.get_message_length() - 12);
+                    }
+                }
+            }
             break;
 
         case (MessageType::SoftwareVersion):

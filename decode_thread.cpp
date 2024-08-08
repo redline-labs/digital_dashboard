@@ -16,10 +16,6 @@ DecodeThread::DecodeThread() :
     QObject(),
     _should_terminate{false}
 {
-    // Silence!
-    av_log_set_level(AV_LOG_ERROR);
-
-
     // Get set up for libavcodec.
     _pkt = av_packet_alloc();
     if (_pkt == nullptr)
@@ -56,6 +52,8 @@ DecodeThread::DecodeThread() :
         SPDLOG_ERROR("Could not allocate frame.");
     }
 
+    _pRGBFrame = av_frame_alloc();
+
     // Start the thread.
      _decode_thread = std::thread(std::bind(&DecodeThread::run, this));
 };
@@ -67,7 +65,10 @@ DecodeThread::~DecodeThread()
     av_parser_close(_parser);
     avcodec_free_context(&_codec_context);
     av_frame_free(&_frame);
+    av_frame_free(&_pRGBFrame);
     av_packet_free(&_pkt);
+
+    sws_freeContext(_sws_ctx);
 }
 
 void DecodeThread::run()
@@ -144,40 +145,41 @@ void DecodeThread::stop()
 
 void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
 {
-    struct SwsContext* sws_ctx = NULL;
-
     int ret = avcodec_send_packet(dec_ctx, pkt);
     if (ret < 0) {
         SPDLOG_ERROR("Error sending a packet for decoding.");
         return;
     }
 
-    //Create SWS Context for converting from decode pixel format (like YUV420) to RGB
-    ////////////////////////////////////////////////////////////////////////////
-    sws_ctx = sws_getContext(dec_ctx->width,
-                             dec_ctx->height,
-                             dec_ctx->pix_fmt,
-                             dec_ctx->width,
-                             dec_ctx->height,
-                             AV_PIX_FMT_RGB24,
-                             SWS_BICUBIC,
-                             NULL,
-                             NULL,
-                             NULL);
-
-    if (sws_ctx == nullptr)
+    // It could be our first pass, and we delaying init until we have the frame size.
+    if (_sws_ctx == nullptr)
     {
-        SPDLOG_ERROR("Failed to get SWS context.");
-        return;
+        _sws_ctx = sws_getContext(
+            dec_ctx->width,
+            dec_ctx->height,
+            dec_ctx->pix_fmt,
+            dec_ctx->width,
+            dec_ctx->height,
+            AV_PIX_FMT_RGB24,
+            SWS_BICUBIC,
+            NULL,
+            NULL,
+            NULL
+        );
+
+        // If its still broken, bomb out.
+        if (_sws_ctx == nullptr)
+        {
+            SPDLOG_ERROR("Failed to get SWS context.");
+            return;
+        }
     }
 
-    AVFrame* pRGBFrame = av_frame_alloc();
+    _pRGBFrame->format = AV_PIX_FMT_RGB24;
+    _pRGBFrame->width = dec_ctx->width;
+    _pRGBFrame->height = dec_ctx->height;
 
-    pRGBFrame->format = AV_PIX_FMT_RGB24;
-    pRGBFrame->width = dec_ctx->width;
-    pRGBFrame->height = dec_ctx->height;
-
-    int sts = av_frame_get_buffer(pRGBFrame, 0);
+    int sts = av_frame_get_buffer(_pRGBFrame, 0);
 
     if (sts < 0)
     {
@@ -201,15 +203,15 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
         // AV_PIX_FMT_YUVJ420P
 
 
-        //Convert from input format (e.g YUV420) to RGB and save to PPM:
+        // Convert from input format (e.g YUV420) to RGB and save to PPM:
         ////////////////////////////////////////////////////////////////////////////
-        sts = sws_scale(sws_ctx,                //struct SwsContext* c,
+        sts = sws_scale(_sws_ctx,               //struct SwsContext* c,
                         frame->data,            //const uint8_t* const srcSlice[],
                         frame->linesize,        //const int srcStride[],
                         0,                      //int srcSliceY,
                         frame->height,          //int srcSliceH,
-                        pRGBFrame->data,        //uint8_t* const dst[],
-                        pRGBFrame->linesize);   //const int dstStride[]);
+                        _pRGBFrame->data,       //uint8_t* const dst[],
+                        _pRGBFrame->linesize);  //const int dstStride[]);
 
         if (sts != frame->height)
         {
@@ -217,24 +219,12 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
             break;  //Error!
         }
 
-        /* the picture is allocated by the decoder. no need to free it */
-        //ppm_save_to_buffer(pRGBFrame->data[0], pRGBFrame->linesize[0], pRGBFrame->width, pRGBFrame->height, &ppm_image[0], sizeof(ppm_image));
-
-        QImage img(pRGBFrame->data[0], pRGBFrame->width, pRGBFrame->height, pRGBFrame->linesize[0], QImage::Format_RGB888);
-
-        /*if (pix_map.loadFromData(ppm_image, sizeof(ppm_image), "PPM") == false)
-        {
-            SPDLOG_ERROR("Failed to convert to pixmap.");
-        }*/
+        QImage img(_pRGBFrame->data[0], _pRGBFrame->width, _pRGBFrame->height, _pRGBFrame->linesize[0], QImage::Format_RGB888);
 
         emit (
             imageReady(QPixmap::fromImage(img))
         );
     }
-
-    //Free
-    sws_freeContext(sws_ctx);
-    av_frame_free(&pRGBFrame);
 }
 
 #include "moc_decode_thread.cpp"

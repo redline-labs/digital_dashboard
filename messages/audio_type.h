@@ -108,4 +108,61 @@ constexpr AudioFormat decode_audio_type(uint8_t audio_type)
     }
 }
 
+enum class AudioCommand
+{
+    OutputStart = 1,
+    OutputStop = 2,
+    InputConfig = 3,
+    PhonecallStart = 4,
+    PhonecallStop = 5,
+    NaviStart = 6,
+    NaviStop = 7,
+    SiriStart = 8,
+    SiriStop = 9,
+    MediaStart = 0xA,
+    MediaStop = 0xB
+};
+
+constexpr std::string_view audio_command_to_string(AudioCommand cmd)
+{
+    switch (cmd)
+    {
+        case (AudioCommand::OutputStart):
+            return "OutputStart";
+
+        case (AudioCommand::OutputStop):
+            return "OutputStop";
+
+        case (AudioCommand::InputConfig):
+            return "InputConfig";
+
+        case (AudioCommand::PhonecallStart):
+            return "PhonecallStart";
+
+        case (AudioCommand::PhonecallStop):
+            return "PhonecallStop";
+
+        case (AudioCommand::NaviStart):
+            return "NaviStart";
+
+        case (AudioCommand::NaviStop):
+            return "NaviStop";
+
+        case (AudioCommand::SiriStart):
+            return "SiriStart";
+
+        case (AudioCommand::SiriStop):
+            return "SiriStop";
+
+        case (AudioCommand::MediaStart):
+            return "MediaStart";
+
+        case (AudioCommand::MediaStop):
+            return "MediaStop";
+
+        default:
+            return "UNKNOWN";
+    }
+}
+
 #endif  // AUDIO_TYPE_H_

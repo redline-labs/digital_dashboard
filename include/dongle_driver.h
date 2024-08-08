@@ -58,6 +58,7 @@ class DongleDriver
     static std::string_view libusb_version();
 
     void register_frame_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
+    void register_audio_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
 
     void send_touch_event(TouchAction action, uint32_t x, uint32_t y);
 
@@ -79,6 +80,7 @@ class DongleDriver
     uint8_t _rx_data[512u * 1024u];
 
     std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _frame_ready_callback;
+    std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _audio_ready_callback;
 
     bool find_dongle();
 
