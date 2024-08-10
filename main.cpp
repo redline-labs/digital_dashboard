@@ -13,6 +13,10 @@
 #include <csignal>
 
 #include <QApplication>
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QAudioSink>
+#include <QMediaDevices>
 #include <QLabel>
 #include <QMediaPlayer>
 #include <QVideoWidget>
@@ -77,14 +81,37 @@ int main(int argc, char** argv)
     video_widget.show();*/
 
 
+    QAudioFormat format;
+    format.setSampleRate(44100);
+    format.setChannelCount(2);
+    format.setSampleFormat(QAudioFormat::Int16);
+
+    const auto devices = QMediaDevices::audioOutputs();
+    for (const QAudioDevice &device : devices)
+    {
+        SPDLOG_DEBUG("Found audio device: {}",  device.description().toStdString());
+    }
+
+    QAudioDevice info(QMediaDevices::defaultAudioOutput());
+    if (!info.isFormatSupported(format)) {
+        SPDLOG_ERROR("Raw audio format not supported by backend, cannot play audio.");
+        // TODO: Should we bomb out?
+    }
+
+    SPDLOG_DEBUG("Using audio output: {}", info.description().toStdString());
+
+    QAudioSink audio(format);
+    SPDLOG_DEBUG("Default audio sink buffer size = {}, setting to {}.", audio.bufferSize(), cfg.audio_device_buffer_size);
+    audio.setBufferSize(cfg.audio_device_buffer_size);
+
+    auto audio_buffer = audio.start();
 
     driver.register_frame_ready_callback([&decode_thread] (const uint8_t* buffer, uint32_t buffer_len){
         decode_thread.accept_new_data(buffer, buffer_len);
     });
 
-    //std::ofstream audio_output;
-    //audio_output.open("output.audio", std::ios::trunc | std::ios::binary | std::ios::out);
-    driver.register_audio_ready_callback([] (const uint8_t* buffer, uint32_t buffer_len){
+    driver.register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
+        audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
         //audio_output.write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
@@ -98,9 +125,6 @@ int main(int argc, char** argv)
 
     SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.
-
-
-    //audio_output.close();
 
 
     SPDLOG_WARN("Exit received, tearing down.");

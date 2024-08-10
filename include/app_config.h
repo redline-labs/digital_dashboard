@@ -77,7 +77,8 @@ struct app_config_t {
         audio_transfer_mode{false},
         wifi_type{WiFiType::WiFi_5_GHz},
         mic_type{MicType::OS},
-        phone_config{}
+        phone_config{},
+        audio_device_buffer_size{8192}
     {}
 
     uint16_t width_px;
@@ -96,6 +97,9 @@ struct app_config_t {
     WiFiType wifi_type;
     MicType mic_type;
     phone_config_t phone_config;
+
+    // Host settings.
+    uint32_t audio_device_buffer_size;
 };
 
 

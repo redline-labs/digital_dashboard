@@ -54,6 +54,8 @@ struct convert<app_config_t> {
 
         // TODO: phone config;
 
+        rhs.audio_device_buffer_size = node["audio_device_buffer_size"].as<uint32_t>();
+
         return true;
     }
 };
