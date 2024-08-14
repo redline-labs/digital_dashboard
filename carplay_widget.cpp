@@ -6,6 +6,9 @@
 CarPlayWidget::CarPlayWidget() :
     QLabel()
 {
+    setStyleSheet("QLabel { background-color : black; color : white; }");
+    setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+    setText("Plug in iPhone");
 }
 
 CarPlayWidget::~CarPlayWidget()

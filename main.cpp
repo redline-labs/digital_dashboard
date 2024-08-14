@@ -3,12 +3,16 @@
 #include "carplay_stream.h"
 #include "decode_thread.h"
 #include "dongle_driver.h"
+#include "main_window.h"
 #include "messages/message.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
+#include <QSparkLineWidget.h>
+
+#include <cmath>
 #include <condition_variable>
 #include <csignal>
 
@@ -66,9 +70,11 @@ int main(int argc, char** argv)
 
 
     QApplication app(argc, argv);
-    CarPlayWidget carplay_widget;
-    carplay_widget.setSize(cfg.width_px, cfg.height_px);
-    carplay_widget.show();
+
+
+    MainWindow main_window(cfg);
+    main_window.show();
+
 
     /*CarPlayStream video_stream;
 
@@ -115,14 +121,14 @@ int main(int argc, char** argv)
         //audio_output.write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
-
+/*
     QObject::connect(&decode_thread,   &DecodeThread::imageReady,
                      &carplay_widget,  &CarPlayWidget::setPixmap);
 
     QObject::connect(&carplay_widget,  &CarPlayWidget::touchEvent, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
         driver.send_touch_event(action, x, y);
     });
-
+*/
     SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.
 
