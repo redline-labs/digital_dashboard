@@ -59,6 +59,7 @@ class DongleDriver
 
     void register_frame_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
     void register_audio_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
+    void register_phone_connect_event(std::function<void(bool)> cb);
 
     void send_touch_event(TouchAction action, uint32_t x, uint32_t y);
 
@@ -81,6 +82,7 @@ class DongleDriver
 
     std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _frame_ready_callback;
     std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _audio_ready_callback;
+    std::function<void(bool)> _phone_connect_event_callback;
 
     bool find_dongle();
 

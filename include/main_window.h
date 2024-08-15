@@ -7,6 +7,7 @@
 #include "QSparkLineWidget.h"
 
 #include <QHBoxLayout>
+#include <QPixmap>
 
 
 class MainWindow : public QWidget
@@ -17,6 +18,13 @@ class MainWindow : public QWidget
     MainWindow(const app_config_t& app_cfg);
 
 
+  public slots:
+    void update_carplay_image(const QPixmap& pixmap);
+
+  signals:
+    void carplay_touch_event(TouchAction action, uint32_t x, uint32_t y);
+
+
   private:
     app_config_t _app_cfg;
 
@@ -24,7 +32,6 @@ class MainWindow : public QWidget
     dqtx::QSparkLineWidget _sparkline_widget;
 
     QHBoxLayout _horizontal_layout;
-
 
 };  // class MainWindow
 

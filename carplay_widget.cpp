@@ -41,4 +41,17 @@ void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
     );
 }
 
+void CarPlayWidget::phone_connected(bool is_connected)
+{
+    if (is_connected == false)
+    {
+        setPixmap({});
+        setText("Plug in iPhone");
+    }
+    else
+    {
+        setText("Found iPhone, connecting...");
+    }
+}
+
 #include "moc_carplay_widget.cpp"

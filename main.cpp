@@ -1,19 +1,13 @@
 #include "app_config.h"
-#include "carplay_widget.h"
-#include "carplay_stream.h"
 #include "decode_thread.h"
 #include "dongle_driver.h"
 #include "main_window.h"
-#include "messages/message.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
-#include <QSparkLineWidget.h>
-
 #include <cmath>
-#include <condition_variable>
 #include <csignal>
 
 #include <QApplication>
@@ -21,9 +15,6 @@
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QMediaDevices>
-#include <QLabel>
-#include <QMediaPlayer>
-#include <QVideoWidget>
 
 // Patches to third party:
 // LibUSB core for debug messages.
@@ -104,7 +95,7 @@ int main(int argc, char** argv)
         // TODO: Should we bomb out?
     }
 
-    SPDLOG_DEBUG("Using audio output: {}", info.description().toStdString());
+    SPDLOG_INFO("Using audio output: {}", info.description().toStdString());
 
     QAudioSink audio(format);
     SPDLOG_DEBUG("Default audio sink buffer size = {}, setting to {}.", audio.bufferSize(), cfg.audio_device_buffer_size);
@@ -118,17 +109,16 @@ int main(int argc, char** argv)
 
     driver.register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
-        //audio_output.write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
-/*
-    QObject::connect(&decode_thread,   &DecodeThread::imageReady,
-                     &carplay_widget,  &CarPlayWidget::setPixmap);
 
-    QObject::connect(&carplay_widget,  &CarPlayWidget::touchEvent, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
+    QObject::connect(&decode_thread,   &DecodeThread::imageReady,
+                     &main_window,     &MainWindow::update_carplay_image);
+
+    QObject::connect(&main_window,  &MainWindow::carplay_touch_event, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
         driver.send_touch_event(action, x, y);
     });
-*/
+
     SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.
 

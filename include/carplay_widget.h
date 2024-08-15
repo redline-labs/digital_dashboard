@@ -16,6 +16,10 @@ class CarPlayWidget : public QLabel
 
     void setSize(uint32_t width_px, uint32_t height_px);
 
+
+  public slots:
+    void phone_connected(bool is_connected);
+
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
 
