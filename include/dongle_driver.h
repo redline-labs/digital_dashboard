@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdbool>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 #include <thread>
 

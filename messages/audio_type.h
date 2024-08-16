@@ -1,6 +1,7 @@
 #ifndef AUDIO_TYPE_H_
 #define AUDIO_TYPE_H_
 
+#include <cstdint>
 #include <string_view>
 
 enum class AudioFrequency

@@ -1,6 +1,7 @@
 #ifndef APP_CONFIG_H_
 #define APP_CONFIG_H_
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
