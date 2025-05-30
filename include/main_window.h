@@ -4,8 +4,6 @@
 #include "app_config.h"
 #include "carplay_widget.h"
 
-#include "QSparkLineWidget.h"
-
 #include <QHBoxLayout>
 #include <QPixmap>
 
@@ -29,7 +27,6 @@ class MainWindow : public QWidget
     app_config_t _app_cfg;
 
     CarPlayWidget _carplay_widget;
-    dqtx::QSparkLineWidget _sparkline_widget;
 
     QHBoxLayout _horizontal_layout;
 

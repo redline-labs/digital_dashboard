@@ -47,7 +47,7 @@ int main(int argc, char** argv)
     spdlog::set_level(args_result["debug"].as<bool>() ? spdlog::level::debug : spdlog::level::info);
 
 
-    auto cfg = load_app_config("/Users/ryan/src/carplay_cpp/config.yaml");
+    auto cfg = load_app_config("/Users/ryan/src/mercedes_dashboard/config.yaml");
 
     DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
 
@@ -65,17 +65,6 @@ int main(int argc, char** argv)
 
     MainWindow main_window(cfg);
     main_window.show();
-
-
-    /*CarPlayStream video_stream;
-
-
-    QMediaPlayer player;
-    QVideoWidget video_widget;
-    player.setVideoOutput(&video_widget);
-
-    player.setSourceDevice(&video_stream);
-    video_widget.show();*/
 
 
     QAudioFormat format;

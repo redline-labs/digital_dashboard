@@ -81,8 +81,6 @@ include_directories(
     cxxopts-3.2.0/include
 
     nlohmann-json-3.11.3
-
-    dqtx/include
 )
 
 include_directories(
@@ -93,21 +91,12 @@ include_directories(
 qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
-    carplay_stream.cpp
     carplay_widget.cpp
     decode_thread.cpp
     dongle_driver.cpp
 
     main_window.cpp
     messages/message.cpp
-
-    #dqtx/src/QDensityWidget.cpp
-    #dqtx/src/QIconTheme.cpp
-    #dqtx/src/QSparkLineAndBarsWidget.cpp
-    #dqtx/src/QSparkLineIconFactory.cpp
-    dqtx/src/QSparkLineWidget.cpp
-    #dqtx/src/QTextIconFactory.cpp
-    #dqtx/src/QUnixSignalHandler.cpp
 
     yaml-cpp-0.8.0/src/binary.cpp
     yaml-cpp-0.8.0/src/convert.cpp

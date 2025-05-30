@@ -34,6 +34,7 @@ enum class DeviceStep
   Fail,
 };
 
+
 class DongleDriver
 {
   public:
