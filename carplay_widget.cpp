@@ -54,12 +54,19 @@ CarPlayWidget::CarPlayWidget() :
     m_textureU(0),
     m_textureV(0),
     m_vbo(0),
+    m_pboIndex(0),
+    m_nextPboIndex(1),
     m_frameWidth(0),
     m_frameHeight(0),
     m_hasFrame(false),
     m_phoneConnected(true)
 {
     setStyleSheet("QOpenGLWidget { background-color : black; }");
+    
+    // Initialize PBO array
+    for (int i = 0; i < 6; i++) {
+        m_pboIds[i] = 0;
+    }
 }
 
 CarPlayWidget::~CarPlayWidget()
@@ -70,6 +77,11 @@ CarPlayWidget::~CarPlayWidget()
     if (m_textureU) glDeleteTextures(1, &m_textureU);
     if (m_textureV) glDeleteTextures(1, &m_textureV);
     if (m_vbo) glDeleteBuffers(1, &m_vbo);
+    
+    // Cleanup PBOs
+    for (int i = 0; i < 6; i++) {
+        if (m_pboIds[i]) glDeleteBuffers(1, &m_pboIds[i]);
+    }
     
     delete m_shaderProgram;
     
@@ -149,6 +161,9 @@ void CarPlayWidget::setupTextures()
     glGenTextures(1, &m_textureY);
     glGenTextures(1, &m_textureU);
     glGenTextures(1, &m_textureV);
+    
+    // Generate PBOs for async texture uploads (double buffering)
+    glGenBuffers(6, m_pboIds);
     
     // Configure textures
     for (GLuint texture : {m_textureY, m_textureU, m_textureV}) {
@@ -288,28 +303,61 @@ void CarPlayWidget::uploadYUVTextures(QByteArray yData, QByteArray uData, QByteA
     m_frameWidth = width;
     m_frameHeight = height;
     
-    SPDLOG_DEBUG("Uploading YUV frame: {}x{}, strides: Y={}, U={}, V={}", width, height, yStride, uStride, vStride);
+    //SPDLOG_DEBUG("Uploading YUV frame: {}x{}, strides: Y={}, U={}, V={}", width, height, yStride, uStride, vStride);
     
-    // Upload Y plane (full resolution)
+    // Calculate actual data sizes (may be smaller than stride * height)
+    const int yDataSize = yData.size();
+    const int uDataSize = uData.size();
+    const int vDataSize = vData.size();
+    
+    // Use double-buffered PBOs for async uploads
+    // PBOs 0,1 = Y plane, PBOs 2,3 = U plane, PBOs 4,5 = V plane
+    const int yPbo = m_pboIndex * 3 + 0;
+    const int uPbo = m_pboIndex * 3 + 1; 
+    const int vPbo = m_pboIndex * 3 + 2;
+    
+    const int nextYPbo = m_nextPboIndex * 3 + 0;
+    const int nextUPbo = m_nextPboIndex * 3 + 1;
+    const int nextVPbo = m_nextPboIndex * 3 + 2;
+    
+    // Bind and upload to current PBOs
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[yPbo]);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, yDataSize, yData.constData(), GL_STREAM_DRAW);
+    
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[uPbo]);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, uDataSize, uData.constData(), GL_STREAM_DRAW);
+    
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[vPbo]);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, vDataSize, vData.constData(), GL_STREAM_DRAW);
+    
+    // Upload textures from previous frame's PBOs (async)
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[nextYPbo]);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, yStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData.constData());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, 0);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
-    // Upload U plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_textureU);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[nextUPbo]);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, uStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uData.constData());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, 0);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
-    // Upload V plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_textureV);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[nextVPbo]);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, vStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, vData.constData());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, 0);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    
+    // Unbind PBO
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    
+    // Swap buffer indices for next frame
+    m_pboIndex = m_nextPboIndex;
+    m_nextPboIndex = (m_nextPboIndex + 1) % 2;
     
     // Check for OpenGL errors
     GLenum error = glGetError();

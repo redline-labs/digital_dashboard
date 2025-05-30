@@ -48,6 +48,11 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     GLuint m_textureV;
     GLuint m_vbo;
     
+    // Pixel Buffer Objects for async texture uploads (double buffering)
+    GLuint m_pboIds[6]; // Y, U, V for front and back buffers
+    int m_pboIndex;     // Current PBO index (0 or 1)
+    int m_nextPboIndex; // Next PBO index
+    
     int m_frameWidth;
     int m_frameHeight;
     bool m_hasFrame;

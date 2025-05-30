@@ -23,7 +23,7 @@ DecodeThread::DecodeThread() :
     _codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (_codec == nullptr)
     {
-        SPDLOG_ERROR("Failed to find libavcodec codec.");
+        SPDLOG_ERROR("Failed to find H.264 codec.");
     }
 
     _parser = av_parser_init(_codec->id);
@@ -158,9 +158,13 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
         // AV_PIX_FMT_YUVJ420P
 
         // Copy YUV data to ensure it remains valid after this frame is reused
-        int ySize = frame->linesize[0] * frame->height;
-        int uSize = frame->linesize[1] * frame->height / 2;
-        int vSize = frame->linesize[2] * frame->height / 2;
+        // Use efficient QByteArray constructor copying
+        const int yStride = frame->linesize[0];
+        const int uStride = frame->linesize[1];
+        const int vStride = frame->linesize[2];
+        const int ySize = yStride * frame->height;
+        const int uSize = uStride * (frame->height / 2);
+        const int vSize = vStride * (frame->height / 2);
         
         QByteArray yData(reinterpret_cast<const char*>(frame->data[0]), ySize);
         QByteArray uData(reinterpret_cast<const char*>(frame->data[1]), uSize);
@@ -168,7 +172,7 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
 
         emit (
             imageReady(yData, uData, vData, frame->width, frame->height, 
-                      frame->linesize[0], frame->linesize[1], frame->linesize[2])
+                      yStride, uStride, vStride)
         );
     }
 }
