@@ -29,21 +29,19 @@ uniform sampler2D textureV;
 
 void main()
 {
+    // Use optimized YUV->RGB conversion matrix
     float y = texture2D(textureY, TexCoord).r;
     float u = texture2D(textureU, TexCoord).r - 0.5;
     float v = texture2D(textureV, TexCoord).r - 0.5;
     
-    // BT.601 color conversion (YUV to RGB)
-    float r = y + 1.402 * v;
-    float g = y - 0.344136 * u - 0.714136 * v;
-    float b = y + 1.772 * u;
+    // BT.601 optimized conversion (avoid expensive operations)
+    vec3 rgb;
+    rgb.r = y + 1.402 * v;
+    rgb.g = y - 0.344136 * u - 0.714136 * v;  
+    rgb.b = y + 1.772 * u;
     
-    // Clamp values to [0,1] range
-    r = clamp(r, 0.0, 1.0);
-    g = clamp(g, 0.0, 1.0);
-    b = clamp(b, 0.0, 1.0);
-    
-    gl_FragColor = vec4(r, g, b, 1.0);
+    // Clamp in one operation
+    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 )";
 
@@ -219,45 +217,32 @@ void CarPlayWidget::paintGL()
     
     if (!m_hasFrame || !m_phoneConnected) {
         // Just clear to black when no frame or phone not connected
-        SPDLOG_DEBUG("Not rendering: hasFrame={}, phoneConnected={}", m_hasFrame, m_phoneConnected);
         return;
     }
     
     if (!m_shaderProgram) {
-        SPDLOG_ERROR("No shader program available");
         return;
     }
     
     m_shaderProgram->bind();
     
-    // Bind textures with error checking
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_textureY);
-    m_shaderProgram->setUniformValue("textureY", 0);
-    
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_textureU);
-    m_shaderProgram->setUniformValue("textureU", 1);
-    
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, m_textureV);
-    m_shaderProgram->setUniformValue("textureV", 2);
-    
-    // Check for OpenGL errors before rendering
-    GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
-        SPDLOG_ERROR("OpenGL error before rendering: 0x{:x}", error);
+    // Set texture uniforms once (they don't change)
+    static bool uniformsSet = false;
+    if (!uniformsSet) {
+        m_shaderProgram->setUniformValue("textureY", 0);
+        m_shaderProgram->setUniformValue("textureU", 1);
+        m_shaderProgram->setUniformValue("textureV", 2);
+        uniformsSet = true;
     }
+    
+    // Bind textures (textures are already bound to correct units from upload)
+    // No need to call glActiveTexture here since we're just using them
     
     // Setup vertex attributes manually for OpenGL 2.1
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     
     GLint posAttrib = m_shaderProgram->attributeLocation("aPos");
     GLint texAttrib = m_shaderProgram->attributeLocation("aTexCoord");
-    
-    if (posAttrib == -1 || texAttrib == -1) {
-        SPDLOG_ERROR("Failed to get attribute locations: aPos={}, aTexCoord={}", posAttrib, texAttrib);
-    }
     
     glEnableVertexAttribArray(posAttrib);
     glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
@@ -267,12 +252,6 @@ void CarPlayWidget::paintGL()
     
     // Draw quad
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-    
-    // Check for OpenGL errors after rendering
-    error = glGetError();
-    if (error != GL_NO_ERROR) {
-        SPDLOG_ERROR("OpenGL error after rendering: 0x{:x}", error);
-    }
     
     glDisableVertexAttribArray(posAttrib);
     glDisableVertexAttribArray(texAttrib);
