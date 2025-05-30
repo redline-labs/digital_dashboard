@@ -2,6 +2,7 @@
 #define DECODE_THREAD_H_
 
 #include <QObject>
+#include <QByteArray>
 
 #include <atomic>
 #include <condition_variable>
@@ -28,7 +29,7 @@ class DecodeThread : public QObject
     void stop();
 
   signals:
-    void imageReady(AVFrame *frame);
+    void imageReady(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride);
 
   private:
     void run();

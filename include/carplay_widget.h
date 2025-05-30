@@ -8,9 +8,7 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QMouseEvent>
-
-// Forward declaration for FFmpeg
-struct AVFrame;
+#include <QByteArray>
 
 class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -24,7 +22,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 
   public slots:
     void phone_connected(bool is_connected);
-    void updateYUVFrame(AVFrame* frame);
+    void updateYUVFrame(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride);
 
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
@@ -41,7 +39,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 
     void setupShaders();
     void setupTextures();
-    void uploadYUVTextures(AVFrame* frame);
+    void uploadYUVTextures(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride);
     void createTestPattern();
 
     QOpenGLShaderProgram* m_shaderProgram;

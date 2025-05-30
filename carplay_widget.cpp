@@ -5,10 +5,6 @@
 #include <QOpenGLShaderProgram>
 #include <vector>
 
-extern "C" {
-#include <libavutil/frame.h>
-}
-
 static const char* vertexShaderSource = R"(
 #version 120
 attribute vec2 aPos;
@@ -274,45 +270,45 @@ void CarPlayWidget::resizeGL(int w, int h)
     glViewport(0, 0, w, h);
 }
 
-void CarPlayWidget::updateYUVFrame(AVFrame* frame)
+void CarPlayWidget::updateYUVFrame(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride)
 {
-    if (!frame) {
+    if (yData.isEmpty() || uData.isEmpty() || vData.isEmpty()) {
         return;
     }
     
     makeCurrent();
-    uploadYUVTextures(frame);
+    uploadYUVTextures(yData, uData, vData, width, height, yStride, uStride, vStride);
     m_hasFrame = true;
     update(); // Trigger a repaint
     doneCurrent();
 }
 
-void CarPlayWidget::uploadYUVTextures(AVFrame* frame)
+void CarPlayWidget::uploadYUVTextures(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride)
 {
-    m_frameWidth = frame->width;
-    m_frameHeight = frame->height;
+    m_frameWidth = width;
+    m_frameHeight = height;
     
-    SPDLOG_DEBUG("Uploading YUV frame: {}x{}, format: {}", frame->width, frame->height, frame->format);
+    SPDLOG_DEBUG("Uploading YUV frame: {}x{}, strides: Y={}, U={}, V={}", width, height, yStride, uStride, vStride);
     
     // Upload Y plane (full resolution)
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[0]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width, frame->height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[0]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, yStride);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData.constData());
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
     // Upload U plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[1]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[1]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, uStride);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uData.constData());
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
     // Upload V plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_textureV);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[2]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[2]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, vStride);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, vData.constData());
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
     // Check for OpenGL errors

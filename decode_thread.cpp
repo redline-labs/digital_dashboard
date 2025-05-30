@@ -157,8 +157,18 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
 
         // AV_PIX_FMT_YUVJ420P
 
+        // Copy YUV data to ensure it remains valid after this frame is reused
+        int ySize = frame->linesize[0] * frame->height;
+        int uSize = frame->linesize[1] * frame->height / 2;
+        int vSize = frame->linesize[2] * frame->height / 2;
+        
+        QByteArray yData(reinterpret_cast<const char*>(frame->data[0]), ySize);
+        QByteArray uData(reinterpret_cast<const char*>(frame->data[1]), uSize);
+        QByteArray vData(reinterpret_cast<const char*>(frame->data[2]), vSize);
+
         emit (
-            imageReady(frame)
+            imageReady(yData, uData, vData, frame->width, frame->height, 
+                      frame->linesize[0], frame->linesize[1], frame->linesize[2])
         );
     }
 }

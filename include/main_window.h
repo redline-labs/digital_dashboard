@@ -19,7 +19,7 @@ class MainWindow : public QWidget
 
 
   public slots:
-    void update_carplay_image(AVFrame* frame);
+    void update_carplay_image(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride);
 
   signals:
     void carplay_touch_event(TouchAction action, uint32_t x, uint32_t y);
