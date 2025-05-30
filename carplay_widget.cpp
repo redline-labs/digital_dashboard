@@ -3,6 +3,7 @@
 
 #include <spdlog/spdlog.h>
 #include <QOpenGLShaderProgram>
+#include <vector>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -36,10 +37,15 @@ void main()
     float u = texture2D(textureU, TexCoord).r - 0.5;
     float v = texture2D(textureV, TexCoord).r - 0.5;
     
-    // BT.601 color conversion
+    // BT.601 color conversion (YUV to RGB)
     float r = y + 1.402 * v;
     float g = y - 0.344136 * u - 0.714136 * v;
     float b = y + 1.772 * u;
+    
+    // Clamp values to [0,1] range
+    r = clamp(r, 0.0, 1.0);
+    g = clamp(g, 0.0, 1.0);
+    b = clamp(b, 0.0, 1.0);
     
     gl_FragColor = vec4(r, g, b, 1.0);
 }
@@ -55,7 +61,7 @@ CarPlayWidget::CarPlayWidget() :
     m_frameWidth(0),
     m_frameHeight(0),
     m_hasFrame(false),
-    m_phoneConnected(false)
+    m_phoneConnected(true)
 {
     setStyleSheet("QOpenGLWidget { background-color : black; }");
 }
@@ -156,6 +162,44 @@ void CarPlayWidget::setupTextures()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
+    
+    // Create a test pattern to verify rendering works
+    createTestPattern();
+}
+
+void CarPlayWidget::createTestPattern()
+{
+    const int width = 64;
+    const int height = 64;
+    
+    // Create test Y plane (white to black gradient)
+    std::vector<uint8_t> yData(width * height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            yData[y * width + x] = static_cast<uint8_t>(255 * x / width);
+        }
+    }
+    
+    // Create test U and V planes (neutral gray)
+    std::vector<uint8_t> uvData(width/2 * height/2, 128);
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_textureY);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData.data());
+    
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_textureU);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uvData.data());
+    
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m_textureV);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uvData.data());
+    
+    m_frameWidth = width;
+    m_frameHeight = height;
+    m_hasFrame = true;
+    
+    SPDLOG_INFO("Created test pattern: {}x{}", width, height);
 }
 
 void CarPlayWidget::paintGL()
@@ -164,16 +208,18 @@ void CarPlayWidget::paintGL()
     
     if (!m_hasFrame || !m_phoneConnected) {
         // Just clear to black when no frame or phone not connected
+        SPDLOG_DEBUG("Not rendering: hasFrame={}, phoneConnected={}", m_hasFrame, m_phoneConnected);
         return;
     }
     
     if (!m_shaderProgram) {
+        SPDLOG_ERROR("No shader program available");
         return;
     }
     
     m_shaderProgram->bind();
     
-    // Bind textures
+    // Bind textures with error checking
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
     m_shaderProgram->setUniformValue("textureY", 0);
@@ -186,11 +232,21 @@ void CarPlayWidget::paintGL()
     glBindTexture(GL_TEXTURE_2D, m_textureV);
     m_shaderProgram->setUniformValue("textureV", 2);
     
+    // Check for OpenGL errors before rendering
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        SPDLOG_ERROR("OpenGL error before rendering: 0x{:x}", error);
+    }
+    
     // Setup vertex attributes manually for OpenGL 2.1
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     
     GLint posAttrib = m_shaderProgram->attributeLocation("aPos");
     GLint texAttrib = m_shaderProgram->attributeLocation("aTexCoord");
+    
+    if (posAttrib == -1 || texAttrib == -1) {
+        SPDLOG_ERROR("Failed to get attribute locations: aPos={}, aTexCoord={}", posAttrib, texAttrib);
+    }
     
     glEnableVertexAttribArray(posAttrib);
     glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
@@ -200,6 +256,12 @@ void CarPlayWidget::paintGL()
     
     // Draw quad
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    
+    // Check for OpenGL errors after rendering
+    error = glGetError();
+    if (error != GL_NO_ERROR) {
+        SPDLOG_ERROR("OpenGL error after rendering: 0x{:x}", error);
+    }
     
     glDisableVertexAttribArray(posAttrib);
     glDisableVertexAttribArray(texAttrib);
@@ -230,20 +292,34 @@ void CarPlayWidget::uploadYUVTextures(AVFrame* frame)
     m_frameWidth = frame->width;
     m_frameHeight = frame->height;
     
-    // Upload Y plane
+    SPDLOG_DEBUG("Uploading YUV frame: {}x{}, format: {}", frame->width, frame->height, frame->format);
+    
+    // Upload Y plane (full resolution)
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, frame->width, frame->height, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[0]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[0]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width, frame->height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[0]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
     // Upload U plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, frame->width/2, frame->height/2, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[1]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[1]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[1]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     
     // Upload V plane (chroma, half resolution)
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_textureV);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, frame->width/2, frame->height/2, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[2]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[2]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[2]);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    
+    // Check for OpenGL errors
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        SPDLOG_ERROR("OpenGL error after texture upload: 0x{:x}", error);
+    }
 }
 
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)

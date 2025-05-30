@@ -42,6 +42,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void setupShaders();
     void setupTextures();
     void uploadYUVTextures(AVFrame* frame);
+    void createTestPattern();
 
     QOpenGLShaderProgram* m_shaderProgram;
     GLuint m_textureY;
