@@ -2,12 +2,9 @@
 
 #include <spdlog/spdlog.h>
 
-#include <QImage>
-
 extern "C"
 {
 #include <libavcodec/avcodec.h>
-#include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 }
 
@@ -52,8 +49,6 @@ DecodeThread::DecodeThread() :
         SPDLOG_ERROR("Could not allocate frame.");
     }
 
-    _pRGBFrame = av_frame_alloc();
-
     // Start the thread.
      _decode_thread = std::thread(std::bind(&DecodeThread::run, this));
 };
@@ -65,10 +60,7 @@ DecodeThread::~DecodeThread()
     av_parser_close(_parser);
     avcodec_free_context(&_codec_context);
     av_frame_free(&_frame);
-    av_frame_free(&_pRGBFrame);
     av_packet_free(&_pkt);
-
-    sws_freeContext(_sws_ctx);
 }
 
 void DecodeThread::run()
@@ -151,43 +143,6 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
         return;
     }
 
-    // It could be our first pass, and we delaying init until we have the frame size.
-    if (_sws_ctx == nullptr)
-    {
-        _sws_ctx = sws_getContext(
-            dec_ctx->width,
-            dec_ctx->height,
-            dec_ctx->pix_fmt,
-            dec_ctx->width,
-            dec_ctx->height,
-            AV_PIX_FMT_RGB24,
-            SWS_BICUBIC,
-            NULL,
-            NULL,
-            NULL
-        );
-
-        // If its still broken, bomb out.
-        if (_sws_ctx == nullptr)
-        {
-            SPDLOG_ERROR("Failed to get SWS context.");
-            return;
-        }
-    }
-
-    _pRGBFrame->format = AV_PIX_FMT_RGB24;
-    _pRGBFrame->width = dec_ctx->width;
-    _pRGBFrame->height = dec_ctx->height;
-
-    int sts = av_frame_get_buffer(_pRGBFrame, 0);
-
-    if (sts < 0)
-    {
-        SPDLOG_ERROR("Failed to AV frame buffer.");
-        return;  //Error!
-    }
-
-
     while (ret >= 0) {
         ret = avcodec_receive_frame(dec_ctx, frame);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
@@ -202,27 +157,8 @@ void DecodeThread::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt
 
         // AV_PIX_FMT_YUVJ420P
 
-
-        // Convert from input format (e.g YUV420) to RGB and save to PPM:
-        ////////////////////////////////////////////////////////////////////////////
-        sts = sws_scale(_sws_ctx,               //struct SwsContext* c,
-                        frame->data,            //const uint8_t* const srcSlice[],
-                        frame->linesize,        //const int srcStride[],
-                        0,                      //int srcSliceY,
-                        frame->height,          //int srcSliceH,
-                        _pRGBFrame->data,       //uint8_t* const dst[],
-                        _pRGBFrame->linesize);  //const int dstStride[]);
-
-        if (sts != frame->height)
-        {
-            SPDLOG_ERROR("STS does not match frame height.");
-            break;  //Error!
-        }
-
-        QImage img(_pRGBFrame->data[0], _pRGBFrame->width, _pRGBFrame->height, _pRGBFrame->linesize[0], QImage::Format_RGB888);
-
         emit (
-            imageReady(QPixmap::fromImage(img))
+            imageReady(frame)
         );
     }
 }

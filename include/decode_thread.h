@@ -2,7 +2,6 @@
 #define DECODE_THREAD_H_
 
 #include <QObject>
-#include <QPixmap>
 
 #include <atomic>
 #include <condition_variable>
@@ -15,7 +14,6 @@ struct AVCodecParserContext;
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
-struct SwsContext;
 
 class DecodeThread : public QObject
 {
@@ -30,7 +28,7 @@ class DecodeThread : public QObject
     void stop();
 
   signals:
-    void imageReady(const QPixmap &);
+    void imageReady(AVFrame *frame);
 
   private:
     void run();
@@ -40,9 +38,7 @@ class DecodeThread : public QObject
     AVCodecParserContext* _parser;
     AVCodecContext* _codec_context;
     AVFrame* _frame;
-    AVFrame* _pRGBFrame;
     AVPacket* _pkt;
-    SwsContext* _sws_ctx;
 
     uint8_t _receive_buffer[512u * 1024u];
     uint32_t _receive_length;

@@ -5,7 +5,9 @@
 #include "carplay_widget.h"
 
 #include <QHBoxLayout>
-#include <QPixmap>
+
+// Forward declaration for FFmpeg
+struct AVFrame;
 
 
 class MainWindow : public QWidget
@@ -17,7 +19,7 @@ class MainWindow : public QWidget
 
 
   public slots:
-    void update_carplay_image(const QPixmap& pixmap);
+    void update_carplay_image(AVFrame* frame);
 
   signals:
     void carplay_touch_event(TouchAction action, uint32_t x, uint32_t y);

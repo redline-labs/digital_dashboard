@@ -28,9 +28,9 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
     });
 }
 
-void MainWindow::update_carplay_image(const QPixmap& pixmap)
+void MainWindow::update_carplay_image(AVFrame* frame)
 {
-    _carplay_widget.setPixmap(pixmap);
+    _carplay_widget.updateYUVFrame(frame);
 }
 
 #include "moc_main_window.cpp"

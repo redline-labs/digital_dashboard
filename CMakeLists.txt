@@ -67,7 +67,7 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavutil
 )
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets OpenGL OpenGLWidgets)
 qt_standard_project_setup()
 
 
@@ -139,6 +139,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
 )
 
 add_executable(test_messages
