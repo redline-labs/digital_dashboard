@@ -5,6 +5,23 @@
 #include <QOpenGLShaderProgram>
 #include <vector>
 
+// Helper function to check and log OpenGL errors
+static void checkGLError(const char* operation) {
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        const char* errorString;
+        switch (error) {
+            case GL_INVALID_ENUM: errorString = "GL_INVALID_ENUM"; break;
+            case GL_INVALID_VALUE: errorString = "GL_INVALID_VALUE"; break;
+            case GL_INVALID_OPERATION: errorString = "GL_INVALID_OPERATION"; break;
+            case GL_OUT_OF_MEMORY: errorString = "GL_OUT_OF_MEMORY"; break;
+            case GL_INVALID_FRAMEBUFFER_OPERATION: errorString = "GL_INVALID_FRAMEBUFFER_OPERATION"; break;
+            default: errorString = "Unknown Error"; break;
+        }
+        SPDLOG_ERROR("OpenGL error during {}: {} (0x{:x})", operation, errorString, error);
+    }
+}
+
 static const char* vertexShaderSource = R"(
 #version 120
 attribute vec2 aPos;
@@ -160,6 +177,12 @@ void CarPlayWidget::setupTextures()
     glGenTextures(1, &m_textureU);
     glGenTextures(1, &m_textureV);
     
+    // Check if texture generation succeeded
+    if (m_textureY == 0 || m_textureU == 0 || m_textureV == 0) {
+        SPDLOG_ERROR("Failed to generate OpenGL textures");
+        return;
+    }
+    
     // Generate PBOs for async texture uploads (double buffering)
     glGenBuffers(6, m_pboIds);
     
@@ -170,7 +193,13 @@ void CarPlayWidget::setupTextures()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        
+        // Check for OpenGL errors after each texture configuration
+        checkGLError("texture setup");
     }
+    
+    // Unbind texture
+    glBindTexture(GL_TEXTURE_2D, 0);
     
     // Create a test pattern to verify rendering works
     createTestPattern();
@@ -195,14 +224,21 @@ void CarPlayWidget::createTestPattern()
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData.data());
+    checkGLError("Y texture creation");
     
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_textureU);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uvData.data());
+    checkGLError("U texture creation");
     
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_textureV);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uvData.data());
+    checkGLError("V texture creation");
+    
+    // Reset to texture unit 0
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
     
     m_frameWidth = width;
     m_frameHeight = height;
@@ -235,8 +271,15 @@ void CarPlayWidget::paintGL()
         uniformsSet = true;
     }
     
-    // Bind textures (textures are already bound to correct units from upload)
-    // No need to call glActiveTexture here since we're just using them
+    // Explicitly bind textures to their respective texture units
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_textureY);
+    
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_textureU);
+    
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m_textureV);
     
     // Setup vertex attributes manually for OpenGL 2.1
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
@@ -299,6 +342,13 @@ void CarPlayWidget::uploadYUVTextures(QByteArray yData, QByteArray uData, QByteA
     const int nextUPbo = m_nextPboIndex * 3 + 1;
     const int nextVPbo = m_nextPboIndex * 3 + 2;
     
+    // Validate PBO indices to prevent out-of-bounds access
+    if (yPbo >= 6 || uPbo >= 6 || vPbo >= 6 || nextYPbo >= 6 || nextUPbo >= 6 || nextVPbo >= 6) {
+        SPDLOG_ERROR("Invalid PBO index calculation: current=({},{},{}), next=({},{},{})", 
+                     yPbo, uPbo, vPbo, nextYPbo, nextUPbo, nextVPbo);
+        return;
+    }
+    
     // Bind and upload to current PBOs
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pboIds[yPbo]);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, yDataSize, yData.constData(), GL_STREAM_DRAW);
@@ -339,10 +389,7 @@ void CarPlayWidget::uploadYUVTextures(QByteArray yData, QByteArray uData, QByteA
     m_nextPboIndex = (m_nextPboIndex + 1) % 2;
     
     // Check for OpenGL errors
-    GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
-        SPDLOG_ERROR("OpenGL error after texture upload: 0x{:x}", error);
-    }
+    checkGLError("texture upload");
 }
 
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
