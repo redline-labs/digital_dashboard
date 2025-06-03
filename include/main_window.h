@@ -17,9 +17,8 @@ class MainWindow : public QWidget
   public:
     MainWindow(const app_config_t& app_cfg);
 
-
-  public slots:
-    void update_carplay_image(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride);
+    // Provide direct access to the CarPlay widget for integrated decoding
+    CarPlayWidget& getCarPlayWidget() { return _carplay_widget; }
 
   signals:
     void carplay_touch_event(TouchAction action, uint32_t x, uint32_t y);

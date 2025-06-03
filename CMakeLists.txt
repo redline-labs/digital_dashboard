@@ -92,7 +92,6 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     carplay_widget.cpp
-    decode_thread.cpp
     dongle_driver.cpp
 
     main_window.cpp

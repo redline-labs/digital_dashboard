@@ -1,5 +1,4 @@
 #include "app_config.h"
-#include "decode_thread.h"
 #include "dongle_driver.h"
 #include "main_window.h"
 
@@ -51,8 +50,6 @@ int main(int argc, char** argv)
 
     DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
 
-    DecodeThread decode_thread;
-
     std::signal(SIGINT, [](int /* signum */)
     {
         SPDLOG_WARN("SIGINT received.");
@@ -92,17 +89,16 @@ int main(int argc, char** argv)
 
     auto audio_buffer = audio.start();
 
-    driver.register_frame_ready_callback([&decode_thread] (const uint8_t* buffer, uint32_t buffer_len){
-        decode_thread.accept_new_data(buffer, buffer_len);
+    // Use the integrated decoder in CarPlayWidget instead of separate DecodeThread
+    driver.register_frame_ready_callback([&main_window] (const uint8_t* buffer, uint32_t buffer_len){
+        main_window.getCarPlayWidget().accept_new_data(buffer, buffer_len);
     });
 
     driver.register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
-
-    QObject::connect(&decode_thread,   &DecodeThread::imageReady,
-                     &main_window,     &MainWindow::update_carplay_image);
+    // No longer need the Qt signal/slot connection for frame updates
 
     QObject::connect(&main_window,  &MainWindow::carplay_touch_event, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
         driver.send_touch_event(action, x, y);
@@ -114,7 +110,8 @@ int main(int argc, char** argv)
 
     SPDLOG_WARN("Exit received, tearing down.");
 
-    decode_thread.stop();
+    // Stop the integrated decoder
+    main_window.getCarPlayWidget().stop_decoder();
     driver.stop();
 
     return 0u;

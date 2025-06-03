@@ -28,9 +28,4 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
     });
 }
 
-void MainWindow::update_carplay_image(QByteArray yData, QByteArray uData, QByteArray vData, int width, int height, int yStride, int uStride, int vStride)
-{
-    _carplay_widget.updateYUVFrame(yData, uData, vData, width, height, yStride, uStride, vStride);
-}
-
 #include "moc_main_window.cpp"
