@@ -86,16 +86,19 @@ include_directories(
 include_directories(
     include
     messages
+
+    widgets/carplay/include
 )
 
 qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
-    carplay_widget.cpp
-    dongle_driver.cpp
-
     main_window.cpp
-    messages/message.cpp
+
+    widgets/carplay/carplay_widget.cpp
+    widgets/carplay/dongle_driver.cpp
+    widgets/carplay/message.cpp
+    widgets/carplay/opengl_shaders.cpp
 
     yaml-cpp-0.8.0/src/binary.cpp
     yaml-cpp-0.8.0/src/convert.cpp
@@ -143,7 +146,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 add_executable(test_messages
-    test_messages.cpp
-    messages/message.cpp
+    widgets/carplay/test_messages.cpp
+    widgets/carplay/message.cpp
 )
 

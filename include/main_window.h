@@ -2,7 +2,7 @@
 #define MAIN_WINDOW_H_
 
 #include "app_config.h"
-#include "carplay_widget.h"
+#include "carplay/carplay_widget.h"
 
 #include <QHBoxLayout>
 

@@ -1,5 +1,5 @@
 #include "app_config.h"
-#include "dongle_driver.h"
+#include "carplay/dongle_driver.h"
 #include "main_window.h"
 
 #include <cxxopts.hpp>
@@ -63,7 +63,6 @@ int main(int argc, char** argv)
     MainWindow main_window(cfg);
     main_window.show();
 
-
     QAudioFormat format;
     format.setSampleRate(44100);
     format.setChannelCount(2);
@@ -97,8 +96,6 @@ int main(int argc, char** argv)
     driver.register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
-
-    // No longer need the Qt signal/slot connection for frame updates
 
     QObject::connect(&main_window,  &MainWindow::carplay_touch_event, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
         driver.send_touch_event(action, x, y);
