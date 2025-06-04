@@ -19,7 +19,6 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     SYSTEM ${CMAKE_SOURCE_DIR}/yaml-cpp-0.8.0/include
     SYSTEM ${CMAKE_SOURCE_DIR}/libusb-cmake-1.0.27/libusb
     SYSTEM ${CMAKE_SOURCE_DIR}/cxxopts-3.2.0/include
-    SYSTEM ${CMAKE_SOURCE_DIR}/nlohmann-json-3.11.3
 )
 
 # Find required packages for this widget
@@ -42,6 +41,8 @@ target_link_libraries(${CARPLAY_WIDGET_LIB} PUBLIC
     Qt6::OpenGLWidgets
     # Link spdlog (now available from parent CMakeLists.txt)
     spdlog::spdlog
+    # Link nlohmann/json (now available from parent CMakeLists.txt)
+    nlohmann_json::nlohmann_json
 )
 
 # Set C++ standard
@@ -60,7 +61,6 @@ target_include_directories(carplay_test_messages PRIVATE
     include
     ${CMAKE_SOURCE_DIR}/include
     SYSTEM ${CMAKE_SOURCE_DIR}/yaml-cpp-0.8.0/include
-    SYSTEM ${CMAKE_SOURCE_DIR}/nlohmann-json-3.11.3
 )
 
 target_compile_features(carplay_test_messages PRIVATE cxx_std_20)
@@ -68,4 +68,5 @@ target_compile_features(carplay_test_messages PRIVATE cxx_std_20)
 # Link spdlog to the test executable too
 target_link_libraries(carplay_test_messages PRIVATE
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
 ) 

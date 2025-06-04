@@ -1,5 +1,5 @@
 #include "carplay/message.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 

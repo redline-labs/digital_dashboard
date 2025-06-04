@@ -42,6 +42,20 @@ set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(spdlog)
 
+# Fetch nlohmann/json
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+
+# Configure nlohmann/json options
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(nlohmann_json)
+
 #add_link_options(
 #    -Wl,--gc-sections
 #)
@@ -96,8 +110,6 @@ include_directories(
     libusb-cmake-1.0.27/libusb
 
     cxxopts-3.2.0/include
-
-    nlohmann-json-3.11.3
 )
 
 include_directories(
@@ -150,6 +162,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
     # Link spdlog (now fetched via FetchContent)
     spdlog::spdlog
+
+    # Link nlohmann/json (now fetched via FetchContent)
+    nlohmann_json::nlohmann_json
 
     # Link the carplay widget library
     carplay_widget
