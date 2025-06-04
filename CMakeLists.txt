@@ -24,8 +24,6 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 #    -Wl,--gc-sections
 #)
 
-add_subdirectory(libusb-cmake-1.0.27)
-
 add_compile_options(
     #$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
     #$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
@@ -60,14 +58,12 @@ add_compile_options(
     #-flto
 )
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
-    libavcodec
-    libswscale
-    libavutil
-)
+add_subdirectory(libusb-cmake-1.0.27)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets OpenGL OpenGLWidgets)
+# Add widgets subdirectory
+add_subdirectory(widgets)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
 qt_standard_project_setup()
 
 
@@ -85,20 +81,12 @@ include_directories(
 
 include_directories(
     include
-    messages
-
-    widgets/carplay/include
 )
 
 qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
-
-    widgets/carplay/carplay_widget.cpp
-    widgets/carplay/dongle_driver.cpp
-    widgets/carplay/message.cpp
-    widgets/carplay/opengl_shaders.cpp
 
     yaml-cpp-0.8.0/src/binary.cpp
     yaml-cpp-0.8.0/src/convert.cpp
@@ -131,22 +119,15 @@ qt_add_executable(${PROJECT_NAME}
     yaml-cpp-0.8.0/src/tag.cpp
 )
 
-set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
+#set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    usb-1.0
-    PkgConfig::LIBAV
-
     Qt6::Core
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
-    Qt6::OpenGL
-    Qt6::OpenGLWidgets
-)
 
-add_executable(test_messages
-    widgets/carplay/test_messages.cpp
-    widgets/carplay/message.cpp
+    # Link the carplay widget library
+    carplay_widget
 )
 
