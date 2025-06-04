@@ -1,0 +1,20 @@
+--- a/include/spdlog/tweakme.h
++++ b/include/spdlog/tweakme.h
+@@ -50,7 +50,7 @@
+ // Use only if your code never modifies a logger's log levels concurrently by
+ // different threads.
+ //
+-// #define SPDLOG_NO_ATOMIC_LEVELS
++#define SPDLOG_NO_ATOMIC_LEVELS
+ ///////////////////////////////////////////////////////////////////////////////
+ 
+ ///////////////////////////////////////////////////////////////////////////////
+@@ -131,7 +131,7 @@
+ // Uncomment and set to compile time level with zero cost (default is INFO).
+ // Macros like SPDLOG_DEBUG(..), SPDLOG_INFO(..)  will expand to empty statements if not enabled
+ //
+-// #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
++#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+ ///////////////////////////////////////////////////////////////////////////////
+ 
+ ///////////////////////////////////////////////////////////////////////////////

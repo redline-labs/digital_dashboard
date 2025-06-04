@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
+# Include FetchContent module for downloading dependencies
+include(FetchContent)
+
 set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
@@ -19,6 +22,25 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
 message("-- Build Type: ${CMAKE_BUILD_TYPE}")
+
+# Fetch spdlog
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.15.3
+    GIT_SHALLOW TRUE
+    # Option 1: Apply patch during fetch (before source is processed)
+    PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/spdlog_tweakme.patch
+)
+
+# Configure spdlog options before making it available
+# Disable building tests, examples, and benchmarks
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(spdlog)
 
 #add_link_options(
 #    -Wl,--gc-sections
@@ -69,7 +91,6 @@ qt_standard_project_setup()
 
 include_directories(
     SYSTEM
-    spdlog-1.14.1/include
     yaml-cpp-0.8.0/include
 
     libusb-cmake-1.0.27/libusb
@@ -126,6 +147,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+
+    # Link spdlog (now fetched via FetchContent)
+    spdlog::spdlog
 
     # Link the carplay widget library
     carplay_widget
