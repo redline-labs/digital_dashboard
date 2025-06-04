@@ -94,9 +94,6 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void accept_new_data(const uint8_t* buffer, uint32_t buffer_len);
     void stop_decoder();
 
-  public slots:
-    void phone_connected(bool is_connected);
-
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
 
@@ -129,7 +126,6 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     GLuint m_vbo;
     
     bool m_hasFrame;
-    bool m_phoneConnected;
     
     // Integrated decode thread members
     const AVCodec* _codec;

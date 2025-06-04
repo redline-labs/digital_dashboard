@@ -14,31 +14,13 @@ extern "C"
 #include <libavutil/pixdesc.h>
 }
 
-// Helper function to check and log OpenGL errors
-static void checkGLError(const char* operation) {
-    GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
-        const char* errorString;
-        switch (error) {
-            case GL_INVALID_ENUM: errorString = "GL_INVALID_ENUM"; break;
-            case GL_INVALID_VALUE: errorString = "GL_INVALID_VALUE"; break;
-            case GL_INVALID_OPERATION: errorString = "GL_INVALID_OPERATION"; break;
-            case GL_OUT_OF_MEMORY: errorString = "GL_OUT_OF_MEMORY"; break;
-            case GL_INVALID_FRAMEBUFFER_OPERATION: errorString = "GL_INVALID_FRAMEBUFFER_OPERATION"; break;
-            default: errorString = "Unknown Error"; break;
-        }
-        SPDLOG_ERROR("OpenGL error during {}: {} (0x{:x})", operation, errorString, error);
-    }
-}
-
+// Simplified shaders
 static const char* vertexShaderSource = R"(
 #version 120
 attribute vec2 aPos;
 attribute vec2 aTexCoord;
 varying vec2 TexCoord;
-
-void main()
-{
+void main() {
     gl_Position = vec4(aPos, 0.0, 1.0);
     TexCoord = aTexCoord;
 }
@@ -50,18 +32,14 @@ varying vec2 TexCoord;
 uniform sampler2D textureY;
 uniform sampler2D textureU;
 uniform sampler2D textureV;
-
-void main()
-{
+void main() {
     float y = texture2D(textureY, TexCoord).r;
     float u = texture2D(textureU, TexCoord).r - 0.5;
     float v = texture2D(textureV, TexCoord).r - 0.5;
-    
     vec3 rgb;
     rgb.r = y + 1.402 * v;
     rgb.g = y - 0.344136 * u - 0.714136 * v;  
     rgb.b = y + 1.772 * u;
-    
     gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 )";
@@ -74,7 +52,6 @@ CarPlayWidget::CarPlayWidget() :
     m_textureV(0),
     m_vbo(0),
     m_hasFrame(false),
-    m_phoneConnected(true),
     _codec(nullptr),
     _parser(nullptr),
     _codec_context(nullptr),
@@ -93,22 +70,17 @@ CarPlayWidget::~CarPlayWidget()
     stop_decoder();
     cleanupDecoder();
     
-    // Clear frame data
     {
         std::lock_guard<std::mutex> lock(_frame_mutex);
         _current_frame.clear();
     }
     
-    // Clean up OpenGL resources
     makeCurrent();
-    
     if (m_textureY) glDeleteTextures(1, &m_textureY);
     if (m_textureU) glDeleteTextures(1, &m_textureU);
     if (m_textureV) glDeleteTextures(1, &m_textureV);
     if (m_vbo) glDeleteBuffers(1, &m_vbo);
-    
     delete m_shaderProgram;
-    
     doneCurrent();
 }
 
@@ -121,25 +93,19 @@ void CarPlayWidget::initializeGL()
 {
     initializeOpenGLFunctions();
     
-    // Log OpenGL info
-    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    SPDLOG_INFO("OpenGL Version: {}", version ? version : "Unknown");
-    
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glEnable(GL_TEXTURE_2D);
     
     setupShaders();
     setupTextures();
     
-    // Setup vertex data for a fullscreen quad
+    // Fullscreen quad setup
     float vertices[] = {
-        // positions   // texture coords
         -1.0f,  1.0f,  0.0f, 0.0f,  // top left
         -1.0f, -1.0f,  0.0f, 1.0f,  // bottom left
          1.0f, -1.0f,  1.0f, 1.0f,  // bottom right
          1.0f,  1.0f,  1.0f, 0.0f   // top right
     };
-    
     unsigned int indices[] = {0, 1, 2, 2, 3, 0};
     
     glGenBuffers(1, &m_vbo);
@@ -148,7 +114,6 @@ void CarPlayWidget::initializeGL()
     
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 }
@@ -157,18 +122,10 @@ void CarPlayWidget::setupShaders()
 {
     m_shaderProgram = new QOpenGLShaderProgram();
     
-    if (!m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource)) {
-        SPDLOG_ERROR("Failed to compile vertex shader: {}", m_shaderProgram->log().toStdString());
-        return;
-    }
-    
-    if (!m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSource)) {
-        SPDLOG_ERROR("Failed to compile fragment shader: {}", m_shaderProgram->log().toStdString());
-        return;
-    }
-    
-    if (!m_shaderProgram->link()) {
-        SPDLOG_ERROR("Failed to link shader program: {}", m_shaderProgram->log().toStdString());
+    if (!m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource) ||
+        !m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSource) ||
+        !m_shaderProgram->link()) {
+        SPDLOG_ERROR("Shader compilation failed");
         return;
     }
 }
@@ -179,7 +136,7 @@ void CarPlayWidget::setupTextures()
     glGenTextures(1, &m_textureU);
     glGenTextures(1, &m_textureV);
     
-    // Configure textures with simple settings
+    // Configure all textures with same settings
     for (GLuint texture : {m_textureY, m_textureU, m_textureV}) {
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -187,7 +144,6 @@ void CarPlayWidget::setupTextures()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -198,42 +154,40 @@ void CarPlayWidget::initializeDecoder()
     _codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     _parser = av_parser_init(_codec->id);
     _codec_context = avcodec_alloc_context3(_codec);
+    _frame = av_frame_alloc();
 
-    if (!_pkt || !_codec || !_parser || !_codec_context) {
+    if (!_pkt || !_codec || !_parser || !_codec_context || !_frame) {
         SPDLOG_ERROR("Failed to initialize codec components");
         return;
     }
 
     // Try hardware decoding on macOS
-    bool hw_success = false;
 #ifdef __APPLE__
     AVBufferRef* hw_device_ctx = nullptr;
     if (av_hwdevice_ctx_create(&hw_device_ctx, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) >= 0) {
         _codec_context->hw_device_ctx = av_buffer_ref(hw_device_ctx);
         if (avcodec_open2(_codec_context, _codec, nullptr) >= 0) {
-            hw_success = true;
             SPDLOG_INFO("Hardware decoding enabled");
-        } else {
-            av_buffer_unref(&_codec_context->hw_device_ctx);
-            avcodec_free_context(&_codec_context);
-            _codec_context = avcodec_alloc_context3(_codec);
+            av_buffer_unref(&hw_device_ctx);
+            goto decoder_ready;
         }
+        // Cleanup and fallback
+        av_buffer_unref(&_codec_context->hw_device_ctx);
+        avcodec_free_context(&_codec_context);
+        _codec_context = avcodec_alloc_context3(_codec);
         av_buffer_unref(&hw_device_ctx);
     }
 #endif
 
-    // Fallback to software decoding
-    if (!hw_success) {
-        if (avcodec_open2(_codec_context, _codec, nullptr) >= 0) {
-            SPDLOG_INFO("Software decoding enabled");
-        } else {
-            SPDLOG_ERROR("Failed to open codec");
-        }
+    // Software decoding fallback
+    if (avcodec_open2(_codec_context, _codec, nullptr) >= 0) {
+        SPDLOG_INFO("Software decoding enabled");
+    } else {
+        SPDLOG_ERROR("Failed to open codec");
+        return;
     }
 
-    _frame = av_frame_alloc();
-    
-    // Start decode thread
+decoder_ready:
     _decode_thread = std::thread(&CarPlayWidget::run_decode_thread, this);
 }
 
@@ -266,8 +220,6 @@ void CarPlayWidget::stop_decoder()
 
 void CarPlayWidget::run_decode_thread()
 {
-    SPDLOG_DEBUG("Starting decode thread");
-
     while (!_should_terminate) {
         auto timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
         
@@ -291,63 +243,39 @@ void CarPlayWidget::run_decode_thread()
             }
         }
     }
-
-    SPDLOG_DEBUG("Decode thread finished");
 }
 
 void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
 {
-    SPDLOG_INFO("Decoding frame");
     if (avcodec_send_packet(dec_ctx, pkt) < 0) return;
 
     while (avcodec_receive_frame(dec_ctx, frame) >= 0) {
-        // Validate frame dimensions
+        // Basic validation
         if (frame->width <= 0 || frame->height <= 0 || frame->width > 4096 || frame->height > 4096) {
-            SPDLOG_ERROR("Invalid frame dimensions: {}x{}", frame->width, frame->height);
             continue;
         }
 
-        // Handle hardware frames - transfer to software format
+        // Handle hardware frames
         AVFrame* sw_frame = frame;
         AVFrame* temp_frame = nullptr;
         
         if (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_YUVJ420P) {
-            SPDLOG_DEBUG("Hardware frame detected (format: {}), transferring to software", frame->format);
             temp_frame = av_frame_alloc();
-            if (temp_frame == nullptr) {
-                SPDLOG_ERROR("Failed to allocate temporary frame");
+            if (!temp_frame || av_hwframe_transfer_data(temp_frame, frame, 0) < 0) {
+                if (temp_frame) av_frame_free(&temp_frame);
                 continue;
             }
-            
-            if (av_hwframe_transfer_data(temp_frame, frame, 0) < 0) {
-                SPDLOG_ERROR("Failed to transfer frame data");
-                av_frame_free(&temp_frame);
-                continue;
-            }
-            
             sw_frame = temp_frame;
         }
 
-        // Validate frame data pointers
-        if (sw_frame->data[0] == nullptr || sw_frame->data[1] == nullptr) {
-            SPDLOG_ERROR("Invalid frame data pointers: Y={}, U={}", 
-                        static_cast<void*>(sw_frame->data[0]), static_cast<void*>(sw_frame->data[1]));
-            if (temp_frame) av_frame_free(&temp_frame);
-            continue;
-        }
-        
-        // For standard YUV420P, also check V pointer
-        if (sw_frame->format != AV_PIX_FMT_NV12 && sw_frame->data[2] == nullptr) {
-            SPDLOG_ERROR("Invalid V plane pointer for YUV420P format");
+        // Validate frame data
+        if (!sw_frame->data[0] || !sw_frame->data[1] || 
+            (sw_frame->format != AV_PIX_FMT_NV12 && !sw_frame->data[2])) {
             if (temp_frame) av_frame_free(&temp_frame);
             continue;
         }
 
-        SPDLOG_DEBUG("Valid frame: {}x{}, format: {}, strides: Y={}, U={}, V={}", 
-                    sw_frame->width, sw_frame->height, sw_frame->format,
-                    sw_frame->linesize[0], sw_frame->linesize[1], sw_frame->linesize[2]);
-
-        // Update current frame
+        // Update frame buffer
         {
             std::lock_guard<std::mutex> lock(_frame_mutex);
             _current_frame.clear();
@@ -367,33 +295,27 @@ void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pk
                 std::memcpy(_current_frame.yData, sw_frame->data[0], ySize);
                 
                 if (sw_frame->format == AV_PIX_FMT_NV12) {
-                    // Handle NV12 format (interleaved UV)
-                    SPDLOG_DEBUG("Processing NV12 format frame");
+                    // NV12: De-interleave UV data
                     const uint8_t* uvData = sw_frame->data[1];
                     const int uvStride = sw_frame->linesize[1];
                     const int uvHeight = sw_frame->height / 2;
-                    
                     const int uvPlaneSize = uvHeight * (sw_frame->width / 2);
+                    
                     _current_frame.uData = new uint8_t[uvPlaneSize];
                     _current_frame.vData = new uint8_t[uvPlaneSize];
                     
-                    // De-interleave UV data
                     for (int y = 0; y < uvHeight; y++) {
                         for (int x = 0; x < sw_frame->width / 2; x++) {
                             const int uvIndex = y * uvStride + x * 2;
                             const int uvOutIndex = y * (sw_frame->width / 2) + x;
-                            
-                            _current_frame.uData[uvOutIndex] = uvData[uvIndex];     // U component
-                            _current_frame.vData[uvOutIndex] = uvData[uvIndex + 1]; // V component
+                            _current_frame.uData[uvOutIndex] = uvData[uvIndex];
+                            _current_frame.vData[uvOutIndex] = uvData[uvIndex + 1];
                         }
                     }
-                    
-                    // Update strides for separate planes
                     _current_frame.uStride = sw_frame->width / 2;
                     _current_frame.vStride = sw_frame->width / 2;
                 } else {
-                    // Handle standard YUV420P format
-                    SPDLOG_DEBUG("Processing YUV420P format frame");
+                    // YUV420P: Direct copy
                     _current_frame.uData = new uint8_t[uSize];
                     _current_frame.vData = new uint8_t[vSize];
                     std::memcpy(_current_frame.uData, sw_frame->data[1], uSize);
@@ -403,14 +325,9 @@ void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pk
                 _current_frame.isValid = true;
                 _new_frame_available = true;
                 m_hasFrame = true;
-                
-                SPDLOG_INFO("Frame ready: {}x{}", _current_frame.width, _current_frame.height);
-
-                // Direct notification to Qt thread
                 notifyFrameReady();
                 
             } catch (const std::bad_alloc&) {
-                SPDLOG_ERROR("Failed to allocate frame data");
                 _current_frame.clear();
             }
         }
@@ -421,7 +338,6 @@ void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pk
 
 void CarPlayWidget::notifyFrameReady()
 {
-    // Use Qt's thread-safe way to trigger a repaint
     QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
 }
 
@@ -429,11 +345,9 @@ void CarPlayWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT);
     
-    if (!m_hasFrame || !m_phoneConnected || !m_shaderProgram) {
-        return;
-    }
+    if (!m_hasFrame || !m_shaderProgram) return;
     
-    // Upload new frame data if available
+    // Upload new frame if available
     if (_new_frame_available.load()) {
         std::lock_guard<std::mutex> lock(_frame_mutex);
         if (_current_frame.isValid) {
@@ -442,40 +356,30 @@ void CarPlayWidget::paintGL()
         }
     }
     
+    // Render
     m_shaderProgram->bind();
-    
-    // Set texture uniforms
     m_shaderProgram->setUniformValue("textureY", 0);
     m_shaderProgram->setUniformValue("textureU", 1);
     m_shaderProgram->setUniformValue("textureV", 2);
     
-    // Bind textures
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, m_textureV);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m_textureY);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m_textureU);
+    glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, m_textureV);
     
-    // Setup vertex attributes
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    
     GLint posAttrib = m_shaderProgram->attributeLocation("aPos");
     GLint texAttrib = m_shaderProgram->attributeLocation("aTexCoord");
     
     glEnableVertexAttribArray(posAttrib);
     glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
-    
     glEnableVertexAttribArray(texAttrib);
     glVertexAttribPointer(texAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 
                          reinterpret_cast<void*>(2 * sizeof(float)));
     
-    // Draw
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
     
     glDisableVertexAttribArray(posAttrib);
     glDisableVertexAttribArray(texAttrib);
-    
     m_shaderProgram->release();
 }
 
@@ -488,7 +392,7 @@ void CarPlayWidget::uploadYUVTextures(const DecodedFrame& frame)
 {
     if (!frame.isValid) return;
     
-    // Simple direct texture upload - no PBOs, no complex buffering
+    // Direct texture upload
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.yStride);
@@ -508,8 +412,6 @@ void CarPlayWidget::uploadYUVTextures(const DecodedFrame& frame)
                  0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame.vData);
     
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    
-    checkGLError("texture upload");
 }
 
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
@@ -525,15 +427,6 @@ void CarPlayWidget::mouseReleaseEvent(QMouseEvent* e)
 void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 {
     emit touchEvent(TouchAction::Move, static_cast<uint32_t>(e->pos().x()), static_cast<uint32_t>(e->pos().y()));
-}
-
-void CarPlayWidget::phone_connected(bool is_connected)
-{
-    m_phoneConnected = is_connected;
-    if (!is_connected) {
-        m_hasFrame = false;
-    }
-    update();
 }
 
 #include "moc_carplay_widget.cpp"
