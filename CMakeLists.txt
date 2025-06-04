@@ -56,6 +56,21 @@ set(JSON_Install OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(nlohmann_json)
 
+# Fetch cxxopts
+FetchContent_Declare(
+    cxxopts
+    GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
+    GIT_TAG v3.2.0
+    GIT_SHALLOW TRUE
+)
+
+# Configure cxxopts options
+set(CXXOPTS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CXXOPTS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CXXOPTS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(cxxopts)
+
 #add_link_options(
 #    -Wl,--gc-sections
 #)
@@ -108,8 +123,6 @@ include_directories(
     yaml-cpp-0.8.0/include
 
     libusb-cmake-1.0.27/libusb
-
-    cxxopts-3.2.0/include
 )
 
 include_directories(
@@ -165,6 +178,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json
+
+    # Link cxxopts (now fetched via FetchContent)
+    cxxopts::cxxopts
 
     # Link the carplay widget library
     carplay_widget

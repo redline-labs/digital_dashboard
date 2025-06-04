@@ -18,7 +18,6 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     ${CMAKE_SOURCE_DIR}/include
     SYSTEM ${CMAKE_SOURCE_DIR}/yaml-cpp-0.8.0/include
     SYSTEM ${CMAKE_SOURCE_DIR}/libusb-cmake-1.0.27/libusb
-    SYSTEM ${CMAKE_SOURCE_DIR}/cxxopts-3.2.0/include
 )
 
 # Find required packages for this widget
@@ -69,4 +68,5 @@ target_compile_features(carplay_test_messages PRIVATE cxx_std_20)
 target_link_libraries(carplay_test_messages PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    cxxopts::cxxopts
 ) 
