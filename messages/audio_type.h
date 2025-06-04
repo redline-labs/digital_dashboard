@@ -101,7 +101,7 @@ constexpr AudioFormat decode_audio_type(uint8_t audio_type)
             return AudioFormat(AudioFrequency::Frequency_16000, AudioChannel::Channel_1, 16);
 
         case (6):
-            return AudioFormat(AudioFrequency::Frequency_24000, AudioChannel::Channel_1, 16);;
+            return AudioFormat(AudioFrequency::Frequency_24000, AudioChannel::Channel_1, 16);
 
         case (7):
         default:

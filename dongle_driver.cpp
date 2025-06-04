@@ -544,14 +544,13 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
         case (MessageType::Command):
             {
                 auto cmd = Command(&buffer[0]);
-                SPDLOG_DEBUG("Received Command::{} ({}).", command_mapping_to_string(cmd.get_value()),
-                    static_cast<uint32_t>(cmd.get_value()));
+                SPDLOG_DEBUG("Received Command::{} ({}), length = {}.", command_mapping_to_string(cmd.get_value()),
+                    static_cast<uint32_t>(cmd.get_value()), header.get_message_length());
             }
             break;
 
         case (MessageType::VideoData):
             // TODO: Add bounds checks here to make sure we're not gonna shoot ourselves in the foot.
-            //(self.width, self.height, self.flags, self.unknown1, self.unknown2) = struct.unpack("<LLLLL", data[:20])
             /*{
                 uint32_t rx_width = read_uint32_t_little_endian(&buffer[0]);
                 uint32_t rx_height = read_uint32_t_little_endian(&buffer[4]);
@@ -559,8 +558,8 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
                 uint32_t rx_unknown1 = read_uint32_t_little_endian(&buffer[12]);
                 uint32_t rx_unknown2 = read_uint32_t_little_endian(&buffer[16]);
 
-                SPDLOG_DEBUG("rx_width = {}, rx_height = {}, rx_flags = {}, rx_unknown1 = {}, rx_unknown2 = {}",
-                    rx_width, rx_height, rx_flags, rx_unknown1, rx_unknown2);
+                SPDLOG_DEBUG("rx_width = {}, rx_height = {}, rx_flags = {}, rx_unknown1 = {}, rx_unknown2 = {}, length = {}",
+                    rx_width, rx_height, rx_flags, rx_unknown1, rx_unknown2, header.get_message_length());
             }*/
 
             if (_frame_ready_callback != nullptr)
@@ -571,19 +570,27 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
 
         case (MessageType::AudioData):
             {
-                //uint32_t decode_type = read_uint32_t_little_endian(&buffer[0]);
-                //float volume = static_cast<float>(read_uint32_t_little_endian(&buffer[4]));
-                //uint32_t audio_type = read_uint32_t_little_endian(&buffer[8]);
+                uint32_t decode_type = read_uint32_t_little_endian(&buffer[0]);
+                float volume = static_cast<float>(read_uint32_t_little_endian(&buffer[4]));
+                uint32_t audio_type = read_uint32_t_little_endian(&buffer[8]);
 
                 if (header.get_message_length() == 13)
                 {
                     AudioCommand cmd = static_cast<AudioCommand>(buffer[12]);
-                    SPDLOG_DEBUG("Audio Command {}", audio_command_to_string(cmd));
+                    SPDLOG_DEBUG("Audio Command {}, decode_type = {}, volume = {}, audio_type = {}",
+                        audio_command_to_string(cmd),
+                        decode_type,
+                        volume,
+                        audio_type);
                 }
                 else if (header.get_message_length() == 16)
                 {
                     uint32_t volume_duration = read_uint32_t_little_endian(&buffer[12]);
-                    SPDLOG_DEBUG("volume_duration = {}", volume_duration);
+                    SPDLOG_DEBUG("volume_duration = {}, decode_type = {}, volume = {}, audio_type = {}",
+                        volume_duration,
+                        decode_type,
+                        volume,
+                        audio_type);
                 }
                 else
                 {
@@ -604,7 +611,7 @@ void DongleDriver::decode_dongle_response(MessageHeader header, const uint8_t* b
             break;
 
         default:
-            SPDLOG_DEBUG("Received message {}.", msg_type_to_string(header.get_message_type()));
+            SPDLOG_WARN("Received unknown message {}.", msg_type_to_string(header.get_message_type()));
             break;
     }
 }
