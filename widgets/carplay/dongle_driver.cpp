@@ -1,8 +1,7 @@
 #include "carplay/dongle_driver.h"
 #include "carplay/dongle_config_file.h"
 
-#include <libusb/libusb.h>
-#include <libusb/version.h>
+#include <libusb.h>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/bin_to_hex.h>

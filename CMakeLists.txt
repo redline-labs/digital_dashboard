@@ -91,6 +91,17 @@ set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(yaml-cpp)
 
+# Fetch libusb-cmake
+FetchContent_Declare(
+    libusb
+    GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git
+    GIT_TAG v1.0.27
+    GIT_SHALLOW TRUE
+    COMMENT "Fetching libusb-cmake"
+)
+
+FetchContent_MakeAvailable(libusb)
+
 #add_link_options(
 #    -Wl,--gc-sections
 #)
@@ -129,9 +140,6 @@ add_compile_options(
     #-flto
 )
 
-add_subdirectory(libusb-cmake-1.0.27)
-
-# Add widgets subdirectory
 add_subdirectory(widgets)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
@@ -140,7 +148,6 @@ qt_standard_project_setup()
 
 include_directories(
     SYSTEM
-    libusb-cmake-1.0.27/libusb
 )
 
 include_directories(
