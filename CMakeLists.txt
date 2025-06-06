@@ -29,8 +29,9 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.15.3
     GIT_SHALLOW TRUE
-    # Option 1: Apply patch during fetch (before source is processed)
+    UPDATE_DISCONNECTED 1
     PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/spdlog_tweakme.patch
+    COMMENT "Fetching spdlog"
 )
 
 # Configure spdlog options before making it available
@@ -48,6 +49,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.11.3
     GIT_SHALLOW TRUE
+    COMMENT "Fetching nlohmann/json"
 )
 
 # Configure nlohmann/json options
@@ -62,6 +64,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
     GIT_TAG v3.2.0
     GIT_SHALLOW TRUE
+    COMMENT "Fetching cxxopts"
 )
 
 # Configure cxxopts options
@@ -75,8 +78,9 @@ FetchContent_MakeAvailable(cxxopts)
 FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG master
+    GIT_SHA 2f86d13
     GIT_SHALLOW TRUE
+    COMMENT "Fetching yaml-cpp"
 )
 
 # Configure yaml-cpp options
