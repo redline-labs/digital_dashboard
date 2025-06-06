@@ -4,6 +4,10 @@ cmake_minimum_required(VERSION 3.10)
 # Define the library name
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
+find_package(OpenGL REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
+
+
 # Create the library with all the carplay source files
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
@@ -16,6 +20,7 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     include
     ${CMAKE_SOURCE_DIR}/include
+    ${OPENGL_INCLUDE_DIR}
 )
 
 # Find required packages for this widget
@@ -26,7 +31,7 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavutil
 )
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
+
 
 # Link required libraries to this widget
 target_link_libraries(${CARPLAY_WIDGET_LIB} PUBLIC
@@ -36,6 +41,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB} PUBLIC
     Qt6::Widgets
     Qt6::OpenGL
     Qt6::OpenGLWidgets
+    ${OPENGL_LIBRARIES}
     # Link spdlog (now available from parent CMakeLists.txt)
     spdlog::spdlog
     # Link nlohmann/json (now available from parent CMakeLists.txt)

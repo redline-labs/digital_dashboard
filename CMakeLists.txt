@@ -27,11 +27,9 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.15.3
+    GIT_TAG 6fa3601  # Version 1.15.3
     GIT_SHALLOW TRUE
-    UPDATE_DISCONNECTED 1
     PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/spdlog_tweakme.patch
-    COMMENT "Fetching spdlog"
 )
 
 # Configure spdlog options before making it available
@@ -47,9 +45,8 @@ FetchContent_MakeAvailable(spdlog)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
+    GIT_TAG 55f9368  # Version 3.12.0
     GIT_SHALLOW TRUE
-    COMMENT "Fetching nlohmann/json"
 )
 
 # Configure nlohmann/json options
@@ -62,9 +59,8 @@ FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_Declare(
     cxxopts
     GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
-    GIT_TAG v3.2.0
+    GIT_TAG 44380e5  # Version 3.3.1
     GIT_SHALLOW TRUE
-    COMMENT "Fetching cxxopts"
 )
 
 # Configure cxxopts options
@@ -78,9 +74,8 @@ FetchContent_MakeAvailable(cxxopts)
 FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_SHA 2f86d13
+    GIT_TAG 2f86d13  # Master, following release of 0.8.0
     GIT_SHALLOW TRUE
-    COMMENT "Fetching yaml-cpp"
 )
 
 # Configure yaml-cpp options
@@ -97,7 +92,6 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git
     GIT_TAG v1.0.27
     GIT_SHALLOW TRUE
-    COMMENT "Fetching libusb-cmake"
 )
 
 FetchContent_MakeAvailable(libusb)
@@ -145,10 +139,6 @@ add_subdirectory(widgets)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
 qt_standard_project_setup()
 
-
-include_directories(
-    SYSTEM
-)
 
 include_directories(
     include
