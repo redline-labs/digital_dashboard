@@ -71,6 +71,22 @@ set(CXXOPTS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(cxxopts)
 
+# Fetch yaml-cpp
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+
+# Configure yaml-cpp options
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(yaml-cpp)
+
 #add_link_options(
 #    -Wl,--gc-sections
 #)
@@ -120,8 +136,6 @@ qt_standard_project_setup()
 
 include_directories(
     SYSTEM
-    yaml-cpp-0.8.0/include
-
     libusb-cmake-1.0.27/libusb
 )
 
@@ -133,36 +147,6 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
-
-    yaml-cpp-0.8.0/src/binary.cpp
-    yaml-cpp-0.8.0/src/convert.cpp
-    yaml-cpp-0.8.0/src/depthguard.cpp
-    yaml-cpp-0.8.0/src/directives.cpp
-    yaml-cpp-0.8.0/src/emit.cpp
-    yaml-cpp-0.8.0/src/emitfromevents.cpp
-    yaml-cpp-0.8.0/src/emitter.cpp
-    yaml-cpp-0.8.0/src/emitterstate.cpp
-    yaml-cpp-0.8.0/src/emitterutils.cpp
-    yaml-cpp-0.8.0/src/exceptions.cpp
-    yaml-cpp-0.8.0/src/exp.cpp
-    yaml-cpp-0.8.0/src/memory.cpp
-    yaml-cpp-0.8.0/src/node.cpp
-    yaml-cpp-0.8.0/src/node_data.cpp
-    yaml-cpp-0.8.0/src/nodebuilder.cpp
-    yaml-cpp-0.8.0/src/nodeevents.cpp
-    yaml-cpp-0.8.0/src/null.cpp
-    yaml-cpp-0.8.0/src/ostream_wrapper.cpp
-    yaml-cpp-0.8.0/src/parse.cpp
-    yaml-cpp-0.8.0/src/parser.cpp
-    yaml-cpp-0.8.0/src/regex_yaml.cpp
-    yaml-cpp-0.8.0/src/scanner.cpp
-    yaml-cpp-0.8.0/src/scanscalar.cpp
-    yaml-cpp-0.8.0/src/scantag.cpp
-    yaml-cpp-0.8.0/src/scantoken.cpp
-    yaml-cpp-0.8.0/src/simplekey.cpp
-    yaml-cpp-0.8.0/src/singledocparser.cpp
-    yaml-cpp-0.8.0/src/stream.cpp
-    yaml-cpp-0.8.0/src/tag.cpp
 )
 
 #set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
@@ -172,15 +156,18 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
-
+    
     # Link spdlog (now fetched via FetchContent)
     spdlog::spdlog
-
+    
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json
-
+    
     # Link cxxopts (now fetched via FetchContent)
     cxxopts::cxxopts
+    
+    # Link yaml-cpp (now fetched via FetchContent)
+    yaml-cpp::yaml-cpp
 
     # Link the carplay widget library
     carplay_widget
