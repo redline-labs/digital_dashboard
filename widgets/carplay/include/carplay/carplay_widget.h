@@ -46,65 +46,7 @@ enum class DeviceStep
   Fail,
 };
 
-// Simplified structure to hold decoded frame data
-struct DecodedFrame {
-    uint8_t* yData = nullptr;
-    uint8_t* uData = nullptr;
-    uint8_t* vData = nullptr;
-    int width = 0;
-    int height = 0;
-    int yStride = 0;
-    int uStride = 0;
-    int vStride = 0;
-    bool isValid = false;
-    
-    void clear() {
-        delete[] yData;
-        delete[] uData;
-        delete[] vData;
-        yData = uData = vData = nullptr;
-        width = height = yStride = uStride = vStride = 0;
-        isValid = false;
-    }
-    
-    // Move constructor
-    DecodedFrame(DecodedFrame&& other) noexcept {
-        *this = std::move(other);
-    }
-    
-    // Move assignment
-    DecodedFrame& operator=(DecodedFrame&& other) noexcept {
-        if (this != &other) {
-            clear();
-            yData = other.yData;
-            uData = other.uData;
-            vData = other.vData;
-            width = other.width;
-            height = other.height;
-            yStride = other.yStride;
-            uStride = other.uStride;
-            vStride = other.vStride;
-            isValid = other.isValid;
-            
-            // Clear the source
-            other.yData = other.uData = other.vData = nullptr;
-            other.width = other.height = other.yStride = other.uStride = other.vStride = 0;
-            other.isValid = false;
-        }
-        return *this;
-    }
-    
-    // Disable copy constructor and copy assignment
-    DecodedFrame(const DecodedFrame&) = delete;
-    DecodedFrame& operator=(const DecodedFrame&) = delete;
-    
-    // Default constructor
-    DecodedFrame() = default;
-    
-    ~DecodedFrame() {
-        clear();
-    }
-};
+
 
 class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -144,7 +86,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 
     void setupShaders();
     void setupTextures();
-    void uploadYUVTextures(const DecodedFrame& frame);
+    void uploadYUVTextures(const AVFrame* frame);
     
     // Integrated decoding methods
     void initializeDecoder();
@@ -189,7 +131,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     
     // Simplified frame buffer (single frame, direct notification)
     std::mutex _frame_mutex;
-    DecodedFrame _current_frame;
+    AVFrame* _current_frame;
     std::atomic<bool> _new_frame_available;
     
     // Dongle driver constants

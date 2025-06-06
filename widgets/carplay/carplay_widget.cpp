@@ -15,7 +15,6 @@ extern "C"
 {
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
-#include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -148,6 +147,7 @@ CarPlayWidget::CarPlayWidget(app_config_t cfg, bool libusb_debug) :
     _pkt(nullptr),
     _receive_length(0),
     _should_terminate(false),
+    _current_frame(nullptr),
     _new_frame_available(false),
     _app_cfg{cfg},
     _libusb_debug{libusb_debug},
@@ -173,7 +173,10 @@ CarPlayWidget::~CarPlayWidget()
     
     {
         std::lock_guard<std::mutex> lock(_frame_mutex);
-        _current_frame.clear();
+        if (_current_frame) {
+            av_frame_unref(_current_frame);
+            av_frame_free(&_current_frame);
+        }
     }
     
     makeCurrent();
@@ -262,25 +265,7 @@ void CarPlayWidget::initializeDecoder()
         return;
     }
 
-    // Try hardware decoding on macOS
-#ifdef __APPLE__
-    AVBufferRef* hw_device_ctx = nullptr;
-    if (av_hwdevice_ctx_create(&hw_device_ctx, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) >= 0) {
-        _codec_context->hw_device_ctx = av_buffer_ref(hw_device_ctx);
-        if (avcodec_open2(_codec_context, _codec, nullptr) >= 0) {
-            SPDLOG_INFO("Hardware decoding enabled");
-            av_buffer_unref(&hw_device_ctx);
-            goto decoder_ready;
-        }
-        // Cleanup and fallback
-        av_buffer_unref(&_codec_context->hw_device_ctx);
-        avcodec_free_context(&_codec_context);
-        _codec_context = avcodec_alloc_context3(_codec);
-        av_buffer_unref(&hw_device_ctx);
-    }
-#endif
-
-    // Software decoding fallback
+    // Use software decoding
     if (avcodec_open2(_codec_context, _codec, nullptr) >= 0) {
         SPDLOG_INFO("Software decoding enabled");
     } else {
@@ -288,7 +273,6 @@ void CarPlayWidget::initializeDecoder()
         return;
     }
 
-decoder_ready:
     _decode_thread = std::thread(&CarPlayWidget::run_decode_thread, this);
 }
 
@@ -356,84 +340,30 @@ void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pk
             continue;
         }
 
-        // Handle hardware frames
-        AVFrame* sw_frame = frame;
-        AVFrame* temp_frame = nullptr;
-        
-        if (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_YUVJ420P) {
-            temp_frame = av_frame_alloc();
-            if (!temp_frame || av_hwframe_transfer_data(temp_frame, frame, 0) < 0) {
-                if (temp_frame) av_frame_free(&temp_frame);
-                continue;
-            }
-            sw_frame = temp_frame;
-        }
-
-        // Validate frame data
-        if (!sw_frame->data[0] || !sw_frame->data[1] || 
-            (sw_frame->format != AV_PIX_FMT_NV12 && !sw_frame->data[2])) {
-            if (temp_frame) av_frame_free(&temp_frame);
+        // Validate frame format and data
+        if ((frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_YUVJ420P) ||
+            !frame->data[0] || !frame->data[1] || !frame->data[2]) {
             continue;
         }
 
         // Update frame buffer
         {
             std::lock_guard<std::mutex> lock(_frame_mutex);
-            _current_frame.clear();
             
-            _current_frame.width = sw_frame->width;
-            _current_frame.height = sw_frame->height;
-            _current_frame.yStride = sw_frame->linesize[0];
-            _current_frame.uStride = sw_frame->linesize[1];
-            _current_frame.vStride = sw_frame->linesize[2];
+            // Clean up previous frame
+            if (_current_frame) {
+                av_frame_unref(_current_frame);
+            } else {
+                _current_frame = av_frame_alloc();
+            }
             
-            const int ySize = _current_frame.yStride * _current_frame.height;
-            const int uSize = _current_frame.uStride * (_current_frame.height / 2);
-            const int vSize = _current_frame.vStride * (_current_frame.height / 2);
-            
-            try {
-                _current_frame.yData = new uint8_t[ySize];
-                std::memcpy(_current_frame.yData, sw_frame->data[0], ySize);
-                
-                if (sw_frame->format == AV_PIX_FMT_NV12) {
-                    // NV12: De-interleave UV data
-                    const uint8_t* uvData = sw_frame->data[1];
-                    const int uvStride = sw_frame->linesize[1];
-                    const int uvHeight = sw_frame->height / 2;
-                    const int uvPlaneSize = uvHeight * (sw_frame->width / 2);
-                    
-                    _current_frame.uData = new uint8_t[uvPlaneSize];
-                    _current_frame.vData = new uint8_t[uvPlaneSize];
-                    
-                    for (int y = 0; y < uvHeight; y++) {
-                        for (int x = 0; x < sw_frame->width / 2; x++) {
-                            const int uvIndex = y * uvStride + x * 2;
-                            const int uvOutIndex = y * (sw_frame->width / 2) + x;
-                            _current_frame.uData[uvOutIndex] = uvData[uvIndex];
-                            _current_frame.vData[uvOutIndex] = uvData[uvIndex + 1];
-                        }
-                    }
-                    _current_frame.uStride = sw_frame->width / 2;
-                    _current_frame.vStride = sw_frame->width / 2;
-                } else {
-                    // YUV420P: Direct copy
-                    _current_frame.uData = new uint8_t[uSize];
-                    _current_frame.vData = new uint8_t[vSize];
-                    std::memcpy(_current_frame.uData, sw_frame->data[1], uSize);
-                    std::memcpy(_current_frame.vData, sw_frame->data[2], vSize);
-                }
-                
-                _current_frame.isValid = true;
+            // Create a reference to the current frame
+            if (_current_frame && av_frame_ref(_current_frame, frame) >= 0) {
                 _new_frame_available = true;
                 m_hasFrame = true;
                 notifyFrameReady();
-                
-            } catch (const std::bad_alloc&) {
-                _current_frame.clear();
             }
         }
-        
-        if (temp_frame) av_frame_free(&temp_frame);
     }
 }
 
@@ -451,7 +381,7 @@ void CarPlayWidget::paintGL()
     // Upload new frame if available
     if (_new_frame_available.load()) {
         std::lock_guard<std::mutex> lock(_frame_mutex);
-        if (_current_frame.isValid) {
+        if (_current_frame) {
             uploadYUVTextures(_current_frame);
             _new_frame_available = false;
         }
@@ -489,28 +419,28 @@ void CarPlayWidget::resizeGL(int w, int h)
     glViewport(0, 0, w, h);
 }
 
-void CarPlayWidget::uploadYUVTextures(const DecodedFrame& frame)
+void CarPlayWidget::uploadYUVTextures(const AVFrame* frame)
 {
-    if (!frame.isValid) return;
+    if (!frame || !frame->data[0]) return;
     
     // Direct texture upload
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.yStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame.width, frame.height, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame.yData);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[0]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width, frame->height, 
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[0]);
     
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.uStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame.width/2, frame.height/2, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame.uData);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[1]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[1]);
     
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_textureV);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.vStride);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame.width/2, frame.height/2, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame.vData);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[2]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[2]);
     
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
