@@ -1,5 +1,4 @@
 #include "app_config.h"
-#include "carplay/dongle_driver.h"
 #include "main_window.h"
 
 #include <cxxopts.hpp>
@@ -48,8 +47,6 @@ int main(int argc, char** argv)
 
     auto cfg = load_app_config("/Users/ryan/src/mercedes_dashboard/config.yaml");
 
-    DongleDriver driver(cfg, args_result["libusb_debug"].as<bool>());
-
     std::signal(SIGINT, [](int /* signum */)
     {
         SPDLOG_WARN("SIGINT received.");
@@ -60,7 +57,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
 
 
-    MainWindow main_window(cfg);
+    MainWindow main_window(cfg, args_result["libusb_debug"].as<bool>());
     main_window.show();
 
     QAudioFormat format;
@@ -88,18 +85,13 @@ int main(int argc, char** argv)
 
     auto audio_buffer = audio.start();
 
-    // Use the integrated decoder in CarPlayWidget instead of separate DecodeThread
-    driver.register_frame_ready_callback([&main_window] (const uint8_t* buffer, uint32_t buffer_len){
-        main_window.getCarPlayWidget().accept_new_data(buffer, buffer_len);
-    });
-
-    driver.register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
+    // Register audio callback with the integrated CarPlay widget
+    main_window.getCarPlayWidget().register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
-    QObject::connect(&main_window,  &MainWindow::carplay_touch_event, [&driver] (TouchAction action, uint32_t x, uint32_t y) {
-        driver.send_touch_event(action, x, y);
-    });
+    // Start the integrated dongle functionality
+    main_window.getCarPlayWidget().start_dongle();
 
     SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.
@@ -107,9 +99,9 @@ int main(int argc, char** argv)
 
     SPDLOG_WARN("Exit received, tearing down.");
 
-    // Stop the integrated decoder
+    // Stop the integrated decoder and dongle
     main_window.getCarPlayWidget().stop_decoder();
-    driver.stop();
+    main_window.getCarPlayWidget().stop_dongle();
 
     return 0u;
 }

@@ -11,7 +11,6 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
 # Create the library with all the carplay source files
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
-    dongle_driver.cpp
     message.cpp
     opengl_shaders.cpp
 )

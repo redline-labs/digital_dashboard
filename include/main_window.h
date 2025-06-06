@@ -15,13 +15,10 @@ class MainWindow : public QWidget
     Q_OBJECT
 
   public:
-    MainWindow(const app_config_t& app_cfg);
+    MainWindow(const app_config_t& app_cfg, bool libusb_debug = false);
 
     // Provide direct access to the CarPlay widget for integrated decoding
     CarPlayWidget& getCarPlayWidget() { return _carplay_widget; }
-
-  signals:
-    void carplay_touch_event(TouchAction action, uint32_t x, uint32_t y);
 
 
   private:

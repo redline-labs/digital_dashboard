@@ -3,10 +3,10 @@
 #include <spdlog/spdlog.h>
 
 
-MainWindow::MainWindow(const app_config_t& app_cfg):
+MainWindow::MainWindow(const app_config_t& app_cfg, bool libusb_debug):
     QWidget{},
     _app_cfg{app_cfg},
-    _carplay_widget{},
+    _carplay_widget{app_cfg, libusb_debug},
     _horizontal_layout{this}
 {
     setWindowTitle("Mercedes Dash");
@@ -17,15 +17,6 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
 
     _carplay_widget.setSize(_app_cfg.width_px, _app_cfg.height_px);
     _horizontal_layout.addWidget(&_carplay_widget);
-
-
-    QObject::connect(&_carplay_widget,  &CarPlayWidget::touchEvent, [this](TouchAction action, uint32_t x, uint32_t y)
-    {
-        emit
-        (
-            carplay_touch_event(action, x, y)
-        );
-    });
 }
 
 #include "moc_main_window.cpp"

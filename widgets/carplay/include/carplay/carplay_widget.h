@@ -2,6 +2,8 @@
 #define CARPLAY_WIDGET_H_
 
 #include "touch_action.h"
+#include "message.h"
+#include "app_config.h"
 
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
@@ -12,6 +14,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <functional>
 
 // Forward declarations for libavcodec stuff.
 struct AVCodec;
@@ -19,6 +22,29 @@ struct AVCodecParserContext;
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
+
+// Forward declarations for libusb to keep things tidy.
+struct libusb_device_handle;
+
+enum class DeviceStep
+{
+  Init,
+  SendDPI,
+  SendOpen,
+  SendNightMode,
+  SendDriveHand,
+  SendChargeMode,
+  SendBoxName,
+  SendBoxSettings,
+  SendWiFiEnable,
+  SendWiFiType,
+  SendMicType,
+  SendAudioTransferMode,
+  SendWiFiConnect,
+
+  Done,
+  Fail,
+};
 
 // Simplified structure to hold decoded frame data
 struct DecodedFrame {
@@ -85,14 +111,23 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     Q_OBJECT
 
   public:
-    CarPlayWidget();
+    CarPlayWidget(app_config_t cfg, bool libusb_debug = false);
     ~CarPlayWidget();
 
     void setSize(uint32_t width_px, uint32_t height_px);
     
-    // Integrated decoding interface
+    // Integrated decoding interface (now used internally)
     void accept_new_data(const uint8_t* buffer, uint32_t buffer_len);
     void stop_decoder();
+    
+    // Dongle driver functionality
+    void start_dongle();
+    void stop_dongle();
+    void step(); // Public so callbacks can access it
+    void register_audio_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
+    void register_phone_connect_event(std::function<void(bool)> cb);
+    
+    static std::string_view libusb_version();
 
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
@@ -117,6 +152,16 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void run_decode_thread();
     void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt);
     void notifyFrameReady(); // Direct notification instead of timer
+
+    // Dongle driver methods
+    void initializeDongleDriver();
+    void cleanupDongleDriver();
+    bool find_dongle();
+    void dongle_read_thread();
+    void libusb_event_thread();
+    void heartbeat_thread();
+    void decode_dongle_response(MessageHeader header, const uint8_t* buffer);
+    void send_touch_event_internal(TouchAction action, uint32_t x, uint32_t y);
 
     // Simplified OpenGL rendering members
     QOpenGLShaderProgram* m_shaderProgram;
@@ -146,6 +191,39 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     std::mutex _frame_mutex;
     DecodedFrame _current_frame;
     std::atomic<bool> _new_frame_available;
+    
+    // Dongle driver constants
+    static constexpr uint16_t kUsbVid = 0x1314u;
+    static constexpr uint16_t kUsbPid = 0x1521u;
+    static constexpr uint8_t kInterfaceNumber = 0x00;
+    static constexpr uint8_t kEndpointInAddress = 0x81u;
+    static constexpr uint8_t kEndpointOutAddress = 0x01u;
+    static constexpr uint16_t kUsbDefaultTimeoutMs = 1000u;
+    static constexpr uint16_t kUsbConfigDelayMs = 25u;
+    static constexpr uint16_t kHeartbeatTimeMs = 2000u;
+    
+    // Dongle driver member variables
+    app_config_t _app_cfg;
+    bool _libusb_debug;
+    libusb_device_handle* _device_handle;
+    int _hotplug_callback_handle;
+    DeviceStep _current_step;
+
+    std::thread _event_thread;
+    std::thread _read_thread;
+    std::thread _heartbeat_thread;
+    std::atomic<bool> _event_thread_should_run;
+    std::atomic<bool> _read_thread_should_run;
+    std::atomic<bool> _heartbeat_thread_should_run;
+
+    std::vector<uint8_t> _usb_request;
+    uint8_t _rx_data[512u * 1024u];
+
+    std::function<void(const uint8_t* buffer, uint32_t buffer_len)> _audio_ready_callback;
+    std::function<void(bool)> _phone_connect_event_callback;
+    
+    // Thread safety
+    std::mutex _step_mutex;
 };
 
 #endif  // CARPLAY_WIDGET_H_
