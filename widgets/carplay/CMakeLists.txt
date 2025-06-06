@@ -34,18 +34,20 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
 
 
 # Link required libraries to this widget
-target_link_libraries(${CARPLAY_WIDGET_LIB} PUBLIC
-    usb-1.0
-    PkgConfig::LIBAV
-    Qt6::Core
-    Qt6::Widgets
-    Qt6::OpenGL
-    Qt6::OpenGLWidgets
-    ${OPENGL_LIBRARIES}
-    # Link spdlog (now available from parent CMakeLists.txt)
-    spdlog::spdlog
-    # Link nlohmann/json (now available from parent CMakeLists.txt)
-    nlohmann_json::nlohmann_json
+target_link_libraries(${CARPLAY_WIDGET_LIB} 
+    PUBLIC
+        usb-1.0
+        PkgConfig::LIBAV
+        Qt6::Core
+        Qt6::Widgets
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        ${OPENGL_LIBRARIES}
+        # Link nlohmann/json (now available from parent CMakeLists.txt)
+        nlohmann_json::nlohmann_json
+    PRIVATE
+        # Link spdlog privately so it doesn't propagate to consumers
+        spdlog::spdlog
 )
 
 # Set C++ standard

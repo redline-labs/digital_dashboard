@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.10)
 # Include FetchContent module for downloading dependencies
 include(FetchContent)
 
+# Only fetch dependencies during initial configuration, not on every build
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+set(FETCHCONTENT_QUIET OFF)
+
 set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
@@ -22,6 +26,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
 message("-- Build Type: ${CMAKE_BUILD_TYPE}")
+
+
 
 # Fetch spdlog
 FetchContent_Declare(
