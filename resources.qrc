@@ -1,0 +1,12 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file alias="fonts/futura.ttf">resources/futura.ttf</file>
+    <file alias="fonts/DSEG7ClassicMini-Bold.ttf">resources/DSEG7ClassicMini-Bold.ttf</file>
+    <file alias="fonts/DSEG7Classic-Bold.ttf">resources/DSEG7Classic-Bold.ttf</file>
+
+    <file alias="telltales/telltale_windshield_washer.svg">resources/telltale_windshield_washer.svg</file>
+    <file alias="telltales/telltale_brake_system.svg">resources/telltale_brake_system.svg</file>
+    <file alias="telltales/telltale_battery.svg">resources/telltale_battery.svg</file>
+    <file alias="telltales/telltale_high_beam.svg">resources/telltale_high_beam.svg</file>
+</qresource>
+</RCC> 
