@@ -115,39 +115,6 @@ void BatteryTelltaleWidget::paintEvent(QPaintEvent *event)
             // Draw the colored icon
             painter.drawPixmap(finalIconRect, svgPixmap);
         }
-    } else {
-        // Fallback: draw a simple battery shape if SVG fails to load
-        painter.setPen(QPen(mIconColor, 2));
-        painter.setBrush(Qt::NoBrush);
-        
-        // Draw simple battery outline
-        QRect batteryBody = iconRect.adjusted(iconRect.width()/6, iconRect.height()/4, 
-                                            -iconRect.width()/6, -iconRect.height()/4);
-        painter.drawRect(batteryBody);
-        
-        // Draw battery terminal
-        QRect terminal(batteryBody.right(), batteryBody.y() + batteryBody.height()/3,
-                      iconRect.width()/12, batteryBody.height()/3);
-        painter.drawRect(terminal);
-        
-        // Draw + and - symbols if asserted
-        if (mAsserted) {
-            painter.setPen(QPen(mIconColor, 1));
-            QRect leftSide = batteryBody.adjusted(batteryBody.width()/4, batteryBody.height()/3,
-                                                -batteryBody.width()*3/4, -batteryBody.height()/3);
-            QRect rightSide = batteryBody.adjusted(batteryBody.width()*3/4, batteryBody.height()/3,
-                                                 -batteryBody.width()/4, -batteryBody.height()/3);
-            
-            // Draw minus sign
-            painter.drawLine(leftSide.left(), leftSide.center().y(), 
-                           leftSide.right(), leftSide.center().y());
-            
-            // Draw plus sign
-            painter.drawLine(rightSide.left(), rightSide.center().y(), 
-                           rightSide.right(), rightSide.center().y());
-            painter.drawLine(rightSide.center().x(), rightSide.top(), 
-                           rightSide.center().x(), rightSide.bottom());
-        }
     }
 }
 
