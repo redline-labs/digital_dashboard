@@ -1,5 +1,5 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#ifndef WidgetsMainWindow_H
+#define WidgetsMainWindow_H
 
 #include <QMainWindow>
 #include <QTimer>
@@ -7,21 +7,21 @@
 #include <QSlider>
 
 QT_BEGIN_NAMESPACE
-namespace Ui { class MainWindow; }
+namespace Ui { class WidgetsMainWindow; }
 QT_END_NAMESPACE
 
-#include "tachometerwidget.h"
-#include "speedometerwidgetmph.h"
-#include "sparklineitem.h"
-#include "batterytelltalewidget.h"
+#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
+#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
+#include "sparkline/sparkline.h"
+#include "mercedes_190e_telltales/battery_telltale.h"
 
-class MainWindow : public QMainWindow
+class WidgetsMainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+    WidgetsMainWindow(QWidget *parent = nullptr);
+    ~WidgetsMainWindow();
 
 private slots:
     void updateTachometer();
@@ -32,7 +32,7 @@ private slots:
     void onBatteryTelltaleToggled(bool checked);
 
 private:
-    Ui::MainWindow *ui;
+    Ui::WidgetsMainWindow *ui;
     TachometerWidget *mTachometer;
     SpeedometerWidgetMPH *mSpeedometer;
     SparklineItem *mSparkline;
@@ -45,4 +45,4 @@ private:
     QTimer *mTimerRPM;
     QTimer *mTimerMPH;
 };
-#endif // MAINWINDOW_H
+#endif // WidgetsMainWindow_H

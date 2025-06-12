@@ -43,7 +43,6 @@ private:
 
     const float m_scaleRadius;       // Radius for the tick marks
     const float m_numberRadius;      // Radius for the numbers
-    const float m_textLabelRadius;   // Radius for "x100 1/min" text (approximate)
 
     const float m_pivotRadius;       // Radius of the central pivot hole/dot
     const float m_needleLength;      // Length of the needle from pivot

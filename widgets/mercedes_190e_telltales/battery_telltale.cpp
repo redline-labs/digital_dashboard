@@ -1,4 +1,4 @@
-#include "batterytelltalewidget.h"
+#include "mercedes_190e_telltales/battery_telltale.h"
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QDebug>
@@ -15,7 +15,7 @@ BatteryTelltaleWidget::BatteryTelltaleWidget(QWidget *parent)
     , mAsserted(false)
 {
     // Load the SVG renderer
-    mSvgRenderer = new QSvgRenderer(QString(":/telltales/telltale_battery.svg"), this);
+    mSvgRenderer = new QSvgRenderer(QString(":/mercedes_190e_telltales/telltale_battery.svg"), this);
     
     if (!mSvgRenderer->isValid()) {
         qWarning() << "Failed to load battery telltale SVG";
@@ -156,3 +156,5 @@ void BatteryTelltaleWidget::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     update(); // Ensure the widget repaints with new size
 } 
+
+#include "mercedes_190e_telltales/moc_battery_telltale.cpp"

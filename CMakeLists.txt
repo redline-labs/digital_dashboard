@@ -3,10 +3,6 @@ cmake_minimum_required(VERSION 3.10)
 # Include FetchContent module for downloading dependencies
 include(FetchContent)
 
-# Only fetch dependencies during initial configuration, not on every build
-set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-set(FETCHCONTENT_QUIET OFF)
-
 set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
@@ -29,78 +25,16 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 
 
 
-# Fetch spdlog
-FetchContent_Declare(
-    spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG 6fa3601  # Version 1.15.3
-    GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/spdlog_tweakme.patch
-)
+# Only fetch dependencies during initial configuration, not on every build
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+set(FETCHCONTENT_QUIET OFF)
 
-# Configure spdlog options before making it available
-# Disable building tests, examples, and benchmarks
-set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
-set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
-set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(spdlog)
-
-# Fetch nlohmann/json
-FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG 55f9368  # Version 3.12.0
-    GIT_SHALLOW TRUE
-)
-
-# Configure nlohmann/json options
-set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-set(JSON_Install OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(nlohmann_json)
-
-# Fetch cxxopts
-FetchContent_Declare(
-    cxxopts
-    GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
-    GIT_TAG 44380e5  # Version 3.3.1
-    GIT_SHALLOW TRUE
-)
-
-# Configure cxxopts options
-set(CXXOPTS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(CXXOPTS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(CXXOPTS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(cxxopts)
-
-# Fetch yaml-cpp
-FetchContent_Declare(
-    yaml-cpp
-    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG 2f86d13  # Master, following release of 0.8.0
-    GIT_SHALLOW TRUE
-)
-
-# Configure yaml-cpp options
-set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(yaml-cpp)
-
-# Fetch libusb-cmake
-FetchContent_Declare(
-    libusb
-    GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git
-    GIT_TAG v1.0.27
-    GIT_SHALLOW TRUE
-)
-
-FetchContent_MakeAvailable(libusb)
+# Include dependency configurations
+include(cmake/spdlog.cmake)
+include(cmake/nlohmann_json.cmake)
+include(cmake/cxxopts.cmake)
+include(cmake/yaml-cpp.cmake)
+include(cmake/libusb.cmake)
 
 #add_link_options(
 #    -Wl,--gc-sections
@@ -142,7 +76,13 @@ add_compile_options(
 
 add_subdirectory(widgets)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets)
+
+# Enable Qt's automatic MOC, UIC, and RCC processing
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets Svg)
 qt_standard_project_setup()
 
 
@@ -154,6 +94,8 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
+    widgets_mainwindow.cpp
+    resources.qrc
 )
 
 #set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
@@ -163,6 +105,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+    Qt6::Svg
     
     # Link spdlog (now fetched via FetchContent)
     spdlog::spdlog
@@ -178,5 +121,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
     # Link the carplay widget library
     carplay_widget
+    mercedes_190e_telltales
+    mercedes_190e_speedometer
+    mercedes_190e_tachometer
+    sparkline
 )
 

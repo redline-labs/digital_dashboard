@@ -1,4 +1,4 @@
-#include "sparklineitem.h"
+#include "sparkline/sparkline.h"
 #include <QHBoxLayout>
 #include <QFont>
 #include <QPen>
@@ -204,3 +204,5 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     painter.setPen(pen);
     painter.drawPath(linePath);
 } 
+
+#include "sparkline/moc_sparkline.cpp"

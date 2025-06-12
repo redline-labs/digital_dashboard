@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "main_window.h"
+#include "widgets_mainwindow.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
@@ -92,6 +93,15 @@ int main(int argc, char** argv)
 
     // Start the integrated dongle functionality
     main_window.getCarPlayWidget().start_dongle();
+
+
+    // Add in the widgets demo as well.
+    WidgetsMainWindow widgets_main_window;
+    widgets_main_window.show();
+
+
+
+
 
     SPDLOG_INFO("Starting.");
     app.exec();  // Blocking.

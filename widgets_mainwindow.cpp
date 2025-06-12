@@ -1,11 +1,11 @@
-#include "mainwindow.h"
+#include "widgets_mainwindow.h"
 #include <QLabel> // For a label if needed, not strictly for slider now
 #include <QHBoxLayout> // Ensure this is included for QHBoxLayout
 #include <QVBoxLayout> // For controls layout if needed
 #include <QTimer> // For QTimer
 #include <QCheckBox> // For battery telltale toggle
 
-MainWindow::MainWindow(QWidget *parent)
+WidgetsMainWindow::WidgetsMainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     mCentralWidget = new QWidget(this);
@@ -26,7 +26,7 @@ MainWindow::MainWindow(QWidget *parent)
     mSpeedSlider->setRange(0, 1250); // 0 to 125.0 MPH
     mSpeedSlider->setValue(0);
     speedoLayout->addWidget(mSpeedSlider);
-    connect(mSpeedSlider, &QSlider::valueChanged, this, &MainWindow::onSpeedChanged);
+    connect(mSpeedSlider, &QSlider::valueChanged, this, &WidgetsMainWindow::onSpeedChanged);
     mMainLayout->addWidget(speedoContainer, 1);
 
     // --- Tachometer Section (Middle) ---
@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget *parent)
     mRpmSlider->setRange(0, 7000); // 0 to 7000 RPM
     mRpmSlider->setValue(0);
     tachoLayout->addWidget(mRpmSlider);
-    connect(mRpmSlider, &QSlider::valueChanged, this, &MainWindow::onRpmChanged);
+    connect(mRpmSlider, &QSlider::valueChanged, this, &WidgetsMainWindow::onRpmChanged);
     mMainLayout->addWidget(tachoContainer, 1);
 
     // --- Sparkline Section (Right) ---
@@ -59,7 +59,7 @@ MainWindow::MainWindow(QWidget *parent)
     mSparklineSlider->setRange(0, 100);
     mSparklineSlider->setValue(50);
     sparklineVLayout->addWidget(mSparklineSlider);
-    connect(mSparklineSlider, &QSlider::valueChanged, this, &MainWindow::updateSparkline);
+    connect(mSparklineSlider, &QSlider::valueChanged, this, &WidgetsMainWindow::updateSparkline);
     
     // --- Battery Telltale Section ---
     mBatteryTelltale = new BatteryTelltaleWidget(this);
@@ -69,7 +69,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCheckBox *batteryCheckBox = new QCheckBox("Battery Warning");
     batteryCheckBox->setChecked(false);
     sparklineVLayout->addWidget(batteryCheckBox);
-    connect(batteryCheckBox, &QCheckBox::toggled, this, &MainWindow::onBatteryTelltaleToggled);
+    connect(batteryCheckBox, &QCheckBox::toggled, this, &WidgetsMainWindow::onBatteryTelltaleToggled);
     
     mMainLayout->addWidget(sparklineContainer, 1);
 
@@ -83,18 +83,18 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1000, 400); // Adjusted size for two gauges
 }
 
-MainWindow::~MainWindow()
+WidgetsMainWindow::~WidgetsMainWindow()
 {
     // Qt handles child widget deletion automatically
 }
 
-void MainWindow::onSpeedChanged(int value)
+void WidgetsMainWindow::onSpeedChanged(int value)
 {
     if (mSpeedometer)
         mSpeedometer->setSpeed(value / 10.0f);
 }
 
-void MainWindow::onRpmChanged(int value)
+void WidgetsMainWindow::onRpmChanged(int value)
 {
     if (mTachometer)
     {
@@ -102,27 +102,27 @@ void MainWindow::onRpmChanged(int value)
     }
 }
 
-void MainWindow::updateSparkline(int value)
+void WidgetsMainWindow::updateSparkline(int value)
 {
     if (mSparkline) {
         mSparkline->addDataPoint(static_cast<double>(value));
     }
 }
 
-void MainWindow::onBatteryTelltaleToggled(bool checked)
+void WidgetsMainWindow::onBatteryTelltaleToggled(bool checked)
 {
     if (mBatteryTelltale) {
         mBatteryTelltale->setAsserted(checked);
     }
 }
 
-void MainWindow::updateTachometer()
+void WidgetsMainWindow::updateTachometer()
 {
     // Example: int newRpm = mRpmSlider->value() + (qrand() % 200 - 100);
     // if (mTachometer) mTachometer->setRpm(newRpm > 0 ? newRpm : 0);
 }
 
-void MainWindow::updateSpeedometer()
+void WidgetsMainWindow::updateSpeedometer()
 {
     // Example: int newSpeed = mSpeedSlider->value() + (qrand() % 10 - 5);
     // if (mSpeedometer) mSpeedometer->setSpeed(newSpeed > 0 ? newSpeed : 0);

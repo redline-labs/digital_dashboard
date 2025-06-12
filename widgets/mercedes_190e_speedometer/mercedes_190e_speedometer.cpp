@@ -1,4 +1,4 @@
-#include "speedometerwidgetmph.h"
+#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include <QPaintEvent>
 #include <QFontMetrics>
 #include <QDebug> // For font loading messages
@@ -434,3 +434,5 @@ void SpeedometerWidgetMPH::drawNeedle(QPainter *painter)
 
     painter->restore();
 } 
+
+#include "mercedes_190e_speedometer/moc_mercedes_190e_speedometer.cpp"

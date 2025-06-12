@@ -1,5 +1,5 @@
 #include <QTime> // Added for current time
-#include "tachometerwidget.h"
+#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include <QPainter>
 #include <QFontDatabase>
 #include <QDebug>
@@ -22,7 +22,6 @@ TachometerWidget::TachometerWidget(QWidget *parent)
 
       m_scaleRadius(85.0f),      // Outer edge of ticks
       m_numberRadius(62.5f),     // Center of numbers
-      m_textLabelRadius(45.0f),  // Approx. radial distance for "x100" text center
       m_pivotRadius(7.0f),
       m_needleLength(83.0f),     // From pivot center to needle tip
 
@@ -315,3 +314,5 @@ void TachometerWidget::drawClock(QPainter *painter) {
 
     painter->restore(); // Restore from clock translation
 }
+
+#include "mercedes_190e_tachometer/moc_mercedes_190e_tachometer.cpp"
