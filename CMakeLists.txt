@@ -35,6 +35,7 @@ include(cmake/nlohmann_json.cmake)
 include(cmake/cxxopts.cmake)
 include(cmake/yaml-cpp.cmake)
 include(cmake/libusb.cmake)
+include(cmake/zenoh-c.cmake)
 
 # LGPL Compliance: Create source code availability notice
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/SOURCE_CODE_NOTICE.txt

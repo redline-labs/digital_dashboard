@@ -73,6 +73,7 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 | [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.8.0 | MIT | YAML configuration file parsing | N |
 | [cxxopts](https://github.com/jarro2783/cxxopts) | 3.3.1 | MIT | Command line argument parsing | N |
 | [libusb-cmake](https://github.com/libusb/libusb-cmake.git) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
+| [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) | 1.4.0 | EPL-2.0 / Apache-2.0 | Zero overhead pub/sub messaging | N |
 
 
 ## Project Structure
