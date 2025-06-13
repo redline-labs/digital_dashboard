@@ -72,7 +72,7 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT | JSON parsing and serialization | N|
 | [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.8.0 | MIT | YAML configuration file parsing | N |
 | [cxxopts](https://github.com/jarro2783/cxxopts) | 3.3.1 | MIT | Command line argument parsing | N |
-| [libusb](https://github.com/libusb/libusb) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
+| [libusb-cmake](https://github.com/libusb/libusb-cmake.git) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
 
 
 ## Project Structure
