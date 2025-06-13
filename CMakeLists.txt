@@ -36,6 +36,28 @@ include(cmake/cxxopts.cmake)
 include(cmake/yaml-cpp.cmake)
 include(cmake/libusb.cmake)
 
+# LGPL Compliance: Create source code availability notice
+file(WRITE ${CMAKE_BINARY_DIR}/licenses/SOURCE_CODE_NOTICE.txt
+"LGPL Source Code Availability Notice
+=====================================
+
+This software includes components licensed under the GNU Lesser General Public License (LGPL).
+Per LGPL requirements, the source code for these components is available as follows:
+
+Qt6 Framework:
+- Official source: https://download.qt.io/official_releases/qt/
+- License: LGPL v3
+- Used version: Qt ${Qt6_VERSION} (determined at build time)
+
+libusb:
+- Official source: https://github.com/libusb/libusb
+- License: LGPL v2.1+
+- Used version: v1.0.27
+- Git commit: See licenses/libusb/fetch_info.txt
+
+For a copy of the LGPL licenses, see the respective license files in this directory.
+")
+
 #add_link_options(
 #    -Wl,--gc-sections
 #)

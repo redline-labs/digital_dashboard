@@ -63,18 +63,16 @@ The application uses `config.yaml` for configuration. Key settings include:
 - Night mode and drive type preferences
 
 ## Third-Party Libraries
+The following libraries are fetched as part of a CMake step.  For complete license information, see the individual license files in the resulting `build/licenses/` directory. Patches (where applicable) are also available in the source directory under the `patches` directory, and also copied out to the `build/licenses` directory.
 
-| Library | Version | License | Purpose |
-|---------|---------|---------|---------|
-| [Qt6](https://www.qt.io/) | 6.x | LGPL v3 / Commercial | GUI framework and multimedia support |
-| [spdlog](https://github.com/gabime/spdlog) | 1.15.3 | MIT | Fast C++ logging library |
-| [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT | JSON parsing and serialization |
-| [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.8.0 | MIT | YAML configuration file parsing |
-| [cxxopts](https://github.com/jarro2783/cxxopts) | 3.3.1 | MIT | Command line argument parsing |
-| [libusb](https://github.com/libusb/libusb) | 1.0.27 | LGPL v2.1+ | USB device communication |
-
-### Patches
-- **spdlog**: Configuration (tweakme.h) for the default logger.
+| Library | Version | License | Purpose | Patched |
+|---------|---------|---------|---------|---------|
+| [Qt6](https://www.qt.io/) | 6.x | LGPL v3 / Commercial | GUI framework and multimedia support | N |
+| [spdlog](https://github.com/gabime/spdlog) | 1.15.3 | MIT | Fast C++ logging library | Y |
+| [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT | JSON parsing and serialization | N|
+| [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.8.0 | MIT | YAML configuration file parsing | N |
+| [cxxopts](https://github.com/jarro2783/cxxopts) | 3.3.1 | MIT | Command line argument parsing | N |
+| [libusb](https://github.com/libusb/libusb) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
 
 
 ## Project Structure
@@ -95,4 +93,4 @@ mercedes_dashboard/
 
 ## License
 
-See `COPYING` for license information. 
+See `COPYING` for license information.
