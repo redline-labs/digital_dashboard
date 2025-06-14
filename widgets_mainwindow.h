@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <QHBoxLayout>
 #include <QSlider>
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class WidgetsMainWindow; }
@@ -14,6 +15,9 @@ QT_END_NAMESPACE
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "sparkline/sparkline.h"
 #include "mercedes_190e_telltales/battery_telltale.h"
+
+// Zenoh includes
+#include "zenoh.hxx"
 
 class WidgetsMainWindow : public QMainWindow
 {
@@ -30,8 +34,12 @@ private slots:
     void onSpeedChanged(int value);
     void onRpmChanged(int value);
     void onBatteryTelltaleToggled(bool checked);
+    void onSpeedDataReceived(double speedMps);
 
 private:
+    // Private methods
+    void initializeZenoh();
+    
     Ui::WidgetsMainWindow *ui;
     TachometerWidget *mTachometer;
     SpeedometerWidgetMPH *mSpeedometer;
@@ -44,5 +52,9 @@ private:
     QHBoxLayout *mMainLayout;
     QTimer *mTimerRPM;
     QTimer *mTimerMPH;
+    
+    // Zenoh-related members
+    std::unique_ptr<zenoh::Session> mZenohSession;
+    std::unique_ptr<zenoh::Subscriber<void>> mSpeedSubscriber;
 };
 #endif // WidgetsMainWindow_H

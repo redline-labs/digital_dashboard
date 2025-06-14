@@ -4,6 +4,8 @@
 #include <QVBoxLayout> // For controls layout if needed
 #include <QTimer> // For QTimer
 #include <QCheckBox> // For battery telltale toggle
+#include <QMetaObject> // For Qt::QueuedConnection
+#include <spdlog/spdlog.h> // For logging
 
 WidgetsMainWindow::WidgetsMainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -79,6 +81,9 @@ WidgetsMainWindow::WidgetsMainWindow(QWidget *parent)
     onSpeedChanged(mSpeedSlider->value());
     onRpmChanged(mRpmSlider->value());
     
+    // Initialize Zenoh session and subscriber
+    initializeZenoh();
+    
     setWindowTitle("Mercedes Instrument Cluster");
     resize(1000, 400); // Adjusted size for two gauges
 }
@@ -126,4 +131,71 @@ void WidgetsMainWindow::updateSpeedometer()
 {
     // Example: int newSpeed = mSpeedSlider->value() + (qrand() % 10 - 5);
     // if (mSpeedometer) mSpeedometer->setSpeed(newSpeed > 0 ? newSpeed : 0);
-} 
+}
+
+void WidgetsMainWindow::initializeZenoh()
+{
+    try {
+        // Create Zenoh configuration
+        auto config = zenoh::Config::create_default();
+        
+        // Open Zenoh session
+        mZenohSession = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(config)));
+        SPDLOG_INFO("Zenoh session opened successfully");
+        
+        // Create subscriber for vehicle speed
+        auto key_expr = zenoh::KeyExpr("vehicle/speed_mps");
+        
+        mSpeedSubscriber = std::make_unique<zenoh::Subscriber<void>>(
+            mZenohSession->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        // Convert payload to string and then to double
+                        const auto& payload = sample.get_payload();
+                        std::string speed_str = payload.as_string();
+                        double speed_mps = std::stod(speed_str);
+                        
+                        // Call slot via Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, "onSpeedDataReceived", 
+                                                Qt::QueuedConnection, 
+                                                Q_ARG(double, speed_mps));
+                        
+                        spdlog::debug("Received speed: {} m/s", speed_mps);
+                    } catch (const std::exception& e) {
+                        SPDLOG_ERROR("Error processing speed data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        spdlog::info("Zenoh speed subscriber created for key: vehicle/speed_mps");
+        
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Failed to initialize Zenoh: {}", e.what());
+        // Continue without Zenoh - the application can still function with manual sliders
+    }
+}
+
+void WidgetsMainWindow::onSpeedDataReceived(double speedMps)
+{
+    // Convert m/s to mph (1 m/s = 2.23694 mph)
+    double speedMph = speedMps * 2.23694;
+    
+    // Update the speedometer widget
+    if (mSpeedometer) {
+        mSpeedometer->setSpeed(static_cast<float>(speedMph));
+        spdlog::debug("Updated speedometer: {} mph (from {} m/s)", speedMph, speedMps);
+    }
+    
+    // Optional: Update the slider to reflect the received value
+    // Convert back to slider scale (0-1250 represents 0-125.0 MPH)
+    if (mSpeedSlider) {
+        int sliderValue = static_cast<int>(speedMph * 10.0);
+        sliderValue = std::min(std::max(sliderValue, 0), 1250); // Clamp to slider range
+        mSpeedSlider->blockSignals(true); // Prevent slider change from triggering onSpeedChanged
+        mSpeedSlider->setValue(sliderValue);
+        mSpeedSlider->blockSignals(false);
+    }
+}
