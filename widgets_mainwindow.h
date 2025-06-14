@@ -31,7 +31,6 @@ private slots:
     void updateTachometer();
     void updateSpeedometer();
     void updateSparkline(int value);
-    void onSpeedChanged(int value);
     void onRpmChanged(int value);
     void onBatteryTelltaleToggled(bool checked);
     void onSpeedDataReceived(double speedMps);
@@ -46,7 +45,6 @@ private:
     SparklineItem *mSparkline;
     BatteryTelltaleWidget *mBatteryTelltale;
     QSlider *mRpmSlider;
-    QSlider *mSpeedSlider;
     QSlider *mSparklineSlider;
     QWidget *mCentralWidget;
     QHBoxLayout *mMainLayout;

@@ -24,11 +24,6 @@ WidgetsMainWindow::WidgetsMainWindow(QWidget *parent)
 
     QLabel *speedLabel = new QLabel("MPH");
     speedoLayout->addWidget(speedLabel);
-    mSpeedSlider = new QSlider(Qt::Horizontal, this);
-    mSpeedSlider->setRange(0, 1250); // 0 to 125.0 MPH
-    mSpeedSlider->setValue(0);
-    speedoLayout->addWidget(mSpeedSlider);
-    connect(mSpeedSlider, &QSlider::valueChanged, this, &WidgetsMainWindow::onSpeedChanged);
     mMainLayout->addWidget(speedoContainer, 1);
 
     // --- Tachometer Section (Middle) ---
@@ -78,7 +73,6 @@ WidgetsMainWindow::WidgetsMainWindow(QWidget *parent)
     // Initialize sparkline with the slider's current value
     updateSparkline(mSparklineSlider->value());
     // Initialize other widgets too
-    onSpeedChanged(mSpeedSlider->value());
     onRpmChanged(mRpmSlider->value());
     
     // Initialize Zenoh session and subscriber
@@ -93,11 +87,7 @@ WidgetsMainWindow::~WidgetsMainWindow()
     // Qt handles child widget deletion automatically
 }
 
-void WidgetsMainWindow::onSpeedChanged(int value)
-{
-    if (mSpeedometer)
-        mSpeedometer->setSpeed(value / 10.0f);
-}
+
 
 void WidgetsMainWindow::onRpmChanged(int value)
 {
@@ -160,8 +150,7 @@ void WidgetsMainWindow::initializeZenoh()
                         QMetaObject::invokeMethod(this, "onSpeedDataReceived", 
                                                 Qt::QueuedConnection, 
                                                 Q_ARG(double, speed_mps));
-                        
-                        spdlog::debug("Received speed: {} m/s", speed_mps);
+
                     } catch (const std::exception& e) {
                         SPDLOG_ERROR("Error processing speed data: {}", e.what());
                     }
@@ -186,16 +175,5 @@ void WidgetsMainWindow::onSpeedDataReceived(double speedMps)
     // Update the speedometer widget
     if (mSpeedometer) {
         mSpeedometer->setSpeed(static_cast<float>(speedMph));
-        spdlog::debug("Updated speedometer: {} mph (from {} m/s)", speedMph, speedMps);
-    }
-    
-    // Optional: Update the slider to reflect the received value
-    // Convert back to slider scale (0-1250 represents 0-125.0 MPH)
-    if (mSpeedSlider) {
-        int sliderValue = static_cast<int>(speedMph * 10.0);
-        sliderValue = std::min(std::max(sliderValue, 0), 1250); // Clamp to slider range
-        mSpeedSlider->blockSignals(true); // Prevent slider change from triggering onSpeedChanged
-        mSpeedSlider->setValue(sliderValue);
-        mSpeedSlider->blockSignals(false);
     }
 }

@@ -153,3 +153,16 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     sparkline
 )
 
+# Add standalone speed publisher executable
+add_executable(speed_publisher
+    speed_publisher.cpp
+)
+
+target_link_libraries(speed_publisher PRIVATE
+    # Link spdlog
+    spdlog::spdlog
+    
+    # Link zenoh-cpp
+    zenohcxx::zenohc
+)
+
