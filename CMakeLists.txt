@@ -36,6 +36,7 @@ include(cmake/cxxopts.cmake)
 include(cmake/yaml-cpp.cmake)
 include(cmake/libusb.cmake)
 include(cmake/zenoh-c.cmake)
+include(cmake/zenoh-cpp.cmake)
 
 # LGPL Compliance: Create source code availability notice
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/SOURCE_CODE_NOTICE.txt
@@ -141,6 +142,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     
     # Link yaml-cpp (now fetched via FetchContent)
     yaml-cpp::yaml-cpp
+
+    zenohcxx::zenohc
 
     # Link the carplay widget library
     carplay_widget
