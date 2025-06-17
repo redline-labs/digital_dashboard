@@ -56,12 +56,43 @@ int main(int argc, char** argv)
 
     QApplication app(argc, argv);
 
+    // Create windows from configuration
+    std::vector<std::unique_ptr<MainWindow>> windows;
+    CarPlayWidget* carplay_widget = nullptr;
 
-    MainWindow main_window(cfg, args_result["libusb_debug"].as<bool>());
-    main_window.show();
+    if (cfg.windows.empty()) {
+        // Fallback: create a single window with legacy configuration
+        window_config_t fallback_window;
+        fallback_window.name = "main";
+        fallback_window.width = cfg.width_px;
+        fallback_window.height = cfg.height_px;
+        
+        auto main_window = std::make_unique<MainWindow>(cfg, fallback_window, args_result["libusb_debug"].as<bool>());
+        carplay_widget = main_window->getCarPlayWidget();
+        main_window->show();
+        windows.push_back(std::move(main_window));
+        
+        SPDLOG_INFO("Created fallback window '{}' ({}x{})", fallback_window.name, 
+                    fallback_window.width, fallback_window.height);
+    } else {
+        // Create configured windows
+        for (const auto& window_cfg : cfg.windows) {
+            auto main_window = std::make_unique<MainWindow>(cfg, window_cfg, args_result["libusb_debug"].as<bool>());
+            
+            // Check if this window has a CarPlay widget
+            if (!carplay_widget) {
+                carplay_widget = main_window->getCarPlayWidget();
+            }
+            
+            main_window->show();
+            windows.push_back(std::move(main_window));
+            
+            SPDLOG_INFO("Created window '{}' ({}x{}) with {} widgets", 
+                       window_cfg.name, window_cfg.width, window_cfg.height, window_cfg.widgets.size());
+        }
+    }
 
     // Only setup CarPlay audio if CarPlay widget exists
-    CarPlayWidget* carplay_widget = main_window.getCarPlayWidget();
     if (carplay_widget) {
         QAudioFormat format;
         format.setSampleRate(44100);
@@ -98,11 +129,11 @@ int main(int argc, char** argv)
         
         SPDLOG_INFO("CarPlay widget configured and started.");
     } else {
-        SPDLOG_INFO("No CarPlay widget configured in YAML.");
+        SPDLOG_INFO("No CarPlay widget configured in any window.");
     }
 
 
-    SPDLOG_INFO("Starting.");
+    SPDLOG_INFO("Starting with {} windows.", windows.size());
     app.exec();  // Blocking.
 
 

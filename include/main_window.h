@@ -21,16 +21,20 @@ class MainWindow : public QWidget
     Q_OBJECT
 
   public:
-    MainWindow(const app_config_t& app_cfg, bool libusb_debug = false);
+    MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg, bool libusb_debug = false);
 
     // Provide direct access to the CarPlay widget for integrated decoding
     CarPlayWidget* getCarPlayWidget();
+
+    // Get the window name for identification
+    const std::string& getWindowName() const;
 
   private:
     void createWidgetsFromConfig();
     QWidget* createWidget(const widget_config_t& widget_config);
 
     app_config_t _app_cfg;
+    window_config_t _window_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
     CarPlayWidget* _carplay_widget; // Keep reference for external access
 };  // class MainWindow

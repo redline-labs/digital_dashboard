@@ -79,11 +79,13 @@ struct widget_config_t {
 
 struct window_config_t {
     window_config_t() :
+        name{},
         width{800},
         height{480},
         widgets{}
     {}
 
+    std::string name;
     uint16_t width;
     uint16_t height;
     std::vector<widget_config_t> widgets;
@@ -109,7 +111,7 @@ struct app_config_t {
         mic_type{MicType::OS},
         phone_config{},
         audio_device_buffer_size{8192},
-        window{}
+        windows{}
     {}
 
     uint16_t width_px;
@@ -132,8 +134,8 @@ struct app_config_t {
     // Host settings.
     uint32_t audio_device_buffer_size;
 
-    // Window layout configuration
-    window_config_t window;
+    // Window layout configuration - support multiple windows
+    std::vector<window_config_t> windows;
 };
 
 

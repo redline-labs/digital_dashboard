@@ -4,18 +4,14 @@
 #include <QDebug>
 
 
-MainWindow::MainWindow(const app_config_t& app_cfg, bool libusb_debug):
+MainWindow::MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg, bool libusb_debug):
     QWidget{},
     _app_cfg{app_cfg},
+    _window_cfg{window_cfg},
     _carplay_widget{nullptr}
 {
-    setWindowTitle("Mercedes Dash");
-    
-    // Use window size from config if specified, otherwise fall back to legacy config
-    uint16_t window_width = _app_cfg.window.width > 0 ? _app_cfg.window.width : _app_cfg.width_px;
-    uint16_t window_height = _app_cfg.window.height > 0 ? _app_cfg.window.height : _app_cfg.height_px;
-    
-    setFixedSize(window_width, window_height);
+    setWindowTitle(QString("Mercedes Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
+    setFixedSize(_window_cfg.width, _window_cfg.height);
 
     // Create widgets from configuration
     createWidgetsFromConfig();
@@ -23,7 +19,7 @@ MainWindow::MainWindow(const app_config_t& app_cfg, bool libusb_debug):
 
 void MainWindow::createWidgetsFromConfig()
 {
-    for (const auto& widget_config : _app_cfg.window.widgets) {
+    for (const auto& widget_config : _window_cfg.widgets) {
         QWidget* widget = createWidget(widget_config);
         if (widget) {
             // Set parent and position
@@ -34,11 +30,12 @@ void MainWindow::createWidgetsFromConfig()
             // Store the widget
             _widgets.emplace_back(std::unique_ptr<QWidget>(widget));
             
-            spdlog::info("Created widget '{}' at ({}, {}) with size {}x{}", 
+            spdlog::info("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'", 
                         widget_config.type, widget_config.x, widget_config.y, 
-                        widget_config.width, widget_config.height);
+                        widget_config.width, widget_config.height, _window_cfg.name);
         } else {
-            spdlog::error("Failed to create widget of type '{}'", widget_config.type);
+            spdlog::error("Failed to create widget of type '{}' in window '{}'", 
+                         widget_config.type, _window_cfg.name);
         }
     }
 }
@@ -76,6 +73,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
 CarPlayWidget* MainWindow::getCarPlayWidget()
 {
     return _carplay_widget;
+}
+
+const std::string& MainWindow::getWindowName() const
+{
+    return _window_cfg.name;
 }
 
 #include "moc_main_window.cpp"

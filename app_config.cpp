@@ -39,6 +39,7 @@ struct convert<window_config_t> {
     static Node encode(const window_config_t& rhs)
     {
         Node node = {};
+        node["name"] = rhs.name;
         node["width"] = rhs.width;
         node["height"] = rhs.height;
         node["widgets"] = rhs.widgets;
@@ -49,6 +50,7 @@ struct convert<window_config_t> {
     {
         if (!node.IsMap()) return false;
 
+        if (node["name"]) rhs.name = node["name"].as<std::string>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
         if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
@@ -81,7 +83,7 @@ struct convert<app_config_t> {
 
         // TODO: phone config;
         node["audio_device_buffer_size"] = rhs.audio_device_buffer_size;
-        node["window"] = rhs.window;
+        node["windows"] = rhs.windows;
 
         return node;
     }
@@ -108,9 +110,16 @@ struct convert<app_config_t> {
 
         rhs.audio_device_buffer_size = node["audio_device_buffer_size"].as<uint32_t>();
 
-        // Parse window configuration if it exists
-        if (node["window"]) {
-            rhs.window = node["window"].as<window_config_t>();
+        // Parse windows configuration - support both single window (legacy) and multiple windows
+        if (node["windows"]) {
+            rhs.windows = node["windows"].as<std::vector<window_config_t>>();
+        } else if (node["window"]) {
+            // Legacy single window support - convert to windows array
+            window_config_t legacy_window = node["window"].as<window_config_t>();
+            if (legacy_window.name.empty()) {
+                legacy_window.name = "main";
+            }
+            rhs.windows.push_back(legacy_window);
         }
 
         return true;

@@ -22,42 +22,48 @@ phone_config:
 # Audio device buffer size (bytes) on the host.
 audio_device_buffer_size: 16384
 
-# Window layout configuration
-window:
-  width: 1024
-  height: 768
-  widgets:
-    # Mercedes 190E Speedometer on the left
-    - type: "speedometer"
-      x: 50
-      y: 100
-      width: 300
-      height: 300
+# Multi-window layout configuration
+windows:
+  # Instrument cluster window with gauges and telltales
+  - name: "instrument_cluster"
+    width: 800
+    height: 450
+    widgets:
+      # Mercedes 190E Speedometer on the left
+      - type: "speedometer"
+        x: 50
+        y: 75
+        width: 250
+        height: 250
+      
+      # Mercedes 190E Tachometer on the right
+      - type: "tachometer" 
+        x: 350
+        y: 75
+        width: 250
+        height: 250
+      
+      # Battery telltale indicator in top left
+      - type: "battery_telltale"
+        x: 50
+        y: 25
+        width: 30
+        height: 30
+      
+      # Sparkline for engine data on top
+      - type: "sparkline"
+        x: 300
+        y: 25
+        width: 200
+        height: 40
 
-    # Mercedes 190E Tachometer on the right
-    - type: "tachometer"
-      x: 450
-      y: 100
-      width: 300
-      height: 300
-
-    # Battery telltale indicator in top left
-    - type: "battery_telltale"
-      x: 50
-      y: 50
-      width: 30
-      height: 30
-
-    # Sparkline for engine data on top
-    - type: "sparkline"
-      x: 350
-      y: 50
-      width: 200
-      height: 40
-
-    # CarPlay widget in bottom area (optional - remove if not needed)
-    - type: "carplay"
-      x: 150
-      y: 450
-      width: 800
-      height: 350
+  # Dedicated CarPlay window
+  - name: "carplay"
+    width: 800
+    height: 600
+    widgets:
+      - type: "carplay"
+        x: 0
+        y: 0
+        width: 800
+        height: 600
