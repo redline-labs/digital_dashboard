@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 enum class DriveType
 {
@@ -60,6 +61,34 @@ struct phone_config_t
     android_auto_phone_config_t android_auto;
 };
 
+struct widget_config_t {
+    widget_config_t() :
+        type{},
+        x{0},
+        y{0},
+        width{100},
+        height{100}
+    {}
+
+    std::string type;
+    uint16_t x;
+    uint16_t y;
+    uint16_t width;
+    uint16_t height;
+};
+
+struct window_config_t {
+    window_config_t() :
+        width{800},
+        height{480},
+        widgets{}
+    {}
+
+    uint16_t width;
+    uint16_t height;
+    std::vector<widget_config_t> widgets;
+};
+
 struct app_config_t {
 
     app_config_t() :
@@ -79,7 +108,8 @@ struct app_config_t {
         wifi_type{WiFiType::WiFi_5_GHz},
         mic_type{MicType::OS},
         phone_config{},
-        audio_device_buffer_size{8192}
+        audio_device_buffer_size{8192},
+        window{}
     {}
 
     uint16_t width_px;
@@ -101,6 +131,9 @@ struct app_config_t {
 
     // Host settings.
     uint32_t audio_device_buffer_size;
+
+    // Window layout configuration
+    window_config_t window;
 };
 
 

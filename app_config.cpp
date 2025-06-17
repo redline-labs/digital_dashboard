@@ -8,6 +8,56 @@
 namespace YAML {
 
 template<>
+struct convert<widget_config_t> {
+    static Node encode(const widget_config_t& rhs)
+    {
+        Node node = {};
+        node["type"] = rhs.type;
+        node["x"] = rhs.x;
+        node["y"] = rhs.y;
+        node["width"] = rhs.width;
+        node["height"] = rhs.height;
+        return node;
+    }
+
+    static bool decode(const Node& node, widget_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+
+        if (node["type"]) rhs.type = node["type"].as<std::string>();
+        if (node["x"]) rhs.x = node["x"].as<uint16_t>();
+        if (node["y"]) rhs.y = node["y"].as<uint16_t>();
+        if (node["width"]) rhs.width = node["width"].as<uint16_t>();
+        if (node["height"]) rhs.height = node["height"].as<uint16_t>();
+
+        return true;
+    }
+};
+
+template<>
+struct convert<window_config_t> {
+    static Node encode(const window_config_t& rhs)
+    {
+        Node node = {};
+        node["width"] = rhs.width;
+        node["height"] = rhs.height;
+        node["widgets"] = rhs.widgets;
+        return node;
+    }
+
+    static bool decode(const Node& node, window_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+
+        if (node["width"]) rhs.width = node["width"].as<uint16_t>();
+        if (node["height"]) rhs.height = node["height"].as<uint16_t>();
+        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
+
+        return true;
+    }
+};
+
+template<>
 struct convert<app_config_t> {
     static Node encode(const app_config_t& rhs)
     {
@@ -30,6 +80,8 @@ struct convert<app_config_t> {
         //node["mic_type"]            = static_cast<uint32_t>(rhs.mic_type);
 
         // TODO: phone config;
+        node["audio_device_buffer_size"] = rhs.audio_device_buffer_size;
+        node["window"] = rhs.window;
 
         return node;
     }
@@ -56,11 +108,16 @@ struct convert<app_config_t> {
 
         rhs.audio_device_buffer_size = node["audio_device_buffer_size"].as<uint32_t>();
 
+        // Parse window configuration if it exists
+        if (node["window"]) {
+            rhs.window = node["window"].as<window_config_t>();
+        }
+
         return true;
     }
 };
 
-}   // namespace yaml
+}   // namespace YAML
 
 
 app_config_t load_app_config(const std::string& config_filepath)

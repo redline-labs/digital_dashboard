@@ -8,6 +8,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2" CACHE STRING "")
 
+# Workaround for macOS
+SET(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
+
 # project name
 project(carplay_cpp)
 
@@ -118,7 +121,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
-    widgets_mainwindow.cpp
+    #widgets_mainwindow.cpp
     resources.qrc
 )
 

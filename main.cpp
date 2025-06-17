@@ -1,6 +1,5 @@
 #include "app_config.h"
 #include "main_window.h"
-#include "widgets_mainwindow.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
@@ -61,46 +60,46 @@ int main(int argc, char** argv)
     MainWindow main_window(cfg, args_result["libusb_debug"].as<bool>());
     main_window.show();
 
-    QAudioFormat format;
-    format.setSampleRate(44100);
-    format.setChannelCount(2);
-    format.setSampleFormat(QAudioFormat::Int16);
+    // Only setup CarPlay audio if CarPlay widget exists
+    CarPlayWidget* carplay_widget = main_window.getCarPlayWidget();
+    if (carplay_widget) {
+        QAudioFormat format;
+        format.setSampleRate(44100);
+        format.setChannelCount(2);
+        format.setSampleFormat(QAudioFormat::Int16);
 
-    const auto devices = QMediaDevices::audioOutputs();
-    for (const QAudioDevice &device : devices)
-    {
-        SPDLOG_DEBUG("Found audio device: {}",  device.description().toStdString());
+        const auto devices = QMediaDevices::audioOutputs();
+        for (const QAudioDevice &device : devices)
+        {
+            SPDLOG_DEBUG("Found audio device: {}",  device.description().toStdString());
+        }
+
+        QAudioDevice info(QMediaDevices::defaultAudioOutput());
+        if (!info.isFormatSupported(format)) {
+            SPDLOG_ERROR("Raw audio format not supported by backend, cannot play audio.");
+            // TODO: Should we bomb out?
+        }
+
+        SPDLOG_INFO("Using audio output: {}", info.description().toStdString());
+
+        QAudioSink audio(format);
+        SPDLOG_DEBUG("Default audio sink buffer size = {}, setting to {}.", audio.bufferSize(), cfg.audio_device_buffer_size);
+        audio.setBufferSize(cfg.audio_device_buffer_size);
+
+        auto audio_buffer = audio.start();
+
+        // Register audio callback with the integrated CarPlay widget
+        carplay_widget->register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
+            audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
+        });
+
+        // Start the integrated dongle functionality
+        carplay_widget->start_dongle();
+        
+        SPDLOG_INFO("CarPlay widget configured and started.");
+    } else {
+        SPDLOG_INFO("No CarPlay widget configured in YAML.");
     }
-
-    QAudioDevice info(QMediaDevices::defaultAudioOutput());
-    if (!info.isFormatSupported(format)) {
-        SPDLOG_ERROR("Raw audio format not supported by backend, cannot play audio.");
-        // TODO: Should we bomb out?
-    }
-
-    SPDLOG_INFO("Using audio output: {}", info.description().toStdString());
-
-    QAudioSink audio(format);
-    SPDLOG_DEBUG("Default audio sink buffer size = {}, setting to {}.", audio.bufferSize(), cfg.audio_device_buffer_size);
-    audio.setBufferSize(cfg.audio_device_buffer_size);
-
-    auto audio_buffer = audio.start();
-
-    // Register audio callback with the integrated CarPlay widget
-    main_window.getCarPlayWidget().register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
-        audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
-    });
-
-    // Start the integrated dongle functionality
-    main_window.getCarPlayWidget().start_dongle();
-
-
-    // Add in the widgets demo as well.
-    WidgetsMainWindow widgets_main_window;
-    widgets_main_window.show();
-
-
-
 
 
     SPDLOG_INFO("Starting.");
@@ -109,9 +108,11 @@ int main(int argc, char** argv)
 
     SPDLOG_WARN("Exit received, tearing down.");
 
-    // Stop the integrated decoder and dongle
-    main_window.getCarPlayWidget().stop_decoder();
-    main_window.getCarPlayWidget().stop_dongle();
+    // Stop the integrated decoder and dongle if CarPlay widget exists
+    if (carplay_widget) {
+        carplay_widget->stop_decoder();
+        carplay_widget->stop_dongle();
+    }
 
     return 0u;
 }
