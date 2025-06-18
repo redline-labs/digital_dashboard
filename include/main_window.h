@@ -11,6 +11,10 @@
 #include <QWidget>
 #include <vector>
 #include <memory>
+#include <map>
+
+// Zenoh includes
+#include "zenoh.hxx"
 
 // Forward declaration for FFmpeg
 struct AVFrame;
@@ -22,6 +26,7 @@ class MainWindow : public QWidget
 
   public:
     MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg, bool libusb_debug = false);
+    ~MainWindow();
 
     // Provide direct access to the CarPlay widget for integrated decoding
     CarPlayWidget* getCarPlayWidget();
@@ -29,14 +34,33 @@ class MainWindow : public QWidget
     // Get the window name for identification
     const std::string& getWindowName() const;
 
+  private slots:
+    // Zenoh data reception slots (thread-safe via Qt's queued connections)
+    void onSpeedDataReceived(double speedMps);
+    void onRpmDataReceived(double rpm);
+    void onSparklineDataReceived(double value);
+    void onBatteryTelltaleDataReceived(bool asserted);
+
   private:
     void createWidgetsFromConfig();
     QWidget* createWidget(const widget_config_t& widget_config);
+    void initializeZenoh();
+    void createZenohSubscription(const std::string& zenoh_key, QWidget* widget, const std::string& widget_type);
 
     app_config_t _app_cfg;
     window_config_t _window_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
     CarPlayWidget* _carplay_widget; // Keep reference for external access
+
+    // Zenoh-related members
+    std::unique_ptr<zenoh::Session> _zenoh_session;
+    std::vector<std::unique_ptr<zenoh::Subscriber<void>>> _zenoh_subscribers;
+    
+    // Widget mappings for data updates
+    std::map<std::string, SpeedometerWidgetMPH*> _speedometer_widgets;
+    std::map<std::string, TachometerWidget*> _tachometer_widgets;
+    std::map<std::string, SparklineItem*> _sparkline_widgets;
+    std::map<std::string, BatteryTelltaleWidget*> _battery_telltale_widgets;
 };  // class MainWindow
 
 

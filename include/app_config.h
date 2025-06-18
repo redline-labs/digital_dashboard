@@ -67,7 +67,8 @@ struct widget_config_t {
         x{0},
         y{0},
         width{100},
-        height{100}
+        height{100},
+        zenoh_key{}
     {}
 
     std::string type;
@@ -75,6 +76,7 @@ struct widget_config_t {
     uint16_t y;
     uint16_t width;
     uint16_t height;
+    std::string zenoh_key;  // Optional Zenoh subscription key for real-time data
 };
 
 struct window_config_t {

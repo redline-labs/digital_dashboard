@@ -17,6 +17,9 @@ struct convert<widget_config_t> {
         node["y"] = rhs.y;
         node["width"] = rhs.width;
         node["height"] = rhs.height;
+        if (!rhs.zenoh_key.empty()) {
+            node["zenoh_key"] = rhs.zenoh_key;
+        }
         return node;
     }
 
@@ -29,6 +32,7 @@ struct convert<widget_config_t> {
         if (node["y"]) rhs.y = node["y"].as<uint16_t>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         return true;
     }

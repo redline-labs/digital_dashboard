@@ -22,42 +22,46 @@ phone_config:
 # Audio device buffer size (bytes) on the host.
 audio_device_buffer_size: 16384
 
-# Multi-window layout configuration
+# Multi-window layout configuration with Zenoh real-time data subscriptions
 windows:
   # Instrument cluster window with gauges and telltales
   - name: "instrument_cluster"
     width: 800
     height: 450
     widgets:
-      # Mercedes 190E Speedometer on the left
+      # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
       - type: "speedometer"
         x: 50
         y: 75
         width: 250
         height: 250
+        zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
       
-      # Mercedes 190E Tachometer on the right
+      # Mercedes 190E Tachometer on the right - subscribes to engine RPM
       - type: "tachometer" 
         x: 350
         y: 75
         width: 250
         height: 250
+        zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
       
-      # Battery telltale indicator in top left
+      # Battery telltale indicator in top left - subscribes to battery warning
       - type: "battery_telltale"
         x: 50
         y: 25
         width: 30
         height: 30
+        zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
       
-      # Sparkline for engine data on top
+      # Sparkline for engine data on top - subscribes to engine temperature
       - type: "sparkline"
         x: 300
         y: 25
         width: 200
         height: 40
+        zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
 
-  # Dedicated CarPlay window
+  # Dedicated CarPlay window (no Zenoh subscription needed)
   - name: "carplay"
     width: 800
     height: 600

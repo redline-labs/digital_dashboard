@@ -1,0 +1,175 @@
+#include <iostream>
+#include <chrono>
+#include <thread>
+#include <cmath>
+#include <string>
+#include <csignal>
+#include <cstdlib>
+#include <spdlog/spdlog.h>
+#include "zenoh.hxx"
+
+class TestDataPublisher {
+private:
+    std::unique_ptr<zenoh::Session> mSession;
+    std::unique_ptr<zenoh::Publisher> mSpeedPublisher;
+    std::unique_ptr<zenoh::Publisher> mRpmPublisher;
+    std::unique_ptr<zenoh::Publisher> mTemperaturePublisher;
+    std::unique_ptr<zenoh::Publisher> mBatteryWarningPublisher;
+    bool mRunning;
+    
+    // Simulation parameters
+    static constexpr double PUBLISH_RATE_HZ = 30.0; // 10 Hz
+    static constexpr double SPEED_CYCLE_SEC = 8.0;  // Speed cycle period
+    static constexpr double RPM_CYCLE_SEC = 6.0;    // RPM cycle period
+    static constexpr double TEMP_CYCLE_SEC = 12.0;  // Temperature cycle period
+    static constexpr double BATTERY_CYCLE_SEC = 20.0; // Battery warning cycle period
+    
+public:
+    TestDataPublisher() : mRunning(false) {}
+    
+    ~TestDataPublisher() {
+        stop();
+    }
+    
+    bool initialize() {
+        try {
+            // Create Zenoh configuration
+            auto config = zenoh::Config::create_default();
+            
+            // Open Zenoh session
+            mSession = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(config)));
+            SPDLOG_INFO("Zenoh session opened successfully");
+            
+            // Create publishers for different data types
+            mSpeedPublisher = std::make_unique<zenoh::Publisher>(
+                mSession->declare_publisher(zenoh::KeyExpr("vehicle/speed_mps"))
+            );
+            
+            mRpmPublisher = std::make_unique<zenoh::Publisher>(
+                mSession->declare_publisher(zenoh::KeyExpr("vehicle/engine/rpm"))
+            );
+            
+            mTemperaturePublisher = std::make_unique<zenoh::Publisher>(
+                mSession->declare_publisher(zenoh::KeyExpr("vehicle/engine/temperature_celsius"))
+            );
+            
+            mBatteryWarningPublisher = std::make_unique<zenoh::Publisher>(
+                mSession->declare_publisher(zenoh::KeyExpr("vehicle/telltales/battery_warning"))
+            );
+            
+            SPDLOG_INFO("All test data publishers created successfully");
+            return true;
+            
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Failed to initialize Zenoh: {}", e.what());
+            return false;
+        }
+    }
+    
+    void start() {
+        if (!mSession) {
+            SPDLOG_ERROR("Publishers not initialized. Call initialize() first.");
+            return;
+        }
+        
+        mRunning = true;
+        SPDLOG_INFO("Starting test data publisher at {} Hz", PUBLISH_RATE_HZ);
+        SPDLOG_INFO("Publishing to the following keys:");
+        SPDLOG_INFO("  - vehicle/speed_mps (speed data)");
+        SPDLOG_INFO("  - vehicle/engine/rpm (RPM data)");
+        SPDLOG_INFO("  - vehicle/engine/temperature_celsius (temperature data)");
+        SPDLOG_INFO("  - vehicle/telltales/battery_warning (battery warning status)");
+        
+        const auto sleep_duration = std::chrono::milliseconds(
+            static_cast<int>(1000.0 / PUBLISH_RATE_HZ)
+        );
+        
+        auto start_time = std::chrono::steady_clock::now();
+        
+        while (mRunning) {
+            auto current_time = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                current_time - start_time
+            ).count() / 1000.0; // Convert to seconds
+            
+            // Generate simulated vehicle data
+            generateAndPublishData(elapsed);
+            
+            // Sleep to maintain the desired publish rate
+            std::this_thread::sleep_for(sleep_duration);
+        }
+        
+        SPDLOG_INFO("Test data publisher stopped");
+    }
+    
+    void stop() {
+        mRunning = false;
+    }
+    
+private:
+    void generateAndPublishData(double elapsed) {
+        try {
+            // Vehicle speed (0-35 m/s, sine wave pattern)
+            double speed_phase = (elapsed / SPEED_CYCLE_SEC) * 2.0 * M_PI;
+            double speed_mps = 17.5 * (1.0 + std::sin(speed_phase)); // 0-35 m/s
+            publishData(mSpeedPublisher.get(), std::to_string(speed_mps));
+            
+            // Engine RPM (800-6000 RPM, different sine wave)
+            double rpm_phase = (elapsed / RPM_CYCLE_SEC) * 2.0 * M_PI;
+            double rpm = 3400 + 2600 * std::sin(rpm_phase); // 800-6000 RPM
+            publishData(mRpmPublisher.get(), std::to_string(rpm));
+            
+            // Engine temperature (60-120°C, slower variation)
+            double temp_phase = (elapsed / TEMP_CYCLE_SEC) * 2.0 * M_PI;
+            double temperature = 30 + 30 * std::sin(temp_phase); // 60-120°C
+            publishData(mTemperaturePublisher.get(), std::to_string(temperature));
+            
+            // Battery warning (periodic toggle)
+            double battery_phase = (elapsed / BATTERY_CYCLE_SEC) * 2.0 * M_PI;
+            bool battery_warning = std::sin(battery_phase) > 0.8; // Occasional warning
+            publishData(mBatteryWarningPublisher.get(), battery_warning ? "true" : "false");
+            
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Failed to generate/publish data: {}", e.what());
+        }
+    }
+    
+    void publishData(zenoh::Publisher* publisher, const std::string& data) {
+        if (!publisher) return;
+        
+        try {
+            auto payload = zenoh::Bytes(data);
+            publisher->put(std::move(payload));
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Failed to publish data '{}': {}", data, e.what());
+        }
+    }
+};
+
+int main(int argc, char* argv[]) {
+    // Set up logging
+    spdlog::set_level(spdlog::level::info);
+    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+    
+    SPDLOG_INFO("Starting Mercedes Dashboard Test Data Publisher");
+    SPDLOG_INFO("This will publish simulated vehicle data to demonstrate real-time widget updates");
+    SPDLOG_INFO("Press Ctrl+C to stop...");
+    
+    TestDataPublisher publisher;
+    
+    if (!publisher.initialize()) {
+        SPDLOG_ERROR("Failed to initialize publisher. Exiting.");
+        return -1;
+    }
+    
+    // Set up signal handling for graceful shutdown
+    std::signal(SIGINT, [](int signal) {
+        SPDLOG_INFO("Received interrupt signal. Shutting down...");
+        std::exit(0);
+    });
+    
+    // Start publishing (this will run until interrupted)
+    publisher.start();
+    
+    return 0;
+} 

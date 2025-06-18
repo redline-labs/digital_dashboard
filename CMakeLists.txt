@@ -156,12 +156,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     sparkline
 )
 
-# Add standalone speed publisher executable
-add_executable(speed_publisher
-    speed_publisher.cpp
+# Add comprehensive test data publisher executable
+add_executable(test_data_publisher
+    test_data_publisher.cpp
 )
 
-target_link_libraries(speed_publisher PRIVATE
+target_link_libraries(test_data_publisher PRIVATE
     # Link spdlog
     spdlog::spdlog
     
