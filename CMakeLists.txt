@@ -8,8 +8,8 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2" CACHE STRING "")
 
-# Workaround for macOS
-SET(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
+# Set macOS deployment target to match system
+SET(CMAKE_OSX_DEPLOYMENT_TARGET 15.4)
 
 # project name
 project(carplay_cpp)
@@ -41,27 +41,12 @@ include(cmake/libusb.cmake)
 include(cmake/zenoh-c.cmake)
 include(cmake/zenoh-cpp.cmake)
 
+# Create a common logging interface to avoid duplicate spdlog linking
+add_library(common_logging INTERFACE)
+target_link_libraries(common_logging INTERFACE spdlog::spdlog)
+
 # LGPL Compliance: Create source code availability notice
-file(WRITE ${CMAKE_BINARY_DIR}/licenses/SOURCE_CODE_NOTICE.txt
-"LGPL Source Code Availability Notice
-=====================================
-
-This software includes components licensed under the GNU Lesser General Public License (LGPL).
-Per LGPL requirements, the source code for these components is available as follows:
-
-Qt6 Framework:
-- Official source: https://download.qt.io/official_releases/qt/
-- License: LGPL v3
-- Used version: Qt ${Qt6_VERSION} (determined at build time)
-
-libusb:
-- Official source: https://github.com/libusb/libusb
-- License: LGPL v2.1+
-- Used version: v1.0.27
-- Git commit: See licenses/libusb/fetch_info.txt
-
-For a copy of the LGPL licenses, see the respective license files in this directory.
-")
+file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)
 
 #add_link_options(
 #    -Wl,--gc-sections
@@ -134,8 +119,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::MultimediaWidgets
     Qt6::Svg
     
-    # Link spdlog (now fetched via FetchContent)
-    spdlog::spdlog
+    # Link common logging interface (wraps spdlog)
+    common_logging
     
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json
@@ -162,8 +147,8 @@ add_executable(test_data_publisher
 )
 
 target_link_libraries(test_data_publisher PRIVATE
-    # Link spdlog
-    spdlog::spdlog
+    # Link common logging interface (wraps spdlog)
+    common_logging
     
     # Link zenoh-cpp
     zenohcxx::zenohc

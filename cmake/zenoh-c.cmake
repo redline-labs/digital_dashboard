@@ -1,3 +1,6 @@
+# Set deployment target for Rust builds (zenoh-c uses Cargo) before fetching
+set(ENV{MACOSX_DEPLOYMENT_TARGET} ${CMAKE_OSX_DEPLOYMENT_TARGET})
+
 # Fetch zenoh-c
 FetchContent_Declare(
     zenohc
