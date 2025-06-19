@@ -4,6 +4,12 @@
 #include "touch_action.h"
 #include "message.h"
 #include "app_config.h"
+#include "device_step.h"
+
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QAudioSink>
+#include <QMediaDevices>
 
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
@@ -25,27 +31,6 @@ struct AVPacket;
 
 // Forward declarations for libusb to keep things tidy.
 struct libusb_device_handle;
-
-enum class DeviceStep
-{
-  Init,
-  SendDPI,
-  SendOpen,
-  SendNightMode,
-  SendDriveHand,
-  SendChargeMode,
-  SendBoxName,
-  SendBoxSettings,
-  SendWiFiEnable,
-  SendWiFiType,
-  SendMicType,
-  SendAudioTransferMode,
-  SendWiFiConnect,
-
-  Done,
-  Fail,
-};
-
 
 
 class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions

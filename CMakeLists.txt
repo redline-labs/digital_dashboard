@@ -94,7 +94,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 qt_standard_project_setup()
 
 
@@ -115,9 +115,6 @@ qt_add_executable(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Widgets
-    Qt6::Multimedia
-    Qt6::MultimediaWidgets
-    Qt6::Svg
     
     # Link common logging interface (wraps spdlog)
     common_logging

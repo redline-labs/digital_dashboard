@@ -5,12 +5,13 @@ cmake_minimum_required(VERSION 3.10)
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
 find_package(OpenGL REQUIRED)
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets Multimedia)
 
 
 # Create the library with all the carplay source files
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
+    libusb_helpers.cpp
     message.cpp
     opengl_shaders.cpp
 )
@@ -26,11 +27,7 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavcodec
-    libswscale
-    libavutil
 )
-
-
 
 # Link required libraries to this widget
 target_link_libraries(${CARPLAY_WIDGET_LIB} 
@@ -41,6 +38,9 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::Widgets
         Qt6::OpenGL
         Qt6::OpenGLWidgets
+        Qt6::Multimedia
+
+
         ${OPENGL_LIBRARIES}
         # Link nlohmann/json (now available from parent CMakeLists.txt)
         nlohmann_json::nlohmann_json

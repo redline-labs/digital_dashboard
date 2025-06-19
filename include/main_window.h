@@ -45,7 +45,7 @@ class MainWindow : public QWidget
     void createWidgetsFromConfig();
     QWidget* createWidget(const widget_config_t& widget_config);
     void initializeZenoh();
-    void createZenohSubscription(const std::string& zenoh_key, QWidget* widget, const std::string& widget_type);
+    void createZenohSubscription(const std::string& zenoh_key, const std::string& widget_type);
 
     app_config_t _app_cfg;
     window_config_t _window_cfg;

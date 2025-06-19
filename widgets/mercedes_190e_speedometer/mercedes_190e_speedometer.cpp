@@ -3,7 +3,7 @@
 #include <QFontMetrics>
 #include <QDebug> // For font loading messages
 
-#include <cmath> // For std::sin, std::cos, M_PI
+#include <cmath>
 #include <numbers>
 #include <vector> // For std::vector
 
@@ -16,8 +16,6 @@ constexpr float degreesToRadians(float degrees)
 SpeedometerWidgetMPH::SpeedometerWidgetMPH(QWidget *parent)
     : QWidget(parent), m_currentSpeedMph(0.0f), m_odometerValue(123456) // Initial odometer value
 {
-    setMinimumSize(250, 250); // A bit larger to accommodate details
-
     // Load font from Qt resources
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf"); // Use resource path
     if (fontId != -1) {

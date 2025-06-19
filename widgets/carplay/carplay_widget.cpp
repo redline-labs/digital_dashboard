@@ -4,6 +4,7 @@
 #include "carplay/dongle_config_file.h"
 #include "carplay/audio_type.h"
 #include "carplay/command_mapping.h"
+#include "carplay/libusb_helpers.h"
 
 #include <spdlog/spdlog.h>
 #include <QOpenGLShaderProgram>
@@ -54,57 +55,6 @@ static int hotplug_callback(libusb_context* /*ctx*/, libusb_device* /*device*/, 
         static_cast<CarPlayWidget*>(widget_instance)->stop_dongle();
     }
     return 0;
-}
-
-static std::string_view lookup_libusb_transfer_failure_string(int ret)
-{
-    switch (ret)
-    {
-        case (0): return "NO ERROR";
-        case (LIBUSB_ERROR_NO_DEVICE): return "LIBUSB_ERROR_NO_DEVICE";
-        case (LIBUSB_ERROR_BUSY): return "LIBUSB_ERROR_BUSY";
-        case (LIBUSB_ERROR_NOT_SUPPORTED): return "LIBUSB_ERROR_NOT_SUPPORTED";
-        case (LIBUSB_ERROR_INVALID_PARAM): return "LIBUSB_ERROR_INVALID_PARAM";
-        default: return "UNKNOWN ERROR";
-    }
-}
-
-static std::string_view lookup_libusb_transfer_status_string(libusb_transfer_status status)
-{
-    switch (status)
-    {
-        case (LIBUSB_TRANSFER_COMPLETED): return "LIBUSB_TRANSFER_COMPLETED";
-        case (LIBUSB_TRANSFER_ERROR): return "LIBUSB_TRANSFER_ERROR";
-        case (LIBUSB_TRANSFER_TIMED_OUT): return "LIBUSB_TRANSFER_TIMED_OUT";
-        case (LIBUSB_TRANSFER_CANCELLED): return "LIBUSB_TRANSFER_CANCELLED";
-        case (LIBUSB_TRANSFER_STALL): return "LIBUSB_TRANSFER_STALL";
-        case (LIBUSB_TRANSFER_NO_DEVICE): return "LIBUSB_TRANSFER_NO_DEVICE";
-        case (LIBUSB_TRANSFER_OVERFLOW): return "LIBUSB_TRANSFER_OVERFLOW";
-        default: return "UNKNOWN";
-    }
-}
-
-constexpr std::string_view device_step_to_string(DeviceStep step)
-{
-    switch (step)
-    {
-        case (DeviceStep::Init): return "Init";
-        case (DeviceStep::SendDPI): return "SendDPI";
-        case (DeviceStep::SendOpen): return "SendOpen";
-        case (DeviceStep::SendNightMode): return "SendNightMode";
-        case (DeviceStep::SendDriveHand): return "SendDriveHand";
-        case (DeviceStep::SendChargeMode): return "SendChargeMode";
-        case (DeviceStep::SendBoxName): return "SendBoxName";
-        case (DeviceStep::SendBoxSettings): return "SendBoxSettings";
-        case (DeviceStep::SendWiFiEnable): return "SendWiFiEnable";
-        case (DeviceStep::SendWiFiType): return "SendWiFiType";
-        case (DeviceStep::SendMicType): return "SendMicType";
-        case (DeviceStep::SendAudioTransferMode): return "SendAudioTransferMode";
-        case (DeviceStep::SendWiFiConnect): return "SendWiFiConnect";
-        case (DeviceStep::Done): return "Done";
-        case (DeviceStep::Fail): return "Fail";
-        default: return "UNKNOWN";
-    }
 }
 
 static void libusb_transfer_callback(struct libusb_transfer *transfer)
@@ -162,6 +112,42 @@ CarPlayWidget::CarPlayWidget(app_config_t cfg, bool libusb_debug) :
     setStyleSheet("QOpenGLWidget { background-color : black; }");
     initializeDecoder();
     initializeDongleDriver();
+
+
+    QAudioFormat format;
+    format.setSampleRate(44100);
+    format.setChannelCount(2);
+    format.setSampleFormat(QAudioFormat::Int16);
+
+    const auto devices = QMediaDevices::audioOutputs();
+    for (const QAudioDevice &device : devices)
+    {
+        SPDLOG_DEBUG("Found audio device: {}",  device.description().toStdString());
+    }
+
+    QAudioDevice info(QMediaDevices::defaultAudioOutput());
+    if (!info.isFormatSupported(format)) {
+        SPDLOG_ERROR("Raw audio format not supported by backend, cannot play audio.");
+        // TODO: Should we bomb out?
+    }
+
+    SPDLOG_INFO("Using audio output: {}", info.description().toStdString());
+
+    QAudioSink audio(format);
+    SPDLOG_DEBUG("Default audio sink buffer size = {}, setting to {}.", audio.bufferSize(), cfg.audio_device_buffer_size);
+    audio.setBufferSize(cfg.audio_device_buffer_size);
+
+    auto audio_buffer = audio.start();
+
+    // Register audio callback with the integrated CarPlay widget
+    register_audio_ready_callback([&audio_buffer] (const uint8_t* buffer, uint32_t buffer_len){
+        audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
+    });
+
+    // Start the integrated dongle functionality
+    start_dongle();
+
+    SPDLOG_INFO("CarPlay widget configured and started.");
 }
 
 CarPlayWidget::~CarPlayWidget()

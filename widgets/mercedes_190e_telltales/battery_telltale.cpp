@@ -1,6 +1,7 @@
 #include "mercedes_190e_telltales/battery_telltale.h"
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QSvgRenderer>
 #include <QDebug>
 
 // Define static colors

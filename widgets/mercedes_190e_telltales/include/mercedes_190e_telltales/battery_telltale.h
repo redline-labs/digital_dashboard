@@ -3,8 +3,11 @@
 
 #include <QWidget>
 #include <QPainter>
-#include <QSvgRenderer>
 #include <QTimer>
+
+// Forward declaration.
+class QSvgRenderer;
+
 
 class BatteryTelltaleWidget : public QWidget
 {

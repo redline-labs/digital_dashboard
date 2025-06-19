@@ -41,7 +41,7 @@ void MainWindow::createWidgetsFromConfig()
             
             // Create Zenoh subscription if specified
             if (!widget_config.zenoh_key.empty() && _zenoh_session) {
-                createZenohSubscription(widget_config.zenoh_key, widget, widget_config.type);
+                createZenohSubscription(widget_config.zenoh_key, widget_config.type);
             }
             
             spdlog::info("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'{}",
@@ -121,7 +121,7 @@ void MainWindow::initializeZenoh()
     }
 }
 
-void MainWindow::createZenohSubscription(const std::string& zenoh_key, QWidget* widget, const std::string& widget_type)
+void MainWindow::createZenohSubscription(const std::string& zenoh_key, const std::string& widget_type)
 {
     if (!_zenoh_session) {
         spdlog::warn("Cannot create Zenoh subscription for key '{}' - session not available", zenoh_key);
