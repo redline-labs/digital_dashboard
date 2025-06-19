@@ -15,12 +15,7 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
-#include <libavutil/imgutils.h>
-#include <libavutil/pixdesc.h>
 }
-
-#define STR_HELPER(x) #x
-#define STR(x) STR_HELPER(x)
 
 // Libusb helper functions
 static void libusb_log(libusb_context* /*ctx*/, enum libusb_log_level level, const char* str)
@@ -458,7 +453,8 @@ void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 // Dongle driver implementation
 void CarPlayWidget::initializeDongleDriver()
 {
-    SPDLOG_DEBUG("Using libusb {}.", libusb_version());
+    const auto version = libusb_get_version();
+    SPDLOG_DEBUG("Using libusb {}.{}.{}", version->major, version->minor, version->micro);
     
     libusb_init_context(nullptr, nullptr, /*num_options=*/0);
     
@@ -544,11 +540,6 @@ void CarPlayWidget::register_audio_ready_callback(std::function<void(const uint8
 void CarPlayWidget::register_phone_connect_event(std::function<void(bool)> cb)
 {
     _phone_connect_event_callback = cb;
-}
-
-std::string_view CarPlayWidget::libusb_version()
-{
-    return {STR(LIBUSB_MAJOR) "." STR(LIBUSB_MINOR) "." STR(LIBUSB_MICRO)};
 }
 
 bool CarPlayWidget::find_dongle()

@@ -53,8 +53,6 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void step(); // Public so callbacks can access it
     void register_audio_ready_callback(std::function<void(const uint8_t* buffer, uint32_t buffer_len)> cb);
     void register_phone_connect_event(std::function<void(bool)> cb);
-    
-    static std::string_view libusb_version();
 
   signals:
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);

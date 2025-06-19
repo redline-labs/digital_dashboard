@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
 
-# Include FetchContent module for downloading dependencies
-include(FetchContent)
-
 set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
@@ -26,27 +23,8 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 
-
-
-# Only fetch dependencies during initial configuration, not on every build
-set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-set(FETCHCONTENT_QUIET OFF)
-
-# Include dependency configurations
-include(cmake/spdlog.cmake)
-include(cmake/nlohmann_json.cmake)
-include(cmake/cxxopts.cmake)
-include(cmake/yaml-cpp.cmake)
-include(cmake/libusb.cmake)
-include(cmake/zenoh-c.cmake)
-include(cmake/zenoh-cpp.cmake)
-
-# Create a common logging interface to avoid duplicate spdlog linking
-add_library(common_logging INTERFACE)
-target_link_libraries(common_logging INTERFACE spdlog::spdlog)
-
-# LGPL Compliance: Create source code availability notice
-file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)
+# Pull in third party dependencies.
+add_subdirectory(third_party)
 
 #add_link_options(
 #    -Wl,--gc-sections
@@ -106,7 +84,6 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
-    #widgets_mainwindow.cpp
     resources.qrc
 )
 
