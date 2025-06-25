@@ -13,8 +13,8 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-SpeedometerWidgetMPH::SpeedometerWidgetMPH(QWidget *parent)
-    : QWidget(parent), m_currentSpeedMph(0.0f), m_odometerValue(123456) // Initial odometer value
+SpeedometerWidgetMPH::SpeedometerWidgetMPH(const speedometer_config_t& cfg, QWidget *parent)
+    : QWidget(parent), m_currentSpeedMph(0.0f), _cfg{cfg}, m_odometerValue(cfg.odometer_value) // Initial odometer value
 {
     // Load font from Qt resources
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf"); // Use resource path
@@ -28,7 +28,7 @@ SpeedometerWidgetMPH::SpeedometerWidgetMPH(QWidget *parent)
 
 void SpeedometerWidgetMPH::setSpeed(float speed) // speed in MPH
 {
-    m_currentSpeedMph = qBound(0.0f, speed, static_cast<float>(m_maxSpeedMph));
+    m_currentSpeedMph = qBound(0.0f, speed, static_cast<float>(_cfg.max_speed));
     update();
 }
 
@@ -188,7 +188,7 @@ void SpeedometerWidgetMPH::drawMphTicksAndNumbers(QPainter *painter)
     const float boxSpacing = 1.0f;      // Spacing between multiple boxes
 
     auto drawBoxesAtMPH = [&](float mphValue, int numBoxes) {
-        float rawAngle = valueToAngle(mphValue, static_cast<float>(m_maxSpeedMph));
+        float rawAngle = valueToAngle(mphValue, static_cast<float>(_cfg.max_speed));
         
         painter->save();
         painter->rotate(-rawAngle); // Rotate context so the direction of the value is along the +X axis
@@ -226,11 +226,11 @@ void SpeedometerWidgetMPH::drawMphTicksAndNumbers(QPainter *painter)
     const float majorTickPenWidth = 2.0f;
     const float minorTickPenWidth = 1.0f;
 
-    for (int mph = 0; mph <= m_maxSpeedMph; mph += 5) { // Iterate every 5 MPH
-        // Skip drawing ticks beyond m_maxSpeedMph if they are not also major interval markers like 120 for loop end condition
-        // This loop condition allows 120 to be processed. Ticks slightly over might occur if m_maxSpeedMph wasn't a multiple of 5.
+    for (int mph = 0; mph <= _cfg.max_speed; mph += 5) { // Iterate every 5 MPH
+        // Skip drawing ticks beyond _cfg.max_speed if they are not also major interval markers like 120 for loop end condition
+        // This loop condition allows 120 to be processed. Ticks slightly over might occur if _cfg.max_speed wasn't a multiple of 5.
 
-        float rawAngle = valueToAngle(static_cast<float>(mph), static_cast<float>(m_maxSpeedMph));
+        float rawAngle = valueToAngle(static_cast<float>(mph), static_cast<float>(_cfg.max_speed));
         float angleRadForTicks = degreesToRadians(-rawAngle); // Negate angle for tick math
         
         bool isMajorTick = (mph % 10 == 0);
@@ -248,7 +248,7 @@ void SpeedometerWidgetMPH::drawMphTicksAndNumbers(QPainter *painter)
         }
 
         // Labels every 20 mph, starting from 20 up to maxSpeedMph
-        if (mph % 20 == 0 && mph >= 0 && mph <= m_maxSpeedMph) {
+        if (mph % 20 == 0 && mph >= 0 && mph <= _cfg.max_speed) {
             // Special case for 0: only draw if it's exactly 0, often not labelled unless it's the start of a range shown
             // The prompt usually implies 20, 40, etc. for labels, so 0 might not be desired.
             // Let's draw 0 only if explicitly 0 and no other labels are drawn for it yet. Or, skip 0 entirely based on common gauge design.
@@ -276,7 +276,7 @@ void SpeedometerWidgetMPH::drawKmhTicksAndNumbers(QPainter *painter)
 
     constexpr float mphToKmh = 1.60934f;
     const float minSpeedKmh = 0.0f;
-    const float maxSpeedKmh = static_cast<float>(m_maxSpeedMph) * mphToKmh; // Derived max KM/H
+    const float maxSpeedKmh = static_cast<float>(_cfg.max_speed) * mphToKmh; // Derived max KM/H
 
     float kmhArcRadius = 65.0f;
     float kmhArcThickness = 1.25f;
@@ -405,7 +405,7 @@ void SpeedometerWidgetMPH::drawOverlayText(QPainter *painter)
 void SpeedometerWidgetMPH::drawNeedle(QPainter *painter)
 {
     painter->save();
-    float rawNeedleAngle = valueToAngle(m_currentSpeedMph, static_cast<float>(m_maxSpeedMph));
+    float rawNeedleAngle = valueToAngle(m_currentSpeedMph, static_cast<float>(_cfg.max_speed));
     painter->rotate(-rawNeedleAngle); 
 
     // Needle properties (Orange, tapered)

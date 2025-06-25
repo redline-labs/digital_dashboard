@@ -8,8 +8,9 @@
 #include <QTimer>
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 
-SparklineItem::SparklineItem(const QString &units, QWidget *parent)
-    : QWidget(parent), units(units), m_fixedMinY(0.0), m_fixedMaxY(100.0) { // Initialize fixed range
+SparklineItem::SparklineItem(const sparkline_config_t& cfg, QWidget *parent)
+    : QWidget(parent), _cfg{cfg}
+{
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
     
     // Value and Units display
@@ -25,7 +26,7 @@ SparklineItem::SparklineItem(const QString &units, QWidget *parent)
     valueLabel->setFont(valueFont);
     valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    unitsLabel = new QLabel(units, this);
+    unitsLabel = new QLabel(_cfg.units.c_str(), this);
     QFont unitsFont = unitsLabel->font();
     unitsFont.setPointSize(10); // Smaller font for units
     unitsLabel->setFont(unitsFont);
@@ -42,10 +43,6 @@ SparklineItem::SparklineItem(const QString &units, QWidget *parent)
     setLayout(mainLayout);
 
     setMinimumHeight(60);
-    // Add some initial data for visual testing
-    // for(int i = 0; i < 20; ++i) {
-    //     addDataPoint(qrand() % 100);
-    // }
 
     // Initialize dataPoints with default values to ensure it's always full for scrolling
     for (int i = 0; i < MAX_DATA_POINTS; ++i) {
@@ -61,12 +58,12 @@ SparklineItem::SparklineItem(const QString &units, QWidget *parent)
 
 void SparklineItem::setYAxisRange(double minVal, double maxVal) {
     if (minVal < maxVal) {
-        m_fixedMinY = minVal;
-        m_fixedMaxY = maxVal;
+        _cfg.min_value = minVal;
+        _cfg.max_value = maxVal;
     } else {
         // Handle error or set to a default valid range
-        m_fixedMinY = 0.0;
-        m_fixedMaxY = 100.0;
+        _cfg.min_value = 0.0;
+        _cfg.max_value = 100.0;
     }
     // No need to call update() here, as paintEvent will use these values on next repaint
 }
@@ -84,7 +81,7 @@ void SparklineItem::forceRepaint() {
         dataPoints.removeFirst();
         // When adding m_lastValue, we might want to clamp it to the fixed Y range
         // if strict adherence to the range is required for new points.
-        // double valueToAppend = qBound(m_fixedMinY, m_lastValue, m_fixedMaxY);
+        // double valueToAppend = qBound(_cfg.min_value, m_lastValue, _cfg.max_value);
         // dataPoints.append(valueToAppend);
         dataPoints.append(m_lastValue); // Using unclamped m_lastValue for now
     }
@@ -130,16 +127,16 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     QRectF graphRect(padding, padding, graphPlotWidth, textBlockHeight);
 
     // Use fixed Y-axis range
-    double minVal = m_fixedMinY;
-    double maxVal = m_fixedMaxY;
+    double minVal = _cfg.min_value;
+    double maxVal = _cfg.max_value;
 
     // Ensure maxVal is not equal to minVal to prevent division by zero
-    // This check is critical if m_fixedMinY can be equal to m_fixedMaxY
+    // This check is critical if _cfg.min_value can be equal to _cfg.max_value
     if (maxVal == minVal) {
         maxVal += 1.0; // Or handle as an error / no plot
     }
 
-    QColor lineColor = Qt::blue;
+    QColor lineColor = QColor::fromString(_cfg.line_color.c_str()); //= Qt::blue;
     QColor gradientStartColor = lineColor.darker(120); // Slightly darker blue
     QColor gradientEndColor = gradientStartColor;
     gradientEndColor.setAlpha(0x00); // Semi-transparent blue for the bottom of the gradient
@@ -160,7 +157,7 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
 
     float currentX = graphRect.left();
     // Clamp the y-value calculation to the graphRect boundaries
-    // This prevents drawing outside the box if data points exceed m_fixedMinY/m_fixedMaxY
+    // This prevents drawing outside the box if data points exceed _cfg.min_value/_cfg.max_value
     float firstDataY = dataPoints[0];
     float firstNormY = (firstDataY - minVal) / yRange;
     // float firstClampedNormY = qBound(0.0f, static_cast<float>(firstNormY), 1.0f);

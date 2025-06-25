@@ -1,10 +1,10 @@
 #ifndef CARPLAY_WIDGET_H_
 #define CARPLAY_WIDGET_H_
 
-#include "touch_action.h"
-#include "message.h"
-#include "app_config.h"
-#include "device_step.h"
+#include "carplay/touch_action.h"
+#include "carplay/message.h"
+#include "carplay/config.h"
+#include "carplay/device_step.h"
 
 #include <QAudioDevice>
 #include <QAudioFormat>
@@ -38,7 +38,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     Q_OBJECT
 
   public:
-    CarPlayWidget(app_config_t cfg, bool libusb_debug = false);
+    CarPlayWidget(carplay_config_t cfg);
     ~CarPlayWidget();
 
     void setSize(uint32_t width_px, uint32_t height_px);
@@ -128,8 +128,8 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     static constexpr uint16_t kHeartbeatTimeMs = 2000u;
     
     // Dongle driver member variables
-    app_config_t _app_cfg;
-    bool _libusb_debug;
+    carplay_config_t _cfg;
+
     libusb_device_handle* _device_handle;
     int _hotplug_callback_handle;
     DeviceStep _current_step;

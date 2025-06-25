@@ -1,6 +1,8 @@
 #ifndef TACHOMETERWIDGET_H
 #define TACHOMETERWIDGET_H
 
+#include "mercedes_190e_tachometer/config.h"
+
 #include <QWidget>
 #include <QString>
 #include <QPointF>
@@ -16,7 +18,7 @@ class TachometerWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit TachometerWidget(QWidget *parent = nullptr);
+    explicit TachometerWidget(tachometer_config_t cfg, QWidget *parent = nullptr);
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
     float getRpm() const;
@@ -37,7 +39,6 @@ private:
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
 
     // Drawing parameters based on the new reference image
-    const float m_maxRpmDisplay; // Max value on dial (e.g., 70 for 7000 RPM)
     const float m_angleStart_deg;    // Angle for 0 RPM
     const float m_angleSweep_deg;    // Total sweep angle for m_maxRpmDisplay
 
@@ -48,9 +49,9 @@ private:
     const float m_needleLength;      // Length of the needle from pivot
 
     // Red Zone parameters (values on 0-70 scale)
-    const float m_redZone1_StartValue;
-    const float m_redZone1_EndValue;
     const float m_redZoneArcWidth;
+
+    tachometer_config_t _cfg;
 
     QString m_fontFamily;
     QFont m_dialFont;

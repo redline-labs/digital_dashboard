@@ -1,4 +1,4 @@
-#include "app_config.h"
+#include "carplay/config.h"
 #include "carplay/message.h"
 
 #include <spdlog/spdlog.h>
@@ -96,7 +96,7 @@ int main(int /*argc*/, char** /*argv*/)
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
     std::vector<uint8_t> usb_request;
-    app_config_t cfg;
+    carplay_config_t cfg;
 
     usb_request = SendNumber(DongleConfigFile::DPI, cfg.dpi).serialize();
     test("SendDPI", usb_request, kGSSendDPI);

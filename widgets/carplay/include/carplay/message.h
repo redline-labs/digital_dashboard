@@ -8,7 +8,7 @@
 #include "phone_type.h"
 #include "touch_action.h"
 
-#include "app_config.h"
+#include "carplay/config.h"
 
 #include <array>
 #include <string>
@@ -341,10 +341,10 @@ class SendOpen : public Message
     constexpr static std::string_view name = "SendOpen";
     constexpr static uint16_t kPayloadBytes = 28;
 
-    SendOpen(const app_config_t& config);
+    SendOpen(const carplay_config_t& config);
 
   private:
-    app_config_t _config;
+    carplay_config_t _config;
 
     uint16_t get_payload_size() final;
     void write_payload(uint8_t* buffer) final;
@@ -396,7 +396,7 @@ class SendBoxSettings : public Message
   public:
     constexpr static std::string_view name = "SendBoxSettings";
 
-    SendBoxSettings(const app_config_t& cfg, uint64_t sync_time = 8u);
+    SendBoxSettings(const carplay_config_t& cfg, uint64_t sync_time = 8u);
 
     const std::string& get_string();
 

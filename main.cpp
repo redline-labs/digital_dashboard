@@ -25,8 +25,7 @@ int main(int argc, char** argv)
     cxxopts::Options options("carplay_app", "Spin up a CarPlay instance.");
     options.add_options()
         ("config", "Configuration file to use.", cxxopts::value<std::string>())
-        ("debug", "Enable debug logging.", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-        ("libusb_debug", "Enable LibUSB debugging logging.", cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
+        ("debug", "Enable debug logging.", cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
     cxxopts::ParseResult args_result;
 
     try
@@ -55,7 +54,7 @@ int main(int argc, char** argv)
 
     // Create configured windows
     for (const auto& window_cfg : cfg.windows) {
-        auto main_window = std::make_unique<MainWindow>(cfg, window_cfg, args_result["libusb_debug"].as<bool>());
+        auto main_window = std::make_unique<MainWindow>(cfg, window_cfg);
 
         main_window->show();
         windows.push_back(std::move(main_window));

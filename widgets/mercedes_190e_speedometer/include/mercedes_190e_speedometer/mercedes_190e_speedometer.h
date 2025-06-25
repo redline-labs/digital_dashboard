@@ -1,6 +1,8 @@
 #ifndef SPEEDOMETERWIDGETMPH_H
 #define SPEEDOMETERWIDGETMPH_H
 
+#include "mercedes_190e_speedometer/config.h"
+
 #include <QWidget>
 #include <QPainter>
 #include <QPointF>
@@ -14,7 +16,7 @@ class SpeedometerWidgetMPH : public QWidget
 {
     Q_OBJECT
 public:
-    explicit SpeedometerWidgetMPH(QWidget *parent = nullptr);
+    explicit SpeedometerWidgetMPH(const speedometer_config_t& cfg, QWidget *parent = nullptr);
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     float getSpeed() const;
     void setOdometerValue(int value); // Setter for odometer
@@ -33,7 +35,8 @@ private:
     float valueToAngle(float value, float maxVal); // Changed to float
 
     float m_currentSpeedMph;
-    const int m_maxSpeedMph = 160; // Main scale up to 120 MPH
+
+    speedometer_config_t _cfg;
 
     // Angles are Qt standard (0 at 3 o'clock, positive CCW), assuming Y-up due to painter.scale(1,-1)
     const float m_angleValueMin = 210.0f; // Changed to float

@@ -12,10 +12,9 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-TachometerWidget::TachometerWidget(QWidget *parent)
+TachometerWidget::TachometerWidget(tachometer_config_t cfg, QWidget *parent)
     : QWidget(parent),
       m_currentRpmValue(0.0f),
-      m_maxRpmDisplay(8000.0f),
 
       m_angleStart_deg(160.0f),    // 0 RPM at 7 o'clock
       m_angleSweep_deg(220.0f),   // Sweep CCW. End: 160+220=380 -> 20 deg (approx 1-2 o'clock)
@@ -26,9 +25,8 @@ TachometerWidget::TachometerWidget(QWidget *parent)
       m_needleLength(83.0f),     // From pivot center to needle tip
 
       // Updated Red Zone for the new image (single block)
-      m_redZone1_StartValue(7000.0f),
-      m_redZone1_EndValue(8000.0f),
       m_redZoneArcWidth(12.0f), // Thickness of the red block
+      _cfg{cfg},
       m_currentTime(QTime::currentTime()) // Initialize current time
 {
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
@@ -43,10 +41,13 @@ TachometerWidget::TachometerWidget(QWidget *parent)
     m_labelFont = QFont(m_fontFamily, 7, QFont::Normal);
 
     // Setup timer for clock updates
-    m_clockUpdateTimer = new QTimer(this);
-    connect(m_clockUpdateTimer, &QTimer::timeout, this, &TachometerWidget::updateClockTime);
-    m_clockUpdateTimer->start(1000 * 60); // Update every minute
-    updateClockTime(); // Initial call to set time
+    if (_cfg.show_clock == true)
+    {
+        m_clockUpdateTimer = new QTimer(this);
+        connect(m_clockUpdateTimer, &QTimer::timeout, this, &TachometerWidget::updateClockTime);
+        m_clockUpdateTimer->start(1000 * 60); // Update every minute
+        updateClockTime(); // Initial call to set time
+    }
 }
 
 void TachometerWidget::setRpm(float rpm) {
@@ -54,8 +55,8 @@ void TachometerWidget::setRpm(float rpm) {
     if (clampedRpm < 0.0f) {
         clampedRpm = 0.0f;
     }
-    if (clampedRpm > m_maxRpmDisplay) {
-        clampedRpm = m_maxRpmDisplay;
+    if (clampedRpm > _cfg.max_rpm) {
+        clampedRpm = _cfg.max_rpm;
     }
 
     m_currentRpmValue = clampedRpm;
@@ -67,8 +68,8 @@ float TachometerWidget::getRpm() const {
 }
 
 float TachometerWidget::valueToAngle(float value) const {
-    if (m_maxRpmDisplay <= 0.0f) return m_angleStart_deg;
-    float proportion = value / m_maxRpmDisplay;
+    if (_cfg.max_rpm <= 0.0f) return m_angleStart_deg;
+    float proportion = value / _cfg.max_rpm;
     return m_angleStart_deg + proportion * m_angleSweep_deg;
 }
 
@@ -84,7 +85,12 @@ void TachometerWidget::paintEvent(QPaintEvent *event) {
     drawRedZone(&painter); // Draw red zone first so ticks can overlay if needed
     drawScaleAndNumbers(&painter);
     drawStaticText(&painter);
-    drawClock(&painter); // Draw clock
+
+    if (_cfg.show_clock == true)
+    {
+        drawClock(&painter); // Draw clock
+    }
+
     drawNeedle(&painter);
 }
 
@@ -103,7 +109,7 @@ void TachometerWidget::drawScaleAndNumbers(QPainter *painter) {
     QFontMetrics fm(m_dialFont);
 
     // We iterate based on the *displayed* scale (0-70 for labels/major ticks).
-    float displayedMax = m_maxRpmDisplay / 100.0f; // e.g., 70.0f
+    float displayedMax = _cfg.max_rpm / 100.0f; // e.g., 70.0f
 
     // Revised loop for clarity: Iterate for ticks based on displayed values (0, 1, 2, ..., displayedMax)
     for (float displayed_val_iter = 0; displayed_val_iter <= displayedMax; displayed_val_iter += 5.0f) {
@@ -149,8 +155,8 @@ void TachometerWidget::drawRedZone(QPainter *painter) {
     QPen redPen(QColor(220, 0, 0), m_redZoneArcWidth, Qt::SolidLine, Qt::FlatCap);
     painter->setPen(redPen);
 
-    float startAngle = -1.0f * valueToAngle(m_redZone1_StartValue);
-    float endAngle = -1.0f * valueToAngle(m_redZone1_EndValue);
+    float startAngle = -1.0f * valueToAngle(_cfg.redline_rpm);
+    float endAngle = -1.0f * valueToAngle(_cfg.max_rpm);
     float spanAngle = endAngle - startAngle;
 
     QRectF rect(-arcRadius, -arcRadius, 2 * arcRadius, 2 * arcRadius);

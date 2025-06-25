@@ -1,6 +1,8 @@
 #ifndef BATTERYTELLTALEWIDGET_H
 #define BATTERYTELLTALEWIDGET_H
 
+#include <mercedes_190e_telltales/config.h>
+
 #include <QWidget>
 #include <QPainter>
 #include <QTimer>
@@ -15,7 +17,7 @@ class BatteryTelltaleWidget : public QWidget
     Q_PROPERTY(bool asserted READ isAsserted WRITE setAsserted NOTIFY assertedChanged)
 
 public:
-    explicit BatteryTelltaleWidget(QWidget *parent = nullptr);
+    explicit BatteryTelltaleWidget(const battery_telltale_config_t& cfg, QWidget *parent = nullptr);
     ~BatteryTelltaleWidget();
 
     bool isAsserted() const { return mAsserted; }
@@ -32,6 +34,8 @@ protected:
 
 private:
     void updateColors();
+
+    battery_telltale_config_t _cfg;
 
     QSvgRenderer *mSvgRenderer;
     bool mAsserted;

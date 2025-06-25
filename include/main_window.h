@@ -25,7 +25,7 @@ class MainWindow : public QWidget
     Q_OBJECT
 
   public:
-    MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg, bool libusb_debug = false);
+    MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg);
     ~MainWindow();
 
     // Provide direct access to the CarPlay widget for integrated decoding

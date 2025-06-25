@@ -77,7 +77,7 @@ static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
         (static_cast<uint32_t>(buffer[3]) << 24);
 }
 
-CarPlayWidget::CarPlayWidget(app_config_t cfg, bool libusb_debug) :
+CarPlayWidget::CarPlayWidget(carplay_config_t cfg) :
     QOpenGLWidget(),
     m_shaderProgram(nullptr),
     m_textureY(0),
@@ -94,8 +94,7 @@ CarPlayWidget::CarPlayWidget(app_config_t cfg, bool libusb_debug) :
     _should_terminate(false),
     _current_frame(nullptr),
     _new_frame_available(false),
-    _app_cfg{cfg},
-    _libusb_debug{libusb_debug},
+    _cfg{cfg},
     _device_handle{nullptr},
     _current_step{DeviceStep::Init},
     _event_thread_should_run{true},
@@ -458,7 +457,7 @@ void CarPlayWidget::initializeDongleDriver()
     
     libusb_init_context(nullptr, nullptr, /*num_options=*/0);
     
-    if (_libusb_debug)
+    if (_cfg.libusb_debug == true)
     {
         libusb_set_log_cb(nullptr, &libusb_log, LIBUSB_LOG_CB_GLOBAL);
         libusb_set_option(nullptr, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_DEBUG);
@@ -580,25 +579,25 @@ void CarPlayWidget::step()
             
         case (DeviceStep::SendDPI):
             SPDLOG_DEBUG("Sending config (DPI).");
-            _usb_request = SendNumber(DongleConfigFile::DPI, _app_cfg.dpi).serialize();
+            _usb_request = SendNumber(DongleConfigFile::DPI, _cfg.dpi).serialize();
             _current_step = DeviceStep::SendOpen;  // Next step on success;
             break;
             
         case (DeviceStep::SendOpen):
             SPDLOG_DEBUG("Sending config (Open).");
-            _usb_request = SendOpen(_app_cfg).serialize();
+            _usb_request = SendOpen(_cfg).serialize();
             _current_step = DeviceStep::SendNightMode;  // Next step on success;
             break;
             
         case (DeviceStep::SendNightMode):
             SPDLOG_DEBUG("Sending config (Night Mode).");
-            _usb_request = SendBoolean(DongleConfigFile::NightMode, _app_cfg.night_mode).serialize();
+            _usb_request = SendBoolean(DongleConfigFile::NightMode, _cfg.night_mode).serialize();
             _current_step = DeviceStep::SendDriveHand;  // Next step on success;
             break;
             
         case (DeviceStep::SendDriveHand):
             SPDLOG_DEBUG("Sending config (drive side).");
-            _usb_request = SendNumber(DongleConfigFile::HandDriveMode, static_cast<uint32_t>(_app_cfg.drive_type)).serialize();
+            _usb_request = SendNumber(DongleConfigFile::HandDriveMode, static_cast<uint32_t>(_cfg.drive_type)).serialize();
             _current_step = DeviceStep::SendChargeMode;  // Next step on success;
             break;
             
@@ -610,13 +609,13 @@ void CarPlayWidget::step()
             
         case (DeviceStep::SendBoxName):
             SPDLOG_DEBUG("Sending config (box name).");
-            _usb_request = SendString(DongleConfigFile::BoxName, _app_cfg.box_name).serialize();
+            _usb_request = SendString(DongleConfigFile::BoxName, _cfg.box_name).serialize();
             _current_step = DeviceStep::SendBoxSettings;  // Next step on success;
             break;
             
         case (DeviceStep::SendBoxSettings):
             SPDLOG_DEBUG("Sending config (box settings).");
-            _usb_request = SendBoxSettings(_app_cfg).serialize();
+            _usb_request = SendBoxSettings(_cfg).serialize();
             _current_step = DeviceStep::SendWiFiEnable;  // Next step on success;
             break;
             
@@ -914,8 +913,8 @@ void CarPlayWidget::send_touch_event_internal(TouchAction action, uint32_t x, ui
     }
     
     // We have to scale from 0....10,000.
-    uint32_t scaled_x = static_cast<uint32_t>((static_cast<float>(x) / static_cast<float>(_app_cfg.width_px)) * 10000.0f);
-    uint32_t scaled_y = static_cast<uint32_t>((static_cast<float>(y) / static_cast<float>(_app_cfg.height_px)) * 10000.0f);
+    uint32_t scaled_x = static_cast<uint32_t>((static_cast<float>(x) / static_cast<float>(_cfg.width_px)) * 10000.0f);
+    uint32_t scaled_y = static_cast<uint32_t>((static_cast<float>(y) / static_cast<float>(_cfg.height_px)) * 10000.0f);
     
     std::vector<uint8_t> usb_request = SendTouch(action, scaled_x, scaled_y).serialize();
     

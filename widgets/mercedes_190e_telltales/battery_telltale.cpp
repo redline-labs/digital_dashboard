@@ -10,8 +10,9 @@ const QColor BatteryTelltaleWidget::NORMAL_BACKGROUND = QColor(60, 60, 60);     
 const QColor BatteryTelltaleWidget::ASSERTED_ICON = QColor(255, 255, 255);        // White when asserted
 const QColor BatteryTelltaleWidget::NORMAL_ICON = QColor(120, 120, 120);          // Light gray when normal
 
-BatteryTelltaleWidget::BatteryTelltaleWidget(QWidget *parent)
+BatteryTelltaleWidget::BatteryTelltaleWidget(const battery_telltale_config_t& cfg, QWidget *parent)
     : QWidget(parent)
+    , _cfg{cfg}
     , mSvgRenderer(nullptr)
     , mAsserted(false)
 {
@@ -50,10 +51,10 @@ void BatteryTelltaleWidget::setAsserted(bool asserted)
 void BatteryTelltaleWidget::updateColors()
 {
     if (mAsserted) {
-        mBackgroundColor = ASSERTED_BACKGROUND;
+        mBackgroundColor = QColor::fromString(_cfg.warning_color);
         mIconColor = ASSERTED_ICON;
     } else {
-        mBackgroundColor = NORMAL_BACKGROUND;
+        mBackgroundColor = QColor::fromString(_cfg.normal_color);
         mIconColor = NORMAL_ICON;
     }
 }

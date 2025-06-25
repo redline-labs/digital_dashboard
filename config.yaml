@@ -1,27 +1,3 @@
-width_px: 800
-height_px: 400
-fps: 30
-dpi: 160
-format: 5
-i_box_version: 2
-phone_work_mode: 2
-packet_max: 49152
-box_name: "nodePlay"
-night_mode: false
-drive_type: "LHD"
-media_delay: 300
-audio_transfer_mode: false
-wifi_type: "5Ghz"
-mic_type: "OS"
-phone_config:
-  car_play:
-    frame_interval: 5000
-  android_auto:
-    frame_interval: null
-
-# Audio device buffer size (bytes) on the host.
-audio_device_buffer_size: 16384
-
 # Multi-window layout configuration with Zenoh real-time data subscriptions
 windows:
   # Instrument cluster window with gauges and telltales
@@ -36,6 +12,9 @@ windows:
         width: 250
         height: 250
         zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
+        config:
+          odometer_value: 123456
+          max_speed: 160
       
       # Mercedes 190E Tachometer on the right - subscribes to engine RPM
       - type: "tachometer" 
@@ -44,6 +23,10 @@ windows:
         width: 250
         height: 250
         zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
+        config:
+          max_rpm: 8000
+          redline_rpm: 7000
+          show_clock: true
       
       # Battery telltale indicator in top left - subscribes to battery warning
       - type: "battery_telltale"
@@ -52,22 +35,55 @@ windows:
         width: 30
         height: 30
         zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
+        config:
+          normal_color: "#333333"
+          warning_color: "#FF0000"
       
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: "sparkline"
         x: 300
-        y: 25
+        y: 15
         width: 200
         height: 40
         zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
+        config:
+          units: "Coolant (C)"
+          min_value: -40
+          max_value: 120
+          line_color: "#FFA500"
+          update_rate: 30
 
   # Dedicated CarPlay window (no Zenoh subscription needed)
-  - name: "carplay"
-    width: 800
-    height: 600
-    widgets:
-      - type: "carplay"
-        x: 0
-        y: 0
-        width: 800
-        height: 600
+#  - name: "carplay"
+#    width: 800
+#    height: 600
+#    widgets:
+#      - type: "carplay"
+#        x: 0
+#        y: 0
+#        width: 800
+#        height: 600
+#        config:
+#          width_px: 800
+#          height_px: 600
+#          fps: 30
+#          dpi: 160
+#          format: 5
+#          i_box_version: 2
+#          phone_work_mode: 2
+#          packet_max: 49152
+#          box_name: "nodePlay"
+#          night_mode: false
+#          drive_type: "LHD"
+#          media_delay: 300
+#          audio_transfer_mode: false
+#          wifi_type: "5Ghz"
+#          mic_type: "OS"
+#          phone_config:
+#            car_play:
+#              frame_interval: 5000
+#            android_auto:
+#              frame_interval: null
+#
+#          # Audio device buffer size (bytes) on the host.
+#          audio_device_buffer_size: 16384

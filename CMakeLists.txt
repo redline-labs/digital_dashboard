@@ -78,6 +78,8 @@ qt_standard_project_setup()
 
 include_directories(
     include
+
+    widgets/mercedes_190e_speedometer/include
 )
 
 qt_add_executable(${PROJECT_NAME}

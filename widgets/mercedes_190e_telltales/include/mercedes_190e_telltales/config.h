@@ -8,13 +8,11 @@
 struct battery_telltale_config_t {
     battery_telltale_config_t() :
         warning_color{"#FF0000"},
-        normal_color{"#333333"},
-        blink_rate{2}
+        normal_color{"#333333"}
     {}
 
     std::string warning_color;  // Color when warning is active
     std::string normal_color;   // Color when in normal state
-    uint16_t blink_rate;        // Blinks per second when active
 };
 
 #endif // MERCEDES_190E_TELLTALES_CONFIG_H
