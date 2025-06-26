@@ -22,6 +22,7 @@ windows:
   - name: "instrument_cluster"  # Unique window identifier
     width: 800                  # Window width in pixels
     height: 450                 # Window height in pixels
+    background_color: "#1a1a1a" # Window background color (hex format, optional)
     widgets:                    # Array of widgets for this window
       - type: "speedometer"
         x: 50
@@ -71,6 +72,16 @@ The following widget types are supported with their corresponding data expectati
 - **Zenoh Data**: Not supported (uses USB/video stream data)
 - **Note**: Only one CarPlay widget should be configured across all windows
 
+## Window Properties
+
+Each window requires the following properties:
+
+- **`name`** (string): Unique window identifier used in logs and window titles
+- **`width`** (integer): Window width in pixels
+- **`height`** (integer): Window height in pixels  
+- **`background_color`** (string, optional): Window background color in hex format (e.g., "#1a1a1a", "#FFFFFF"). Defaults to "#000000" (black) if not specified
+- **`widgets`** (array): Array of widget configurations for this window
+
 ## Widget Properties
 
 Each widget requires the following properties:
@@ -81,6 +92,37 @@ Each widget requires the following properties:
 - **`width`** (integer): Widget width in pixels
 - **`height`** (integer): Widget height in pixels
 - **`zenoh_key`** (string, optional): Zenoh subscription key for real-time data updates
+
+## Widget Configuration Details
+
+Each widget type has specific configuration options that can be set in the `config` section:
+
+### Speedometer Configuration
+- **`odometer_value`** (integer): Starting odometer reading (0-999999)
+- **`max_speed`** (integer): Maximum speed on gauge in mph
+
+### Tachometer Configuration  
+- **`max_rpm`** (integer): Maximum RPM value on gauge
+- **`redline_rpm`** (integer): RPM where redline zone begins
+- **`show_clock`** (boolean): Whether to display digital clock
+
+### Sparkline Configuration
+- **`units`** (string): Display units (e.g., "°C", "mph", "psi")
+- **`min_value`** (number): Minimum Y-axis range value
+- **`max_value`** (number): Maximum Y-axis range value
+- **`line_color`** (string): Hex color for line and gradient (e.g., "#FFA500")
+- **`text_color`** (string): Hex color for value and units text (e.g., "#FFFFFF")
+- **`font_family`** (string): Font family name (e.g., "Arial", "Times", "Courier")
+- **`font_size_value`** (integer): Font size for the value text in points (default: 24)
+- **`font_size_units`** (integer): Font size for the units text in points (default: 10)
+- **`update_rate`** (integer): Refresh rate in Hz
+
+### Battery Telltale Configuration
+- **`warning_color`** (string): Color when warning is active (hex format)
+- **`normal_color`** (string): Color when in normal state (hex format)
+
+### CarPlay Configuration
+CarPlay widget has extensive configuration options for video, audio, and device parameters. See the example configuration for details.
 
 ## Real-Time Data with Zenoh
 
@@ -115,6 +157,7 @@ windows:
   - name: "instrument_cluster"
     width: 800
     height: 450
+    background_color: "#1a1a1a"  # Dark background for better contrast
     widgets:
       # Speedometer with real-time vehicle speed
       - type: "speedometer"
@@ -147,11 +190,22 @@ windows:
         width: 200
         height: 40
         zenoh_key: "vehicle/engine/temperature_celsius"
+        config:
+          units: "°C"
+          min_value: -40
+          max_value: 120
+          line_color: "#FFA500"
+          text_color: "#FFFFFF"
+          font_family: "Arial"
+          font_size_value: 24
+          font_size_units: 10
+          update_rate: 30
 
   # CarPlay window (no real-time data needed)
   - name: "carplay"
     width: 800
     height: 600
+    background_color: "#000000"  # Black background for CarPlay
     widgets:
       - type: "carplay"
         x: 0

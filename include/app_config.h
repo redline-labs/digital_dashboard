@@ -45,12 +45,14 @@ struct window_config_t {
         name{},
         width{800},
         height{480},
+        background_color{"#000000"},
         widgets{}
     {}
 
     std::string name;
     uint16_t width;
     uint16_t height;
+    std::string background_color;  // Window background color in hex format (#RRGGBB)
     std::vector<widget_config_t> widgets;
 };
 

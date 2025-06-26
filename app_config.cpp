@@ -1,4 +1,3 @@
-
 #include "app_config.h"
 #include <yaml-cpp/yaml.h>
 
@@ -123,6 +122,10 @@ struct convert<sparkline_config_t> {
         node["min_value"] = rhs.min_value;
         node["max_value"] = rhs.max_value;
         node["line_color"] = rhs.line_color;
+        node["text_color"] = rhs.text_color;
+        node["font_family"] = rhs.font_family;
+        node["font_size_value"] = rhs.font_size_value;
+        node["font_size_units"] = rhs.font_size_units;
         node["update_rate"] = rhs.update_rate;
 
         return node;
@@ -136,6 +139,10 @@ struct convert<sparkline_config_t> {
         rhs.min_value = node["min_value"].as<double>();
         rhs.max_value = node["max_value"].as<double>();
         rhs.line_color = node["line_color"].as<std::string>();
+        rhs.text_color = node["text_color"].as<std::string>();
+        if (node["font_family"]) rhs.font_family = node["font_family"].as<std::string>();
+        if (node["font_size_value"]) rhs.font_size_value = node["font_size_value"].as<uint16_t>();
+        if (node["font_size_units"]) rhs.font_size_units = node["font_size_units"].as<uint16_t>();
         rhs.update_rate = node["update_rate"].as<uint16_t>();
 
         return true;
@@ -256,6 +263,7 @@ struct convert<window_config_t> {
         node["name"] = rhs.name;
         node["width"] = rhs.width;
         node["height"] = rhs.height;
+        node["background_color"] = rhs.background_color;
         node["widgets"] = rhs.widgets;
         return node;
     }
@@ -267,6 +275,7 @@ struct convert<window_config_t> {
         if (node["name"]) rhs.name = node["name"].as<std::string>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
+        if (node["background_color"]) rhs.background_color = node["background_color"].as<std::string>();
         if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
 
         return true;

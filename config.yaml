@@ -4,6 +4,7 @@ windows:
   - name: "instrument_cluster"
     width: 800
     height: 450
+    background_color: "#000000"
     widgets:
       # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
       - type: "speedometer"
@@ -51,6 +52,8 @@ windows:
           min_value: -40
           max_value: 120
           line_color: "#FFA500"
+          text_color: "#FFFFFF"
+          font_family: "Futura"
           update_rate: 30
 
   # Dedicated CarPlay window (no Zenoh subscription needed)

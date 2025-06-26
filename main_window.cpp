@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <QDebug>
 #include <QMetaObject>
+#include <QPalette>
 
 
 MainWindow::MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg):
@@ -13,6 +14,10 @@ MainWindow::MainWindow(const app_config_t& app_cfg, const window_config_t& windo
 {
     setWindowTitle(QString("Mercedes Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
     setFixedSize(_window_cfg.width, _window_cfg.height);
+
+    // Set background color from configuration
+    setStyleSheet(QString("MainWindow { background-color: %1; }")
+                 .arg(QString::fromStdString(_window_cfg.background_color)));
 
     // Initialize Zenoh first
     initializeZenoh();

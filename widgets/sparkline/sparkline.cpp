@@ -20,17 +20,23 @@ SparklineItem::SparklineItem(const sparkline_config_t& cfg, QWidget *parent)
     valueUnitsLayout->setContentsMargins(0,0,0,0);
 
     valueLabel = new QLabel("0", this);
-    QFont valueFont = valueLabel->font();
-    valueFont.setPointSize(24); // Large font for value
+    QFont valueFont(_cfg.font_family.c_str());
+    valueFont.setPointSize(_cfg.font_size_value);
     valueFont.setBold(true);
     valueLabel->setFont(valueFont);
     valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    
+    // Apply text color from configuration
+    valueLabel->setStyleSheet(QString("color: %1;").arg(_cfg.text_color.c_str()));
 
     unitsLabel = new QLabel(_cfg.units.c_str(), this);
-    QFont unitsFont = unitsLabel->font();
-    unitsFont.setPointSize(10); // Smaller font for units
+    QFont unitsFont(_cfg.font_family.c_str());
+    unitsFont.setPointSize(_cfg.font_size_units);
     unitsLabel->setFont(unitsFont);
     unitsLabel->setAlignment(Qt::AlignRight | Qt::AlignTop);
+    
+    // Apply text color from configuration
+    unitsLabel->setStyleSheet(QString("color: %1;").arg(_cfg.text_color.c_str()));
 
     valueUnitsLayout->addWidget(valueLabel);
     valueUnitsLayout->addWidget(unitsLabel);
