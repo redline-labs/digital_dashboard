@@ -12,7 +12,7 @@
 #include "mercedes_190e_tachometer/config.h"
 #include "mercedes_190e_telltales/config.h"
 #include "sparkline/config.h"
-
+#include "mercedes_190e_cluster_gauge/config.h"
 
 struct widget_config_t {
     widget_config_t() :
@@ -37,7 +37,8 @@ struct widget_config_t {
         carplay_config_t,
         tachometer_config_t,
         battery_telltale_config_t,
-        sparkline_config_t> config;
+        sparkline_config_t,
+        cluster_gauge_config_t> config;
 };
 
 struct window_config_t {

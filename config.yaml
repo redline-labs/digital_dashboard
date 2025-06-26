@@ -2,14 +2,14 @@
 windows:
   # Instrument cluster window with gauges and telltales
   - name: "instrument_cluster"
-    width: 800
+    width: 1200
     height: 450
     background_color: "#000000"
     widgets:
       # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
       - type: "speedometer"
-        x: 50
-        y: 75
+        x: 350
+        y: 15
         width: 250
         height: 250
         zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
@@ -19,8 +19,8 @@ windows:
       
       # Mercedes 190E Tachometer on the right - subscribes to engine RPM
       - type: "tachometer" 
-        x: 350
-        y: 75
+        x: 650
+        y: 15
         width: 250
         height: 250
         zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
@@ -32,7 +32,7 @@ windows:
       # Battery telltale indicator in top left - subscribes to battery warning
       - type: "battery_telltale"
         x: 50
-        y: 25
+        y: 400
         width: 30
         height: 30
         zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
@@ -42,7 +42,7 @@ windows:
       
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: "sparkline"
-        x: 300
+        x: 950
         y: 15
         width: 200
         height: 40
@@ -55,6 +55,14 @@ windows:
           text_color: "#FFFFFF"
           font_family: "Futura"
           update_rate: 30
+
+      # Cluster gauge for all gauges
+      - type: "cluster_gauge"
+        x: 50
+        y: 15
+        width: 250
+        height: 250
+        config: {}
 
   # Dedicated CarPlay window (no Zenoh subscription needed)
 #  - name: "carplay"

@@ -7,6 +7,7 @@
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "sparkline/sparkline.h"
 #include "mercedes_190e_telltales/battery_telltale.h"
+#include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 
 #include <QWidget>
 #include <vector>
@@ -28,9 +29,6 @@ class MainWindow : public QWidget
     MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg);
     ~MainWindow();
 
-    // Provide direct access to the CarPlay widget for integrated decoding
-    CarPlayWidget* getCarPlayWidget();
-
     // Get the window name for identification
     const std::string& getWindowName() const;
 
@@ -50,7 +48,6 @@ class MainWindow : public QWidget
     app_config_t _app_cfg;
     window_config_t _window_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
-    CarPlayWidget* _carplay_widget; // Keep reference for external access
 
     // Zenoh-related members
     std::unique_ptr<zenoh::Session> _zenoh_session;

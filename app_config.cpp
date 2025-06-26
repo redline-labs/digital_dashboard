@@ -203,10 +203,10 @@ struct convert<widget_config_t> {
         {
             node["config"] = std::get<sparkline_config_t>(rhs.config);
         }
-        else if (rhs.type == "battery_telltale")
+        /*else if (rhs.type == "battery_telltale")
         {
             node["config"] = std::get<battery_telltale_config_t>(rhs.config);
-        }
+        }*/
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", rhs.type);

@@ -9,8 +9,7 @@
 MainWindow::MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg):
     QWidget{},
     _app_cfg{app_cfg},
-    _window_cfg{window_cfg},
-    _carplay_widget{nullptr}
+    _window_cfg{window_cfg}
 {
     setWindowTitle(QString("Mercedes Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
     setFixedSize(_window_cfg.width, _window_cfg.height);
@@ -101,8 +100,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         // CarPlay widget needs special handling due to its constructor parameters
         auto* carplay = new CarPlayWidget(std::get<carplay_config_t>(widget_config.config));
         carplay->setSize(widget_config.width, widget_config.height);
-        _carplay_widget = carplay; // Store reference for external access
         return carplay;
+    }
+    else if (type == "cluster_gauge") {
+        auto* cluster_gauge = new Mercedes190EClusterGauge({});
+        return cluster_gauge;
     }
     else {
         spdlog::warn("Unknown widget type: '{}'", type);
@@ -228,11 +230,6 @@ void MainWindow::onBatteryTelltaleDataReceived(bool asserted)
             widget->setAsserted(asserted);
         }
     }
-}
-
-CarPlayWidget* MainWindow::getCarPlayWidget()
-{
-    return _carplay_widget;
 }
 
 const std::string& MainWindow::getWindowName() const

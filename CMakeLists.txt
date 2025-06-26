@@ -78,8 +78,6 @@ qt_standard_project_setup()
 
 include_directories(
     include
-
-    widgets/mercedes_190e_speedometer/include
 )
 
 qt_add_executable(${PROJECT_NAME}
@@ -115,6 +113,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     mercedes_190e_speedometer
     mercedes_190e_tachometer
     sparkline
+    mercedes_190e_cluster_gauge
 )
 
 # Add comprehensive test data publisher executable
