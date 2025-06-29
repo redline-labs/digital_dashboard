@@ -97,7 +97,7 @@ void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
 
     // Draw the 4 sub-gauges at their respective positions
     // Each sub-gauge is positioned at a radius from the center
-    float subGaugeRadius = 35.0f;
+    float subGaugeRadius = 45.0f;
 
     // Top gauge (12 o'clock)
     drawSubGauge(&painter, m_config.top_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
@@ -127,20 +127,20 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
     painter->save();
 
     //const float subGaugeRadius = 25.0f;
-    const float tickRadius = 70.0f;
+    const float tickRadius = 98.0f;
     //const float gaugeArcThickness = 1.5f;
 
      // Needle properties (Orange, tapered) - scaled down for sub-gauge
     const QColor needleColor(255, 165, 0); // Orange like speedometer
-    const float needleBaseWidth = 2.0f;    // Width at the pivot (scaled down)
-    const float needleTipWidth = 1.0f;     // Width at the tip
-    const float needleLength = 45.0f;
+    const float needleBaseWidth = 3.0f;    // Width at the pivot (scaled down)
+    const float needleTipWidth = 2.0f;     // Width at the tip
+    const float needleLength = 50.0f;
 
     // Calculate the arc range for this sub-gauge position
     // Each gauge arc should be on the "outer" side and span 90 degrees opening toward center
     // The arc should be positioned opposite to the radial direction toward center
     const float gaugeSpan = 90.0f; // Sweep 90 degrees clockwise
-
+    
     // Qt coordinate system.  0 degrees is a 3-o'clock position.  Positive values are counter
     // clockwise.
     const float gaugeStartAngle = startAngle - (gaugeSpan / 2.0f) + 90.0f;
@@ -163,22 +163,44 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
     const int numTicks = 5;
     for (int i = 0; i < numTicks; ++i)
     {
-        float tickAngle = gaugeStartAngle + (i * (gaugeSpan / (numTicks - 1)));
-        float tickAngleRad = degreesToRadians(tickAngle);
+        // Calculate the value ratio for this tick (inverted: 0 = max, 4 = min)
+        float valueRatio = static_cast<float>(numTicks - 1 - i) / (numTicks - 1);
+        
+        // Calculate where the needle would point for this value
+        float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
+        float needleAngleRad = degreesToRadians(needleAngleForTick);
+        
+        // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
+        QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
+                         centerY + needleLength * -1.0f * std::sin(needleAngleRad));
+        
+        // Calculate the angle from main gauge center (0,0) to the needle tip
+        float angleFromMainCenter = std::atan2(needleTip.y(), needleTip.x());
+        
+        // Position the tick at this angle on the outer radius
+        float tickOuterRadius = tickRadius;
+        QPointF tickOuter(tickOuterRadius * std::cos(angleFromMainCenter),
+                         tickOuterRadius * std::sin(angleFromMainCenter));
+        
+        // Calculate the direction from the outer tick point to the sub-gauge center
+        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
+        
+        // Normalize the direction vector
+        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() + 
+                                   dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
+        if (dirLength > 0.0f) {
+            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
+            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
+        }
+        
+        // Calculate the inner tick point along the direction toward sub-gauge center
+        float tickLength = 5.0f;
+        QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
 
-        float tickStartRadius = tickRadius - 3.0f;
-        float tickEndRadius = tickRadius;
-
-        QPointF tickStart(centerX + tickStartRadius * -1.0f * std::cos(tickAngleRad),
-                         centerY + tickStartRadius * -1.0f * std::sin(tickAngleRad));
-
-        QPointF tickEnd(centerX + tickEndRadius * -1.0f * std::cos(tickAngleRad),
-                         centerY + tickEndRadius * -1.0f * std::sin(tickAngleRad));
-
-        float thickness = i % 2 == 0 ? 2.0f : 1.0f;
+        float thickness = i % 2 == 0 ? 3.0f : 2.0f;
         QPen tickPen(Qt::white, thickness);
         painter->setPen(tickPen);
-        painter->drawLine(tickStart, tickEnd);
+        painter->drawLine(tickOuter, tickInner);
     }
 
     // Calculate needle angle based on gauge value
@@ -215,7 +237,7 @@ void Mercedes190EClusterGauge::drawCenterHole(QPainter *painter, float centerX, 
     painter->save();
     
     // Central pivot (dark grey/black, flat circle) - scaled down for sub-gauge
-    const float pivotRadius = 4.0f; // Scaled down from speedometer's 8.0f
+    const float pivotRadius = 6.0f; // Scaled down from speedometer's 8.0f
     painter->setPen(Qt::NoPen);
     painter->setBrush(QColor(40, 40, 40)); // Dark grey like speedometer
     painter->drawEllipse(QPointF(centerX, centerY), pivotRadius, pivotRadius);
