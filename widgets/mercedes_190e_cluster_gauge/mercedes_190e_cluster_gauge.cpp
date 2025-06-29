@@ -194,7 +194,7 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
         }
         
         // Calculate the inner tick point along the direction toward sub-gauge center
-        float tickLength = 5.0f;
+        float tickLength = 8.0f;
         QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
 
         float thickness = i % 2 == 0 ? 3.0f : 2.0f;
@@ -203,8 +203,72 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
         painter->drawLine(tickOuter, tickInner);
     }
 
+    // Draw labels below certain ticks
+    painter->save();
+    
+    // Set up font for labels
+    QFont labelFont(m_fontFamily);
+    labelFont.setPointSizeF(9.0f);
+    painter->setFont(labelFont);
+    painter->setPen(Qt::white);
+    QFontMetricsF fm(labelFont);
+    
+    // Label positions: 0 = rightmost (max), 2 = middle, 4 = leftmost (min)
+    const char* labels[] = {"R", nullptr, "1/2", nullptr, "1/1"};
+    
+    for (int i = 0; i < numTicks; ++i)
+    {
+        if (labels[i] == nullptr) continue;
+        
+        // Calculate the value ratio for this tick (inverted: 0 = max, 4 = min)
+        float valueRatio = static_cast<float>(numTicks - 1 - i) / (numTicks - 1);
+        
+        // Calculate where the needle would point for this value
+        float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
+        float needleAngleRad = degreesToRadians(needleAngleForTick);
+        
+        // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
+        QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
+                         centerY + needleLength * -1.0f * std::sin(needleAngleRad));
+        
+        // Calculate the angle from main gauge center (0,0) to the needle tip
+        float angleFromMainCenter = std::atan2(needleTip.y(), needleTip.x());
+        
+        // Position the label below the tick
+        float labelRadius = tickRadius - 17.0f; // Position labels inside the ticks
+        QPointF labelPos(labelRadius * std::cos(angleFromMainCenter),
+                        labelRadius * std::sin(angleFromMainCenter));
+        
+        // Draw the label
+        QString labelText = QString::fromUtf8(labels[i]);
+        QRectF textRect = fm.boundingRect(labelText);
+        textRect.moveCenter(labelPos);
+        painter->drawText(textRect, Qt::AlignCenter, labelText);
+    }
+    
+    // Draw the triangle symbol on the left side
+    painter->save();
+    
+    // Position triangle to the left of the gauge
+    float triangleX = centerX - 46.0f;
+    float triangleY = centerY - 30.0f;
+    float triangleSize = 8.0f;
+    
+    // Create triangle pointing right
+    QPolygonF triangle;
+    triangle << QPointF(triangleX - triangleSize/2, triangleY - triangleSize/2)
+             << QPointF(triangleX - triangleSize/2, triangleY + triangleSize/2)
+             << QPointF(triangleX + triangleSize/2, triangleY);
+    
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(Qt::white);
+    painter->drawPolygon(triangle);
+    
+    painter->restore();
+    painter->restore();
+
     // Calculate needle angle based on gauge value
-    float current_value = 0.0f; // gauge.current_value
+    float current_value = 20.0f; // gauge.current_value
     float valueRatio = (current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
     valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
 
