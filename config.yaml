@@ -4,7 +4,7 @@ windows:
   - name: "instrument_cluster"
     width: 1200
     height: 450
-    background_color: "#000000"
+    background_color: "#555555"
     widgets:
       # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
       - type: "speedometer"

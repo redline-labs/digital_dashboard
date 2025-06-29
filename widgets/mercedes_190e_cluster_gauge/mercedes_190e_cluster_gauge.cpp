@@ -3,6 +3,8 @@
 #include <QFontMetrics>
 #include <QDebug>
 
+#include <spdlog/spdlog.h>
+
 #include <cmath>
 #include <numbers>
 
@@ -72,10 +74,10 @@ float Mercedes190EClusterGauge::getLeftGaugeValue() const
 float Mercedes190EClusterGauge::valueToAngle(float value, float minVal, float maxVal)
 {
     if (maxVal == minVal) return 0.0f;
-    
+
     float constrainedValue = qBound(minVal, value, maxVal);
     float factor = (constrainedValue - minVal) / (maxVal - minVal);
-    
+
     // Each sub-gauge spans approximately 90 degrees
     float angleSpan = 90.0f;
     return factor * angleSpan;
@@ -92,22 +94,22 @@ void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
     painter.scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
 
     drawBackground(&painter);
-    
+
     // Draw the 4 sub-gauges at their respective positions
     // Each sub-gauge is positioned at a radius from the center
-    float subGaugeRadius = 60.0f;
-    
+    float subGaugeRadius = 35.0f;
+
     // Top gauge (12 o'clock)
-    drawSubGauge(&painter, m_config.top_gauge, 0.0f, -subGaugeRadius, 270.0f);  // Start at top
-    
-    // Right gauge (3 o'clock)  
-    drawSubGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f, 0.0f);   // Start at right
-    
+    drawSubGauge(&painter, m_config.top_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
+
+    // Right gauge (3 o'clock)
+    //drawSubGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f, 0.0f);   // Start at right
+
     // Bottom gauge (6 o'clock)
-    drawSubGauge(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius, 90.0f);  // Start at bottom
-    
+    //drawSubGauge(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius, 90.0f);  // Start at bottom
+
     // Left gauge (9 o'clock)
-    drawSubGauge(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f, 180.0f); // Start at left
+    //drawSubGauge(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f, 180.0f); // Start at left
 }
 
 void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
@@ -119,68 +121,76 @@ void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge, 
+void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
                                           float centerX, float centerY, float startAngle)
 {
     painter->save();
-    
-    const float subGaugeRadius = 25.0f;
-    const float tickRadius = 20.0f;
-    const float gaugeArcThickness = 1.5f;
+
+    //const float subGaugeRadius = 25.0f;
+    const float tickRadius = 70.0f;
+    //const float gaugeArcThickness = 1.5f;
 
      // Needle properties (Orange, tapered) - scaled down for sub-gauge
     const QColor needleColor(255, 165, 0); // Orange like speedometer
     const float needleBaseWidth = 2.0f;    // Width at the pivot (scaled down)
     const float needleTipWidth = 1.0f;     // Width at the tip
-    const float needleLength = 18.0f;
-    
+    const float needleLength = 45.0f;
+
     // Calculate the arc range for this sub-gauge position
     // Each gauge arc should be on the "outer" side and span 90 degrees opening toward center
     // The arc should be positioned opposite to the radial direction toward center
-    float gaugeStartAngle = startAngle + 180.0f - 45.0f;  // Start on outer side, 45° before
-    float gaugeSpan = 90.0f; // Sweep 90 degrees clockwise
-    
-    // Draw the gauge arc background  
+    const float gaugeSpan = 90.0f; // Sweep 90 degrees clockwise
+
+    // Qt coordinate system.  0 degrees is a 3-o'clock position.  Positive values are counter
+    // clockwise.
+    const float gaugeStartAngle = startAngle - (gaugeSpan / 2.0f) + 90.0f;
+
+    /*
+    // Draw the gauge arc background
     QPen arcPen(Qt::white);
     arcPen.setWidthF(gaugeArcThickness);
     painter->setPen(arcPen);
     painter->setBrush(Qt::NoBrush);
-    
-    QRectF gaugeRect(centerX - subGaugeRadius, centerY - subGaugeRadius, 
+
+
+    QRectF gaugeRect(centerX - subGaugeRadius, centerY - subGaugeRadius,
                      subGaugeRadius * 2.0f, subGaugeRadius * 2.0f);
-    
+
     painter->drawArc(gaugeRect, static_cast<int>(gaugeStartAngle * 16.0f), static_cast<int>(gaugeSpan * 16.0f));
-    
+    */
+
     // Draw tick marks
     const int numTicks = 5;
-    for (int i = 0; i <= numTicks; ++i) {
-        float tickAngle = gaugeStartAngle + (i * gaugeSpan / numTicks);
+    for (int i = 0; i < numTicks; ++i)
+    {
+        float tickAngle = gaugeStartAngle + (i * (gaugeSpan / (numTicks - 1)));
         float tickAngleRad = degreesToRadians(tickAngle);
-        
+
         float tickStartRadius = tickRadius - 3.0f;
         float tickEndRadius = tickRadius;
-        
-        QPointF tickStart(centerX + tickStartRadius * std::cos(tickAngleRad),
-                         centerY + tickStartRadius * std::sin(tickAngleRad));
-                         
-        QPointF tickEnd(centerX + tickEndRadius * std::cos(tickAngleRad),
-                       centerY + tickEndRadius * std::sin(tickAngleRad));
-        
-        QPen tickPen(Qt::white, 1.0f);
+
+        QPointF tickStart(centerX + tickStartRadius * -1.0f * std::cos(tickAngleRad),
+                         centerY + tickStartRadius * -1.0f * std::sin(tickAngleRad));
+
+        QPointF tickEnd(centerX + tickEndRadius * -1.0f * std::cos(tickAngleRad),
+                         centerY + tickEndRadius * -1.0f * std::sin(tickAngleRad));
+
+        float thickness = i % 2 == 0 ? 2.0f : 1.0f;
+        QPen tickPen(Qt::white, thickness);
         painter->setPen(tickPen);
         painter->drawLine(tickStart, tickEnd);
     }
-    
+
     // Calculate needle angle based on gauge value
-    float valueRatio = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    float current_value = 0.0f; // gauge.current_value
+    float valueRatio = (current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
     valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
-    float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-    
+
+    float needleAngle = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
+
     painter->save();
     painter->translate(centerX, centerY); // Move origin to gauge center
-    painter->rotate(-needleAngle); // Rotate to needle angle
-    
-   
+    painter->rotate(-1.0f * needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
     
     QPolygonF needlePolygon;
     needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot

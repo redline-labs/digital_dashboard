@@ -23,10 +23,9 @@ struct cluster_gauge_config_t {
         bottom_gauge{},
         left_gauge{}
     {
-        // Set some reasonable defaults for the 4 gauges
-        // Top gauge (12 o'clock) - Temperature
-        top_gauge.min_value = 40.0f;
-        top_gauge.max_value = 120.0f;
+        // Fuel gauge.
+        top_gauge.min_value = 0.0f;
+        top_gauge.max_value = 100.0f;
         
         // Right gauge (3 o'clock) - Fuel 
         right_gauge.min_value = 0.0f;
