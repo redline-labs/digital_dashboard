@@ -351,9 +351,20 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
         QPointF tickOuter(tickRadius * std::cos(projectedAngle),
                          tickRadius * std::sin(projectedAngle));
         
-        // Draw tick inward toward the center of the main gauge
-        QPointF tickInner(90.0f * std::cos(projectedAngle),
-                         90.0f * std::sin(projectedAngle));
+        // Calculate the direction from the tick outer point toward the sub-gauge center
+        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
+        
+        // Normalize the direction vector
+        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() + 
+                                   dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
+        if (dirLength > 0.0f) {
+            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
+            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
+        }
+        
+        // Calculate the inner tick point along the direction toward sub-gauge center
+        float tickLength = 8.0f;
+        QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
 
         float thickness = 3.0f;
         QPen tickPen(Qt::white, thickness);
@@ -390,7 +401,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
                                          centerX + 50.0f * std::cos(labelAngleRad));
         
         // Position the label inside the ticks
-        float labelRadius = 80.0f; // Position labels inside the ticks
+        float labelRadius = 82.0f; // Position labels inside the ticks
         QPointF labelPos(labelRadius * std::cos(projectedAngle),
                         labelRadius * std::sin(projectedAngle));
         
@@ -438,8 +449,8 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
         // Position the icon below the pivot
         float iconHeight = 12.0f;
         float iconWidth = 24.0f;
-        float iconX = centerX - iconWidth;
-        float iconY = centerY + 15.0f; // Position below the pivot
+        float iconX = centerX - 20.0f;
+        float iconY = centerY + 12.0f; // Position below the pivot
         
         // Render the SVG directly
         svgRenderer.render(painter, QRectF(iconX, iconY, iconWidth, iconHeight));
