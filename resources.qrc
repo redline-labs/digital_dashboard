@@ -8,5 +8,9 @@
     <file alias="mercedes_190e_telltales/telltale_brake_system.svg">resources/widgets/mercedes_190e_telltales/telltale_brake_system.svg</file>
     <file alias="mercedes_190e_telltales/telltale_battery.svg">resources/widgets/mercedes_190e_telltales/telltale_battery.svg</file>
     <file alias="mercedes_190e_telltales/telltale_high_beam.svg">resources/widgets/mercedes_190e_telltales/telltale_high_beam.svg</file>
+
+    <file alias="mercedes_190e_cluster_gauge/coolant_icon.svg">resources/widgets/mercedes_190e_cluster_gauge/coolant_icon.svg</file>
+    <file alias="mercedes_190e_cluster_gauge/gas_icon.svg">resources/widgets/mercedes_190e_cluster_gauge/gas_icon.svg</file>
+    <file alias="mercedes_190e_cluster_gauge/oil_icon.svg">resources/widgets/mercedes_190e_cluster_gauge/oil_icon.svg</file>
 </qresource>
 </RCC> 

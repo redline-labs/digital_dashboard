@@ -145,20 +145,6 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
     // clockwise.
     const float gaugeStartAngle = startAngle - (gaugeSpan / 2.0f) + 90.0f;
 
-    /*
-    // Draw the gauge arc background
-    QPen arcPen(Qt::white);
-    arcPen.setWidthF(gaugeArcThickness);
-    painter->setPen(arcPen);
-    painter->setBrush(Qt::NoBrush);
-
-
-    QRectF gaugeRect(centerX - subGaugeRadius, centerY - subGaugeRadius,
-                     subGaugeRadius * 2.0f, subGaugeRadius * 2.0f);
-
-    painter->drawArc(gaugeRect, static_cast<int>(gaugeStartAngle * 16.0f), static_cast<int>(gaugeSpan * 16.0f));
-    */
-
     // Draw tick marks
     const int numTicks = 5;
     for (int i = 0; i < numTicks; ++i)
