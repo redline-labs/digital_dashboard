@@ -103,8 +103,8 @@ void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
     // Top gauge (12 o'clock)
     drawSubGauge(&painter, m_config.top_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
 
-    // Right gauge (3 o'clock)
-    //drawSubGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f, 0.0f);   // Start at right
+    // Right gauge (3 o'clock) - Oil Pressure
+    drawOilPressureGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
 
     // Bottom gauge (6 o'clock)
     //drawSubGauge(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius, 90.0f);  // Start at bottom
@@ -309,6 +309,135 @@ void Mercedes190EClusterGauge::drawCenterHole(QPainter *painter, float centerX, 
     painter->setPen(Qt::NoPen);
     painter->setBrush(QColor(40, 40, 40)); // Dark grey like speedometer
     painter->drawEllipse(QPointF(centerX, centerY), pivotRadius, pivotRadius);
+    
+    painter->restore();
+}
+
+void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+                              float centerX, float centerY)
+{
+    painter->save();
+
+    const float tickRadius = 98.0f;
+
+    // Needle properties (Orange, tapered) - scaled down for sub-gauge
+    const QColor needleColor(255, 165, 0); // Orange like speedometer
+    const float needleBaseWidth = 3.0f;    // Width at the pivot (scaled down)
+    const float needleTipWidth = 2.0f;     // Width at the tip
+    const float needleLength = 50.0f;
+
+    // Oil pressure gauge is on the right (3 o'clock position)
+    // The arc should span 90 degrees from top to bottom on the right side
+    const float gaugeSpan = 90.0f;
+    const float gaugeStartAngle = -45.0f; // Start at upper right
+
+    // Draw tick marks
+    const int numTicks = 5;
+    for (int i = 0; i < numTicks; ++i)
+    {
+        // Calculate the value ratio for this tick
+        float valueRatio = static_cast<float>(i) / (numTicks - 1);
+        
+        // Calculate the angle for this tick mark
+        float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
+        float tickAngleRad = degreesToRadians(tickAngle);
+        
+        // Position ticks at a fixed radius from the sub-gauge center
+        const float tickStartRadius = 35.0f;  // Start of tick (closer to center)
+        const float tickEndRadius = 43.0f;    // End of tick (farther from center)
+        
+        // Calculate tick positions relative to sub-gauge center
+        QPointF tickStart(centerX + tickStartRadius * std::cos(tickAngleRad),
+                         centerY + tickStartRadius * std::sin(tickAngleRad));
+        QPointF tickEnd(centerX + tickEndRadius * std::cos(tickAngleRad),
+                       centerY + tickEndRadius * std::sin(tickAngleRad));
+
+        float thickness = i % 2 == 0 ? 3.0f : 2.0f;
+        QPen tickPen(Qt::white, thickness);
+        painter->setPen(tickPen);
+        painter->drawLine(tickStart, tickEnd);
+    }
+
+    // Draw labels for oil pressure
+    painter->save();
+    
+    // Set up font for labels
+    QFont labelFont(m_fontFamily);
+    labelFont.setPointSizeF(9.0f);
+    painter->setFont(labelFont);
+    painter->setPen(Qt::white);
+    QFontMetricsF fm(labelFont);
+    
+    // Label positions for oil pressure: 0, 1, 2, 3
+    const char* labels[] = {"0", nullptr, "1", nullptr, "3"};
+    
+    for (int i = 0; i < numTicks; ++i)
+    {
+        if (labels[i] == nullptr) continue;
+        
+        // Calculate the value ratio for this tick
+        float valueRatio = static_cast<float>(i) / (numTicks - 1);
+        
+        // Calculate the angle for this label
+        float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
+        float labelAngleRad = degreesToRadians(labelAngle);
+        
+        // Position the label outside the ticks
+        float labelRadius = 50.0f;  // Position labels outside the tick marks
+        QPointF labelPos(centerX + labelRadius * std::cos(labelAngleRad),
+                        centerY + labelRadius * std::sin(labelAngleRad));
+        
+        // Draw the label
+        QString labelText = QString::fromUtf8(labels[i]);
+        QRectF textRect = fm.boundingRect(labelText);
+        textRect.moveCenter(labelPos);
+        painter->drawText(textRect, Qt::AlignCenter, labelText);
+    }
+    
+    painter->restore();
+
+    // Calculate needle angle based on gauge value
+    float valueRatio = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
+
+    float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
+
+    // Draw the needle
+    painter->save();
+    painter->translate(centerX, centerY); // Move origin to gauge center
+    painter->rotate(-1.0f * needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
+    
+    QPolygonF needlePolygon;
+    needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot
+                  << QPointF(needleLength, -needleTipWidth / 2.0f) // Bottom-right at tip
+                  << QPointF(needleLength, needleTipWidth / 2.0f)  // Top-right at tip
+                  << QPointF(0.0f, needleBaseWidth / 2.0f);   // Top-left at pivot
+    
+    painter->setPen(Qt::NoPen); // No border for the needle itself
+    painter->setBrush(needleColor);
+    painter->drawPolygon(needlePolygon);
+    
+    painter->restore();
+    
+    // Draw center pivot (dark grey/black, flat circle) - scaled down for sub-gauge
+    drawCenterHole(painter, centerX, centerY);
+    
+    // Draw oil icon below the pivot
+    painter->save();
+    
+    // Load and render the oil icon SVG
+    QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/oil_icon.svg"));
+    if (svgRenderer.isValid()) {
+        // Position the icon below the pivot
+        float iconSize = 20.0f; // Size of the icon
+        float iconX = centerX - iconSize / 2.0f;
+        float iconY = centerY + 10.0f; // Position below the pivot
+        
+        // Render the SVG directly
+        svgRenderer.render(painter, QRectF(iconX, iconY, iconSize, iconSize));
+    }
+    
+    painter->restore();
     
     painter->restore();
 }
