@@ -40,6 +40,8 @@ private:
                       float centerX, float centerY, float startAngle);
     void drawOilPressureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
                               float centerX, float centerY);
+    void drawCoolantTemperatureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+                                     float centerX, float centerY);
     void drawCenterHole(QPainter *painter, float centerX, float centerY);
     
     float valueToAngle(float value, float minVal, float maxVal);
