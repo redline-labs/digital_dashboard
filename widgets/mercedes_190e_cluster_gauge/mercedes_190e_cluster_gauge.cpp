@@ -338,24 +338,27 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
         // Calculate the value ratio for this tick
         float valueRatio = static_cast<float>(i) / (numTicks - 1);
         
-        // Calculate the angle for this tick mark
+        // Calculate the angle for this tick mark relative to sub-gauge center
         float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
         float tickAngleRad = degreesToRadians(tickAngle);
         
-        // Position ticks at a fixed radius from the sub-gauge center
-        const float tickStartRadius = 35.0f;  // Start of tick (closer to center)
-        const float tickEndRadius = 43.0f;    // End of tick (farther from center)
+        // For the right gauge, we need to calculate where this angle projects onto the main gauge edge
+        // The sub-gauge center is at (subGaugeRadius, 0), so we offset from there
+        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(tickAngleRad), 
+                                         centerX + 50.0f * std::cos(tickAngleRad));
         
-        // Calculate tick positions relative to sub-gauge center
-        QPointF tickStart(centerX + tickStartRadius * std::cos(tickAngleRad),
-                         centerY + tickStartRadius * std::sin(tickAngleRad));
-        QPointF tickEnd(centerX + tickEndRadius * std::cos(tickAngleRad),
-                       centerY + tickEndRadius * std::sin(tickAngleRad));
+        // Position the tick on the outer edge of the main gauge
+        QPointF tickOuter(tickRadius * std::cos(projectedAngle),
+                         tickRadius * std::sin(projectedAngle));
+        
+        // Draw tick inward toward the center of the main gauge
+        QPointF tickInner(90.0f * std::cos(projectedAngle),
+                         90.0f * std::sin(projectedAngle));
 
         float thickness = 3.0f;
         QPen tickPen(Qt::white, thickness);
         painter->setPen(tickPen);
-        painter->drawLine(tickStart, tickEnd);
+        painter->drawLine(tickOuter, tickInner);
     }
 
     // Draw labels for oil pressure
@@ -378,14 +381,18 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
         // Calculate the value ratio for this tick
         float valueRatio = static_cast<float>(i) / (numTicks - 1);
         
-        // Calculate the angle for this label
+        // Calculate the angle for this label relative to sub-gauge center
         float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
         float labelAngleRad = degreesToRadians(labelAngle);
         
-        // Position the label outside the ticks
-        float labelRadius = 50.0f;  // Position labels outside the tick marks
-        QPointF labelPos(centerX + labelRadius * std::cos(labelAngleRad),
-                        centerY + labelRadius * std::sin(labelAngleRad));
+        // For the right gauge, calculate where this angle projects onto the main gauge
+        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(labelAngleRad), 
+                                         centerX + 50.0f * std::cos(labelAngleRad));
+        
+        // Position the label inside the ticks
+        float labelRadius = 80.0f; // Position labels inside the ticks
+        QPointF labelPos(labelRadius * std::cos(projectedAngle),
+                        labelRadius * std::sin(projectedAngle));
         
         // Draw the label
         QString labelText = QString::fromUtf8(labels[i]);
