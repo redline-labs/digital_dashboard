@@ -2,6 +2,7 @@
 #include <QPaintEvent>
 #include <QFontMetrics>
 #include <QDebug>
+#include <QSvgRenderer>
 
 #include <spdlog/spdlog.h>
 
@@ -278,6 +279,23 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gau
     
     // Draw center pivot (dark grey/black, flat circle) - scaled down for sub-gauge
     drawCenterHole(painter, centerX, centerY);
+    
+    // Draw gas icon below the pivot
+    painter->save();
+    
+    // Load and render the gas icon SVG
+    QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));
+    if (svgRenderer.isValid()) {
+        // Position the icon below the pivot
+        float iconSize = 20.0f; // Size of the icon
+        float iconX = centerX - iconSize / 2.0f;
+        float iconY = centerY + 10.0f; // Position below the pivot
+        
+        // Render the SVG directly - it already has black fill with transparent cutouts
+        svgRenderer.render(painter, QRectF(iconX, iconY, iconSize, iconSize));
+    }
+    
+    painter->restore();
     
     painter->restore();
 }
