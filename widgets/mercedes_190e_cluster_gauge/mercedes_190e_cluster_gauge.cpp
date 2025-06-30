@@ -332,7 +332,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
     const float gaugeStartAngle = -45.0f; // Start at upper right
 
     // Draw tick marks
-    const int numTicks = 5;
+    const int numTicks = 4;
     for (int i = 0; i < numTicks; ++i)
     {
         // Calculate the value ratio for this tick
@@ -352,7 +352,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
         QPointF tickEnd(centerX + tickEndRadius * std::cos(tickAngleRad),
                        centerY + tickEndRadius * std::sin(tickAngleRad));
 
-        float thickness = i % 2 == 0 ? 3.0f : 2.0f;
+        float thickness = 3.0f;
         QPen tickPen(Qt::white, thickness);
         painter->setPen(tickPen);
         painter->drawLine(tickStart, tickEnd);
@@ -369,7 +369,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
     QFontMetricsF fm(labelFont);
     
     // Label positions for oil pressure: 0, 1, 2, 3
-    const char* labels[] = {"0", nullptr, "1", nullptr, "3"};
+    const char* labels[] = {"3", "2", "1", "0"};
     
     for (int i = 0; i < numTicks; ++i)
     {
@@ -429,12 +429,13 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
     QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/oil_icon.svg"));
     if (svgRenderer.isValid()) {
         // Position the icon below the pivot
-        float iconSize = 20.0f; // Size of the icon
-        float iconX = centerX - iconSize / 2.0f;
-        float iconY = centerY + 10.0f; // Position below the pivot
+        float iconHeight = 12.0f;
+        float iconWidth = 24.0f;
+        float iconX = centerX - iconWidth;
+        float iconY = centerY + 15.0f; // Position below the pivot
         
         // Render the SVG directly
-        svgRenderer.render(painter, QRectF(iconX, iconY, iconSize, iconSize));
+        svgRenderer.render(painter, QRectF(iconX, iconY, iconWidth, iconHeight));
     }
     
     painter->restore();
