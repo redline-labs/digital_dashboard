@@ -20,7 +20,6 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     include
     ${CMAKE_SOURCE_DIR}/include
-    ${OPENGL_INCLUDE_DIR}
 )
 
 # Find required packages for this widget
@@ -39,9 +38,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::OpenGL
         Qt6::OpenGLWidgets
         Qt6::Multimedia
-
-
-        ${OPENGL_LIBRARIES}
+        OpenGL::GL
         # Link nlohmann/json (now available from parent CMakeLists.txt)
         nlohmann_json::nlohmann_json
     PRIVATE
