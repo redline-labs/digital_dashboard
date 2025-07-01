@@ -11,6 +11,7 @@ include(nlohmann_json.cmake)
 include(cxxopts.cmake)
 include(yaml-cpp.cmake)
 include(libusb.cmake)
+include(hidapi.cmake)
 include(zenoh-c.cmake)
 include(zenoh-cpp.cmake)
 
