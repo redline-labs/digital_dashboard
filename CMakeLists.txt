@@ -25,6 +25,9 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 
 # Pull in third party dependencies.
 add_subdirectory(third_party)
+add_subdirectory(widgets)
+add_subdirectory(libs)
+add_subdirectory(examples)
 
 #add_link_options(
 #    -Wl,--gc-sections
@@ -63,9 +66,6 @@ add_compile_options(
     -fno-math-errno
     #-flto
 )
-
-add_subdirectory(widgets)
-
 
 # Enable Qt's automatic MOC, UIC, and RCC processing
 set(CMAKE_AUTOMOC ON)

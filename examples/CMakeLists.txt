@@ -1,0 +1,1 @@
+add_subdirectory(mcp2221a_i2c_scan) 
