@@ -47,7 +47,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
     report[1] = 0x10; // Command: Status/Set Parameters
     report[2] = 0x00; // Reserved
 
-    if(cancel_i2c)
+    if (cancel_i2c == true)
     {
         report[3] = 0x10; // Cancel current I2C/SMBus transfer
     }
@@ -93,7 +93,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
     status.i2c_state = static_cast<I2CState>(response[8]);
     status.ack_status = response[20];
 
-    SPDLOG_INFO("Cancel I2C: {}, Speed response: {}, Speed: {} Hz, State I2C: {}, Ack status: {}", static_cast<uint8_t>(status.i2c_cancel_response), static_cast<uint8_t>(status.i2c_speed_response), status.speed_hz, static_cast<uint8_t>(status.i2c_state), status.ack_status);
+    //SPDLOG_INFO("Cancel I2C: {}, Speed response: {}, Speed: {} Hz, State I2C: {}, Ack status: {}", static_cast<uint8_t>(status.i2c_cancel_response), static_cast<uint8_t>(status.i2c_speed_response), status.speed_hz, static_cast<uint8_t>(status.i2c_state), status.ack_status);
 
     return status;
 }
@@ -213,25 +213,25 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
         }
 
         std::vector<uint8_t> response(64, 0);
-        int res = hid_read_timeout(device_, response.data(), response.size(), 100);
-        SPDLOG_INFO("addr: 0x{:02x}, res: {}, response[0]: 0x{:02x}, response[1]: 0x{:02x}, response[2]: 0x{:02x}", addr, res, response[0], response[1], response[2]);
+        int res = hid_read_timeout(device_, response.data(), response.size(), 10);
+        //SPDLOG_WARN("addr: 0x{:02x}, res: {}, response[0]: 0x{:02x}, response[1]: 0x{:02x}, response[2]: 0x{:02x}", addr, res, response[0], response[1], response[2]);
         
         if (res > 0 && response[0] == 0x90 && response[1] == 0x00) {
-             // The command was accepted by the MCP2221A. Now check the I2C engine status.
-             // A status of 0x00 (Idle) means the START-ADDR-STOP sequence completed with an ACK.
-             // A status of 0x25 means the address was NACKed.
-             if(response[2] == 0x00)
-             {
+            // Now check the ACK status.
+            auto status = get_status();
+            if (status && status->ack_status == 0x00)
+            {
                 found_devices.push_back(addr);
-                spdlog::info("Found device at address 0x{:02x}", addr);
+                //SPDLOG_INFO("Found device at address 0x{:02x}", addr);
              }
         }
-        // Sleep for 20ms
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        // This can happen if the bus is locked. Issue a cancel.
-        get_status_set_parameters(true);
+        else
+        {
+            // This can happen if the bus is locked. Issue a cancel.
+            get_status_set_parameters(true);
+        }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        //std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     spdlog::info("I2C scan complete.");
     return found_devices;
