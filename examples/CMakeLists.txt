@@ -1,1 +1,2 @@
-add_subdirectory(mcp2221a_i2c_scan) 
+add_subdirectory(mcp2221a_i2c_scan)
+add_subdirectory(apple_mfi_ic_demo) 

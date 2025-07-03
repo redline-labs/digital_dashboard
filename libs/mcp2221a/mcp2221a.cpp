@@ -24,6 +24,10 @@ bool MCP2221A::open() {
         return false;
     }
     spdlog::info("MCP2221A device opened");
+
+    // Cancel any pending I2C transfers
+    get_status_set_parameters(true);
+
     return true;
 }
 
@@ -111,7 +115,7 @@ bool MCP2221A::set_i2c_speed(uint32_t speed_hz) {
     }
 
     if (status->i2c_speed_response != I2CSpeedResponse::NowConsidered) {
-        spdlog::error("I2C speed not set");
+        spdlog::error("I2C speed not set, i2c_speed_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_speed_response));
         return false;
     }
 
@@ -144,9 +148,10 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
         spdlog::error("Failed to send I2C write command");
         return false;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     std::vector<uint8_t> response(64, 0);
-    hid_read(device_, response.data(), response.size());
+    int res = hid_read_timeout(device_, response.data(), response.size(), 100);
 
     if (response[0] != 0x90 || response[1] != 0x00) {
          spdlog::error("I2C write failed for address 0x{:02x}", address);
@@ -159,6 +164,14 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
 std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
     if (!is_open() || length > 60) return {};
     
+    // Check if I2C engine is ready before starting
+    auto status = get_status();
+    if (status && status->i2c_state != I2CState::Idle) {
+        spdlog::warn("I2C engine not idle (state: 0x{:02x}), cancelling previous operation", static_cast<uint8_t>(status->i2c_state));
+        get_status_set_parameters(true); // Cancel any pending operation
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
     std::vector<uint8_t> report(65, 0);
     report[0] = 0x00;
     report[1] = 0x91; // I2C Read Data
@@ -167,27 +180,62 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
     report[4] = (address << 1) | 0x01;
 
     if (hid_write(device_, report.data(), report.size()) == -1) {
-        spdlog::error("Failed to send I2C read command");
+        SPDLOG_ERROR("Failed to send I2C read command");
         return {};
     }
 
     std::vector<uint8_t> response(64, 0);
-    int res = hid_read_timeout(device_, response.data(), response.size(), 100);
+    
+    // Wait for the I2C read command to complete
+    for (int i = 0; i < 10; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-    if (res <= 0 || response[0] != 0x91 || response[1] != 0x00) {
-        spdlog::error("I2C read command failed for address 0x{:02x}", address);
+        int res = hid_read_timeout(device_, response.data(), response.size(), 100);
+
+        spdlog::debug("attempt = {}, res = {}, I2C read command response: 0x{:02x}, 0x{:02x}, 0x{:02x}", i, res, response[0], response[1], response[2]);
+
+        // Check if we got a valid response
+        if (res > 0 && response[0] == 0x91 && response[1] == 0x00) {
+            break;
+        }
+
+        if (i == 9) {
+            spdlog::error("I2C read command failed after {} attempts", i + 1);
+            get_status_set_parameters(true); // Cancel the operation
+            return {};
+        }
+    }
+
+    // Now get the actual data
+    std::fill(report.begin(), report.end(), 0);
+    report[0] = 0x00;
+    report[1] = 0x40; // I2C Read Data - Get Data
+
+    if (hid_write(device_, report.data(), report.size()) == -1) {
+        spdlog::error("Failed to send I2C get data command");
         return {};
     }
 
-    hid_read_timeout(device_, response.data(), response.size(), 100);
-    if (response[0] != 0x41) { // Read data response
-         spdlog::error("Did not receive I2C read data response");
-         return {};
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    int res = hid_read_timeout(device_, response.data(), response.size(), 100);
+
+    spdlog::debug("res = {}, I2C read data response: 0x{:02x}, 0x{:02x}, 0x{:02x}, 0x{:02x}", res, response[0], response[1], response[2], response[3]);
+
+    if (res <= 0 || response[0] != 0x40 || response[1] != 0x00) {
+        spdlog::error("Failed to get I2C read data: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", res, response[0], response[1]);
+        get_status_set_parameters(true); // Cancel the operation
+        return {};
     }
     
-    size_t bytes_read = response[2];
+    size_t bytes_read = response[3];
+    if (bytes_read != length) {
+        spdlog::warn("Expected {} bytes but got {} bytes", length, bytes_read);
+    }
+    
     std::vector<uint8_t> result(bytes_read);
     memcpy(result.data(), response.data() + 4, bytes_read);
+    spdlog::debug("I2C read successful: {} bytes", result.size());
 
     return result;
 }
