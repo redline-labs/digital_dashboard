@@ -18,17 +18,32 @@ MCP2221A::~MCP2221A() {
     hid_exit();
 }
 
-bool MCP2221A::open(bool should_reset) {
+bool MCP2221A::open() {
     device_ = hid_open(VENDOR_ID, PRODUCT_ID, nullptr);
     if (!device_) {
-        spdlog::error("MCP2221A device not found");
+        SPDLOG_ERROR("MCP2221A device not found.");
         return false;
     }
     
-    if (should_reset == true)
-    {
-        SPDLOG_INFO("Resetting MCP2221A device.");
-        reset();
+    // Reset the device.
+    std::vector<uint8_t> report(65, 0);
+    report[0] = 0x00; // Report ID
+    report[1] = 0x70; // Command: Reset
+    report[2] = 0xAB; // Reserved
+    report[3] = 0xCD; // Reserved
+    report[4] = 0xEF; // Reserved
+
+    if (hid_write(device_, report.data(), report.size()) == -1) {
+        SPDLOG_ERROR("Failed to send reset command");
+        return false;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    device_ = hid_open(VENDOR_ID, PRODUCT_ID, nullptr);
+    if (!device_) {
+        SPDLOG_ERROR("MCP2221A device not found after reset.");
+        return false;
     }
 
     return true;
@@ -134,16 +149,16 @@ bool MCP2221A::cancel() {
     
     auto status = get_status_set_parameters(true);
     if (!status) {
-        spdlog::error("Failed to cancel I2C.");
+        SPDLOG_ERROR("Failed to cancel I2C.");
         return false;
     }
 
     if ((status->i2c_cancel_response != I2CCancelResponse::MarkedForCancellation) && (status->i2c_cancel_response != I2CCancelResponse::AlreadyInIdleMode)) {
-        spdlog::error("I2C not canceled, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_cancel_response));
+        SPDLOG_WARN("I2C not canceled, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_cancel_response));
         return false;
     }
 
-    spdlog::info("I2C canceled");
+    SPDLOG_INFO("I2C canceled");
     return true;
 }
 
@@ -151,32 +166,6 @@ std::optional<MCP2221AStatus> MCP2221A::get_status()
 {
     return get_status_set_parameters();
 }
-
-bool MCP2221A::reset() {
-    if (!is_open())
-    {
-        return false;
-    }
-
-    std::vector<uint8_t> report(65, 0);
-    report[0] = 0x00; // Report ID
-    report[1] = 0x70; // Command: Reset
-    report[2] = 0xAB; // Reserved
-    report[3] = 0xCD; // Reserved
-    report[4] = 0xEF; // Reserved
-
-    if (hid_write(device_, report.data(), report.size()) == -1) {
-        spdlog::error("Failed to send reset command");
-        return false;
-    }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    open(false);
-
-    return true;
-}
-
 
 bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     if (!is_open()) return false;

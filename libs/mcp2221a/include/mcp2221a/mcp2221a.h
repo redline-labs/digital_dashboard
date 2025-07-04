@@ -57,10 +57,9 @@ public:
     MCP2221A();
     ~MCP2221A();
 
-    bool open(bool should_reset = true);
+    bool open();
     void close();
     bool is_open() const;
-    bool reset();
 
     bool set_i2c_speed(uint32_t speed_hz);
     bool cancel();

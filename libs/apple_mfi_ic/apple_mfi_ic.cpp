@@ -28,7 +28,11 @@ bool AppleMFIIC::init() {
         mcp2221a_->close();
         return false;
     }
-    
+
+    // We need to do a dummy read to the MFi IC to "wake it up".  Not sure why,
+    // but it doesn't seem to respond to the first interaction.
+    mcp2221a_->i2c_write(I2C_ADDRESS, {});
+    mcp2221a_->cancel();
     /*
     // Scan for the device
     auto devices = mcp2221a_->scan_i2c_bus();

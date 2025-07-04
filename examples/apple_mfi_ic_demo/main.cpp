@@ -13,22 +13,22 @@ int main() {
     
     // Initialize the connection
     if (!mfi_ic.init()) {
-        spdlog::error("Failed to initialize Apple MFI IC connection");
+        SPDLOG_ERROR("Failed to initialize Apple MFI IC connection");
         return 1;
     }
     
-    spdlog::info("Successfully connected to Apple MFI IC");
+    SPDLOG_INFO("Successfully connected to Apple MFI IC");
     
     // Query all device information
     auto device_info = mfi_ic.query_device_info();
     if (!device_info) {
-        spdlog::error("Failed to query device information");
+        SPDLOG_ERROR("Failed to query device information");
         return 1;
     }
     
     auto value = mfi_ic.read_register(AppleMFIIC::Register::AccessoryCertificateDataLength, 2);
     if (!value) {
-        spdlog::error("Failed to read Accessory Certificate Data Length");
+        SPDLOG_ERROR("Failed to read Accessory Certificate Data Length");
         return 1;
     }
     //spdlog::info("Accessory Certificate Data Length: [{:02x}]", fmt::join(value->data(), ", "));
