@@ -25,6 +25,13 @@ int main() {
         return 1;
     }
     
+    auto value = mfi_ic.read_register(AppleMFIIC::Register::AccessoryCertificateDataLength);
+    if (!value) {
+        spdlog::error("Failed to read Accessory Certificate Data Length");
+        return 1;
+    }
+    spdlog::info("Accessory Certificate Data Length: 0x{:02x}", *value);
+
     // Print the device information
     std::cout << "\nApple MFI IC Information:\n";
     std::cout << "-------------------------\n";

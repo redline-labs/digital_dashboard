@@ -18,7 +18,21 @@ public:
         DeviceVersion = 0x00,
         AuthenticationRevision = 0x01,
         AuthenticationProtocolMajorVersion = 0x02,
-        AuthenticationProtocolMinorVersion = 0x03
+        AuthenticationProtocolMinorVersion = 0x03,
+        ErrorCode = 0x05,
+    
+        AuthenticationControlAndStatus = 0x10,
+        ChallengeResponseDataLength = 0x11,
+        ChallengeResponseData = 0x12,
+        
+        ChallengeDataLength = 0x20,
+        ChallengeData = 0x21,
+        
+        AccessoryCertificateDataLength = 0x30,
+        AccessoryCertificateData = 0x31,
+        
+        SelfTestStatus = 0x40,
+        SystemEventCounter = 0x4D
     };
     
     // Structure to hold all the queried information
