@@ -82,20 +82,21 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
         report[5] = 0x00; // No action
     }
 
-    if (hid_write(device_, report.data(), report.size()) == -1) {
-        spdlog::error("Failed to send status/set command");
+    if (hid_write(device_, report.data(), report.size()) == -1)
+    {
+        SPDLOG_ERROR("Failed to send status/set command");
         return std::nullopt;
     }
 
     std::vector<uint8_t> response(64, 0);
     int bytes_read = hid_read(device_, response.data(), response.size());
     if (bytes_read < 64) {
-        spdlog::error("Failed to read enough data for status response (read {} bytes)", bytes_read);
+        SPDLOG_ERROR("Failed to read enough data for status response (read {} bytes)", bytes_read);
         return std::nullopt;
     }
 
     if (response[0] != 0x10 || response[1] != 0x00) {
-        spdlog::error("Status/set command failed with code 0x{:02x}", response[1]);
+        SPDLOG_ERROR("Status/set command failed with code 0x{:02x}", response[1]);
         return std::nullopt;
     }
     
@@ -104,11 +105,9 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
     // I2C Status
     status.i2c_cancel_response = static_cast<I2CCancelResponse>(response[2]);
     status.i2c_speed_response = static_cast<I2CSpeedResponse>(response[3]);
-    status.speed_hz = 12000000 / (response[4] + 3); // sram[6] is the divider from status read
+    status.speed_hz = 12000000 / (response[4] + 3);
     status.i2c_state = static_cast<I2CState>(response[8]);
     status.ack_status = response[20];
-
-    //SPDLOG_INFO("Cancel I2C: {}, Speed response: {}, Speed: {} Hz, State I2C: {}, Ack status: {}", static_cast<uint8_t>(status.i2c_cancel_response), static_cast<uint8_t>(status.i2c_speed_response), status.speed_hz, static_cast<uint8_t>(status.i2c_state), status.ack_status);
 
     return status;
 }
@@ -121,16 +120,16 @@ bool MCP2221A::set_i2c_speed(uint32_t speed_hz) {
     
     auto status = get_status_set_parameters(false, speed_hz);
     if (!status) {
-        spdlog::error("Failed to set I2C speed.");
+        SPDLOG_ERROR("Failed to set I2C speed.");
         return false;
     }
 
     if (status->i2c_speed_response != I2CSpeedResponse::NowConsidered) {
-        spdlog::error("I2C speed not set, i2c_speed_response: 0x{:02x}, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_speed_response), static_cast<uint8_t>(status->i2c_cancel_response));
+        SPDLOG_ERROR("I2C speed not set, i2c_speed_response: 0x{:02x}, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_speed_response), static_cast<uint8_t>(status->i2c_cancel_response));
         return false;
     }
 
-    spdlog::info("I2C speed set to {} Hz", status->speed_hz);
+    SPDLOG_INFO("I2C speed set to {} Hz", status->speed_hz);
     return true;
 }
 
@@ -163,7 +162,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status()
 bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     if (!is_open()) return false;
     if (data.size() > 60) {
-        spdlog::error("I2C write data too large (max 60 bytes)");
+        SPDLOG_ERROR("I2C write data too large (max 60 bytes)");
         return false;
     }
 
@@ -177,7 +176,7 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     memcpy(report.data() + 5, data.data(), data.size());
 
     if (hid_write(device_, report.data(), report.size()) == -1) {
-        spdlog::error("Failed to send I2C write command");
+        SPDLOG_ERROR("Failed to send I2C write command");
         return false;
     }
 
@@ -185,7 +184,7 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     int res = hid_read_timeout(device_, response.data(), response.size(), 100u);
 
     if (response[0] != 0x90 || response[1] != 0x00) {
-         spdlog::error("I2C write failed for address 0x{:02x}", address);
+        SPDLOG_ERROR("I2C write failed for address 0x{:02x}", address);
         return false;
     }
 
@@ -267,7 +266,7 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
     std::vector<uint8_t> found_devices;
     if (!is_open()) return found_devices;
 
-    spdlog::info("Scanning I2C bus...");
+    SPDLOG_INFO("Scanning I2C bus...");
     for (uint8_t addr = 1; addr < 128; ++addr) {
         // Use I2C Write Data command with 0 length to ping the address.
         // This performs a full START-ADDR-STOP sequence.
@@ -279,14 +278,13 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
         report[4] = addr << 1; 
 
         if (hid_write(device_, report.data(), report.size()) == -1) {
-            spdlog::warn("hid_write failed during scan for 0x{:02x}", addr);
+            SPDLOG_WARN("hid_write failed during scan for 0x{:02x}", addr);
             continue;
         }
 
         std::vector<uint8_t> response(64, 0);
         int res = hid_read_timeout(device_, response.data(), response.size(), 10);
-        //SPDLOG_WARN("addr: 0x{:02x}, res: {}, response[0]: 0x{:02x}, response[1]: 0x{:02x}, response[2]: 0x{:02x}", addr, res, response[0], response[1], response[2]);
-        
+
         if (res > 0 && response[0] == 0x90 && response[1] == 0x00) {
             // Now check the ACK status.
             auto status = get_status();
@@ -303,6 +301,6 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
         }
 
     }
-    spdlog::info("I2C scan complete.");
+    SPDLOG_INFO("I2C scan complete.");
     return found_devices;
 } 
