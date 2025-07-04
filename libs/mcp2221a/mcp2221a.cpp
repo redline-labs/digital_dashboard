@@ -1,5 +1,6 @@
 #include "mcp2221a/mcp2221a.h"
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/ranges.h> // Required for fmt::join
 #include <vector>
 #include <cstring>
 #include <iostream>
@@ -17,16 +18,18 @@ MCP2221A::~MCP2221A() {
     hid_exit();
 }
 
-bool MCP2221A::open() {
+bool MCP2221A::open(bool should_reset) {
     device_ = hid_open(VENDOR_ID, PRODUCT_ID, nullptr);
     if (!device_) {
         spdlog::error("MCP2221A device not found");
         return false;
     }
-    spdlog::info("MCP2221A device opened");
-
-    // Cancel any pending I2C transfers
-    get_status_set_parameters(true);
+    
+    if (should_reset == true)
+    {
+        SPDLOG_INFO("Resetting MCP2221A device.");
+        reset();
+    }
 
     return true;
 }
@@ -115,7 +118,7 @@ bool MCP2221A::set_i2c_speed(uint32_t speed_hz) {
     }
 
     if (status->i2c_speed_response != I2CSpeedResponse::NowConsidered) {
-        spdlog::error("I2C speed not set, i2c_speed_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_speed_response));
+        spdlog::error("I2C speed not set, i2c_speed_response: 0x{:02x}, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_speed_response), static_cast<uint8_t>(status->i2c_cancel_response));
         return false;
     }
 
@@ -123,10 +126,57 @@ bool MCP2221A::set_i2c_speed(uint32_t speed_hz) {
     return true;
 }
 
+bool MCP2221A::cancel() {
+    if (!is_open())
+    {
+        return false;
+    }
+    
+    auto status = get_status_set_parameters(true);
+    if (!status) {
+        spdlog::error("Failed to cancel I2C.");
+        return false;
+    }
+
+    if ((status->i2c_cancel_response != I2CCancelResponse::MarkedForCancellation) && (status->i2c_cancel_response != I2CCancelResponse::AlreadyInIdleMode)) {
+        spdlog::error("I2C not canceled, i2c_cancel_response: 0x{:02x}", static_cast<uint8_t>(status->i2c_cancel_response));
+        return false;
+    }
+
+    spdlog::info("I2C canceled");
+    return true;
+}
+
 std::optional<MCP2221AStatus> MCP2221A::get_status()
 {
     return get_status_set_parameters();
 }
+
+bool MCP2221A::reset() {
+    if (!is_open())
+    {
+        return false;
+    }
+
+    std::vector<uint8_t> report(65, 0);
+    report[0] = 0x00; // Report ID
+    report[1] = 0x70; // Command: Reset
+    report[2] = 0xAB; // Reserved
+    report[3] = 0xCD; // Reserved
+    report[4] = 0xEF; // Reserved
+
+    if (hid_write(device_, report.data(), report.size()) == -1) {
+        spdlog::error("Failed to send reset command");
+        return false;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    open(false);
+
+    return true;
+}
+
 
 bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     if (!is_open()) return false;
@@ -158,17 +208,24 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
         return false;
     }
 
+    SPDLOG_INFO("Write to device 0x{:02X} = [{:02X}]", address, fmt::join(data, ", "));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
     return true;
 }
 
 std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
-    if (!is_open() || length > 60) return {};
+    if (!is_open() || length > 60)
+    {
+        return {};
+    }
     
     // Check if I2C engine is ready before starting
     auto status = get_status();
     if (status && status->i2c_state != I2CState::Idle) {
-        spdlog::warn("I2C engine not idle (state: 0x{:02x}), cancelling previous operation", static_cast<uint8_t>(status->i2c_state));
-        get_status_set_parameters(true); // Cancel any pending operation
+        SPDLOG_WARN("I2C engine not idle (state: 0x{:02x}), cancelling previous operation", static_cast<uint8_t>(status->i2c_state));
+        cancel(); // Cancel any pending operation
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
@@ -192,12 +249,13 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
 
         int res = hid_read_timeout(device_, response.data(), response.size(), 100);
 
-        spdlog::debug("attempt = {}, res = {}, I2C read command response: 0x{:02x}, 0x{:02x}, 0x{:02x}", i, res, response[0], response[1], response[2]);
-
+        
         // Check if we got a valid response
         if (res > 0 && response[0] == 0x91 && response[1] == 0x00) {
             break;
         }
+
+        SPDLOG_DEBUG("attempt = {}, res = {}, I2C read command response: 0x{:02x}, 0x{:02x}, 0x{:02x}", i, res, response[0], response[1], response[2]);
 
         if (i == 9) {
             spdlog::error("I2C read command failed after {} attempts", i + 1);
@@ -220,8 +278,6 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
 
     int res = hid_read_timeout(device_, response.data(), response.size(), 100);
 
-    spdlog::debug("res = {}, I2C read data response: 0x{:02x}, 0x{:02x}, 0x{:02x}, 0x{:02x}", res, response[0], response[1], response[2], response[3]);
-
     if (res <= 0 || response[0] != 0x40 || response[1] != 0x00) {
         spdlog::error("Failed to get I2C read data: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", res, response[0], response[1]);
         get_status_set_parameters(true); // Cancel the operation
@@ -233,6 +289,8 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
         spdlog::warn("Expected {} bytes but got {} bytes", length, bytes_read);
     }
     
+    SPDLOG_INFO("Read device 0x{:02X} = [{:02X}]", address, fmt::join(response.data() + 4, response.data() + 4 + bytes_read, ", "));
+
     std::vector<uint8_t> result(bytes_read);
     memcpy(result.data(), response.data() + 4, bytes_read);
     spdlog::debug("I2C read successful: {} bytes", result.size());

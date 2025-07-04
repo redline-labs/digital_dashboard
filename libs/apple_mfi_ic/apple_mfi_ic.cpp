@@ -1,6 +1,7 @@
 #include "apple_mfi_ic/apple_mfi_ic.h"
 #include "mcp2221a/mcp2221a.h"
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/ranges.h> // Required for fmt::join
 #include <sstream>
 #include <iomanip>
 #include <thread>
@@ -61,7 +62,7 @@ bool AppleMFIIC::is_connected() const {
     return connected_ && mcp2221a_ && mcp2221a_->is_open();
 }
 
-std::optional<uint8_t> AppleMFIIC::read_register(Register reg) {
+std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size_t length) {
     if (!is_connected()) {
         spdlog::error("Not connected to Apple MFI IC");
         return std::nullopt;
@@ -75,14 +76,14 @@ std::optional<uint8_t> AppleMFIIC::read_register(Register reg) {
     }
     
     // Read the register value
-    auto data = mcp2221a_->i2c_read(I2C_ADDRESS, 1);
+    auto data = mcp2221a_->i2c_read(I2C_ADDRESS, length);
     if (data.empty()) {
         spdlog::error("Failed to read register 0x{:02x}", static_cast<uint8_t>(reg));
         return std::nullopt;
     }
     
-    spdlog::debug("Read register 0x{:02x} = 0x{:02x}", static_cast<uint8_t>(reg), data[0]);
-    return data[0];
+    SPDLOG_INFO("Read register 0x{:02X} = [{:02X}]", static_cast<uint8_t>(reg), fmt::join(data, ", "));
+    return data;
 }
 
 std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
@@ -99,7 +100,7 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
         spdlog::error("Failed to read Device Version");
         return std::nullopt;
     }
-    info.device_version = *device_version;
+    info.device_version = device_version->data()[0];
     
     // Read Authentication Revision
     auto auth_revision = read_register(Register::AuthenticationRevision);
@@ -107,7 +108,7 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
         spdlog::error("Failed to read Authentication Revision");
         return std::nullopt;
     }
-    info.authentication_revision = *auth_revision;
+    info.authentication_revision = auth_revision->data()[0];
     
     // Read Authentication Protocol Major Version
     auto auth_major = read_register(Register::AuthenticationProtocolMajorVersion);
@@ -115,7 +116,7 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
         spdlog::error("Failed to read Authentication Protocol Major Version");
         return std::nullopt;
     }
-    info.authentication_protocol_major_version = *auth_major;
+    info.authentication_protocol_major_version = auth_major->data()[0];
     
     // Read Authentication Protocol Minor Version
     auto auth_minor = read_register(Register::AuthenticationProtocolMinorVersion);
@@ -123,7 +124,7 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
         spdlog::error("Failed to read Authentication Protocol Minor Version");
         return std::nullopt;
     }
-    info.authentication_protocol_minor_version = *auth_minor;
+    info.authentication_protocol_minor_version = auth_minor->data()[0];
     
     //spdlog::info("Successfully queried Apple MFI IC: {}", info.to_string());
     return info;

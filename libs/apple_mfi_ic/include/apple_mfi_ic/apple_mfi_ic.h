@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 // Forward declaration
 class MCP2221A;
@@ -58,7 +59,7 @@ public:
     bool is_connected() const;
     
     // Read a single register
-    std::optional<uint8_t> read_register(Register reg);
+    std::optional<std::vector<uint8_t>> read_register(Register reg, size_t length = 1);
     
     // Query all device information
     std::optional<DeviceInfo> query_device_info();

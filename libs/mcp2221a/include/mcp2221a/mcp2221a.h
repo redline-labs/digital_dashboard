@@ -45,17 +45,25 @@ struct MCP2221AStatus {
     uint8_t ack_status;
 };
 
+enum class MCP2221ACommands : uint8_t {
+    I2CWriteData = 0x90,
+    I2CReadData = 0x91,
+    I2CGetData = 0x40,
+};
+
 
 class MCP2221A {
 public:
     MCP2221A();
     ~MCP2221A();
 
-    bool open();
+    bool open(bool should_reset = true);
     void close();
     bool is_open() const;
+    bool reset();
 
     bool set_i2c_speed(uint32_t speed_hz);
+    bool cancel();
     bool i2c_write(uint8_t address, const std::vector<uint8_t>& data);
     std::vector<uint8_t> i2c_read(uint8_t address, size_t length);
 
