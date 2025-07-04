@@ -1,13 +1,11 @@
 #pragma once
 
+#include "mcp2221a/mcp2221a.h"
+
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-
-// Forward declaration
-class MCP2221A;
 
 class AppleMFIIC {
 public:
@@ -65,6 +63,6 @@ public:
     std::optional<DeviceInfo> query_device_info();
     
 private:
-    std::unique_ptr<MCP2221A> mcp2221a_;
+    MCP2221A mcp2221a_;
     bool connected_;
 }; 
