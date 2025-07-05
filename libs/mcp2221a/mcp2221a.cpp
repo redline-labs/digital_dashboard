@@ -188,17 +188,17 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
         return false;
     }
 
-    SPDLOG_INFO("Write to device 0x{:02X} = [{:02X}]", address, fmt::join(data, ", "));
+    SPDLOG_DEBUG("Write to device 0x{:02X} = [{:02X}]", address, fmt::join(data, ", "));
 
     return true;
 }
 
 std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
-    if (!is_open() || length > 60)
+    if (!is_open() || length == 0)
     {
         return {};
     }
-    
+
     // Check if I2C engine is ready before starting
     auto status = get_status();
     if (status && status->i2c_state != I2CState::Idle) {
@@ -207,6 +207,7 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
+    // Send I2C read command with the total length
     std::vector<uint8_t> report(65, 0);
     report[0] = 0x00;
     report[1] = 0x91; // I2C Read Data
@@ -220,53 +221,97 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
     }
 
     std::vector<uint8_t> response(64, 0);
+    int res = hid_read_timeout(device_, response.data(), response.size(), 100u);
 
-    int res = hid_read_timeout(device_, response.data(), response.size(), 100);
-
-    
     // Check if we got a valid response
     if ((res == 0) || (response[0] != 0x91) || (response[1] != 0x00)) {
         SPDLOG_ERROR("I2C read failed: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", res, response[0], response[1]);
         return {};
     }
 
-    // Now get the actual data
-    std::fill(report.begin(), report.end(), 0);
-    report[0] = 0x00;
-    report[1] = 0x40; // I2C Read Data - Get Data
-
-    if (hid_write(device_, report.data(), report.size()) == -1) {
-        SPDLOG_ERROR("Failed to send I2C get data command");
-        return {};
-    }
-
-    res = hid_read_timeout(device_, response.data(), response.size(), 100u);
-
-    if (res <= 0 || response[0] != 0x40 || response[1] != 0x00)
+    // Wait a bit for the I2C operation to complete
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    
+    // Now get the actual data using multiple 0x40 commands in 60-byte chunks
+    std::vector<uint8_t> final_result;
+    final_result.reserve(length);
+    
+    size_t total_bytes_read = 0;
+    
+    while (total_bytes_read < length)
     {
-        SPDLOG_ERROR("Failed to get I2C read data: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", res, response[0], response[1]);
-        cancel();
-        return {};
+        // Try multiple times to get the data, as the I2C operation might still be in progress
+        bool success = false;
+        for (uint8_t attempt = 0; attempt < 3u; ++attempt)
+        {
+            std::fill(report.begin(), report.end(), 0);
+            report[0] = 0x00;
+            report[1] = 0x40; // I2C Read Data - Get Data
+
+            if (hid_write(device_, report.data(), report.size()) == -1) {
+                SPDLOG_ERROR("Failed to send I2C get data command at offset {}", total_bytes_read);
+                return {};
+            }
+            
+            res = hid_read_timeout(device_, response.data(), response.size(), 100u);
+
+            if (res <= 0) {
+                SPDLOG_WARN("No response on attempt {} at offset {}", attempt, total_bytes_read);
+                continue;
+            }
+            
+            if (response[0] != 0x40) {
+                SPDLOG_WARN("Wrong response type 0x{:02x} on attempt {} at offset {}", response[0], attempt, total_bytes_read);
+                continue;
+            }
+            
+            if (response[1] == 0x00) {
+                // Success
+                success = true;
+                break;
+            } else if (response[1] == 0x41) {
+                // I2C engine busy, wait and retry
+                SPDLOG_DEBUG("I2C engine busy (0x41) on attempt {} at offset {}, retrying...", attempt, total_bytes_read);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5u));
+                continue;
+            } else {
+                // Other error
+                SPDLOG_ERROR("I2C error 0x{:02x} on attempt {} at offset {}", response[1], attempt, total_bytes_read);
+                break;
+            }
+        }
+        
+        if (!success) {
+            SPDLOG_ERROR("Failed to get I2C read data at offset {} after 10 attempts: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", total_bytes_read, res, response[0], response[1]);
+            cancel();
+            return {};
+        }
+        
+        size_t bytes_available = response[3];
+        if (bytes_available == 0) {
+            // No more data available
+            break;
+        }
+        
+        // Copy the available data (up to 60 bytes per 0x40 response)
+        size_t bytes_to_copy = (bytes_available > (length - total_bytes_read)) ? (length - total_bytes_read) : bytes_available;
+        final_result.insert(final_result.end(), response.data() + 4, response.data() + 4 + bytes_to_copy);
+        total_bytes_read += bytes_to_copy;
     }
     
-    size_t bytes_read = response[3];
-    if (bytes_read != length) {
-        SPDLOG_WARN("Expected {} bytes but got {} bytes", length, bytes_read);
+    if (final_result.size() != length) {
+        SPDLOG_WARN("Expected {} bytes but got {} bytes total", length, final_result.size());
     }
     
-    SPDLOG_INFO("Read device 0x{:02X} = [{:02X}]", address, fmt::join(response.data() + 4, response.data() + 4 + bytes_read, ", "));
+    SPDLOG_DEBUG("Read device 0x{:02X} = [{:02X}]", address, fmt::join(final_result, ", "));
 
-    std::vector<uint8_t> result(bytes_read);
-    memcpy(result.data(), response.data() + 4, bytes_read);
-
-    return result;
+    return final_result;
 }
 
 std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
     std::vector<uint8_t> found_devices;
     if (!is_open()) return found_devices;
 
-    SPDLOG_INFO("Scanning I2C bus...");
     for (uint8_t addr = 1; addr < 128; ++addr) {
         // Use I2C Write Data command with 0 length to ping the address.
         // This performs a full START-ADDR-STOP sequence.
@@ -301,6 +346,6 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus() {
         }
 
     }
-    SPDLOG_INFO("I2C scan complete.");
+
     return found_devices;
 } 

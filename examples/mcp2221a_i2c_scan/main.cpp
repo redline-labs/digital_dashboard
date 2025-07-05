@@ -4,8 +4,7 @@
 #include "mcp2221a/mcp2221a.h"
 
 int main() {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::info("MCP2221A I2C Bus Scanner");
+    spdlog::set_level(spdlog::level::debug);
 
     MCP2221A mcp;
     if (!mcp.open()) {
