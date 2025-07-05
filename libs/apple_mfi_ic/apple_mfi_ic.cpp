@@ -82,7 +82,6 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
         return std::nullopt;
     }
     
-    SPDLOG_INFO("Read register 0x{:02X} = [{:02X}]", static_cast<uint8_t>(reg), fmt::join(data, ", "));
     return data;
 }
 
@@ -133,6 +132,45 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
     //spdlog::info("Successfully queried Apple MFI IC: {}", info.to_string());
     return info;
 }
+
+std::vector<uint8_t> AppleMFIIC::read_certificate_data()
+{
+    auto value = read_register(AppleMFIIC::Register::AccessoryCertificateDataLength, 2);
+    if (!value)
+    {
+        SPDLOG_ERROR("Failed to read Accessory Certificate Data Length");
+        return {};
+    }
+
+    // TODO Do sanity check on the length based on the device protocol version.
+
+    uint16_t cert_length = (value->data()[0] << 8) | value->data()[1];
+    SPDLOG_DEBUG("Accessory Certificate Data Length: {} bytes", cert_length);
+
+    std::vector<uint8_t> certificate_data;
+    certificate_data.reserve(cert_length);
+
+    // Now read the actual certificate data
+    uint16_t current_offset = 0;
+    uint8_t register_address = static_cast<uint8_t>(AppleMFIIC::Register::AccessoryCertificateData);
+    while (current_offset < cert_length)
+    {
+        uint16_t chunk_size = std::min(static_cast<uint16_t>(128u), static_cast<uint16_t>(cert_length - current_offset));
+        auto chunk_data = read_register(static_cast<AppleMFIIC::Register>(register_address), chunk_size);
+        if (!chunk_data) {
+            SPDLOG_ERROR("Failed to read Accessory Certificate Data");
+            return {};
+        }
+
+        certificate_data.insert(certificate_data.end(), chunk_data->begin(), chunk_data->end());
+
+        current_offset += chunk_size;
+        register_address += 1u;
+    }
+    
+    return certificate_data;
+}
+
 
 std::string AppleMFIIC::DeviceInfo::to_string() const
 {

@@ -26,35 +26,15 @@ int main() {
         return 1;
     }
     
-    auto value = mfi_ic.read_register(AppleMFIIC::Register::AccessoryCertificateDataLength, 2);
-    if (!value) {
-        SPDLOG_ERROR("Failed to read Accessory Certificate Data Length");
+    auto certificate_data = mfi_ic.read_certificate_data();
+    if (certificate_data.empty()) {
+        SPDLOG_ERROR("Failed to read certificate data");
         return 1;
     }
 
-    uint16_t cert_length = (value->data()[0] << 8) | value->data()[1];
-    SPDLOG_INFO("Accessory Certificate Data Length: {} bytes", cert_length);
-
-    // Now read the actual certificate data
-    uint16_t current_offset = 0;
-    uint8_t register_address = static_cast<uint8_t>(AppleMFIIC::Register::AccessoryCertificateData);
-    while (current_offset < cert_length)
-    {
-        uint16_t chunk_size = std::min(static_cast<uint16_t>(128u), static_cast<uint16_t>(cert_length - current_offset));
-        auto certificate_data = mfi_ic.read_register(static_cast<AppleMFIIC::Register>(register_address), chunk_size);
-        if (!certificate_data) {
-            SPDLOG_ERROR("Failed to read Accessory Certificate Data");
-            return 1;
-        }
-        current_offset += chunk_size;
-        ++register_address;
-    }
-    /*
-    auto certificate_data_0 = mfi_ic.read_register(AppleMFIIC::Register::AccessoryCertificateData, 128u);
-    if (!certificate_data_0) {
-        SPDLOG_ERROR("Failed to read Accessory Certificate Data");
-        return 1;
-    }*/
+    SPDLOG_INFO("Certificate data: {}", fmt::join(certificate_data, ""));
+    
+    
 
     // Print the device information
     std::cout << "\nApple MFI IC Information:\n";

@@ -58,6 +58,9 @@ public:
     
     // Read a single register
     std::optional<std::vector<uint8_t>> read_register(Register reg, size_t length = 1);
+
+    // Read the certificate data
+    std::vector<uint8_t> read_certificate_data();
     
     // Query all device information
     std::optional<DeviceInfo> query_device_info();

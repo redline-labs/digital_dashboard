@@ -228,9 +228,6 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
         SPDLOG_ERROR("I2C read failed: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", res, response[0], response[1]);
         return {};
     }
-
-    // Wait a bit for the I2C operation to complete
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
     
     // Now get the actual data using multiple 0x40 commands in 60-byte chunks
     std::vector<uint8_t> final_result;
@@ -244,6 +241,10 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
         bool success = false;
         for (uint8_t attempt = 0; attempt < 3u; ++attempt)
         {
+            // For longer reads this is necessary. TODO We could probably calculate if a delay
+            // is required or not based on the length of the read.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10u));
+
             std::fill(report.begin(), report.end(), 0);
             report[0] = 0x00;
             report[1] = 0x40; // I2C Read Data - Get Data
@@ -272,7 +273,6 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
             } else if (response[1] == 0x41) {
                 // I2C engine busy, wait and retry
                 SPDLOG_DEBUG("I2C engine busy (0x41) on attempt {} at offset {}, retrying...", attempt, total_bytes_read);
-                std::this_thread::sleep_for(std::chrono::milliseconds(5u));
                 continue;
             } else {
                 // Other error
@@ -288,7 +288,8 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length) {
         }
         
         size_t bytes_available = response[3];
-        if (bytes_available == 0) {
+        if (bytes_available == 0)
+        {
             // No more data available
             break;
         }
