@@ -349,6 +349,139 @@ std::optional<AppleMFIIC::CertificateInfo> AppleMFIIC::read_and_parse_certificat
     return parse_certificate(cert_data);
 }
 
+std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector<uint8_t>& challenge_data)
+{
+    if (!is_connected()) {
+        SPDLOG_ERROR("Not connected to Apple MFI IC");
+        return std::nullopt;
+    }
+    
+    if (challenge_data.empty() || challenge_data.size() > 20) {
+        SPDLOG_ERROR("Challenge data must be between 1 and 20 bytes");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Starting challenge-response authentication with {} bytes of challenge data", challenge_data.size());
+    
+    // Step 1: Write Challenge Data Length (0x20)
+    uint16_t challenge_length = static_cast<uint16_t>(challenge_data.size());
+    std::vector<uint8_t> length_data = {
+        static_cast<uint8_t>((challenge_length >> 8) & 0xFF),  // High byte
+        static_cast<uint8_t>(challenge_length & 0xFF)          // Low byte
+    };
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, {static_cast<uint8_t>(Register::ChallengeDataLength)})) {
+        SPDLOG_ERROR("Failed to write challenge data length register address");
+        return std::nullopt;
+    }
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, length_data)) {
+        SPDLOG_ERROR("Failed to write challenge data length");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Wrote challenge data length: {} bytes", challenge_length);
+    
+    // Step 2: Write Challenge Response Data Length (0x11) - Set to 128 bytes (0x0080)
+    std::vector<uint8_t> response_length_data = {0x00, 0x80};  // 128 bytes
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, {static_cast<uint8_t>(Register::ChallengeResponseDataLength)})) {
+        SPDLOG_ERROR("Failed to write challenge response data length register address");
+        return std::nullopt;
+    }
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, response_length_data)) {
+        SPDLOG_ERROR("Failed to write challenge response data length");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Wrote challenge response data length: 128 bytes");
+    
+    // Step 3: Write Challenge Data (0x21)
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, {static_cast<uint8_t>(Register::ChallengeData)})) {
+        SPDLOG_ERROR("Failed to write challenge data register address");
+        return std::nullopt;
+    }
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, challenge_data)) {
+        SPDLOG_ERROR("Failed to write challenge data");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Wrote challenge data: {} bytes", challenge_data.size());
+    
+    // TODO: It seems like the MFi IC is busy after this.  We should wait for it to be ready.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10u));
+
+    // Step 4: Start Authentication (0x10) - Write 0x01 to start the process
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, {static_cast<uint8_t>(Register::AuthenticationControlAndStatus)})) {
+        SPDLOG_ERROR("Failed to write authentication control register address");
+        return std::nullopt;
+    }
+    
+    if (!mcp2221a_.i2c_write(I2C_ADDRESS, {0x01})) {
+        SPDLOG_ERROR("Failed to start authentication process");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Started authentication process");
+    
+    // Step 5: Poll Authentication Control and Status (0x10) until ready
+    bool authentication_complete = false;
+    const int max_attempts = 10;  // Give it up to 1 second
+    
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10u));
+        
+        auto status_data = read_register(Register::AuthenticationControlAndStatus, 1);
+        if (!status_data) {
+            SPDLOG_ERROR("Failed to read authentication status on attempt {}", attempt);
+            continue;
+        }
+        
+        uint8_t status = status_data->data()[0];
+        SPDLOG_DEBUG("Authentication status on attempt {}: 0x{:02x}", attempt, status);
+        
+        if (status == 0x10) {
+            // Authentication complete
+            authentication_complete = true;
+            SPDLOG_DEBUG("Authentication completed after {} attempts", attempt + 1);
+            break;
+        } else if (status == 0x01) {
+            // Still processing
+            continue;
+        } else {
+            SPDLOG_ERROR("Unexpected authentication status: 0x{:02x}", status);
+            return std::nullopt;
+        }
+    }
+    
+    if (!authentication_complete) {
+        SPDLOG_ERROR("Authentication did not complete within timeout");
+        return std::nullopt;
+    }
+    
+    // Step 6: Read Challenge Response Data Length (0x11) to confirm
+    auto response_length = read_register(Register::ChallengeResponseDataLength, 2);
+    if (!response_length) {
+        SPDLOG_ERROR("Failed to read challenge response data length");
+        return std::nullopt;
+    }
+    
+    uint16_t actual_response_length = (response_length->data()[0] << 8) | response_length->data()[1];
+    SPDLOG_DEBUG("Challenge response data length: {} bytes", actual_response_length);
+    
+    // Step 7: Read Challenge Response Data (0x12)
+    auto signature_data = read_register(Register::ChallengeResponseData, actual_response_length);
+    if (!signature_data) {
+        SPDLOG_ERROR("Failed to read challenge response data");
+        return std::nullopt;
+    }
+    
+    SPDLOG_DEBUG("Successfully read signature: {} bytes", signature_data->size());
+    return *signature_data;
+}
+
 std::string AppleMFIIC::DeviceInfo::to_string() const
 {
     std::ostringstream oss;

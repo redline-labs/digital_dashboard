@@ -90,6 +90,9 @@ public:
     // Read and parse certificate in one call
     std::optional<CertificateInfo> read_and_parse_certificate();
     
+    // Sign challenge data using the MFI IC
+    std::optional<std::vector<uint8_t>> sign_challenge(const std::vector<uint8_t>& challenge_data);
+    
     // Query all device information
     std::optional<DeviceInfo> query_device_info();
     

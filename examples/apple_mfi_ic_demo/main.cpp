@@ -39,6 +39,29 @@ int main() {
 
     SPDLOG_INFO(certificate_info->to_string());
 
+    // Test challenge-response signing with the same data from the debug log
+    std::vector<uint8_t> test_challenge = {
+        0xbe, 0xb2, 0x10, 0xf4, 0x8a, 0x75, 0xad, 0x76, 0x86, 0xdf,
+        0x2d, 0x7b, 0xc5, 0x0f, 0x65, 0xc8, 0x3b, 0xd8, 0x88, 0xad
+    };
+    
+    SPDLOG_INFO("Testing challenge-response signing with {} bytes of challenge data", test_challenge.size());
+    
+    auto signature = mfi_ic.sign_challenge(test_challenge);
+    if (!signature) {
+        SPDLOG_ERROR("Failed to sign challenge data");
+        return 1;
+    }
+    
+    SPDLOG_INFO("Challenge signed successfully! Signature length: {} bytes", signature->size());
+    
+    // Show signature in hex format
+    std::string signature_hex;
+    for (size_t i = 0; i < signature->size(); ++i) {
+        signature_hex += fmt::format("{:02x}", (*signature)[i]);
+    }
+    SPDLOG_INFO("Signature: {}", signature_hex);
+
     // Close the connection
     mfi_ic.close();
 
