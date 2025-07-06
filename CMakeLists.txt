@@ -27,7 +27,6 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 add_subdirectory(third_party)
 add_subdirectory(widgets)
 add_subdirectory(libs)
-add_subdirectory(examples)
 
 #add_link_options(
 #    -Wl,--gc-sections

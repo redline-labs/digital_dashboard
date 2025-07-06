@@ -1,2 +1,0 @@
-adafruit-blinka
-adafruit-circuitpython-mcp2221 
