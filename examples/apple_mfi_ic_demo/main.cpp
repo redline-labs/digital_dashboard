@@ -30,13 +30,14 @@ int main() {
     SPDLOG_INFO("Authentication Revision: 0x{:02X}", device_info->authentication_revision);
     SPDLOG_INFO("Authentication Protocol Version: {}.{}", device_info->authentication_protocol_major_version, device_info->authentication_protocol_minor_version);
     
-    auto certificate_data = mfi_ic.read_certificate_data();
-    if (certificate_data.empty()) {
-        SPDLOG_ERROR("Failed to read certificate data");
+    // Read and parse the certificate
+    auto certificate_info = mfi_ic.read_and_parse_certificate();
+    if (!certificate_info) {
+        SPDLOG_ERROR("Failed to read and parse certificate");
         return 1;
     }
 
-    SPDLOG_INFO("Certificate data: {}", fmt::join(certificate_data, ""));
+    SPDLOG_INFO(certificate_info->to_string());
 
     // Close the connection
     mfi_ic.close();

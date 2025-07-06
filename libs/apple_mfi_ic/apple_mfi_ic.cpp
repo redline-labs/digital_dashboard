@@ -7,6 +7,15 @@
 #include <thread>
 #include <chrono>
 
+// OpenSSL includes
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/pkcs7.h>
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/asn1.h>
+
 AppleMFIIC::AppleMFIIC() 
     : mcp2221a_{}
     , connected_(false) 
@@ -169,4 +178,209 @@ std::vector<uint8_t> AppleMFIIC::read_certificate_data()
     }
     
     return certificate_data;
+}
+
+std::optional<AppleMFIIC::CertificateInfo> AppleMFIIC::parse_certificate(const std::vector<uint8_t>& cert_data)
+{
+    if (cert_data.empty()) {
+        SPDLOG_ERROR("Certificate data is empty");
+        return std::nullopt;
+    }
+    
+    // Create a BIO from the certificate data
+    BIO* bio = BIO_new_mem_buf(cert_data.data(), static_cast<int>(cert_data.size()));
+    if (!bio) {
+        SPDLOG_ERROR("Failed to create BIO from certificate data");
+        return std::nullopt;
+    }
+    
+    // Try to parse as PKCS#7 first
+    PKCS7* pkcs7 = d2i_PKCS7_bio(bio, nullptr);
+    X509* cert = nullptr;
+    
+    if (pkcs7) {
+        SPDLOG_DEBUG("Certificate data appears to be PKCS#7 format");
+        
+        // Extract the certificate from PKCS#7
+        STACK_OF(X509)* certs = nullptr;
+        int type = OBJ_obj2nid(pkcs7->type);
+        
+        if (type == NID_pkcs7_signed) {
+            certs = pkcs7->d.sign->cert;
+        } else if (type == NID_pkcs7_signedAndEnveloped) {
+            certs = pkcs7->d.signed_and_enveloped->cert;
+        }
+        
+        if (certs && sk_X509_num(certs) > 0) {
+            cert = sk_X509_value(certs, 0); // Get the first certificate
+            X509_up_ref(cert); // Increment reference count
+        }
+        
+        PKCS7_free(pkcs7);
+    }
+    
+    BIO_free(bio);
+    
+    if (!cert) {
+        SPDLOG_ERROR("Failed to parse certificate data as PKCS#7.");
+        return std::nullopt;
+    }
+    
+    CertificateInfo info;
+    info.is_valid = true;
+    
+    // Extract subject
+    char* subject_str = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
+    if (subject_str) {
+        info.subject = subject_str;
+        OPENSSL_free(subject_str);
+    }
+    
+    // Extract issuer
+    char* issuer_str = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
+    if (issuer_str) {
+        info.issuer = issuer_str;
+        OPENSSL_free(issuer_str);
+    }
+    
+    // Extract serial number
+    ASN1_INTEGER* serial = X509_get_serialNumber(cert);
+    if (serial) {
+        BIGNUM* bn = ASN1_INTEGER_to_BN(serial, nullptr);
+        if (bn) {
+            char* serial_str = BN_bn2hex(bn);
+            if (serial_str) {
+                info.serial_number = serial_str;
+                OPENSSL_free(serial_str);
+            }
+            BN_free(bn);
+        }
+    }
+    
+    // Extract validity dates
+    const ASN1_TIME* not_before = X509_get0_notBefore(cert);
+    const ASN1_TIME* not_after = X509_get0_notAfter(cert);
+    
+    if (not_before) {
+        BIO* time_bio = BIO_new(BIO_s_mem());
+        if (ASN1_TIME_print(time_bio, not_before)) {
+            char* time_str;
+            long time_len = BIO_get_mem_data(time_bio, &time_str);
+            info.not_before = std::string(time_str, time_len);
+        }
+        BIO_free(time_bio);
+    }
+    
+    if (not_after) {
+        BIO* time_bio = BIO_new(BIO_s_mem());
+        if (ASN1_TIME_print(time_bio, not_after)) {
+            char* time_str;
+            long time_len = BIO_get_mem_data(time_bio, &time_str);
+            info.not_after = std::string(time_str, time_len);
+        }
+        BIO_free(time_bio);
+    }
+    
+    // Extract public key algorithm
+    EVP_PKEY* pkey = X509_get_pubkey(cert);
+    if (pkey) {
+        int pkey_type = EVP_PKEY_base_id(pkey);
+        switch (pkey_type) {
+            case EVP_PKEY_RSA:
+                info.public_key_algorithm = "RSA";
+                break;
+            case EVP_PKEY_EC:
+                info.public_key_algorithm = "EC";
+                break;
+            case EVP_PKEY_DSA:
+                info.public_key_algorithm = "DSA";
+                break;
+            default:
+                info.public_key_algorithm = "Unknown";
+                break;
+        }
+        EVP_PKEY_free(pkey);
+    }
+    
+    // Extract signature algorithm
+    const X509_ALGOR* sig_alg;
+    X509_get0_signature(nullptr, &sig_alg, cert);
+    if (sig_alg) {
+        int sig_nid = OBJ_obj2nid(sig_alg->algorithm);
+        const char* sig_name = OBJ_nid2ln(sig_nid);
+        if (sig_name) {
+            info.signature_algorithm = sig_name;
+        }
+    }
+    
+    // Extract Subject Alternative Names
+    STACK_OF(GENERAL_NAME)* san_names = static_cast<STACK_OF(GENERAL_NAME)*>(
+        X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr));
+    
+    if (san_names) {
+        int san_count = sk_GENERAL_NAME_num(san_names);
+        for (int i = 0; i < san_count; i++) {
+            GENERAL_NAME* gen = sk_GENERAL_NAME_value(san_names, i);
+            if (gen->type == GEN_DNS) {
+                unsigned char* dns_name = nullptr;
+                int dns_len = ASN1_STRING_to_UTF8(&dns_name, gen->d.dNSName);
+                if (dns_len > 0 && dns_name) {
+                    info.subject_alt_names.emplace_back(reinterpret_cast<char*>(dns_name), dns_len);
+                    OPENSSL_free(dns_name);
+                }
+            }
+        }
+        sk_GENERAL_NAME_pop_free(san_names, GENERAL_NAME_free);
+    }
+    
+    X509_free(cert);
+
+    return info;
+}
+
+std::optional<AppleMFIIC::CertificateInfo> AppleMFIIC::read_and_parse_certificate()
+{
+    auto cert_data = read_certificate_data();
+    if (cert_data.empty()) {
+        SPDLOG_ERROR("Failed to read certificate data");
+        return std::nullopt;
+    }
+    
+    return parse_certificate(cert_data);
+}
+
+std::string AppleMFIIC::DeviceInfo::to_string() const
+{
+    std::ostringstream oss;
+    oss << "Device Version: 0x" << std::hex << std::setw(2) << std::setfill('0') 
+        << static_cast<int>(device_version)
+        << ", Authentication Revision: 0x" << std::setw(2) << std::setfill('0') 
+        << static_cast<int>(authentication_revision)
+        << ", Authentication Protocol: " << std::dec 
+        << static_cast<int>(authentication_protocol_major_version) << "."
+        << static_cast<int>(authentication_protocol_minor_version);
+    return oss.str();
+}
+
+std::string AppleMFIIC::CertificateInfo::to_string() const
+{
+    std::ostringstream oss;
+    oss << "Certificate Information:\n";
+    oss << "  Subject: " << subject << "\n";
+    oss << "  Issuer: " << issuer << "\n";
+    oss << "  Serial Number: " << serial_number << "\n";
+    oss << "  Valid From: " << not_before << "\n";
+    oss << "  Valid To: " << not_after << "\n";
+    oss << "  Public Key Algorithm: " << public_key_algorithm << "\n";
+    oss << "  Signature Algorithm: " << signature_algorithm << "\n";
+    oss << "  Valid: " << (is_valid ? "Yes" : "No") << "\n";
+    
+    if (!subject_alt_names.empty()) {
+        oss << "  Subject Alternative Names:\n";
+        for (const auto& san : subject_alt_names) {
+            oss << "    - " << san << "\n";
+        }
+    }
+    
+    return oss.str();
 }

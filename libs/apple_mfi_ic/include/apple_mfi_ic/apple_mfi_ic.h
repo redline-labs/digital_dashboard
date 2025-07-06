@@ -6,6 +6,11 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <memory>
+
+// Forward declarations for OpenSSL types
+typedef struct x509_st X509;
+typedef struct pkcs7_st PKCS7;
 
 class AppleMFIIC {
 public:
@@ -41,6 +46,24 @@ public:
         uint8_t authentication_revision;
         uint8_t authentication_protocol_major_version;
         uint8_t authentication_protocol_minor_version;
+        
+        std::string to_string() const;
+    };
+    
+    // Structure to hold certificate information
+    struct CertificateInfo
+    {
+        std::string subject;
+        std::string issuer;
+        std::string serial_number;
+        std::string not_before;
+        std::string not_after;
+        std::string public_key_algorithm;
+        std::string signature_algorithm;
+        std::vector<std::string> subject_alt_names;
+        bool is_valid;
+        
+        std::string to_string() const;
     };
     
     AppleMFIIC();
@@ -60,6 +83,12 @@ public:
 
     // Read the certificate data
     std::vector<uint8_t> read_certificate_data();
+    
+    // Parse certificate data from raw bytes
+    std::optional<CertificateInfo> parse_certificate(const std::vector<uint8_t>& cert_data);
+    
+    // Read and parse certificate in one call
+    std::optional<CertificateInfo> read_and_parse_certificate();
     
     // Query all device information
     std::optional<DeviceInfo> query_device_info();
