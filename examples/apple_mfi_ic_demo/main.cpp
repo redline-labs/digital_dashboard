@@ -25,6 +25,10 @@ int main() {
         SPDLOG_ERROR("Failed to query device information");
         return 1;
     }
+
+    SPDLOG_INFO("Device Version: 0x{:02X}", device_info->device_version);
+    SPDLOG_INFO("Authentication Revision: 0x{:02X}", device_info->authentication_revision);
+    SPDLOG_INFO("Authentication Protocol Version: {}.{}", device_info->authentication_protocol_major_version, device_info->authentication_protocol_minor_version);
     
     auto certificate_data = mfi_ic.read_certificate_data();
     if (certificate_data.empty()) {
@@ -33,20 +37,7 @@ int main() {
     }
 
     SPDLOG_INFO("Certificate data: {}", fmt::join(certificate_data, ""));
-    
-    
 
-    // Print the device information
-    std::cout << "\nApple MFI IC Information:\n";
-    std::cout << "-------------------------\n";
-    std::cout << "Device Version: 0x" << std::hex 
-              << static_cast<int>(device_info->device_version) << std::dec << "\n";
-    std::cout << "Authentication Revision: 0x" << std::hex 
-              << static_cast<int>(device_info->authentication_revision) << std::dec << "\n";
-    std::cout << "Authentication Protocol Version: " 
-              << static_cast<int>(device_info->authentication_protocol_major_version) 
-              << "." << static_cast<int>(device_info->authentication_protocol_minor_version) << "\n";
-    
     // Close the connection
     mfi_ic.close();
 

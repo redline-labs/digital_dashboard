@@ -35,13 +35,12 @@ public:
     };
     
     // Structure to hold all the queried information
-    struct DeviceInfo {
+    struct DeviceInfo
+    {
         uint8_t device_version;
         uint8_t authentication_revision;
         uint8_t authentication_protocol_major_version;
         uint8_t authentication_protocol_minor_version;
-        
-        std::string to_string() const;
     };
     
     AppleMFIIC();

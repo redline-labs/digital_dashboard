@@ -170,17 +170,3 @@ std::vector<uint8_t> AppleMFIIC::read_certificate_data()
     
     return certificate_data;
 }
-
-
-std::string AppleMFIIC::DeviceInfo::to_string() const
-{
-    std::ostringstream oss;
-    oss << "Device Version: 0x" << std::hex << std::setw(2) << std::setfill('0') 
-        << static_cast<int>(device_version)
-        << ", Authentication Revision: 0x" << std::setw(2) << std::setfill('0') 
-        << static_cast<int>(authentication_revision)
-        << ", Authentication Protocol: " << std::dec 
-        << static_cast<int>(authentication_protocol_major_version) << "."
-        << static_cast<int>(authentication_protocol_minor_version);
-    return oss.str();
-} 
