@@ -52,15 +52,8 @@ int main() {
         SPDLOG_ERROR("Failed to sign challenge data");
         return 1;
     }
-    
-    SPDLOG_INFO("Challenge signed successfully! Signature length: {} bytes", signature->size());
-    
-    // Show signature in hex format
-    std::string signature_hex;
-    for (size_t i = 0; i < signature->size(); ++i) {
-        signature_hex += fmt::format("{:02x}", (*signature)[i]);
-    }
-    SPDLOG_INFO("Signature: {}", signature_hex);
+
+    SPDLOG_INFO("Signature: [{:02x}]", fmt::join(*signature, ", "));
 
     // Close the connection
     mfi_ic.close();
