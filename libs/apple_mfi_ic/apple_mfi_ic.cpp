@@ -378,20 +378,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     
     SPDLOG_DEBUG("Wrote challenge data length: {} bytes", challenge_length);
     
-    // Step 2: Write Challenge Response Data Length (0x11) - Set to 128 bytes (0x0080)
-    std::vector<uint8_t> response_length_write = {
-        static_cast<uint8_t>(Register::ChallengeResponseDataLength),
-        0x00, 0x80  // 128 bytes
-    };
-    
-    if (!mcp2221a_.i2c_write(I2C_ADDRESS, response_length_write)) {
-        SPDLOG_ERROR("Failed to write challenge response data length");
-        return std::nullopt;
-    }
-    
-    SPDLOG_DEBUG("Wrote challenge response data length: 128 bytes");
-    
-    // Step 3: Write Challenge Data (0x21)
+    // Step 2: Write Challenge Data (0x21)
     std::vector<uint8_t> challenge_write;
     challenge_write.push_back(static_cast<uint8_t>(Register::ChallengeData));
     challenge_write.insert(challenge_write.end(), challenge_data.begin(), challenge_data.end());
@@ -406,7 +393,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     // TODO: It seems like the MFi IC is busy after this.  We should wait for it to be ready.
     std::this_thread::sleep_for(std::chrono::milliseconds(10u));
 
-    // Step 4: Start Authentication (0x10) - Write 0x01 to start the process
+    // Step 3: Start Authentication (0x10) - Write 0x01 to start the process
     std::vector<uint8_t> auth_start_write = {
         static_cast<uint8_t>(Register::AuthenticationControlAndStatus),
         0x01
@@ -423,7 +410,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     // Lets wait the majority of the time here.
     std::this_thread::sleep_for(std::chrono::milliseconds(400u));
     
-    // Step 5: Poll Authentication Control and Status (0x10) until ready
+    // Step 4: Poll Authentication Control and Status (0x10) until ready
     bool authentication_complete = false;
     const int max_attempts = 10;  // Give it up to 1 second
     
@@ -459,7 +446,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
         return std::nullopt;
     }
     
-    // Step 6: Read Challenge Response Data Length (0x11) to confirm
+    // Step 5: Read Challenge Response Data Length (0x11) to confirm
     auto response_length = read_register(Register::ChallengeResponseDataLength, 2);
     if (!response_length) {
         SPDLOG_ERROR("Failed to read challenge response data length");
@@ -469,7 +456,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     uint16_t actual_response_length = (response_length->data()[0] << 8) | response_length->data()[1];
     SPDLOG_DEBUG("Challenge response data length: {} bytes", actual_response_length);
     
-    // Step 7: Read Challenge Response Data (0x12)
+    // Step 6: Read Challenge Response Data (0x12)
     auto signature_data = read_register(Register::ChallengeResponseData, actual_response_length);
     if (!signature_data) {
         SPDLOG_ERROR("Failed to read challenge response data");
