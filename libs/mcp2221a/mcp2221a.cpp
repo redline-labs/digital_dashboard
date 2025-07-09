@@ -1,12 +1,12 @@
 #include "mcp2221a/mcp2221a.h"
 
-
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h> // Required for fmt::join
 
 #include <optional>
 #include <thread>
 #include <vector>
+#include <cstring>
 
 class Report_t
 {
@@ -29,8 +29,13 @@ class Report_t
         data_[1] = cmd;
     }
 
-
     constexpr uint8_t& operator[](size_t idx)
+    {
+        // TODO: Bounds railing.
+        return data_[idx + 1u];  // Offset by one since we have the HID report ID.
+    }
+
+    constexpr const uint8_t& operator[](size_t idx) const
     {
         // TODO: Bounds railing.
         return data_[idx + 1u];  // Offset by one since we have the HID report ID.
@@ -41,7 +46,12 @@ class Report_t
         return &data_[0];
     }
 
-    constexpr size_t size()
+    constexpr operator const uint8_t*() const
+    {
+        return &data_[0];
+    }
+
+    constexpr size_t size() const
     {
         return kDataSize;
     }
@@ -50,6 +60,77 @@ class Report_t
     payload_t data_;
 };
 
+// Generic make_report function that accepts variable arguments
+template<typename... Args>
+constexpr Report_t make_report(MCP2221ACommands cmd, Args... args)
+{
+    Report_t report(cmd);
+    size_t index = 1;
+    
+    // Fold expression to set each argument
+    ((report[index++] = static_cast<uint8_t>(args)), ...);
+    
+    return report;
+}
+
+// Template function with enum literal as non-type template parameter
+template<MCP2221ACommands Cmd, typename... Args>
+constexpr Report_t make_report(Args... args)
+{
+    Report_t report(Cmd);
+    size_t index = 1u;
+    
+    // Fold expression to set each argument
+    ((report[index++] = static_cast<uint8_t>(args)), ...);
+    
+    return report;
+}
+
+// Template specialization for Reset command with default values
+template<>
+constexpr Report_t make_report<MCP2221ACommands::Reset>()
+{
+    return make_report(MCP2221ACommands::Reset, 0xAB, 0xCD, 0xEF);
+}
+
+// Template specialization for I2C Write Data command
+template<>
+constexpr Report_t make_report<MCP2221ACommands::I2CWriteData, uint16_t, uint8_t>(uint16_t data_length, uint8_t address)
+{
+    return make_report(MCP2221ACommands::I2CWriteData, 
+                       static_cast<uint8_t>(data_length & 0xFF),        // Length LSB
+                       static_cast<uint8_t>((data_length >> 8) & 0xFF), // Length MSB
+                       address);                                         // I2C address
+}
+
+// Template specialization for I2C Read Data command
+template<>
+constexpr Report_t make_report<MCP2221ACommands::I2CReadData, uint16_t, uint8_t>(uint16_t data_length, uint8_t address)
+{
+    return make_report(MCP2221ACommands::I2CReadData,
+                       static_cast<uint8_t>(data_length & 0xFF),        // Length LSB
+                       static_cast<uint8_t>((data_length >> 8) & 0xFF), // Length MSB
+                       address);                                         // I2C address with read bit
+}
+
+// Template specialization for I2C Get Data command
+template<>
+constexpr Report_t make_report<MCP2221ACommands::I2CGetData>()
+{
+    return make_report(MCP2221ACommands::I2CGetData);
+}
+
+template<>
+constexpr Report_t make_report<MCP2221ACommands::StatusSetParameters, bool, uint32_t>(bool cancel_i2c, uint32_t speed_hz)
+{
+    return make_report(
+        MCP2221ACommands::StatusSetParameters,
+        0x00, // Reserved
+        cancel_i2c ? 0x10 : 0x00,
+        speed_hz > 1000u ? 0x20 : 0x00,
+        (12000000 / speed_hz) - 3
+    );
+}
 
 
 MCP2221A::MCP2221A() :
@@ -76,17 +157,7 @@ bool MCP2221A::open()
     }
     
     // Reset the device.
-    /*std::vector<uint8_t> report(65, 0);
-    report[0] = 0x00; // Report ID
-    report[1] = 0x70; // Command: Reset
-    report[2] = 0xAB; // Reserved
-    report[3] = 0xCD; // Reserved
-    report[4] = 0xEF; // Reserved*/
-
-    Report_t report(MCP2221ACommands::Reset);
-    report[1] = 0xAB;
-    report[2] = 0xCD;
-    report[3] = 0xEF;
+    auto report = make_report<MCP2221ACommands::Reset>();
 
     if (hid_write(device_.get(), report, report.size()) == -1)
     {
@@ -118,25 +189,9 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
         return std::nullopt;
     }
 
-    std::vector<uint8_t> report(65, 0);
-    report[0] = 0x00; // Report ID
-    report[1] = 0x10; // Command: Status/Set Parameters
-    report[2] = 0x00; // Reserved
+    auto report = make_report<MCP2221ACommands::StatusSetParameters>(cancel_i2c, speed_hz);
 
-    report[3] = cancel_i2c == true ? 0x10 : 0x00; // Cancel current I2C/SMBus transfer
-
-    if(speed_hz > 1000u)
-    {
-        report[4] = 0x20; // Set I2C parameters
-        report[5] = (12000000 / speed_hz) - 3;
-    }
-    else
-    {
-        report[4] = 0x00; // No action
-        report[5] = 0x00; // No action
-    }
-
-    if (hid_write(device_.get(), report.data(), report.size()) == -1)
+    if (hid_write(device_.get(), report, report.size()) == -1)
     {
         SPDLOG_ERROR("Failed to send status/set command");
         return std::nullopt;
@@ -228,16 +283,14 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
         return false;
     }
 
-    std::vector<uint8_t> report(65, 0);
-    report[0] = 0x00;
-    report[1] = 0x90; // I2C Write Data
-    report[2] = data.size() & 0xFF;
-    report[3] = (data.size() >> 8) & 0xFF;
-    report[4] = address << 1;
+    auto report = make_report<MCP2221ACommands::I2CWriteData>(data.size(), address << 1);
+    
+    // Copy the data payload starting at index 4 (which is report[3] due to offset)
+    for (size_t i = 0; i < data.size(); ++i) {
+        report[4 + i] = data[i];
+    }
 
-    memcpy(report.data() + 5, data.data(), data.size());
-
-    if (hid_write(device_.get(), report.data(), report.size()) == -1) {
+    if (hid_write(device_.get(), report, report.size()) == -1) {
         SPDLOG_ERROR("Failed to send I2C write command");
         return false;
     }
@@ -272,14 +325,9 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
     }
     
     // Send I2C read command with the total length
-    std::vector<uint8_t> report(65, 0);
-    report[0] = 0x00;
-    report[1] = 0x91; // I2C Read Data
-    report[2] = length & 0xFF;
-    report[3] = (length >> 8) & 0xFF;
-    report[4] = (address << 1) | 0x01;
+    auto report = make_report<MCP2221ACommands::I2CReadData>(length, (address << 1) | 0x01);
 
-    if (hid_write(device_.get(), report.data(), report.size()) == -1)
+    if (hid_write(device_.get(), report, report.size()) == -1)
     {
         SPDLOG_ERROR("Failed to send I2C read command");
         return {};
@@ -311,11 +359,9 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
             // is required or not based on the length of the read.
             std::this_thread::sleep_for(std::chrono::milliseconds(10u));
 
-            std::fill(report.begin(), report.end(), 0);
-            report[0] = 0x00;
-            report[1] = 0x40; // I2C Read Data - Get Data
+            report = make_report<MCP2221ACommands::I2CGetData>();
 
-            if (hid_write(device_.get(), report.data(), report.size()) == -1)
+            if (hid_write(device_.get(), report, report.size()) == -1)
             {
                 SPDLOG_ERROR("Failed to send I2C get data command at offset {}", total_bytes_read);
                 return {};
@@ -393,14 +439,9 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus()
     for (uint8_t addr = 1; addr < 128; ++addr) {
         // Use I2C Write Data command with 0 length to ping the address.
         // This performs a full START-ADDR-STOP sequence.
-        std::vector<uint8_t> report(65, 0);
-        report[0] = 0x00;
-        report[1] = 0x90; // I2C Write Data (with STOP)
-        report[2] = 0x00; // Length LSB
-        report[3] = 0x00; // Length MSB
-        report[4] = addr << 1; 
+        auto report = make_report<MCP2221ACommands::I2CWriteData>(0, addr << 1);
 
-        if (hid_write(device_.get(), report.data(), report.size()) == -1)
+        if (hid_write(device_.get(), report, report.size()) == -1)
         {
             SPDLOG_WARN("hid_write failed during scan for 0x{:02x}", addr);
             continue;

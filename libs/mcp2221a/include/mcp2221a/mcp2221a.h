@@ -50,6 +50,7 @@ struct MCP2221AStatus
 
 enum class MCP2221ACommands : uint8_t
 {
+    StatusSetParameters = 0x10,
     I2CWriteData = 0x90,
     I2CReadData = 0x91,
     I2CGetData = 0x40,
