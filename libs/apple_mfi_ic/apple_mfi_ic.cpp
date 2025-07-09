@@ -38,7 +38,6 @@ bool AppleMFIIC::init()
     // Set I2C speed to 400kHz (standard speed for MFI communication)
     if (!mcp2221a_.set_i2c_speed(100000)) {
         SPDLOG_ERROR("Failed to set I2C speed");
-        mcp2221a_.close();
         return false;
     }
 
@@ -47,7 +46,6 @@ bool AppleMFIIC::init()
     if (mcp2221a_.i2c_write(I2C_ADDRESS, {}) == false)
     {
         SPDLOG_ERROR("Failed to write to Apple MFI IC");
-        mcp2221a_.close();
         return false;
     }
 
@@ -58,8 +56,8 @@ bool AppleMFIIC::init()
     return true;
 }
 
-void AppleMFIIC::close() {
-    mcp2221a_.close();
+void AppleMFIIC::close()
+{
     connected_ = false;
 }
 

@@ -27,7 +27,5 @@ int main() {
         }
     }
 
-    mcp.close();
-
     return 0;
 } 
