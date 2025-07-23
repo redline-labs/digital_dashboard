@@ -5,12 +5,12 @@
 #include <QDebug>
 
 // Define static colors
-const QColor BatteryTelltaleWidget::ASSERTED_BACKGROUND = QColor(200, 50, 50);    // Medium red
-const QColor BatteryTelltaleWidget::NORMAL_BACKGROUND = QColor(60, 60, 60);       // Dark gray
-const QColor BatteryTelltaleWidget::ASSERTED_ICON = QColor(255, 255, 255);        // White when asserted
-const QColor BatteryTelltaleWidget::NORMAL_ICON = QColor(120, 120, 120);          // Light gray when normal
+const QColor Mercedes190EBatteryTelltale::ASSERTED_BACKGROUND = QColor(200, 50, 50);    // Medium red
+const QColor Mercedes190EBatteryTelltale::NORMAL_BACKGROUND = QColor(60, 60, 60);       // Dark gray
+const QColor Mercedes190EBatteryTelltale::ASSERTED_ICON = QColor(255, 255, 255);        // White when asserted
+const QColor Mercedes190EBatteryTelltale::NORMAL_ICON = QColor(120, 120, 120);          // Light gray when normal
 
-BatteryTelltaleWidget::BatteryTelltaleWidget(const battery_telltale_config_t& cfg, QWidget *parent)
+Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const battery_telltale_config_t& cfg, QWidget *parent)
     : QWidget(parent)
     , _cfg{cfg}
     , mSvgRenderer(nullptr)
@@ -33,12 +33,12 @@ BatteryTelltaleWidget::BatteryTelltaleWidget(const battery_telltale_config_t& cf
     setAttribute(Qt::WA_OpaquePaintEvent, false);
 }
 
-BatteryTelltaleWidget::~BatteryTelltaleWidget()
+Mercedes190EBatteryTelltale::~Mercedes190EBatteryTelltale()
 {
     // Qt handles cleanup automatically due to parent-child relationships
 }
 
-void BatteryTelltaleWidget::setAsserted(bool asserted)
+void Mercedes190EBatteryTelltale::setAsserted(bool asserted)
 {
     if (mAsserted != asserted) {
         mAsserted = asserted;
@@ -48,7 +48,7 @@ void BatteryTelltaleWidget::setAsserted(bool asserted)
     }
 }
 
-void BatteryTelltaleWidget::updateColors()
+void Mercedes190EBatteryTelltale::updateColors()
 {
     if (mAsserted) {
         mBackgroundColor = QColor::fromString(_cfg.warning_color);
@@ -59,12 +59,12 @@ void BatteryTelltaleWidget::updateColors()
     }
 }
 
-QSize BatteryTelltaleWidget::sizeHint() const
+QSize Mercedes190EBatteryTelltale::sizeHint() const
 {
     return QSize(64, 64); // Default size
 }
 
-void BatteryTelltaleWidget::paintEvent(QPaintEvent *event)
+void Mercedes190EBatteryTelltale::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     
@@ -120,7 +120,7 @@ void BatteryTelltaleWidget::paintEvent(QPaintEvent *event)
     }
 }
 
-void BatteryTelltaleWidget::resizeEvent(QResizeEvent *event)
+void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     update(); // Ensure the widget repaints with new size

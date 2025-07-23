@@ -9,7 +9,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O2" CACHE STRING "")
 SET(CMAKE_OSX_DEPLOYMENT_TARGET 15.4)
 
 # project name
-project(carplay_cpp)
+project(dashboard)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

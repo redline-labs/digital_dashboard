@@ -13,12 +13,12 @@
 
 class QPainter;
 
-class TachometerWidget : public QWidget
+class Mercedes190ETachometer : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit TachometerWidget(tachometer_config_t cfg, QWidget *parent = nullptr);
+    explicit Mercedes190ETachometer(tachometer_config_t cfg, QWidget *parent = nullptr);
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
     float getRpm() const;

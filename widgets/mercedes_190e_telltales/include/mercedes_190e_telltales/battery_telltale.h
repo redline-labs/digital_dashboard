@@ -11,14 +11,14 @@
 class QSvgRenderer;
 
 
-class BatteryTelltaleWidget : public QWidget
+class Mercedes190EBatteryTelltale : public QWidget
 {
     Q_OBJECT
     Q_PROPERTY(bool asserted READ isAsserted WRITE setAsserted NOTIFY assertedChanged)
 
 public:
-    explicit BatteryTelltaleWidget(const battery_telltale_config_t& cfg, QWidget *parent = nullptr);
-    ~BatteryTelltaleWidget();
+    explicit Mercedes190EBatteryTelltale(const battery_telltale_config_t& cfg, QWidget *parent = nullptr);
+    ~Mercedes190EBatteryTelltale();
 
     bool isAsserted() const { return mAsserted; }
     void setAsserted(bool asserted);

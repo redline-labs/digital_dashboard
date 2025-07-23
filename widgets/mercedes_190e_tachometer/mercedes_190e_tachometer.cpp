@@ -12,7 +12,7 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-TachometerWidget::TachometerWidget(tachometer_config_t cfg, QWidget *parent)
+Mercedes190ETachometer::Mercedes190ETachometer(tachometer_config_t cfg, QWidget *parent)
     : QWidget(parent),
       m_currentRpmValue(0.0f),
 
@@ -31,7 +31,7 @@ TachometerWidget::TachometerWidget(tachometer_config_t cfg, QWidget *parent)
 {
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
     if (fontId == -1) {
-        qWarning() << "TachometerWidget: Failed to load Futura font. Using default.";
+        qWarning() << "Mercedes190ETachometer: Failed to load Futura font. Using default.";
         m_fontFamily = QFont().family();
     } else {
         m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
@@ -44,13 +44,13 @@ TachometerWidget::TachometerWidget(tachometer_config_t cfg, QWidget *parent)
     if (_cfg.show_clock == true)
     {
         m_clockUpdateTimer = new QTimer(this);
-        connect(m_clockUpdateTimer, &QTimer::timeout, this, &TachometerWidget::updateClockTime);
+        connect(m_clockUpdateTimer, &QTimer::timeout, this, &Mercedes190ETachometer::updateClockTime);
         m_clockUpdateTimer->start(1000 * 60); // Update every minute
         updateClockTime(); // Initial call to set time
     }
 }
 
-void TachometerWidget::setRpm(float rpm) {
+void Mercedes190ETachometer::setRpm(float rpm) {
     float clampedRpm = rpm;
     if (clampedRpm < 0.0f) {
         clampedRpm = 0.0f;
@@ -63,17 +63,17 @@ void TachometerWidget::setRpm(float rpm) {
     update();
 }
 
-float TachometerWidget::getRpm() const {
+float Mercedes190ETachometer::getRpm() const {
     return m_currentRpmValue; // Returns direct RPM
 }
 
-float TachometerWidget::valueToAngle(float value) const {
+float Mercedes190ETachometer::valueToAngle(float value) const {
     if (_cfg.max_rpm <= 0.0f) return m_angleStart_deg;
     float proportion = value / _cfg.max_rpm;
     return m_angleStart_deg + proportion * m_angleSweep_deg;
 }
 
-void TachometerWidget::paintEvent(QPaintEvent *event) {
+void Mercedes190ETachometer::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
@@ -94,7 +94,7 @@ void TachometerWidget::paintEvent(QPaintEvent *event) {
     drawNeedle(&painter);
 }
 
-void TachometerWidget::drawBackground(QPainter *painter) {
+void Mercedes190ETachometer::drawBackground(QPainter *painter) {
     painter->save();
     painter->setBrush(Qt::black);
     painter->setPen(Qt::NoPen);
@@ -102,7 +102,7 @@ void TachometerWidget::drawBackground(QPainter *painter) {
     painter->restore();
 }
 
-void TachometerWidget::drawScaleAndNumbers(QPainter *painter) {
+void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
     painter->save();
     painter->setFont(m_dialFont);
     painter->setPen(Qt::white);
@@ -148,7 +148,7 @@ void TachometerWidget::drawScaleAndNumbers(QPainter *painter) {
     painter->restore();
 }
 
-void TachometerWidget::drawRedZone(QPainter *painter) {
+void Mercedes190ETachometer::drawRedZone(QPainter *painter) {
     painter->save();
 
     float arcRadius = m_scaleRadius - (m_redZoneArcWidth / 2.0f);
@@ -165,7 +165,7 @@ void TachometerWidget::drawRedZone(QPainter *painter) {
     painter->restore();
 }
 
-void TachometerWidget::drawStaticText(QPainter *painter) {
+void Mercedes190ETachometer::drawStaticText(QPainter *painter) {
     painter->save();
     painter->setFont(m_labelFont);
     painter->setPen(Qt::white);
@@ -190,7 +190,7 @@ void TachometerWidget::drawStaticText(QPainter *painter) {
     painter->restore();
 }
 
-void TachometerWidget::drawNeedle(QPainter *painter) {
+void Mercedes190ETachometer::drawNeedle(QPainter *painter) {
     painter->save();
     // Use tachometer's valueToAngle and m_currentRpmValue (which is now direct RPM)
     float angle = valueToAngle(m_currentRpmValue);
@@ -221,12 +221,12 @@ void TachometerWidget::drawNeedle(QPainter *painter) {
     painter->restore();
 }
 
-void TachometerWidget::updateClockTime() {
+void Mercedes190ETachometer::updateClockTime() {
     m_currentTime = QTime::currentTime();
     update(); // Trigger a repaint
 }
 
-void TachometerWidget::drawClock(QPainter *painter) {
+void Mercedes190ETachometer::drawClock(QPainter *painter) {
     painter->save();
 
     // Clock properties

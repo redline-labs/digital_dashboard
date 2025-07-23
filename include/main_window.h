@@ -55,9 +55,9 @@ class MainWindow : public QWidget
     
     // Widget mappings for data updates
     std::map<std::string, Mercedes190ESpeedometer*> _speedometer_widgets;
-    std::map<std::string, TachometerWidget*> _tachometer_widgets;
+    std::map<std::string, Mercedes190ETachometer*> _tachometer_widgets;
     std::map<std::string, SparklineItem*> _sparkline_widgets;
-    std::map<std::string, BatteryTelltaleWidget*> _battery_telltale_widgets;
+    std::map<std::string, Mercedes190EBatteryTelltale*> _battery_telltale_widgets;
 };  // class MainWindow
 
 

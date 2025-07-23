@@ -72,7 +72,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         return speedometer;
     }
     else if (type == "tachometer") {
-        auto* tachometer = new TachometerWidget(std::get<tachometer_config_t>(widget_config.config));
+        auto* tachometer = new Mercedes190ETachometer(std::get<tachometer_config_t>(widget_config.config));
         // Store mapping for Zenoh updates if key is provided
         if (!widget_config.zenoh_key.empty()) {
             _tachometer_widgets[widget_config.zenoh_key] = tachometer;
@@ -89,7 +89,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         return sparkline;
     }
     else if (type == "battery_telltale") {
-        auto* battery_telltale = new BatteryTelltaleWidget(std::get<battery_telltale_config_t>(widget_config.config));
+        auto* battery_telltale = new Mercedes190EBatteryTelltale(std::get<battery_telltale_config_t>(widget_config.config));
         // Store mapping for Zenoh updates if key is provided
         if (!widget_config.zenoh_key.empty()) {
             _battery_telltale_widgets[widget_config.zenoh_key] = battery_telltale;
