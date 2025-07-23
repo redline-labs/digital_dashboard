@@ -12,6 +12,8 @@
 #include <QTimer>
 #include <QTime>
 
+#include <string_view>
+
 class QPainter;
 
 class Mercedes190ETachometer : public QWidget
@@ -20,6 +22,7 @@ class Mercedes190ETachometer : public QWidget
 
 public:
     using config_t = Mercedes190ETachometerConfig_t;
+    static constexpr std::string_view kWidgetName = "mercedes_190e_tachometer";
 
     explicit Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent = nullptr);
 

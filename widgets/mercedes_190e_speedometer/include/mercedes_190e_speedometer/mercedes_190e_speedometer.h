@@ -13,11 +13,14 @@
 #include <QColor>
 #include <QFontDatabase>
 
+#include <string_view>
+
 class Mercedes190ESpeedometer : public QWidget
 {
     Q_OBJECT
 public:
     using config_t = Mercedes190ESpeedometerConfig_t;
+    static constexpr std::string_view kWidgetName = "mercedes_190e_speedometer";
 
     explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
     void setSpeed(float speed); // Assume input speed is in MPH for this widget

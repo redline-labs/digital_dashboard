@@ -8,6 +8,8 @@
 #include <QPainter>
 #include <QTimer>
 
+#include <string_view>
+
 // Forward declaration.
 class QSvgRenderer;
 
@@ -19,6 +21,7 @@ class Mercedes190EBatteryTelltale : public QWidget
 
 public:
     using config_t = Mercedes190EBatteryTelltaleConfig_t;
+    static constexpr std::string_view kWidgetName = "mercedes_190e_telltales";
 
     explicit Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent = nullptr);
     ~Mercedes190EBatteryTelltale();

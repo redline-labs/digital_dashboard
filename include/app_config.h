@@ -7,12 +7,12 @@
 #include <variant>
 #include <vector>
 
-#include "carplay/config.h"
-#include "mercedes_190e_speedometer/config.h"
-#include "mercedes_190e_tachometer/config.h"
-#include "mercedes_190e_telltales/config.h"
-#include "sparkline/config.h"
-#include "mercedes_190e_cluster_gauge/config.h"
+#include "carplay/carplay_widget.h"
+#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
+#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
+#include "mercedes_190e_telltales/battery_telltale.h"
+#include "sparkline/sparkline.h"
+#include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 
 struct widget_config_t {
     widget_config_t() :
@@ -31,12 +31,12 @@ struct widget_config_t {
     uint16_t height;
 
     std::variant<
-        Mercedes190ESpeedometerConfig_t,
-        CarplayConfig_t,
-        Mercedes190ETachometerConfig_t,
-        Mercedes190EBatteryTelltaleConfig_t,
-        SparklineConfig_t,
-        Mercedes190EClusterGaugeConfig_t> config;
+        Mercedes190ESpeedometer::config_t,
+        CarPlayWidget::config_t,
+        Mercedes190ETachometer::config_t,
+        Mercedes190EBatteryTelltale::config_t,
+        SparklineItem::config_t,
+        Mercedes190EClusterGauge::config_t> config;
 };
 
 struct window_config_t {

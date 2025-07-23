@@ -10,15 +10,15 @@
 #include <QVector>
 #include <QLabel>
 #include <QVBoxLayout>
-#include <QMetaObject>
-#include <memory>
-#include <map>
+
+#include <string_view>
 
 class SparklineItem : public QWidget {
     Q_OBJECT
 
 public:
     using config_t = SparklineConfig_t;
+    static constexpr std::string_view kWidgetName = "sparkline";
 
     explicit SparklineItem(const SparklineConfig_t& cfg, QWidget *parent = nullptr);
     void addDataPoint(double value);

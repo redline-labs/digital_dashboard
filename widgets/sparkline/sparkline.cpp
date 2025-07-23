@@ -9,6 +9,10 @@
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 #include <spdlog/spdlog.h>
 
+#include <QMetaObject>
+#include <memory>
+#include <map>
+
 SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     : QWidget(parent), _cfg{cfg}
 {

@@ -250,29 +250,29 @@ struct convert<widget_config_t> {
         node["width"] = rhs.width;
         node["height"] = rhs.height;
 
-        if (rhs.type == "carplay")
+        if (rhs.type == CarPlayWidget::kWidgetName)
         {
-            node["config"] = std::get<CarplayConfig_t>(rhs.config);
+            node["config"] = std::get<CarPlayWidget::config_t>(rhs.config);
         }
-        else if (rhs.type == "speedometer")
+        else if (rhs.type == Mercedes190ESpeedometer::kWidgetName)
         {
-            node["config"] = std::get<Mercedes190ESpeedometerConfig_t>(rhs.config);
+            node["config"] = std::get<Mercedes190ESpeedometer::config_t>(rhs.config);
         }
-        else if (rhs.type == "tachometer")
+        else if (rhs.type == Mercedes190ETachometer::kWidgetName)
         {
-            node["config"] = std::get<Mercedes190ETachometerConfig_t>(rhs.config);
+            node["config"] = std::get<Mercedes190ETachometer::config_t>(rhs.config);
         }
-        else if (rhs.type == "sparkline")
+        else if (rhs.type == SparklineItem::kWidgetName)
         {
-            node["config"] = std::get<SparklineConfig_t>(rhs.config);
+            node["config"] = std::get<SparklineItem::config_t>(rhs.config);
         }
-        else if (rhs.type == "battery_telltale")
+        else if (rhs.type == Mercedes190EBatteryTelltale::kWidgetName)
         {
-            node["config"] = std::get<Mercedes190EBatteryTelltaleConfig_t>(rhs.config);
+            node["config"] = std::get<Mercedes190EBatteryTelltale::config_t>(rhs.config);
         }
-        else if (rhs.type == "mercedes_190e_cluster_gauge")
+        else if (rhs.type == Mercedes190EClusterGauge::kWidgetName)
         {
-            node["config"] = std::get<Mercedes190EClusterGaugeConfig_t>(rhs.config);
+            node["config"] = std::get<Mercedes190EClusterGauge::config_t>(rhs.config);
         }
         else
         {

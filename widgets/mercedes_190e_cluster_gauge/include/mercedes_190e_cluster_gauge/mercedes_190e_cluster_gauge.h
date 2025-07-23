@@ -12,11 +12,14 @@
 #include <QColor>
 #include <QFontDatabase>
 
+#include <string_view>
+
 class Mercedes190EClusterGauge : public QWidget
 {
     Q_OBJECT
 public:
     using config_t = Mercedes190EClusterGaugeConfig_t;
+    static constexpr std::string_view kWidgetName = "mercedes_190e_cluster_gauge";
 
     explicit Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent = nullptr);
     virtual ~Mercedes190EClusterGauge() = default;

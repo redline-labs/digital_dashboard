@@ -21,6 +21,7 @@
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <string_view>
 
 // Forward declarations for libavcodec stuff.
 struct AVCodec;
@@ -39,7 +40,8 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 
   public:
     using config_t = CarplayConfig_t;
-  
+    static constexpr std::string_view kWidgetName = "carplay";
+
     CarPlayWidget(CarplayConfig_t cfg);
     ~CarPlayWidget();
 
