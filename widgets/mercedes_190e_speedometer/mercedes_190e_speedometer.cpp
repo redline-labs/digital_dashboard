@@ -1,12 +1,17 @@
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include <QPaintEvent>
 #include <QFontMetrics>
-#include <QDebug> // For font loading messages
+#include <QMetaObject>
+
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <memory>
 #include <numbers>
 #include <vector> // For std::vector
+
+
+
 
 // Helper for degree to radian conversion
 constexpr float degreesToRadians(float degrees)
@@ -22,7 +27,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     if (fontId != -1) {
         m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
     } else {
-        qWarning("Failed to load futura.ttf from resources. Using default sans-serif.");
+        SPDLOG_WARN("Failed to load futura.ttf from resources. Using default sans-serif.");
         m_fontFamily = "sans-serif"; // Fallback font
     }
 }
@@ -447,7 +452,7 @@ void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> se
 void Mercedes190ESpeedometer::createZenohSubscription()
 {
     if (!_zenoh_session) {
-        spdlog::warn("Mercedes190ESpeedometer: Cannot create subscription - no Zenoh session");
+        SPDLOG_WARN("Mercedes190ESpeedometer: Cannot create subscription - no Zenoh session");
         return;
     }
     
@@ -476,17 +481,17 @@ void Mercedes190ESpeedometer::createZenohSubscription()
                                                 Q_ARG(double, speed_mps));
                         
                     } catch (const std::exception& e) {
-                        spdlog::error("Mercedes190ESpeedometer: Error parsing speed data: {}", e.what());
+                        SPDLOG_ERROR("Mercedes190ESpeedometer: Error parsing speed data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        spdlog::info("Mercedes190ESpeedometer: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Mercedes190ESpeedometer: Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        spdlog::error("Mercedes190ESpeedometer: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("Mercedes190ESpeedometer: Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }

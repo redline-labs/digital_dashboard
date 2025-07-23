@@ -136,7 +136,7 @@ std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
     }
     info.authentication_protocol_minor_version = auth_minor->data()[0];
     
-    //spdlog::info("Successfully queried Apple MFI IC: {}", info.to_string());
+    //SPDLOG_INFO("Successfully queried Apple MFI IC: {}", info.to_string());
     return info;
 }
 

@@ -43,11 +43,11 @@ void MainWindow::createWidgetsFromConfig()
             // Store the widget
             _widgets.emplace_back(std::unique_ptr<QWidget>(widget));
             
-            spdlog::info("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'",
+            SPDLOG_INFO("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'",
                         widget_config.type, widget_config.x, widget_config.y, 
                         widget_config.width, widget_config.height, _window_cfg.name);
         } else {
-            spdlog::error("Failed to create widget of type '{}' in window '{}'", 
+            SPDLOG_ERROR("Failed to create widget of type '{}' in window '{}'", 
                          widget_config.type, _window_cfg.name);
         }
     }
@@ -96,7 +96,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         return cluster_gauge;
     }
     else {
-        spdlog::warn("Unknown widget type: '{}'", type);
+        SPDLOG_WARN("Unknown widget type: '{}'", type);
         return nullptr;
     }
 }
@@ -109,10 +109,10 @@ void MainWindow::initializeZenoh()
         
         // Open Zenoh session (use shared_ptr for sharing with widgets)
         _zenoh_session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
-        spdlog::info("Zenoh session opened successfully for window '{}'", _window_cfg.name);
+        SPDLOG_INFO("Zenoh session opened successfully for window '{}'", _window_cfg.name);
         
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize Zenoh for window '{}': {}", _window_cfg.name, e.what());
+        SPDLOG_ERROR("Failed to initialize Zenoh for window '{}': {}", _window_cfg.name, e.what());
         // Continue without Zenoh - widgets can still function without real-time data
     }
 }

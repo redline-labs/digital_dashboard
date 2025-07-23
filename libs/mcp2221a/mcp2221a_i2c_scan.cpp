@@ -12,18 +12,18 @@ int main() {
     }
 
     if (!mcp.set_i2c_speed(100000)) {
-        spdlog::error("Failed to set I2C speed.");
+        SPDLOG_ERROR("Failed to set I2C speed.");
         return 1;
     }
 
     std::vector<uint8_t> devices = mcp.scan_i2c_bus();
 
     if (devices.empty()) {
-        spdlog::info("No I2C devices found.");
+        SPDLOG_INFO("No I2C devices found.");
     } else {
-        spdlog::info("Found {} devices:", devices.size());
+        SPDLOG_INFO("Found {} devices:", devices.size());
         for (const auto& device : devices) {
-            spdlog::info(" - 0x{:02x}", device);
+            SPDLOG_INFO(" - 0x{:02x}", device);
         }
     }
 

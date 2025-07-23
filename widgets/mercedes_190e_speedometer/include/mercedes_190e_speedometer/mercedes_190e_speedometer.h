@@ -12,8 +12,6 @@
 #include <QBrush>
 #include <QColor>
 #include <QFontDatabase>
-#include <QMetaObject>
-#include <memory>
 
 class Mercedes190ESpeedometer : public QWidget
 {

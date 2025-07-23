@@ -7,8 +7,6 @@
 #include <QWidget>
 #include <QPainter>
 #include <QTimer>
-#include <QMetaObject>
-#include <memory>
 
 // Forward declaration.
 class QSvgRenderer;

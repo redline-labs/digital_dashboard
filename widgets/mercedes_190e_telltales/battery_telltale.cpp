@@ -1,9 +1,13 @@
 #include "mercedes_190e_telltales/battery_telltale.h"
+
+#include <QMetaObject>
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QSvgRenderer>
-#include <QDebug>
+
 #include <spdlog/spdlog.h>
+
+#include <memory>
 
 // Define static colors
 const QColor Mercedes190EBatteryTelltale::ASSERTED_BACKGROUND = QColor(200, 50, 50);    // Medium red
@@ -21,7 +25,7 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
     mSvgRenderer = new QSvgRenderer(QString(":/mercedes_190e_telltales/telltale_battery.svg"), this);
     
     if (!mSvgRenderer->isValid()) {
-        qWarning() << "Failed to load battery telltale SVG";
+        SPDLOG_WARN("Failed to load battery telltale SVG");
     }
     
     // Initialize colors
@@ -140,7 +144,7 @@ void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session
 void Mercedes190EBatteryTelltale::createZenohSubscription()
 {
     if (!_zenoh_session) {
-        spdlog::warn("Mercedes190EBatteryTelltale: Cannot create subscription - no Zenoh session");
+        SPDLOG_WARN("Mercedes190EBatteryTelltale: Cannot create subscription - no Zenoh session");
         return;
     }
     
@@ -169,17 +173,17 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
                                                 Q_ARG(bool, asserted));
                         
                     } catch (const std::exception& e) {
-                        spdlog::error("Mercedes190EBatteryTelltale: Error parsing data: {}", e.what());
+                        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Error parsing data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        spdlog::info("Mercedes190EBatteryTelltale: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Mercedes190EBatteryTelltale: Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        spdlog::error("Mercedes190EBatteryTelltale: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }

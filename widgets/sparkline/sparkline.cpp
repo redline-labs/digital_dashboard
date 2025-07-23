@@ -222,7 +222,7 @@ void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> session)
 void SparklineItem::createZenohSubscription()
 {
     if (!_zenoh_session) {
-        spdlog::warn("SparklineItem: Cannot create subscription - no Zenoh session");
+        SPDLOG_WARN("SparklineItem: Cannot create subscription - no Zenoh session");
         return;
     }
     
@@ -251,17 +251,17 @@ void SparklineItem::createZenohSubscription()
                                                 Q_ARG(double, value));
                         
                     } catch (const std::exception& e) {
-                        spdlog::error("SparklineItem: Error parsing data: {}", e.what());
+                        SPDLOG_ERROR("SparklineItem: Error parsing data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        spdlog::info("SparklineItem: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("SparklineItem: Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        spdlog::error("SparklineItem: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("SparklineItem: Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }

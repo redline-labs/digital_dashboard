@@ -138,7 +138,7 @@ MCP2221A::MCP2221A() :
 {
     if (hid_init())
     {
-        spdlog::error("Failed to initialize HIDAPI");
+        SPDLOG_ERROR("Failed to initialize HIDAPI");
     }
 }
 

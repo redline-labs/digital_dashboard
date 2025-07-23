@@ -2,9 +2,12 @@
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include <QPainter>
 #include <QFontDatabase>
-#include <QDebug>
+#include <QMetaObject>
+
 #include <spdlog/spdlog.h>
+
 #include <cmath> // For std::cos, std::sin
+#include <memory>
 #include <numbers>
 
 // Helper for degree to radian conversion
@@ -32,7 +35,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
 {
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
     if (fontId == -1) {
-        qWarning() << "Mercedes190ETachometer: Failed to load Futura font. Using default.";
+        SPDLOG_WARN("Mercedes190ETachometer: Failed to load Futura font. Using default.");
         m_fontFamily = QFont().family();
     } else {
         m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
@@ -335,7 +338,7 @@ void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> ses
 void Mercedes190ETachometer::createZenohSubscription()
 {
     if (!_zenoh_session) {
-        spdlog::warn("Mercedes190ETachometer: Cannot create subscription - no Zenoh session");
+        SPDLOG_WARN("Mercedes190ETachometer: Cannot create subscription - no Zenoh session");
         return;
     }
     
@@ -364,17 +367,17 @@ void Mercedes190ETachometer::createZenohSubscription()
                                                 Q_ARG(double, rpm));
                         
                     } catch (const std::exception& e) {
-                        spdlog::error("Mercedes190ETachometer: Error parsing RPM data: {}", e.what());
+                        SPDLOG_ERROR("Mercedes190ETachometer: Error parsing RPM data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        spdlog::info("Mercedes190ETachometer: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Mercedes190ETachometer: Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        spdlog::error("Mercedes190ETachometer: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("Mercedes190ETachometer: Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }

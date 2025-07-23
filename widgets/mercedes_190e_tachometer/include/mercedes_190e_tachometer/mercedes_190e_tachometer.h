@@ -11,8 +11,6 @@
 #include <QColor>
 #include <QTimer>
 #include <QTime>
-#include <QMetaObject>
-#include <memory>
 
 class QPainter;
 
