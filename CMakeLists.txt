@@ -83,6 +83,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     app_config.cpp
     main_window.cpp
+    command_line_args.cpp
     resources.qrc
 )
 
