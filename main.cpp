@@ -76,7 +76,11 @@ int main(int argc, char** argv)
     std::string config_file_path = args_result["config"].as<std::string>();
     SPDLOG_INFO("Loading configuration file '{}'.", config_file_path);
     auto cfg = load_app_config(config_file_path);
-
+    if (!cfg)
+    {
+        SPDLOG_CRITICAL("Failed to load configuration file '{}'.", config_file_path);
+        return -1;
+    }
 
     QApplication app(argc, argv);
 
@@ -84,8 +88,9 @@ int main(int argc, char** argv)
     std::vector<std::unique_ptr<MainWindow>> windows;
 
     // Create configured windows
-    for (const auto& window_cfg : cfg.windows) {
-        auto main_window = std::make_unique<MainWindow>(cfg, window_cfg);
+    for (const auto& window_cfg : cfg.value().windows)
+    {
+        auto main_window = std::make_unique<MainWindow>(window_cfg);
 
         main_window->show();
         windows.push_back(std::move(main_window));

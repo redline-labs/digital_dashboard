@@ -26,7 +26,7 @@ class MainWindow : public QWidget
     Q_OBJECT
 
   public:
-    MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg);
+    MainWindow(const window_config_t& window_cfg);
     ~MainWindow();
 
     // Get the window name for identification
@@ -45,7 +45,6 @@ class MainWindow : public QWidget
     void initializeZenoh();
     void createZenohSubscription(const std::string& zenoh_key, const std::string& widget_type);
 
-    app_config_t _app_cfg;
     window_config_t _window_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
 

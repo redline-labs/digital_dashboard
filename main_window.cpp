@@ -6,9 +6,8 @@
 #include <QPalette>
 
 
-MainWindow::MainWindow(const app_config_t& app_cfg, const window_config_t& window_cfg):
+MainWindow::MainWindow(const window_config_t& window_cfg):
     QWidget{},
-    _app_cfg{app_cfg},
     _window_cfg{window_cfg}
 {
     setWindowTitle(QString("Mercedes Dash - %1").arg(QString::fromStdString(_window_cfg.name)));

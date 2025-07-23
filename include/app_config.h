@@ -2,6 +2,7 @@
 #define APP_CONFIG_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -68,7 +69,7 @@ struct app_config_t {
 };
 
 
-app_config_t load_app_config(const std::string& config_filepath);
+std::optional<app_config_t> load_app_config(const std::string& config_filepath);
 
 
 #endif  // APP_CONFIG_H_

@@ -75,7 +75,7 @@ windows:
             min_value: 0
             max_value: 80
             current_value: 40
-          left_gauge2:
+          left_gauge:
             min_value: 0
             max_value: 40
             current_value: 20

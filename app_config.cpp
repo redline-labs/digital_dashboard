@@ -372,10 +372,10 @@ struct convert<app_config_t> {
 }   // namespace YAML
 
 
-app_config_t load_app_config(const std::string& config_filepath)
+std::optional<app_config_t> load_app_config(const std::string& config_filepath)
 {
     // Default config in case of error.
-    app_config_t config = {};
+    std::optional<app_config_t> config = std::nullopt;
 
     try
     {
