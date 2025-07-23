@@ -62,7 +62,24 @@ windows:
         y: 15
         width: 250
         height: 250
-        config: {}
+        config:
+          top_gauge:
+            min_value: 0
+            max_value: 100
+            current_value: 50
+          right_gauge:
+            min_value: 0
+            max_value: 100
+            current_value: 75
+          bottom_gauge:
+            min_value: 0
+            max_value: 80
+            current_value: 40
+          left_gauge2:
+            min_value: 0
+            max_value: 40
+            current_value: 20
+
 
   # Dedicated CarPlay window (no Zenoh subscription needed)
 #  - name: "carplay"

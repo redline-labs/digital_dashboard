@@ -172,6 +172,56 @@ struct convert<battery_telltale_config_t> {
     }
 };
 
+template<>
+struct convert<cluster_gauge_config_t::sub_gauge_config_t> {
+    static Node encode(const cluster_gauge_config_t::sub_gauge_config_t& rhs)
+    {
+        Node node = {};
+        node["min_value"] = rhs.min_value;
+        node["max_value"] = rhs.max_value;
+        node["current_value"] = rhs.current_value;
+
+        return node;
+    }
+
+    static bool decode(const Node& node, cluster_gauge_config_t::sub_gauge_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+
+        rhs.min_value = node["min_value"].as<float>();
+        rhs.max_value = node["max_value"].as<float>();
+        rhs.current_value = node["current_value"].as<float>();
+
+        return true;
+    }
+};
+
+template<>
+struct convert<cluster_gauge_config_t> {
+    static Node encode(const cluster_gauge_config_t& rhs)
+    {
+        Node node = {};
+        node["top_gauge"] = rhs.top_gauge;
+        node["right_gauge"] = rhs.right_gauge;
+        node["bottom_gauge"] = rhs.bottom_gauge;
+        node["left_gauge"] = rhs.left_gauge;
+
+        return node;
+    }
+
+    static bool decode(const Node& node, cluster_gauge_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+
+        rhs.top_gauge = node["top_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
+        rhs.right_gauge = node["right_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
+        rhs.bottom_gauge = node["bottom_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
+        rhs.left_gauge = node["left_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
+
+        return true;
+    }
+};
+
 
 template<>
 struct convert<widget_config_t> {
@@ -203,10 +253,14 @@ struct convert<widget_config_t> {
         {
             node["config"] = std::get<sparkline_config_t>(rhs.config);
         }
-        /*else if (rhs.type == "battery_telltale")
+        else if (rhs.type == "battery_telltale")
         {
             node["config"] = std::get<battery_telltale_config_t>(rhs.config);
-        }*/
+        }
+        else if (rhs.type == "mercedes_190e_cluster_gauge")
+        {
+            node["config"] = std::get<cluster_gauge_config_t>(rhs.config);
+        }
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", rhs.type);
@@ -245,6 +299,10 @@ struct convert<widget_config_t> {
         else if (rhs.type == "battery_telltale")
         {
             rhs.config = node["config"].as<battery_telltale_config_t>();
+        }
+        else if (rhs.type == "cluster_gauge")
+        {
+            rhs.config = node["config"].as<cluster_gauge_config_t>();
         }
         else
         {
@@ -316,5 +374,29 @@ struct convert<app_config_t> {
 
 app_config_t load_app_config(const std::string& config_filepath)
 {
-    return YAML::LoadFile(config_filepath).as<app_config_t>();
+    // Default config in case of error.
+    app_config_t config = {};
+
+    try
+    {
+        config = YAML::LoadFile(config_filepath).as<app_config_t>();
+    }
+    catch (const YAML::BadFile& e)
+    {
+        SPDLOG_ERROR("Failed to load app config: (YAML::BadFile : {})", e.what());
+    }
+    catch (const YAML::ParserException& e)
+    {
+        SPDLOG_ERROR("Failed to load app config: (YAML::ParserException : {})", e.what());
+    }
+    catch (const YAML::Exception& e)
+    {
+        SPDLOG_ERROR("Failed to load app config: (YAML::Exception : {})", e.what());
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to load app config: (std::exception : {})", e.what());
+    }
+
+    return config;
 }

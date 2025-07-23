@@ -196,7 +196,7 @@ void TachometerWidget::drawNeedle(QPainter *painter) {
     float angle = valueToAngle(m_currentRpmValue);
     painter->rotate(angle);
 
-    // Needle properties (Orange, tapered - from SpeedometerWidgetMPH)
+    // Needle properties (Orange, tapered - from Mercedes190ESpeedometer)
     QColor needleColor(255, 165, 0); // Orange
     float needleBaseWidth = 4.0f;    // Width at the pivot
     float needleTipWidth = 2.0f;     // Width at the tip

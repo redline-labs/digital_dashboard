@@ -64,7 +64,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     const std::string& type = widget_config.type;
     
     if (type == "speedometer") {
-        auto* speedometer = new SpeedometerWidgetMPH(std::get<speedometer_config_t>(widget_config.config));
+        auto* speedometer = new Mercedes190ESpeedometer(std::get<speedometer_config_t>(widget_config.config));
         // Store mapping for Zenoh updates if key is provided
         if (!widget_config.zenoh_key.empty()) {
             _speedometer_widgets[widget_config.zenoh_key] = speedometer;

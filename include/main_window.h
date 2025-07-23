@@ -54,7 +54,7 @@ class MainWindow : public QWidget
     std::vector<std::unique_ptr<zenoh::Subscriber<void>>> _zenoh_subscribers;
     
     // Widget mappings for data updates
-    std::map<std::string, SpeedometerWidgetMPH*> _speedometer_widgets;
+    std::map<std::string, Mercedes190ESpeedometer*> _speedometer_widgets;
     std::map<std::string, TachometerWidget*> _tachometer_widgets;
     std::map<std::string, SparklineItem*> _sparkline_widgets;
     std::map<std::string, BatteryTelltaleWidget*> _battery_telltale_widgets;

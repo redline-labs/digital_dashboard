@@ -13,7 +13,7 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-SpeedometerWidgetMPH::SpeedometerWidgetMPH(const speedometer_config_t& cfg, QWidget *parent)
+Mercedes190ESpeedometer::Mercedes190ESpeedometer(const speedometer_config_t& cfg, QWidget *parent)
     : QWidget(parent), m_currentSpeedMph(0.0f), _cfg{cfg}, m_odometerValue(cfg.odometer_value) // Initial odometer value
 {
     // Load font from Qt resources
@@ -26,18 +26,18 @@ SpeedometerWidgetMPH::SpeedometerWidgetMPH(const speedometer_config_t& cfg, QWid
     }
 }
 
-void SpeedometerWidgetMPH::setSpeed(float speed) // speed in MPH
+void Mercedes190ESpeedometer::setSpeed(float speed) // speed in MPH
 {
     m_currentSpeedMph = qBound(0.0f, speed, static_cast<float>(_cfg.max_speed));
     update();
 }
 
-float SpeedometerWidgetMPH::getSpeed() const
+float Mercedes190ESpeedometer::getSpeed() const
 {
     return m_currentSpeedMph;
 }
 
-float SpeedometerWidgetMPH::valueToAngle(float value, float maxVal)
+float Mercedes190ESpeedometer::valueToAngle(float value, float maxVal)
 {
     float constrainedValue = qBound(0.0f, value, maxVal);
     float factor = 0.0f;
@@ -48,7 +48,7 @@ float SpeedometerWidgetMPH::valueToAngle(float value, float maxVal)
     return m_angleValueMin + factor * m_angleSweep;
 }
 
-void SpeedometerWidgetMPH::setOdometerValue(int value)
+void Mercedes190ESpeedometer::setOdometerValue(int value)
 {
     if (value >= 0 && value <= 999999) { // Assume 6 digits max
         m_odometerValue = value;
@@ -56,7 +56,7 @@ void SpeedometerWidgetMPH::setOdometerValue(int value)
     }
 }
 
-void SpeedometerWidgetMPH::paintEvent(QPaintEvent *event)
+void Mercedes190ESpeedometer::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
@@ -74,7 +74,7 @@ void SpeedometerWidgetMPH::paintEvent(QPaintEvent *event)
     drawNeedle(&painter); // Draw needle last so it's on top
 }
 
-void SpeedometerWidgetMPH::drawBackground(QPainter *painter)
+void Mercedes190ESpeedometer::drawBackground(QPainter *painter)
 {
     painter->save();
     painter->setPen(Qt::NoPen);
@@ -83,7 +83,7 @@ void SpeedometerWidgetMPH::drawBackground(QPainter *painter)
     painter->restore();
 }
 
-void SpeedometerWidgetMPH::drawOdometer(QPainter *painter)
+void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
 {
     painter->save();
 
@@ -159,7 +159,7 @@ void SpeedometerWidgetMPH::drawOdometer(QPainter *painter)
     painter->restore();
 }
 
-void SpeedometerWidgetMPH::drawMphTicksAndNumbers(QPainter *painter)
+void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
 {
     painter->save();
     
@@ -269,7 +269,7 @@ void SpeedometerWidgetMPH::drawMphTicksAndNumbers(QPainter *painter)
     painter->restore();
 }
 
-void SpeedometerWidgetMPH::drawKmhTicksAndNumbers(QPainter *painter)
+void Mercedes190ESpeedometer::drawKmhTicksAndNumbers(QPainter *painter)
 {
     painter->save();
     painter->setPen(Qt::white);
@@ -347,7 +347,7 @@ void SpeedometerWidgetMPH::drawKmhTicksAndNumbers(QPainter *painter)
     painter->restore();
 }
 
-void SpeedometerWidgetMPH::drawOverlayText(QPainter *painter)
+void Mercedes190ESpeedometer::drawOverlayText(QPainter *painter)
 {
     painter->save();
     painter->setPen(Qt::white);
@@ -402,7 +402,7 @@ void SpeedometerWidgetMPH::drawOverlayText(QPainter *painter)
     painter->restore(); 
 }
 
-void SpeedometerWidgetMPH::drawNeedle(QPainter *painter)
+void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
 {
     painter->save();
     float rawNeedleAngle = valueToAngle(m_currentSpeedMph, static_cast<float>(_cfg.max_speed));

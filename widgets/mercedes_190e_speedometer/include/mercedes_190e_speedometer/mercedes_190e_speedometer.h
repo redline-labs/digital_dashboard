@@ -12,11 +12,11 @@
 #include <QColor>
 #include <QFontDatabase>
 
-class SpeedometerWidgetMPH : public QWidget
+class Mercedes190ESpeedometer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit SpeedometerWidgetMPH(const speedometer_config_t& cfg, QWidget *parent = nullptr);
+    explicit Mercedes190ESpeedometer(const speedometer_config_t& cfg, QWidget *parent = nullptr);
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     float getSpeed() const;
     void setOdometerValue(int value); // Setter for odometer
