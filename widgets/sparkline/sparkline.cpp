@@ -7,6 +7,7 @@
 #include <QBrush>
 #include <QTimer>
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
+#include <spdlog/spdlog.h>
 
 SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     : QWidget(parent), _cfg{cfg}
@@ -206,6 +207,68 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     pen.setWidth(2);
     painter.setPen(pen);
     painter.drawPath(linePath);
-} 
+}
+
+void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    _zenoh_session = session;
+    
+    // If we have a zenoh key configured, create the subscription
+    if (!_cfg.zenoh_key.empty()) {
+        createZenohSubscription();
+    }
+}
+
+void SparklineItem::createZenohSubscription()
+{
+    if (!_zenoh_session) {
+        spdlog::warn("SparklineItem: Cannot create subscription - no Zenoh session");
+        return;
+    }
+    
+    if (_cfg.zenoh_key.empty()) {
+        return; // No key configured
+    }
+    
+    try {
+        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
+        
+        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
+            _zenoh_session->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        // Convert payload to string
+                        const auto& payload = sample.get_payload();
+                        std::string data_str = payload.as_string();
+                        
+                        // Convert data to double value
+                        double value = std::stod(data_str);
+                        
+                        // Use Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, "onDataReceived", 
+                                                Qt::QueuedConnection, 
+                                                Q_ARG(double, value));
+                        
+                    } catch (const std::exception& e) {
+                        spdlog::error("SparklineItem: Error parsing data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        spdlog::info("SparklineItem: Created subscription for key '{}'", _cfg.zenoh_key);
+        
+    } catch (const std::exception& e) {
+        spdlog::error("SparklineItem: Failed to create subscription for key '{}': {}", 
+                     _cfg.zenoh_key, e.what());
+    }
+}
+
+void SparklineItem::onDataReceived(double value)
+{
+    addDataPoint(value);
+}
 
 #include "sparkline/moc_sparkline.cpp"

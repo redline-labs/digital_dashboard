@@ -12,8 +12,8 @@ windows:
         y: 15
         width: 250
         height: 250
-        zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
         config:
+          zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
           odometer_value: 123456
           max_speed: 160
       
@@ -23,8 +23,8 @@ windows:
         y: 15
         width: 250
         height: 250
-        zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
         config:
+          zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
           max_rpm: 8000
           redline_rpm: 7000
           show_clock: true
@@ -35,8 +35,8 @@ windows:
         y: 400
         width: 30
         height: 30
-        zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
         config:
+          zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
           normal_color: "#333333"
           warning_color: "#FF0000"
       
@@ -46,8 +46,8 @@ windows:
         y: 15
         width: 200
         height: 40
-        zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
         config:
+          zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
           units: "Coolant (C)"
           min_value: -40
           max_value: 120

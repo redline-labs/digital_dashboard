@@ -72,6 +72,9 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
         Node node = {};
         node["odometer_value"] = rhs.odometer_value;
         node["max_speed"] = rhs.max_speed;
+        if (!rhs.zenoh_key.empty()) {
+            node["zenoh_key"] = rhs.zenoh_key;
+        }
 
         return node;
     }
@@ -80,8 +83,9 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        rhs.odometer_value = node["odometer_value"].as<uint32_t>();
-        rhs.max_speed = node["max_speed"].as<uint16_t>();
+        if (node["odometer_value"]) rhs.odometer_value = node["odometer_value"].as<uint32_t>();
+        if (node["max_speed"]) rhs.max_speed = node["max_speed"].as<uint16_t>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         return true;
     }
@@ -96,6 +100,9 @@ struct convert<Mercedes190ETachometerConfig_t> {
         node["max_rpm"] = rhs.max_rpm;
         node["redline_rpm"] = rhs.redline_rpm;
         node["show_clock"] = rhs.show_clock;
+        if (!rhs.zenoh_key.empty()) {
+            node["zenoh_key"] = rhs.zenoh_key;
+        }
 
         return node;
     }
@@ -104,9 +111,10 @@ struct convert<Mercedes190ETachometerConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        rhs.max_rpm = node["max_rpm"].as<uint32_t>();
-        rhs.redline_rpm = node["redline_rpm"].as<uint16_t>();
-        rhs.show_clock = node["show_clock"].as<bool>();
+        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
+        if (node["redline_rpm"]) rhs.redline_rpm = node["redline_rpm"].as<uint16_t>();
+        if (node["show_clock"]) rhs.show_clock = node["show_clock"].as<bool>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         return true;
     }
@@ -127,6 +135,9 @@ struct convert<SparklineConfig_t> {
         node["font_size_value"] = rhs.font_size_value;
         node["font_size_units"] = rhs.font_size_units;
         node["update_rate"] = rhs.update_rate;
+        if (!rhs.zenoh_key.empty()) {
+            node["zenoh_key"] = rhs.zenoh_key;
+        }
 
         return node;
     }
@@ -143,7 +154,8 @@ struct convert<SparklineConfig_t> {
         if (node["font_family"]) rhs.font_family = node["font_family"].as<std::string>();
         if (node["font_size_value"]) rhs.font_size_value = node["font_size_value"].as<uint16_t>();
         if (node["font_size_units"]) rhs.font_size_units = node["font_size_units"].as<uint16_t>();
-        rhs.update_rate = node["update_rate"].as<uint16_t>();
+        if (node["update_rate"]) rhs.update_rate = node["update_rate"].as<uint16_t>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         return true;
     }
@@ -157,6 +169,9 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
         Node node = {};
         node["warning_color"] = rhs.warning_color;
         node["normal_color"] = rhs.normal_color;
+        if (!rhs.zenoh_key.empty()) {
+            node["zenoh_key"] = rhs.zenoh_key;
+        }
 
         return node;
     }
@@ -165,8 +180,9 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        rhs.warning_color = node["warning_color"].as<std::string>();
-        rhs.normal_color = node["normal_color"].as<std::string>();
+        if (node["warning_color"]) rhs.warning_color = node["warning_color"].as<std::string>();
+        if (node["normal_color"]) rhs.normal_color = node["normal_color"].as<std::string>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         return true;
     }
@@ -233,9 +249,6 @@ struct convert<widget_config_t> {
         node["y"] = rhs.y;
         node["width"] = rhs.width;
         node["height"] = rhs.height;
-        if (!rhs.zenoh_key.empty()) {
-            node["zenoh_key"] = rhs.zenoh_key;
-        }
 
         if (rhs.type == "carplay")
         {
@@ -278,7 +291,6 @@ struct convert<widget_config_t> {
         if (node["y"]) rhs.y = node["y"].as<uint16_t>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
 
         if (rhs.type == "carplay")
         {

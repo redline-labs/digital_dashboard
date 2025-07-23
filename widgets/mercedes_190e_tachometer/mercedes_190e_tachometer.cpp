@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QFontDatabase>
 #include <QDebug>
+#include <spdlog/spdlog.h>
 #include <cmath> // For std::cos, std::sin
 #include <numbers>
 
@@ -319,6 +320,68 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     painter->drawEllipse(QPointF(0.0f, 0.0f), clockPivotRadius, clockPivotRadius);
 
     painter->restore(); // Restore from clock translation
+}
+
+void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    _zenoh_session = session;
+    
+    // If we have a zenoh key configured, create the subscription
+    if (!_cfg.zenoh_key.empty()) {
+        createZenohSubscription();
+    }
+}
+
+void Mercedes190ETachometer::createZenohSubscription()
+{
+    if (!_zenoh_session) {
+        spdlog::warn("Mercedes190ETachometer: Cannot create subscription - no Zenoh session");
+        return;
+    }
+    
+    if (_cfg.zenoh_key.empty()) {
+        return; // No key configured
+    }
+    
+    try {
+        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
+        
+        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
+            _zenoh_session->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        // Convert payload to string
+                        const auto& payload = sample.get_payload();
+                        std::string data_str = payload.as_string();
+                        
+                        // Convert data to RPM
+                        double rpm = std::stod(data_str);
+                        
+                        // Use Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, "onRpmDataReceived", 
+                                                Qt::QueuedConnection, 
+                                                Q_ARG(double, rpm));
+                        
+                    } catch (const std::exception& e) {
+                        spdlog::error("Mercedes190ETachometer: Error parsing RPM data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        spdlog::info("Mercedes190ETachometer: Created subscription for key '{}'", _cfg.zenoh_key);
+        
+    } catch (const std::exception& e) {
+        spdlog::error("Mercedes190ETachometer: Failed to create subscription for key '{}': {}", 
+                     _cfg.zenoh_key, e.what());
+    }
+}
+
+void Mercedes190ETachometer::onRpmDataReceived(double rpm)
+{
+    setRpm(static_cast<float>(rpm));
 }
 
 #include "mercedes_190e_tachometer/moc_mercedes_190e_tachometer.cpp"

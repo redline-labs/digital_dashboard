@@ -15,7 +15,8 @@ struct SparklineConfig_t {
         font_family{"Arial"},
         font_size_value{24},
         font_size_units{10},
-        update_rate{30}
+        update_rate{30},
+        zenoh_key{}
     {}
 
     std::string units;          // Display units (e.g., "°C", "mph", "psi")
@@ -27,6 +28,7 @@ struct SparklineConfig_t {
     uint16_t font_size_value;   // Font size for the value text in points
     uint16_t font_size_units;   // Font size for the units text in points
     uint16_t update_rate;       // Refresh rate in Hz
+    std::string zenoh_key;      // Optional Zenoh subscription key
 };
 
 #endif // SPARKLINE_CONFIG_H

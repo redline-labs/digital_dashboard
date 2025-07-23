@@ -8,11 +8,13 @@
 struct Mercedes190EBatteryTelltaleConfig_t {
     Mercedes190EBatteryTelltaleConfig_t() :
         warning_color{"#FF0000"},
-        normal_color{"#333333"}
+        normal_color{"#333333"},
+        zenoh_key{}
     {}
 
     std::string warning_color;  // Color when warning is active
     std::string normal_color;   // Color when in normal state
+    std::string zenoh_key;      // Optional Zenoh subscription key
 };
 
 #endif // MERCEDES_190E_TELLTALES_CONFIG_H

@@ -21,7 +21,6 @@ struct widget_config_t {
         y{0},
         width{100},
         height{100},
-        zenoh_key{},
         config{}
     {}
 
@@ -30,7 +29,6 @@ struct widget_config_t {
     uint16_t y;
     uint16_t width;
     uint16_t height;
-    std::string zenoh_key;  // Optional Zenoh subscription key for real-time data
 
     std::variant<
         Mercedes190ESpeedometerConfig_t,

@@ -21,4 +21,6 @@ target_include_directories(mercedes_190e_tachometer PUBLIC
 target_link_libraries(mercedes_190e_tachometer
     PRIVATE
         Qt6::Widgets
+        zenohcxx::zenohc  # For Zenoh functionality
+        common_logging    # For spdlog
 )

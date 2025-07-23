@@ -2,10 +2,13 @@
 #define BATTERYTELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
+#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
 #include <QTimer>
+#include <QMetaObject>
+#include <memory>
 
 // Forward declaration.
 class QSvgRenderer;
@@ -24,6 +27,9 @@ public:
 
     bool isAsserted() const { return mAsserted; }
     void setAsserted(bool asserted);
+    
+    // Set Zenoh session for data subscription
+    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
     QSize sizeHint() const override;
 
@@ -33,6 +39,9 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+
+private slots:
+    void onAssertedDataReceived(bool asserted);
 
 private:
     void updateColors();
@@ -49,6 +58,12 @@ private:
     static const QColor NORMAL_BACKGROUND;
     static const QColor ASSERTED_ICON;
     static const QColor NORMAL_ICON;
+    
+    // Zenoh-related members
+    std::shared_ptr<zenoh::Session> _zenoh_session;
+    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
+    
+    void createZenohSubscription();
 };
 
 #endif // BATTERYTELLTALEWIDGET_H 

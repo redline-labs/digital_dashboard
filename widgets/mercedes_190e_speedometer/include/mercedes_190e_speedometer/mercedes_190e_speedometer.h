@@ -2,6 +2,7 @@
 #define SPEEDOMETERWIDGETMPH_H
 
 #include "mercedes_190e_speedometer/config.h"
+#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
@@ -11,6 +12,8 @@
 #include <QBrush>
 #include <QColor>
 #include <QFontDatabase>
+#include <QMetaObject>
+#include <memory>
 
 class Mercedes190ESpeedometer : public QWidget
 {
@@ -22,9 +25,15 @@ public:
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     float getSpeed() const;
     void setOdometerValue(int value); // Setter for odometer
+    
+    // Set Zenoh session for data subscription
+    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+
+private slots:
+    void onSpeedDataReceived(double speedMps);
 
 private:
     void drawBackground(QPainter *painter);
@@ -47,6 +56,12 @@ private:
 
     QString m_fontFamily; // Added to store Futura font family
     int m_odometerValue; // Stores the odometer reading
+    
+    // Zenoh-related members
+    std::shared_ptr<zenoh::Session> _zenoh_session;
+    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
+    
+    void createZenohSubscription();
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

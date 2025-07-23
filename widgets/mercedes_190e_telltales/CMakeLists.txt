@@ -22,4 +22,6 @@ target_link_libraries(mercedes_190e_telltales
     PRIVATE
         Qt6::Widgets
         Qt6::Svg
+        zenohcxx::zenohc  # For Zenoh functionality
+        common_logging    # For spdlog
 )

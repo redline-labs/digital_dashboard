@@ -8,12 +8,14 @@ struct Mercedes190ETachometerConfig_t {
     Mercedes190ETachometerConfig_t() :
         max_rpm{6000},
         redline_rpm{5500},
-        show_clock{true}
+        show_clock{true},
+        zenoh_key{}
     {}
 
     uint16_t max_rpm;           // Maximum RPM value on gauge
     uint16_t redline_rpm;       // RPM where redline zone begins
     bool show_clock;            // Whether to display digital clock
+    std::string zenoh_key;      // Optional Zenoh subscription key
 };
 
 #endif // MERCEDES_190E_TACHOMETER_CONFIG_H

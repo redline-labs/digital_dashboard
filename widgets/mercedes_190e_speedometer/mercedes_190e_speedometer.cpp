@@ -2,6 +2,7 @@
 #include <QPaintEvent>
 #include <QFontMetrics>
 #include <QDebug> // For font loading messages
+#include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <numbers>
@@ -431,6 +432,70 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
     painter->drawEllipse(QPointF(0.0f,0.0f), pivotRadius, pivotRadius); 
 
     painter->restore();
-} 
+}
+
+void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    _zenoh_session = session;
+    
+    // If we have a zenoh key configured, create the subscription
+    if (!_cfg.zenoh_key.empty()) {
+        createZenohSubscription();
+    }
+}
+
+void Mercedes190ESpeedometer::createZenohSubscription()
+{
+    if (!_zenoh_session) {
+        spdlog::warn("Mercedes190ESpeedometer: Cannot create subscription - no Zenoh session");
+        return;
+    }
+    
+    if (_cfg.zenoh_key.empty()) {
+        return; // No key configured
+    }
+    
+    try {
+        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
+        
+        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
+            _zenoh_session->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        // Convert payload to string
+                        const auto& payload = sample.get_payload();
+                        std::string data_str = payload.as_string();
+                        
+                        // Convert data to speed in m/s
+                        double speed_mps = std::stod(data_str);
+                        
+                        // Use Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, "onSpeedDataReceived", 
+                                                Qt::QueuedConnection, 
+                                                Q_ARG(double, speed_mps));
+                        
+                    } catch (const std::exception& e) {
+                        spdlog::error("Mercedes190ESpeedometer: Error parsing speed data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        spdlog::info("Mercedes190ESpeedometer: Created subscription for key '{}'", _cfg.zenoh_key);
+        
+    } catch (const std::exception& e) {
+        spdlog::error("Mercedes190ESpeedometer: Failed to create subscription for key '{}': {}", 
+                     _cfg.zenoh_key, e.what());
+    }
+}
+
+void Mercedes190ESpeedometer::onSpeedDataReceived(double speedMps)
+{
+    // Convert m/s to mph (1 m/s = 2.23694 mph)
+    double speedMph = speedMps * 2.23694;
+    setSpeed(static_cast<float>(speedMph));
+}
 
 #include "mercedes_190e_speedometer/moc_mercedes_190e_speedometer.cpp"

@@ -3,6 +3,7 @@
 #include <QResizeEvent>
 #include <QSvgRenderer>
 #include <QDebug>
+#include <spdlog/spdlog.h>
 
 // Define static colors
 const QColor Mercedes190EBatteryTelltale::ASSERTED_BACKGROUND = QColor(200, 50, 50);    // Medium red
@@ -124,6 +125,68 @@ void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     update(); // Ensure the widget repaints with new size
-} 
+}
+
+void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    _zenoh_session = session;
+    
+    // If we have a zenoh key configured, create the subscription
+    if (!_cfg.zenoh_key.empty()) {
+        createZenohSubscription();
+    }
+}
+
+void Mercedes190EBatteryTelltale::createZenohSubscription()
+{
+    if (!_zenoh_session) {
+        spdlog::warn("Mercedes190EBatteryTelltale: Cannot create subscription - no Zenoh session");
+        return;
+    }
+    
+    if (_cfg.zenoh_key.empty()) {
+        return; // No key configured
+    }
+    
+    try {
+        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
+        
+        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
+            _zenoh_session->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        // Convert payload to string
+                        const auto& payload = sample.get_payload();
+                        std::string data_str = payload.as_string();
+                        
+                        // Convert data to bool (true if "true" or "1")
+                        bool asserted = (data_str == "true" || data_str == "1");
+                        
+                        // Use Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, "onAssertedDataReceived", 
+                                                Qt::QueuedConnection, 
+                                                Q_ARG(bool, asserted));
+                        
+                    } catch (const std::exception& e) {
+                        spdlog::error("Mercedes190EBatteryTelltale: Error parsing data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        spdlog::info("Mercedes190EBatteryTelltale: Created subscription for key '{}'", _cfg.zenoh_key);
+        
+    } catch (const std::exception& e) {
+        spdlog::error("Mercedes190EBatteryTelltale: Failed to create subscription for key '{}': {}", 
+                     _cfg.zenoh_key, e.what());
+    }
+}
+
+void Mercedes190EBatteryTelltale::onAssertedDataReceived(bool asserted)
+{
+    setAsserted(asserted);
+}
 
 #include "mercedes_190e_telltales/moc_battery_telltale.cpp"
