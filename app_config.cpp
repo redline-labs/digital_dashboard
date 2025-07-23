@@ -10,8 +10,8 @@ namespace YAML {
 
 
 template<>
-struct convert<carplay_config_t> {
-    static Node encode(const carplay_config_t& rhs)
+struct convert<CarplayConfig_t> {
+    static Node encode(const CarplayConfig_t& rhs)
     {
         Node node = {};
 
@@ -37,7 +37,7 @@ struct convert<carplay_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, carplay_config_t& rhs)
+    static bool decode(const Node& node, CarplayConfig_t& rhs)
     {
 
         rhs.width_px = node["width_px"].as<uint16_t>();
@@ -66,8 +66,8 @@ struct convert<carplay_config_t> {
 
 
 template<>
-struct convert<speedometer_config_t> {
-    static Node encode(const speedometer_config_t& rhs)
+struct convert<Mercedes190ESpeedometerConfig_t> {
+    static Node encode(const Mercedes190ESpeedometerConfig_t& rhs)
     {
         Node node = {};
         node["odometer_value"] = rhs.odometer_value;
@@ -76,7 +76,7 @@ struct convert<speedometer_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, speedometer_config_t& rhs)
+    static bool decode(const Node& node, Mercedes190ESpeedometerConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
@@ -89,8 +89,8 @@ struct convert<speedometer_config_t> {
 
 
 template<>
-struct convert<tachometer_config_t> {
-    static Node encode(const tachometer_config_t& rhs)
+struct convert<Mercedes190ETachometerConfig_t> {
+    static Node encode(const Mercedes190ETachometerConfig_t& rhs)
     {
         Node node = {};
         node["max_rpm"] = rhs.max_rpm;
@@ -100,7 +100,7 @@ struct convert<tachometer_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, tachometer_config_t& rhs)
+    static bool decode(const Node& node, Mercedes190ETachometerConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
@@ -114,8 +114,8 @@ struct convert<tachometer_config_t> {
 
 
 template<>
-struct convert<sparkline_config_t> {
-    static Node encode(const sparkline_config_t& rhs)
+struct convert<SparklineConfig_t> {
+    static Node encode(const SparklineConfig_t& rhs)
     {
         Node node = {};
         node["units"] = rhs.units;
@@ -131,7 +131,7 @@ struct convert<sparkline_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, sparkline_config_t& rhs)
+    static bool decode(const Node& node, SparklineConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
@@ -151,8 +151,8 @@ struct convert<sparkline_config_t> {
 
 
 template<>
-struct convert<battery_telltale_config_t> {
-    static Node encode(const battery_telltale_config_t& rhs)
+struct convert<Mercedes190EBatteryTelltaleConfig_t> {
+    static Node encode(const Mercedes190EBatteryTelltaleConfig_t& rhs)
     {
         Node node = {};
         node["warning_color"] = rhs.warning_color;
@@ -161,7 +161,7 @@ struct convert<battery_telltale_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, battery_telltale_config_t& rhs)
+    static bool decode(const Node& node, Mercedes190EBatteryTelltaleConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
@@ -173,8 +173,8 @@ struct convert<battery_telltale_config_t> {
 };
 
 template<>
-struct convert<cluster_gauge_config_t::sub_gauge_config_t> {
-    static Node encode(const cluster_gauge_config_t::sub_gauge_config_t& rhs)
+struct convert<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t> {
+    static Node encode(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& rhs)
     {
         Node node = {};
         node["min_value"] = rhs.min_value;
@@ -184,7 +184,7 @@ struct convert<cluster_gauge_config_t::sub_gauge_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, cluster_gauge_config_t::sub_gauge_config_t& rhs)
+    static bool decode(const Node& node, Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& rhs)
     {
         if (!node.IsMap()) return false;
 
@@ -197,8 +197,8 @@ struct convert<cluster_gauge_config_t::sub_gauge_config_t> {
 };
 
 template<>
-struct convert<cluster_gauge_config_t> {
-    static Node encode(const cluster_gauge_config_t& rhs)
+struct convert<Mercedes190EClusterGaugeConfig_t> {
+    static Node encode(const Mercedes190EClusterGaugeConfig_t& rhs)
     {
         Node node = {};
         node["top_gauge"] = rhs.top_gauge;
@@ -209,14 +209,14 @@ struct convert<cluster_gauge_config_t> {
         return node;
     }
 
-    static bool decode(const Node& node, cluster_gauge_config_t& rhs)
+    static bool decode(const Node& node, Mercedes190EClusterGaugeConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
-        rhs.top_gauge = node["top_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
-        rhs.right_gauge = node["right_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
-        rhs.bottom_gauge = node["bottom_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
-        rhs.left_gauge = node["left_gauge"].as<cluster_gauge_config_t::sub_gauge_config_t>();
+        rhs.top_gauge = node["top_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
+        rhs.right_gauge = node["right_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
+        rhs.bottom_gauge = node["bottom_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
+        rhs.left_gauge = node["left_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
 
         return true;
     }
@@ -239,27 +239,27 @@ struct convert<widget_config_t> {
 
         if (rhs.type == "carplay")
         {
-            node["config"] = std::get<carplay_config_t>(rhs.config);
+            node["config"] = std::get<CarplayConfig_t>(rhs.config);
         }
         else if (rhs.type == "speedometer")
         {
-            node["config"] = std::get<speedometer_config_t>(rhs.config);
+            node["config"] = std::get<Mercedes190ESpeedometerConfig_t>(rhs.config);
         }
         else if (rhs.type == "tachometer")
         {
-            node["config"] = std::get<tachometer_config_t>(rhs.config);
+            node["config"] = std::get<Mercedes190ETachometerConfig_t>(rhs.config);
         }
         else if (rhs.type == "sparkline")
         {
-            node["config"] = std::get<sparkline_config_t>(rhs.config);
+            node["config"] = std::get<SparklineConfig_t>(rhs.config);
         }
         else if (rhs.type == "battery_telltale")
         {
-            node["config"] = std::get<battery_telltale_config_t>(rhs.config);
+            node["config"] = std::get<Mercedes190EBatteryTelltaleConfig_t>(rhs.config);
         }
         else if (rhs.type == "mercedes_190e_cluster_gauge")
         {
-            node["config"] = std::get<cluster_gauge_config_t>(rhs.config);
+            node["config"] = std::get<Mercedes190EClusterGaugeConfig_t>(rhs.config);
         }
         else
         {
@@ -282,27 +282,27 @@ struct convert<widget_config_t> {
 
         if (rhs.type == "carplay")
         {
-            rhs.config = node["config"].as<carplay_config_t>();
+            rhs.config = node["config"].as<CarplayConfig_t>();
         }
         else if (rhs.type == "speedometer")
         {
-            rhs.config = node["config"].as<speedometer_config_t>();
+            rhs.config = node["config"].as<Mercedes190ESpeedometerConfig_t>();
         }
         else if (rhs.type == "tachometer")
         {
-            rhs.config = node["config"].as<tachometer_config_t>();
+            rhs.config = node["config"].as<Mercedes190ETachometerConfig_t>();
         }
         else if (rhs.type == "sparkline")
         {
-            rhs.config = node["config"].as<sparkline_config_t>();
+            rhs.config = node["config"].as<SparklineConfig_t>();
         }
         else if (rhs.type == "battery_telltale")
         {
-            rhs.config = node["config"].as<battery_telltale_config_t>();
+            rhs.config = node["config"].as<Mercedes190EBatteryTelltaleConfig_t>();
         }
         else if (rhs.type == "cluster_gauge")
         {
-            rhs.config = node["config"].as<cluster_gauge_config_t>();
+            rhs.config = node["config"].as<Mercedes190EClusterGaugeConfig_t>();
         }
         else
         {

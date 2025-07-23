@@ -5,8 +5,8 @@
 #include <cstdint>
 
 
-struct battery_telltale_config_t {
-    battery_telltale_config_t() :
+struct Mercedes190EBatteryTelltaleConfig_t {
+    Mercedes190EBatteryTelltaleConfig_t() :
         warning_color{"#FF0000"},
         normal_color{"#333333"}
     {}

@@ -8,7 +8,7 @@
 #include <QTimer>
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 
-SparklineItem::SparklineItem(const sparkline_config_t& cfg, QWidget *parent)
+SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     : QWidget(parent), _cfg{cfg}
 {
     QHBoxLayout *mainLayout = new QHBoxLayout(this);

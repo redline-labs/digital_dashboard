@@ -18,7 +18,9 @@ class Mercedes190ETachometer : public QWidget
     Q_OBJECT
 
 public:
-    explicit Mercedes190ETachometer(tachometer_config_t cfg, QWidget *parent = nullptr);
+    using config_t = Mercedes190ETachometerConfig_t;
+
+    explicit Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent = nullptr);
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
     float getRpm() const;
@@ -51,7 +53,7 @@ private:
     // Red Zone parameters (values on 0-70 scale)
     const float m_redZoneArcWidth;
 
-    tachometer_config_t _cfg;
+    Mercedes190ETachometerConfig_t _cfg;
 
     QString m_fontFamily;
     QFont m_dialFont;

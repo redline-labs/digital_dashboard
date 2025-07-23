@@ -4,7 +4,7 @@
 #include <cstdint>
 
 // Widget-specific configuration structs
-struct cluster_gauge_config_t {
+struct Mercedes190EClusterGaugeConfig_t {
     struct sub_gauge_config_t {
         sub_gauge_config_t() :
             min_value{0.0f},
@@ -17,7 +17,7 @@ struct cluster_gauge_config_t {
         float current_value; // Current value for this sub-gauge
     };
 
-    cluster_gauge_config_t() :
+    Mercedes190EClusterGaugeConfig_t() :
         top_gauge{},
         right_gauge{},
         bottom_gauge{},

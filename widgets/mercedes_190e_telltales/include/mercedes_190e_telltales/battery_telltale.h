@@ -17,7 +17,9 @@ class Mercedes190EBatteryTelltale : public QWidget
     Q_PROPERTY(bool asserted READ isAsserted WRITE setAsserted NOTIFY assertedChanged)
 
 public:
-    explicit Mercedes190EBatteryTelltale(const battery_telltale_config_t& cfg, QWidget *parent = nullptr);
+    using config_t = Mercedes190EBatteryTelltaleConfig_t;
+
+    explicit Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent = nullptr);
     ~Mercedes190EBatteryTelltale();
 
     bool isAsserted() const { return mAsserted; }
@@ -35,7 +37,7 @@ protected:
 private:
     void updateColors();
 
-    battery_telltale_config_t _cfg;
+    Mercedes190EBatteryTelltaleConfig_t _cfg;
 
     QSvgRenderer *mSvgRenderer;
     bool mAsserted;

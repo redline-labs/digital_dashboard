@@ -59,9 +59,9 @@ struct phone_config_t
     android_auto_phone_config_t android_auto;
 };
 
-struct carplay_config_t {
+struct CarplayConfig_t {
 
-    carplay_config_t() :
+    CarplayConfig_t() :
         libusb_debug{false},
         width_px{800},
         height_px{640},

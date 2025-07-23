@@ -12,7 +12,7 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-Mercedes190ETachometer::Mercedes190ETachometer(tachometer_config_t cfg, QWidget *parent)
+Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent)
     : QWidget(parent),
       m_currentRpmValue(0.0f),
 

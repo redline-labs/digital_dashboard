@@ -4,8 +4,8 @@
 #include <cstdint>
 
 // Widget-specific configuration structs
-struct speedometer_config_t {
-    speedometer_config_t() :
+struct Mercedes190ESpeedometerConfig_t {
+    constexpr Mercedes190ESpeedometerConfig_t() :
         odometer_value{0u},
         max_speed{125u}
     {}

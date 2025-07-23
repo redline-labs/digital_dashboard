@@ -5,8 +5,8 @@
 #include <cstdint>
 
 
-struct sparkline_config_t {
-    sparkline_config_t() :
+struct SparklineConfig_t {
+    SparklineConfig_t() :
         units{""},
         min_value{0.0},
         max_value{100.0},

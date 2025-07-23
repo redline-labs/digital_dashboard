@@ -4,8 +4,8 @@
 #include <string>
 #include <cstdint>
 
-struct tachometer_config_t {
-    tachometer_config_t() :
+struct Mercedes190ETachometerConfig_t {
+    Mercedes190ETachometerConfig_t() :
         max_rpm{6000},
         redline_rpm{5500},
         show_clock{true}

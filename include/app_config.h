@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -34,12 +33,12 @@ struct widget_config_t {
     std::string zenoh_key;  // Optional Zenoh subscription key for real-time data
 
     std::variant<
-        speedometer_config_t,
-        carplay_config_t,
-        tachometer_config_t,
-        battery_telltale_config_t,
-        sparkline_config_t,
-        cluster_gauge_config_t> config;
+        Mercedes190ESpeedometerConfig_t,
+        CarplayConfig_t,
+        Mercedes190ETachometerConfig_t,
+        Mercedes190EBatteryTelltaleConfig_t,
+        SparklineConfig_t,
+        Mercedes190EClusterGaugeConfig_t> config;
 };
 
 struct window_config_t {

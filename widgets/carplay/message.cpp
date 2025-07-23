@@ -538,7 +538,7 @@ SendString::SendString(DongleConfigFile file, std::string value) :
 /* ---------------------------------------------------------------------------- */
 /* SendBoxSettings                                                              */
 /* ---------------------------------------------------------------------------- */
-SendBoxSettings::SendBoxSettings(const carplay_config_t& cfg, uint64_t sync_time) :
+SendBoxSettings::SendBoxSettings(const CarplayConfig_t& cfg, uint64_t sync_time) :
   Message({0u, MessageType::BoxSettings})
 {
     nlohmann::ordered_json j;   // Probably doesn't have to be ordered, but makes it easier to test.
@@ -570,7 +570,7 @@ const std::string& SendBoxSettings::get_string()
 /* ---------------------------------------------------------------------------- */
 /* SendOpen                                                                     */
 /* ---------------------------------------------------------------------------- */
-SendOpen::SendOpen(const carplay_config_t& config) :
+SendOpen::SendOpen(const CarplayConfig_t& config) :
   Message({0u, MessageType::Open}),
   _config{config}
 {

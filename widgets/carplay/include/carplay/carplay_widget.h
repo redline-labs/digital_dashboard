@@ -38,7 +38,9 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     Q_OBJECT
 
   public:
-    CarPlayWidget(carplay_config_t cfg);
+    using config_t = CarplayConfig_t;
+  
+    CarPlayWidget(CarplayConfig_t cfg);
     ~CarPlayWidget();
 
     void setSize(uint32_t width_px, uint32_t height_px);
@@ -128,7 +130,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     static constexpr uint16_t kHeartbeatTimeMs = 2000u;
     
     // Dongle driver member variables
-    carplay_config_t _cfg;
+    CarplayConfig_t _cfg;
 
     libusb_device_handle* _device_handle;
     int _hotplug_callback_handle;

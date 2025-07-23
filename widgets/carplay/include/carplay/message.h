@@ -341,10 +341,10 @@ class SendOpen : public Message
     constexpr static std::string_view name = "SendOpen";
     constexpr static uint16_t kPayloadBytes = 28;
 
-    SendOpen(const carplay_config_t& config);
+    SendOpen(const CarplayConfig_t& config);
 
   private:
-    carplay_config_t _config;
+    CarplayConfig_t _config;
 
     uint16_t get_payload_size() final;
     void write_payload(uint8_t* buffer) final;
@@ -396,7 +396,7 @@ class SendBoxSettings : public Message
   public:
     constexpr static std::string_view name = "SendBoxSettings";
 
-    SendBoxSettings(const carplay_config_t& cfg, uint64_t sync_time = 8u);
+    SendBoxSettings(const CarplayConfig_t& cfg, uint64_t sync_time = 8u);
 
     const std::string& get_string();
 

@@ -16,7 +16,9 @@ class Mercedes190EClusterGauge : public QWidget
 {
     Q_OBJECT
 public:
-    explicit Mercedes190EClusterGauge(const cluster_gauge_config_t& cfg, QWidget *parent = nullptr);
+    using config_t = Mercedes190EClusterGaugeConfig_t;
+
+    explicit Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent = nullptr);
     virtual ~Mercedes190EClusterGauge() = default;
     
     // Setters for each sub-gauge value
@@ -36,17 +38,17 @@ protected:
 
 private:
     void drawBackground(QPainter *painter);
-    void drawSubGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge, 
+    void drawSubGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge, 
                       float centerX, float centerY, float startAngle);
-    void drawOilPressureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+    void drawOilPressureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
                               float centerX, float centerY);
-    void drawCoolantTemperatureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+    void drawCoolantTemperatureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
                                      float centerX, float centerY);
     void drawCenterHole(QPainter *painter, float centerX, float centerY);
     
     float valueToAngle(float value, float minVal, float maxVal);
 
-    cluster_gauge_config_t m_config;
+    Mercedes190EClusterGaugeConfig_t m_config;
     QString m_fontFamily; // Font family for text rendering
 };
 

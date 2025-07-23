@@ -15,7 +15,7 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-Mercedes190EClusterGauge::Mercedes190EClusterGauge(const cluster_gauge_config_t& cfg, QWidget *parent)
+Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent)
     : QWidget(parent), m_config(cfg)
 {
     // Load font from Qt resources
@@ -122,7 +122,7 @@ void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
                                           float centerX, float centerY, float startAngle)
 {
     painter->save();
@@ -313,7 +313,7 @@ void Mercedes190EClusterGauge::drawCenterHole(QPainter *painter, float centerX, 
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
                               float centerX, float centerY)
 {
     painter->save();
@@ -461,7 +461,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const clu
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, const cluster_gauge_config_t::sub_gauge_config_t& gauge,
+void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
                                      float centerX, float centerY)
 {
     painter->save();

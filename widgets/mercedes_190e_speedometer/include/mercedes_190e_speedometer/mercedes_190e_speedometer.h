@@ -16,7 +16,9 @@ class Mercedes190ESpeedometer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit Mercedes190ESpeedometer(const speedometer_config_t& cfg, QWidget *parent = nullptr);
+    using config_t = Mercedes190ESpeedometerConfig_t;
+
+    explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     float getSpeed() const;
     void setOdometerValue(int value); // Setter for odometer
@@ -36,7 +38,7 @@ private:
 
     float m_currentSpeedMph;
 
-    speedometer_config_t _cfg;
+    config_t _cfg;
 
     // Angles are Qt standard (0 at 3 o'clock, positive CCW), assuming Y-up due to painter.scale(1,-1)
     const float m_angleValueMin = 210.0f; // Changed to float

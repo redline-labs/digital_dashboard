@@ -14,7 +14,9 @@ class SparklineItem : public QWidget {
     Q_OBJECT
 
 public:
-    explicit SparklineItem(const sparkline_config_t& cfg, QWidget *parent = nullptr);
+    using config_t = SparklineConfig_t;
+
+    explicit SparklineItem(const SparklineConfig_t& cfg, QWidget *parent = nullptr);
     void addDataPoint(double value);
     void setYAxisRange(double minVal, double maxVal);
 
@@ -25,7 +27,7 @@ private slots:
     void forceRepaint();
 
 private:
-    sparkline_config_t _cfg;
+    SparklineConfig_t _cfg;
 
     QVector<double> dataPoints;
     QLabel *valueLabel;

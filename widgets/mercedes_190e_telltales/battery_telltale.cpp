@@ -10,7 +10,7 @@ const QColor Mercedes190EBatteryTelltale::NORMAL_BACKGROUND = QColor(60, 60, 60)
 const QColor Mercedes190EBatteryTelltale::ASSERTED_ICON = QColor(255, 255, 255);        // White when asserted
 const QColor Mercedes190EBatteryTelltale::NORMAL_ICON = QColor(120, 120, 120);          // Light gray when normal
 
-Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const battery_telltale_config_t& cfg, QWidget *parent)
+Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent)
     : QWidget(parent)
     , _cfg{cfg}
     , mSvgRenderer(nullptr)

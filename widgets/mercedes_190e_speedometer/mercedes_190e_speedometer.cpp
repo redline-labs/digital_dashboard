@@ -13,7 +13,7 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-Mercedes190ESpeedometer::Mercedes190ESpeedometer(const speedometer_config_t& cfg, QWidget *parent)
+Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerConfig_t& cfg, QWidget *parent)
     : QWidget(parent), m_currentSpeedMph(0.0f), _cfg{cfg}, m_odometerValue(cfg.odometer_value) // Initial odometer value
 {
     // Load font from Qt resources
