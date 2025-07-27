@@ -23,4 +23,5 @@ target_link_libraries(sparkline
         Qt6::Widgets
         zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
+        schemas           # For Cap'n Proto schemas
 )

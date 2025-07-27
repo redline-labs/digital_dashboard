@@ -7,6 +7,11 @@
 
 #include <spdlog/spdlog.h>
 
+// Cap'n Proto includes
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+#include "vehicle_warnings.capnp.h"
+
 #include <memory>
 
 // Define static colors
@@ -160,12 +165,19 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
                 key_expr,
                 [this](const zenoh::Sample& sample) {
                     try {
-                        // Convert payload to string
-                        const auto& payload = sample.get_payload();
-                        std::string data_str = payload.as_string();
+                        // Get the payload bytes
+                        auto bytes = sample.get_payload().as_string();
                         
-                        // Convert data to bool (true if "true" or "1")
-                        bool asserted = (data_str == "true" || data_str == "1");
+                        // Deserialize Cap'n Proto message
+                        ::capnp::FlatArrayMessageReader message(
+                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
+                                       bytes.size() / sizeof(capnp::word))
+                        );
+                        
+                        BatteryWarning::Reader batteryWarning = message.getRoot<BatteryWarning>();
+                        
+                        // Extract the warning status
+                        bool asserted = batteryWarning.getIsWarningActive();
                         
                         // Use Qt's queued connection to ensure thread safety
                         QMetaObject::invokeMethod(this, "onAssertedDataReceived", 

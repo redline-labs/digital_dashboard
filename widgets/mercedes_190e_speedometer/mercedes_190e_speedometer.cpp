@@ -5,6 +5,11 @@
 
 #include <spdlog/spdlog.h>
 
+// Cap'n Proto includes
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+#include "vehicle_speed.capnp.h"
+
 #include <cmath>
 #include <memory>
 #include <numbers>
@@ -468,17 +473,24 @@ void Mercedes190ESpeedometer::createZenohSubscription()
                 key_expr,
                 [this](const zenoh::Sample& sample) {
                     try {
-                        // Convert payload to string
-                        const auto& payload = sample.get_payload();
-                        std::string data_str = payload.as_string();
+                        // Get the payload bytes
+                        auto bytes = sample.get_payload().as_string();
                         
-                        // Convert data to speed in m/s
-                        double speed_mps = std::stod(data_str);
+                        // Deserialize Cap'n Proto message
+                        ::capnp::FlatArrayMessageReader message(
+                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
+                                       bytes.size() / sizeof(capnp::word))
+                        );
+                        
+                        VehicleSpeed::Reader vehicleSpeed = message.getRoot<VehicleSpeed>();
+                        
+                        // Extract the speed data
+                        float speed_mps = vehicleSpeed.getSpeedMps();
                         
                         // Use Qt's queued connection to ensure thread safety
                         QMetaObject::invokeMethod(this, "onSpeedDataReceived", 
                                                 Qt::QueuedConnection, 
-                                                Q_ARG(double, speed_mps));
+                                                Q_ARG(double, static_cast<double>(speed_mps)));
                         
                     } catch (const std::exception& e) {
                         SPDLOG_ERROR("Mercedes190ESpeedometer: Error parsing speed data: {}", e.what());

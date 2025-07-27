@@ -9,6 +9,13 @@
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 #include <spdlog/spdlog.h>
 
+// Cap'n Proto includes
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+#include "vehicle_speed.capnp.h"
+#include "engine_telemetry.capnp.h"
+#include "vehicle_warnings.capnp.h"
+
 #include <QMetaObject>
 #include <memory>
 #include <map>
@@ -242,12 +249,34 @@ void SparklineItem::createZenohSubscription()
                 key_expr,
                 [this](const zenoh::Sample& sample) {
                     try {
-                        // Convert payload to string
-                        const auto& payload = sample.get_payload();
-                        std::string data_str = payload.as_string();
+                        // Get the payload bytes
+                        auto bytes = sample.get_payload().as_string();
                         
-                        // Convert data to double value
-                        double value = std::stod(data_str);
+                        // Deserialize Cap'n Proto message
+                        ::capnp::FlatArrayMessageReader message(
+                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
+                                       bytes.size() / sizeof(capnp::word))
+                        );
+                        
+                        double value = 0.0;
+                        
+                        // Determine which schema type based on the key
+                        if (_cfg.zenoh_key.find("speed") != std::string::npos) {
+                            VehicleSpeed::Reader vehicleSpeed = message.getRoot<VehicleSpeed>();
+                            value = static_cast<double>(vehicleSpeed.getSpeedMps());
+                        } else if (_cfg.zenoh_key.find("rpm") != std::string::npos) {
+                            EngineRpm::Reader engineRpm = message.getRoot<EngineRpm>();
+                            value = static_cast<double>(engineRpm.getRpm());
+                        } else if (_cfg.zenoh_key.find("temperature") != std::string::npos) {
+                            EngineTemperature::Reader engineTemp = message.getRoot<EngineTemperature>();
+                            value = static_cast<double>(engineTemp.getTemperatureCelsius());
+                        } else if (_cfg.zenoh_key.find("battery") != std::string::npos) {
+                            BatteryWarning::Reader batteryWarning = message.getRoot<BatteryWarning>();
+                            value = batteryWarning.getIsWarningActive() ? 1.0 : 0.0;
+                        } else {
+                            SPDLOG_WARN("SparklineItem: Unknown data type for key '{}'", _cfg.zenoh_key);
+                            return;
+                        }
                         
                         // Use Qt's queued connection to ensure thread safety
                         QMetaObject::invokeMethod(this, "onDataReceived", 

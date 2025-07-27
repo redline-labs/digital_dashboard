@@ -24,4 +24,5 @@ target_link_libraries(mercedes_190e_telltales
         Qt6::Svg
         zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
+        schemas           # For Cap'n Proto schemas
 )

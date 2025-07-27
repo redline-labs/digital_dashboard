@@ -6,6 +6,11 @@
 
 #include <spdlog/spdlog.h>
 
+// Cap'n Proto includes
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+#include "engine_telemetry.capnp.h"
+
 #include <cmath> // For std::cos, std::sin
 #include <memory>
 #include <numbers>
@@ -354,17 +359,24 @@ void Mercedes190ETachometer::createZenohSubscription()
                 key_expr,
                 [this](const zenoh::Sample& sample) {
                     try {
-                        // Convert payload to string
-                        const auto& payload = sample.get_payload();
-                        std::string data_str = payload.as_string();
+                        // Get the payload bytes
+                        auto bytes = sample.get_payload().as_string();
                         
-                        // Convert data to RPM
-                        double rpm = std::stod(data_str);
+                        // Deserialize Cap'n Proto message
+                        ::capnp::FlatArrayMessageReader message(
+                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
+                                       bytes.size() / sizeof(capnp::word))
+                        );
+                        
+                        EngineRpm::Reader engineRpm = message.getRoot<EngineRpm>();
+                        
+                        // Extract the RPM data
+                        uint32_t rpm = engineRpm.getRpm();
                         
                         // Use Qt's queued connection to ensure thread safety
                         QMetaObject::invokeMethod(this, "onRpmDataReceived", 
                                                 Qt::QueuedConnection, 
-                                                Q_ARG(double, rpm));
+                                                Q_ARG(double, static_cast<double>(rpm)));
                         
                     } catch (const std::exception& e) {
                         SPDLOG_ERROR("Mercedes190ETachometer: Error parsing RPM data: {}", e.what());

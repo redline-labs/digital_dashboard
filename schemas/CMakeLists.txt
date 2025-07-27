@@ -1,7 +1,9 @@
 # Schemas CMakeLists.txt
 
 set(SCHEMA_FILES
-    engine_data.capnp
+    vehicle_speed.capnp
+    engine_telemetry.capnp
+    vehicle_warnings.capnp
 )
 
 set(GENERATED_SOURCES)
