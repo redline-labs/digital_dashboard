@@ -16,8 +16,6 @@
 #include <vector> // For std::vector
 
 
-
-
 // Helper for degree to radian conversion
 constexpr float degreesToRadians(float degrees)
 {

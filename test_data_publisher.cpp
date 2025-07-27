@@ -11,6 +11,7 @@
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
+#include <kj/io.h>
 #include "vehicle_speed.capnp.h"
 #include "engine_telemetry.capnp.h"
 #include "vehicle_warnings.capnp.h"
@@ -141,16 +142,6 @@ private:
         }
     }
     
-    void publishData(zenoh::Publisher* publisher, const std::string& data) {
-        if (!publisher) return;
-        
-        try {
-            auto payload = zenoh::Bytes(data);
-            publisher->put(std::move(payload));
-        } catch (const std::exception& e) {
-            SPDLOG_ERROR("Failed to publish data '{}': {}", data, e.what());
-        }
-    }
     
     void publishSpeedData(zenoh::Publisher* publisher, float speedMps)
     {
@@ -171,13 +162,16 @@ private:
             ).count();
             vehicleSpeed.setTimestamp(static_cast<uint64_t>(timestamp));
             
-            // Serialize to bytes
-            auto words = capnp::messageToFlatArray(message);
-            auto bytes = words.asBytes();
+            // Use VectorOutputStream to write to its internal buffer
+            kj::VectorOutputStream stream;
+            capnp::writeMessage(stream, message);
+            
+            // Get the data from the stream (single copy instead of double copy)
+            auto streamData = stream.getArray();
+            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            auto payload = zenoh::Bytes(std::string(reinterpret_cast<const char*>(bytes.begin()), bytes.size()));
-            publisher->put(std::move(payload));
+            publisher->put(zenoh::Bytes(std::move(buffer)));
             
             SPDLOG_DEBUG("Published speed data: {:.2f} m/s at timestamp {}", speedMps, timestamp);
             
@@ -205,13 +199,16 @@ private:
             ).count();
             engineRpm.setTimestamp(static_cast<uint64_t>(timestamp));
             
-            // Serialize to bytes
-            auto words = capnp::messageToFlatArray(message);
-            auto bytes = words.asBytes();
+            // Use VectorOutputStream to write to its internal buffer
+            kj::VectorOutputStream stream;
+            capnp::writeMessage(stream, message);
+            
+            // Get the data from the stream (single copy instead of double copy)
+            auto streamData = stream.getArray();
+            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            auto payload = zenoh::Bytes(std::string(reinterpret_cast<const char*>(bytes.begin()), bytes.size()));
-            publisher->put(std::move(payload));
+            publisher->put(zenoh::Bytes(std::move(buffer)));
             
             SPDLOG_DEBUG("Published RPM data: {} RPM at timestamp {}", rpm, timestamp);
             
@@ -239,13 +236,16 @@ private:
             ).count();
             engineTemp.setTimestamp(static_cast<uint64_t>(timestamp));
             
-            // Serialize to bytes
-            auto words = capnp::messageToFlatArray(message);
-            auto bytes = words.asBytes();
+            // Use VectorOutputStream to write to its internal buffer
+            kj::VectorOutputStream stream;
+            capnp::writeMessage(stream, message);
+            
+            // Get the data from the stream (single copy instead of double copy)
+            auto streamData = stream.getArray();
+            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            auto payload = zenoh::Bytes(std::string(reinterpret_cast<const char*>(bytes.begin()), bytes.size()));
-            publisher->put(std::move(payload));
+            publisher->put(zenoh::Bytes(std::move(buffer)));
             
             SPDLOG_DEBUG("Published temperature data: {:.1f}°C at timestamp {}", temperatureCelsius, timestamp);
             
@@ -273,13 +273,16 @@ private:
             ).count();
             batteryWarning.setTimestamp(static_cast<uint64_t>(timestamp));
             
-            // Serialize to bytes
-            auto words = capnp::messageToFlatArray(message);
-            auto bytes = words.asBytes();
+            // Use VectorOutputStream to write to its internal buffer
+            kj::VectorOutputStream stream;
+            capnp::writeMessage(stream, message);
+            
+            // Get the data from the stream (single copy instead of double copy)
+            auto streamData = stream.getArray();
+            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            auto payload = zenoh::Bytes(std::string(reinterpret_cast<const char*>(bytes.begin()), bytes.size()));
-            publisher->put(std::move(payload));
+            publisher->put(zenoh::Bytes(std::move(buffer)));
             
             SPDLOG_DEBUG("Published battery warning data: {} at timestamp {}", isWarningActive ? "ACTIVE" : "INACTIVE", timestamp);
             
