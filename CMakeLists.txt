@@ -25,6 +25,7 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 
 # Pull in third party dependencies.
 add_subdirectory(third_party)
+add_subdirectory(schemas)
 add_subdirectory(widgets)
 add_subdirectory(libs)
 
@@ -127,5 +128,7 @@ target_link_libraries(test_data_publisher PRIVATE
     
     # Link zenoh-cpp
     zenohcxx::zenohc
+    
+    # Link our schemas library
+    schemas
 )
-

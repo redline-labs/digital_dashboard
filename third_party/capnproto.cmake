@@ -11,6 +11,11 @@ FetchContent_Declare(
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CAPNP_LITE OFF CACHE BOOL "" FORCE)
 
+# We need the capnp compiler for schema compilation
+set(CAPNP_INCLUDE_DIRS ${capnproto_SOURCE_DIR}/c++/src)
+set(CAPNP_EXECUTABLE ${capnproto_BINARY_DIR}/c++/src/capnp/capnp)
+set(CAPNPC_CXX_EXECUTABLE ${capnproto_BINARY_DIR}/c++/src/capnp/capnpc-c++)
+
 FetchContent_MakeAvailable(capnproto)
 
 # Copy capnproto license
