@@ -14,9 +14,51 @@
 #include "sparkline/sparkline.h"
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 
+enum class widget_type_t
+{
+    mercedes_190e_speedometer,
+    mercedes_190e_tachometer,
+    mercedes_190e_battery_telltale,
+    mercedes_190e_cluster_gauge,
+
+    sparkline,
+
+    carplay,
+
+    unknown
+};
+
+constexpr std::string_view widget_type_to_string(widget_type_t type)
+{
+    switch (type)
+    {
+        case widget_type_t::mercedes_190e_speedometer:
+            return "mercedes_190e_speedometer";
+
+        case widget_type_t::mercedes_190e_tachometer:
+            return "mercedes_190e_tachometer";
+
+        case widget_type_t::mercedes_190e_battery_telltale:
+            return "mercedes_190e_battery_telltale";
+
+        case widget_type_t::mercedes_190e_cluster_gauge:
+            return "mercedes_190e_cluster_gauge";
+
+        case widget_type_t::sparkline:
+            return "sparkline";
+
+        case widget_type_t::carplay:
+            return "carplay";
+
+        case widget_type_t::unknown:
+        default:
+            return "unknown";
+    }
+}
+
 struct widget_config_t {
     widget_config_t() :
-        type{},
+        type{widget_type_t::unknown},
         x{0},
         y{0},
         width{100},
@@ -24,7 +66,7 @@ struct widget_config_t {
         config{}
     {}
 
-    std::string type;
+    widget_type_t type;
     uint16_t x;
     uint16_t y;
     uint16_t width;

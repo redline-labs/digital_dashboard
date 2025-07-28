@@ -21,7 +21,7 @@ class Mercedes190EBatteryTelltale : public QWidget
 
 public:
     using config_t = Mercedes190EBatteryTelltaleConfig_t;
-    static constexpr std::string_view kWidgetName = "mercedes_190e_telltales";
+    static constexpr std::string_view kWidgetName = "mercedes_190e_battery_telltale";
 
     explicit Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent = nullptr);
     ~Mercedes190EBatteryTelltale();

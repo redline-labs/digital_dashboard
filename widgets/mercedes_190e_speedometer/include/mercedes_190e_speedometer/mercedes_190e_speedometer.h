@@ -22,6 +22,21 @@ public:
     using config_t = Mercedes190ESpeedometerConfig_t;
     static constexpr std::string_view kWidgetName = "mercedes_190e_speedometer";
 
+    explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
+
+    void setSpeed(float speed); // Assume input speed is in MPH for this widget
+    void setOdometerValue(int value); // Setter for odometer
+    
+    // Set Zenoh session for data subscription
+    void setZenohSession(std::shared_ptr<zenoh::Session> session);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+
+private slots:
+    void onSpeedDataReceived(double speedMps);
+
+private:
     // Speedometer properties.
     static constexpr float kAngleMinDeg = 210.0f;
     static constexpr float kAngleSweepDeg = -240.0f;
@@ -61,21 +76,6 @@ public:
     static constexpr float kKmhMajorTickLen = 6.0f;
     static constexpr float kKmhMinorTickLen = 3.0f;
 
-    explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
-
-    void setSpeed(float speed); // Assume input speed is in MPH for this widget
-    void setOdometerValue(int value); // Setter for odometer
-    
-    // Set Zenoh session for data subscription
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
-
-protected:
-    void paintEvent(QPaintEvent *event) override;
-
-private slots:
-    void onSpeedDataReceived(double speedMps);
-
-private:
     void drawBackground(QPainter *painter);
     void drawMphTicksAndNumbers(QPainter *painter);
     void drawKmhTicksAndNumbers(QPainter *painter);

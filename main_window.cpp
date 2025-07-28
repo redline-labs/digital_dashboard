@@ -32,9 +32,11 @@ MainWindow::~MainWindow()
 
 void MainWindow::createWidgetsFromConfig()
 {
-    for (const auto& widget_config : _window_cfg.widgets) {
+    for (const auto& widget_config : _window_cfg.widgets)
+    {
         QWidget* widget = createWidget(widget_config);
-        if (widget) {
+        if (widget)
+        {
             // Set parent and position
             widget->setParent(this);
             widget->setGeometry(widget_config.x, widget_config.y, widget_config.width, widget_config.height);
@@ -44,66 +46,79 @@ void MainWindow::createWidgetsFromConfig()
             _widgets.emplace_back(std::unique_ptr<QWidget>(widget));
             
             SPDLOG_INFO("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'",
-                        widget_config.type, widget_config.x, widget_config.y, 
-                        widget_config.width, widget_config.height, _window_cfg.name);
-        } else {
+                widget_type_to_string(widget_config.type),
+                widget_config.x,
+                widget_config.y, 
+                widget_config.width,
+                widget_config.height,
+                _window_cfg.name);
+        }
+        else
+        {
             SPDLOG_ERROR("Failed to create widget of type '{}' in window '{}'", 
-                         widget_config.type, _window_cfg.name);
+                widget_type_to_string(widget_config.type),
+                _window_cfg.name);
         }
     }
 }
 
 QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
-{
-    const std::string& type = widget_config.type;
-    
-    if (type == "speedometer") {
+{    
+    if (widget_config.type == widget_type_t::mercedes_190e_speedometer)
+    {
         auto* speedometer = new Mercedes190ESpeedometer(std::get<Mercedes190ESpeedometerConfig_t>(widget_config.config));
         if (_zenoh_session) {
             speedometer->setZenohSession(_zenoh_session);
         }
         return speedometer;
     }
-    else if (type == "tachometer") {
+    else if (widget_config.type == widget_type_t::mercedes_190e_tachometer)
+    {
         auto* tachometer = new Mercedes190ETachometer(std::get<Mercedes190ETachometerConfig_t>(widget_config.config));
         if (_zenoh_session) {
             tachometer->setZenohSession(_zenoh_session);
         }
         return tachometer;
     }
-    else if (type == "sparkline") {
+    else if (widget_config.type == widget_type_t::sparkline)
+    {
         auto* sparkline = new SparklineItem(std::get<SparklineConfig_t>(widget_config.config));
         if (_zenoh_session) {
             sparkline->setZenohSession(_zenoh_session);
         }
         return sparkline;
     }
-    else if (type == "battery_telltale") {
+    else if (widget_config.type == widget_type_t::mercedes_190e_battery_telltale)
+    {
         auto* battery_telltale = new Mercedes190EBatteryTelltale(std::get<Mercedes190EBatteryTelltaleConfig_t>(widget_config.config));
         if (_zenoh_session) {
             battery_telltale->setZenohSession(_zenoh_session);
         }
         return battery_telltale;
     }
-    else if (type == "carplay") {
+    else if (widget_config.type == widget_type_t::carplay)
+    {
         // CarPlay widget needs special handling due to its constructor parameters
         auto* carplay = new CarPlayWidget(std::get<CarplayConfig_t>(widget_config.config));
         carplay->setSize(widget_config.width, widget_config.height);
         return carplay;
     }
-    else if (type == "cluster_gauge") {
+    else if (widget_config.type == widget_type_t::mercedes_190e_cluster_gauge)
+    {
         auto* cluster_gauge = new Mercedes190EClusterGauge({});
         return cluster_gauge;
     }
-    else {
-        SPDLOG_WARN("Unknown widget type: '{}'", type);
+    else
+    {
+        SPDLOG_WARN("Unknown widget type: '{}'", widget_type_to_string(widget_config.type));
         return nullptr;
     }
 }
 
 void MainWindow::initializeZenoh()
 {
-    try {
+    try
+    {
         // Create Zenoh configuration
         auto config = zenoh::Config::create_default();
         
@@ -111,7 +126,9 @@ void MainWindow::initializeZenoh()
         _zenoh_session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
         SPDLOG_INFO("Zenoh session opened successfully for window '{}'", _window_cfg.name);
         
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         SPDLOG_ERROR("Failed to initialize Zenoh for window '{}': {}", _window_cfg.name, e.what());
         // Continue without Zenoh - widgets can still function without real-time data
     }

@@ -7,7 +7,7 @@ windows:
     background_color: "#555555"
     widgets:
       # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
-      - type: "speedometer"
+      - type: mercedes_190e_speedometer
         x: 350
         y: 15
         width: 250
@@ -19,7 +19,7 @@ windows:
           shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
       
       # Mercedes 190E Tachometer on the right - subscribes to engine RPM
-      - type: "tachometer" 
+      - type: mercedes_190e_tachometer
         x: 650
         y: 15
         width: 250
@@ -31,7 +31,7 @@ windows:
           show_clock: true
       
       # Battery telltale indicator in top left - subscribes to battery warning
-      - type: "battery_telltale"
+      - type: mercedes_190e_battery_telltale
         x: 50
         y: 400
         width: 30
@@ -42,7 +42,7 @@ windows:
           warning_color: "#FF0000"
       
       # Sparkline for engine data on top - subscribes to engine temperature
-      - type: "sparkline"
+      - type: sparkline
         x: 950
         y: 15
         width: 200
@@ -58,7 +58,7 @@ windows:
           update_rate: 30
 
       # Cluster gauge for all gauges
-      - type: "cluster_gauge"
+      - type: mercedes_190e_cluster_gauge
         x: 50
         y: 15
         width: 250
@@ -87,7 +87,7 @@ windows:
 #    width: 800
 #    height: 600
 #    widgets:
-#      - type: "carplay"
+#      - type: carplay
 #        x: 0
 #        y: 0
 #        width: 800
