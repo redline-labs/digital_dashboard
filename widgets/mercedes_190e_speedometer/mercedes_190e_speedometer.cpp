@@ -12,6 +12,7 @@
 #include <capnp/serialize.h>
 #include "vehicle_speed.capnp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -68,37 +69,35 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
 
 void Mercedes190ESpeedometer::setSpeed(float speed) // speed in MPH
 {
-    current_speed_mph_ = qBound(0.0f, speed, static_cast<float>(cfg_.max_speed));
+    current_speed_mph_ = std::clamp(speed, 0.0f, static_cast<float>(cfg_.max_speed));
     update();
 }
 
 float Mercedes190ESpeedometer::valueToAngle(float value, float maxVal)
 {
-    float constrainedValue = qBound(0.0f, value, maxVal);
+    float constrainedValue = std::clamp(value, 0.0f, maxVal);
     float factor = 0.0f;
+    
     if (maxVal != 0.0f)
     {
         factor = constrainedValue / maxVal;
     }
+
     return kAngleMinDeg + factor * kAngleSweepDeg;
 }
 
 void Mercedes190ESpeedometer::setOdometerValue(int value)
 {
-    if (value >= 0 && value <= 999999)  // Assume 6 digits max
-    {
-        odometer_value_ = value;
-        update();
-    }
+    odometer_value_ = std::clamp(value, 0, 999999);
+    update();
 }
 
-void Mercedes190ESpeedometer::paintEvent(QPaintEvent *event)
+void Mercedes190ESpeedometer::paintEvent(QPaintEvent */*event*/)
 {
-    Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    int side = qMin(width(), height());
+    int side = std::min(width(), height());
     painter.translate(width() / 2.0, height() / 2.0); // Origin to center
     painter.scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
 
@@ -217,6 +216,7 @@ void Mercedes190ESpeedometer::drawBoxesAtMPH(QPainter *painter, float mphValue, 
         painter->drawRect(markerRect);
         painter->restore();
     }
+
     painter->restore(); // Restores translate and rotate for this MPH value
 };
 
@@ -238,9 +238,10 @@ void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
     painter->setPen(Qt::NoPen); // No border for the boxes
     painter->setBrush(Qt::white); // White boxes
 
-    drawBoxesAtMPH(painter, 28.0f, 1);
-    drawBoxesAtMPH(painter, 54.0f, 2);
-    drawBoxesAtMPH(painter, 87.0f, 3);
+    for (uint8_t i = 0; i < cfg_.shift_box_markers.size(); ++i)
+    {
+        drawBoxesAtMPH(painter, static_cast<float>(cfg_.shift_box_markers[i]), i + 1);
+    }
 
     painter->restore(); // Restores pen and brush settings set before drawing markers
 
@@ -425,10 +426,8 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
     painter->drawPolygon(needlePolygon);
     
     // Central pivot (dark grey/black, flat circle)
-    float pivotRadius = 8.0f; // Larger pivot as per image
-    painter->setBrush(QColor(40, 40, 40)); // Dark grey
-    // painter->setPen(QColor(20,20,20)); // Optional subtle border for pivot
-    painter->drawEllipse(QPointF(0.0f,0.0f), pivotRadius, pivotRadius); 
+    painter->setBrush(kPivotColor); // Dark grey
+    painter->drawEllipse(QPointF(0.0f,0.0f), kPivotRadius, kPivotRadius); 
 
     painter->restore();
 }
@@ -464,8 +463,10 @@ void Mercedes190ESpeedometer::createZenohSubscription()
         zenoh_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
             zenoh_session_->declare_subscriber(
                 key_expr,
-                [this](const zenoh::Sample& sample) {
-                    try {
+                [this](const zenoh::Sample& sample)
+                {
+                    try
+                    {
                         // Get the payload bytes
                         auto bytes = sample.get_payload().as_string();
                         
@@ -485,8 +486,10 @@ void Mercedes190ESpeedometer::createZenohSubscription()
                                                 Qt::QueuedConnection, 
                                                 Q_ARG(double, static_cast<double>(speed_mps)));
                         
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Mercedes190ESpeedometer: Error parsing speed data: {}", e.what());
+                    }
+                    catch (const std::exception& e)
+                    {
+                        SPDLOG_ERROR("Error parsing speed data: {}", e.what());
                     }
                 },
                 zenoh::closures::none

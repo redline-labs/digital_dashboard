@@ -32,6 +32,10 @@ public:
     static constexpr float kNeedleBaseWidth = 4.0f;    // Width at the pivot
     static constexpr float kNeedleTipWidth = 2.0f;     // Width at the tip (can be 0 for a sharp point)
 
+    // Pivot properties.
+    static constexpr float kPivotRadius = 8.0f; // Larger pivot as per image
+    static constexpr QColor kPivotColor = QColor(40, 40, 40); // Dark grey/black
+
     // Odometer properties.
     static constexpr uint8_t kNumDigits = 6;
     static constexpr float kDigitWidth = 12.0f;

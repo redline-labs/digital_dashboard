@@ -75,7 +75,9 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
         if (!rhs.zenoh_key.empty()) {
             node["zenoh_key"] = rhs.zenoh_key;
         }
-
+        if (!rhs.shift_box_markers.empty()) {
+            node["shift_box_markers"] = rhs.shift_box_markers;
+        }
         return node;
     }
 
@@ -86,7 +88,7 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
         if (node["odometer_value"]) rhs.odometer_value = node["odometer_value"].as<uint32_t>();
         if (node["max_speed"]) rhs.max_speed = node["max_speed"].as<uint16_t>();
         if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-
+        if (node["shift_box_markers"]) rhs.shift_box_markers = node["shift_box_markers"].as<std::vector<uint8_t>>();
         return true;
     }
 };
