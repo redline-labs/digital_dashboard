@@ -256,6 +256,7 @@ private:
 
     void publishBatteryWarningData(zenoh::Publisher* publisher, bool isWarningActive)
     {
+        static float modifier = 0.0f;
         if (!publisher) return;
         
         try {
@@ -265,6 +266,8 @@ private:
             
             // Set the warning status
             batteryWarning.setIsWarningActive(isWarningActive);
+            batteryWarning.setBatteryVoltage(12.0f + std::sin(modifier));
+            modifier += 0.01f;
             
             // Set timestamp (current time in milliseconds)
             auto now = std::chrono::system_clock::now();

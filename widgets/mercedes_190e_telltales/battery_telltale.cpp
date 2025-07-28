@@ -12,19 +12,17 @@
 #include <capnp/serialize.h>
 #include "vehicle_warnings.capnp.h"
 
-#include <memory>
+// ExprTk includes
+#include "exprtk.hpp"
 
-// Define static colors
-const QColor Mercedes190EBatteryTelltale::ASSERTED_BACKGROUND = QColor(200, 50, 50);    // Medium red
-const QColor Mercedes190EBatteryTelltale::NORMAL_BACKGROUND = QColor(60, 60, 60);       // Dark gray
-const QColor Mercedes190EBatteryTelltale::ASSERTED_ICON = QColor(255, 255, 255);        // White when asserted
-const QColor Mercedes190EBatteryTelltale::NORMAL_ICON = QColor(120, 120, 120);          // Light gray when normal
+#include <memory>
 
 Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent)
     : QWidget(parent)
     , _cfg{cfg}
     , mSvgRenderer(nullptr)
     , mAsserted(false)
+    , _expression(nullptr)
 {
     // Load the SVG renderer
     mSvgRenderer = new QSvgRenderer(QString(":/mercedes_190e_telltales/telltale_battery.svg"), this);
@@ -32,6 +30,9 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
     if (!mSvgRenderer->isValid()) {
         SPDLOG_WARN("Failed to load battery telltale SVG");
     }
+    
+    // Initialize expression
+    initializeExpression();
     
     // Initialize colors
     updateColors();
@@ -50,22 +51,25 @@ Mercedes190EBatteryTelltale::~Mercedes190EBatteryTelltale()
 
 void Mercedes190EBatteryTelltale::setAsserted(bool asserted)
 {
-    if (mAsserted != asserted) {
+    if (mAsserted != asserted)
+    {
         mAsserted = asserted;
         updateColors();
         update(); // Trigger a repaint
-        emit assertedChanged(asserted);
     }
 }
 
 void Mercedes190EBatteryTelltale::updateColors()
 {
-    if (mAsserted) {
+    if (mAsserted)
+    {
         mBackgroundColor = QColor::fromString(_cfg.warning_color);
-        mIconColor = ASSERTED_ICON;
-    } else {
+        mIconColor = kAssertedIcon;
+    }
+    else
+    {
         mBackgroundColor = QColor::fromString(_cfg.normal_color);
-        mIconColor = NORMAL_ICON;
+        mIconColor = kNormalIcon;
     }
 }
 
@@ -140,7 +144,7 @@ void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session
 {
     _zenoh_session = session;
     
-    // If we have a zenoh key configured, create the subscription
+    // If we have a zenoh key configured, create the legacy subscription
     if (!_cfg.zenoh_key.empty()) {
         createZenohSubscription();
     }
@@ -177,32 +181,91 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
                         BatteryWarning::Reader batteryWarning = message.getRoot<BatteryWarning>();
                         
                         // Extract the warning status
-                        bool asserted = batteryWarning.getIsWarningActive();
+                        float batteryVoltage = batteryWarning.getBatteryVoltage();
                         
                         // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onAssertedDataReceived", 
+                        QMetaObject::invokeMethod(this, "onBatteryVoltageReceived", 
                                                 Qt::QueuedConnection, 
-                                                Q_ARG(bool, asserted));
+                                                Q_ARG(float, batteryVoltage));
                         
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Error parsing data: {}", e.what());
+                    }
+                    catch (const std::exception& e)
+                    {
+                        SPDLOG_ERROR("Error parsing data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        SPDLOG_INFO("Mercedes190EBatteryTelltale: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }
 
-void Mercedes190EBatteryTelltale::onAssertedDataReceived(bool asserted)
+void Mercedes190EBatteryTelltale::onBatteryVoltageReceived(float voltage)
 {
-    setAsserted(asserted);
+    _battery_voltage = static_cast<double>(voltage);
+    _variables["batteryVoltage"] = _battery_voltage;
+    
+    // Evaluate the condition and update telltale state
+    bool shouldAssert = evaluateCondition();
+    setAsserted(shouldAssert);
 }
+
+void Mercedes190EBatteryTelltale::initializeExpression()
+{
+    try {
+        // Initialize variables
+        _variables["batteryVoltage"] = _battery_voltage;
+        
+        // Create symbol table and add variables by reference
+        _symbol_table = std::make_unique<exprtk::symbol_table<double>>();
+        for (auto& [name, value] : _variables) {
+            _symbol_table->add_variable(name, value);
+        }
+        
+        // Create and compile expression
+        _expression = std::make_unique<exprtk::expression<double>>();
+        _expression->register_symbol_table(*_symbol_table);
+        
+        exprtk::parser<double> parser;
+        if (!parser.compile(_cfg.condition_expression, *_expression)) {
+            SPDLOG_ERROR("Mercedes190EBatteryTelltale: Failed to compile expression '{}': {}", 
+                         _cfg.condition_expression, parser.error());
+            _expression.reset(); // Clear invalid expression
+            _symbol_table.reset();
+        } else {
+            SPDLOG_INFO("Mercedes190EBatteryTelltale: Successfully compiled expression: '{}'", 
+                        _cfg.condition_expression);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Exception initializing expression: {}", e.what());
+        _expression.reset();
+        _symbol_table.reset();
+    }
+}
+
+bool Mercedes190EBatteryTelltale::evaluateCondition()
+{
+    if (!_expression) {
+        // Fallback to a simple voltage check if expression failed
+        return _battery_voltage < 12.0;
+    }
+    
+    try {
+        // Variables are already linked by reference, so just evaluate
+        double result = _expression->value();
+        return result != 0.0;
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Mercedes190EBatteryTelltale: Exception evaluating expression: {}", e.what());
+        // Fallback to simple check
+        return _battery_voltage < 12.0;
+    }
+}
+
 
 #include "mercedes_190e_telltales/moc_battery_telltale.cpp"

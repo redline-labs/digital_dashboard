@@ -40,6 +40,7 @@ windows:
           zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
           normal_color: "#333333"
           warning_color: "#FF0000"
+          condition_expression: "batteryVoltage < 12.0"  # Illuminate when voltage is low
       
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: sparkline
