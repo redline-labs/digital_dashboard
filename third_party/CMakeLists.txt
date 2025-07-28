@@ -15,6 +15,7 @@ include(hidapi.cmake)
 include(zenoh-c.cmake)
 include(zenoh-cpp.cmake)
 include(capnproto.cmake)
+include(exprtk.cmake)
 
 # Create a common logging interface to avoid duplicate spdlog linking
 add_library(common_logging INTERFACE)
