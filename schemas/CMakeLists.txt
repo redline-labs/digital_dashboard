@@ -2,7 +2,8 @@
 
 set(SCHEMA_FILES
     vehicle_speed.capnp
-    engine_telemetry.capnp
+    engine_rpm.capnp
+    engine_temperature.capnp
     vehicle_warnings.capnp
 )
 

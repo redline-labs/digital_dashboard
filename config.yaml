@@ -37,10 +37,11 @@ windows:
         width: 30
         height: 30
         config:
-          zenoh_key: "vehicle/telltales/battery_warning"  # Boolean: true=warning, false=normal
+          zenoh_key: "vehicle/telltales/battery_warning"
+          schema_type: "BatteryWarning"  # Cap'n Proto schema type
           normal_color: "#333333"
           warning_color: "#FF0000"
-          condition_expression: "batteryVoltage < 12.0"  # Illuminate when voltage is low
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
       
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: sparkline

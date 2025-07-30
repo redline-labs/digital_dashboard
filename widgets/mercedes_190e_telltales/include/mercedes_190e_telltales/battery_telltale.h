@@ -2,6 +2,7 @@
 #define BATTERYTELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
+#include <mercedes_190e_telltales/capnp_data_extractor.h>
 #include "zenoh.hxx"
 
 #include <QWidget>
@@ -10,6 +11,9 @@
 
 #include <string_view>
 #include <map>
+
+// Declare metatype for Qt signal
+Q_DECLARE_METATYPE(CapnpDataExtractor::VariableMap)
 
 // Forward declaration.
 class QSvgRenderer;
@@ -44,7 +48,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void onBatteryVoltageReceived(float voltage);
+    void onDataReceived(const CapnpDataExtractor::VariableMap& variables);
 
 private:
     void updateColors();
@@ -64,16 +68,18 @@ private:
     static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
     static constexpr QColor kNormalIcon = QColor(120, 120, 120);          // Light gray when normal
     
-    // Zenoh-related members
+        // Zenoh-related members
     std::shared_ptr<zenoh::Session> _zenoh_session;
-    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;        // Legacy subscription
+    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
+
+    // Data extraction
+    CapnpDataExtractor _data_extractor;
 
     // ExprTk-related members
     std::unique_ptr<exprtk::expression<double>> _expression;
     std::unique_ptr<exprtk::symbol_table<double>> _symbol_table;
     std::map<std::string, double> _variables;
-    double _battery_voltage = 12.0; // Default safe value
-
+    
     void createZenohSubscription();
 };
 

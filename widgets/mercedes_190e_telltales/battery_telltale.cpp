@@ -10,7 +10,6 @@
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
-#include "vehicle_warnings.capnp.h"
 
 // ExprTk includes
 #include "exprtk.hpp"
@@ -30,6 +29,9 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
     if (!mSvgRenderer->isValid()) {
         SPDLOG_WARN("Failed to load battery telltale SVG");
     }
+    
+    // Initialize data extractor
+    _data_extractor.setSchemaType(_cfg.schema_type);
     
     // Initialize expression
     initializeExpression();
@@ -144,7 +146,7 @@ void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session
 {
     _zenoh_session = session;
     
-    // If we have a zenoh key configured, create the legacy subscription
+    // If we have a zenoh key configured, create the subscription
     if (!_cfg.zenoh_key.empty()) {
         createZenohSubscription();
     }
@@ -172,21 +174,13 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
                         // Get the payload bytes
                         auto bytes = sample.get_payload().as_string();
                         
-                        // Deserialize Cap'n Proto message
-                        ::capnp::FlatArrayMessageReader message(
-                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
-                                       bytes.size() / sizeof(capnp::word))
-                        );
-                        
-                        BatteryWarning::Reader batteryWarning = message.getRoot<BatteryWarning>();
-                        
-                        // Extract the warning status
-                        float batteryVoltage = batteryWarning.getBatteryVoltage();
+                        // Extract variables using the generic extractor
+                        auto variables = _data_extractor.extractVariables(bytes);
                         
                         // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onBatteryVoltageReceived", 
+                        QMetaObject::invokeMethod(this, "onDataReceived", 
                                                 Qt::QueuedConnection, 
-                                                Q_ARG(float, batteryVoltage));
+                                                Q_ARG(CapnpDataExtractor::VariableMap, variables));
                         
                     }
                     catch (const std::exception& e)
@@ -198,7 +192,8 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
             )
         );
         
-        SPDLOG_INFO("Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Created subscription for key '{}' with schema type '{}'", 
+                    _cfg.zenoh_key, _cfg.schema_type);
         
     } catch (const std::exception& e) {
         SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
@@ -206,10 +201,13 @@ void Mercedes190EBatteryTelltale::createZenohSubscription()
     }
 }
 
-void Mercedes190EBatteryTelltale::onBatteryVoltageReceived(float voltage)
+void Mercedes190EBatteryTelltale::onDataReceived(const CapnpDataExtractor::VariableMap& variables)
 {
-    _battery_voltage = static_cast<double>(voltage);
-    _variables["batteryVoltage"] = _battery_voltage;
+    // Update all variables
+    for (const auto& [name, value] : variables)
+    {
+        _variables[name] = value;
+    }
     
     // Evaluate the condition and update telltale state
     bool shouldAssert = evaluateCondition();
@@ -218,13 +216,33 @@ void Mercedes190EBatteryTelltale::onBatteryVoltageReceived(float voltage)
 
 void Mercedes190EBatteryTelltale::initializeExpression()
 {
-    try {
-        // Initialize variables
-        _variables["batteryVoltage"] = _battery_voltage;
+    try
+    {
+        // Get available variables from the schema
+        auto available_vars = _data_extractor.getAvailableVariables();
+
+        // Log available variables
+        if (!available_vars.empty())
+        {
+            std::string var_list;
+            for (const auto& var : available_vars)
+            {
+                if (!var_list.empty()) var_list += ", ";
+                var_list += var;
+            }
+            SPDLOG_INFO("Available variables for schema '{}': {}", _cfg.schema_type, var_list);
+        }
+        
+        // Initialize variables with default values
+        for (const auto& var_name : available_vars)
+        {
+            _variables[var_name] = 0.0; // Default value
+        }
         
         // Create symbol table and add variables by reference
         _symbol_table = std::make_unique<exprtk::symbol_table<double>>();
-        for (auto& [name, value] : _variables) {
+        for (auto& [name, value] : _variables)
+        {
             _symbol_table->add_variable(name, value);
         }
         
@@ -233,16 +251,21 @@ void Mercedes190EBatteryTelltale::initializeExpression()
         _expression->register_symbol_table(*_symbol_table);
         
         exprtk::parser<double> parser;
-        if (!parser.compile(_cfg.condition_expression, *_expression)) {
+        if (!parser.compile(_cfg.condition_expression, *_expression))
+        {
             SPDLOG_ERROR("Mercedes190EBatteryTelltale: Failed to compile expression '{}': {}", 
                          _cfg.condition_expression, parser.error());
             _expression.reset(); // Clear invalid expression
             _symbol_table.reset();
-        } else {
+        }
+        else
+        {
             SPDLOG_INFO("Mercedes190EBatteryTelltale: Successfully compiled expression: '{}'", 
                         _cfg.condition_expression);
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         SPDLOG_ERROR("Mercedes190EBatteryTelltale: Exception initializing expression: {}", e.what());
         _expression.reset();
         _symbol_table.reset();
@@ -251,19 +274,21 @@ void Mercedes190EBatteryTelltale::initializeExpression()
 
 bool Mercedes190EBatteryTelltale::evaluateCondition()
 {
-    if (!_expression) {
-        // Fallback to a simple voltage check if expression failed
-        return _battery_voltage < 12.0;
+    if (!_expression)
+    {
+        return true; // No data, default to warning.
     }
     
-    try {
+    try
+    {
         // Variables are already linked by reference, so just evaluate
         double result = _expression->value();
         return result != 0.0;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         SPDLOG_ERROR("Mercedes190EBatteryTelltale: Exception evaluating expression: {}", e.what());
-        // Fallback to simple check
-        return _battery_voltage < 12.0;
+        return true; // No data, default to warning.
     }
 }
 

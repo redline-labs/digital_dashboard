@@ -10,12 +10,14 @@ struct Mercedes190EBatteryTelltaleConfig_t {
         warning_color{"#FF0000"},
         normal_color{"#333333"},
         zenoh_key{},
+        schema_type{"BatteryWarning"},
         condition_expression{"batteryVoltage < 12.0"}
     {}
 
     std::string warning_color;          // Color when warning is active
     std::string normal_color;           // Color when in normal state
-    std::string zenoh_key;              // Optional Zenoh subscription key (legacy)
+    std::string zenoh_key;              // Zenoh subscription key for data
+    std::string schema_type;            // Cap'n Proto schema type (e.g., "BatteryWarning", "EngineRpm")
     std::string condition_expression;   // Expression to evaluate for telltale state
 };
 
