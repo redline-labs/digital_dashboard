@@ -5,8 +5,21 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2" CACHE STRING "")
 
-# Set macOS deployment target to match system
-SET(CMAKE_OSX_DEPLOYMENT_TARGET 15.4)
+# Automatically detect and set macOS deployment target to match current system
+if(APPLE)
+    execute_process(
+        COMMAND sw_vers -productVersion
+        OUTPUT_VARIABLE MACOS_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    
+    # Extract major.minor version (e.g., "15.5" from "15.5.0")
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" MACOS_DEPLOYMENT_VERSION "${MACOS_VERSION}")
+    
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOS_DEPLOYMENT_VERSION})
+    message(STATUS "Detected macOS version: ${MACOS_VERSION}")
+    message(STATUS "Setting deployment target to: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
 
 # project name
 project(dashboard)
