@@ -7,6 +7,9 @@
 #include <memory>
 
 #include <capnp/schema.h>
+#include <capnp/dynamic.h>
+#include <capnp/message.h>
+#include <capnp/serialize.h>
 #include <exprtk.hpp>
 
 #include "expression_parser/schema_registry.h"
@@ -64,7 +67,31 @@ class ExpressionParser
      */
     bool isValid() const;
 
+    /**
+     * Evaluate the expression against a Cap'n Proto message payload
+     * @param payload Raw Cap'n Proto message bytes
+     * @param size Size of the payload in bytes
+     * @return The evaluated result as a double
+     * @throws std::runtime_error if evaluation fails
+     */
+    double evaluate(const void* payload, size_t size);
+
+    /**
+     * Evaluate the expression against a Cap'n Proto message payload
+     * @param payload Vector containing Cap'n Proto message bytes
+     * @return The evaluated result as a double
+     * @throws std::runtime_error if evaluation fails
+     */
+    double evaluate(const std::vector<uint8_t>& payload);
+
 private:
+    // Cached field information for fast extraction
+    struct FieldCache {
+        capnp::StructSchema::Field field;
+        std::string name;
+        capnp::DynamicValue::Type expected_type;
+    };
+
     std::string schema_name_;
     std::string expression_;
     capnp::Schema schema_;
@@ -75,6 +102,9 @@ private:
     exprtk::symbol_table<double> symbol_table_;
     exprtk::expression<double> compiled_expression_;
     exprtk::parser<double> parser_;
+
+    // Field extraction cache - pre-computed field access information
+    std::vector<FieldCache> field_cache_;
 
     /**
      * Extract variables from the expression using exprtk
@@ -92,6 +122,19 @@ private:
      * @return Set of field names
      */
     std::unordered_set<std::string> getSchemaFieldNames(const capnp::Schema& schema);
+
+    /**
+     * Build the field cache for fast extraction during evaluation
+     * This pre-computes field access information for all required variables
+     */
+    void buildFieldCache();
+
+    /**
+     * Extract field values from a Cap'n Proto message reader using cached field info
+     * @param reader The message reader
+     * @return Map of field names to their numeric values
+     */
+    void extractFieldValues(capnp::DynamicStruct::Reader reader);
 };
 
 } // namespace expression_parser

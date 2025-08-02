@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <sstream>
+#include <capnp/serialize.h>
 
 namespace expression_parser {
 
@@ -39,6 +40,9 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
 
     if (is_valid_ == true)
     {
+        // Build the field cache for fast extraction
+        buildFieldCache();
+        
         // Add the variables to the symbol table.
         for (auto& [var, value] : variables_)
         {
@@ -57,7 +61,8 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     }
 }
 
-void ExpressionParser::extractVariables() {
+void ExpressionParser::extractVariables()
+{
     // Use ExprTk's collect_variables utility function
     std::vector<std::string> variable_list;
     
@@ -134,6 +139,131 @@ const std::map<std::string, double>& ExpressionParser::getVariables() const
 bool ExpressionParser::isValid() const
 {
     return is_valid_;
+}
+
+double ExpressionParser::evaluate(const void* payload, size_t size)
+{
+    if (!is_valid_)
+    {
+        throw std::runtime_error("Expression is not valid, cannot evaluate");
+    }
+
+    try
+    {
+        // Create a Cap'n Proto message reader from the raw payload
+        capnp::FlatArrayMessageReader message_reader(
+            kj::arrayPtr(static_cast<const capnp::word*>(payload), size / sizeof(capnp::word)));
+        
+        // Get the root as a dynamic struct using our schema
+        auto root = message_reader.getRoot<capnp::DynamicStruct>(schema_.asStruct());
+        
+        // Extract field values from the message
+        extractFieldValues(root);
+        
+        // Evaluate the compiled expression
+        return compiled_expression_.value();
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to evaluate expression: {}", e.what());
+        throw std::runtime_error("Expression evaluation failed: " + std::string(e.what()));
+    }
+}
+
+double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
+{
+    return evaluate(payload.data(), payload.size());
+}
+
+void ExpressionParser::buildFieldCache()
+{
+    field_cache_.clear();
+    
+    if (!schema_.getProto().isStruct())
+    {
+        SPDLOG_ERROR("Schema is not a struct, cannot build field cache");
+        return;
+    }
+    
+    auto struct_schema = schema_.asStruct();
+    auto fields = struct_schema.getFields();
+    
+    // Pre-compute field access information for all required variables
+    for (const auto& [var_name, _] : variables_)
+    {
+        // Find the field in the schema
+        auto field = struct_schema.getFieldByName(var_name);
+        
+        // Determine the expected type for optimized extraction
+        capnp::DynamicValue::Type expected_type = capnp::DynamicValue::UNKNOWN;
+        auto field_type = field.getType();
+        
+        if (field_type.isBool())
+        {
+            expected_type = capnp::DynamicValue::BOOL;
+        }
+        else if (field_type.isInt8() || field_type.isInt16() || field_type.isInt32() || field_type.isInt64())
+        {
+            expected_type = capnp::DynamicValue::INT;
+        }
+        else if (field_type.isUInt8() || field_type.isUInt16() || field_type.isUInt32() || field_type.isUInt64())
+        {
+            expected_type = capnp::DynamicValue::UINT;
+        }
+        else if (field_type.isFloat32() || field_type.isFloat64())
+        {
+            expected_type = capnp::DynamicValue::FLOAT;
+        }
+        else if (field_type.isText())
+        {
+            expected_type = capnp::DynamicValue::TEXT;
+        }
+        
+        // Cache the field information
+        field_cache_.push_back({field, var_name, expected_type});
+        
+        SPDLOG_DEBUG("Cached field '{}' for fast extraction", var_name);
+    }
+    
+    SPDLOG_INFO("Built field cache with {} fields", field_cache_.size());
+}
+
+void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
+{
+    // Use cached field information for fast extraction
+    for (const auto& cached_field : field_cache_)
+    {
+        auto value = reader.get(cached_field.field);
+        double numeric_value = 0.0;
+        
+        // Fast type conversion using cached type information
+        switch (cached_field.expected_type)
+        {
+            case capnp::DynamicValue::BOOL:
+                numeric_value = value.as<bool>() ? 1.0 : 0.0;
+                break;
+
+            case capnp::DynamicValue::INT:
+                numeric_value = static_cast<double>(value.as<int64_t>());
+                break;
+
+            case capnp::DynamicValue::UINT:
+                numeric_value = static_cast<double>(value.as<uint64_t>());
+                break;
+
+            case capnp::DynamicValue::FLOAT:
+                numeric_value = static_cast<double>(value.as<double>());
+                break;
+
+            case capnp::DynamicValue::TEXT:
+            default:
+                SPDLOG_WARN("Skipping field '{}' in expression evaluation", cached_field.name);
+                numeric_value = 0.0;
+        }
+        
+        variables_[cached_field.name] = numeric_value;
+        SPDLOG_DEBUG("Extracted field '{}' = {}", cached_field.name, numeric_value);
+    }
 }
 
 } // namespace expression_parser

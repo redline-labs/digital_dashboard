@@ -46,11 +46,3 @@ target_link_libraries(expression_parser PUBLIC
     common_logging
     exprtk::exprtk
 )
-
-# Optional: Uncomment to build test example
-# add_executable(expression_parser_test test_example.cpp)
-# target_link_libraries(expression_parser_test PUBLIC
-#     expression_parser
-#     schemas
-#     common_logging
-# )
