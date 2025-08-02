@@ -5,6 +5,8 @@
 #include <map>
 #include <unordered_set>
 #include <memory>
+#include <type_traits>
+#include <cmath>
 
 #include <capnp/schema.h>
 #include <capnp/dynamic.h>
@@ -85,6 +87,27 @@ class ExpressionParser
      */
     double evaluate(const std::vector<uint8_t>& payload);
 
+    /**
+     * Evaluate the expression against a Cap'n Proto message payload with templated return type
+     * @tparam T The desired return type (e.g., float, bool, int)
+     * @param payload Raw Cap'n Proto message bytes
+     * @param size Size of the payload in bytes
+     * @return The evaluated result cast to type T
+     * @throws std::runtime_error if evaluation fails
+     */
+    template<typename T>
+    T evaluate(const void* payload, size_t size);
+
+    /**
+     * Evaluate the expression against a Cap'n Proto message payload with templated return type
+     * @tparam T The desired return type (e.g., float, bool, int)
+     * @param payload Vector containing Cap'n Proto message bytes
+     * @return The evaluated result cast to type T
+     * @throws std::runtime_error if evaluation fails
+     */
+    template<typename T>
+    T evaluate(const std::vector<uint8_t>& payload);
+
 private:
     // Cached field information for fast extraction
     struct FieldCache {
@@ -137,6 +160,54 @@ private:
      */
     void extractFieldValues(capnp::DynamicStruct::Reader reader);
 };
+
+// Template implementations
+template<typename T = float>
+T ExpressionParser::evaluate(const void* payload, size_t size)
+{
+    if (!is_valid_)
+    {
+        throw std::runtime_error("Expression is not valid, cannot evaluate");
+    }
+
+    try
+    {
+        // Create a Cap'n Proto message reader from the raw payload
+        capnp::FlatArrayMessageReader message_reader(
+            kj::arrayPtr(static_cast<const capnp::word*>(payload), size / sizeof(capnp::word)));
+        
+        // Get the root as a dynamic struct using our schema
+        auto root = message_reader.getRoot<capnp::DynamicStruct>(schema_.asStruct());
+        
+        // Extract field values from the message
+        extractFieldValues(root);
+        
+        // Evaluate the compiled expression and cast to desired type
+        double result = compiled_expression_.value();
+        
+        // Handle different return types with appropriate conversions
+        if constexpr (std::is_same_v<T, bool>) {
+            // For boolean, consider anything non-zero as true
+            return static_cast<T>(result != 0.0);
+        } else if constexpr (std::is_integral_v<T>) {
+            // For integer types, round to nearest integer
+            return static_cast<T>(std::round(result));
+        } else {
+            // For floating point types, direct cast
+            return static_cast<T>(result);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        throw std::runtime_error("Expression evaluation failed: " + std::string(e.what()));
+    }
+}
+
+template<typename T = float>
+T ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
+{
+    return evaluate<T>(payload.data(), payload.size());
+}
 
 } // namespace expression_parser
 

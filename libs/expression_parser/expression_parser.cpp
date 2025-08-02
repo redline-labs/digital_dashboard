@@ -57,7 +57,7 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
 
     if (is_valid_ == true)
     {
-        SPDLOG_INFO("Expression '{}' compiled successfully", expression_);
+        SPDLOG_DEBUG("Expression '{}' compiled successfully.", expression_);
     }
 }
 
@@ -141,40 +141,6 @@ bool ExpressionParser::isValid() const
     return is_valid_;
 }
 
-double ExpressionParser::evaluate(const void* payload, size_t size)
-{
-    if (!is_valid_)
-    {
-        throw std::runtime_error("Expression is not valid, cannot evaluate");
-    }
-
-    try
-    {
-        // Create a Cap'n Proto message reader from the raw payload
-        capnp::FlatArrayMessageReader message_reader(
-            kj::arrayPtr(static_cast<const capnp::word*>(payload), size / sizeof(capnp::word)));
-        
-        // Get the root as a dynamic struct using our schema
-        auto root = message_reader.getRoot<capnp::DynamicStruct>(schema_.asStruct());
-        
-        // Extract field values from the message
-        extractFieldValues(root);
-        
-        // Evaluate the compiled expression
-        return compiled_expression_.value();
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to evaluate expression: {}", e.what());
-        throw std::runtime_error("Expression evaluation failed: " + std::string(e.what()));
-    }
-}
-
-double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
-{
-    return evaluate(payload.data(), payload.size());
-}
-
 void ExpressionParser::buildFieldCache()
 {
     field_cache_.clear();
@@ -221,11 +187,9 @@ void ExpressionParser::buildFieldCache()
         
         // Cache the field information
         field_cache_.push_back({field, var_name, expected_type});
-        
-        SPDLOG_DEBUG("Cached field '{}' for fast extraction", var_name);
     }
     
-    SPDLOG_INFO("Built field cache with {} fields", field_cache_.size());
+    SPDLOG_DEBUG("Built field cache with {} field{}.", field_cache_.size(), field_cache_.size() == 1 ? "" : "s");
 }
 
 void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
@@ -262,8 +226,17 @@ void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
         }
         
         variables_[cached_field.name] = numeric_value;
-        SPDLOG_DEBUG("Extracted field '{}' = {}", cached_field.name, numeric_value);
     }
+}
+
+double ExpressionParser::evaluate(const void* payload, size_t size)
+{
+    return evaluate<double>(payload, size);
+}
+
+double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
+{
+    return evaluate<double>(payload);
 }
 
 } // namespace expression_parser

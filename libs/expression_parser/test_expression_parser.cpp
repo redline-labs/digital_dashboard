@@ -1,7 +1,9 @@
 #include "expression_parser/expression_parser.h"
 #include "expression_parser/schema_registry.h"
 
-#include <iostream>
+#include "spdlog/spdlog.h"
+#include "spdlog/fmt/ranges.h"
+
 #include <cassert>
 #include <vector>
 #include <cstdint>
@@ -76,7 +78,7 @@ std::vector<uint8_t> createBatteryWarningMessage(bool isWarningActive, float bat
 }
 
 void testSchemaLookup() {
-    std::cout << "=== Testing Schema Lookup by Name ===" << std::endl;
+    SPDLOG_INFO("=== Testing Schema Lookup by Name ===");
     
     // Test valid schema names
     std::vector<std::string> validSchemas = {
@@ -84,7 +86,7 @@ void testSchemaLookup() {
     };
     
     for (const auto& schemaName : validSchemas) {
-        std::cout << "Testing schema lookup for: " << schemaName << std::endl;
+        SPDLOG_INFO("Testing schema lookup for: {}", schemaName);
         
         // Create parser with a simple expression to test schema lookup
         ExpressionParser parser(schemaName, "timestamp");
@@ -96,20 +98,20 @@ void testSchemaLookup() {
         // Verify schema was actually loaded (has non-zero ID)
         assert(parser.getSchema().getProto().getId() != 0);
         
-        std::cout << "✓ Schema '" << schemaName << "' found successfully" << std::endl;
+        SPDLOG_INFO("Schema '{}' found successfully", schemaName);
     }
     
     // Test invalid schema name
-    std::cout << "Testing invalid schema lookup..." << std::endl;
+    SPDLOG_INFO("Testing invalid schema lookup...");
     ExpressionParser invalidParser("NonExistentSchema", "timestamp");
     assert(invalidParser.isValid() == false);
-    std::cout << "✓ Invalid schema correctly rejected" << std::endl;
+    SPDLOG_INFO("Invalid schema correctly rejected");
     
-    std::cout << "Schema lookup tests passed!" << std::endl << std::endl;
+    SPDLOG_INFO("Schema lookup tests passed!");
 }
 
 void testVariableExtraction() {
-    std::cout << "=== Testing Variable Extraction from Expressions ===" << std::endl;
+    SPDLOG_INFO("=== Testing Variable Extraction from Expressions ===");
     
     // Test simple single variable expression
     {
@@ -120,7 +122,7 @@ void testVariableExtraction() {
         assert(variables.size() == 1);
         assert(variables.find("speedMps") != variables.end());
         
-        std::cout << "✓ Single variable 'speedMps' extracted correctly" << std::endl;
+        SPDLOG_INFO("Single variable 'speedMps' extracted correctly");
     }
     
     // Test multiple variable expression
@@ -133,7 +135,7 @@ void testVariableExtraction() {
         assert(variables.find("speedMps") != variables.end());
         assert(variables.find("timestamp") != variables.end());
         
-        std::cout << "✓ Multiple variables extracted correctly: speedMps, timestamp" << std::endl;
+        SPDLOG_INFO("Multiple variables extracted correctly: speedMps, timestamp");
     }
     
     // Test complex mathematical expression
@@ -146,7 +148,7 @@ void testVariableExtraction() {
         assert(variables.find("rpm") != variables.end());
         assert(variables.find("timestamp") != variables.end());
         
-        std::cout << "✓ Complex expression variables extracted correctly" << std::endl;
+        SPDLOG_INFO("Complex expression variables extracted correctly");
     }
     
     // Test expression with repeated variables (should only extract once)
@@ -158,69 +160,148 @@ void testVariableExtraction() {
         assert(variables.size() == 1);
         assert(variables.find("speedMps") != variables.end());
         
-        std::cout << "✓ Repeated variables handled correctly" << std::endl;
+        SPDLOG_INFO("Repeated variables handled correctly");
     }
     
-    std::cout << "Variable extraction tests passed!" << std::endl << std::endl;
+    SPDLOG_INFO("Variable extraction tests passed!");
 }
 
 void testVariableSchemaMatching() {
-    std::cout << "=== Testing Variable to Schema Field Matching ===" << std::endl;
+    SPDLOG_INFO("=== Testing Variable to Schema Field Matching ===");
     
     // Test valid variables that exist in schema
     {
         ExpressionParser parser("VehicleSpeed", "speedMps + timestamp");
         assert(parser.isValid() == true);
-        std::cout << "✓ Valid VehicleSpeed fields matched correctly" << std::endl;
+        SPDLOG_INFO("Valid VehicleSpeed fields matched correctly");
     }
     
     {
         ExpressionParser parser("EngineRpm", "rpm * 60 + timestamp");
         assert(parser.isValid() == true);
-        std::cout << "✓ Valid EngineRpm fields matched correctly" << std::endl;
+        SPDLOG_INFO("Valid EngineRpm fields matched correctly");
     }
     
     {
         ExpressionParser parser("EngineTemperature", "temperatureCelsius * 1.8 + 32");
         assert(parser.isValid() == true);
-        std::cout << "✓ Valid EngineTemperature fields matched correctly" << std::endl;
+        SPDLOG_INFO("Valid EngineTemperature fields matched correctly");
     }
     
     {
         ExpressionParser parser("BatteryWarning", "isWarningActive + batteryVoltage");
         assert(parser.isValid() == true);
-        std::cout << "✓ Valid BatteryWarning fields matched correctly" << std::endl;
+        SPDLOG_INFO("Valid BatteryWarning fields matched correctly");
     }
     
     // Test invalid variables that don't exist in schema
     {
         ExpressionParser parser("VehicleSpeed", "invalidField + speedMps");
         assert(parser.isValid() == false);
-        std::cout << "✓ Invalid field correctly rejected" << std::endl;
+        SPDLOG_INFO("Invalid field correctly rejected");
     }
     
     {
         ExpressionParser parser("EngineRpm", "horsepower + rpm");
         assert(parser.isValid() == false);
-        std::cout << "✓ Non-existent field correctly rejected" << std::endl;
+        SPDLOG_INFO("Non-existent field correctly rejected");
     }
     
     // Test mixed valid/invalid variables
     {
         ExpressionParser parser("VehicleSpeed", "speedMps + nonExistentField");
         assert(parser.isValid() == false);
-        std::cout << "✓ Mixed valid/invalid fields correctly rejected" << std::endl;
+        SPDLOG_INFO("Mixed valid/invalid fields correctly rejected");
     }
     
-    std::cout << "Variable to schema matching tests passed!" << std::endl << std::endl;
+    SPDLOG_INFO("Variable to schema matching tests passed!");
+}
+
+void testTemplatedEvaluation() {
+    SPDLOG_INFO("=== Testing Templated Expression Evaluation ===");
+    
+    // Test boolean return type
+    {
+        SPDLOG_INFO("Testing boolean evaluation...");
+        
+        ExpressionParser parser("BatteryWarning", "isWarningActive");
+        assert(parser.isValid() == true);
+        
+        // Test with warning active
+        auto payload = createBatteryWarningMessage(true, 12.6f, 1234567890ULL);
+        bool result = parser.evaluate<bool>(payload);
+        assert(result == true);
+        SPDLOG_INFO("Boolean evaluation: isWarningActive = true");
+        
+        // Test with warning inactive
+        payload = createBatteryWarningMessage(false, 12.6f, 1234567890ULL);
+        result = parser.evaluate<bool>(payload);
+        assert(result == false);
+        SPDLOG_INFO("Boolean evaluation: isWarningActive = false");
+        
+        // Test boolean expression with threshold
+        ExpressionParser thresholdParser("BatteryWarning", "batteryVoltage > 12.0");
+        assert(thresholdParser.isValid() == true);
+        
+        payload = createBatteryWarningMessage(false, 12.6f, 1234567890ULL);
+        result = thresholdParser.evaluate<bool>(payload);
+        assert(result == true);
+        SPDLOG_INFO("Boolean threshold: batteryVoltage > 12.0 = true (12.6V)");
+        
+        payload = createBatteryWarningMessage(false, 11.5f, 1234567890ULL);
+        result = thresholdParser.evaluate<bool>(payload);
+        assert(result == false);
+        SPDLOG_INFO("Boolean threshold: batteryVoltage > 12.0 = false (11.5V)");
+    }
+    
+    // Test float return type
+    {
+        SPDLOG_INFO("Testing float evaluation...");
+        
+        ExpressionParser parser("VehicleSpeed", "speedMps * 3.6");
+        assert(parser.isValid() == true);
+        
+        auto payload = createVehicleSpeedMessage(20.0f, 1234567890ULL);
+        float result = parser.evaluate<float>(payload);
+        assert(std::abs(result - 72.0f) < 0.001f);
+        SPDLOG_INFO("Float evaluation: 20 m/s = {} km/h", result);
+    }
+    
+    // Test integer return type
+    {
+        SPDLOG_INFO("Testing integer evaluation...");
+        
+        ExpressionParser parser("EngineRpm", "rpm / 100");
+        assert(parser.isValid() == true);
+        
+        auto payload = createEngineRpmMessage(3567, 1234567890ULL);
+        int result = parser.evaluate<int>(payload);
+        assert(result == 36);  // 3567 / 100 = 35.67, rounded to 36
+        SPDLOG_INFO("Integer evaluation: 3567 RPM / 100 = {} (rounded)", result);
+    }
+    
+    // Test long return type
+    {
+        SPDLOG_INFO("Testing long evaluation...");
+        
+        ExpressionParser parser("VehicleSpeed", "timestamp");
+        assert(parser.isValid() == true);
+        
+        auto payload = createVehicleSpeedMessage(10.0f, 1234567890ULL);
+        long result = parser.evaluate<long>(payload);
+        assert(result == 1234567890L);
+        SPDLOG_INFO("Long evaluation: timestamp = {}", result);
+    }
+    
+    SPDLOG_INFO("Templated evaluation tests passed!");
 }
 
 void testExpressionEvaluation() {
-    std::cout << "=== Testing Expression Evaluation with CapnProto Payloads ===" << std::endl;
+    SPDLOG_INFO("=== Testing Expression Evaluation with CapnProto Payloads ===");
     
     // Test VehicleSpeed evaluation
     {
-        std::cout << "Testing VehicleSpeed evaluation..." << std::endl;
+        SPDLOG_INFO("Testing VehicleSpeed evaluation...");
         
         ExpressionParser parser("VehicleSpeed", "speedMps * 3.6");  // Convert m/s to km/h
         assert(parser.isValid() == true);
@@ -231,12 +312,12 @@ void testExpressionEvaluation() {
         
         // Check result (20 * 3.6 = 72)
         assert(std::abs(result - 72.0) < 0.001);
-        std::cout << "✓ VehicleSpeed: 20 m/s converted to " << result << " km/h" << std::endl;
+        SPDLOG_INFO("VehicleSpeed: 20 m/s converted to {} km/h", result);
     }
     
     // Test EngineRpm evaluation
     {
-        std::cout << "Testing EngineRpm evaluation..." << std::endl;
+        SPDLOG_INFO("Testing EngineRpm evaluation...");
         
         ExpressionParser parser("EngineRpm", "rpm / 1000.0");  // Convert RPM to thousands
         assert(parser.isValid() == true);
@@ -247,12 +328,12 @@ void testExpressionEvaluation() {
         
         // Check result (3500 / 1000 = 3.5)
         assert(std::abs(result - 3.5) < 0.001);
-        std::cout << "✓ EngineRpm: 3500 RPM converted to " << result << " thousands" << std::endl;
+        SPDLOG_INFO("EngineRpm: 3500 RPM converted to {} thousands", result);
     }
     
     // Test EngineTemperature evaluation
     {
-        std::cout << "Testing EngineTemperature evaluation..." << std::endl;
+        SPDLOG_INFO("Testing EngineTemperature evaluation...");
         
         ExpressionParser parser("EngineTemperature", "temperatureCelsius * 1.8 + 32");  // Celsius to Fahrenheit
         assert(parser.isValid() == true);
@@ -263,12 +344,12 @@ void testExpressionEvaluation() {
         
         // Check result (90 * 1.8 + 32 = 194)
         assert(std::abs(result - 194.0) < 0.001);
-        std::cout << "✓ EngineTemperature: 90°C converted to " << result << "°F" << std::endl;
+        SPDLOG_INFO("EngineTemperature: 90°C converted to {}°F", result);
     }
     
     // Test BatteryWarning evaluation (boolean + float)
     {
-        std::cout << "Testing BatteryWarning evaluation..." << std::endl;
+        SPDLOG_INFO("Testing BatteryWarning evaluation...");
         
         ExpressionParser parser("BatteryWarning", "isWarningActive * 10 + batteryVoltage");
         assert(parser.isValid() == true);
@@ -279,7 +360,7 @@ void testExpressionEvaluation() {
         
         // Check result (1 * 10 + 12.6 = 22.6)
         assert(std::abs(result - 22.6) < 0.001);
-        std::cout << "✓ BatteryWarning: active warning + 12.6V = " << result << std::endl;
+        SPDLOG_INFO("BatteryWarning: active warning + 12.6V = {}", result);
         
         // Test with warning inactive
         payload = createBatteryWarningMessage(false, 12.6f, 1234567890ULL);
@@ -287,12 +368,12 @@ void testExpressionEvaluation() {
         
         // Check result (0 * 10 + 12.6 = 12.6)
         assert(std::abs(result - 12.6) < 0.001);
-        std::cout << "✓ BatteryWarning: inactive warning + 12.6V = " << result << std::endl;
+        SPDLOG_INFO("BatteryWarning: inactive warning + 12.6V = {}", result);
     }
     
     // Test complex mathematical expression
     {
-        std::cout << "Testing complex mathematical expression..." << std::endl;
+        SPDLOG_INFO("Testing complex mathematical expression...");
         
         ExpressionParser parser("VehicleSpeed", "sqrt(speedMps * speedMps + 1) + sin(timestamp / 1000000.0)");
         assert(parser.isValid() == true);
@@ -303,12 +384,12 @@ void testExpressionEvaluation() {
         // Expected: sqrt(3*3 + 1) + sin(1) = sqrt(10) + sin(1) ≈ 3.162 + 0.841 ≈ 4.003
         double expected = std::sqrt(10.0) + std::sin(1.0);
         assert(std::abs(result - expected) < 0.01);
-        std::cout << "✓ Complex math expression: " << result << " (expected ~" << expected << ")" << std::endl;
+        SPDLOG_INFO("Complex math expression: {} (expected ~{})", result, expected);
     }
     
     // Test timestamp usage
     {
-        std::cout << "Testing timestamp field usage..." << std::endl;
+        SPDLOG_INFO("Testing timestamp field usage...");
         
         ExpressionParser parser("VehicleSpeed", "timestamp / 1000000.0");  // Convert µs to seconds
         assert(parser.isValid() == true);
@@ -318,14 +399,14 @@ void testExpressionEvaluation() {
         
         // Check result (1234567890 / 1000000 = 1234.56789)
         assert(std::abs(result - 1234.56789) < 0.001);
-        std::cout << "✓ Timestamp: " << 1234567890ULL << " µs converted to " << result << " seconds" << std::endl;
+        SPDLOG_INFO("Timestamp: {} µs converted to {} seconds", 1234567890ULL, result);
     }
     
-    std::cout << "Expression evaluation tests passed!" << std::endl << std::endl;
+    SPDLOG_INFO("Expression evaluation tests passed!");
 }
 
 void testErrorHandling() {
-    std::cout << "=== Testing Error Handling ===" << std::endl;
+    SPDLOG_INFO("=== Testing Error Handling ===");
     
     // Test evaluation with invalid parser
     {
@@ -338,7 +419,7 @@ void testErrorHandling() {
             double result = parser.evaluate(payload);
             assert(false);  // Should not reach here
         } catch (const std::runtime_error& e) {
-            std::cout << "✓ Invalid parser correctly throws exception: " << e.what() << std::endl;
+            SPDLOG_INFO("Invalid parser correctly throws exception: {}", e.what());
         }
     }
     
@@ -354,46 +435,36 @@ void testErrorHandling() {
             double result = parser.evaluate(payload);
             // This might work or fail depending on internal CapnProto behavior
             // The important thing is it doesn't crash
-            std::cout << "✓ Wrong payload schema handled gracefully" << std::endl;
+            SPDLOG_INFO("Wrong payload schema handled gracefully");
         } catch (const std::exception& e) {
-            std::cout << "✓ Wrong payload schema throws exception: " << e.what() << std::endl;
+            SPDLOG_INFO("Wrong payload schema throws exception: {}", e.what());
         }
     }
     
-    std::cout << "Error handling tests passed!" << std::endl << std::endl;
+    SPDLOG_INFO("Error handling tests passed!");
 }
 
-void printAvailableSchemas() {
-    std::cout << "=== Available Schemas ===" << std::endl;
-    
-    auto schemas = get_available_schemas();
-    for (const auto& schemaName : schemas) {
-        std::cout << "- " << schemaName << std::endl;
-    }
-    std::cout << std::endl;
-}
-
-int main() {
-    std::cout << "Expression Parser Test Program" << std::endl;
-    std::cout << "==============================" << std::endl << std::endl;
+int main()
+{
+    spdlog::set_level(spdlog::level::debug);
     
     try {
-        printAvailableSchemas();
+        SPDLOG_INFO("Available Schemas: [{}]", fmt::join(get_available_schemas(), ", "));
         
         testSchemaLookup();
         testVariableExtraction();
         testVariableSchemaMatching();
+        testTemplatedEvaluation();
         testExpressionEvaluation();
         testErrorHandling();
         
-        std::cout << "🎉 All tests passed successfully!" << std::endl;
+        SPDLOG_INFO("All tests passed successfully!");
         return 0;
         
-    } catch (const std::exception& e) {
-        std::cout << "❌ Test failed with exception: " << e.what() << std::endl;
-        return 1;
-    } catch (...) {
-        std::cout << "❌ Test failed with unknown exception" << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Test failed with exception: {}", e.what());
         return 1;
     }
 }
