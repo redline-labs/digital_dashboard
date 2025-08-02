@@ -11,6 +11,13 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(exprtk)
 
+# Create an interface library target for exprtk
+add_library(exprtk_lib INTERFACE)
+target_include_directories(exprtk_lib INTERFACE "${exprtk_SOURCE_DIR}")
+
+# Add a namespaced alias for the exprtk target
+add_library(exprtk::exprtk ALIAS exprtk_lib)
+
 # Copy exprtk license
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/exprtk)
 file(COPY ${exprtk_SOURCE_DIR}/license.txt ${exprtk_SOURCE_DIR}/readme.txt

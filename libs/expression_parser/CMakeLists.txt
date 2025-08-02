@@ -25,22 +25,32 @@ configure_file(
 )
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/expression_parser/schema_registry.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/expression_parser/schema_registry.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/expression_parser/schema_registry.h"
     @ONLY
 )
 
-add_library(schema_registry STATIC
+add_library(expression_parser STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp
-    #capnp_data_extractor.cpp
+    expression_parser.cpp
 )
 
-target_include_directories(schema_registry PUBLIC
+target_include_directories(expression_parser PUBLIC
+    include
     "${CMAKE_CURRENT_BINARY_DIR}/include"
 )
 
-target_link_libraries(schema_registry PUBLIC
+target_link_libraries(expression_parser PUBLIC
     capnp
     schemas
     common_logging
+    exprtk::exprtk
 )
+
+# Optional: Uncomment to build test example
+# add_executable(expression_parser_test test_example.cpp)
+# target_link_libraries(expression_parser_test PUBLIC
+#     expression_parser
+#     schemas
+#     common_logging
+# )
