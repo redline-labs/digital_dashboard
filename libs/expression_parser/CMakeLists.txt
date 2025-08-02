@@ -46,3 +46,15 @@ target_link_libraries(expression_parser PUBLIC
     common_logging
     exprtk::exprtk
 )
+
+# Add test executable
+add_executable(test_expression_parser
+    test_expression_parser.cpp
+)
+
+target_link_libraries(test_expression_parser
+    expression_parser
+    schemas
+    capnp
+    kj
+)

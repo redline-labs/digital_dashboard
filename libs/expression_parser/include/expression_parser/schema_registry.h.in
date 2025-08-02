@@ -8,10 +8,12 @@
 
 #include <capnp/schema.h>
 
+extern const std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> kAvailableSchemas;
+
 typedef std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> available_schemas_t;
 
 capnp::Schema get_schema_by_name(const std::string& schema_name);
 
-constexpr available_schemas_t get_available_schemas();
+constexpr available_schemas_t get_available_schemas() { return kAvailableSchemas; }
 
 #endif // SCHEMA_REGISTRY_H 

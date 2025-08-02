@@ -21,8 +21,3 @@ capnp::Schema get_schema_by_name(const std::string& schema_name)
 
     return {};
 }
-
-constexpr available_schemas_t get_available_schemas()
-{
-    return kAvailableSchemas;
-}

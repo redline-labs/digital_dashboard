@@ -10,6 +10,7 @@
 #include <capnp/dynamic.h>
 #include <capnp/message.h>
 #include <capnp/serialize.h>
+#define exprtk_disable_caseinsensitivity
 #include <exprtk.hpp>
 
 #include "expression_parser/schema_registry.h"
