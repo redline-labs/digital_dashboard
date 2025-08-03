@@ -38,6 +38,7 @@ add_library(expression_parser STATIC
 target_include_directories(expression_parser PUBLIC
     include
     "${CMAKE_CURRENT_BINARY_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../include"  # TODO: This is a hack to get the helpers.h file included.
 )
 
 target_link_libraries(expression_parser PUBLIC

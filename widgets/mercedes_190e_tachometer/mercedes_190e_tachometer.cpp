@@ -40,7 +40,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
 {
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
     if (fontId == -1) {
-        SPDLOG_WARN("Mercedes190ETachometer: Failed to load Futura font. Using default.");
+        SPDLOG_WARN("Failed to load Futura font. Using default.");
         m_fontFamily = QFont().family();
     } else {
         m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
@@ -343,7 +343,7 @@ void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> ses
 void Mercedes190ETachometer::createZenohSubscription()
 {
     if (!_zenoh_session) {
-        SPDLOG_WARN("Mercedes190ETachometer: Cannot create subscription - no Zenoh session");
+        SPDLOG_WARN("Cannot create subscription - no Zenoh session");
         return;
     }
     
@@ -379,17 +379,17 @@ void Mercedes190ETachometer::createZenohSubscription()
                                                 Q_ARG(double, static_cast<double>(rpm)));
                         
                     } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Mercedes190ETachometer: Error parsing RPM data: {}", e.what());
+                        SPDLOG_ERROR("Error parsing RPM data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        SPDLOG_INFO("Mercedes190ETachometer: Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Created subscription for key '{}'", _cfg.zenoh_key);
         
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("Mercedes190ETachometer: Failed to create subscription for key '{}': {}", 
+        SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
                      _cfg.zenoh_key, e.what());
     }
 }

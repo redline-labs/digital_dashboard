@@ -22,4 +22,16 @@ constexpr T mph_to_kph(T mph)
     return mph * static_cast<T>(1.60934);
 }
 
+template<typename T = float>
+constexpr T mph_to_mps(T mph)
+{
+    return mph * static_cast<T>(0.44704);
+}
+
+template<typename T = float>
+constexpr T mps_to_mph(T mps)
+{
+    return mps * static_cast<T>(2.23694);
+}
+
 #endif // HELPERS_H_

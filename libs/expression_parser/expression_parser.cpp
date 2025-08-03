@@ -1,6 +1,7 @@
 #include "expression_parser/expression_parser.h"
 
 #include "spdlog/spdlog.h"
+#include "helpers.h"
 
 #include <stdexcept>
 #include <algorithm>
@@ -31,7 +32,11 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
         is_valid_ = false;
         return;
     }
-    
+
+    // Add the extend_functions to the symbol table.
+    symbol_table_.add_function("mph_to_mps", &mph_to_mps<double>);
+    symbol_table_.add_function("mps_to_mph", &mps_to_mph<double>);
+
     // Extract variables from the expression
     extractVariables();
     
@@ -66,7 +71,7 @@ void ExpressionParser::extractVariables()
     // Use ExprTk's collect_variables utility function
     std::vector<std::string> variable_list;
     
-    if (exprtk::collect_variables(expression_, variable_list))
+    if (exprtk::collect_variables(expression_, symbol_table_, variable_list))
     {
         // Store the variable list and sort it
         for (const auto& var : variable_list)
@@ -188,8 +193,6 @@ void ExpressionParser::buildFieldCache()
         // Cache the field information
         field_cache_.push_back({field, var_name, expected_type});
     }
-    
-    SPDLOG_DEBUG("Built field cache with {} field{}.", field_cache_.size(), field_cache_.size() == 1 ? "" : "s");
 }
 
 void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
