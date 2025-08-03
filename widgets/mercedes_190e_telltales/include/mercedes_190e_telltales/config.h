@@ -5,14 +5,16 @@
 #include <cstdint>
 
 
-struct Mercedes190EBatteryTelltaleConfig_t {
+struct Mercedes190EBatteryTelltaleConfig_t
+{
     Mercedes190EBatteryTelltaleConfig_t() :
         warning_color{"#FF0000"},
         normal_color{"#333333"},
         zenoh_key{},
-        schema_type{"BatteryWarning"},
-        condition_expression{"batteryVoltage < 12.0"}
-    {}
+        schema_type{""},
+        condition_expression{""}
+    {
+    }
 
     std::string warning_color;          // Color when warning is active
     std::string normal_color;           // Color when in normal state

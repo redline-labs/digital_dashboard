@@ -171,9 +171,8 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
         Node node = {};
         node["warning_color"] = rhs.warning_color;
         node["normal_color"] = rhs.normal_color;
-        if (!rhs.zenoh_key.empty()) {
-            node["zenoh_key"] = rhs.zenoh_key;
-        }
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
         node["condition_expression"] = rhs.condition_expression;
         return node;
     }
@@ -185,6 +184,7 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
         if (node["warning_color"]) rhs.warning_color = node["warning_color"].as<std::string>();
         if (node["normal_color"]) rhs.normal_color = node["normal_color"].as<std::string>();
         if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
         if (node["condition_expression"]) rhs.condition_expression = node["condition_expression"].as<std::string>();
         return true;
     }

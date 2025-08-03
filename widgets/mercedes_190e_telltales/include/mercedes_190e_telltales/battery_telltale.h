@@ -2,7 +2,6 @@
 #define BATTERYTELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
-#include <mercedes_190e_telltales/capnp_data_extractor.h>
 #include "zenoh.hxx"
 
 #include <QWidget>
@@ -11,17 +10,13 @@
 
 #include <string_view>
 #include <map>
+#include <memory>
 
-// Declare metatype for Qt signal
-Q_DECLARE_METATYPE(CapnpDataExtractor::VariableMap)
-
-// Forward declaration.
+// Forward declarations
 class QSvgRenderer;
 
-// ExprTk forward declaration
-namespace exprtk {
-    template <typename T> class expression;
-    template <typename T> class symbol_table;
+namespace expression_parser {
+    class ExpressionParser;
 }
 
 
@@ -48,12 +43,10 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void onDataReceived(const CapnpDataExtractor::VariableMap& variables);
+    void onDataReceived(const std::string& bytes);
 
 private:
     void updateColors();
-    void initializeExpression();
-    bool evaluateCondition();
 
     Mercedes190EBatteryTelltaleConfig_t _cfg;
 
@@ -68,17 +61,12 @@ private:
     static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
     static constexpr QColor kNormalIcon = QColor(120, 120, 120);          // Light gray when normal
     
-        // Zenoh-related members
+    // Zenoh-related members
     std::shared_ptr<zenoh::Session> _zenoh_session;
     std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
-
-    // Data extraction
-    CapnpDataExtractor _data_extractor;
-
-    // ExprTk-related members
-    std::unique_ptr<exprtk::expression<double>> _expression;
-    std::unique_ptr<exprtk::symbol_table<double>> _symbol_table;
-    std::map<std::string, double> _variables;
+    
+    // Expression parser for condition evaluation
+    std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
     
     void createZenohSubscription();
 };

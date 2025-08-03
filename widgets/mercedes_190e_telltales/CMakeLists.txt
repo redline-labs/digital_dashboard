@@ -10,7 +10,6 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Svg)
 # Create the library with all the carplay source files
 add_library(mercedes_190e_telltales STATIC
     battery_telltale.cpp
-    capnp_data_extractor.cpp
 )
 
 # Set up include directories for this library
@@ -30,4 +29,5 @@ target_link_libraries(mercedes_190e_telltales
         common_logging    # For spdlog
         schemas           # For Cap'n Proto schemas
         CapnProto::capnp  # Cap'n Proto runtime library
+        expression_parser # For condition evaluation
 )
