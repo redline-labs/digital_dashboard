@@ -14,9 +14,14 @@ windows:
         height: 250
         config:
           zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
+          schema_type: "VehicleSpeed"
+
           odometer_value: 123456
           max_speed: 160
           shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
+
+          speed_expression: "speedMps * 2.23694"  # Convert m/s to mph
+          odometer_expression: ""
       
       # Mercedes 190E Tachometer on the right - subscribes to engine RPM
       - type: mercedes_190e_tachometer

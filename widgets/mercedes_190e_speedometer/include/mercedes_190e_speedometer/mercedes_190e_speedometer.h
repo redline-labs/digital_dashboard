@@ -14,6 +14,12 @@
 #include <QFontMetrics>
 
 #include <string_view>
+#include <memory>
+
+// Forward declarations
+namespace expression_parser {
+    class ExpressionParser;
+}
 
 class Mercedes190ESpeedometer : public QWidget
 {
@@ -34,7 +40,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private slots:
-    void onSpeedDataReceived(double speedMps);
+    void onDataReceived(const std::string& bytes);
 
 private:
     // Speedometer properties.
@@ -104,6 +110,10 @@ private:
     // Zenoh-related members
     std::shared_ptr<zenoh::Session> zenoh_session_;
     std::unique_ptr<zenoh::Subscriber<void>> zenoh_subscriber_;
+    
+    // Expression parsers for speed and odometer calculations
+    std::unique_ptr<expression_parser::ExpressionParser> speed_expression_parser_;
+    std::unique_ptr<expression_parser::ExpressionParser> odometer_expression_parser_;
     
     void createZenohSubscription();
 };

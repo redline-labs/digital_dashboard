@@ -10,7 +10,9 @@
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
-#include "vehicle_speed.capnp.h"
+
+// Expression parser
+#include "expression_parser/expression_parser.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +25,61 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     cfg_{cfg},
     odometer_value_(cfg.odometer_value)
 {
+    // Initialize speed expression parser
+    try
+    {
+        speed_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+            cfg_.schema_type, 
+            cfg_.speed_expression
+        );
+        
+        if (!speed_expression_parser_->isValid())
+        {
+            SPDLOG_ERROR("Invalid speed expression '{}' for schema '{}' in speedometer", 
+                        cfg_.speed_expression, cfg_.schema_type);
+            speed_expression_parser_.reset(); // Disable expression parsing
+        }
+        else
+        {
+            SPDLOG_INFO("Speedometer initialized with speed expression: '{}' (schema: '{}')", 
+                       cfg_.speed_expression, cfg_.schema_type);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to initialize speed expression parser for speedometer: {}", e.what());
+        speed_expression_parser_.reset();
+    }
+    
+    // Initialize odometer expression parser (optional)
+    if (!cfg_.odometer_expression.empty())
+    {
+        try
+        {
+            odometer_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+                cfg_.schema_type, 
+                cfg_.odometer_expression
+            );
+            
+            if (!odometer_expression_parser_->isValid())
+            {
+                SPDLOG_ERROR("Invalid odometer expression '{}' for schema '{}' in speedometer", 
+                            cfg_.odometer_expression, cfg_.schema_type);
+                odometer_expression_parser_.reset();
+            }
+            else
+            {
+                SPDLOG_INFO("Speedometer initialized with odometer expression: '{}' (schema: '{}')", 
+                           cfg_.odometer_expression, cfg_.schema_type);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            SPDLOG_ERROR("Failed to initialize odometer expression parser for speedometer: {}", e.what());
+            odometer_expression_parser_.reset();
+        }
+    }
+    
     // Load font from Qt resources
     QString font_family = "sans-serif";
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf"); // Use resource path
@@ -469,34 +526,22 @@ void Mercedes190ESpeedometer::createZenohSubscription()
                     {
                         // Get the payload bytes
                         auto bytes = sample.get_payload().as_string();
-                        
-                        // Deserialize Cap'n Proto message
-                        ::capnp::FlatArrayMessageReader message(
-                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
-                                       bytes.size() / sizeof(capnp::word))
-                        );
-                        
-                        VehicleSpeed::Reader vehicleSpeed = message.getRoot<VehicleSpeed>();
-                        
-                        // Extract the speed data
-                        float speed_mps = vehicleSpeed.getSpeedMps();
-                        
+
                         // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onSpeedDataReceived", 
-                                                Qt::QueuedConnection, 
-                                                Q_ARG(double, static_cast<double>(speed_mps)));
+                        QMetaObject::invokeMethod(this, "onDataReceived", Qt::QueuedConnection, bytes);
                         
                     }
                     catch (const std::exception& e)
                     {
-                        SPDLOG_ERROR("Error parsing speed data: {}", e.what());
+                        SPDLOG_ERROR("Error parsing speedometer data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        SPDLOG_INFO("Created subscription for key '{}'", cfg_.zenoh_key);
+        SPDLOG_INFO("Created subscription for key '{}' with schema type '{}'", 
+                    cfg_.zenoh_key, cfg_.schema_type);
         
     }
     catch (const std::exception& e)
@@ -505,11 +550,32 @@ void Mercedes190ESpeedometer::createZenohSubscription()
     }
 }
 
-void Mercedes190ESpeedometer::onSpeedDataReceived(double speedMps)
+void Mercedes190ESpeedometer::onDataReceived(const std::string& bytes)
 {
-    // Convert m/s to mph (1 m/s = 2.23694 mph)
-    double speedMph = speedMps * 2.23694;
-    setSpeed(static_cast<float>(speedMph));
+    try
+    {
+        // Convert string bytes to vector<uint8_t> for expression parser
+        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+        
+        // Evaluate speed expression
+        if (speed_expression_parser_)
+        {
+            float speedMph = speed_expression_parser_->evaluate<float>(payload);
+            setSpeed(speedMph);
+        }
+        
+        // Evaluate odometer expression (if configured)
+        if (odometer_expression_parser_)
+        {
+            int odometerValue = odometer_expression_parser_->evaluate<int>(payload);
+            setOdometerValue(odometerValue);
+        }
+        
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Speedometer: Failed to evaluate expressions: {}", e.what());
+    }
 }
 
 #include "mercedes_190e_speedometer/moc_mercedes_190e_speedometer.cpp"
