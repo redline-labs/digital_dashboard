@@ -13,8 +13,14 @@
 #include <QTime>
 
 #include <string_view>
+#include <memory>
 
 class QPainter;
+
+// Forward declarations
+namespace expression_parser {
+    class ExpressionParser;
+}
 
 class Mercedes190ETachometer : public QWidget
 {
@@ -36,7 +42,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private slots:
-    void onRpmDataReceived(double rpm);
+    void onDataReceived(const std::string& bytes);
 
 private:
     float valueToAngle(float value) const;
@@ -78,6 +84,9 @@ private:
     // Zenoh-related members
     std::shared_ptr<zenoh::Session> _zenoh_session;
     std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
+    
+    // Expression parser for RPM calculation
+    std::unique_ptr<expression_parser::ExpressionParser> rpm_expression_parser_;
     
     void createZenohSubscription();
 };

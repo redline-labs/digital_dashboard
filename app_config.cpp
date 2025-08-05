@@ -104,9 +104,9 @@ struct convert<Mercedes190ETachometerConfig_t> {
         node["max_rpm"] = rhs.max_rpm;
         node["redline_rpm"] = rhs.redline_rpm;
         node["show_clock"] = rhs.show_clock;
-        if (!rhs.zenoh_key.empty()) {
-            node["zenoh_key"] = rhs.zenoh_key;
-        }
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["rpm_expression"] = rhs.rpm_expression;
 
         return node;
     }
@@ -115,10 +115,12 @@ struct convert<Mercedes190ETachometerConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
-        if (node["redline_rpm"]) rhs.redline_rpm = node["redline_rpm"].as<uint16_t>();
-        if (node["show_clock"]) rhs.show_clock = node["show_clock"].as<bool>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.max_rpm = node["max_rpm"].as<uint32_t>();
+        rhs.redline_rpm = node["redline_rpm"].as<uint16_t>();
+        rhs.show_clock = node["show_clock"].as<bool>();
+        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.schema_type = node["schema_type"].as<std::string>();
+        rhs.rpm_expression = node["rpm_expression"].as<std::string>();
 
         return true;
     }

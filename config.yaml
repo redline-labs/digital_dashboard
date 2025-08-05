@@ -34,6 +34,8 @@ windows:
           max_rpm: 8000
           redline_rpm: 7000
           show_clock: true
+          schema_type: "EngineRpm"
+          rpm_expression: "rpm"
       
       # Battery telltale indicator in top left - subscribes to battery warning
       - type: mercedes_190e_battery_telltale

@@ -9,7 +9,9 @@
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
-#include "engine_telemetry.capnp.h"
+
+// Expression parser
+#include "expression_parser/expression_parser.h"
 
 #include <cmath> // For std::cos, std::sin
 #include <memory>
@@ -38,6 +40,32 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
       _cfg{cfg},
       m_currentTime(QTime::currentTime()) // Initialize current time
 {
+    // Initialize RPM expression parser
+    try
+    {
+        rpm_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+            _cfg.schema_type, 
+            _cfg.rpm_expression
+        );
+        
+        if (!rpm_expression_parser_->isValid())
+        {
+            SPDLOG_ERROR("Invalid RPM expression '{}' for schema '{}' in tachometer", 
+                        _cfg.rpm_expression, _cfg.schema_type);
+            rpm_expression_parser_.reset(); // Disable expression parsing
+        }
+        else
+        {
+            SPDLOG_INFO("Tachometer initialized with RPM expression: '{}' (schema: '{}')", 
+                       _cfg.rpm_expression, _cfg.schema_type);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to initialize RPM expression parser for tachometer: {}", e.what());
+        rpm_expression_parser_.reset();
+    }
+    
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
     if (fontId == -1) {
         SPDLOG_WARN("Failed to load Futura font. Using default.");
@@ -361,32 +389,20 @@ void Mercedes190ETachometer::createZenohSubscription()
                     try {
                         // Get the payload bytes
                         auto bytes = sample.get_payload().as_string();
-                        
-                        // Deserialize Cap'n Proto message
-                        ::capnp::FlatArrayMessageReader message(
-                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
-                                       bytes.size() / sizeof(capnp::word))
-                        );
-                        
-                        EngineRpm::Reader engineRpm = message.getRoot<EngineRpm>();
-                        
-                        // Extract the RPM data
-                        uint32_t rpm = engineRpm.getRpm();
-                        
+
                         // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onRpmDataReceived", 
-                                                Qt::QueuedConnection, 
-                                                Q_ARG(double, static_cast<double>(rpm)));
+                        QMetaObject::invokeMethod(this, "onDataReceived", Qt::QueuedConnection, bytes);
                         
                     } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Error parsing RPM data: {}", e.what());
+                        SPDLOG_ERROR("Error parsing tachometer data: {}", e.what());
                     }
                 },
                 zenoh::closures::none
             )
         );
         
-        SPDLOG_INFO("Created subscription for key '{}'", _cfg.zenoh_key);
+        SPDLOG_INFO("Created subscription for key '{}' with schema type '{}'", 
+                    _cfg.zenoh_key, _cfg.schema_type);
         
     } catch (const std::exception& e) {
         SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
@@ -394,9 +410,25 @@ void Mercedes190ETachometer::createZenohSubscription()
     }
 }
 
-void Mercedes190ETachometer::onRpmDataReceived(double rpm)
+void Mercedes190ETachometer::onDataReceived(const std::string& bytes)
 {
-    setRpm(static_cast<float>(rpm));
+    try
+    {
+        // Convert string bytes to vector<uint8_t> for expression parser
+        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+        
+        // Evaluate RPM expression
+        if (rpm_expression_parser_)
+        {
+            float rpmValue = rpm_expression_parser_->evaluate<float>(payload);
+            setRpm(rpmValue);
+        }
+        
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Tachometer: Failed to evaluate RPM expression: {}", e.what());
+    }
 }
 
 #include "mercedes_190e_tachometer/moc_mercedes_190e_tachometer.cpp"
