@@ -11,6 +11,7 @@ set(SCHEMA_FILES
 set(GENERATED_SOURCES)
 set(GENERATED_HEADERS)
 set(ALL_SCHEMA_STRUCTS)
+set(ALL_HEADER_FILES)
 
 # Function to extract struct names from a .capnp file
 function(extract_structs_from_schema SCHEMA_FILE OUTPUT_VAR)
@@ -60,6 +61,9 @@ foreach(SCHEMA_FILE ${SCHEMA_FILES})
     extract_structs_from_schema(${SCHEMA_FILE} STRUCTS_IN_FILE)
     list(APPEND ALL_SCHEMA_STRUCTS ${STRUCTS_IN_FILE})
     message(STATUS "Found structs in ${SCHEMA_FILE}: ${STRUCTS_IN_FILE}")
+
+    # Also generate the expected header file name.
+    list(APPEND ALL_HEADER_FILES "${SCHEMA_FILE}.h")
 endforeach()
 
 # Create a library for all schemas
@@ -82,4 +86,5 @@ target_link_libraries(schemas PUBLIC
 # Store the schema structs as a target property to be picked up by the main project.
 set_target_properties(schemas PROPERTIES
     SCHEMA_STRUCTS "${ALL_SCHEMA_STRUCTS}"
+    SCHEMA_HEADER_FILES "${ALL_HEADER_FILES}"
 )

@@ -1,11 +1,17 @@
 # Get the schema structs from the schemas target property
 get_target_property(SCHEMA_STRUCTS_FROM_TARGET schemas SCHEMA_STRUCTS)
+get_target_property(SCHEMA_HEADER_FILES_FROM_TARGET schemas SCHEMA_HEADER_FILES)
 
 # Generate schema_registry.cpp from schema_registry.cpp.in.
 # Uses the SCHEMA_CONDITIONAL_LOGIC macro to generate the conditional logic for the switch statement.
 set(SCHEMA_CONDITIONAL_LOGIC "")
 foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
     string(APPEND SCHEMA_CONDITIONAL_LOGIC "    if (schema_name == \"${STRUCT_NAME}\") { return capnp::Schema::from<${STRUCT_NAME}>(); }\n")
+endforeach()
+
+set(SCHEMA_INCLUDES "")
+foreach(SCHEMA_HEADER_FILE ${SCHEMA_HEADER_FILES_FROM_TARGET})
+    string(APPEND SCHEMA_INCLUDES "#include \"${SCHEMA_HEADER_FILE}\"\n")
 endforeach()
 
 # Count the number of schemas.
