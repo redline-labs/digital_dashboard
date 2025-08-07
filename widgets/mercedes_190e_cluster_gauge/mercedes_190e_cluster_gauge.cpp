@@ -627,7 +627,7 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     // Draw the needle
     painter->save();
     painter->translate(centerX, centerY); // Move origin to gauge center
-    painter->rotate(-1.0f * needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
+    painter->rotate(needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
     
     QPolygonF needlePolygon;
     needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot
