@@ -77,6 +77,8 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
         node["schema_type"] = rhs.schema_type;
         node["speed_expression"] = rhs.speed_expression;
         node["odometer_expression"] = rhs.odometer_expression;
+        node["odometer_zenoh_key"] = rhs.odometer_zenoh_key;
+        node["odometer_schema_type"] = rhs.odometer_schema_type;
         return node;
     }
 
@@ -84,13 +86,15 @@ struct convert<Mercedes190ESpeedometerConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        if (node["odometer_value"]) rhs.odometer_value = node["odometer_value"].as<uint32_t>();
-        if (node["max_speed"]) rhs.max_speed = node["max_speed"].as<uint16_t>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        if (node["shift_box_markers"]) rhs.shift_box_markers = node["shift_box_markers"].as<std::vector<uint8_t>>();
-        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
-        if (node["speed_expression"]) rhs.speed_expression = node["speed_expression"].as<std::string>();
-        if (node["odometer_expression"]) rhs.odometer_expression = node["odometer_expression"].as<std::string>();
+        rhs.odometer_value = node["odometer_value"].as<uint32_t>();
+        rhs.max_speed = node["max_speed"].as<uint16_t>();
+        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.shift_box_markers = node["shift_box_markers"].as<std::vector<uint8_t>>();
+        rhs.schema_type = node["schema_type"].as<std::string>();
+        rhs.speed_expression = node["speed_expression"].as<std::string>();
+        rhs.odometer_expression = node["odometer_expression"].as<std::string>();
+        rhs.odometer_zenoh_key = node["odometer_zenoh_key"].as<std::string>();
+        rhs.odometer_schema_type = node["odometer_schema_type"].as<std::string>();
         return true;
     }
 };

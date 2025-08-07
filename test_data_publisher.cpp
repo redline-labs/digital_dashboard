@@ -7,12 +7,14 @@
 #include <cstdlib>
 #include <spdlog/spdlog.h>
 #include "zenoh.hxx"
+#include "helpers.h"
 
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 #include <kj/io.h>
 #include "vehicle_speed.capnp.h"
+#include "vehicle_odometer.capnp.h"
 #include "engine_rpm.capnp.h"
 #include "engine_temperature.capnp.h"
 #include "vehicle_warnings.capnp.h"
@@ -21,17 +23,22 @@ class TestDataPublisher {
 private:
     std::unique_ptr<zenoh::Session> mSession;
     std::unique_ptr<zenoh::Publisher> mSpeedPublisher;
+    std::unique_ptr<zenoh::Publisher> mOdometerPublisher;
     std::unique_ptr<zenoh::Publisher> mRpmPublisher;
     std::unique_ptr<zenoh::Publisher> mTemperaturePublisher;
     std::unique_ptr<zenoh::Publisher> mBatteryWarningPublisher;
     bool mRunning;
     
     // Simulation parameters
-    static constexpr double PUBLISH_RATE_HZ = 30.0; // 10 Hz
+    static constexpr double PUBLISH_RATE_HZ = 30.0; // 30 Hz
     static constexpr double SPEED_CYCLE_SEC = 8.0;  // Speed cycle period
     static constexpr double RPM_CYCLE_SEC = 6.0;    // RPM cycle period
     static constexpr double TEMP_CYCLE_SEC = 12.0;  // Temperature cycle period
     static constexpr double BATTERY_CYCLE_SEC = 20.0; // Battery warning cycle period
+    static constexpr double ODOMETER_UPDATE_SEC = 1.0; // Odometer update period (1 Hz)
+    
+    // Odometer state
+    mutable uint32_t mCurrentOdometer = 123456; // Starting odometer value in miles
     
 public:
     TestDataPublisher() : mRunning(false) {}
@@ -52,6 +59,10 @@ public:
             // Create publishers for different data types
             mSpeedPublisher = std::make_unique<zenoh::Publisher>(
                 mSession->declare_publisher(zenoh::KeyExpr("vehicle/speed_mps"))
+            );
+            
+            mOdometerPublisher = std::make_unique<zenoh::Publisher>(
+                mSession->declare_publisher(zenoh::KeyExpr("vehicle/odometer"))
             );
             
             mRpmPublisher = std::make_unique<zenoh::Publisher>(
@@ -85,6 +96,7 @@ public:
         SPDLOG_INFO("Starting test data publisher at {} Hz", PUBLISH_RATE_HZ);
         SPDLOG_INFO("Publishing to the following keys:");
         SPDLOG_INFO("  - vehicle/speed_mps (speed data in Cap'n Proto format)");
+        SPDLOG_INFO("  - vehicle/odometer (odometer data in Cap'n Proto format, starting at {} miles)", mCurrentOdometer);
         SPDLOG_INFO("  - vehicle/engine/rpm (RPM data in Cap'n Proto format)");
         SPDLOG_INFO("  - vehicle/engine/temperature_celsius (temperature data in Cap'n Proto format)");
         SPDLOG_INFO("  - vehicle/telltales/battery_warning (battery warning status in Cap'n Proto format)");
@@ -122,6 +134,19 @@ private:
             double speed_phase = (elapsed / SPEED_CYCLE_SEC) * 2.0 * M_PI;
             double speed_mps = 17.5 * (1.0 + std::sin(speed_phase)); // 0-35 m/s
             publishSpeedData(mSpeedPublisher.get(), static_cast<float>(speed_mps));
+            
+            // Odometer (simulated accumulation based on speed) - using Cap'n Proto
+            static double last_odometer_time = 0.0;
+            if (elapsed - last_odometer_time >= ODOMETER_UPDATE_SEC)
+            {
+                // Calculate distance traveled since last update (speed in m/s * time in seconds * meters to miles conversion)
+                double distance_miles = (mps_to_mph(speed_mps) / 3600.0) * ODOMETER_UPDATE_SEC; // m/s to miles
+                distance_miles *= 50.0;  // Make it move so we can actually see it.
+                mCurrentOdometer += static_cast<uint32_t>(std::round(distance_miles));
+                publishOdometerData(mOdometerPublisher.get(), mCurrentOdometer);
+
+                last_odometer_time = elapsed;
+            }
             
             // Engine RPM (800-6000 RPM, different sine wave) - using Cap'n Proto
             double rpm_phase = (elapsed / RPM_CYCLE_SEC) * 2.0 * M_PI;
@@ -179,6 +204,43 @@ private:
             
         } catch (const std::exception& e) {
             SPDLOG_ERROR("Failed to publish speed data: {}", e.what());
+        }
+    }
+
+    void publishOdometerData(zenoh::Publisher* publisher, uint32_t totalMiles)
+    {
+        if (!publisher) return;
+        
+        try {
+            // Create a Cap'n Proto message
+            ::capnp::MallocMessageBuilder message;
+            VehicleOdometer::Builder vehicleOdometer = message.initRoot<VehicleOdometer>();
+            
+            // Set the odometer value
+            vehicleOdometer.setTotalMiles(totalMiles);
+            
+            // Set timestamp (current time in milliseconds)
+            auto now = std::chrono::system_clock::now();
+            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()
+            ).count();
+            vehicleOdometer.setTimestamp(static_cast<uint64_t>(timestamp));
+            
+            // Use VectorOutputStream to write to its internal buffer
+            kj::VectorOutputStream stream;
+            capnp::writeMessage(stream, message);
+            
+            // Get the data from the stream (single copy instead of double copy)
+            auto streamData = stream.getArray();
+            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
+            
+            // Create Zenoh payload and publish
+            publisher->put(zenoh::Bytes(std::move(buffer)));
+            
+            SPDLOG_DEBUG("Published odometer data: {} miles at timestamp {}", totalMiles, timestamp);
+            
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Failed to publish odometer data: {}", e.what());
         }
     }
 
@@ -305,7 +367,7 @@ int main(int /*argc*/, char* /*argv*/[])
     spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
     
     SPDLOG_INFO("Starting Mercedes Dashboard Test Data Publisher");
-    SPDLOG_INFO("This will publish simulated vehicle data to demonstrate real-time widget updates");
+    SPDLOG_INFO("This will publish simulated vehicle data including odometer updates to demonstrate real-time widget updates");
     SPDLOG_INFO("Press Ctrl+C to stop...");
     
     TestDataPublisher publisher;
