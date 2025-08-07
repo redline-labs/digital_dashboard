@@ -3,8 +3,16 @@
 #include <QFontMetrics>
 #include <QDebug>
 #include <QSvgRenderer>
+#include <QMetaObject>
 
 #include <spdlog/spdlog.h>
+
+// Cap'n Proto includes
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+
+// Expression parser
+#include "expression_parser/expression_parser.h"
 
 #include <cmath>
 #include <numbers>
@@ -15,8 +23,13 @@ constexpr float degreesToRadians(float degrees)
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent)
-    : QWidget(parent), m_config(cfg)
+Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent):
+  QWidget(parent),
+  m_config(cfg),
+  fuel_gauge_current_value_(0.0f),
+  oil_pressure_gauge_current_value_(0.0f),
+  coolant_temperature_gauge_current_value_(0.0f),
+  economy_gauge_current_value_(0.0f)
 {
     // Load font from Qt resources
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
@@ -26,50 +39,79 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
         qWarning("Failed to load futura.ttf from resources. Using default sans-serif.");
         m_fontFamily = "sans-serif";
     }
+    
+    // Initialize expression parsers for each sub-gauge
+    auto initializeSubGaugeParser = [this](const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
+                                          std::unique_ptr<expression_parser::ExpressionParser>& parser,
+                                          const char* gauge_name) {
+        if (!gauge_config.zenoh_key.empty() && !gauge_config.schema_type.empty() && !gauge_config.value_expression.empty()) {
+            try {
+                parser = std::make_unique<expression_parser::ExpressionParser>(
+                    gauge_config.schema_type, 
+                    gauge_config.value_expression
+                );
+                
+                if (!parser->isValid()) {
+                    SPDLOG_ERROR("Invalid {} gauge expression '{}' for schema '{}' in cluster gauge", 
+                                gauge_name, gauge_config.value_expression, gauge_config.schema_type);
+                    parser.reset();
+                }
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("Failed to initialize {} gauge expression parser: {}", gauge_name, e.what());
+                parser.reset();
+            }
+        }
+    };
+    
+    // Initialize parsers for all sub-gauges
+    initializeSubGaugeParser(m_config.fuel_gauge, top_gauge_expression_parser_, "top");
+    initializeSubGaugeParser(m_config.right_gauge, right_gauge_expression_parser_, "right");
+    initializeSubGaugeParser(m_config.bottom_gauge, bottom_gauge_expression_parser_, "bottom");
+    initializeSubGaugeParser(m_config.left_gauge, left_gauge_expression_parser_, "left");
 }
 
 void Mercedes190EClusterGauge::setTopGaugeValue(float value)
 {
-    m_config.top_gauge.current_value = qBound(m_config.top_gauge.min_value, value, m_config.top_gauge.max_value);
+    fuel_gauge_current_value_ = qBound(m_config.fuel_gauge.min_value, value, m_config.fuel_gauge.max_value);
     update();
 }
 
 void Mercedes190EClusterGauge::setRightGaugeValue(float value)
 {
-    m_config.right_gauge.current_value = qBound(m_config.right_gauge.min_value, value, m_config.right_gauge.max_value);
+    oil_pressure_gauge_current_value_ = qBound(m_config.right_gauge.min_value, value, m_config.right_gauge.max_value);
     update();
 }
 
 void Mercedes190EClusterGauge::setBottomGaugeValue(float value)
 {
-    m_config.bottom_gauge.current_value = qBound(m_config.bottom_gauge.min_value, value, m_config.bottom_gauge.max_value);
+    economy_gauge_current_value_ = qBound(m_config.bottom_gauge.min_value, value, m_config.bottom_gauge.max_value);
     update();
 }
 
 void Mercedes190EClusterGauge::setLeftGaugeValue(float value)
 {
-    m_config.left_gauge.current_value = qBound(m_config.left_gauge.min_value, value, m_config.left_gauge.max_value);
+    coolant_temperature_gauge_current_value_ = qBound(m_config.left_gauge.min_value, value, m_config.left_gauge.max_value);
     update();
 }
 
 float Mercedes190EClusterGauge::getTopGaugeValue() const
 {
-    return m_config.top_gauge.current_value;
+    return fuel_gauge_current_value_;
 }
 
 float Mercedes190EClusterGauge::getRightGaugeValue() const
 {
-    return m_config.right_gauge.current_value;
+    return oil_pressure_gauge_current_value_;
 }
 
 float Mercedes190EClusterGauge::getBottomGaugeValue() const
 {
-    return m_config.bottom_gauge.current_value;
+    return economy_gauge_current_value_;
 }
 
 float Mercedes190EClusterGauge::getLeftGaugeValue() const
 {
-    return m_config.left_gauge.current_value;
+    return coolant_temperature_gauge_current_value_;
 }
 
 float Mercedes190EClusterGauge::valueToAngle(float value, float minVal, float maxVal)
@@ -101,7 +143,7 @@ void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
     float subGaugeRadius = 45.0f;
 
     // Top gauge (12 o'clock)
-    drawSubGauge(&painter, m_config.top_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
+    drawSubGauge(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
 
     // Right gauge (3 o'clock) - Oil Pressure
     drawOilPressureGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
@@ -255,8 +297,7 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const Mercedes190
     painter->restore();
 
     // Calculate needle angle based on gauge value
-    float current_value = 20.0f; // gauge.current_value
-    float valueRatio = (current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    float valueRatio = (fuel_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
     valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
 
     float needleAngle = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
@@ -415,7 +456,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mer
     painter->restore();
 
     // Calculate needle angle based on gauge value
-    float valueRatio = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    float valueRatio = (oil_pressure_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
     valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
 
     float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
@@ -578,7 +619,7 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     painter->restore();
 
     // Calculate needle angle based on gauge value
-    float valueRatio = (gauge.current_value - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    float valueRatio = (coolant_temperature_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
     valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
 
     float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
@@ -621,6 +662,124 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     painter->restore();
     
     painter->restore();
+}
+
+void Mercedes190EClusterGauge::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    zenoh_session_ = session;
+    
+    // Create subscriptions for all configured sub-gauges
+    if (zenoh_session_) {
+        createZenohSubscriptions();
+    }
+}
+
+void Mercedes190EClusterGauge::createZenohSubscriptions()
+{
+    if (!zenoh_session_) {
+        SPDLOG_WARN("Cannot create subscriptions - no Zenoh session");
+        return;
+    }
+    
+    // Create subscription for each sub-gauge that has a zenoh_key configured
+    createSubGaugeSubscription(m_config.fuel_gauge, top_gauge_subscriber_, "onTopGaugeDataReceived", "top");
+    createSubGaugeSubscription(m_config.right_gauge, right_gauge_subscriber_, "onRightGaugeDataReceived", "right");
+    createSubGaugeSubscription(m_config.bottom_gauge, bottom_gauge_subscriber_, "onBottomGaugeDataReceived", "bottom");
+    createSubGaugeSubscription(m_config.left_gauge, left_gauge_subscriber_, "onLeftGaugeDataReceived", "left");
+}
+
+void Mercedes190EClusterGauge::createSubGaugeSubscription(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
+                                                         std::unique_ptr<zenoh::Subscriber<void>>& subscriber,
+                                                         const char* slot_name,
+                                                         const char* gauge_name)
+{
+    if (gauge_config.zenoh_key.empty()) {
+        return; // No key configured for this sub-gauge
+    }
+    
+    try {
+        auto key_expr = zenoh::KeyExpr(gauge_config.zenoh_key);
+        
+        subscriber = std::make_unique<zenoh::Subscriber<void>>(
+            zenoh_session_->declare_subscriber(
+                key_expr,
+                [this, slot_name](const zenoh::Sample& sample)
+                {
+                    try {
+                        // Get the payload bytes
+                        auto bytes = sample.get_payload().as_string();
+
+                        // Use Qt's queued connection to ensure thread safety
+                        QMetaObject::invokeMethod(this, slot_name, Qt::QueuedConnection, bytes);
+                        
+                    } catch (const std::exception& e) {
+                        SPDLOG_ERROR("Error parsing cluster gauge data: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        
+        SPDLOG_INFO("Created subscription for {} gauge key '{}' with schema type '{}'", 
+                    gauge_name, gauge_config.zenoh_key, gauge_config.schema_type);
+        
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Failed to create subscription for {} gauge key '{}': {}", 
+                     gauge_name, gauge_config.zenoh_key, e.what());
+    }
+}
+
+// Data handlers for each sub-gauge
+void Mercedes190EClusterGauge::onTopGaugeDataReceived(const std::string& bytes)
+{
+    try {
+        if (top_gauge_expression_parser_) {
+            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+            float value = top_gauge_expression_parser_->evaluate<float>(payload);
+            setTopGaugeValue(value);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Top gauge: Failed to evaluate expression: {}", e.what());
+    }
+}
+
+void Mercedes190EClusterGauge::onRightGaugeDataReceived(const std::string& bytes)
+{
+    try {
+        if (right_gauge_expression_parser_) {
+            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+            float value = right_gauge_expression_parser_->evaluate<float>(payload);
+            setRightGaugeValue(value);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Right gauge: Failed to evaluate expression: {}", e.what());
+    }
+}
+
+void Mercedes190EClusterGauge::onBottomGaugeDataReceived(const std::string& bytes)
+{
+    try {
+        if (bottom_gauge_expression_parser_) {
+            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+            float value = bottom_gauge_expression_parser_->evaluate<float>(payload);
+            setBottomGaugeValue(value);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Bottom gauge: Failed to evaluate expression: {}", e.what());
+    }
+}
+
+void Mercedes190EClusterGauge::onLeftGaugeDataReceived(const std::string& bytes)
+{
+    try {
+        if (left_gauge_expression_parser_) {
+            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+            float value = left_gauge_expression_parser_->evaluate<float>(payload);
+            setLeftGaugeValue(value);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Left gauge: Failed to evaluate expression: {}", e.what());
+    }
 }
 
 #include "mercedes_190e_cluster_gauge/moc_mercedes_190e_cluster_gauge.cpp"

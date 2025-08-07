@@ -67,7 +67,8 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     if (widget_config.type == widget_type_t::mercedes_190e_speedometer)
     {
         auto* speedometer = new Mercedes190ESpeedometer(std::get<Mercedes190ESpeedometerConfig_t>(widget_config.config));
-        if (_zenoh_session) {
+        if (_zenoh_session)
+        {
             speedometer->setZenohSession(_zenoh_session);
         }
         return speedometer;
@@ -75,7 +76,8 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     else if (widget_config.type == widget_type_t::mercedes_190e_tachometer)
     {
         auto* tachometer = new Mercedes190ETachometer(std::get<Mercedes190ETachometerConfig_t>(widget_config.config));
-        if (_zenoh_session) {
+        if (_zenoh_session)
+        {
             tachometer->setZenohSession(_zenoh_session);
         }
         return tachometer;
@@ -83,7 +85,8 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     else if (widget_config.type == widget_type_t::sparkline)
     {
         auto* sparkline = new SparklineItem(std::get<SparklineConfig_t>(widget_config.config));
-        if (_zenoh_session) {
+        if (_zenoh_session)
+        {
             sparkline->setZenohSession(_zenoh_session);
         }
         return sparkline;
@@ -91,7 +94,8 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     else if (widget_config.type == widget_type_t::mercedes_190e_battery_telltale)
     {
         auto* battery_telltale = new Mercedes190EBatteryTelltale(std::get<Mercedes190EBatteryTelltaleConfig_t>(widget_config.config));
-        if (_zenoh_session) {
+        if (_zenoh_session)
+        {
             battery_telltale->setZenohSession(_zenoh_session);
         }
         return battery_telltale;
@@ -105,7 +109,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     }
     else if (widget_config.type == widget_type_t::mercedes_190e_cluster_gauge)
     {
-        auto* cluster_gauge = new Mercedes190EClusterGauge({});
+        auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));
+        if (_zenoh_session)
+        {
+            cluster_gauge->setZenohSession(_zenoh_session);
+        }
         return cluster_gauge;
     }
     else

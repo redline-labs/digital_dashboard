@@ -13,7 +13,8 @@
 #include <capnp/serialize.h>
 #include <kj/io.h>
 #include "vehicle_speed.capnp.h"
-#include "engine_telemetry.capnp.h"
+#include "engine_rpm.capnp.h"
+#include "engine_temperature.capnp.h"
 #include "vehicle_warnings.capnp.h"
 
 class TestDataPublisher {
@@ -125,7 +126,8 @@ private:
             // Engine RPM (800-6000 RPM, different sine wave) - using Cap'n Proto
             double rpm_phase = (elapsed / RPM_CYCLE_SEC) * 2.0 * M_PI;
             double rpm = 3400 + 2600 * std::sin(rpm_phase); // 800-6000 RPM
-            publishRpmData(mRpmPublisher.get(), static_cast<uint32_t>(rpm));
+            double oil_pressure = 40 + 20 * std::sin(rpm_phase); // 20-60 PSI
+            publishRpmData(mRpmPublisher.get(), static_cast<uint32_t>(rpm), static_cast<float>(oil_pressure));
             
             // Engine temperature (60-120°C, slower variation) - using Cap'n Proto
             double temp_phase = (elapsed / TEMP_CYCLE_SEC) * 2.0 * M_PI;
@@ -180,7 +182,7 @@ private:
         }
     }
 
-    void publishRpmData(zenoh::Publisher* publisher, uint32_t rpm)
+    void publishRpmData(zenoh::Publisher* publisher, uint32_t rpm, float oil_pressure)
     {
         if (!publisher) return;
         
@@ -191,7 +193,8 @@ private:
             
             // Set the RPM value
             engineRpm.setRpm(rpm);
-            
+            engineRpm.setOilPressurePsi(oil_pressure);
+
             // Set timestamp (current time in milliseconds)
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(

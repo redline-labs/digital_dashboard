@@ -2,6 +2,7 @@
 #define MERCEDES_190E_CLUSTER_GAUGE_H
 
 #include "mercedes_190e_cluster_gauge/config.h"
+#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
@@ -13,6 +14,12 @@
 #include <QFontDatabase>
 
 #include <string_view>
+#include <memory>
+
+// Forward declarations
+namespace expression_parser {
+    class ExpressionParser;
+}
 
 class Mercedes190EClusterGauge : public QWidget
 {
@@ -35,9 +42,18 @@ public:
     float getRightGaugeValue() const;
     float getBottomGaugeValue() const;
     float getLeftGaugeValue() const;
+    
+    // Set Zenoh session for data subscriptions
+    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+
+private slots:
+    void onTopGaugeDataReceived(const std::string& bytes);
+    void onRightGaugeDataReceived(const std::string& bytes);
+    void onBottomGaugeDataReceived(const std::string& bytes);
+    void onLeftGaugeDataReceived(const std::string& bytes);
 
 private:
     void drawBackground(QPainter *painter);
@@ -53,6 +69,40 @@ private:
 
     Mercedes190EClusterGaugeConfig_t m_config;
     QString m_fontFamily; // Font family for text rendering
+
+    // Fuel gauge current value
+    float fuel_gauge_current_value_;
+
+    // Oil pressure gauge current value
+    float oil_pressure_gauge_current_value_;
+
+    // Coolant temperature gauge current value
+    float coolant_temperature_gauge_current_value_;
+
+    // Economy gauge current value
+    float economy_gauge_current_value_;
+
+    // Zenoh-related members
+    std::shared_ptr<zenoh::Session> zenoh_session_;
+    
+    // Expression parsers for each sub-gauge
+    std::unique_ptr<expression_parser::ExpressionParser> top_gauge_expression_parser_;
+    std::unique_ptr<expression_parser::ExpressionParser> right_gauge_expression_parser_;
+    std::unique_ptr<expression_parser::ExpressionParser> bottom_gauge_expression_parser_;
+    std::unique_ptr<expression_parser::ExpressionParser> left_gauge_expression_parser_;
+    
+    // Zenoh subscribers for each sub-gauge
+    std::unique_ptr<zenoh::Subscriber<void>> top_gauge_subscriber_;
+    std::unique_ptr<zenoh::Subscriber<void>> right_gauge_subscriber_;
+    std::unique_ptr<zenoh::Subscriber<void>> bottom_gauge_subscriber_;
+    std::unique_ptr<zenoh::Subscriber<void>> left_gauge_subscriber_;
+    
+    // Helper methods for Zenoh subscriptions
+    void createZenohSubscriptions();
+    void createSubGaugeSubscription(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
+                                   std::unique_ptr<zenoh::Subscriber<void>>& subscriber,
+                                   const char* slot_name,
+                                   const char* gauge_name);
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

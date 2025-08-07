@@ -36,6 +36,8 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     // Add the extend_functions to the symbol table.
     symbol_table_.add_function("mph_to_mps", &mph_to_mps<double>);
     symbol_table_.add_function("mps_to_mph", &mps_to_mph<double>);
+    symbol_table_.add_function("psi_to_bar", &psi_to_bar<double>);
+    symbol_table_.add_function("bar_to_psi", &bar_to_psi<double>);
 
     // Extract variables from the expression
     extractVariables();
@@ -58,11 +60,6 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
 
         compiled_expression_.register_symbol_table(symbol_table_);
         is_valid_ = parser_.compile(expression_, compiled_expression_) == true;
-    }
-
-    if (is_valid_ == true)
-    {
-        SPDLOG_DEBUG("Expression '{}' compiled successfully.", expression_);
     }
 }
 

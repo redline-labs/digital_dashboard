@@ -13,7 +13,8 @@
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 #include "vehicle_speed.capnp.h"
-#include "engine_telemetry.capnp.h"
+#include "engine_rpm.capnp.h"
+#include "engine_temperature.capnp.h"
 #include "vehicle_warnings.capnp.h"
 
 #include <QMetaObject>

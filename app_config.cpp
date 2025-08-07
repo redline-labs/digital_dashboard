@@ -201,7 +201,9 @@ struct convert<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t> {
         Node node = {};
         node["min_value"] = rhs.min_value;
         node["max_value"] = rhs.max_value;
-        node["current_value"] = rhs.current_value;
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["value_expression"] = rhs.value_expression;
 
         return node;
     }
@@ -212,8 +214,9 @@ struct convert<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t> {
 
         rhs.min_value = node["min_value"].as<float>();
         rhs.max_value = node["max_value"].as<float>();
-        rhs.current_value = node["current_value"].as<float>();
-
+        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.schema_type = node["schema_type"].as<std::string>();
+        rhs.value_expression = node["value_expression"].as<std::string>();
         return true;
     }
 };
@@ -223,7 +226,7 @@ struct convert<Mercedes190EClusterGaugeConfig_t> {
     static Node encode(const Mercedes190EClusterGaugeConfig_t& rhs)
     {
         Node node = {};
-        node["top_gauge"] = rhs.top_gauge;
+        node["fuel_gauge"] = rhs.fuel_gauge;
         node["right_gauge"] = rhs.right_gauge;
         node["bottom_gauge"] = rhs.bottom_gauge;
         node["left_gauge"] = rhs.left_gauge;
@@ -235,7 +238,7 @@ struct convert<Mercedes190EClusterGaugeConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        rhs.top_gauge = node["top_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
+        rhs.fuel_gauge = node["fuel_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
         rhs.right_gauge = node["right_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
         rhs.bottom_gauge = node["bottom_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
         rhs.left_gauge = node["left_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();

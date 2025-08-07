@@ -73,23 +73,30 @@ windows:
         width: 250
         height: 250
         config:
-          top_gauge:
+          fuel_gauge:
             min_value: 0
             max_value: 100
-            current_value: 50
+            zenoh_key: "vehicle/speed_mps"
+            schema_type: "VehicleSpeed"
+            value_expression: "speedMps"
           right_gauge:
             min_value: 0
-            max_value: 100
-            current_value: 75
+            max_value: 3
+            zenoh_key: "vehicle/speed_mps"
+            schema_type: "VehicleSpeed"
+            value_expression: "psi_to_bar(speedMps)"
           bottom_gauge:
             min_value: 0
             max_value: 80
-            current_value: 40
+            zenoh_key: "vehicle/engine/temperature_celsius"
+            schema_type: "EngineTemperature"
+            value_expression: "temperatureCelsius"
           left_gauge:
-            min_value: 0
-            max_value: 40
-            current_value: 20
-
+            min_value: 40
+            max_value: 120
+            zenoh_key: "vehicle/engine/temperature_celsius"
+            schema_type: "EngineTemperature"
+            value_expression: "temperatureCelsius"
 
   # Dedicated CarPlay window (no Zenoh subscription needed)
 #  - name: "carplay"
