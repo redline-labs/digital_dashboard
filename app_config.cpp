@@ -145,9 +145,9 @@ struct convert<SparklineConfig_t> {
         node["font_size_value"] = rhs.font_size_value;
         node["font_size_units"] = rhs.font_size_units;
         node["update_rate"] = rhs.update_rate;
-        if (!rhs.zenoh_key.empty()) {
-            node["zenoh_key"] = rhs.zenoh_key;
-        }
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["value_expression"] = rhs.value_expression;
 
         return node;
     }
@@ -161,11 +161,13 @@ struct convert<SparklineConfig_t> {
         rhs.max_value = node["max_value"].as<double>();
         rhs.line_color = node["line_color"].as<std::string>();
         rhs.text_color = node["text_color"].as<std::string>();
-        if (node["font_family"]) rhs.font_family = node["font_family"].as<std::string>();
-        if (node["font_size_value"]) rhs.font_size_value = node["font_size_value"].as<uint16_t>();
-        if (node["font_size_units"]) rhs.font_size_units = node["font_size_units"].as<uint16_t>();
-        if (node["update_rate"]) rhs.update_rate = node["update_rate"].as<uint16_t>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.font_family = node["font_family"].as<std::string>();
+        rhs.font_size_value = node["font_size_value"].as<uint16_t>();
+        rhs.font_size_units = node["font_size_units"].as<uint16_t>();
+        rhs.update_rate = node["update_rate"].as<uint16_t>();
+        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.schema_type = node["schema_type"].as<std::string>();
+        rhs.value_expression = node["value_expression"].as<std::string>();
 
         return true;
     }
@@ -189,11 +191,11 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
     {
         if (!node.IsMap()) return false;
 
-        if (node["warning_color"]) rhs.warning_color = node["warning_color"].as<std::string>();
-        if (node["normal_color"]) rhs.normal_color = node["normal_color"].as<std::string>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
-        if (node["condition_expression"]) rhs.condition_expression = node["condition_expression"].as<std::string>();
+        rhs.warning_color = node["warning_color"].as<std::string>();
+        rhs.normal_color = node["normal_color"].as<std::string>();
+        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        rhs.schema_type = node["schema_type"].as<std::string>();
+        rhs.condition_expression = node["condition_expression"].as<std::string>();
         return true;
     }
 };

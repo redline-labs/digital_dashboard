@@ -47,8 +47,9 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
         if (!gauge_config.zenoh_key.empty() && !gauge_config.schema_type.empty() && !gauge_config.value_expression.empty()) {
             try {
                 parser = std::make_unique<expression_parser::ExpressionParser>(
-                    gauge_config.schema_type, 
-                    gauge_config.value_expression
+                    gauge_config.schema_type,
+                    gauge_config.value_expression,
+                    gauge_config.zenoh_key
                 );
                 
                 if (!parser->isValid()) {
@@ -667,119 +668,66 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
 void Mercedes190EClusterGauge::setZenohSession(std::shared_ptr<zenoh::Session> session)
 {
     zenoh_session_ = session;
-    
-    // Create subscriptions for all configured sub-gauges
+
     if (zenoh_session_) {
-        createZenohSubscriptions();
+        configureParserSubscriptions();
     }
 }
 
-void Mercedes190EClusterGauge::createZenohSubscriptions()
+void Mercedes190EClusterGauge::configureParserSubscriptions()
 {
     if (!zenoh_session_) {
-        SPDLOG_WARN("Cannot create subscriptions - no Zenoh session");
+        SPDLOG_WARN("Cannot configure parser subscriptions - no Zenoh session");
         return;
     }
-    
-    // Create subscription for each sub-gauge that has a zenoh_key configured
-    createSubGaugeSubscription(m_config.fuel_gauge, top_gauge_subscriber_, "onTopGaugeDataReceived", "top");
-    createSubGaugeSubscription(m_config.right_gauge, right_gauge_subscriber_, "onRightGaugeDataReceived", "right");
-    createSubGaugeSubscription(m_config.bottom_gauge, bottom_gauge_subscriber_, "onBottomGaugeDataReceived", "bottom");
-    createSubGaugeSubscription(m_config.left_gauge, left_gauge_subscriber_, "onLeftGaugeDataReceived", "left");
-}
 
-void Mercedes190EClusterGauge::createSubGaugeSubscription(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
-                                                         std::unique_ptr<zenoh::Subscriber<void>>& subscriber,
-                                                         const char* slot_name,
-                                                         const char* gauge_name)
-{
-    if (gauge_config.zenoh_key.empty()) {
-        return; // No key configured for this sub-gauge
+    if (top_gauge_expression_parser_) {
+        top_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onTopGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+        top_gauge_expression_parser_->setZenohSession(zenoh_session_);
     }
-    
-    try {
-        auto key_expr = zenoh::KeyExpr(gauge_config.zenoh_key);
-        
-        subscriber = std::make_unique<zenoh::Subscriber<void>>(
-            zenoh_session_->declare_subscriber(
-                key_expr,
-                [this, slot_name](const zenoh::Sample& sample)
-                {
-                    try {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
-
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, slot_name, Qt::QueuedConnection, bytes);
-                        
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Error parsing cluster gauge data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("Created subscription for {} gauge key '{}' with schema type '{}'", 
-                    gauge_name, gauge_config.zenoh_key, gauge_config.schema_type);
-        
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Failed to create subscription for {} gauge key '{}': {}", 
-                     gauge_name, gauge_config.zenoh_key, e.what());
+    if (right_gauge_expression_parser_) {
+        right_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onRightGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+        right_gauge_expression_parser_->setZenohSession(zenoh_session_);
+    }
+    if (bottom_gauge_expression_parser_) {
+        bottom_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onBottomGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+        bottom_gauge_expression_parser_->setZenohSession(zenoh_session_);
+    }
+    if (left_gauge_expression_parser_) {
+        left_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onLeftGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+        left_gauge_expression_parser_->setZenohSession(zenoh_session_);
     }
 }
+
+// Direct widget subscriptions removed; handled by expression_parser
 
 // Data handlers for each sub-gauge
-void Mercedes190EClusterGauge::onTopGaugeDataReceived(const std::string& bytes)
+void Mercedes190EClusterGauge::onTopGaugeEvaluated(float value)
 {
-    try {
-        if (top_gauge_expression_parser_) {
-            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-            float value = top_gauge_expression_parser_->evaluate<float>(payload);
-            setTopGaugeValue(value);
-        }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Top gauge: Failed to evaluate expression: {}", e.what());
-    }
+    setTopGaugeValue(value);
 }
 
-void Mercedes190EClusterGauge::onRightGaugeDataReceived(const std::string& bytes)
+void Mercedes190EClusterGauge::onRightGaugeEvaluated(float value)
 {
-    try {
-        if (right_gauge_expression_parser_) {
-            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-            float value = right_gauge_expression_parser_->evaluate<float>(payload);
-            setRightGaugeValue(value);
-        }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Right gauge: Failed to evaluate expression: {}", e.what());
-    }
+    setRightGaugeValue(value);
 }
 
-void Mercedes190EClusterGauge::onBottomGaugeDataReceived(const std::string& bytes)
+void Mercedes190EClusterGauge::onBottomGaugeEvaluated(float value)
 {
-    try {
-        if (bottom_gauge_expression_parser_) {
-            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-            float value = bottom_gauge_expression_parser_->evaluate<float>(payload);
-            setBottomGaugeValue(value);
-        }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Bottom gauge: Failed to evaluate expression: {}", e.what());
-    }
+    setBottomGaugeValue(value);
 }
 
-void Mercedes190EClusterGauge::onLeftGaugeDataReceived(const std::string& bytes)
+void Mercedes190EClusterGauge::onLeftGaugeEvaluated(float value)
 {
-    try {
-        if (left_gauge_expression_parser_) {
-            std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-            float value = left_gauge_expression_parser_->evaluate<float>(payload);
-            setLeftGaugeValue(value);
-        }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Left gauge: Failed to evaluate expression: {}", e.what());
-    }
+    setLeftGaugeValue(value);
 }
 
 #include "mercedes_190e_cluster_gauge/moc_mercedes_190e_cluster_gauge.cpp"

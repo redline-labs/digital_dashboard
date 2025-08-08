@@ -50,10 +50,10 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private slots:
-    void onTopGaugeDataReceived(const std::string& bytes);
-    void onRightGaugeDataReceived(const std::string& bytes);
-    void onBottomGaugeDataReceived(const std::string& bytes);
-    void onLeftGaugeDataReceived(const std::string& bytes);
+    void onTopGaugeEvaluated(float value);
+    void onRightGaugeEvaluated(float value);
+    void onBottomGaugeEvaluated(float value);
+    void onLeftGaugeEvaluated(float value);
 
 private:
     void drawBackground(QPainter *painter);
@@ -91,18 +91,8 @@ private:
     std::unique_ptr<expression_parser::ExpressionParser> bottom_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> left_gauge_expression_parser_;
     
-    // Zenoh subscribers for each sub-gauge
-    std::unique_ptr<zenoh::Subscriber<void>> top_gauge_subscriber_;
-    std::unique_ptr<zenoh::Subscriber<void>> right_gauge_subscriber_;
-    std::unique_ptr<zenoh::Subscriber<void>> bottom_gauge_subscriber_;
-    std::unique_ptr<zenoh::Subscriber<void>> left_gauge_subscriber_;
-    
-    // Helper methods for Zenoh subscriptions
-    void createZenohSubscriptions();
-    void createSubGaugeSubscription(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
-                                   std::unique_ptr<zenoh::Subscriber<void>>& subscriber,
-                                   const char* slot_name,
-                                   const char* gauge_name);
+    // Helper methods to configure parser-owned subscriptions
+    void configureParserSubscriptions();
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

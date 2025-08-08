@@ -2,6 +2,7 @@
 #define SPARKLINEITEM_H
 
 #include "sparkline/config.h"
+
 #include "zenoh.hxx"
 
 #include <QWidget>
@@ -12,6 +13,10 @@
 #include <QVBoxLayout>
 
 #include <string_view>
+
+namespace expression_parser {
+    class ExpressionParser;
+}
 
 class SparklineItem : public QWidget {
     Q_OBJECT
@@ -32,7 +37,7 @@ protected:
 
 private slots:
     void forceRepaint();
-    void onDataReceived(double value);
+    void onDataEvaluated(double value);
 
 private:
     SparklineConfig_t _cfg;
@@ -46,9 +51,12 @@ private:
     
     // Zenoh-related members
     std::shared_ptr<zenoh::Session> _zenoh_session;
-    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
     
-    void createZenohSubscription();
+    // Expression parser owned subscription if configured
+    std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
+
+    // Fallback direct subscription when schema/expression not provided
+    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
 };
 
 #endif // SPARKLINEITEM_H 

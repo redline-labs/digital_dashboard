@@ -7,15 +7,19 @@
 #include <memory>
 #include <type_traits>
 #include <cmath>
+#include <functional>
+#include <vector>
 
 #include <capnp/schema.h>
 #include <capnp/dynamic.h>
 #include <capnp/message.h>
 #include <capnp/serialize.h>
+#include "zenoh.hxx"
 #define exprtk_disable_caseinsensitivity
 #include <exprtk.hpp>
 
 #include "expression_parser/schema_registry.h"
+#include "spdlog/spdlog.h"
 
 namespace expression_parser
 {
@@ -39,6 +43,16 @@ class ExpressionParser
      * @param expression Mathematical expression string to be evaluated
      */
     ExpressionParser(const std::string& schema_name, const std::string& expression);
+
+    /**
+     * Constructor that additionally stores a Zenoh key for automatic subscription
+     * when a Zenoh session is provided via setZenohSession().
+     *
+     * @param schema_name Name of the schema to use for validation
+     * @param expression Mathematical expression string to be evaluated
+     * @param zenoh_key Key expression to subscribe to via Zenoh
+     */
+    ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key);
 
     /**
      * Get the schema name being used
@@ -108,6 +122,31 @@ class ExpressionParser
     template<typename T>
     T evaluate(const std::vector<uint8_t>& payload);
 
+    /**
+     * Configure the result callback that will be invoked when subscribed data
+     * is received and evaluated. You must call setResultCallback<T>() before
+     * setZenohSession() to ensure typed evaluation on incoming samples.
+     */
+    template<typename T>
+    void setResultCallback(std::function<void(T)> callback)
+    {
+        evaluation_handler_ = [this, cb = std::move(callback)](const std::vector<uint8_t>& payload) mutable {
+            try {
+                T value = this->evaluate<T>(payload);
+                cb(value);
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("ExpressionParser: evaluation callback error: {}", e.what());
+            }
+        };
+    }
+
+    /**
+     * Set the Zenoh session and declare the subscriber (if a zenoh key was
+     * provided). Incoming samples will be evaluated and forwarded to the
+     * previously configured result callback, if set.
+     */
+    void setZenohSession(std::shared_ptr<zenoh::Session> session);
+
 private:
     // Cached field information for fast extraction
     struct FieldCache {
@@ -129,6 +168,12 @@ private:
 
     // Field extraction cache - pre-computed field access information
     std::vector<FieldCache> field_cache_;
+
+    // Zenoh related configuration/handles
+    std::string zenoh_key_;
+    std::shared_ptr<zenoh::Session> zenoh_session_;
+    std::unique_ptr<zenoh::Subscriber<void>> zenoh_subscriber_;
+    std::function<void(const std::vector<uint8_t>&)> evaluation_handler_;
 
     /**
      * Extract variables from the expression using exprtk

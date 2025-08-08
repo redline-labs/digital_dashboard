@@ -29,8 +29,9 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     try
     {
         speed_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
-            cfg_.schema_type, 
-            cfg_.speed_expression
+            cfg_.schema_type,
+            cfg_.speed_expression,
+            cfg_.zenoh_key
         );
         
         if (!speed_expression_parser_->isValid())
@@ -58,10 +59,13 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
         {
             // Use odometer-specific schema type if odometer zenoh key is configured, otherwise fallback to speed schema
             std::string odometer_schema = cfg_.odometer_zenoh_key.empty() ? cfg_.schema_type : cfg_.odometer_schema_type;
+            // Subscribe on odometer key if provided, otherwise reuse the speed key
+            std::string odometer_key = cfg_.odometer_zenoh_key.empty() ? cfg_.zenoh_key : cfg_.odometer_zenoh_key;
             
             odometer_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
-                odometer_schema, 
-                cfg_.odometer_expression
+                odometer_schema,
+                cfg_.odometer_expression,
+                odometer_key
             );
             
             if (!odometer_expression_parser_->isValid())
@@ -495,167 +499,44 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
 void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
 {
     zenoh_session_ = session;
-    
-    // Create subscriptions for configured keys
-    createZenohSubscriptions();
+
+    configureParserSubscriptions();
 }
 
-void Mercedes190ESpeedometer::createZenohSubscriptions()
+void Mercedes190ESpeedometer::configureParserSubscriptions()
 {
-    if (!zenoh_session_)
-    {
-        SPDLOG_WARN("Cannot create subscriptions - no Zenoh session");
+    if (!zenoh_session_) {
+        SPDLOG_WARN("Cannot configure parser subscriptions - no Zenoh session");
         return;
     }
-    
-    // Create speed subscription if configured
-    if (!cfg_.zenoh_key.empty())
-    {
-        createSpeedSubscription();
+
+    if (speed_expression_parser_) {
+        speed_expression_parser_->setResultCallback<float>([this](float mph) {
+            QMetaObject::invokeMethod(this, "onSpeedEvaluated", Qt::QueuedConnection, Q_ARG(float, mph));
+        });
+        speed_expression_parser_->setZenohSession(zenoh_session_);
     }
-    
-    // Create odometer subscription if configured
-    if (!cfg_.odometer_zenoh_key.empty())
-    {
-        createOdometerSubscription();
+
+    if (odometer_expression_parser_) {
+        odometer_expression_parser_->setResultCallback<int>([this](int miles) {
+            QMetaObject::invokeMethod(this, "onOdometerEvaluated", Qt::QueuedConnection, Q_ARG(int, miles));
+        });
+        odometer_expression_parser_->setZenohSession(zenoh_session_);
     }
 }
 
-void Mercedes190ESpeedometer::createSpeedSubscription()
-{
-    if (!zenoh_session_ || cfg_.zenoh_key.empty())
-    {
-        return;
-    }
-    
-    try
-    {
-        auto key_expr = zenoh::KeyExpr(cfg_.zenoh_key);
-        
-        zenoh_speed_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
-            zenoh_session_->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample)
-                {
-                    try
-                    {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
+// Removed direct widget subscriptions; handled by expression_parser
 
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onSpeedDataReceived", Qt::QueuedConnection, bytes);
-                        
-                    }
-                    catch (const std::exception& e)
-                    {
-                        SPDLOG_ERROR("Error parsing speed data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("Created speed subscription for key '{}' with schema type '{}'", 
-                    cfg_.zenoh_key, cfg_.schema_type);
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to create speed subscription for key '{}': {}", cfg_.zenoh_key, e.what());
-    }
+// Removed direct widget subscriptions; handled by expression_parser
+
+void Mercedes190ESpeedometer::onSpeedEvaluated(float mph)
+{
+    setSpeed(mph);
 }
 
-void Mercedes190ESpeedometer::createOdometerSubscription()
+void Mercedes190ESpeedometer::onOdometerEvaluated(int miles)
 {
-    if (!zenoh_session_ || cfg_.odometer_zenoh_key.empty())
-    {
-        return;
-    }
-    
-    try
-    {
-        auto key_expr = zenoh::KeyExpr(cfg_.odometer_zenoh_key);
-        
-        zenoh_odometer_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
-            zenoh_session_->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample)
-                {
-                    try
-                    {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
-
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onOdometerDataReceived", Qt::QueuedConnection, bytes);
-                        
-                    }
-                    catch (const std::exception& e)
-                    {
-                        SPDLOG_ERROR("Error parsing odometer data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("Created odometer subscription for key '{}' with schema type '{}'", 
-                    cfg_.odometer_zenoh_key, cfg_.odometer_schema_type);
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to create odometer subscription for key '{}': {}", cfg_.odometer_zenoh_key, e.what());
-    }
-}
-
-void Mercedes190ESpeedometer::onSpeedDataReceived(const std::string& bytes)
-{
-    try
-    {
-        // Convert string bytes to vector<uint8_t> for expression parser
-        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-        
-        // Evaluate speed expression
-        if (speed_expression_parser_)
-        {
-            float speedMph = speed_expression_parser_->evaluate<float>(payload);
-            setSpeed(speedMph);
-        }
-        
-        // If no separate odometer subscription is configured, try to get odometer from speed data
-        if (cfg_.odometer_zenoh_key.empty() && odometer_expression_parser_)
-        {
-            int odometerValue = odometer_expression_parser_->evaluate<int>(payload);
-            setOdometerValue(odometerValue);
-        }
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Speedometer: Failed to evaluate speed expressions: {}", e.what());
-    }
-}
-
-void Mercedes190ESpeedometer::onOdometerDataReceived(const std::string& bytes)
-{
-    try
-    {
-        // Convert string bytes to vector<uint8_t> for expression parser
-        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-        
-        // Evaluate odometer expression
-        if (odometer_expression_parser_)
-        {
-            int odometerValue = odometer_expression_parser_->evaluate<int>(payload);
-            setOdometerValue(odometerValue);
-        }
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Speedometer: Failed to evaluate odometer expressions: {}", e.what());
-    }
+    setOdometerValue(miles);
 }
 
 #include "mercedes_190e_speedometer/moc_mercedes_190e_speedometer.cpp"

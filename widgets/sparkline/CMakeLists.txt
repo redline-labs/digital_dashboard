@@ -24,4 +24,5 @@ target_link_libraries(sparkline
         zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
         schemas           # For Cap'n Proto schemas
+        expression_parser # For expression evaluation if configured
 )

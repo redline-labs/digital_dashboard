@@ -44,8 +44,9 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
     try
     {
         rpm_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
-            _cfg.schema_type, 
-            _cfg.rpm_expression
+            _cfg.schema_type,
+            _cfg.rpm_expression,
+            _cfg.zenoh_key
         );
         
         if (!rpm_expression_parser_->isValid())
@@ -361,74 +362,20 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
 void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
 {
     _zenoh_session = session;
-    
-    // If we have a zenoh key configured, create the subscription
-    if (!_cfg.zenoh_key.empty()) {
-        createZenohSubscription();
+
+    if (rpm_expression_parser_) {
+        rpm_expression_parser_->setResultCallback<float>([this](float rpm) {
+            QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
+        });
+        rpm_expression_parser_->setZenohSession(_zenoh_session);
     }
 }
 
-void Mercedes190ETachometer::createZenohSubscription()
-{
-    if (!_zenoh_session) {
-        SPDLOG_WARN("Cannot create subscription - no Zenoh session");
-        return;
-    }
-    
-    if (_cfg.zenoh_key.empty()) {
-        return; // No key configured
-    }
-    
-    try {
-        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
-        
-        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
-            _zenoh_session->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample) {
-                    try {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
+// Direct subscriptions removed; expression_parser owns the subscription
 
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onDataReceived", Qt::QueuedConnection, bytes);
-                        
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("Error parsing tachometer data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("Created subscription for key '{}' with schema type '{}'", 
-                    _cfg.zenoh_key, _cfg.schema_type);
-        
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
-                     _cfg.zenoh_key, e.what());
-    }
-}
-
-void Mercedes190ETachometer::onDataReceived(const std::string& bytes)
+void Mercedes190ETachometer::onRpmEvaluated(float rpm)
 {
-    try
-    {
-        // Convert string bytes to vector<uint8_t> for expression parser
-        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-        
-        // Evaluate RPM expression
-        if (rpm_expression_parser_)
-        {
-            float rpmValue = rpm_expression_parser_->evaluate<float>(payload);
-            setRpm(rpmValue);
-        }
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Tachometer: Failed to evaluate RPM expression: {}", e.what());
-    }
+    setRpm(rpm);
 }
 
 #include "mercedes_190e_tachometer/moc_mercedes_190e_tachometer.cpp"

@@ -52,6 +52,7 @@ target_link_libraries(expression_parser PUBLIC
     schemas
     common_logging
     exprtk::exprtk
+    zenohcxx::zenohc
 )
 
 # Add test executable

@@ -43,7 +43,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void onDataReceived(const std::string& bytes);
+    void onConditionEvaluated(bool asserted);
 
 private:
     void updateColors();
@@ -63,12 +63,9 @@ private:
     
     // Zenoh-related members
     std::shared_ptr<zenoh::Session> _zenoh_session;
-    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
     
     // Expression parser for condition evaluation
     std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
-    
-    void createZenohSubscription();
 };
 
 #endif // BATTERYTELLTALEWIDGET_H 

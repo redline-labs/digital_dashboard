@@ -40,8 +40,8 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private slots:
-    void onSpeedDataReceived(const std::string& bytes);
-    void onOdometerDataReceived(const std::string& bytes);
+    void onSpeedEvaluated(float mph);
+    void onOdometerEvaluated(int miles);
 
 private:
     // Speedometer properties.
@@ -110,16 +110,12 @@ private:
     
     // Zenoh-related members
     std::shared_ptr<zenoh::Session> zenoh_session_;
-    std::unique_ptr<zenoh::Subscriber<void>> zenoh_speed_subscriber_;
-    std::unique_ptr<zenoh::Subscriber<void>> zenoh_odometer_subscriber_;
     
     // Expression parsers for speed and odometer calculations
     std::unique_ptr<expression_parser::ExpressionParser> speed_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> odometer_expression_parser_;
     
-    void createZenohSubscriptions();
-    void createSpeedSubscription();
-    void createOdometerSubscription();
+    void configureParserSubscriptions();
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

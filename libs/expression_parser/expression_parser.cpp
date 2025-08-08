@@ -63,6 +63,12 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     }
 }
 
+ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key)
+    : ExpressionParser(schema_name, expression)
+{
+    zenoh_key_ = zenoh_key;
+}
+
 void ExpressionParser::extractVariables()
 {
     // Use ExprTk's collect_variables utility function
@@ -238,5 +244,50 @@ double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
 {
     return evaluate<double>(payload);
 }
+
+void ExpressionParser::setZenohSession(std::shared_ptr<zenoh::Session> session)
+{
+    zenoh_session_ = std::move(session);
+    if (!zenoh_session_) {
+        return;
+    }
+
+    if (zenoh_key_.empty()) {
+        return;
+    }
+
+    try {
+        auto key_expr = zenoh::KeyExpr(zenoh_key_);
+
+        // Declare the subscriber: evaluate on arrival and forward to evaluation_handler_
+        zenoh_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
+            zenoh_session_->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample) {
+                    try {
+                        auto bytes = sample.get_payload().as_string();
+                        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+
+                        if (evaluation_handler_) {
+                            evaluation_handler_(payload);
+                        } else {
+                            // Default behavior: perform evaluation to ensure expression stays warm
+                            (void)this->evaluate<double>(payload);
+                        }
+                    } catch (const std::exception& e) {
+                        SPDLOG_ERROR("ExpressionParser: Error handling zenoh sample: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+
+        SPDLOG_INFO("ExpressionParser: Subscribed to zenoh key '{}'", zenoh_key_);
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("ExpressionParser: Failed to subscribe to key '{}': {}", zenoh_key_, e.what());
+    }
+}
+
+// setResultCallback is a template method implemented inline in the header
 
 } // namespace expression_parser

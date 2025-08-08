@@ -9,15 +9,8 @@
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 #include <spdlog/spdlog.h>
 
-// Cap'n Proto includes
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-#include "vehicle_speed.capnp.h"
-#include "engine_rpm.capnp.h"
-#include "engine_temperature.capnp.h"
-#include "vehicle_warnings.capnp.h"
-
 #include <QMetaObject>
+#include "expression_parser/expression_parser.h"
 #include <memory>
 #include <map>
 
@@ -224,83 +217,44 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
 void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> session)
 {
     _zenoh_session = session;
-    
-    // If we have a zenoh key configured, create the subscription
-    if (!_cfg.zenoh_key.empty()) {
-        createZenohSubscription();
-    }
-}
 
-void SparklineItem::createZenohSubscription()
-{
-    if (!_zenoh_session) {
-        SPDLOG_WARN("SparklineItem: Cannot create subscription - no Zenoh session");
+    if (_cfg.zenoh_key.empty())
+    {
         return;
     }
-    
-    if (_cfg.zenoh_key.empty()) {
-        return; // No key configured
-    }
-    
-    try {
-        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
-        
-        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
-            _zenoh_session->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample) {
-                    try {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
-                        
-                        // Deserialize Cap'n Proto message
-                        ::capnp::FlatArrayMessageReader message(
-                            kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()),
-                                       bytes.size() / sizeof(capnp::word))
-                        );
-                        
-                        double value = 0.0;
-                        
-                        // Determine which schema type based on the key
-                        if (_cfg.zenoh_key.find("speed") != std::string::npos) {
-                            VehicleSpeed::Reader vehicleSpeed = message.getRoot<VehicleSpeed>();
-                            value = static_cast<double>(vehicleSpeed.getSpeedMps());
-                        } else if (_cfg.zenoh_key.find("rpm") != std::string::npos) {
-                            EngineRpm::Reader engineRpm = message.getRoot<EngineRpm>();
-                            value = static_cast<double>(engineRpm.getRpm());
-                        } else if (_cfg.zenoh_key.find("temperature") != std::string::npos) {
-                            EngineTemperature::Reader engineTemp = message.getRoot<EngineTemperature>();
-                            value = static_cast<double>(engineTemp.getTemperatureCelsius());
-                        } else if (_cfg.zenoh_key.find("battery") != std::string::npos) {
-                            BatteryWarning::Reader batteryWarning = message.getRoot<BatteryWarning>();
-                            value = batteryWarning.getIsWarningActive() ? 1.0 : 0.0;
-                        } else {
-                            SPDLOG_WARN("SparklineItem: Unknown data type for key '{}'", _cfg.zenoh_key);
-                            return;
-                        }
-                        
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onDataReceived", 
-                                                Qt::QueuedConnection, 
-                                                Q_ARG(double, value));
-                        
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("SparklineItem: Error parsing data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("SparklineItem: Created subscription for key '{}'", _cfg.zenoh_key);
-        
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("SparklineItem: Failed to create subscription for key '{}': {}", 
-                     _cfg.zenoh_key, e.what());
+
+    // If schema_type and expression are provided, use expression_parser-owned subscription
+    if (!_cfg.schema_type.empty() && !_cfg.value_expression.empty())
+    {
+        try
+        {
+            _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+                _cfg.schema_type,
+                _cfg.value_expression,
+                _cfg.zenoh_key
+            );
+            if (_expression_parser->isValid())
+            {
+                _expression_parser->setResultCallback<double>([this](double value) {
+                    QMetaObject::invokeMethod(this, "onDataEvaluated", Qt::QueuedConnection, Q_ARG(double, value));
+                });
+                _expression_parser->setZenohSession(_zenoh_session);
+            }
+            else
+            {
+                SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, _cfg.schema_type);
+                _expression_parser.reset();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            SPDLOG_ERROR("SparklineItem: failed to init expression parser: {}", e.what());
+            _expression_parser.reset();
+        }
     }
 }
 
-void SparklineItem::onDataReceived(double value)
+void SparklineItem::onDataEvaluated(double value)
 {
     addDataPoint(value);
 }

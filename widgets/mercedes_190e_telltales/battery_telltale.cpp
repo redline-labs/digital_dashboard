@@ -25,8 +25,9 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
     // Initialize expression parser
     try {
         _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
-            _cfg.schema_type, 
-            _cfg.condition_expression
+            _cfg.schema_type,
+            _cfg.condition_expression,
+            _cfg.zenoh_key
         );
         
         if (!_expression_parser->isValid()) {
@@ -158,84 +159,20 @@ void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
 void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session> session)
 {
     _zenoh_session = session;
-    
-    // If we have a zenoh key configured, create the subscription
-    if (!_cfg.zenoh_key.empty()) {
-        createZenohSubscription();
+
+    if (_expression_parser) {
+        _expression_parser->setResultCallback<bool>([this](bool asserted) {
+            QMetaObject::invokeMethod(this, "onConditionEvaluated", Qt::QueuedConnection, Q_ARG(bool, asserted));
+        });
+        _expression_parser->setZenohSession(_zenoh_session);
     }
 }
 
-void Mercedes190EBatteryTelltale::createZenohSubscription()
-{
-    if (!_zenoh_session) {
-        SPDLOG_WARN("Mercedes190EBatteryTelltale: Cannot create subscription - no Zenoh session");
-        return;
-    }
-    
-    if (_cfg.zenoh_key.empty()) {
-        return; // No key configured
-    }
-    
-    try {
-        auto key_expr = zenoh::KeyExpr(_cfg.zenoh_key);
-        
-        _zenoh_subscriber = std::make_unique<zenoh::Subscriber<void>>(
-            _zenoh_session->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample)
-                {
-                    try
-                    {
-                        // Get the payload bytes
-                        auto bytes = sample.get_payload().as_string();
+// Direct widget subscription removed; handled by expression_parser
 
-                        // Use Qt's queued connection to ensure thread safety
-                        QMetaObject::invokeMethod(this, "onDataReceived", Qt::QueuedConnection, bytes);
-                        
-                    }
-                    catch (const std::exception& e)
-                    {
-                        SPDLOG_ERROR("Error parsing data: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-        
-        SPDLOG_INFO("Created subscription for key '{}' with schema type '{}'", 
-                    _cfg.zenoh_key, _cfg.schema_type);
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to create subscription for key '{}': {}", 
-                     _cfg.zenoh_key, e.what());
-    }
-}
-
-void Mercedes190EBatteryTelltale::onDataReceived(const std::string& bytes)
+void Mercedes190EBatteryTelltale::onConditionEvaluated(bool asserted)
 {
-    if (!_expression_parser)
-    {
-        return;
-    }
-    
-    try
-    {
-        // Convert string bytes to vector<uint8_t> for expression parser
-        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-        
-        // Evaluate the expression as a boolean condition
-        bool conditionMet = _expression_parser->evaluate<bool>(payload);
-        
-        // Update the telltale state based on the condition
-        setAsserted(conditionMet);
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Battery telltale: Failed to evaluate expression '{}': {}", 
-                    _cfg.condition_expression, e.what());
-    }
+    setAsserted(asserted);
 }
 
 
