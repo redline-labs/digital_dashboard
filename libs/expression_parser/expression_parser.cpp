@@ -2,6 +2,7 @@
 
 #include "spdlog/spdlog.h"
 #include "helpers.h"
+#include "expression_parser/session_manager.h"
 
 #include <stdexcept>
 #include <algorithm>
@@ -10,9 +11,10 @@
 
 namespace expression_parser {
 
-ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression):
+ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key):
     schema_name_{schema_name},
     expression_{expression},
+    zenoh_key_{zenoh_key},
     is_valid_{false},
     symbol_table_{},
     compiled_expression_{},
@@ -61,12 +63,43 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
         compiled_expression_.register_symbol_table(symbol_table_);
         is_valid_ = parser_.compile(expression_, compiled_expression_) == true;
     }
-}
 
-ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key)
-    : ExpressionParser(schema_name, expression)
-{
-    zenoh_key_ = zenoh_key;
+
+    try {
+        zenoh_session_ = SessionManager::getOrCreate();
+        if (!zenoh_session_)
+        {
+            SPDLOG_ERROR("No zenoh session available to subscribe to '{}'", zenoh_key_);
+            return;
+        }
+
+        auto key_expr = zenoh::KeyExpr(zenoh_key_);
+        zenoh_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
+            zenoh_session_->declare_subscriber(
+                key_expr,
+                [this](const zenoh::Sample& sample)
+                {
+                    try
+                    {
+                        auto bytes = sample.get_payload().as_string();
+                        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+                        if (evaluation_handler_)
+                        {
+                            evaluation_handler_(payload);
+                        }
+                    } catch (const std::exception& e) {
+                        SPDLOG_ERROR("Error handling zenoh sample: {}", e.what());
+                    }
+                },
+                zenoh::closures::none
+            )
+        );
+        SPDLOG_INFO("Subscribed to zenoh key '{}'", zenoh_key_);
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to subscribe to key '{}': {}", zenoh_key_, e.what());
+    }
 }
 
 void ExpressionParser::extractVariables()
@@ -245,49 +278,27 @@ double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
     return evaluate<double>(payload);
 }
 
-void ExpressionParser::setZenohSession(std::shared_ptr<zenoh::Session> session)
+// Helper to ensure subscription is declared when we have a key and a callback
+void ensure_subscription(ExpressionParser* self)
 {
-    zenoh_session_ = std::move(session);
-    if (!zenoh_session_) {
+    if (!self) return;
+    if (self->zenoh_key_.empty())
+    {
+        SPDLOG_ERROR("No zenoh key provided for key '{}'", self->zenoh_key_);
+        return;
+    }
+    if (!self->evaluation_handler_)
+    {
+        SPDLOG_ERROR("No evaluation handler set for key '{}'", self->zenoh_key_);
+        return;
+    }
+    if (self->zenoh_subscriber_)
+    {
+        SPDLOG_ERROR("Already subscribed to key '{}'", self->zenoh_key_);
         return;
     }
 
-    if (zenoh_key_.empty()) {
-        return;
-    }
-
-    try {
-        auto key_expr = zenoh::KeyExpr(zenoh_key_);
-
-        // Declare the subscriber: evaluate on arrival and forward to evaluation_handler_
-        zenoh_subscriber_ = std::make_unique<zenoh::Subscriber<void>>(
-            zenoh_session_->declare_subscriber(
-                key_expr,
-                [this](const zenoh::Sample& sample) {
-                    try {
-                        auto bytes = sample.get_payload().as_string();
-                        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-
-                        if (evaluation_handler_) {
-                            evaluation_handler_(payload);
-                        } else {
-                            // Default behavior: perform evaluation to ensure expression stays warm
-                            (void)this->evaluate<double>(payload);
-                        }
-                    } catch (const std::exception& e) {
-                        SPDLOG_ERROR("ExpressionParser: Error handling zenoh sample: {}", e.what());
-                    }
-                },
-                zenoh::closures::none
-            )
-        );
-
-        SPDLOG_INFO("ExpressionParser: Subscribed to zenoh key '{}'", zenoh_key_);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("ExpressionParser: Failed to subscribe to key '{}': {}", zenoh_key_, e.what());
-    }
+    
 }
-
-// setResultCallback is a template method implemented inline in the header
 
 } // namespace expression_parser

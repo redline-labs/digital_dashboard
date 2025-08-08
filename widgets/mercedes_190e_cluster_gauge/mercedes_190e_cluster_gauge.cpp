@@ -69,6 +69,27 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     initializeSubGaugeParser(m_config.right_gauge, right_gauge_expression_parser_, "right");
     initializeSubGaugeParser(m_config.bottom_gauge, bottom_gauge_expression_parser_, "bottom");
     initializeSubGaugeParser(m_config.left_gauge, left_gauge_expression_parser_, "left");
+
+    if (top_gauge_expression_parser_) {
+        top_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onTopGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+    }
+    if (right_gauge_expression_parser_) {
+        right_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onRightGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+    }
+    if (bottom_gauge_expression_parser_) {
+        bottom_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onBottomGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+    }
+    if (left_gauge_expression_parser_) {
+        left_gauge_expression_parser_->setResultCallback<float>([this](float v) {
+            QMetaObject::invokeMethod(this, "onLeftGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+        });
+    }
 }
 
 void Mercedes190EClusterGauge::setTopGaugeValue(float value)
@@ -665,46 +686,13 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::setZenohSession(std::shared_ptr<zenoh::Session> session)
+void Mercedes190EClusterGauge::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
 {
-    zenoh_session_ = session;
-
-    if (zenoh_session_) {
-        configureParserSubscriptions();
-    }
+    configureParserSubscriptions();
 }
 
 void Mercedes190EClusterGauge::configureParserSubscriptions()
 {
-    if (!zenoh_session_) {
-        SPDLOG_WARN("Cannot configure parser subscriptions - no Zenoh session");
-        return;
-    }
-
-    if (top_gauge_expression_parser_) {
-        top_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onTopGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
-        });
-        top_gauge_expression_parser_->setZenohSession(zenoh_session_);
-    }
-    if (right_gauge_expression_parser_) {
-        right_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onRightGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
-        });
-        right_gauge_expression_parser_->setZenohSession(zenoh_session_);
-    }
-    if (bottom_gauge_expression_parser_) {
-        bottom_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onBottomGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
-        });
-        bottom_gauge_expression_parser_->setZenohSession(zenoh_session_);
-    }
-    if (left_gauge_expression_parser_) {
-        left_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onLeftGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
-        });
-        left_gauge_expression_parser_->setZenohSession(zenoh_session_);
-    }
 }
 
 // Direct widget subscriptions removed; handled by expression_parser

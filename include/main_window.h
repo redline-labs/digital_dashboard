@@ -35,13 +35,9 @@ class MainWindow : public QWidget
   private:
     void createWidgetsFromConfig();
     QWidget* createWidget(const widget_config_t& widget_config);
-    void initializeZenoh();
 
     window_config_t _window_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
-
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> _zenoh_session;
 };  // class MainWindow
 
 

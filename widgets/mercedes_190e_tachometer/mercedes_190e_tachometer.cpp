@@ -66,6 +66,13 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
         SPDLOG_ERROR("Failed to initialize RPM expression parser for tachometer: {}", e.what());
         rpm_expression_parser_.reset();
     }
+
+    if (rpm_expression_parser_)
+    {
+        rpm_expression_parser_->setResultCallback<float>([this](float rpm) {
+            QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
+        });
+    }
     
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
     if (fontId == -1) {
@@ -359,16 +366,8 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     painter->restore(); // Restore from clock translation
 }
 
-void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
+void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
 {
-    _zenoh_session = session;
-
-    if (rpm_expression_parser_) {
-        rpm_expression_parser_->setResultCallback<float>([this](float rpm) {
-            QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
-        });
-        rpm_expression_parser_->setZenohSession(_zenoh_session);
-    }
 }
 
 // Direct subscriptions removed; expression_parser owns the subscription

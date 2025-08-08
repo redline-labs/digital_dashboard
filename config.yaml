@@ -62,6 +62,8 @@ windows:
         height: 40
         config:
           zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
+          schema_type: "EngineTemperature"
+          value_expression: "temperatureCelsius"
           units: "Coolant (C)"
           min_value: -40
           max_value: 120

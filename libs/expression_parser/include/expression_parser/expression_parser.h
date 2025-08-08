@@ -37,16 +37,8 @@ class ExpressionParser
 {
   public:
     /**
-     * Constructor that initializes the parser with a schema and expression
-     * 
-     * @param schema_name Name of the schema to use for validation
-     * @param expression Mathematical expression string to be evaluated
-     */
-    ExpressionParser(const std::string& schema_name, const std::string& expression);
-
-    /**
      * Constructor that additionally stores a Zenoh key for automatic subscription
-     * when a Zenoh session is provided via setZenohSession().
+     * using the process-wide SessionManager.
      *
      * @param schema_name Name of the schema to use for validation
      * @param expression Mathematical expression string to be evaluated
@@ -124,30 +116,30 @@ class ExpressionParser
 
     /**
      * Configure the result callback that will be invoked when subscribed data
-     * is received and evaluated. You must call setResultCallback<T>() before
-     * setZenohSession() to ensure typed evaluation on incoming samples.
+     * is received and evaluated. When set, the parser will subscribe using
+     * the process-wide SessionManager with the provided zenoh_key.
      */
     template<typename T>
     void setResultCallback(std::function<void(T)> callback)
     {
-        evaluation_handler_ = [this, cb = std::move(callback)](const std::vector<uint8_t>& payload) mutable {
-            try {
+        SPDLOG_INFO("Setting evaluation callback for key '{}'", zenoh_key_);
+        evaluation_handler_ = [this, cb = std::move(callback)](const std::vector<uint8_t>& payload) mutable
+        {
+            try
+            {
                 T value = this->evaluate<T>(payload);
                 cb(value);
-            } catch (const std::exception& e) {
-                SPDLOG_ERROR("ExpressionParser: evaluation callback error: {}", e.what());
+            }
+            catch (const std::exception& e)
+            {
+                SPDLOG_ERROR("Evaluation callback error: {}", e.what());
             }
         };
     }
 
-    /**
-     * Set the Zenoh session and declare the subscriber (if a zenoh key was
-     * provided). Incoming samples will be evaluated and forwarded to the
-     * previously configured result callback, if set.
-     */
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
-
-private:
+  private:
+    // Allow internal helper to access private members for subscription setup
+    friend void ensure_subscription(ExpressionParser* self);
     // Cached field information for fast extraction
     struct FieldCache {
         capnp::StructSchema::Field field;

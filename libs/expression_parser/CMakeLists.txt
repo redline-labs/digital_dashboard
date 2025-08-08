@@ -39,6 +39,7 @@ configure_file(
 add_library(expression_parser STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp
     expression_parser.cpp
+    session_manager.cpp
 )
 
 target_include_directories(expression_parser PUBLIC

@@ -86,6 +86,20 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
             odometer_expression_parser_.reset();
         }
     }
+
+    if (speed_expression_parser_)
+    {
+        speed_expression_parser_->setResultCallback<float>([this](float mph) {
+            QMetaObject::invokeMethod(this, "onSpeedEvaluated", Qt::QueuedConnection, Q_ARG(float, mph));
+        });
+    }
+
+    if (odometer_expression_parser_)
+    {
+        odometer_expression_parser_->setResultCallback<int>([this](int miles) {
+            QMetaObject::invokeMethod(this, "onOdometerEvaluated", Qt::QueuedConnection, Q_ARG(int, miles));
+        });
+    }
     
     // Load font from Qt resources
     QString font_family = "sans-serif";
@@ -496,33 +510,14 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
     painter->restore();
 }
 
-void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> session)
+void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
 {
-    zenoh_session_ = session;
-
     configureParserSubscriptions();
 }
 
 void Mercedes190ESpeedometer::configureParserSubscriptions()
 {
-    if (!zenoh_session_) {
-        SPDLOG_WARN("Cannot configure parser subscriptions - no Zenoh session");
-        return;
-    }
 
-    if (speed_expression_parser_) {
-        speed_expression_parser_->setResultCallback<float>([this](float mph) {
-            QMetaObject::invokeMethod(this, "onSpeedEvaluated", Qt::QueuedConnection, Q_ARG(float, mph));
-        });
-        speed_expression_parser_->setZenohSession(zenoh_session_);
-    }
-
-    if (odometer_expression_parser_) {
-        odometer_expression_parser_->setResultCallback<int>([this](int miles) {
-            QMetaObject::invokeMethod(this, "onOdometerEvaluated", Qt::QueuedConnection, Q_ARG(int, miles));
-        });
-        odometer_expression_parser_->setZenohSession(zenoh_session_);
-    }
 }
 
 // Removed direct widget subscriptions; handled by expression_parser

@@ -42,6 +42,13 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
         SPDLOG_ERROR("Failed to initialize expression parser for battery telltale: {}", e.what());
         _expression_parser.reset(); // Disable expression parsing
     }
+
+    if (_expression_parser)
+    {
+        _expression_parser->setResultCallback<bool>([this](bool asserted) {
+            QMetaObject::invokeMethod(this, "onConditionEvaluated", Qt::QueuedConnection, Q_ARG(bool, asserted));
+        });
+    }
     
     // Load the SVG renderer
     mSvgRenderer = new QSvgRenderer(QString(":/mercedes_190e_telltales/telltale_battery.svg"), this);
@@ -156,16 +163,8 @@ void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
     update(); // Ensure the widget repaints with new size
 }
 
-void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session> session)
+void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
 {
-    _zenoh_session = session;
-
-    if (_expression_parser) {
-        _expression_parser->setResultCallback<bool>([this](bool asserted) {
-            QMetaObject::invokeMethod(this, "onConditionEvaluated", Qt::QueuedConnection, Q_ARG(bool, asserted));
-        });
-        _expression_parser->setZenohSession(_zenoh_session);
-    }
 }
 
 // Direct widget subscription removed; handled by expression_parser

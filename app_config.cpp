@@ -162,8 +162,8 @@ struct convert<SparklineConfig_t> {
         rhs.line_color = node["line_color"].as<std::string>();
         rhs.text_color = node["text_color"].as<std::string>();
         rhs.font_family = node["font_family"].as<std::string>();
-        rhs.font_size_value = node["font_size_value"].as<uint16_t>();
-        rhs.font_size_units = node["font_size_units"].as<uint16_t>();
+        //rhs.font_size_value = node["font_size_value"].as<uint16_t>();
+        //rhs.font_size_units = node["font_size_units"].as<uint16_t>();
         rhs.update_rate = node["update_rate"].as<uint16_t>();
         rhs.zenoh_key = node["zenoh_key"].as<std::string>();
         rhs.schema_type = node["schema_type"].as<std::string>();

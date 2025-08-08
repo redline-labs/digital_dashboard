@@ -62,6 +62,32 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     }
     m_lastValue = 0.0; // Keep track of the last real value
 
+
+    try
+    {
+        _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+            _cfg.schema_type,
+            _cfg.value_expression,
+            _cfg.zenoh_key
+        );
+        if (_expression_parser->isValid())
+        {
+            _expression_parser->setResultCallback<double>([this](double value) {
+                QMetaObject::invokeMethod(this, "onDataEvaluated", Qt::QueuedConnection, Q_ARG(double, value));
+            });
+        }
+        else
+        {
+            SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, _cfg.schema_type);
+            _expression_parser.reset();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("SparklineItem: failed to init expression parser: {}", e.what());
+        _expression_parser.reset();
+    }
+
     // Initialize and start the repaint timer
     m_repaintTimer = new QTimer(this);
     connect(m_repaintTimer, &QTimer::timeout, this, &SparklineItem::forceRepaint);
@@ -214,44 +240,8 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     painter.drawPath(linePath);
 }
 
-void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> session)
+void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
 {
-    _zenoh_session = session;
-
-    if (_cfg.zenoh_key.empty())
-    {
-        return;
-    }
-
-    // If schema_type and expression are provided, use expression_parser-owned subscription
-    if (!_cfg.schema_type.empty() && !_cfg.value_expression.empty())
-    {
-        try
-        {
-            _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
-                _cfg.schema_type,
-                _cfg.value_expression,
-                _cfg.zenoh_key
-            );
-            if (_expression_parser->isValid())
-            {
-                _expression_parser->setResultCallback<double>([this](double value) {
-                    QMetaObject::invokeMethod(this, "onDataEvaluated", Qt::QueuedConnection, Q_ARG(double, value));
-                });
-                _expression_parser->setZenohSession(_zenoh_session);
-            }
-            else
-            {
-                SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, _cfg.schema_type);
-                _expression_parser.reset();
-            }
-        }
-        catch (const std::exception& e)
-        {
-            SPDLOG_ERROR("SparklineItem: failed to init expression parser: {}", e.what());
-            _expression_parser.reset();
-        }
-    }
 }
 
 void SparklineItem::onDataEvaluated(double value)

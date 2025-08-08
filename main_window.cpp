@@ -17,9 +17,6 @@ MainWindow::MainWindow(const window_config_t& window_cfg):
     setStyleSheet(QString("MainWindow { background-color: %1; }")
                  .arg(QString::fromStdString(_window_cfg.background_color)));
 
-    // Initialize Zenoh first
-    initializeZenoh();
-
     // Create widgets from configuration
     createWidgetsFromConfig();
 }
@@ -67,37 +64,21 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     if (widget_config.type == widget_type_t::mercedes_190e_speedometer)
     {
         auto* speedometer = new Mercedes190ESpeedometer(std::get<Mercedes190ESpeedometerConfig_t>(widget_config.config));
-        if (_zenoh_session)
-        {
-            speedometer->setZenohSession(_zenoh_session);
-        }
         return speedometer;
     }
     else if (widget_config.type == widget_type_t::mercedes_190e_tachometer)
     {
         auto* tachometer = new Mercedes190ETachometer(std::get<Mercedes190ETachometerConfig_t>(widget_config.config));
-        if (_zenoh_session)
-        {
-            tachometer->setZenohSession(_zenoh_session);
-        }
         return tachometer;
     }
     else if (widget_config.type == widget_type_t::sparkline)
     {
         auto* sparkline = new SparklineItem(std::get<SparklineConfig_t>(widget_config.config));
-        if (_zenoh_session)
-        {
-            sparkline->setZenohSession(_zenoh_session);
-        }
         return sparkline;
     }
     else if (widget_config.type == widget_type_t::mercedes_190e_battery_telltale)
     {
         auto* battery_telltale = new Mercedes190EBatteryTelltale(std::get<Mercedes190EBatteryTelltaleConfig_t>(widget_config.config));
-        if (_zenoh_session)
-        {
-            battery_telltale->setZenohSession(_zenoh_session);
-        }
         return battery_telltale;
     }
     else if (widget_config.type == widget_type_t::carplay)
@@ -110,10 +91,6 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     else if (widget_config.type == widget_type_t::mercedes_190e_cluster_gauge)
     {
         auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));
-        if (_zenoh_session)
-        {
-            cluster_gauge->setZenohSession(_zenoh_session);
-        }
         return cluster_gauge;
     }
     else
@@ -122,26 +99,6 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         return nullptr;
     }
 }
-
-void MainWindow::initializeZenoh()
-{
-    try
-    {
-        // Create Zenoh configuration
-        auto config = zenoh::Config::create_default();
-        
-        // Open Zenoh session (use shared_ptr for sharing with widgets)
-        _zenoh_session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
-        SPDLOG_INFO("Zenoh session opened successfully for window '{}'", _window_cfg.name);
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to initialize Zenoh for window '{}': {}", _window_cfg.name, e.what());
-        // Continue without Zenoh - widgets can still function without real-time data
-    }
-}
-
 
 
 const std::string& MainWindow::getWindowName() const
