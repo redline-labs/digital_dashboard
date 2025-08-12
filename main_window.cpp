@@ -93,6 +93,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));
         return cluster_gauge;
     }
+    else if (widget_config.type == widget_type_t::circle_tachometer)
+    {
+        auto* circle_tach = new CircleTachometer(std::get<CircleTachometerConfig_t>(widget_config.config));
+        return circle_tach;
+    }
     else
     {
         SPDLOG_WARN("Unknown widget type: '{}'", widget_type_to_string(widget_config.type));

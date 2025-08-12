@@ -13,6 +13,7 @@
 #include "mercedes_190e_telltales/battery_telltale.h"
 #include "sparkline/sparkline.h"
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
+#include "circle_tachometer/circle_tachometer.h"
 
 enum class widget_type_t
 {
@@ -20,6 +21,7 @@ enum class widget_type_t
     mercedes_190e_tachometer,
     mercedes_190e_battery_telltale,
     mercedes_190e_cluster_gauge,
+        circle_tachometer,
 
     sparkline,
 
@@ -43,6 +45,9 @@ constexpr std::string_view widget_type_to_string(widget_type_t type)
 
         case widget_type_t::mercedes_190e_cluster_gauge:
             return "mercedes_190e_cluster_gauge";
+
+        case widget_type_t::circle_tachometer:
+            return "circle_tachometer";
 
         case widget_type_t::sparkline:
             return "sparkline";
@@ -78,7 +83,8 @@ struct widget_config_t {
         Mercedes190ETachometer::config_t,
         Mercedes190EBatteryTelltale::config_t,
         SparklineItem::config_t,
-        Mercedes190EClusterGauge::config_t> config;
+        Mercedes190EClusterGauge::config_t,
+        CircleTachometer::config_t> config;
 };
 
 struct window_config_t {

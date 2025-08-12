@@ -130,6 +130,34 @@ struct convert<Mercedes190ETachometerConfig_t> {
     }
 };
 
+// New: circle tachometer widget config
+template<>
+struct convert<CircleTachometerConfig_t> {
+    static Node encode(const CircleTachometerConfig_t& rhs)
+    {
+        Node node = {};
+        node["max_rpm"] = rhs.max_rpm;
+        node["warning_rpm"] = rhs.warning_rpm;
+        node["center_page_digit"] = rhs.center_page_digit;
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["rpm_expression"] = rhs.rpm_expression;
+        return node;
+    }
+
+    static bool decode(const Node& node, CircleTachometerConfig_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
+        if (node["warning_rpm"]) rhs.warning_rpm = node["warning_rpm"].as<uint32_t>();
+        if (node["center_page_digit"]) rhs.center_page_digit = node["center_page_digit"].as<uint8_t>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
+        if (node["rpm_expression"]) rhs.rpm_expression = node["rpm_expression"].as<std::string>();
+        return true;
+    }
+};
+
 
 template<>
 struct convert<SparklineConfig_t> {
@@ -294,6 +322,11 @@ struct convert<widget_config_t> {
             node["type"] = Mercedes190EClusterGauge::kWidgetName;
             node["config"] = std::get<Mercedes190EClusterGauge::config_t>(rhs.config);
         }
+        else if (rhs.type == widget_type_t::circle_tachometer)
+        {
+            node["type"] = CircleTachometer::kWidgetName;
+            node["config"] = std::get<CircleTachometer::config_t>(rhs.config);
+        }
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", widget_type_to_string(rhs.type));
@@ -343,6 +376,11 @@ struct convert<widget_config_t> {
         {
             rhs.type = widget_type_t::mercedes_190e_cluster_gauge;
             rhs.config = node["config"].as<Mercedes190EClusterGaugeConfig_t>();
+        }
+        else if (type == CircleTachometer::kWidgetName)
+        {
+            rhs.type = widget_type_t::circle_tachometer;
+            rhs.config = node["config"].as<CircleTachometerConfig_t>();
         }
         else
         {

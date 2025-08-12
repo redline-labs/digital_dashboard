@@ -128,6 +128,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     mercedes_190e_tachometer
     sparkline
     mercedes_190e_cluster_gauge
+    circle_tachometer
 )
 
 # Add comprehensive test data publisher executable
