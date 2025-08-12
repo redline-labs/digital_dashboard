@@ -3,15 +3,15 @@ windows:
   - name: "main"
     width: 800
     height: 480
-    background_color: "#000000"
+    background_color: "#73C3D0"
     widgets:
-      - type: circle_tachometer
+      - type: motec_cdl3_tachometer
         x: 200
         y: 60
         width: 400
         height: 360
         config:
-          max_rpm: 8000
+          max_rpm: 6000
           warning_rpm: 6500
           center_page_digit: 5
           zenoh_key: "vehicle/engine/rpm"

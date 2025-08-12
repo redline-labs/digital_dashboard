@@ -159,6 +159,31 @@ struct convert<CircleTachometerConfig_t> {
 };
 
 
+// Motec CDL3 tachometer widget config
+template<>
+struct convert<MotecCdl3TachometerConfig_t> {
+    static Node encode(const MotecCdl3TachometerConfig_t& rhs)
+    {
+        Node node = {};
+        node["max_rpm"] = rhs.max_rpm;
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["rpm_expression"] = rhs.rpm_expression;
+        return node;
+    }
+
+    static bool decode(const Node& node, MotecCdl3TachometerConfig_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
+        if (node["rpm_expression"]) rhs.rpm_expression = node["rpm_expression"].as<std::string>();
+        return true;
+    }
+};
+
+
 template<>
 struct convert<SparklineConfig_t> {
     static Node encode(const SparklineConfig_t& rhs)
@@ -327,6 +352,11 @@ struct convert<widget_config_t> {
             node["type"] = CircleTachometer::kWidgetName;
             node["config"] = std::get<CircleTachometer::config_t>(rhs.config);
         }
+        else if (rhs.type == widget_type_t::motec_cdl3_tachometer)
+        {
+            node["type"] = MotecCdl3Tachometer::kWidgetName;
+            node["config"] = std::get<MotecCdl3Tachometer::config_t>(rhs.config);
+        }
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", widget_type_to_string(rhs.type));
@@ -381,6 +411,11 @@ struct convert<widget_config_t> {
         {
             rhs.type = widget_type_t::circle_tachometer;
             rhs.config = node["config"].as<CircleTachometerConfig_t>();
+        }
+        else if (type == MotecCdl3Tachometer::kWidgetName)
+        {
+            rhs.type = widget_type_t::motec_cdl3_tachometer;
+            rhs.config = node["config"].as<MotecCdl3TachometerConfig_t>();
         }
         else
         {

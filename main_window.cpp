@@ -5,6 +5,7 @@
 #include <QMetaObject>
 #include <QPalette>
 
+#include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
 
 MainWindow::MainWindow(const window_config_t& window_cfg):
     QWidget{},
@@ -97,6 +98,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     {
         auto* circle_tach = new CircleTachometer(std::get<CircleTachometerConfig_t>(widget_config.config));
         return circle_tach;
+    }
+    else if (widget_config.type == widget_type_t::motec_cdl3_tachometer)
+    {
+        auto* tach = new MotecCdl3Tachometer(std::get<MotecCdl3TachometerConfig_t>(widget_config.config));
+        return tach;
     }
     else
     {
