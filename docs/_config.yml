@@ -1,0 +1,12 @@
+title: Digital Dashboard
+description: Instrument cluster widgets, CarPlay, and more.
+theme: minima
+markdown: kramdown
+plugins:
+  - jekyll-feed
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+
+
