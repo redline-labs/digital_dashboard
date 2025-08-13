@@ -132,8 +132,8 @@ struct convert<Mercedes190ETachometerConfig_t> {
 
 // New: circle tachometer widget config
 template<>
-struct convert<CircleTachometerConfig_t> {
-    static Node encode(const CircleTachometerConfig_t& rhs)
+struct convert<MotecC125TachometerConfig_t> {
+    static Node encode(const MotecC125TachometerConfig_t& rhs)
     {
         Node node = {};
         node["max_rpm"] = rhs.max_rpm;
@@ -145,7 +145,7 @@ struct convert<CircleTachometerConfig_t> {
         return node;
     }
 
-    static bool decode(const Node& node, CircleTachometerConfig_t& rhs)
+    static bool decode(const Node& node, MotecC125TachometerConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
         if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
@@ -347,10 +347,10 @@ struct convert<widget_config_t> {
             node["type"] = Mercedes190EClusterGauge::kWidgetName;
             node["config"] = std::get<Mercedes190EClusterGauge::config_t>(rhs.config);
         }
-        else if (rhs.type == widget_type_t::circle_tachometer)
+        else if (rhs.type == widget_type_t::motec_c125_tachometer)
         {
-            node["type"] = CircleTachometer::kWidgetName;
-            node["config"] = std::get<CircleTachometer::config_t>(rhs.config);
+            node["type"] = MotecC125Tachometer::kWidgetName;
+            node["config"] = std::get<MotecC125Tachometer::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::motec_cdl3_tachometer)
         {
@@ -407,10 +407,10 @@ struct convert<widget_config_t> {
             rhs.type = widget_type_t::mercedes_190e_cluster_gauge;
             rhs.config = node["config"].as<Mercedes190EClusterGaugeConfig_t>();
         }
-        else if (type == CircleTachometer::kWidgetName)
+        else if (type == MotecC125Tachometer::kWidgetName)
         {
-            rhs.type = widget_type_t::circle_tachometer;
-            rhs.config = node["config"].as<CircleTachometerConfig_t>();
+            rhs.type = widget_type_t::motec_c125_tachometer;
+            rhs.config = node["config"].as<MotecC125TachometerConfig_t>();
         }
         else if (type == MotecCdl3Tachometer::kWidgetName)
         {

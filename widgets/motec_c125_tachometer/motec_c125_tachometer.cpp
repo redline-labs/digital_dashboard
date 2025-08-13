@@ -1,4 +1,4 @@
-#include "circle_tachometer/circle_tachometer.h"
+#include "motec_c125_tachometer/motec_c125_tachometer.h"
 
 #include <QPainter>
 #include <QFontDatabase>
@@ -18,7 +18,7 @@ constexpr float kSweepStartDeg = 160.0f; // 0 RPM
 constexpr float kSweepEndDeg   = 20.0f; // max RPM
 }
 
-CircleTachometer::CircleTachometer(const CircleTachometerConfig_t& cfg, QWidget* parent)
+MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent)
     : QWidget(parent), _cfg{cfg}, _rpm{0.0f} {
     // font for the center digit (use bundled Futura if available)
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
@@ -46,26 +46,26 @@ CircleTachometer::CircleTachometer(const CircleTachometerConfig_t& cfg, QWidget*
     }
 }
 
-void CircleTachometer::setZenohSession(std::shared_ptr<zenoh::Session> session) {
+void MotecC125Tachometer::setZenohSession(std::shared_ptr<zenoh::Session> session) {
     _zenoh_session = std::move(session);
 }
 
-float CircleTachometer::clampRpm(float rpm) const {
+float MotecC125Tachometer::clampRpm(float rpm) const {
     if (rpm < 0.0f) return 0.0f;
     if (rpm > static_cast<float>(_cfg.max_rpm)) return static_cast<float>(_cfg.max_rpm);
     return rpm;
 }
 
-void CircleTachometer::setRpm(float rpm) {
+void MotecC125Tachometer::setRpm(float rpm) {
     _rpm = clampRpm(rpm);
     update();
 }
 
-void CircleTachometer::onRpmEvaluated(float rpm) {
+void MotecC125Tachometer::onRpmEvaluated(float rpm) {
     setRpm(rpm);
 }
 
-void CircleTachometer::paintEvent(QPaintEvent* e) {
+void MotecC125Tachometer::paintEvent(QPaintEvent* e) {
     Q_UNUSED(e);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -84,7 +84,7 @@ void CircleTachometer::paintEvent(QPaintEvent* e) {
     drawCenterDigit(&p);
 }
 
-void CircleTachometer::drawDial(QPainter* painter) {
+void MotecC125Tachometer::drawDial(QPainter* painter) {
     painter->save();
 
     // No background here (handled in drawBackdrop)
@@ -118,7 +118,7 @@ void CircleTachometer::drawDial(QPainter* painter) {
     painter->restore();
 }
 
-void CircleTachometer::drawBackdrop(QPainter* painter) {
+void MotecC125Tachometer::drawBackdrop(QPainter* painter) {
     painter->save();
     painter->setPen(Qt::NoPen);
     painter->setBrush(Qt::black);
@@ -126,7 +126,7 @@ void CircleTachometer::drawBackdrop(QPainter* painter) {
     painter->restore();
 }
 
-void CircleTachometer::drawTicks(QPainter* painter) {
+void MotecC125Tachometer::drawTicks(QPainter* painter) {
     painter->save();
 
     // Tick band lies in the dark area between the white rings
@@ -185,7 +185,7 @@ void CircleTachometer::drawTicks(QPainter* painter) {
     painter->restore();
 }
 
-void CircleTachometer::drawFilledArc(QPainter* painter) {
+void MotecC125Tachometer::drawFilledArc(QPainter* painter) {
     painter->save();
 
     // Use the same sweep as ticks for consistency
@@ -218,7 +218,7 @@ void CircleTachometer::drawFilledArc(QPainter* painter) {
     painter->restore();
 }
 
-void CircleTachometer::drawCenterDigit(QPainter* painter) {
+void MotecC125Tachometer::drawCenterDigit(QPainter* painter) {
     painter->save();
     painter->setPen(Qt::white);
     painter->setFont(_digitFont);
@@ -235,6 +235,6 @@ void CircleTachometer::drawCenterDigit(QPainter* painter) {
     painter->restore();
 }
 
-#include "circle_tachometer/moc_circle_tachometer.cpp"
+#include "motec_c125_tachometer/moc_motec_c125_tachometer.cpp"
 
 

@@ -94,9 +94,9 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));
         return cluster_gauge;
     }
-    else if (widget_config.type == widget_type_t::circle_tachometer)
+    else if (widget_config.type == widget_type_t::motec_c125_tachometer)
     {
-        auto* circle_tach = new CircleTachometer(std::get<CircleTachometerConfig_t>(widget_config.config));
+        auto* circle_tach = new MotecC125Tachometer(std::get<MotecC125TachometerConfig_t>(widget_config.config));
         return circle_tach;
     }
     else if (widget_config.type == widget_type_t::motec_cdl3_tachometer)

@@ -7,15 +7,15 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-add_library(circle_tachometer STATIC
-    circle_tachometer.cpp
+add_library(motec_c125_tachometer STATIC
+    motec_c125_tachometer.cpp
 )
 
-target_include_directories(circle_tachometer PUBLIC
+target_include_directories(motec_c125_tachometer PUBLIC
     include
 )
 
-target_link_libraries(circle_tachometer
+target_link_libraries(motec_c125_tachometer
     PRIVATE
         Qt6::Widgets
         zenohcxx::zenohc

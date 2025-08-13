@@ -1,7 +1,7 @@
-#ifndef CIRCLE_TACHOMETER_H
-#define CIRCLE_TACHOMETER_H
+#ifndef MOTEC_C125_TACHOMETER_H
+#define MOTEC_C125_TACHOMETER_H
 
-#include "circle_tachometer/config.h"
+#include "motec_c125_tachometer/config.h"
 #include "zenoh.hxx"
 
 #include <QWidget>
@@ -16,14 +16,14 @@ class ExpressionParser;
 
 class QPainter;
 
-class CircleTachometer : public QWidget {
+class MotecC125Tachometer : public QWidget {
     Q_OBJECT
 
 public:
-    using config_t = CircleTachometerConfig_t;
-    static constexpr std::string_view kWidgetName = "circle_tachometer";
+    using config_t = MotecC125TachometerConfig_t;
+    static constexpr std::string_view kWidgetName = "motec_c125_tachometer";
 
-    explicit CircleTachometer(const CircleTachometerConfig_t& cfg, QWidget* parent = nullptr);
+    explicit MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent = nullptr);
 
     void setRpm(float rpm);
     void setZenohSession(std::shared_ptr<zenoh::Session> session);
@@ -43,7 +43,7 @@ private:
 
     float clampRpm(float rpm) const;
 
-    CircleTachometerConfig_t _cfg;
+    MotecC125TachometerConfig_t _cfg;
     float _rpm; // current rpm
 
     // Fonts
@@ -54,7 +54,7 @@ private:
     std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
 };
 
-#endif // CIRCLE_TACHOMETER_H
+#endif // MOTEC_C125_TACHOMETER_H
 
 
 

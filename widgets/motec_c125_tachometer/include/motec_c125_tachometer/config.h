@@ -1,11 +1,11 @@
-#ifndef CIRCLE_TACHOMETER_CONFIG_H
-#define CIRCLE_TACHOMETER_CONFIG_H
+#ifndef MOTEC_C125_TACHOMETER_CONFIG_H
+#define MOTEC_C125_TACHOMETER_CONFIG_H
 
 #include <cstdint>
 #include <string>
 
-struct CircleTachometerConfig_t {
-    CircleTachometerConfig_t() :
+struct MotecC125TachometerConfig_t {
+    MotecC125TachometerConfig_t() :
         max_rpm{8000},
         warning_rpm{6500},
         center_page_digit{5},
@@ -24,7 +24,7 @@ struct CircleTachometerConfig_t {
     std::string rpm_expression; // Expression to extract rpm
 };
 
-#endif // CIRCLE_TACHOMETER_CONFIG_H
+#endif // MOTEC_C125_TACHOMETER_CONFIG_H
 
 
 
