@@ -54,6 +54,7 @@ target_link_libraries(expression_parser PUBLIC
     common_logging
     exprtk::exprtk
     zenohcxx::zenohc
+    helpers
 )
 
 # Add test executable

@@ -8,22 +8,22 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 # Create the library with all the carplay source files
-add_library(mercedes_190e_speedometer STATIC
-    mercedes_190e_speedometer.cpp
+add_library(sparkline STATIC
+    sparkline.cpp
 )
 
 # Set up include directories for this library
-target_include_directories(mercedes_190e_speedometer PUBLIC
+target_include_directories(sparkline PUBLIC
     include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
 
 # Link required libraries to this widget
-target_link_libraries(mercedes_190e_speedometer
+target_link_libraries(sparkline
     PRIVATE
         Qt6::Widgets
         zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
         schemas           # For Cap'n Proto schemas
-        expression_parser # For expression evaluation
+        expression_parser # For expression evaluation if configured
+        helpers
 )

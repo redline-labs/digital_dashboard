@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <spdlog/spdlog.h>
 #include "zenoh.hxx"
-#include "helpers.h"
+#include "helpers/helpers.h"
 
 // Cap'n Proto includes
 #include <capnp/message.h>

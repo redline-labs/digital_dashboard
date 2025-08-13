@@ -1,5 +1,5 @@
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
-#include "helpers.h"
+#include "helpers/helpers.h"
 
 #include <QPaintEvent>
 #include <QMetaObject>

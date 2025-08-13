@@ -30,4 +30,5 @@ target_link_libraries(mercedes_190e_telltales
         schemas           # For Cap'n Proto schemas
         CapnProto::capnp  # Cap'n Proto runtime library
         expression_parser # For condition evaluation
+        helpers
 )
