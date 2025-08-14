@@ -2,7 +2,6 @@
 #define TACHOMETERWIDGET_H
 
 #include "mercedes_190e_tachometer/config.h"
-#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QString>
@@ -34,9 +33,6 @@ public:
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
     float getRpm() const;
-    
-    // Set Zenoh session for data subscription
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -80,10 +76,7 @@ private:
     QTimer *m_clockUpdateTimer;
 
     void updateClockTime();
-    
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> _zenoh_session;
-    
+
     // Expression parser for RPM calculation
     std::unique_ptr<expression_parser::ExpressionParser> rpm_expression_parser_;
 };

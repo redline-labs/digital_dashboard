@@ -2,7 +2,6 @@
 #define SPEEDOMETERWIDGETMPH_H
 
 #include "mercedes_190e_speedometer/config.h"
-#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
@@ -33,9 +32,6 @@ public:
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     void setOdometerValue(int value); // Setter for odometer
     
-    // Set Zenoh session for data subscription
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
-
 protected:
     void paintEvent(QPaintEvent *event) override;
 
@@ -108,14 +104,9 @@ private:
     QFont unit_font_;
     QFont vdo_font_;
     
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> zenoh_session_;
-    
     // Expression parsers for speed and odometer calculations
     std::unique_ptr<expression_parser::ExpressionParser> speed_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> odometer_expression_parser_;
-    
-    void configureParserSubscriptions();
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

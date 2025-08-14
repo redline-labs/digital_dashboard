@@ -21,9 +21,7 @@ target_include_directories(sparkline PUBLIC
 target_link_libraries(sparkline
     PRIVATE
         Qt6::Widgets
-        zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
-        schemas           # For Cap'n Proto schemas
         expression_parser # For expression evaluation if configured
         helpers
 )

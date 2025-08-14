@@ -72,11 +72,8 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
     buildStaticGeometry();
 }
 
-void MotecCdl3Tachometer::setZenohSession(std::shared_ptr<zenoh::Session> session) {
-    _zenoh_session = std::move(session);
-}
-
-void MotecCdl3Tachometer::setRpm(float rpm) {
+void MotecCdl3Tachometer::setRpm(float rpm)
+{
     _rpm = std::clamp(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
     update();
 }

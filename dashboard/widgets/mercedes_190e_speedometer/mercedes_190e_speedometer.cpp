@@ -7,17 +7,11 @@
 
 #include <spdlog/spdlog.h>
 
-// Cap'n Proto includes
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-
 // Expression parser
 #include "expression_parser/expression_parser.h"
 
 #include <algorithm>
 #include <cmath>
-#include <memory>
-#include <vector>
 
 Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerConfig_t& cfg, QWidget *parent):
     QWidget(parent),
@@ -508,16 +502,6 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
     painter->drawEllipse(QPointF(0.0f,0.0f), kPivotRadius, kPivotRadius); 
 
     painter->restore();
-}
-
-void Mercedes190ESpeedometer::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
-{
-    configureParserSubscriptions();
-}
-
-void Mercedes190ESpeedometer::configureParserSubscriptions()
-{
-
 }
 
 // Removed direct widget subscriptions; handled by expression_parser

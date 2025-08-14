@@ -7,21 +7,12 @@
 
 #include <spdlog/spdlog.h>
 
-// Cap'n Proto includes
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-
 // Expression parser
 #include "expression_parser/expression_parser.h"
+#include "helpers/helpers.h"
 
 #include <cmath>
-#include <numbers>
 
-// Helper for degree to radian conversion
-constexpr float degreesToRadians(float degrees)
-{
-    return degrees * (std::numbers::pi_v<float> / 180.0f);
-}
 
 Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent):
   QWidget(parent),
@@ -41,7 +32,7 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     }
     
     // Initialize expression parsers for each sub-gauge
-    auto initializeSubGaugeParser = [this](const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
+    auto initializeSubGaugeParser = [](const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
                                           std::unique_ptr<expression_parser::ExpressionParser>& parser,
                                           const char* gauge_name) {
         if (!gauge_config.zenoh_key.empty() && !gauge_config.schema_type.empty() && !gauge_config.value_expression.empty()) {
@@ -219,7 +210,7 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const Mercedes190
         
         // Calculate where the needle would point for this value
         float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
-        float needleAngleRad = degreesToRadians(needleAngleForTick);
+        float needleAngleRad = degrees_to_radians(needleAngleForTick);
         
         // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
         QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
@@ -276,7 +267,7 @@ void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const Mercedes190
         
         // Calculate where the needle would point for this value
         float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
-        float needleAngleRad = degreesToRadians(needleAngleForTick);
+        float needleAngleRad = degrees_to_radians(needleAngleForTick);
         
         // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
         QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
@@ -403,7 +394,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mer
         
         // Calculate the angle for this tick mark relative to sub-gauge center
         float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float tickAngleRad = degreesToRadians(tickAngle);
+        float tickAngleRad = degrees_to_radians(tickAngle);
         
         // For the right gauge, we need to calculate where this angle projects onto the main gauge edge
         // The sub-gauge center is at (subGaugeRadius, 0), so we offset from there
@@ -457,7 +448,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mer
         
         // Calculate the angle for this label relative to sub-gauge center
         float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float labelAngleRad = degreesToRadians(labelAngle);
+        float labelAngleRad = degrees_to_radians(labelAngle);
         
         // For the right gauge, calculate where this angle projects onto the main gauge
         float projectedAngle = std::atan2(centerY + 50.0f * std::sin(labelAngleRad), 
@@ -551,7 +542,7 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
         
         // Calculate the angle for this tick mark relative to sub-gauge center
         float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float tickAngleRad = degreesToRadians(tickAngle);
+        float tickAngleRad = degrees_to_radians(tickAngle);
         
         // For the left gauge, we need to calculate where this angle projects onto the main gauge edge
         float projectedAngle = std::atan2(centerY + 50.0f * std::sin(tickAngleRad), 
@@ -604,7 +595,7 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
         
         // Calculate the angle for this label relative to sub-gauge center
         float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float labelAngleRad = degreesToRadians(labelAngle);
+        float labelAngleRad = degrees_to_radians(labelAngle);
         
         // For the left gauge, calculate where this angle projects onto the main gauge
         float projectedAngle = std::atan2(centerY + 50.0f * std::sin(labelAngleRad), 
@@ -630,7 +621,7 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     
     // Position °C to the right of the 120 label
     float unitAngle = gaugeStartAngle + gaugeSpan;
-    float unitAngleRad = degreesToRadians(unitAngle);
+    float unitAngleRad = degrees_to_radians(unitAngle);
     float projectedUnitAngle = std::atan2(centerY + 50.0f * std::sin(unitAngleRad), 
                                          centerX + 50.0f * std::cos(unitAngleRad));
     QPointF unitPos(82.0f * std::cos(projectedUnitAngle) - 10.0f,
@@ -684,15 +675,6 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, co
     painter->restore();
     
     painter->restore();
-}
-
-void Mercedes190EClusterGauge::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
-{
-    configureParserSubscriptions();
-}
-
-void Mercedes190EClusterGauge::configureParserSubscriptions()
-{
 }
 
 // Direct widget subscriptions removed; handled by expression_parser

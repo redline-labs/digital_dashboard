@@ -18,9 +18,7 @@ target_include_directories(motec_cdl3_tachometer PUBLIC
 target_link_libraries(motec_cdl3_tachometer
     PRIVATE
         Qt6::Widgets
-        zenohcxx::zenohc
         common_logging
-        schemas
         expression_parser
         helpers
 )

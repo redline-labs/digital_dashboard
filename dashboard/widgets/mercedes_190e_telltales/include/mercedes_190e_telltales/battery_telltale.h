@@ -2,7 +2,6 @@
 #define BATTERYTELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
-#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
@@ -32,9 +31,6 @@ public:
     ~Mercedes190EBatteryTelltale();
 
     void setAsserted(bool asserted);
-    
-    // Set Zenoh session for data subscription
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
     QSize sizeHint() const override;
 
@@ -60,10 +56,7 @@ private:
     static constexpr QColor kNormalBackground = QColor(60, 60, 60);       // Dark gray
     static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
     static constexpr QColor kNormalIcon = QColor(120, 120, 120);          // Light gray when normal
-    
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> _zenoh_session;
-    
+
     // Expression parser for condition evaluation
     std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
 };

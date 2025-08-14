@@ -7,14 +7,8 @@
 
 #include <spdlog/spdlog.h>
 
-// Cap'n Proto includes
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-
 // Expression parser
 #include "expression_parser/expression_parser.h"
-
-#include <memory>
 
 Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent)
     : QWidget(parent)
@@ -161,10 +155,6 @@ void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     update(); // Ensure the widget repaints with new size
-}
-
-void Mercedes190EBatteryTelltale::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
-{
 }
 
 // Direct widget subscription removed; handled by expression_parser

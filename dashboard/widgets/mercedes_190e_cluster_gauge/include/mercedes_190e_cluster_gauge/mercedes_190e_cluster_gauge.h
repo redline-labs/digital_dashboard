@@ -2,7 +2,6 @@
 #define MERCEDES_190E_CLUSTER_GAUGE_H
 
 #include "mercedes_190e_cluster_gauge/config.h"
-#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QPainter>
@@ -42,9 +41,6 @@ public:
     float getRightGaugeValue() const;
     float getBottomGaugeValue() const;
     float getLeftGaugeValue() const;
-    
-    // Set Zenoh session for data subscriptions
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -82,17 +78,11 @@ private:
     // Economy gauge current value
     float economy_gauge_current_value_;
 
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> zenoh_session_;
-    
     // Expression parsers for each sub-gauge
     std::unique_ptr<expression_parser::ExpressionParser> top_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> right_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> bottom_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> left_gauge_expression_parser_;
-    
-    // Helper methods to configure parser-owned subscriptions
-    void configureParserSubscriptions();
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

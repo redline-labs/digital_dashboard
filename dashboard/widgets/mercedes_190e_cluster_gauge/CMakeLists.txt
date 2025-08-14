@@ -22,9 +22,7 @@ target_link_libraries(mercedes_190e_cluster_gauge
     PRIVATE
         Qt6::Widgets
         Qt6::Svg
-        zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
-        schemas           # For Cap'n Proto schemas
         expression_parser # For expression evaluation
         helpers
 ) 

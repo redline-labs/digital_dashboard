@@ -6,10 +6,6 @@
 
 #include <spdlog/spdlog.h>
 
-// Cap'n Proto includes
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-
 // Expression parser
 #include "expression_parser/expression_parser.h"
 
@@ -364,10 +360,6 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     painter->drawEllipse(QPointF(0.0f, 0.0f), clockPivotRadius, clockPivotRadius);
 
     painter->restore(); // Restore from clock translation
-}
-
-void Mercedes190ETachometer::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
-{
 }
 
 // Direct subscriptions removed; expression_parser owns the subscription

@@ -240,10 +240,6 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     painter.drawPath(linePath);
 }
 
-void SparklineItem::setZenohSession(std::shared_ptr<zenoh::Session> /*session*/)
-{
-}
-
 void SparklineItem::onDataEvaluated(double value)
 {
     addDataPoint(value);

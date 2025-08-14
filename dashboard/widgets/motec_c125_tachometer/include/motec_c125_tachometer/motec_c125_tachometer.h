@@ -2,7 +2,6 @@
 #define MOTEC_C125_TACHOMETER_H
 
 #include "motec_c125_tachometer/config.h"
-#include "zenoh.hxx"
 
 #include <QWidget>
 #include <QFont>
@@ -26,7 +25,6 @@ public:
     explicit MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent = nullptr);
 
     void setRpm(float rpm);
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -50,7 +48,6 @@ private:
     QFont _digitFont;
 
     // Optional live data support
-    std::shared_ptr<zenoh::Session> _zenoh_session;
     std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
 };
 

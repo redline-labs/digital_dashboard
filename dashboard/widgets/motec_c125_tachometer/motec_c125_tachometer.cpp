@@ -46,10 +46,6 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
     }
 }
 
-void MotecC125Tachometer::setZenohSession(std::shared_ptr<zenoh::Session> session) {
-    _zenoh_session = std::move(session);
-}
-
 float MotecC125Tachometer::clampRpm(float rpm) const {
     if (rpm < 0.0f) return 0.0f;
     if (rpm > static_cast<float>(_cfg.max_rpm)) return static_cast<float>(_cfg.max_rpm);
