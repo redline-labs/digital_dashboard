@@ -2,7 +2,26 @@
 
 A modern Qt6-based dashboard application.  Part of a larger project to create an embedded Linux distribution that will run on custom hardware.   The goal is to have a hackable digital dash for vehicles that people can use out of the box with a high amount of customization, or get their hands dirty and extend it to add whatever functionality they desire.
 
-## Features
+All the gauges are drawn/rendered, no static images.  A YAML configuration file controls:
+ - the composition of which widgets are shown and where.
+ - Widget specific configurations, such as max RPM or where shift points are shown.
+ - Data sources for each element within the widget.
+
+ Zenoh is used for pub/sub, and capnproto is used for serialization.  The widgets additionally have a flexible "expression parser" to where a user can specify a capnproto signal and any math expression to be used for the data source for a widget.
+
+For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.
+
+#### (Work in progress) Mercedes 190E Instrument Cluster
+With additional "sparklines" widget on the right.
+![Screengrab](/docs/images/mercedes_190e_demo_display.png)
+
+#### (Work in Progress) Motec CDL2
+![Screengrab](/docs/images/motec_cdl2_demo.png)
+
+#### (Work in Progress) Motec C125
+
+## Documentation
+Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
 
 ## Building Instructions
 
@@ -45,22 +64,15 @@ brew install qt@6
 
 4. **Run the application**:
    ```bash
-   ./carplay_cpp
+   ./dashboard/dashboard -c <path_to_config>
    ```
 
 ### Command Line Options
 
+- `-c`: Path to YAML configuration file (see config directory for examples)
 - `--debug`: Enable debug logging
 - `--libusb_debug`: Enable LibUSB debugging logging
 
-### Configuration
-
-The application uses `config.yaml` for configuration. Key settings include:
-
-- Display resolution and DPI settings
-- CarPlay frame intervals
-- Audio buffer sizes
-- Night mode and drive type preferences
 
 ## Third-Party Libraries
 The following libraries are fetched as part of a CMake step.  For complete license information, see the individual license files in the resulting `build/licenses/` directory. Patches (where applicable) are also available in the source directory under the `patches` directory, and also copied out to the `build/licenses` directory.
@@ -77,22 +89,6 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 | [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp) | 1.4.0 | EPL-2.0 / Apache-2.0 | Zero overhead pub/sub messaging | N |
 | [hidapi](https://github.com/libusb/hidapi.git) | 0.15.0 | GPL3 | HID library | N |
 | [exprtk](https://github.com/ArashPartow/exprtk) | 245c0d5 | MIT | Mathematical expression parsing and evaluation | N |
-
-## Project Structure
-
-```
-mercedes_dashboard/
-├── main.cpp                    # Application entry point
-├── config.yaml                 # Configuration file
-├── CMakeLists.txt             # Build configuration
-├── widgets/                   # Custom widget implementations
-│   ├── carplay/              # CarPlay integration
-│   ├── mercedes_190e_*       # Mercedes-specific widgets
-│   └── sparkline/            # Data visualization
-├── resources/                 # Application resources
-├── cmake/                     # Dependency configurations
-└── patches/                  # Third-party patches
-```
 
 ## License
 
