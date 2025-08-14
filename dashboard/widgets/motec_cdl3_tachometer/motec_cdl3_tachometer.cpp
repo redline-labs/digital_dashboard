@@ -27,8 +27,13 @@ constexpr float kEllipseB = 60.0f;
 // We'll bias low range to sweep faster (bigger angle per 1000) and compress near top.
 }
 
-MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent)
-    : QWidget(parent), _cfg{cfg}, _rpm{0.0f} {
+MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent):
+  QWidget(parent),
+  _cfg{cfg},
+  _rpm{0.0f},
+  _maxOuterA{0.0f},
+  _maxOuterB{0.0f}
+{
     // Load segmented display font (DSEG)
     int dsegId = QFontDatabase::addApplicationFont(":/fonts/DSEG7Classic-Bold.ttf");
     if (dsegId == -1)
@@ -82,9 +87,16 @@ void MotecCdl3Tachometer::paintEvent(QPaintEvent* e)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    const int side = qMin(width(), height());
+    // Scale to fit the actual computed outer extents so nothing is clipped
+    const float normA = (_maxOuterA > 0.0f) ? _maxOuterA : (kEllipseA + 20.0f);
+    const float normB = (_maxOuterB > 0.0f) ? _maxOuterB : (kEllipseB + 20.0f);
+    const float boxW = 2.0f * normA;
+    const float boxH = 2.0f * normB;
+    const float sx = static_cast<float>(width()) / boxW;
+    const float sy = static_cast<float>(height()) / boxH;
+    const float s = std::min(sx, sy);
     p.translate(width() / 2.0, height() / 2.0);
-    p.scale(side / 220.0, side / 220.0); // normalize to 220x220 box, slightly larger
+    p.scale(s, s);
 
     drawSweepBands(&p);
     drawTicksAndLabels(&p);
@@ -164,6 +176,8 @@ void MotecCdl3Tachometer::buildStaticGeometry()
 
     // Build per-segment start angle and span (deg) using constant baseline pixel gap
     float curArc = 0.0f;
+    _maxOuterA = 0.0f;
+    _maxOuterB = 0.0f;
     for (int i = 0; i < kSegments; ++i) {
         float segStartArc = curArc;
         float segEndArc = std::min(totalLen, segStartArc + seg_len_px);
@@ -183,6 +197,10 @@ void MotecCdl3Tachometer::buildStaticGeometry()
         const float center_offset = inner_gap + 0.5f * length_px;
         _segmentRectAX[i] = kEllipseA + center_offset;
         _segmentRectBY[i] = kEllipseB + center_offset;
+
+        // Track max outer extents to prevent clipping during scaling
+        _maxOuterA = std::max(_maxOuterA, _segmentRectAX[i] + 0.5f * _segmentLengthPx[i]);
+        _maxOuterB = std::max(_maxOuterB, _segmentRectBY[i] + 0.5f * _segmentLengthPx[i]);
 
         // Advance with gap after this segment (except after last, but harmless)
         curArc = segEndArc + gap_px;

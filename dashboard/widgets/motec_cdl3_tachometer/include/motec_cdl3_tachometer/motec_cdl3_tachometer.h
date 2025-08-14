@@ -73,6 +73,10 @@ private:
     std::array<float, kSegments> _segmentRectBY{};       // rect b (y radius) per segment
 
     std::vector<float> _tickAngles; // 0..max_rpm step 1000
+
+    // Maximum outer extents (centerline radius + half pen width) for safe scaling
+    float _maxOuterA;
+    float _maxOuterB;
 };
 
 #endif // MOTEC_CDL3_TACHOMETER_H
