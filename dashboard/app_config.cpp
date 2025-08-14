@@ -7,6 +7,29 @@
 
 // Convert from a YAML Node to a native config_t.
 namespace YAML {
+template<>
+struct convert<StaticTextConfig_t> {
+    static Node encode(const StaticTextConfig_t& rhs)
+    {
+        Node node = {};
+        node["text"] = rhs.text;
+        node["font"] = rhs.font;
+        node["font_size"] = rhs.font_size;
+        node["color"] = rhs.color;
+        return node;
+    }
+
+    static bool decode(const Node& node, StaticTextConfig_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["text"]) rhs.text = node["text"].as<std::string>();
+        if (node["font"]) rhs.font = node["font"].as<std::string>();
+        if (node["font_size"]) rhs.font_size = node["font_size"].as<uint16_t>();
+        if (node["color"]) rhs.color = node["color"].as<std::string>();
+        return true;
+    }
+};
+
 
 
 template<>
@@ -357,6 +380,11 @@ struct convert<widget_config_t> {
             node["type"] = MotecCdl3Tachometer::kWidgetName;
             node["config"] = std::get<MotecCdl3Tachometer::config_t>(rhs.config);
         }
+        else if (rhs.type == widget_type_t::static_text)
+        {
+            node["type"] = StaticTextWidget::kWidgetName;
+            node["config"] = std::get<StaticTextWidget::config_t>(rhs.config);
+        }
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", widget_type_to_string(rhs.type));
@@ -372,8 +400,8 @@ struct convert<widget_config_t> {
 
         std::string type = node["type"].as<std::string>();
         
-        if (node["x"]) rhs.x = node["x"].as<uint16_t>();
-        if (node["y"]) rhs.y = node["y"].as<uint16_t>();
+        if (node["x"]) rhs.x = node["x"].as<int16_t>();
+        if (node["y"]) rhs.y = node["y"].as<int16_t>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
 
@@ -416,6 +444,11 @@ struct convert<widget_config_t> {
         {
             rhs.type = widget_type_t::motec_cdl3_tachometer;
             rhs.config = node["config"].as<MotecCdl3TachometerConfig_t>();
+        }
+        else if (type == StaticTextWidget::kWidgetName)
+        {
+            rhs.type = widget_type_t::static_text;
+            rhs.config = node["config"].as<StaticTextConfig_t>();
         }
         else
         {

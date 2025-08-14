@@ -51,6 +51,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     mercedes_190e_cluster_gauge
     motec_c125_tachometer
     motec_cdl3_tachometer
+    static_text
 )
 
 # Add comprehensive test data publisher executable

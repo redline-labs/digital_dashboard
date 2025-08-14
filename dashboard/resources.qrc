@@ -1,8 +1,9 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/">
     <file alias="fonts/futura.ttf">resources/fonts/futura.ttf</file>
-    <file alias="fonts/DSEG7ClassicMini-Bold.ttf">resources/fonts/DSEG7ClassicMini-Bold.ttf</file>
-    <file alias="fonts/DSEG7Classic-Bold.ttf">resources/fonts/DSEG7Classic-Bold.ttf</file>
+    <file alias="fonts/DSEG7ClassicMini-Bold.ttf">resources/fonts/DSEG/DSEG7ClassicMini-Bold.ttf</file>
+    <file alias="fonts/DSEG7Classic-Bold.ttf">resources/fonts/DSEG/DSEG7Classic-Bold.ttf</file>
+    <file alias="fonts/DSEG14Classic-Regular.ttf">resources/fonts/DSEG/DSEG14Classic-Regular.ttf</file>
 
     <file alias="mercedes_190e_telltales/telltale_windshield_washer.svg">resources/widgets/mercedes_190e_telltales/telltale_windshield_washer.svg</file>
     <file alias="mercedes_190e_telltales/telltale_brake_system.svg">resources/widgets/mercedes_190e_telltales/telltale_brake_system.svg</file>

@@ -104,6 +104,11 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* tach = new MotecCdl3Tachometer(std::get<MotecCdl3TachometerConfig_t>(widget_config.config));
         return tach;
     }
+    else if (widget_config.type == widget_type_t::static_text)
+    {
+        auto* txt = new StaticTextWidget(std::get<StaticTextConfig_t>(widget_config.config));
+        return txt;
+    }
     else
     {
         SPDLOG_WARN("Unknown widget type: '{}'", widget_type_to_string(widget_config.type));

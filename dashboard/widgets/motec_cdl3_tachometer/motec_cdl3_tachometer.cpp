@@ -93,8 +93,7 @@ void MotecCdl3Tachometer::paintEvent(QPaintEvent* e)
 void MotecCdl3Tachometer::buildArcLUT()
 {
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
-    
-    constexpr int samples = kLutSamples;
+
     _lutAngles[0] = kSweepStartDeg;
     auto pointOnEllipse = [&](float deg) -> QPointF {
         float t = degrees_to_radians(deg);
@@ -137,7 +136,7 @@ float MotecCdl3Tachometer::angleAtU(float u) const
 
 void MotecCdl3Tachometer::buildStaticGeometry()
 {
-    constexpr float inner_gap = 10.0f;
+    constexpr float inner_gap = 5.0f;  // Gap between segments and baseline.
     constexpr float length_min = 10.0f;
     constexpr float length_max = 20.0f;
 
@@ -208,22 +207,13 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
     // Elliptical path to mimic CDL3: top arc flatter than sides
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
 
-    // Ellipse parameters (flatter at high RPMs)
-    constexpr float seg_offset = 12.0f; // lift segments outward from the baseline to avoid overlap
-    constexpr float ellipse_a_seg = kEllipseA + seg_offset;
-    constexpr float ellipse_b_seg = kEllipseB + seg_offset;
-
     // Segment geometry (we'll step CLOCKWISE: decreasing angles from start to end)
-    constexpr float gap_deg = 0.5f; // visual gap; span computed in angle domain
+    constexpr float gap_deg = 0.1f; // visual gap; span computed in angle domain
     constexpr float seg_span_deg = (sweep_cw - (kSegments - 1) * gap_deg) / kSegments;
 
-    constexpr QColor offColor(210, 230, 230);
     constexpr QColor onColor(30, 30, 30);
 
     // Segment rendering uses variable radial length (pen width) while keeping the inner edge at a fixed offset
-    constexpr float inner_gap = 10.0f;       // fixed distance from baseline to inner edge of segments
-    constexpr float length_min = 10.0f;       // short segments at low RPM (radial length)
-    constexpr float length_max = 20.0f;      // long segments near redline
     QPen pen(Qt::black);
     pen.setCapStyle(Qt::FlatCap);
 
@@ -272,7 +262,7 @@ void MotecCdl3Tachometer::drawTicksAndLabels(QPainter* painter) {
 
     // Label font (small, single digit)
     QFont labelFont = _segmentFont;
-    labelFont.setPointSizeF(std::max(7.0, labelFont.pointSizeF() * 0.9));
+    labelFont.setPointSizeF(5.0f);
     painter->setFont(labelFont);
     painter->setPen(tickColor);
 
@@ -297,8 +287,8 @@ void MotecCdl3Tachometer::drawTicksAndLabels(QPainter* painter) {
         if (tlen > 0.0f) { td.setX(td.x() / tlen); td.setY(td.y() / tlen); }
 
         // Make triangles smaller at low RPM and larger at high RPM
-        constexpr float tri_length = 3.0f;
-        constexpr float tri_half_w = 1.5f;
+        constexpr float tri_length = 2.0f;
+        constexpr float tri_half_w = 1.0f;
 
         QPointF tip = p + n * tri_length; // outward tip
         QPointF base1 = p + td * (-tri_half_w);

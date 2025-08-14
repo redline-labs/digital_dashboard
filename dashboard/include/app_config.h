@@ -15,6 +15,7 @@
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
+#include "static_text/static_text.h"
 
 enum class widget_type_t
 {
@@ -24,6 +25,7 @@ enum class widget_type_t
     mercedes_190e_cluster_gauge,
     motec_c125_tachometer,
     motec_cdl3_tachometer,
+    static_text,
 
     sparkline,
 
@@ -54,6 +56,9 @@ constexpr std::string_view widget_type_to_string(widget_type_t type)
         case widget_type_t::motec_cdl3_tachometer:
             return "motec_cdl3_tachometer";
 
+        case widget_type_t::static_text:
+            return "static_text";
+
         case widget_type_t::sparkline:
             return "sparkline";
 
@@ -77,8 +82,8 @@ struct widget_config_t {
     {}
 
     widget_type_t type;
-    uint16_t x;
-    uint16_t y;
+    int16_t x;
+    int16_t y;
     uint16_t width;
     uint16_t height;
 
@@ -90,7 +95,8 @@ struct widget_config_t {
         SparklineItem::config_t,
         Mercedes190EClusterGauge::config_t,
         MotecC125Tachometer::config_t,
-        MotecCdl3Tachometer::config_t> config;
+        MotecCdl3Tachometer::config_t,
+        StaticTextWidget::config_t> config;
 };
 
 struct window_config_t {
