@@ -67,6 +67,7 @@ private:
     // Precomputed geometry
     static constexpr int kSegments = 46;
     std::array<float, kSegments> _segmentStartAngles{};  // a0 per segment
+    std::array<float, kSegments> _segmentSpanDeg{};      // span (deg) per segment
     std::array<float, kSegments> _segmentLengthPx{};     // pen width per segment
     std::array<float, kSegments> _segmentRectAX{};       // rect a (x radius) per segment
     std::array<float, kSegments> _segmentRectBY{};       // rect b (y radius) per segment

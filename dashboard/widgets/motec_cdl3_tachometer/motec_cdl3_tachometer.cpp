@@ -136,25 +136,59 @@ float MotecCdl3Tachometer::angleAtU(float u) const
 
 void MotecCdl3Tachometer::buildStaticGeometry()
 {
-    constexpr float inner_gap = 5.0f;  // Gap between segments and baseline.
-    constexpr float length_min = 10.0f;
-    constexpr float length_max = 20.0f;
+    constexpr float inner_gap = 5.0f;   // Gap between segments and baseline.
+    constexpr float length_min = 10.0f; // min segment thickness (pen width)
+    constexpr float length_max = 20.0f; // max segment thickness (pen width)
 
-    constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
-    constexpr float gap_deg = 0.5f;
-    constexpr float seg_span_deg = (sweep_cw - (kSegments - 1) * gap_deg) / kSegments;
+    // Compute total baseline arc length using LUT
+    const float totalLen = _lutLengths.back();
 
+    // Desired fixed pixel gap between segments along the baseline path
+    constexpr float gap_px = 0.1f;
+    constexpr float total_gaps = static_cast<float>(kSegments - 1) * gap_px;
+    const float alloc_for_segments = std::max(0.0f, totalLen - total_gaps);
+    const float seg_len_px = (kSegments > 0) ? (alloc_for_segments / static_cast<float>(kSegments)) : 0.0f;
+
+    // Helper: map arc-length s (0..totalLen) to an angle using LUT (inverse of _lutLengths)
+    auto angleAtArcLen = [&](float arcLen) -> float {
+        float target = std::clamp(arcLen, 0.0f, totalLen);
+        int lo = 0, hi = kLutSamples - 1;
+        while (lo + 1 < hi) {
+            int mid = (lo + hi) / 2;
+            if (_lutLengths[mid] < target) lo = mid; else hi = mid;
+        }
+        float denom = std::max(1e-6f, (_lutLengths[hi] - _lutLengths[lo]));
+        float alpha = (target - _lutLengths[lo]) / denom;
+        return _lutAngles[lo] + (_lutAngles[hi] - _lutAngles[lo]) * alpha;
+    };
+
+    // Build per-segment start angle and span (deg) using constant baseline pixel gap
+    float curArc = 0.0f;
     for (int i = 0; i < kSegments; ++i) {
+        float segStartArc = curArc;
+        float segEndArc = std::min(totalLen, segStartArc + seg_len_px);
+        float a_start = angleAtArcLen(segStartArc);
+        float a_end   = angleAtArcLen(segEndArc);
+
+        // Moving clockwise from kSweepStartDeg to kSweepEndDeg, angles decrease.
+        // We store start angle (greater) and negative span for QPainter drawArc in mirrored space
+        float span_deg = a_end - a_start; // will be negative magnitude
+        _segmentStartAngles[i] = a_start;
+        _segmentSpanDeg[i] = span_deg;
+
+        // Thickness and radial rect per segment (same as before, but keep center offset constant)
         const float s = static_cast<float>(i) / static_cast<float>(kSegments - 1);
-        const float a_center = angleAtU(s);
-        _segmentStartAngles[i] = a_center + seg_span_deg * 0.5f; // start angle
         const float length_px = length_min + (length_max - length_min) * s;
         _segmentLengthPx[i] = length_px;
         const float center_offset = inner_gap + 0.5f * length_px;
         _segmentRectAX[i] = kEllipseA + center_offset;
         _segmentRectBY[i] = kEllipseB + center_offset;
+
+        // Advance with gap after this segment (except after last, but harmless)
+        curArc = segEndArc + gap_px;
     }
 
+    // Precompute tick angles at 1000 RPM using LUT proportion mapping
     _tickAngles.clear();
     for (uint32_t rpm = 0; rpm <= _cfg.max_rpm; rpm += 1000) {
         float u = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
@@ -207,10 +241,6 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
     // Elliptical path to mimic CDL3: top arc flatter than sides
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
 
-    // Segment geometry (we'll step CLOCKWISE: decreasing angles from start to end)
-    constexpr float gap_deg = 0.1f; // visual gap; span computed in angle domain
-    constexpr float seg_span_deg = (sweep_cw - (kSegments - 1) * gap_deg) / kSegments;
-
     constexpr QColor onColor(30, 30, 30);
 
     // Segment rendering uses variable radial length (pen width) while keeping the inner edge at a fixed offset
@@ -241,11 +271,12 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
     for (int i = 0; i < on_segments; ++i)
     {
         const float a0 = _segmentStartAngles[i];
+        const float span = _segmentSpanDeg[i];
         QRectF rect(-_segmentRectAX[i], -_segmentRectBY[i], 2 * _segmentRectAX[i], 2 * _segmentRectBY[i]);
         pen.setWidthF(_segmentLengthPx[i]);
         pen.setColor(onColor);
         painter->setPen(pen);
-        painter->drawArc(rect, static_cast<int>(-a0 * 16.0f), static_cast<int>(-seg_span_deg * 16.0f));
+        painter->drawArc(rect, static_cast<int>(-a0 * 16.0f), static_cast<int>(-std::abs(span) * 16.0f));
     }
 
     painter->restore(); // undo vertical mirror
