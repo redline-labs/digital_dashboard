@@ -5,9 +5,18 @@
 #include <cstdint>
 
 
-struct Mercedes190EBatteryTelltaleConfig_t
+enum class Mercedes190ETelltaleType
 {
-    Mercedes190EBatteryTelltaleConfig_t() :
+    battery,
+    brake_system,
+    high_beam,
+    windshield_washer
+};
+
+struct Mercedes190ETelltaleConfig_t
+{
+    Mercedes190ETelltaleConfig_t() :
+        telltale_type{Mercedes190ETelltaleType::battery},
         warning_color{"#FF0000"},
         normal_color{"#333333"},
         zenoh_key{},
@@ -16,6 +25,7 @@ struct Mercedes190EBatteryTelltaleConfig_t
     {
     }
 
+    Mercedes190ETelltaleType telltale_type; // Which icon to render
     std::string warning_color;          // Color when warning is active
     std::string normal_color;           // Color when in normal state
     std::string zenoh_key;              // Zenoh subscription key for data

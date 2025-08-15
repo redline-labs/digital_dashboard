@@ -77,10 +77,10 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* sparkline = new SparklineItem(std::get<SparklineConfig_t>(widget_config.config));
         return sparkline;
     }
-    else if (widget_config.type == widget_type_t::mercedes_190e_battery_telltale)
+    else if (widget_config.type == widget_type_t::mercedes_190e_telltale)
     {
-        auto* battery_telltale = new Mercedes190EBatteryTelltale(std::get<Mercedes190EBatteryTelltaleConfig_t>(widget_config.config));
-        return battery_telltale;
+        auto* telltale = new Mercedes190ETelltale(std::get<Mercedes190ETelltaleConfig_t>(widget_config.config));
+        return telltale;
     }
     else if (widget_config.type == widget_type_t::carplay)
     {

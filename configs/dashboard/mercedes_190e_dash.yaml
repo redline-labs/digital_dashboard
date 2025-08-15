@@ -41,19 +41,59 @@ windows:
           schema_type: "EngineRpm"
           rpm_expression: "rpm"
       
-      # Battery telltale indicator in top left - subscribes to battery warning
-      - type: mercedes_190e_battery_telltale
+      # Telltale indicator - subscribes to a condition and shows an icon
+      - type: mercedes_190e_telltale
         x: 50
         y: 400
         width: 30
         height: 30
         config:
+          telltale_type: battery  # one of: battery, brake_system, high_beam, windshield_washer
           zenoh_key: "vehicle/telltales/battery_warning"
           schema_type: "BatteryWarning"  # Cap'n Proto schema type
           normal_color: "#333333"
           warning_color: "#FF0000"
           condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
       
+      - type: mercedes_190e_telltale
+        x: 90
+        y: 400
+        width: 30
+        height: 30
+        config:
+          telltale_type: brake_system  # one of: battery, brake_system, high_beam, windshield_washer
+          zenoh_key: "vehicle/telltales/battery_warning"
+          schema_type: "BatteryWarning"  # Cap'n Proto schema type
+          normal_color: "#333333"
+          warning_color: "#FF0000"
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+
+      - type: mercedes_190e_telltale
+        x: 130
+        y: 400
+        width: 30
+        height: 30
+        config:
+          telltale_type: high_beam  # one of: battery, brake_system, high_beam, windshield_washer
+          zenoh_key: "vehicle/telltales/battery_warning"
+          schema_type: "BatteryWarning"  # Cap'n Proto schema type
+          normal_color: "#333333"
+          warning_color: "#FF0000"
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+
+      - type: mercedes_190e_telltale
+        x: 170
+        y: 400
+        width: 30
+        height: 30
+        config:
+          telltale_type: windshield_washer  # one of: battery, brake_system, high_beam, windshield_washer
+          zenoh_key: "vehicle/telltales/battery_warning"
+          schema_type: "BatteryWarning"  # Cap'n Proto schema type
+          normal_color: "#333333"
+          warning_color: "#FF0000"
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: sparkline
         x: 950

@@ -10,7 +10,7 @@
 #include "carplay/carplay_widget.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
-#include "mercedes_190e_telltales/battery_telltale.h"
+#include "mercedes_190e_telltales/telltale.h"
 #include "sparkline/sparkline.h"
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
@@ -21,7 +21,7 @@ enum class widget_type_t
 {
     mercedes_190e_speedometer,
     mercedes_190e_tachometer,
-    mercedes_190e_battery_telltale,
+    mercedes_190e_telltale,
     mercedes_190e_cluster_gauge,
     motec_c125_tachometer,
     motec_cdl3_tachometer,
@@ -44,8 +44,8 @@ constexpr std::string_view widget_type_to_string(widget_type_t type)
         case widget_type_t::mercedes_190e_tachometer:
             return "mercedes_190e_tachometer";
 
-        case widget_type_t::mercedes_190e_battery_telltale:
-            return "mercedes_190e_battery_telltale";
+        case widget_type_t::mercedes_190e_telltale:
+            return "mercedes_190e_telltale";
 
         case widget_type_t::mercedes_190e_cluster_gauge:
             return "mercedes_190e_cluster_gauge";
@@ -91,7 +91,7 @@ struct widget_config_t {
         Mercedes190ESpeedometer::config_t,
         CarPlayWidget::config_t,
         Mercedes190ETachometer::config_t,
-        Mercedes190EBatteryTelltale::config_t,
+        Mercedes190ETelltale::config_t,
         SparklineItem::config_t,
         Mercedes190EClusterGauge::config_t,
         MotecC125Tachometer::config_t,

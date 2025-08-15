@@ -251,10 +251,18 @@ struct convert<SparklineConfig_t> {
 
 
 template<>
-struct convert<Mercedes190EBatteryTelltaleConfig_t> {
-    static Node encode(const Mercedes190EBatteryTelltaleConfig_t& rhs)
+struct convert<Mercedes190ETelltaleConfig_t> {
+    static Node encode(const Mercedes190ETelltaleConfig_t& rhs)
     {
         Node node = {};
+        // telltale type
+        switch (rhs.telltale_type)
+        {
+            case Mercedes190ETelltaleType::battery: node["telltale_type"] = "battery"; break;
+            case Mercedes190ETelltaleType::brake_system: node["telltale_type"] = "brake_system"; break;
+            case Mercedes190ETelltaleType::high_beam: node["telltale_type"] = "high_beam"; break;
+            case Mercedes190ETelltaleType::windshield_washer: node["telltale_type"] = "windshield_washer"; break;
+        }
         node["warning_color"] = rhs.warning_color;
         node["normal_color"] = rhs.normal_color;
         node["zenoh_key"] = rhs.zenoh_key;
@@ -263,10 +271,17 @@ struct convert<Mercedes190EBatteryTelltaleConfig_t> {
         return node;
     }
 
-    static bool decode(const Node& node, Mercedes190EBatteryTelltaleConfig_t& rhs)
+    static bool decode(const Node& node, Mercedes190ETelltaleConfig_t& rhs)
     {
         if (!node.IsMap()) return false;
 
+        if (node["telltale_type"]) {
+            auto s = node["telltale_type"].as<std::string>();
+            if (s == "battery") rhs.telltale_type = Mercedes190ETelltaleType::battery;
+            else if (s == "brake_system") rhs.telltale_type = Mercedes190ETelltaleType::brake_system;
+            else if (s == "high_beam") rhs.telltale_type = Mercedes190ETelltaleType::high_beam;
+            else if (s == "windshield_washer") rhs.telltale_type = Mercedes190ETelltaleType::windshield_washer;
+        }
         rhs.warning_color = node["warning_color"].as<std::string>();
         rhs.normal_color = node["normal_color"].as<std::string>();
         rhs.zenoh_key = node["zenoh_key"].as<std::string>();
@@ -360,10 +375,10 @@ struct convert<widget_config_t> {
             node["type"] = SparklineItem::kWidgetName;
             node["config"] = std::get<SparklineItem::config_t>(rhs.config);
         }
-        else if (rhs.type == widget_type_t::mercedes_190e_battery_telltale)
+        else if (rhs.type == widget_type_t::mercedes_190e_telltale)
         {
-            node["type"] = Mercedes190EBatteryTelltale::kWidgetName;
-            node["config"] = std::get<Mercedes190EBatteryTelltale::config_t>(rhs.config);
+            node["type"] = Mercedes190ETelltale::kWidgetName;
+            node["config"] = std::get<Mercedes190ETelltale::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::mercedes_190e_cluster_gauge)
         {
@@ -425,10 +440,16 @@ struct convert<widget_config_t> {
             rhs.type = widget_type_t::sparkline;
             rhs.config = node["config"].as<SparklineConfig_t>();
         }
-        else if (type == Mercedes190EBatteryTelltale::kWidgetName)
+        else if (type == Mercedes190ETelltale::kWidgetName)
         {
-            rhs.type = widget_type_t::mercedes_190e_battery_telltale;
-            rhs.config = node["config"].as<Mercedes190EBatteryTelltaleConfig_t>();
+            rhs.type = widget_type_t::mercedes_190e_telltale;
+            rhs.config = node["config"].as<Mercedes190ETelltaleConfig_t>();
+        }
+        else if (type == std::string("mercedes_190e_battery_telltale"))
+        {
+            // Backward compatibility with old widget type
+            rhs.type = widget_type_t::mercedes_190e_telltale;
+            rhs.config = node["config"].as<Mercedes190ETelltaleConfig_t>();
         }
         else if (type == Mercedes190EClusterGauge::kWidgetName)
         {

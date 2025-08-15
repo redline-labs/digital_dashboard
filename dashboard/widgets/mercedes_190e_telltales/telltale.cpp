@@ -1,4 +1,4 @@
-#include "mercedes_190e_telltales/battery_telltale.h"
+#include "mercedes_190e_telltales/telltale.h"
 
 #include <QMetaObject>
 #include <QPaintEvent>
@@ -10,7 +10,11 @@
 // Expression parser
 #include "expression_parser/expression_parser.h"
 
-Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatteryTelltaleConfig_t& cfg, QWidget *parent)
+// Colors
+static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
+static constexpr QColor kNormalIcon = QColor(120, 120, 120);          // Light gray when normal
+
+Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& cfg, QWidget *parent)
     : QWidget(parent)
     , _cfg{cfg}
     , mSvgRenderer(nullptr)
@@ -24,31 +28,57 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
             _cfg.zenoh_key
         );
         
-        if (!_expression_parser->isValid()) {
-            SPDLOG_ERROR("Invalid expression '{}' for schema '{}' in battery telltale", 
+        if (!_expression_parser->isValid())
+        {
+            SPDLOG_ERROR("Invalid expression '{}' for schema '{}' in telltale", 
                         _cfg.condition_expression, _cfg.schema_type);
             _expression_parser.reset(); // Disable expression parsing
-        } else {
-            SPDLOG_INFO("Battery telltale initialized with expression: '{}' (schema: '{}')", 
+        }
+        else
+        {
+            SPDLOG_INFO("Telltale initialized with expression: '{}' (schema: '{}')", 
                        _cfg.condition_expression, _cfg.schema_type);
         }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Failed to initialize expression parser for battery telltale: {}", e.what());
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to initialize expression parser for telltale: {}", e.what());
         _expression_parser.reset(); // Disable expression parsing
     }
 
     if (_expression_parser)
     {
-        _expression_parser->setResultCallback<bool>([this](bool asserted) {
+        _expression_parser->setResultCallback<bool>([this](bool asserted)
+        {
             QMetaObject::invokeMethod(this, "onConditionEvaluated", Qt::QueuedConnection, Q_ARG(bool, asserted));
         });
     }
     
+    // Select SVG alias based on telltale type
+    switch (_cfg.telltale_type)
+    {
+        case Mercedes190ETelltaleType::battery:
+            mSvgAlias = ":/mercedes_190e_telltales/telltale_battery.svg";
+            break;
+        case Mercedes190ETelltaleType::brake_system:
+            mSvgAlias = ":/mercedes_190e_telltales/telltale_brake_system.svg";
+            break;
+        case Mercedes190ETelltaleType::high_beam:
+            mSvgAlias = ":/mercedes_190e_telltales/telltale_high_beam.svg";
+            break;
+        case Mercedes190ETelltaleType::windshield_washer:
+            mSvgAlias = ":/mercedes_190e_telltales/telltale_windshield_washer.svg";
+            break;
+        default:
+            mSvgAlias = ":/mercedes_190e_telltales/telltale_battery.svg";
+            break;
+    }
+
     // Load the SVG renderer
-    mSvgRenderer = new QSvgRenderer(QString(":/mercedes_190e_telltales/telltale_battery.svg"), this);
+    mSvgRenderer = new QSvgRenderer(QString(mSvgAlias), this);
     
     if (!mSvgRenderer->isValid()) {
-        SPDLOG_WARN("Failed to load battery telltale SVG");
+        SPDLOG_WARN("Failed to load telltale SVG: {}", mSvgAlias.toStdString());
     }
 
     // Initialize colors
@@ -61,12 +91,12 @@ Mercedes190EBatteryTelltale::Mercedes190EBatteryTelltale(const Mercedes190EBatte
     setAttribute(Qt::WA_OpaquePaintEvent, false);
 }
 
-Mercedes190EBatteryTelltale::~Mercedes190EBatteryTelltale()
+Mercedes190ETelltale::~Mercedes190ETelltale()
 {
     // Qt handles cleanup automatically due to parent-child relationships
 }
 
-void Mercedes190EBatteryTelltale::setAsserted(bool asserted)
+void Mercedes190ETelltale::setAsserted(bool asserted)
 {
     if (mAsserted != asserted)
     {
@@ -76,7 +106,7 @@ void Mercedes190EBatteryTelltale::setAsserted(bool asserted)
     }
 }
 
-void Mercedes190EBatteryTelltale::updateColors()
+void Mercedes190ETelltale::updateColors()
 {
     if (mAsserted)
     {
@@ -90,12 +120,12 @@ void Mercedes190EBatteryTelltale::updateColors()
     }
 }
 
-QSize Mercedes190EBatteryTelltale::sizeHint() const
+QSize Mercedes190ETelltale::sizeHint() const
 {
     return QSize(64, 64); // Default size
 }
 
-void Mercedes190EBatteryTelltale::paintEvent(QPaintEvent *event)
+void Mercedes190ETelltale::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     
@@ -151,7 +181,7 @@ void Mercedes190EBatteryTelltale::paintEvent(QPaintEvent *event)
     }
 }
 
-void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
+void Mercedes190ETelltale::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     update(); // Ensure the widget repaints with new size
@@ -159,10 +189,13 @@ void Mercedes190EBatteryTelltale::resizeEvent(QResizeEvent *event)
 
 // Direct widget subscription removed; handled by expression_parser
 
-void Mercedes190EBatteryTelltale::onConditionEvaluated(bool asserted)
+void Mercedes190ETelltale::onConditionEvaluated(bool asserted)
 {
     setAsserted(asserted);
 }
 
 
-#include "mercedes_190e_telltales/moc_battery_telltale.cpp"
+// MOC include generated by Qt's automoc
+#include "mercedes_190e_telltales/moc_telltale.cpp"
+
+

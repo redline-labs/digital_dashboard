@@ -6,7 +6,7 @@
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "sparkline/sparkline.h"
-#include "mercedes_190e_telltales/battery_telltale.h"
+#include "mercedes_190e_telltales/telltale.h"
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"

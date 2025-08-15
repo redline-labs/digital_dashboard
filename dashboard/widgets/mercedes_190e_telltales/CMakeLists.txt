@@ -9,7 +9,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Svg)
 
 # Create the library with all the carplay source files
 add_library(mercedes_190e_telltales STATIC
-    battery_telltale.cpp
+    telltale.cpp
 )
 
 # Set up include directories for this library
