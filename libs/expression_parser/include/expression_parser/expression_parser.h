@@ -77,39 +77,10 @@ class ExpressionParser
     bool isValid() const;
 
     /**
-     * Evaluate the expression against a Cap'n Proto message payload
-     * @param payload Raw Cap'n Proto message bytes
-     * @param size Size of the payload in bytes
-     * @return The evaluated result as a double
-     * @throws std::runtime_error if evaluation fails
-     */
-    double evaluate(const void* payload, size_t size);
-
-    /**
-     * Evaluate the expression against a Cap'n Proto message payload
-     * @param payload Vector containing Cap'n Proto message bytes
-     * @return The evaluated result as a double
-     * @throws std::runtime_error if evaluation fails
-     */
-    double evaluate(const std::vector<uint8_t>& payload);
-
-    /**
      * Evaluate the expression against a Cap'n Proto message payload with templated return type
      * @tparam T The desired return type (e.g., float, bool, int)
      * @param payload Raw Cap'n Proto message bytes
-     * @param size Size of the payload in bytes
      * @return The evaluated result cast to type T
-     * @throws std::runtime_error if evaluation fails
-     */
-    template<typename T>
-    T evaluate(const void* payload, size_t size);
-
-    /**
-     * Evaluate the expression against a Cap'n Proto message payload with templated return type
-     * @tparam T The desired return type (e.g., float, bool, int)
-     * @param payload Vector containing Cap'n Proto message bytes
-     * @return The evaluated result cast to type T
-     * @throws std::runtime_error if evaluation fails
      */
     template<typename T>
     T evaluate(const std::vector<uint8_t>& payload);
@@ -122,7 +93,6 @@ class ExpressionParser
     template<typename T>
     void setResultCallback(std::function<void(T)> callback)
     {
-        SPDLOG_INFO("Setting evaluation callback for key '{}'", zenoh_key_);
         evaluation_handler_ = [this, cb = std::move(callback)](const std::vector<uint8_t>& payload) mutable
         {
             try
@@ -138,10 +108,9 @@ class ExpressionParser
     }
 
   private:
-    // Allow internal helper to access private members for subscription setup
-    friend void ensure_subscription(ExpressionParser* self);
     // Cached field information for fast extraction
-    struct FieldCache {
+    struct FieldCache
+    {
         capnp::StructSchema::Field field;
         std::string name;
         capnp::DynamicValue::Type expected_type;
@@ -200,18 +169,19 @@ class ExpressionParser
 
 // Template implementations
 template<typename T = float>
-T ExpressionParser::evaluate(const void* payload, size_t size)
+T ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
 {
     if (!is_valid_)
     {
-        throw std::runtime_error("Expression is not valid, cannot evaluate");
+        SPDLOG_ERROR("Expression is not valid, cannot evaluate");
+        return 0.0;
     }
 
     try
     {
         // Create a Cap'n Proto message reader from the raw payload
         capnp::FlatArrayMessageReader message_reader(
-            kj::arrayPtr(static_cast<const capnp::word*>(payload), size / sizeof(capnp::word)));
+            kj::arrayPtr(reinterpret_cast<const capnp::word*>(payload.data()), payload.size() / sizeof(capnp::word)));
         
         // Get the root as a dynamic struct using our schema
         auto root = message_reader.getRoot<capnp::DynamicStruct>(schema_.asStruct());
@@ -223,27 +193,27 @@ T ExpressionParser::evaluate(const void* payload, size_t size)
         double result = compiled_expression_.value();
         
         // Handle different return types with appropriate conversions
-        if constexpr (std::is_same_v<T, bool>) {
+        if constexpr (std::is_same_v<T, bool>)
+        {
             // For boolean, consider anything non-zero as true
             return static_cast<T>(result != 0.0);
-        } else if constexpr (std::is_integral_v<T>) {
+        }
+        else if constexpr (std::is_integral_v<T>)
+        {
             // For integer types, round to nearest integer
             return static_cast<T>(std::round(result));
-        } else {
+        }
+        else
+        {
             // For floating point types, direct cast
             return static_cast<T>(result);
         }
     }
     catch (const std::exception& e)
     {
-        throw std::runtime_error("Expression evaluation failed: " + std::string(e.what()));
+        SPDLOG_ERROR("Expression evaluation failed: {}", e.what());
+        return 0.0;
     }
-}
-
-template<typename T = float>
-T ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
-{
-    return evaluate<T>(payload.data(), payload.size());
 }
 
 } // namespace expression_parser

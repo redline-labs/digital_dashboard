@@ -11,7 +11,7 @@ MainWindow::MainWindow(const window_config_t& window_cfg):
     QWidget{},
     _window_cfg{window_cfg}
 {
-    setWindowTitle(QString("Mercedes Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
+    setWindowTitle(QString("Redline Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
     setFixedSize(_window_cfg.width, _window_cfg.height);
 
     // Set background color from configuration

@@ -14,11 +14,16 @@ namespace expression_parser {
 ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key):
     schema_name_{schema_name},
     expression_{expression},
-    zenoh_key_{zenoh_key},
+    variables_{},
     is_valid_{false},
     symbol_table_{},
     compiled_expression_{},
-    parser_{}
+    parser_{},
+    field_cache_{},
+    zenoh_key_{zenoh_key},
+    zenoh_session_{},
+    zenoh_subscriber_{},
+    evaluation_handler_{}
 {
     
     // Assume valid until proven otherwise
@@ -65,7 +70,8 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     }
 
 
-    try {
+    try
+    {
         zenoh_session_ = SessionManager::getOrCreate();
         if (!zenoh_session_)
         {
@@ -79,15 +85,19 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
                 key_expr,
                 [this](const zenoh::Sample& sample)
                 {
+                    if (evaluation_handler_ == nullptr)
+                    {
+                        SPDLOG_ERROR("No evaluation handler set for key '{}'", zenoh_key_);
+                        return;
+                    }
+
                     try
                     {
-                        auto bytes = sample.get_payload().as_string();
-                        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-                        if (evaluation_handler_)
-                        {
-                            evaluation_handler_(payload);
-                        }
-                    } catch (const std::exception& e) {
+                        std::vector<uint8_t> bytes = sample.get_payload().as_vector();
+                        evaluation_handler_(bytes);
+                    }
+                    catch (const std::exception& e)
+                    {
                         SPDLOG_ERROR("Error handling zenoh sample: {}", e.what());
                     }
                 },
@@ -193,7 +203,6 @@ void ExpressionParser::buildFieldCache()
     }
     
     auto struct_schema = schema_.asStruct();
-    auto fields = struct_schema.getFields();
     
     // Pre-compute field access information for all required variables
     for (const auto& [var_name, _] : variables_)
@@ -266,39 +275,6 @@ void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
         
         variables_[cached_field.name] = numeric_value;
     }
-}
-
-double ExpressionParser::evaluate(const void* payload, size_t size)
-{
-    return evaluate<double>(payload, size);
-}
-
-double ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
-{
-    return evaluate<double>(payload);
-}
-
-// Helper to ensure subscription is declared when we have a key and a callback
-void ensure_subscription(ExpressionParser* self)
-{
-    if (!self) return;
-    if (self->zenoh_key_.empty())
-    {
-        SPDLOG_ERROR("No zenoh key provided for key '{}'", self->zenoh_key_);
-        return;
-    }
-    if (!self->evaluation_handler_)
-    {
-        SPDLOG_ERROR("No evaluation handler set for key '{}'", self->zenoh_key_);
-        return;
-    }
-    if (self->zenoh_subscriber_)
-    {
-        SPDLOG_ERROR("Already subscribed to key '{}'", self->zenoh_key_);
-        return;
-    }
-
-    
 }
 
 } // namespace expression_parser

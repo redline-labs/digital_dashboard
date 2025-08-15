@@ -16,20 +16,23 @@ void SessionManager::setDefaultConfig(zenoh::Config&& config)
 std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    if (auto existing = weak_session_.lock()) {
-        SPDLOG_INFO("Reusing existing zenoh session");
+    if (auto existing = weak_session_.lock())
+    {
         return existing;
     }
 
-    try {
+    try
+    {
         zenoh::Config config = default_config_.has_value()
             ? std::move(*default_config_)
             : zenoh::Config::create_default();
         auto session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
         weak_session_ = session;
-        SPDLOG_INFO("Opened shared zenoh session");
+        SPDLOG_INFO("Created new zenoh session.");
         return session;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         SPDLOG_ERROR("Failed to open zenoh session: {}", e.what());
         return {};
     }
