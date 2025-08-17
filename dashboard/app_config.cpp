@@ -161,6 +161,7 @@ struct convert<MotecC125TachometerConfig_t> {
         Node node = {};
         node["max_rpm"] = rhs.max_rpm;
         node["warning_rpm"] = rhs.warning_rpm;
+        node["redline_rpm"] = rhs.redline_rpm;
         node["center_page_digit"] = rhs.center_page_digit;
         node["zenoh_key"] = rhs.zenoh_key;
         node["schema_type"] = rhs.schema_type;
@@ -173,6 +174,7 @@ struct convert<MotecC125TachometerConfig_t> {
         if (!node.IsMap()) return false;
         if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
         if (node["warning_rpm"]) rhs.warning_rpm = node["warning_rpm"].as<uint32_t>();
+        if (node["redline_rpm"]) rhs.redline_rpm = node["redline_rpm"].as<uint32_t>();
         if (node["center_page_digit"]) rhs.center_page_digit = node["center_page_digit"].as<uint8_t>();
         if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
         if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();

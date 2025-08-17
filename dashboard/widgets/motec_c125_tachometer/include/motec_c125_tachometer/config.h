@@ -8,6 +8,7 @@ struct MotecC125TachometerConfig_t {
     MotecC125TachometerConfig_t() :
         max_rpm{8000},
         warning_rpm{6500},
+        redline_rpm{0},
         center_page_digit{5},
         zenoh_key{},
         schema_type{"EngineRpm"},
@@ -16,6 +17,7 @@ struct MotecC125TachometerConfig_t {
 
     uint32_t max_rpm;           // Overall maximum for mapping the yellow arc
     uint32_t warning_rpm;       // Start of warning/redline (for future use)
+    uint32_t redline_rpm;       // Draw a thin red line from this RPM to arc end
     uint8_t  center_page_digit; // Large digit in the center (static for now)
 
     // Optional live data hookup (same style as other widgets)

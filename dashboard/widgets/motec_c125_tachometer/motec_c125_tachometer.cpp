@@ -5,63 +5,126 @@
 #include <QMetaObject>
 
 #include <cmath>
-#include <numbers>
 
 #include <spdlog/spdlog.h>
 
 #include "expression_parser/expression_parser.h"
+#include "helpers/helpers.h"
 
-namespace {
-constexpr float degToRad(float deg) { return deg * (std::numbers::pi_v<float> / 180.0f); }
-// Keep sweep angles consistent across all elements
-constexpr float kSweepStartDeg = 160.0f; // 0 RPM
-constexpr float kSweepEndDeg   = 20.0f; // max RPM
+namespace
+{
+// Measurement sweep (ticks/labels/yellow value) — narrower than the arc span
+constexpr float kSweepStartDeg = 160.0f; // start of the RPM scale (0 RPM)
+constexpr float kSweepEndDeg   = 20.0f;  // end of the RPM scale (max RPM)
+constexpr float kSweepTotalDeg = (kSweepEndDeg < kSweepStartDeg)
+                                 ? (360.0f - (kSweepStartDeg - kSweepEndDeg))
+                                 : (kSweepEndDeg - kSweepStartDeg);
+
+// Visual arc span (outer/inner rings and base fill) — intentionally wider than the sweep
+constexpr float kArcStartDeg   = 140.0f; // arc visuals begin earlier
+constexpr float kArcEndDeg     = 40.0f;  // and end later than the sweep
+constexpr float kArcTotalDeg   = (kArcEndDeg < kArcStartDeg)
+                                 ? (360.0f - (kArcStartDeg - kArcEndDeg))
+                                 : (kArcEndDeg - kArcStartDeg);
+
+// Yellow value arc starts at the visual arc start, but the scale (0 RPM) begins later.
+// This offset ensures a small yellow segment is visible before zero.
+constexpr float kValueStartOffsetDeg = (kSweepStartDeg >= kArcStartDeg)
+                                       ? (kSweepStartDeg - kArcStartDeg)
+                                       : (kSweepStartDeg + 360.0f - kArcStartDeg);
+
+// Dial geometry and styling (all angles map across elements)
+// Outer dial arc (center-line radius and pen width)
+constexpr float kOuterRingRadius = 90.0f;    // controls distance of the outer gray arc from center
+constexpr float kOuterRingPen    = 6.0f;     // stroke width for outer arc
+constexpr QColor kOuterRingColor = QColor(200, 200, 200);      // grayscale color (R=G=B)
+
+// Inner dial arc (center-line radius and pen width)
+constexpr float kInnerRingRadius = 60.0f;    // controls distance of the inner gray arc from center
+constexpr float kInnerRingPen    = 6.0f;    // stroke width for inner arc
+constexpr QColor kInnerRingColor = QColor(200, 200, 200);      // grayscale color (R=G=B)
+
+// Channel (gap) derived from arcs; used for ticks, labels and fill
+constexpr float kChannelInnerEdge   = kInnerRingRadius + (kInnerRingPen / 2.0f); // outer edge of inner arc
+constexpr float kChannelOuterEdge   = kOuterRingRadius - (kOuterRingPen / 2.0f); // inner edge of outer arc
+constexpr float kChannelThickness   = kChannelOuterEdge - kChannelInnerEdge;     // width of the gap between arcs
+constexpr float kChannelCenterRad   = (kChannelOuterEdge + kChannelInnerEdge) * 0.5f; // center radius of the gap
+
+// Tick layout (all ticks are drawn within the channel)
+constexpr float kTickOuterRadius    = kChannelOuterEdge - 0.5f; // small margin from the outer arc
+constexpr float kTickInnerMajor     = kTickOuterRadius - 6.5f;  // major tick length
+constexpr float kTickInnerMid       = kTickOuterRadius - 4.0f;  // mid tick length
+constexpr float kTickInnerMinor     = kTickOuterRadius - 2.5f;  // minor tick length
+constexpr float kTickWidthMajor     = 2.4f;                     // major tick stroke width
+constexpr float kTickWidthMid       = 1.8f;                     // mid tick stroke width
+constexpr float kTickWidthMinor     = 1.0f;                     // minor tick stroke width
+
+// Label layout
+constexpr float kLabelRadius        = kTickInnerMajor - 8.0f;   // place labels closer to the inner arc
+constexpr float kLabelFontSize      = 12.0f;                    // scale relative to center digit font
+
+// Fill band styling
+constexpr float kFillArcRadius      = kChannelCenterRad;        // centered in the channel
+constexpr float kFillArcThickness   = kChannelThickness;        // completely fills the channel (no gap)
+
+constexpr QColor kFillBaseColor    = QColor(255, 255, 255);     // white background of the fill
+constexpr QColor kFillValueColor   = QColor(255, 180, 0);       // yellow overlay color
 }
 
-MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent)
-    : QWidget(parent), _cfg{cfg}, _rpm{0.0f} {
+MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent):
+  QWidget(parent),
+  _cfg{cfg},
+  _rpm{0.0f}
+{
     // font for the center digit (use bundled Futura if available)
     int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-    if (fontId == -1) {
+    if (fontId == -1)
+    {
         _digitFont = QFont("Helvetica", 40, QFont::Bold);
-    } else {
+    }
+    else
+    {
         const QString family = QFontDatabase::applicationFontFamilies(fontId).at(0);
         _digitFont = QFont(family, 40, QFont::Bold);
     }
 
     // Optional expression parser hookup
-    try {
+    try
+    {
         _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
             _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
-        if (_expression_parser->isValid()) {
-            _expression_parser->setResultCallback<float>([this](float rpm) {
+        if (_expression_parser->isValid())
+        {
+            _expression_parser->setResultCallback<float>([this](float rpm)
+            {
                 QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
             });
-        } else {
+        }
+        else
+        {
             _expression_parser.reset();
         }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("CircleTachometer: expression parser init failed: {}", e.what());
+    } 
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Expression parser init failed: {}", e.what());
         _expression_parser.reset();
     }
 }
 
-float MotecC125Tachometer::clampRpm(float rpm) const {
-    if (rpm < 0.0f) return 0.0f;
-    if (rpm > static_cast<float>(_cfg.max_rpm)) return static_cast<float>(_cfg.max_rpm);
-    return rpm;
-}
-
-void MotecC125Tachometer::setRpm(float rpm) {
-    _rpm = clampRpm(rpm);
+void MotecC125Tachometer::setRpm(float rpm)
+{
+    _rpm = std::clamp(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
     update();
 }
 
-void MotecC125Tachometer::onRpmEvaluated(float rpm) {
+void MotecC125Tachometer::onRpmEvaluated(float rpm)
+{
     setRpm(rpm);
 }
 
-void MotecC125Tachometer::paintEvent(QPaintEvent* e) {
+void MotecC125Tachometer::paintEvent(QPaintEvent* e)
+{
     Q_UNUSED(e);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -78,43 +141,64 @@ void MotecC125Tachometer::paintEvent(QPaintEvent* e) {
     drawDial(&p);
     drawTicks(&p);
     drawCenterDigit(&p);
+
+    // Redline overlay along outer arc (thin red stroke from configured RPM to end of arc)
+    if (_cfg.redline_rpm > 0 && _cfg.redline_rpm <= _cfg.max_rpm)
+    {
+        p.save();
+        // Map redline RPM into sweep space, then convert to absolute angle along the visual arc
+        const float proportion = std::clamp(static_cast<float>(_cfg.redline_rpm) / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
+        const float sweep_at_red = kSweepTotalDeg * proportion; // degrees after sweep start
+        const float redline_start_deg = kValueStartOffsetDeg + sweep_at_red; // relative to visual arc start
+
+        QPen redPen(QColor(220, 0, 0));
+        redPen.setWidthF(2.0f);
+        redPen.setCapStyle(Qt::FlatCap);
+        p.setPen(redPen);
+
+        const QRectF outerRect(-kOuterRingRadius, -kOuterRingRadius, 2*kOuterRingRadius, 2*kOuterRingRadius);
+        // Start from arc start + redline angle, draw to the visual arc end clockwise (negative span)
+        const int start_qt = static_cast<int>(-(kArcStartDeg + redline_start_deg) * 16.0f);
+        const int span_qt  = static_cast<int>(-(kArcTotalDeg - redline_start_deg) * 16.0f);
+        p.drawArc(outerRect, start_qt, span_qt);
+        p.restore();
+    }
 }
 
-void MotecC125Tachometer::drawDial(QPainter* painter) {
+void MotecC125Tachometer::drawDial(QPainter* painter)
+{
     painter->save();
 
     // No background here (handled in drawBackdrop)
     painter->setPen(Qt::NoPen);
     painter->setBrush(Qt::NoBrush);
 
-    // Use same sweep as the gauge for both outer/inner outlines so bottoms are truncated
-    const float start_deg = kSweepStartDeg;
-    const float end_deg   = kSweepEndDeg;
-    const float total_sweep = (end_deg < start_deg) ? (360.0f - (start_deg - end_deg)) : (end_deg - start_deg);
-    const int start_qt = static_cast<int>(-start_deg * 16.0f);
-    const int span_qt  = static_cast<int>(-total_sweep * 16.0f);
+    // Arc visuals use the wider visual span
+    constexpr int start_qt = static_cast<int>(-kArcStartDeg * 16.0f);
+    constexpr int span_qt  = static_cast<int>(-kArcTotalDeg * 16.0f);
 
-    // Outer ring (light gray)
-    QPen outerPen(QColor(220,220,220));
-    outerPen.setWidthF(6.0f);
+    // Outer ring (medium/light gray)
+    QPen outerPen(kOuterRingColor);
+    outerPen.setWidthF(kOuterRingPen);
     outerPen.setCapStyle(Qt::FlatCap);
     painter->setPen(outerPen);
     painter->setBrush(Qt::NoBrush);
-    QRectF outerRect(-80.0, -80.0, 160.0, 160.0);
+    QRectF outerRect(-kOuterRingRadius, -kOuterRingRadius, 2*kOuterRingRadius, 2*kOuterRingRadius);
     painter->drawArc(outerRect, start_qt, span_qt);
 
-    // Inner ring (white)
-    QPen innerPen(QColor(255,255,255));
-    innerPen.setWidthF(10.0f);
+    // Inner ring (medium/light gray)
+    QPen innerPen(kInnerRingColor);
+    innerPen.setWidthF(kInnerRingPen);
     innerPen.setCapStyle(Qt::FlatCap);
     painter->setPen(innerPen);
-    QRectF innerRect(-62.0, -62.0, 124.0, 124.0);
+    QRectF innerRect(-kInnerRingRadius, -kInnerRingRadius, 2*kInnerRingRadius, 2*kInnerRingRadius);
     painter->drawArc(innerRect, start_qt, span_qt);
 
     painter->restore();
 }
 
-void MotecC125Tachometer::drawBackdrop(QPainter* painter) {
+void MotecC125Tachometer::drawBackdrop(QPainter* painter)
+{
     painter->save();
     painter->setPen(Qt::NoPen);
     painter->setBrush(Qt::black);
@@ -122,56 +206,47 @@ void MotecC125Tachometer::drawBackdrop(QPainter* painter) {
     painter->restore();
 }
 
-void MotecC125Tachometer::drawTicks(QPainter* painter) {
+void MotecC125Tachometer::drawTicks(QPainter* painter)
+{
     painter->save();
 
-    // Tick band lies in the dark area between the white rings
-    // Inner white ring radius = 62 with pen 10 -> outer edge ~67
-    // Place ticks just outside that, ending just inside the outer ring (80 with pen 6 -> inner edge ~77)
-    const float tick_outer = 76.0f;           // tick line outer radius
-    const float tick_inner_major = 68.5f;     // 1000 RPM
-    const float tick_inner_mid = 70.5f;       // 500 RPM
-    const float tick_inner_minor = 72.5f;     // 100 RPM
-
-    const QColor tickColor = Qt::white;
+    const QColor tickColor = Qt::black;
     QPen pen(tickColor);
     pen.setCapStyle(Qt::FlatCap);
     painter->setPen(pen);
 
-    // Sweep and mapping are the same as the yellow arc
-    const float start_deg = kSweepStartDeg;
-    const float end_deg = kSweepEndDeg;
-    const float sweep_cw = (end_deg < start_deg) ? (end_deg + 360.0f - start_deg) : (end_deg - start_deg);
-
     // Draw ticks at RPM-based intervals (100, 500, 1000)
-    for (uint32_t rpm = 0; rpm <= _cfg.max_rpm; rpm += 100) {
+    for (uint32_t rpm = 0; rpm <= _cfg.max_rpm; rpm += 100)
+    {
         float proportion = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
-        float a = start_deg + sweep_cw * proportion; // clockwise
+        float a = kSweepStartDeg + kSweepTotalDeg * proportion; // clockwise
         if (a >= 360.0f) a -= 360.0f;
-        float rad = degToRad(a);
+        float rad = degrees_to_radians(a);
 
         bool isMajor = (rpm % 1000 == 0);
         bool isMid   = (!isMajor && (rpm % 500 == 0));
-        pen.setWidthF(isMajor ? 3.6f : (isMid ? 2.4f : 1.4f));
+        pen.setWidthF(isMajor ? kTickWidthMajor : (isMid ? kTickWidthMid : kTickWidthMinor));
         painter->setPen(pen);
 
-        float inner = isMajor ? tick_inner_major : (isMid ? tick_inner_mid : tick_inner_minor);
+        float inner = isMajor ? kTickInnerMajor : (isMid ? kTickInnerMid : kTickInnerMinor);
         QPointF p1(inner * std::cos(rad), inner * std::sin(rad));
-        QPointF p2(tick_outer * std::cos(rad), tick_outer * std::sin(rad));
+        QPointF p2(kTickOuterRadius * std::cos(rad), kTickOuterRadius * std::sin(rad));
         painter->drawLine(p1, p2);
     }
 
     // Labels for each 1000 RPM (single digit 1..)
     QFont labelFont = _digitFont;
-    labelFont.setPointSizeF(std::max(8.0, labelFont.pointSizeF() * 0.28));
+    labelFont.setPointSizeF(kLabelFontSize);
     painter->setFont(labelFont);
-    painter->setPen(Qt::white);
-    const float label_radius = 56.0f; // just inside inner ring
-    for (uint32_t rpm = 1000; rpm <= _cfg.max_rpm; rpm += 1000) {
+    painter->setPen(Qt::black);
+    // Place labels closer to inner arc to avoid overlap with shorter ticks
+    constexpr float label_radius = kLabelRadius;
+    for (uint32_t rpm = 0u; rpm <= _cfg.max_rpm; rpm += 1000u)
+    {
         float proportion = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
-        float a = start_deg + sweep_cw * proportion;
+        float a = kSweepStartDeg + kSweepTotalDeg * proportion;
         if (a >= 360.0f) a -= 360.0f;
-        float rad = degToRad(a);
+        float rad = degrees_to_radians(a);
         QString text = QString::number(static_cast<int>(rpm / 1000));
         QRectF r(0,0,16,12);
         r.moveCenter(QPointF(label_radius * std::cos(rad), label_radius * std::sin(rad)));
@@ -181,42 +256,44 @@ void MotecC125Tachometer::drawTicks(QPainter* painter) {
     painter->restore();
 }
 
-void MotecC125Tachometer::drawFilledArc(QPainter* painter) {
+void MotecC125Tachometer::drawFilledArc(QPainter* painter)
+{
     painter->save();
 
-    // Use the same sweep as ticks for consistency
-    const float start_deg = kSweepStartDeg; // where 0 rpm begins
-    const float end_deg = kSweepEndDeg;     // where max rpm ends
-    const float total_sweep = (end_deg < start_deg) ? (360.0f - (start_deg - end_deg)) : (end_deg - start_deg);
-
+    // Compute proportion and value sweep within the inset sweep range
     const float proportion = std::clamp(static_cast<float>(_rpm) / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
-    const float sweep_deg = total_sweep * proportion;
+    const float sweep_deg = kSweepTotalDeg * proportion;
 
-    // Match the gap between inner and outer rings so the fill overlays exactly in that channel
-    const float arc_radius = 72.0f;    // mid-point between ~67.5 and ~76
-    const float arc_thickness = 10.0f; // roughly the gap width
-    QRectF rect(-arc_radius, -arc_radius, 2*arc_radius, 2*arc_radius);
+    // Match the widened gap between inner and outer rings so the fill overlays that channel with no gap
+    constexpr QRectF rect(-kFillArcRadius, -kFillArcRadius, 2 * kFillArcRadius, 2 * kFillArcRadius);
 
-    // First draw the entire sweep in white as the background
-    QPen bgPen(Qt::white);
-    bgPen.setWidthF(arc_thickness);
+    // First draw the entire visual arc span in white as the background so it matches the gray rings
+    QPen bgPen(kFillBaseColor);
+    bgPen.setWidthF(kFillArcThickness);
     bgPen.setCapStyle(Qt::FlatCap);
     painter->setPen(bgPen);
-    painter->drawArc(rect, static_cast<int>(-start_deg * 16.0f), static_cast<int>(-total_sweep * 16.0f));
+    painter->drawArc(rect, static_cast<int>(-kArcStartDeg * 16.0f), static_cast<int>(-kArcTotalDeg * 16.0f));
 
-    // Then overlay the current portion in yellow
-    QPen valPen(QColor(255, 180, 0));
-    valPen.setWidthF(arc_thickness);
+    // Then overlay the current portion in yellow; start from the visual arc start so
+    // a small pre-zero yellow segment is visible up to the 0 tick
+    QPen valPen(kFillValueColor);
+    valPen.setWidthF(kFillArcThickness);
     valPen.setCapStyle(Qt::FlatCap);
     painter->setPen(valPen);
-    painter->drawArc(rect, static_cast<int>(-start_deg * 16.0f), static_cast<int>(-sweep_deg * 16.0f));
+    // total sweep for the yellow arc = offset to zero + value proportion of sweep
+    const float yellow_total_deg = kValueStartOffsetDeg + sweep_deg;
+    painter->drawArc(rect, static_cast<int>(-kArcStartDeg * 16.0f), static_cast<int>(-yellow_total_deg * 16.0f));
 
     painter->restore();
 }
 
-void MotecC125Tachometer::drawCenterDigit(QPainter* painter) {
+void MotecC125Tachometer::drawCenterDigit(QPainter* painter)
+{
+    constexpr QColor digit_color = QColor(255, 255, 255);
+    constexpr QColor rpm_label_color = QColor(100, 100, 100);
+
     painter->save();
-    painter->setPen(Qt::white);
+    painter->setPen(digit_color);
     painter->setFont(_digitFont);
 
     const QString digit = QString::number(static_cast<int>(_cfg.center_page_digit));
@@ -225,8 +302,9 @@ void MotecC125Tachometer::drawCenterDigit(QPainter* painter) {
 
     // Small label RPMx1000 at bottom of center
     QFont small = _digitFont;
-    small.setPointSizeF(std::max(8.0, small.pointSizeF() * 0.35));
+    small.setPointSizeF(8.0f);
     painter->setFont(small);
+    painter->setPen(rpm_label_color);
     painter->drawText(QRectF(-40, 15, 80, 20), Qt::AlignCenter, "RPMx1000");
     painter->restore();
 }

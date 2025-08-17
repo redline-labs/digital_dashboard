@@ -6,13 +6,13 @@ windows:
     background_color: "#000000"
     widgets:
       - type: motec_c125_tachometer
-        x: 200
-        y: 60
-        width: 400
-        height: 360
+        x: 175
+        y: 30
+        width: 450
+        height: 450
         config:
           max_rpm: 6000
-          warning_rpm: 6500
+          redline_rpm: 5000
           center_page_digit: 5
           zenoh_key: "vehicle/engine/rpm"
           schema_type: "EngineRpm"

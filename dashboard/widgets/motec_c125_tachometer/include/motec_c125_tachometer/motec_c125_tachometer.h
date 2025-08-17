@@ -15,7 +15,8 @@ class ExpressionParser;
 
 class QPainter;
 
-class MotecC125Tachometer : public QWidget {
+class MotecC125Tachometer : public QWidget
+{
     Q_OBJECT
 
 public:
@@ -38,8 +39,6 @@ private:
     void drawFilledArc(QPainter* painter);
     void drawTicks(QPainter* painter);
     void drawCenterDigit(QPainter* painter);
-
-    float clampRpm(float rpm) const;
 
     MotecC125TachometerConfig_t _cfg;
     float _rpm; // current rpm
