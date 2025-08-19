@@ -19,6 +19,7 @@ With additional "sparklines" widget on the right.
 ![Screengrab](/docs/images/motec_cdl2_demo.png)
 
 #### (Work in Progress) Motec C125
+![Screengrab](/docs/images/motec_c125_dash_demo.png)
 
 ## Documentation
 Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
