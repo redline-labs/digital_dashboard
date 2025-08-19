@@ -13,33 +13,36 @@ windows:
         width: 250
         height: 250
         config:
-          zenoh_key: "vehicle/speed_mps"  # Real-time speed data in m/s
+          odometer_value: 123456  # Initial odometer value.
+          max_speed: 160  # Maximum speed to display on the arc in miles per hour.
+          shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
+  
+          # Data source for indicated speed. 
+          zenoh_key: "vehicle/speed_mps"
           schema_type: "VehicleSpeed"
+          speed_expression: "mps_to_mph(speedMps)"
           
-          # Separate odometer subscription
+          # Data source for odometer.
           odometer_zenoh_key: "vehicle/odometer"  # Real-time odometer data
           odometer_schema_type: "VehicleOdometer"
-
-          odometer_value: 123456
-          max_speed: 160
-          shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
-
-          speed_expression: "mps_to_mph(speedMps)"
           odometer_expression: "totalMiles"  # Extract miles from odometer data
-      
-      # Mercedes 190E Tachometer on the right - subscribes to engine RPM
+
+
+      # Mercedes 190E Tachometer on the right
       - type: mercedes_190e_tachometer
         x: 650
         y: 15
         width: 250
         height: 250
         config:
-          zenoh_key: "vehicle/engine/rpm"  # Real-time RPM data
+          zenoh_key: "vehicle/engine/rpm"
+          schema_type: "EngineRpm"
+          rpm_expression: "rpm"
+
           max_rpm: 8000
           redline_rpm: 7000
           show_clock: true
-          schema_type: "EngineRpm"
-          rpm_expression: "rpm"
+          
       
       # Telltale indicator - subscribes to a condition and shows an icon
       - type: mercedes_190e_telltale
@@ -49,11 +52,14 @@ windows:
         height: 30
         config:
           telltale_type: battery  # one of: battery, brake_system, high_beam, windshield_washer
+          
           zenoh_key: "vehicle/telltales/battery_warning"
           schema_type: "BatteryWarning"  # Cap'n Proto schema type
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+
           normal_color: "#333333"
           warning_color: "#FF0000"
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+          
       
       - type: mercedes_190e_telltale
         x: 90
@@ -62,12 +68,14 @@ windows:
         height: 30
         config:
           telltale_type: brake_system  # one of: battery, brake_system, high_beam, windshield_washer
+
           zenoh_key: "vehicle/telltales/battery_warning"
           schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          normal_color: "#333333"
-          warning_color: "#FF0000"
           condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
+          normal_color: "#333333"
+          warning_color: "#FF0000"
+          
       - type: mercedes_190e_telltale
         x: 130
         y: 400
@@ -75,12 +83,14 @@ windows:
         height: 30
         config:
           telltale_type: high_beam  # one of: battery, brake_system, high_beam, windshield_washer
+
           zenoh_key: "vehicle/telltales/battery_warning"
           schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          normal_color: "#333333"
-          warning_color: "#FF0000"
           condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
+          normal_color: "#333333"
+          warning_color: "#FF0000"
+          
       - type: mercedes_190e_telltale
         x: 170
         y: 400
@@ -88,11 +98,14 @@ windows:
         height: 30
         config:
           telltale_type: windshield_washer  # one of: battery, brake_system, high_beam, windshield_washer
+          
           zenoh_key: "vehicle/telltales/battery_warning"
           schema_type: "BatteryWarning"  # Cap'n Proto schema type
+          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+
           normal_color: "#333333"
           warning_color: "#FF0000"
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+          
 
       # Sparkline for engine data on top - subscribes to engine temperature
       - type: sparkline
@@ -104,6 +117,7 @@ windows:
           zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
           schema_type: "EngineTemperature"
           value_expression: "temperatureCelsius"
+
           units: "Coolant (C)"
           min_value: -40
           max_value: 120
@@ -122,59 +136,28 @@ windows:
           fuel_gauge:
             min_value: 0
             max_value: 100
+
             zenoh_key: "vehicle/speed_mps"
             schema_type: "VehicleSpeed"
             value_expression: "speedMps"
           right_gauge:
             min_value: 0
             max_value: 3
+
             zenoh_key: "vehicle/speed_mps"
             schema_type: "VehicleSpeed"
             value_expression: "psi_to_bar(speedMps)"
           bottom_gauge:
             min_value: 0
             max_value: 80
+
             zenoh_key: "vehicle/engine/temperature_celsius"
             schema_type: "EngineTemperature"
             value_expression: "temperatureCelsius"
           left_gauge:
             min_value: 40
             max_value: 120
+
             zenoh_key: "vehicle/engine/temperature_celsius"
             schema_type: "EngineTemperature"
             value_expression: "temperatureCelsius"
-
-  # Dedicated CarPlay window (no Zenoh subscription needed)
-#  - name: "carplay"
-#    width: 800
-#    height: 600
-#    widgets:
-#      - type: carplay
-#        x: 0
-#        y: 0
-#        width: 800
-#        height: 600
-#        config:
-#          width_px: 800
-#          height_px: 600
-#          fps: 30
-#          dpi: 160
-#          format: 5
-#          i_box_version: 2
-#          phone_work_mode: 2
-#          packet_max: 49152
-#          box_name: "nodePlay"
-#          night_mode: false
-#          drive_type: "LHD"
-#          media_delay: 300
-#          audio_transfer_mode: false
-#          wifi_type: "5Ghz"
-#          mic_type: "OS"
-#          phone_config:
-#            car_play:
-#              frame_interval: 5000
-#            android_auto:
-#              frame_interval: null
-#
-#          # Audio device buffer size (bytes) on the host.
-#          audio_device_buffer_size: 16384

@@ -885,7 +885,8 @@ void CarPlayWidget::decode_dongle_response(MessageHeader header, const uint8_t* 
                     // Audio data!
                     if (_audio_ready_callback != nullptr)
                     {
-                        _audio_ready_callback(&buffer[12], header.get_message_length() - 12);
+                        // TODO: Re-enable audio.
+                        //_audio_ready_callback(&buffer[12], header.get_message_length() - 12);
                     }
                 }
             }

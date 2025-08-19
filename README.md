@@ -9,7 +9,7 @@ All the gauges are drawn/rendered, no static images.  A YAML configuration file 
 
  Zenoh is used for pub/sub, and capnproto is used for serialization.  The widgets additionally have a flexible "expression parser" to where a user can specify a capnproto signal and any math expression to be used for the data source for a widget.
 
-For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.
+For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.  Multiple windows (displays) can also be supported in the same single configuration - for example, you can have one display be your instrument cluster, the other be a CarPlay window.
 
 #### (Work in progress) Mercedes 190E Instrument Cluster
 With additional "sparklines" widget on the right.
@@ -20,6 +20,10 @@ With additional "sparklines" widget on the right.
 
 #### (Work in Progress) Motec C125
 ![Screengrab](/docs/images/motec_c125_dash_demo.png)
+
+### (Work in Progress) CarPlay Window.
+Requires a CarlinKit dongle such as CPC200-CCPA
+![Screengrab](/docs/images/carplay_demo.png)
 
 ## Documentation
 Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
