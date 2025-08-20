@@ -46,6 +46,17 @@ constexpr T bar_to_psi(T bar)
     return bar * static_cast<T>(14.5037738007218);
 }
 
+template<typename T = float>
+constexpr T celsius_to_fahrenheit(T celsius)
+{
+    return celsius * static_cast<T>(1.8) + static_cast<T>(32);
+}
+
+template<typename T = float>
+constexpr T fahrenheit_to_celsius(T fahrenheit)
+{
+    return (fahrenheit - static_cast<T>(32)) / static_cast<T>(1.8);
+}
 
 
 

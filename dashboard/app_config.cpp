@@ -7,6 +7,74 @@
 
 // Convert from a YAML Node to a native config_t.
 namespace YAML {
+
+template<>
+struct convert<ValueReadoutConfig_t> {
+    static Node encode(const ValueReadoutConfig_t& rhs)
+    {
+        Node node = {};
+        node["label_text"] = rhs.label_text;
+        // alignment
+        switch (rhs.alignment)
+        {
+            case ValueReadoutAlignment::Left:   node["alignment"] = "left"; break;
+            case ValueReadoutAlignment::Right:  node["alignment"] = "right"; break;
+            case ValueReadoutAlignment::Center: node["alignment"] = "center"; break;
+        }
+        node["zenoh_key"] = rhs.zenoh_key;
+        node["schema_type"] = rhs.schema_type;
+        node["value_expression"] = rhs.value_expression;
+        return node;
+    }
+
+    static bool decode(const Node& node, ValueReadoutConfig_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["label_text"]) rhs.label_text = node["label_text"].as<std::string>();
+        if (node["alignment"])
+        {
+            const auto a = node["alignment"].as<std::string>();
+            if (a == "left")
+            {
+                rhs.alignment = ValueReadoutAlignment::Left;
+            } else if (a == "right")
+            {
+                rhs.alignment = ValueReadoutAlignment::Right;
+            }
+            else
+            {
+                rhs.alignment = ValueReadoutAlignment::Center;
+            }
+        }
+        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
+        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
+        if (node["value_expression"]) rhs.value_expression = node["value_expression"].as<std::string>();
+        return true;
+    }
+};
+
+template<>
+struct convert<BackgroundRectConfig_t> {
+    static Node encode(const BackgroundRectConfig_t& rhs)
+    {
+        Node node = {};
+        node["colors"] = rhs.colors;
+        node["direction"] = (rhs.direction == GradientDirection::Vertical) ? "vertical" : "horizontal";
+        return node;
+    }
+
+    static bool decode(const Node& node, BackgroundRectConfig_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["colors"]) rhs.colors = node["colors"].as<std::vector<std::string>>();
+        if (node["direction"]) {
+            const auto d = node["direction"].as<std::string>();
+            rhs.direction = (d == "vertical") ? GradientDirection::Vertical : GradientDirection::Horizontal;
+        }
+        return true;
+    }
+};
+
 template<>
 struct convert<StaticTextConfig_t> {
     static Node encode(const StaticTextConfig_t& rhs)
@@ -402,6 +470,16 @@ struct convert<widget_config_t> {
             node["type"] = StaticTextWidget::kWidgetName;
             node["config"] = std::get<StaticTextWidget::config_t>(rhs.config);
         }
+        else if (rhs.type == widget_type_t::value_readout)
+        {
+            node["type"] = ValueReadoutWidget::kWidgetName;
+            node["config"] = std::get<ValueReadoutWidget::config_t>(rhs.config);
+        }
+        else if (rhs.type == widget_type_t::background_rect)
+        {
+            node["type"] = BackgroundRectWidget::kWidgetName;
+            node["config"] = std::get<BackgroundRectWidget::config_t>(rhs.config);
+        }
         else
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", widget_type_to_string(rhs.type));
@@ -472,6 +550,16 @@ struct convert<widget_config_t> {
         {
             rhs.type = widget_type_t::static_text;
             rhs.config = node["config"].as<StaticTextConfig_t>();
+        }
+        else if (type == ValueReadoutWidget::kWidgetName)
+        {
+            rhs.type = widget_type_t::value_readout;
+            rhs.config = node["config"].as<ValueReadoutConfig_t>();
+        }
+        else if (type == BackgroundRectWidget::kWidgetName)
+        {
+            rhs.type = widget_type_t::background_rect;
+            rhs.config = node["config"].as<BackgroundRectConfig_t>();
         }
         else
         {

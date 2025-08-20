@@ -45,6 +45,8 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     symbol_table_.add_function("mps_to_mph", &mps_to_mph<double>);
     symbol_table_.add_function("psi_to_bar", &psi_to_bar<double>);
     symbol_table_.add_function("bar_to_psi", &bar_to_psi<double>);
+    symbol_table_.add_function("celsius_to_fahrenheit", &celsius_to_fahrenheit<double>);
+    symbol_table_.add_function("fahrenheit_to_celsius", &fahrenheit_to_celsius<double>);
 
     // Extract variables from the expression
     extractVariables();

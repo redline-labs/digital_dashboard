@@ -109,6 +109,16 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* txt = new StaticTextWidget(std::get<StaticTextConfig_t>(widget_config.config));
         return txt;
     }
+    else if (widget_config.type == widget_type_t::value_readout)
+    {
+        auto* readout = new ValueReadoutWidget(std::get<ValueReadoutConfig_t>(widget_config.config));
+        return readout;
+    }
+    else if (widget_config.type == widget_type_t::background_rect)
+    {
+        auto* rect = new BackgroundRectWidget(std::get<BackgroundRectConfig_t>(widget_config.config));
+        return rect;
+    }
     else
     {
         SPDLOG_WARN("Unknown widget type: '{}'", widget_type_to_string(widget_config.type));

@@ -14,8 +14,8 @@
 namespace
 {
 // Measurement sweep (ticks/labels/yellow value) — narrower than the arc span
-constexpr float kSweepStartDeg = 160.0f; // start of the RPM scale (0 RPM)
-constexpr float kSweepEndDeg   = 20.0f;  // end of the RPM scale (max RPM)
+constexpr float kSweepStartDeg = 165.0f; // start of the RPM scale (0 RPM)
+constexpr float kSweepEndDeg   = 15.0f;  // end of the RPM scale (max RPM)
 constexpr float kSweepTotalDeg = (kSweepEndDeg < kSweepStartDeg)
                                  ? (360.0f - (kSweepStartDeg - kSweepEndDeg))
                                  : (kSweepEndDeg - kSweepStartDeg);

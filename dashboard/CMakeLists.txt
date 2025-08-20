@@ -52,6 +52,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     motec_c125_tachometer
     motec_cdl3_tachometer
     static_text
+    value_readout
+    background_rect
 )
 
 # Add comprehensive test data publisher executable
