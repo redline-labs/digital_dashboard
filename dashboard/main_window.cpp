@@ -5,6 +5,8 @@
 #include <QMetaObject>
 #include <QPalette>
 
+#include "reflection/reflection.h"
+
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
 
 MainWindow::MainWindow(const window_config_t& window_cfg):
@@ -44,7 +46,7 @@ void MainWindow::createWidgetsFromConfig()
             _widgets.emplace_back(std::unique_ptr<QWidget>(widget));
             
             SPDLOG_INFO("Created widget '{}' at ({}, {}) with size {}x{} in window '{}'",
-                widget_type_to_string(widget_config.type),
+                reflection::enum_to_string(widget_config.type),
                 widget_config.x,
                 widget_config.y, 
                 widget_config.width,
@@ -54,7 +56,7 @@ void MainWindow::createWidgetsFromConfig()
         else
         {
             SPDLOG_ERROR("Failed to create widget of type '{}' in window '{}'", 
-                widget_type_to_string(widget_config.type),
+                reflection::enum_to_string(widget_config.type),
                 _window_cfg.name);
         }
     }
@@ -121,7 +123,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
     }
     else
     {
-        SPDLOG_WARN("Unknown widget type: '{}'", widget_type_to_string(widget_config.type));
+        SPDLOG_WARN("Unknown widget type: '{}'", reflection::enum_to_string(widget_config.type));
         return nullptr;
     }
 }

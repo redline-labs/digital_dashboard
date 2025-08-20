@@ -41,6 +41,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         OpenGL::GL
         # Link nlohmann/json (now available from parent CMakeLists.txt)
         nlohmann_json::nlohmann_json
+        reflection
     PRIVATE
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
         common_logging
@@ -70,4 +71,5 @@ target_link_libraries(carplay_test_messages PRIVATE
     common_logging
     nlohmann_json::nlohmann_json
     cxxopts::cxxopts
+    reflection
 ) 

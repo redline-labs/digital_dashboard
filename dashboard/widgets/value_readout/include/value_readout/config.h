@@ -3,29 +3,20 @@
 
 #include <cstdint>
 #include <string>
+#include "reflection/reflection.h"
 
-enum class ValueReadoutAlignment {
-	Left,
-	Right,
-	Center
-};
+REFLECT_ENUM(ValueReadoutAlignment,
+	left,
+	right,
+	center
+)
 
-struct ValueReadoutConfig_t {
-	ValueReadoutConfig_t() :
-		label_text{"WATER TMP"},
-		alignment{ValueReadoutAlignment::Right},
-		zenoh_key{},
-		schema_type{"EngineTemperature"},
-		value_expression{"temperatureCelsius"}
-	{}
-
-	std::string label_text;   // Orange label text (e.g., WATER TMP)
-	ValueReadoutAlignment alignment; // Left, Right, or Center
-
-	// Data source
-	std::string zenoh_key;    // Topic/key for subscription
-	std::string schema_type;  // Cap'n Proto schema type name
-	std::string value_expression; // Expression to compute display value
-};
+REFLECT_STRUCT(ValueReadoutConfig_t,
+	(std::string, label_text, "Untitled"),
+	(ValueReadoutAlignment, alignment, ValueReadoutAlignment::left),
+	(std::string, zenoh_key, ""),
+	(std::string, schema_type, ""),
+	(std::string, value_expression, "")
+)
 
 #endif // VALUE_READOUT_CONFIG_H

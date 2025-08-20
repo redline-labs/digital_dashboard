@@ -28,7 +28,7 @@ std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
             : zenoh::Config::create_default();
         auto session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
         weak_session_ = session;
-        SPDLOG_INFO("Created new zenoh session.");
+        SPDLOG_DEBUG("Created new zenoh session.");
         return session;
     }
     catch (const std::exception& e)

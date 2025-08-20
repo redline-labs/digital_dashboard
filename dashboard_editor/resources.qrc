@@ -1,0 +1,19 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <!-- Reuse fonts and widget SVGs from the main dashboard resources -->
+    <file alias="fonts/futura.ttf">../dashboard/resources/fonts/futura.ttf</file>
+    <file alias="fonts/DSEG7ClassicMini-Bold.ttf">../dashboard/resources/fonts/DSEG/DSEG7ClassicMini-Bold.ttf</file>
+    <file alias="fonts/DSEG7Classic-Bold.ttf">../dashboard/resources/fonts/DSEG/DSEG7Classic-Bold.ttf</file>
+    <file alias="fonts/DSEG14Classic-Regular.ttf">../dashboard/resources/fonts/DSEG/DSEG14Classic-Regular.ttf</file>
+
+    <file alias="mercedes_190e_telltales/telltale_windshield_washer.svg">../dashboard/resources/widgets/mercedes_190e_telltales/telltale_windshield_washer.svg</file>
+    <file alias="mercedes_190e_telltales/telltale_brake_system.svg">../dashboard/resources/widgets/mercedes_190e_telltales/telltale_brake_system.svg</file>
+    <file alias="mercedes_190e_telltales/telltale_battery.svg">../dashboard/resources/widgets/mercedes_190e_telltales/telltale_battery.svg</file>
+    <file alias="mercedes_190e_telltales/telltale_high_beam.svg">../dashboard/resources/widgets/mercedes_190e_telltales/telltale_high_beam.svg</file>
+
+    <file alias="mercedes_190e_cluster_gauge/coolant_icon.svg">../dashboard/resources/widgets/mercedes_190e_cluster_gauge/coolant_icon.svg</file>
+    <file alias="mercedes_190e_cluster_gauge/gas_icon.svg">../dashboard/resources/widgets/mercedes_190e_cluster_gauge/gas_icon.svg</file>
+    <file alias="mercedes_190e_cluster_gauge/oil_icon.svg">../dashboard/resources/widgets/mercedes_190e_cluster_gauge/oil_icon.svg</file>
+</qresource>
+</RCC>
+

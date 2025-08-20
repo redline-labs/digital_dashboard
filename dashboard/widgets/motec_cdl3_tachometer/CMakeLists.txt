@@ -16,6 +16,8 @@ target_include_directories(motec_cdl3_tachometer PUBLIC
 )
 
 target_link_libraries(motec_cdl3_tachometer
+    PUBLIC
+        reflection
     PRIVATE
         Qt6::Widgets
         common_logging

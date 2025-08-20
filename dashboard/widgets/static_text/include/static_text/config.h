@@ -3,20 +3,14 @@
 
 #include <string>
 #include <cstdint>
+#include "reflection/reflection.h"
 
-struct StaticTextConfig_t {
-    StaticTextConfig_t()
-        : text{""}
-        , font{"Arial"}
-        , font_size{12}
-        , color{"#000000"}
-    {}
-
-    std::string text;      // Text content
-    std::string font;      // Font family or resource-loaded font family
-    uint16_t    font_size; // Point size
-    std::string color;     // Hex color #RRGGBB
-};
+REFLECT_STRUCT(StaticTextConfig_t,
+    (std::string, text, "Your Text Here"),
+    (std::string, font, "Arial"),
+    (uint16_t,    font_size, 12),
+    (std::string, color, "#000000")
+)
 
 #endif // STATIC_TEXT_CONFIG_H
 

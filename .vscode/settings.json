@@ -64,6 +64,7 @@
         "variant": "cpp",
         "algorithm": "cpp",
         "future": "cpp",
-        "source_location": "cpp"
+        "source_location": "cpp",
+        "type_traits": "cpp"
     }
 }

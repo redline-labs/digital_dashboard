@@ -1,102 +1,83 @@
 #include "app_config.h"
 #include <yaml-cpp/yaml.h>
+#include "reflection/reflection.h"
 
 #include <spdlog/spdlog.h>
 
 #include <string>
 
+
+#define YAML_CONFIG_STRUCT(reflect_struct_name) \
+template<> \
+struct convert<reflect_struct_name> \
+{ \
+    static Node encode(const reflect_struct_name& rhs) \
+    { \
+        Node node = {}; \
+        reflection::visit_fields<reflect_struct_name>(rhs, [&](std::string_view name, const auto& ref, std::string_view /*type*/) \
+        { \
+            node[name] = ref; \
+        }); \
+        return node; \
+    } \
+    static bool decode(const Node& node, reflect_struct_name& rhs) \
+    { \
+        if (!node.IsMap()) return false; \
+        reflection::visit_fields<reflect_struct_name>(rhs, [&](std::string_view name, auto& ref, std::string_view /*type*/) \
+        { \
+            if (node[name]) \
+            { \
+                ref = node[name].as<std::decay_t<decltype(ref)>>(); \
+            } \
+        }); \
+        return true; \
+    } \
+}
+
+#define YAML_CONFIG_ENUM(reflect_enum_name) \
+template<> \
+struct convert<reflect_enum_name> \
+{ \
+    static Node encode(const reflect_enum_name& rhs) \
+    { \
+        return YAML::Node(reflection::enum_to_string(rhs)); \
+    } \
+    static bool decode(const Node& node, reflect_enum_name& rhs) \
+    { \
+        rhs = reflection::enum_traits<reflect_enum_name>::from_string(node.as<std::string>()); \
+        return true; \
+    } \
+}
+
+
 // Convert from a YAML Node to a native config_t.
 namespace YAML {
 
-template<>
-struct convert<ValueReadoutConfig_t> {
-    static Node encode(const ValueReadoutConfig_t& rhs)
-    {
-        Node node = {};
-        node["label_text"] = rhs.label_text;
-        // alignment
-        switch (rhs.alignment)
-        {
-            case ValueReadoutAlignment::Left:   node["alignment"] = "left"; break;
-            case ValueReadoutAlignment::Right:  node["alignment"] = "right"; break;
-            case ValueReadoutAlignment::Center: node["alignment"] = "center"; break;
-        }
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["value_expression"] = rhs.value_expression;
-        return node;
-    }
 
-    static bool decode(const Node& node, ValueReadoutConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["label_text"]) rhs.label_text = node["label_text"].as<std::string>();
-        if (node["alignment"])
-        {
-            const auto a = node["alignment"].as<std::string>();
-            if (a == "left")
-            {
-                rhs.alignment = ValueReadoutAlignment::Left;
-            } else if (a == "right")
-            {
-                rhs.alignment = ValueReadoutAlignment::Right;
-            }
-            else
-            {
-                rhs.alignment = ValueReadoutAlignment::Center;
-            }
-        }
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
-        if (node["value_expression"]) rhs.value_expression = node["value_expression"].as<std::string>();
-        return true;
-    }
-};
+YAML_CONFIG_ENUM(ValueReadoutAlignment);
+YAML_CONFIG_STRUCT(ValueReadoutConfig_t);
 
-template<>
-struct convert<BackgroundRectConfig_t> {
-    static Node encode(const BackgroundRectConfig_t& rhs)
-    {
-        Node node = {};
-        node["colors"] = rhs.colors;
-        node["direction"] = (rhs.direction == GradientDirection::Vertical) ? "vertical" : "horizontal";
-        return node;
-    }
+YAML_CONFIG_ENUM(GradientDirection);
+YAML_CONFIG_STRUCT(BackgroundRectConfig_t);
 
-    static bool decode(const Node& node, BackgroundRectConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["colors"]) rhs.colors = node["colors"].as<std::vector<std::string>>();
-        if (node["direction"]) {
-            const auto d = node["direction"].as<std::string>();
-            rhs.direction = (d == "vertical") ? GradientDirection::Vertical : GradientDirection::Horizontal;
-        }
-        return true;
-    }
-};
+YAML_CONFIG_STRUCT(StaticTextConfig_t);
 
-template<>
-struct convert<StaticTextConfig_t> {
-    static Node encode(const StaticTextConfig_t& rhs)
-    {
-        Node node = {};
-        node["text"] = rhs.text;
-        node["font"] = rhs.font;
-        node["font_size"] = rhs.font_size;
-        node["color"] = rhs.color;
-        return node;
-    }
+YAML_CONFIG_STRUCT(Mercedes190ESpeedometerConfig_t);
+YAML_CONFIG_STRUCT(Mercedes190ETachometerConfig_t);
+YAML_CONFIG_STRUCT(MotecC125TachometerConfig_t);
+YAML_CONFIG_STRUCT(MotecCdl3TachometerConfig_t);
+YAML_CONFIG_STRUCT(SparklineConfig_t);
 
-    static bool decode(const Node& node, StaticTextConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["text"]) rhs.text = node["text"].as<std::string>();
-        if (node["font"]) rhs.font = node["font"].as<std::string>();
-        if (node["font_size"]) rhs.font_size = node["font_size"].as<uint16_t>();
-        if (node["color"]) rhs.color = node["color"].as<std::string>();
-        return true;
-    }
-};
+YAML_CONFIG_ENUM(Mercedes190ETelltaleType);
+YAML_CONFIG_STRUCT(Mercedes190ETelltaleConfig_t);
+
+YAML_CONFIG_STRUCT(sub_gauge_config_t);
+YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
+//YAML_CONFIG_STRUCT(CarplayConfig_t);
+/*YAML_CONFIG_STRUCT(widget_config_t);*/
+YAML_CONFIG_STRUCT(window_config_t);
+YAML_CONFIG_STRUCT(app_config_t);
+
 
 
 
@@ -157,264 +138,6 @@ struct convert<CarplayConfig_t> {
 
 
 template<>
-struct convert<Mercedes190ESpeedometerConfig_t> {
-    static Node encode(const Mercedes190ESpeedometerConfig_t& rhs)
-    {
-        Node node = {};
-        node["odometer_value"] = rhs.odometer_value;
-        node["max_speed"] = rhs.max_speed;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["shift_box_markers"] = rhs.shift_box_markers;
-        node["schema_type"] = rhs.schema_type;
-        node["speed_expression"] = rhs.speed_expression;
-        node["odometer_expression"] = rhs.odometer_expression;
-        node["odometer_zenoh_key"] = rhs.odometer_zenoh_key;
-        node["odometer_schema_type"] = rhs.odometer_schema_type;
-        return node;
-    }
-
-    static bool decode(const Node& node, Mercedes190ESpeedometerConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        rhs.odometer_value = node["odometer_value"].as<uint32_t>();
-        rhs.max_speed = node["max_speed"].as<uint16_t>();
-        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        rhs.shift_box_markers = node["shift_box_markers"].as<std::vector<uint8_t>>();
-        rhs.schema_type = node["schema_type"].as<std::string>();
-        rhs.speed_expression = node["speed_expression"].as<std::string>();
-        rhs.odometer_expression = node["odometer_expression"].as<std::string>();
-        rhs.odometer_zenoh_key = node["odometer_zenoh_key"].as<std::string>();
-        rhs.odometer_schema_type = node["odometer_schema_type"].as<std::string>();
-        return true;
-    }
-};
-
-
-template<>
-struct convert<Mercedes190ETachometerConfig_t> {
-    static Node encode(const Mercedes190ETachometerConfig_t& rhs)
-    {
-        Node node = {};
-        node["max_rpm"] = rhs.max_rpm;
-        node["redline_rpm"] = rhs.redline_rpm;
-        node["show_clock"] = rhs.show_clock;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["rpm_expression"] = rhs.rpm_expression;
-
-        return node;
-    }
-
-    static bool decode(const Node& node, Mercedes190ETachometerConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        rhs.max_rpm = node["max_rpm"].as<uint32_t>();
-        rhs.redline_rpm = node["redline_rpm"].as<uint16_t>();
-        rhs.show_clock = node["show_clock"].as<bool>();
-        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        rhs.schema_type = node["schema_type"].as<std::string>();
-        rhs.rpm_expression = node["rpm_expression"].as<std::string>();
-
-        return true;
-    }
-};
-
-// New: circle tachometer widget config
-template<>
-struct convert<MotecC125TachometerConfig_t> {
-    static Node encode(const MotecC125TachometerConfig_t& rhs)
-    {
-        Node node = {};
-        node["max_rpm"] = rhs.max_rpm;
-        node["warning_rpm"] = rhs.warning_rpm;
-        node["redline_rpm"] = rhs.redline_rpm;
-        node["center_page_digit"] = rhs.center_page_digit;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["rpm_expression"] = rhs.rpm_expression;
-        return node;
-    }
-
-    static bool decode(const Node& node, MotecC125TachometerConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
-        if (node["warning_rpm"]) rhs.warning_rpm = node["warning_rpm"].as<uint32_t>();
-        if (node["redline_rpm"]) rhs.redline_rpm = node["redline_rpm"].as<uint32_t>();
-        if (node["center_page_digit"]) rhs.center_page_digit = node["center_page_digit"].as<uint8_t>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
-        if (node["rpm_expression"]) rhs.rpm_expression = node["rpm_expression"].as<std::string>();
-        return true;
-    }
-};
-
-
-// Motec CDL3 tachometer widget config
-template<>
-struct convert<MotecCdl3TachometerConfig_t> {
-    static Node encode(const MotecCdl3TachometerConfig_t& rhs)
-    {
-        Node node = {};
-        node["max_rpm"] = rhs.max_rpm;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["rpm_expression"] = rhs.rpm_expression;
-        return node;
-    }
-
-    static bool decode(const Node& node, MotecCdl3TachometerConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["max_rpm"]) rhs.max_rpm = node["max_rpm"].as<uint32_t>();
-        if (node["zenoh_key"]) rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        if (node["schema_type"]) rhs.schema_type = node["schema_type"].as<std::string>();
-        if (node["rpm_expression"]) rhs.rpm_expression = node["rpm_expression"].as<std::string>();
-        return true;
-    }
-};
-
-
-template<>
-struct convert<SparklineConfig_t> {
-    static Node encode(const SparklineConfig_t& rhs)
-    {
-        Node node = {};
-        node["units"] = rhs.units;
-        node["min_value"] = rhs.min_value;
-        node["max_value"] = rhs.max_value;
-        node["line_color"] = rhs.line_color;
-        node["text_color"] = rhs.text_color;
-        node["font_family"] = rhs.font_family;
-        node["font_size_value"] = rhs.font_size_value;
-        node["font_size_units"] = rhs.font_size_units;
-        node["update_rate"] = rhs.update_rate;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["value_expression"] = rhs.value_expression;
-
-        return node;
-    }
-
-    static bool decode(const Node& node, SparklineConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        rhs.units = node["units"].as<std::string>();
-        rhs.min_value = node["min_value"].as<double>();
-        rhs.max_value = node["max_value"].as<double>();
-        rhs.line_color = node["line_color"].as<std::string>();
-        rhs.text_color = node["text_color"].as<std::string>();
-        rhs.font_family = node["font_family"].as<std::string>();
-        //rhs.font_size_value = node["font_size_value"].as<uint16_t>();
-        //rhs.font_size_units = node["font_size_units"].as<uint16_t>();
-        rhs.update_rate = node["update_rate"].as<uint16_t>();
-        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        rhs.schema_type = node["schema_type"].as<std::string>();
-        rhs.value_expression = node["value_expression"].as<std::string>();
-
-        return true;
-    }
-};
-
-
-template<>
-struct convert<Mercedes190ETelltaleConfig_t> {
-    static Node encode(const Mercedes190ETelltaleConfig_t& rhs)
-    {
-        Node node = {};
-        // telltale type
-        switch (rhs.telltale_type)
-        {
-            case Mercedes190ETelltaleType::battery: node["telltale_type"] = "battery"; break;
-            case Mercedes190ETelltaleType::brake_system: node["telltale_type"] = "brake_system"; break;
-            case Mercedes190ETelltaleType::high_beam: node["telltale_type"] = "high_beam"; break;
-            case Mercedes190ETelltaleType::windshield_washer: node["telltale_type"] = "windshield_washer"; break;
-        }
-        node["warning_color"] = rhs.warning_color;
-        node["normal_color"] = rhs.normal_color;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["condition_expression"] = rhs.condition_expression;
-        return node;
-    }
-
-    static bool decode(const Node& node, Mercedes190ETelltaleConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        if (node["telltale_type"]) {
-            auto s = node["telltale_type"].as<std::string>();
-            if (s == "battery") rhs.telltale_type = Mercedes190ETelltaleType::battery;
-            else if (s == "brake_system") rhs.telltale_type = Mercedes190ETelltaleType::brake_system;
-            else if (s == "high_beam") rhs.telltale_type = Mercedes190ETelltaleType::high_beam;
-            else if (s == "windshield_washer") rhs.telltale_type = Mercedes190ETelltaleType::windshield_washer;
-        }
-        rhs.warning_color = node["warning_color"].as<std::string>();
-        rhs.normal_color = node["normal_color"].as<std::string>();
-        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        rhs.schema_type = node["schema_type"].as<std::string>();
-        rhs.condition_expression = node["condition_expression"].as<std::string>();
-        return true;
-    }
-};
-
-template<>
-struct convert<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t> {
-    static Node encode(const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& rhs)
-    {
-        Node node = {};
-        node["min_value"] = rhs.min_value;
-        node["max_value"] = rhs.max_value;
-        node["zenoh_key"] = rhs.zenoh_key;
-        node["schema_type"] = rhs.schema_type;
-        node["value_expression"] = rhs.value_expression;
-
-        return node;
-    }
-
-    static bool decode(const Node& node, Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        rhs.min_value = node["min_value"].as<float>();
-        rhs.max_value = node["max_value"].as<float>();
-        rhs.zenoh_key = node["zenoh_key"].as<std::string>();
-        rhs.schema_type = node["schema_type"].as<std::string>();
-        rhs.value_expression = node["value_expression"].as<std::string>();
-        return true;
-    }
-};
-
-template<>
-struct convert<Mercedes190EClusterGaugeConfig_t> {
-    static Node encode(const Mercedes190EClusterGaugeConfig_t& rhs)
-    {
-        Node node = {};
-        node["fuel_gauge"] = rhs.fuel_gauge;
-        node["right_gauge"] = rhs.right_gauge;
-        node["bottom_gauge"] = rhs.bottom_gauge;
-        node["left_gauge"] = rhs.left_gauge;
-
-        return node;
-    }
-
-    static bool decode(const Node& node, Mercedes190EClusterGaugeConfig_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        rhs.fuel_gauge = node["fuel_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
-        rhs.right_gauge = node["right_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
-        rhs.bottom_gauge = node["bottom_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
-        rhs.left_gauge = node["left_gauge"].as<Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t>();
-
-        return true;
-    }
-};
-
-template<>
 struct convert<widget_config_t> {
     static Node encode(const widget_config_t& rhs)
     {
@@ -425,64 +148,55 @@ struct convert<widget_config_t> {
         node["width"] = rhs.width;
         node["height"] = rhs.height;
 
+        node["type"] = reflection::enum_to_string(rhs.type);
+
         if (rhs.type == widget_type_t::carplay)
         {
-            node["type"] = CarPlayWidget::kWidgetName;
             node["config"] = std::get<CarPlayWidget::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::mercedes_190e_speedometer)
         {
-            node["type"] = Mercedes190ESpeedometer::kWidgetName;
             node["config"] = std::get<Mercedes190ESpeedometer::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::mercedes_190e_tachometer)
         {
-            node["type"] = Mercedes190ETachometer::kWidgetName;
             node["config"] = std::get<Mercedes190ETachometer::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::sparkline)
         {
-            node["type"] = SparklineItem::kWidgetName;
             node["config"] = std::get<SparklineItem::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::mercedes_190e_telltale)
         {
-            node["type"] = Mercedes190ETelltale::kWidgetName;
             node["config"] = std::get<Mercedes190ETelltale::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::mercedes_190e_cluster_gauge)
         {
-            node["type"] = Mercedes190EClusterGauge::kWidgetName;
             node["config"] = std::get<Mercedes190EClusterGauge::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::motec_c125_tachometer)
         {
-            node["type"] = MotecC125Tachometer::kWidgetName;
             node["config"] = std::get<MotecC125Tachometer::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::motec_cdl3_tachometer)
         {
-            node["type"] = MotecCdl3Tachometer::kWidgetName;
             node["config"] = std::get<MotecCdl3Tachometer::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::static_text)
         {
-            node["type"] = StaticTextWidget::kWidgetName;
             node["config"] = std::get<StaticTextWidget::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::value_readout)
         {
-            node["type"] = ValueReadoutWidget::kWidgetName;
             node["config"] = std::get<ValueReadoutWidget::config_t>(rhs.config);
         }
         else if (rhs.type == widget_type_t::background_rect)
         {
-            node["type"] = BackgroundRectWidget::kWidgetName;
             node["config"] = std::get<BackgroundRectWidget::config_t>(rhs.config);
         }
         else
         {
-            SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", widget_type_to_string(rhs.type));
+            SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", reflection::enum_to_string(rhs.type));
             node["type"] = "unknown";
         }
 
@@ -565,62 +279,6 @@ struct convert<widget_config_t> {
         {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", type);
             rhs.type = widget_type_t::unknown;
-        }
-
-        return true;
-    }
-};
-
-template<>
-struct convert<window_config_t> {
-    static Node encode(const window_config_t& rhs)
-    {
-        Node node = {};
-        node["name"] = rhs.name;
-        node["width"] = rhs.width;
-        node["height"] = rhs.height;
-        node["background_color"] = rhs.background_color;
-        node["widgets"] = rhs.widgets;
-        return node;
-    }
-
-    static bool decode(const Node& node, window_config_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-
-        if (node["name"]) rhs.name = node["name"].as<std::string>();
-        if (node["width"]) rhs.width = node["width"].as<uint16_t>();
-        if (node["height"]) rhs.height = node["height"].as<uint16_t>();
-        if (node["background_color"]) rhs.background_color = node["background_color"].as<std::string>();
-        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
-
-        return true;
-    }
-};
-
-template<>
-struct convert<app_config_t> {
-    static Node encode(const app_config_t& rhs)
-    {
-        Node node = {};
-
-        node["windows"] = rhs.windows;
-
-        return node;
-    }
-
-    static bool decode(const Node& node, app_config_t& rhs)
-    {
-        // Parse windows configuration - support both single window (legacy) and multiple windows
-        if (node["windows"]) {
-            rhs.windows = node["windows"].as<std::vector<window_config_t>>();
-        } else if (node["window"]) {
-            // Legacy single window support - convert to windows array
-            window_config_t legacy_window = node["window"].as<window_config_t>();
-            if (legacy_window.name.empty()) {
-                legacy_window.name = "main";
-            }
-            rhs.windows.push_back(legacy_window);
         }
 
         return true;

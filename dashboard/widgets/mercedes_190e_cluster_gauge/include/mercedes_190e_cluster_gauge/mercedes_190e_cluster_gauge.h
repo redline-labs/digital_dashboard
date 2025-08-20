@@ -53,11 +53,11 @@ private slots:
 
 private:
     void drawBackground(QPainter *painter);
-    void drawSubGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge, 
+    void drawSubGauge(QPainter *painter, const sub_gauge_config_t& gauge, 
                       float centerX, float centerY, float startAngle);
-    void drawOilPressureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
+    void drawOilPressureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                               float centerX, float centerY);
-    void drawCoolantTemperatureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
+    void drawCoolantTemperatureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                                      float centerX, float centerY);
     void drawCenterHole(QPainter *painter, float centerX, float centerY);
     

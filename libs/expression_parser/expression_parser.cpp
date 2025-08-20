@@ -106,7 +106,7 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
                 zenoh::closures::none
             )
         );
-        SPDLOG_INFO("Subscribed to zenoh key '{}'", zenoh_key_);
+        SPDLOG_DEBUG("Subscribed to zenoh key '{}'", zenoh_key_);
     }
     catch (const std::exception& e)
     {

@@ -3,22 +3,14 @@
 
 #include <cstdint>
 #include <string>
+#include "reflection/reflection.h"
 
-struct MotecCdl3TachometerConfig_t {
-    MotecCdl3TachometerConfig_t()
-        : max_rpm{8000},
-          zenoh_key{},
-          schema_type{"EngineRpm"},
-          rpm_expression{"rpm"}
-    {}
-
-    uint32_t max_rpm;           // Full-scale RPM
-
-    // Optional live data hookup
-    std::string zenoh_key;      // Topic to subscribe to
-    std::string schema_type;    // Cap'n Proto schema type name
-    std::string rpm_expression; // Expression to extract rpm
-};
+REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
+    (uint32_t, max_rpm, 6000),
+    (std::string, zenoh_key, ""),
+    (std::string, schema_type, ""),
+    (std::string, rpm_expression, "")
+)
 
 #endif // MOTEC_CDL3_TACHOMETER_CONFIG_H
 

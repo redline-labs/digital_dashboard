@@ -22,6 +22,8 @@ target_include_directories(mercedes_190e_telltales PUBLIC
 
 # Link required libraries to this widget
 target_link_libraries(mercedes_190e_telltales
+    PUBLIC
+        reflection
     PRIVATE
         Qt6::Widgets
         Qt6::Svg

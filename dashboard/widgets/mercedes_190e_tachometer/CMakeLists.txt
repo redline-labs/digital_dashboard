@@ -19,6 +19,8 @@ target_include_directories(mercedes_190e_tachometer PUBLIC
 
 # Link required libraries to this widget
 target_link_libraries(mercedes_190e_tachometer
+    PUBLIC
+        reflection
     PRIVATE
         Qt6::Widgets
         common_logging    # For spdlog

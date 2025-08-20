@@ -4,17 +4,16 @@
 #include <string>
 #include <vector>
 
-enum class GradientDirection { Vertical, Horizontal };
+#include "reflection/reflection.h"
 
-struct BackgroundRectConfig_t {
-	BackgroundRectConfig_t() :
-		colors{"#000000"},
-		direction{GradientDirection::Horizontal}
-	{}
+REFLECT_ENUM(GradientDirection,
+    vertical,
+    horizontal
+)
 
-	// One or more color strings in #RRGGBB; if 1 color → uniform
-	std::vector<std::string> colors;
-	GradientDirection direction; // Vertical or Horizontal
-};
+REFLECT_STRUCT(BackgroundRectConfig_t,
+    (std::vector<std::string>, colors, {}),
+    (GradientDirection, direction, GradientDirection::vertical)
+)
 
 #endif // BACKGROUND_RECT_CONFIG_H

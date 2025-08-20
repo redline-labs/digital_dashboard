@@ -19,6 +19,8 @@ target_include_directories(mercedes_190e_cluster_gauge PUBLIC
 
 # Link required libraries to this widget
 target_link_libraries(mercedes_190e_cluster_gauge
+    PUBLIC
+        reflection
     PRIVATE
         Qt6::Widgets
         Qt6::Svg

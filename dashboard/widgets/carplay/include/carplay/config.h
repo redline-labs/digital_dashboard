@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include "reflection/reflection.h"
 
 enum class DriveType
 {
@@ -38,72 +39,42 @@ enum class MicType
     OS
 };
 
-struct carplay_phone_config_t
-{
-    carplay_phone_config_t() : frame_interval{5000u} {};
+REFLECT_STRUCT(carplay_phone_config_t,
+    (int32_t, frame_interval, 30)
+)
 
-    int32_t frame_interval;
-};
+// Defaults previously set here are handled elsewhere
 
-struct android_auto_phone_config_t
-{
-    android_auto_phone_config_t() : frame_interval{-1} {};
-    int32_t frame_interval;
-};
+REFLECT_STRUCT(android_auto_phone_config_t,
+    (int32_t, frame_interval, 30)
+)
 
-struct phone_config_t
-{
-    phone_config_t() : car_play{}, android_auto{} {};
+// Defaults previously set here are handled elsewhere
 
-    carplay_phone_config_t car_play;
-    android_auto_phone_config_t android_auto;
-};
+REFLECT_STRUCT(phone_config_t,
+    (carplay_phone_config_t, car_play, carplay_phone_config_t{}),
+    (android_auto_phone_config_t, android_auto, android_auto_phone_config_t{})
+)
 
-struct CarplayConfig_t {
-
-    CarplayConfig_t() :
-        libusb_debug{false},
-        width_px{800},
-        height_px{640},
-        fps{20},
-        dpi{160},
-        format{5},
-        i_box_version{2},
-        phone_work_mode{2},
-        packet_max{49152},
-        box_name("nodePlay"),
-        night_mode{false},
-        drive_type{DriveType::LHD},
-        media_delay{300},
-        audio_transfer_mode{false},
-        wifi_type{WiFiType::WiFi_5_GHz},
-        mic_type{MicType::OS},
-        phone_config{},
-        audio_device_buffer_size{8192}
-    {}
-
-    bool libusb_debug;                          // Enable USB debugging output
-
-    uint16_t width_px;
-    uint16_t height_px;
-    uint8_t fps;
-    uint16_t dpi;
-    uint8_t format;
-    uint8_t i_box_version;
-    uint16_t phone_work_mode;
-    uint32_t packet_max;
-    std::string box_name;
-    bool night_mode;
-    DriveType drive_type;
-    uint16_t media_delay;
-    bool audio_transfer_mode;
-    WiFiType wifi_type;
-    MicType mic_type;
-    phone_config_t phone_config;
-
-    // Host settings.
-    uint32_t audio_device_buffer_size;
-};
-
+REFLECT_STRUCT(CarplayConfig_t,
+    (bool, libusb_debug, false),
+    (uint16_t, width_px, 800),
+    (uint16_t, height_px, 600),
+    (uint8_t, fps, 30),
+    (uint16_t, dpi, 100),
+    (uint8_t, format, 0),
+    (uint8_t, i_box_version, 0),
+    (uint16_t, phone_work_mode, 0),
+    (uint32_t, packet_max, 1024),
+    (std::string, box_name, ""),
+    (bool, night_mode, false),
+    (DriveType, drive_type, DriveType::LHD),
+    (uint16_t, media_delay, 0),
+    (bool, audio_transfer_mode, false),
+    (WiFiType, wifi_type, WiFiType::Disabled),
+    (MicType, mic_type, MicType::Box),
+    (phone_config_t, phone_config, phone_config_t{}),
+    (uint32_t, audio_device_buffer_size, 1024)
+)
 
 #endif // CARPLAY_CONFIG_H

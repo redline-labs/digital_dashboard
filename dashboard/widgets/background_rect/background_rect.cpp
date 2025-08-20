@@ -27,7 +27,7 @@ void BackgroundRectWidget::drawRect(QPainter* painter)
 		return;
 	}
 
-	const bool vertical = (_cfg.direction == GradientDirection::Vertical);
+	const bool vertical = (_cfg.direction == GradientDirection::vertical);
 	QLinearGradient grad(vertical ? r.center().x() : r.left(), vertical ? r.top() : r.center().y(),
 	                     vertical ? r.center().x() : r.right(), vertical ? r.bottom() : r.center().y());
 

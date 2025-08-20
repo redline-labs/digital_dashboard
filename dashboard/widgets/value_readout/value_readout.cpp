@@ -68,15 +68,15 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 	// Layout: horizontal alignment
 	Qt::Alignment hAlign = Qt::AlignLeft;
 	switch (_cfg.alignment) {
-		case ValueReadoutAlignment::Left:
+		case ValueReadoutAlignment::left:
 			hAlign = Qt::AlignLeft;
 			break;
 
-		case ValueReadoutAlignment::Right:
+		case ValueReadoutAlignment::right:
 			hAlign = Qt::AlignRight;
 			break;
 
-		case ValueReadoutAlignment::Center:
+		case ValueReadoutAlignment::center:
 		default:
 			hAlign = Qt::AlignHCenter;
 			break;

@@ -19,6 +19,8 @@ target_include_directories(sparkline PUBLIC
 
 # Link required libraries to this widget
 target_link_libraries(sparkline
+    PUBLIC
+        reflection
     PRIVATE
         Qt6::Widgets
         common_logging    # For spdlog

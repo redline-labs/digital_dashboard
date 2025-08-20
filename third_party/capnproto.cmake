@@ -2,7 +2,7 @@
 FetchContent_Declare(
     capnproto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG 837a2c2
+    GIT_TAG 6846dff
     GIT_SHALLOW TRUE
 )
 
@@ -27,7 +27,7 @@ file(COPY ${capnproto_SOURCE_DIR}/LICENSE ${capnproto_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/capnproto/fetch_info.txt
 "Library: capnproto
 Repository: https://github.com/capnproto/capnproto.git
-Tag/Version: 837a2c2
+Tag/Version: 6846dff
 Shallow Clone: TRUE
 Patches Applied: None
 ") 

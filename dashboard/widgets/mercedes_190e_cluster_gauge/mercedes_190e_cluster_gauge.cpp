@@ -32,7 +32,7 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     }
     
     // Initialize expression parsers for each sub-gauge
-    auto initializeSubGaugeParser = [](const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge_config,
+    auto initializeSubGaugeParser = [](const sub_gauge_config_t& gauge_config,
                                           std::unique_ptr<expression_parser::ExpressionParser>& parser,
                                           const char* gauge_name) {
         if (!gauge_config.zenoh_key.empty() && !gauge_config.schema_type.empty() && !gauge_config.value_expression.empty()) {
@@ -177,7 +177,7 @@ void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
+    void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                                           float centerX, float centerY, float startAngle)
 {
     painter->save();
@@ -367,7 +367,7 @@ void Mercedes190EClusterGauge::drawCenterHole(QPainter *painter, float centerX, 
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
+void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                               float centerX, float centerY)
 {
     painter->save();
@@ -515,7 +515,7 @@ void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const Mer
     painter->restore();
 }
 
-void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, const Mercedes190EClusterGaugeConfig_t::sub_gauge_config_t& gauge,
+void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                                      float centerX, float centerY)
 {
     painter->save();

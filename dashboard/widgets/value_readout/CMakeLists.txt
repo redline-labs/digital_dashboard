@@ -15,7 +15,9 @@ target_include_directories(value_readout PUBLIC
     ${CMAKE_SOURCE_DIR}/dashboard/widgets/value_readout/include
 )
 
-target_link_libraries(value_readout PRIVATE
+target_link_libraries(value_readout PUBLIC
+    reflection
+    PRIVATE
     Qt6::Widgets
     spdlog::spdlog
     common_logging
