@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QTimer>
+#include <QCheckBox>
 
 #include "static_text/static_text.h"
 #include "background_rect/background_rect.h"
@@ -85,6 +86,11 @@ namespace
                 combo->addItem(QString::fromUtf8(value_str.data(), static_cast<int>(value_str.size())));
             }
             return combo;
+        }
+        else if constexpr (std::is_same_v<FieldType, bool>)
+        {
+            auto* check = new QCheckBox(parent);
+            return check;
         }
         else if constexpr (std::is_integral_v<FieldType>)
         {
