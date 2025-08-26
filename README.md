@@ -25,6 +25,11 @@ With additional "sparklines" widget on the right.
 Requires a CarlinKit dongle such as CPC200-CCPA
 ![Screengrab](/docs/images/carplay_demo.png)
 
+## Dashboard Editor
+A very much work-in-progress dashboard editor is being pieced together.  This is a GUI to be able to drag and drop widgets into a dashboard.
+
+![Screengrab](/docs/images/dashboard_editor.png)
+
 ## Documentation
 Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
 
