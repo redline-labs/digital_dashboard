@@ -21,9 +21,9 @@ target_include_directories(mercedes_190e_cluster_gauge PUBLIC
 target_link_libraries(mercedes_190e_cluster_gauge
     PUBLIC
         reflection
+        Qt6::Svg
     PRIVATE
         Qt6::Widgets
-        Qt6::Svg
         common_logging    # For spdlog
         expression_parser # For expression evaluation
         helpers

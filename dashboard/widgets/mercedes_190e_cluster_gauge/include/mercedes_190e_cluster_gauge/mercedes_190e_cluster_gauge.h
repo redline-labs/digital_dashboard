@@ -11,6 +11,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QFontDatabase>
+#include <QSvgRenderer>
 
 #include <string_view>
 #include <memory>
@@ -28,38 +29,25 @@ public:
     static constexpr std::string_view kWidgetName = "mercedes_190e_cluster_gauge";
 
     explicit Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent = nullptr);
-    virtual ~Mercedes190EClusterGauge() = default;
-    
+
+private slots:
     // Setters for each sub-gauge value
-    void setTopGaugeValue(float value);
-    void setRightGaugeValue(float value);
-    void setBottomGaugeValue(float value);
-    void setLeftGaugeValue(float value);
-    
-    // Getters for each sub-gauge value
-    float getTopGaugeValue() const;
-    float getRightGaugeValue() const;
-    float getBottomGaugeValue() const;
-    float getLeftGaugeValue() const;
+    void setFuelGaugeValue(float value);
+    void setOilPressureGaugeValue(float value);
+    void setCoolantTemperatureGaugeValue(float value);
+    void setEconomyGaugeValue(float value);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
 
-private slots:
-    void onTopGaugeEvaluated(float value);
-    void onRightGaugeEvaluated(float value);
-    void onBottomGaugeEvaluated(float value);
-    void onLeftGaugeEvaluated(float value);
-
 private:
     void drawBackground(QPainter *painter);
-    void drawSubGauge(QPainter *painter, const sub_gauge_config_t& gauge, 
-                      float centerX, float centerY, float startAngle);
+    void drawFuelGauge(QPainter *painter, const sub_gauge_config_t& gauge, 
+                       float centerX, float centerY);
     void drawOilPressureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                               float centerX, float centerY);
     void drawCoolantTemperatureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                                      float centerX, float centerY);
-    void drawCenterHole(QPainter *painter, float centerX, float centerY);
     
     float valueToAngle(float value, float minVal, float maxVal);
 
@@ -83,6 +71,10 @@ private:
     std::unique_ptr<expression_parser::ExpressionParser> right_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> bottom_gauge_expression_parser_;
     std::unique_ptr<expression_parser::ExpressionParser> left_gauge_expression_parser_;
+
+    QSvgRenderer fuel_icon_svg_renderer_;
+    QSvgRenderer oil_icon_svg_renderer_;
+    QSvgRenderer coolant_icon_svg_renderer_;
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

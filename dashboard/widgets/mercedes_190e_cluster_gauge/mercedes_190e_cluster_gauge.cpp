@@ -12,7 +12,214 @@
 #include "helpers/helpers.h"
 
 #include <cmath>
+#include <vector>
+#include <algorithm>
 
+// Shared drawing constants to keep visual consistency across sub-gauges.
+// Adjusting these values changes the overall geometry/appearance.
+namespace
+{
+    // Logical canvas size used for uniform device scaling across widget sizes.
+    constexpr float kCanvasLogicalSize = 200.0f;
+
+    // Main circular background radius in logical units.
+    constexpr float kMainGaugeRadius = 100.0f;
+
+    // Radial distance from center to each sub-gauge's pivot (their local center).
+    constexpr float kSubGaugeRadius = 45.0f;
+
+    // Radial position for tick marks drawn around the outer perimeter.
+    constexpr float kOuterTickRadius = 98.0f;
+
+    // Each sub-gauge sweeps a quarter-circle for clarity and compactness.
+    constexpr float kGaugeSpanDegrees = 90.0f;
+
+    // Needle styling shared by all sub-gauges to match cluster aesthetics.
+    constexpr QColor kNeedleColor(255, 165, 0); // Orange needle for brand consistency
+    constexpr float kNeedleBaseWidth = 3.0f;
+    constexpr float kNeedleTipWidth  = 2.0f;
+    constexpr float kNeedleLength    = 50.0f;
+
+    // Typography used for tick labels and unit labels.
+    constexpr float kLabelFontPt = 9.0f;
+    constexpr float kUnitFontPt  = 10.0f;
+
+    // Tick length drawn radially inward from the outer perimeter.
+    constexpr float kTickLength = 8.0f;
+
+    // Tick thicknesses used for major/minor ticks.
+    constexpr float kTickThicknessMajor = 3.0f;
+    constexpr float kTickThicknessMinor = 2.0f;
+
+    // Label radius relative to outer ticks so labels sit just inside.
+    constexpr float kLabelRadius = 82.0f;
+
+    // Offsets to position the coolant unit text (°C) near the high end.
+    constexpr float kCoolantUnitOffsetX = -10.0f;
+    constexpr float kCoolantUnitOffsetY = -15.0f;
+
+    // Radius of center pivot dot for each sub-gauge needle.
+    constexpr float kPivotRadius = 6.0f;
+
+    // Icon sizes/offsets used below gauge pivots.
+    constexpr float kGaugeIconDefaultSize = 20.0f;
+    constexpr float kGaugeIconDefaultOffsetY = 10.0f;
+    constexpr float kOilIconWidth = 24.0f;
+    constexpr float kOilIconHeight = 12.0f;
+    constexpr float kOilIconOffsetXFromCenter = 20.0f;
+    constexpr float kOilIconOffsetY = 12.0f;
+
+    // Fuel gauge left triangle marker geometry.
+    constexpr float kFuelTriangleOffsetX = 46.0f;
+    constexpr float kFuelTriangleOffsetY = 30.0f;
+    constexpr float kFuelTriangleSize = 8.0f;
+
+    enum class GaugeOrientation { Up, Right, Down, Left };
+}
+
+// Shared renderer for sub-gauges with styling knobs.
+static void drawGaugeCommon(
+    QPainter* painter,
+    const sub_gauge_config_t& gauge,
+    float centerX,
+    float centerY,
+    GaugeOrientation orientation,
+    int numTicks,
+    bool alternateTickThickness,
+    const std::vector<const char*>& labels,
+    float currentValue)
+{
+    painter->save();
+
+    // Derive geometry/signs from orientation
+    float orientationAngleDeg = 0.0f;    // central pointing direction
+    bool rotateClockwiseNegative = true; // Qt rotation sign semantics for needle
+    bool invertValueMapping = false;     // whether low values are placed at high end of arc
+    float projectionSign = 1.0f;         // outward vs inward projection when finding outer rim angle
+
+    switch (orientation)
+    {
+        case GaugeOrientation::Up:
+            orientationAngleDeg = 90.0f;
+            rotateClockwiseNegative = true;
+            invertValueMapping = true;    // fuel layout: labels arranged right-to-left, needle mapping inverted
+            projectionSign = -1.0f;
+            break;
+        case GaugeOrientation::Right:
+            orientationAngleDeg = 0.0f;
+            rotateClockwiseNegative = true;
+            invertValueMapping = false;
+            projectionSign = 1.0f;
+            break;
+        case GaugeOrientation::Down:
+            orientationAngleDeg = 270.0f;
+            rotateClockwiseNegative = false;
+            invertValueMapping = true;
+            projectionSign = 1.0f;
+            break;
+        case GaugeOrientation::Left:
+            orientationAngleDeg = 180.0f;
+            rotateClockwiseNegative = false;
+            invertValueMapping = false;
+            projectionSign = 1.0f;
+            break;
+    }
+
+    const float gaugeStartAngle = orientationAngleDeg - (kGaugeSpanDegrees / 2.0f);
+
+    // Ticks
+    for (int i = 0; i < numTicks; ++i)
+    {
+        float valueRatio = static_cast<float>(i) / (numTicks - 1);
+        float mapped = invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+        float tickAngle = gaugeStartAngle + (mapped * kGaugeSpanDegrees);
+        float tickAngleRad = degrees_to_radians(tickAngle);
+
+        float projectedAngle = std::atan2(centerY + projectionSign * kNeedleLength * std::sin(tickAngleRad),
+                                          centerX + projectionSign * kNeedleLength * std::cos(tickAngleRad));
+
+        QPointF tickOuter(kOuterTickRadius * std::cos(projectedAngle),
+                          kOuterTickRadius * std::sin(projectedAngle));
+
+        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
+        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() +
+                                     dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
+        if (dirLength > 0.0f) {
+            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
+            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
+        }
+
+        QPointF tickInner = tickOuter + dirToSubGaugeCenter * kTickLength;
+        float thickness = alternateTickThickness ? (i % 2 == 0 ? kTickThicknessMajor : kTickThicknessMinor)
+                                                 : kTickThicknessMajor;
+        QPen tickPen(Qt::white, thickness);
+        painter->setPen(tickPen);
+        painter->drawLine(tickOuter, tickInner);
+    }
+
+    // Labels
+    if (!labels.empty())
+    {
+        painter->save();
+        QFont labelFont(painter->font());
+        labelFont.setPointSizeF(kLabelFontPt);
+        painter->setFont(labelFont);
+        painter->setPen(Qt::white);
+        QFontMetricsF fm(labelFont);
+
+        for (int i = 0; i < numTicks && i < static_cast<int>(labels.size()); ++i)
+        {
+            if (labels[i] == nullptr) continue;
+            float valueRatio = static_cast<float>(i) / (numTicks - 1);
+            float mapped = invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+            float labelAngle = gaugeStartAngle + (mapped * kGaugeSpanDegrees);
+            float labelAngleRad = degrees_to_radians(labelAngle);
+            float projectedAngle = std::atan2(centerY + projectionSign * kNeedleLength * std::sin(labelAngleRad),
+                                              centerX + projectionSign * kNeedleLength * std::cos(labelAngleRad));
+            QPointF labelPos(kLabelRadius * std::cos(projectedAngle),
+                             kLabelRadius * std::sin(projectedAngle));
+            QString labelText = QString::fromUtf8(labels[i]);
+            QRectF textRect = fm.boundingRect(labelText);
+            textRect.moveCenter(labelPos);
+            painter->drawText(textRect, Qt::AlignCenter, labelText);
+        }
+
+        painter->restore();
+    }
+
+    painter->restore();
+
+    // Needle
+    float valueRatio = 0.0f;
+    if (gauge.max_value != gauge.min_value)
+    {
+        float clamped = std::clamp(currentValue, gauge.min_value, gauge.max_value);
+        valueRatio = (clamped - gauge.min_value) / (gauge.max_value - gauge.min_value);
+    }
+    valueRatio = std::clamp(valueRatio, 0.0f, 1.0f);
+    float mappedNeedle = invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+    float needleAngle = gaugeStartAngle + (mappedNeedle * kGaugeSpanDegrees);
+
+    painter->save();
+    painter->translate(centerX, centerY);
+    painter->rotate(rotateClockwiseNegative ? (-1.0f * needleAngle) : needleAngle);
+
+    QPolygonF needlePolygon;
+    needlePolygon << QPointF(0.0f, -kNeedleBaseWidth / 2.0f)
+                  << QPointF(kNeedleLength, -kNeedleTipWidth / 2.0f)
+                  << QPointF(kNeedleLength,  kNeedleTipWidth / 2.0f)
+                  << QPointF(0.0f,  kNeedleBaseWidth / 2.0f);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(kNeedleColor);
+    painter->drawPolygon(needlePolygon);
+    painter->restore();
+
+    painter->save();
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(QColor(40, 40, 40)); // Dark grey like speedometer
+    painter->drawEllipse(QPointF(centerX, centerY), kPivotRadius, kPivotRadius);
+    painter->restore();
+}
 
 Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent):
   QWidget(parent),
@@ -63,80 +270,85 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
 
     if (top_gauge_expression_parser_) {
         top_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onTopGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+            QMetaObject::invokeMethod(this, [this, v]() { setFuelGaugeValue(v); }, Qt::QueuedConnection);
         });
     }
-    if (right_gauge_expression_parser_) {
+
+    if (right_gauge_expression_parser_)
+    {
         right_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onRightGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+            QMetaObject::invokeMethod(this, [this, v]() { setOilPressureGaugeValue(v); }, Qt::QueuedConnection);
         });
     }
-    if (bottom_gauge_expression_parser_) {
+
+    if (bottom_gauge_expression_parser_)
+    {
         bottom_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onBottomGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+            QMetaObject::invokeMethod(this, [this, v](){ setEconomyGaugeValue(v); }, Qt::QueuedConnection);
         });
     }
-    if (left_gauge_expression_parser_) {
+
+    if (left_gauge_expression_parser_)
+    {
         left_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, "onLeftGaugeEvaluated", Qt::QueuedConnection, Q_ARG(float, v));
+            QMetaObject::invokeMethod(this, [this, v]() { setCoolantTemperatureGaugeValue(v); }, Qt::QueuedConnection);
         });
+    }
+
+    // Initialize SVG renderers
+    fuel_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));
+    if (!fuel_icon_svg_renderer_.isValid())
+    {
+        SPDLOG_ERROR("Failed to load the fuel icon SVG.");
+    }
+
+    oil_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/oil_icon.svg"));
+    if (!oil_icon_svg_renderer_.isValid())
+    {
+        SPDLOG_ERROR("Failed to load the oil icon SVG.");
+    }
+    coolant_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/coolant_icon.svg"));
+    if (!coolant_icon_svg_renderer_.isValid())
+    {
+        SPDLOG_ERROR("Failed to load the coolant icon SVG.");
     }
 }
 
-void Mercedes190EClusterGauge::setTopGaugeValue(float value)
+void Mercedes190EClusterGauge::setFuelGaugeValue(float value)
 {
-    fuel_gauge_current_value_ = qBound(m_config.fuel_gauge.min_value, value, m_config.fuel_gauge.max_value);
+    fuel_gauge_current_value_ = std::clamp(value, m_config.fuel_gauge.min_value, m_config.fuel_gauge.max_value);
     update();
 }
 
-void Mercedes190EClusterGauge::setRightGaugeValue(float value)
+void Mercedes190EClusterGauge::setOilPressureGaugeValue(float value)
 {
-    oil_pressure_gauge_current_value_ = qBound(m_config.right_gauge.min_value, value, m_config.right_gauge.max_value);
+    oil_pressure_gauge_current_value_ = std::clamp(value, m_config.right_gauge.min_value, m_config.right_gauge.max_value);
     update();
 }
 
-void Mercedes190EClusterGauge::setBottomGaugeValue(float value)
+void Mercedes190EClusterGauge::setEconomyGaugeValue(float value)
 {
-    economy_gauge_current_value_ = qBound(m_config.bottom_gauge.min_value, value, m_config.bottom_gauge.max_value);
+    economy_gauge_current_value_ = std::clamp(value, m_config.bottom_gauge.min_value, m_config.bottom_gauge.max_value);
     update();
 }
 
-void Mercedes190EClusterGauge::setLeftGaugeValue(float value)
+void Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue(float value)
 {
-    coolant_temperature_gauge_current_value_ = qBound(m_config.left_gauge.min_value, value, m_config.left_gauge.max_value);
+    coolant_temperature_gauge_current_value_ = std::clamp(value, m_config.left_gauge.min_value, m_config.left_gauge.max_value);
     update();
-}
-
-float Mercedes190EClusterGauge::getTopGaugeValue() const
-{
-    return fuel_gauge_current_value_;
-}
-
-float Mercedes190EClusterGauge::getRightGaugeValue() const
-{
-    return oil_pressure_gauge_current_value_;
-}
-
-float Mercedes190EClusterGauge::getBottomGaugeValue() const
-{
-    return economy_gauge_current_value_;
-}
-
-float Mercedes190EClusterGauge::getLeftGaugeValue() const
-{
-    return coolant_temperature_gauge_current_value_;
 }
 
 float Mercedes190EClusterGauge::valueToAngle(float value, float minVal, float maxVal)
 {
-    if (maxVal == minVal) return 0.0f;
+    if (maxVal == minVal)
+    {
+        return 0.0f;
+    }
 
-    float constrainedValue = qBound(minVal, value, maxVal);
+    float constrainedValue = std::clamp(value, minVal, maxVal);
     float factor = (constrainedValue - minVal) / (maxVal - minVal);
 
-    // Each sub-gauge spans approximately 90 degrees
-    float angleSpan = 90.0f;
-    return factor * angleSpan;
+    return factor * kGaugeSpanDegrees;
 }
 
 void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
@@ -145,18 +357,18 @@ void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    int side = qMin(width(), height());
+    int side = std::min(width(), height());
     painter.translate(width() / 2.0, height() / 2.0); // Origin to center
-    painter.scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
+    painter.scale(side / kCanvasLogicalSize, side / kCanvasLogicalSize); // Logical 200x200 unit square
 
     drawBackground(&painter);
 
     // Draw the 4 sub-gauges at their respective positions
     // Each sub-gauge is positioned at a radius from the center
-    float subGaugeRadius = 45.0f;
+    float subGaugeRadius = kSubGaugeRadius;
 
     // Top gauge (12 o'clock)
-    drawSubGauge(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius, 0.0f);  // Start at top
+    drawFuelGauge(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);  // Start at top
 
     // Right gauge (3 o'clock) - Oil Pressure
     drawOilPressureGauge(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
@@ -173,531 +385,124 @@ void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
     painter->save();
     painter->setPen(Qt::NoPen);
     painter->setBrush(Qt::black);
-    painter->drawEllipse(QPointF(0.0f, 0.0f), 100.0f, 100.0f); // Main background circle
+    painter->drawEllipse(QPointF(0.0f, 0.0f), kMainGaugeRadius, kMainGaugeRadius); // Main background circle
     painter->restore();
 }
 
-    void Mercedes190EClusterGauge::drawSubGauge(QPainter *painter, const sub_gauge_config_t& gauge,
-                                          float centerX, float centerY, float startAngle)
+void Mercedes190EClusterGauge::drawFuelGauge(QPainter *painter, const sub_gauge_config_t& gauge,
+                                          float centerX, float centerY)
 {
+    // Ensure text uses widget-selected font family
+    QFont baseFont(m_fontFamily);
+    painter->setFont(baseFont);
+
+    // Labels arranged from high (right) to low (left)
+    const std::vector<const char*> labels = {"1/1", nullptr, "1/2", nullptr, "R"};
+
+    drawGaugeCommon(
+        painter, gauge,
+        centerX, centerY,
+        GaugeOrientation::Up,
+        5,
+        true,
+        labels,
+        fuel_gauge_current_value_
+    );
+
+    // Draw the triangle symbol on the left side for fuel reserve marker
     painter->save();
-
-    //const float subGaugeRadius = 25.0f;
-    const float tickRadius = 98.0f;
-    //const float gaugeArcThickness = 1.5f;
-
-     // Needle properties (Orange, tapered) - scaled down for sub-gauge
-    const QColor needleColor(255, 165, 0); // Orange like speedometer
-    const float needleBaseWidth = 3.0f;    // Width at the pivot (scaled down)
-    const float needleTipWidth = 2.0f;     // Width at the tip
-    const float needleLength = 50.0f;
-
-    // Calculate the arc range for this sub-gauge position
-    // Each gauge arc should be on the "outer" side and span 90 degrees opening toward center
-    // The arc should be positioned opposite to the radial direction toward center
-    const float gaugeSpan = 90.0f; // Sweep 90 degrees clockwise
-    
-    // Qt coordinate system.  0 degrees is a 3-o'clock position.  Positive values are counter
-    // clockwise.
-    const float gaugeStartAngle = startAngle - (gaugeSpan / 2.0f) + 90.0f;
-
-    // Draw tick marks
-    const int numTicks = 5;
-    for (int i = 0; i < numTicks; ++i)
-    {
-        // Calculate the value ratio for this tick (inverted: 0 = max, 4 = min)
-        float valueRatio = static_cast<float>(numTicks - 1 - i) / (numTicks - 1);
-        
-        // Calculate where the needle would point for this value
-        float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
-        float needleAngleRad = degrees_to_radians(needleAngleForTick);
-        
-        // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
-        QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
-                         centerY + needleLength * -1.0f * std::sin(needleAngleRad));
-        
-        // Calculate the angle from main gauge center (0,0) to the needle tip
-        float angleFromMainCenter = std::atan2(needleTip.y(), needleTip.x());
-        
-        // Position the tick at this angle on the outer radius
-        float tickOuterRadius = tickRadius;
-        QPointF tickOuter(tickOuterRadius * std::cos(angleFromMainCenter),
-                         tickOuterRadius * std::sin(angleFromMainCenter));
-        
-        // Calculate the direction from the outer tick point to the sub-gauge center
-        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
-        
-        // Normalize the direction vector
-        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() + 
-                                   dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
-        if (dirLength > 0.0f) {
-            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
-            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
-        }
-        
-        // Calculate the inner tick point along the direction toward sub-gauge center
-        float tickLength = 8.0f;
-        QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
-
-        float thickness = i % 2 == 0 ? 3.0f : 2.0f;
-        QPen tickPen(Qt::white, thickness);
-        painter->setPen(tickPen);
-        painter->drawLine(tickOuter, tickInner);
-    }
-
-    // Draw labels below certain ticks
-    painter->save();
-    
-    // Set up font for labels
-    QFont labelFont(m_fontFamily);
-    labelFont.setPointSizeF(9.0f);
-    painter->setFont(labelFont);
-    painter->setPen(Qt::white);
-    QFontMetricsF fm(labelFont);
-    
-    // Label positions: 0 = rightmost (max), 2 = middle, 4 = leftmost (min)
-    const char* labels[] = {"R", nullptr, "1/2", nullptr, "1/1"};
-    
-    for (int i = 0; i < numTicks; ++i)
-    {
-        if (labels[i] == nullptr) continue;
-        
-        // Calculate the value ratio for this tick (inverted: 0 = max, 4 = min)
-        float valueRatio = static_cast<float>(numTicks - 1 - i) / (numTicks - 1);
-        
-        // Calculate where the needle would point for this value
-        float needleAngleForTick = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
-        float needleAngleRad = degrees_to_radians(needleAngleForTick);
-        
-        // Calculate where the needle tip would be when pointing at this angle from sub-gauge center
-        QPointF needleTip(centerX + needleLength * -1.0f * std::cos(needleAngleRad),
-                         centerY + needleLength * -1.0f * std::sin(needleAngleRad));
-        
-        // Calculate the angle from main gauge center (0,0) to the needle tip
-        float angleFromMainCenter = std::atan2(needleTip.y(), needleTip.x());
-        
-        // Position the label below the tick
-        float labelRadius = tickRadius - 17.0f; // Position labels inside the ticks
-        QPointF labelPos(labelRadius * std::cos(angleFromMainCenter),
-                        labelRadius * std::sin(angleFromMainCenter));
-        
-        // Draw the label
-        QString labelText = QString::fromUtf8(labels[i]);
-        QRectF textRect = fm.boundingRect(labelText);
-        textRect.moveCenter(labelPos);
-        painter->drawText(textRect, Qt::AlignCenter, labelText);
-    }
-    
-    // Draw the triangle symbol on the left side
-    painter->save();
-    
-    // Position triangle to the left of the gauge
-    float triangleX = centerX - 46.0f;
-    float triangleY = centerY - 30.0f;
-    float triangleSize = 8.0f;
-    
-    // Create triangle pointing right
+    float triangleX = centerX - kFuelTriangleOffsetX;
+    float triangleY = centerY - kFuelTriangleOffsetY;
     QPolygonF triangle;
-    triangle << QPointF(triangleX - triangleSize/2, triangleY - triangleSize/2)
-             << QPointF(triangleX - triangleSize/2, triangleY + triangleSize/2)
-             << QPointF(triangleX + triangleSize/2, triangleY);
-    
+    triangle << QPointF(triangleX - kFuelTriangleSize/2, triangleY - kFuelTriangleSize/2)
+             << QPointF(triangleX - kFuelTriangleSize/2, triangleY + kFuelTriangleSize/2)
+             << QPointF(triangleX + kFuelTriangleSize/2, triangleY);
     painter->setPen(Qt::NoPen);
     painter->setBrush(Qt::white);
     painter->drawPolygon(triangle);
-    
     painter->restore();
-    painter->restore();
-
-    // Calculate needle angle based on gauge value
-    float valueRatio = (fuel_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
-    valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
-
-    float needleAngle = gaugeStartAngle + ((1.0f - valueRatio) * gaugeSpan);
 
     painter->save();
-    painter->translate(centerX, centerY); // Move origin to gauge center
-    painter->rotate(-1.0f * needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
-    
-    QPolygonF needlePolygon;
-    needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot
-                  << QPointF(needleLength, -needleTipWidth / 2.0f) // Bottom-right at tip
-                  << QPointF(needleLength, needleTipWidth / 2.0f)  // Top-right at tip
-                  << QPointF(0.0f, needleBaseWidth / 2.0f);   // Top-left at pivot
-    
-    painter->setPen(Qt::NoPen); // No border for the needle itself
-    painter->setBrush(needleColor);
-    painter->drawPolygon(needlePolygon);
-    
-    painter->restore();
-    
-    // Draw center pivot (dark grey/black, flat circle) - scaled down for sub-gauge
-    drawCenterHole(painter, centerX, centerY);
-    
-    // Draw gas icon below the pivot
-    painter->save();
-    
-    // Load and render the gas icon SVG
-    QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));
-    if (svgRenderer.isValid()) {
-        // Position the icon below the pivot
-        float iconSize = 20.0f; // Size of the icon
-        float iconX = centerX - iconSize / 2.0f;
-        float iconY = centerY + 10.0f; // Position below the pivot
-        
-        // Render the SVG directly - it already has black fill with transparent cutouts
-        svgRenderer.render(painter, QRectF(iconX, iconY, iconSize, iconSize));
+    if (fuel_icon_svg_renderer_.isValid())
+    {
+        float iconX = centerX - kGaugeIconDefaultSize / 2.0f;
+        float iconY = centerY + kGaugeIconDefaultOffsetY;
+        fuel_icon_svg_renderer_.render(painter, QRectF(iconX, iconY, kGaugeIconDefaultSize, kGaugeIconDefaultSize));
     }
-    
-    painter->restore();
-    
-    painter->restore();
-}
-
-void Mercedes190EClusterGauge::drawCenterHole(QPainter *painter, float centerX, float centerY)
-{
-    painter->save();
-    
-    // Central pivot (dark grey/black, flat circle) - scaled down for sub-gauge
-    const float pivotRadius = 6.0f; // Scaled down from speedometer's 8.0f
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(40, 40, 40)); // Dark grey like speedometer
-    painter->drawEllipse(QPointF(centerX, centerY), pivotRadius, pivotRadius);
-    
     painter->restore();
 }
 
 void Mercedes190EClusterGauge::drawOilPressureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                               float centerX, float centerY)
 {
+    QFont baseFont(m_fontFamily);
+    painter->setFont(baseFont);
+
+    const std::vector<const char*> labels = {"3", "2", "1", "0"};
+
+    drawGaugeCommon(
+        painter, gauge,
+        centerX, centerY,
+        GaugeOrientation::Right,
+        4,
+        false,
+        labels,
+        oil_pressure_gauge_current_value_
+    );
+
     painter->save();
-
-    const float tickRadius = 98.0f;
-
-    // Needle properties (Orange, tapered) - scaled down for sub-gauge
-    const QColor needleColor(255, 165, 0); // Orange like speedometer
-    const float needleBaseWidth = 3.0f;    // Width at the pivot (scaled down)
-    const float needleTipWidth = 2.0f;     // Width at the tip
-    const float needleLength = 50.0f;
-
-    // Oil pressure gauge is on the right (3 o'clock position)
-    // The arc should span 90 degrees from top to bottom on the right side
-    const float gaugeSpan = 90.0f;
-    const float gaugeStartAngle = -45.0f; // Start at upper right
-
-    // Draw tick marks
-    const int numTicks = 4;
-    for (int i = 0; i < numTicks; ++i)
+    if (oil_icon_svg_renderer_.isValid())
     {
-        // Calculate the value ratio for this tick
-        float valueRatio = static_cast<float>(i) / (numTicks - 1);
-        
-        // Calculate the angle for this tick mark relative to sub-gauge center
-        float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float tickAngleRad = degrees_to_radians(tickAngle);
-        
-        // For the right gauge, we need to calculate where this angle projects onto the main gauge edge
-        // The sub-gauge center is at (subGaugeRadius, 0), so we offset from there
-        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(tickAngleRad), 
-                                         centerX + 50.0f * std::cos(tickAngleRad));
-        
-        // Position the tick on the outer edge of the main gauge
-        QPointF tickOuter(tickRadius * std::cos(projectedAngle),
-                         tickRadius * std::sin(projectedAngle));
-        
-        // Calculate the direction from the tick outer point toward the sub-gauge center
-        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
-        
-        // Normalize the direction vector
-        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() + 
-                                   dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
-        if (dirLength > 0.0f) {
-            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
-            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
-        }
-        
-        // Calculate the inner tick point along the direction toward sub-gauge center
-        float tickLength = 8.0f;
-        QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
-
-        float thickness = 3.0f;
-        QPen tickPen(Qt::white, thickness);
-        painter->setPen(tickPen);
-        painter->drawLine(tickOuter, tickInner);
+        float iconX = centerX - kOilIconOffsetXFromCenter;
+        float iconY = centerY + kOilIconOffsetY;
+        oil_icon_svg_renderer_.render(painter, QRectF(iconX, iconY, kOilIconWidth, kOilIconHeight));
     }
-
-    // Draw labels for oil pressure
-    painter->save();
-    
-    // Set up font for labels
-    QFont labelFont(m_fontFamily);
-    labelFont.setPointSizeF(9.0f);
-    painter->setFont(labelFont);
-    painter->setPen(Qt::white);
-    QFontMetricsF fm(labelFont);
-    
-    // Label positions for oil pressure: 0, 1, 2, 3
-    const char* labels[] = {"3", "2", "1", "0"};
-    
-    for (int i = 0; i < numTicks; ++i)
-    {
-        if (labels[i] == nullptr) continue;
-        
-        // Calculate the value ratio for this tick
-        float valueRatio = static_cast<float>(i) / (numTicks - 1);
-        
-        // Calculate the angle for this label relative to sub-gauge center
-        float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float labelAngleRad = degrees_to_radians(labelAngle);
-        
-        // For the right gauge, calculate where this angle projects onto the main gauge
-        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(labelAngleRad), 
-                                         centerX + 50.0f * std::cos(labelAngleRad));
-        
-        // Position the label inside the ticks
-        float labelRadius = 82.0f; // Position labels inside the ticks
-        QPointF labelPos(labelRadius * std::cos(projectedAngle),
-                        labelRadius * std::sin(projectedAngle));
-        
-        // Draw the label
-        QString labelText = QString::fromUtf8(labels[i]);
-        QRectF textRect = fm.boundingRect(labelText);
-        textRect.moveCenter(labelPos);
-        painter->drawText(textRect, Qt::AlignCenter, labelText);
-    }
-    
-    painter->restore();
-
-    // Calculate needle angle based on gauge value
-    float valueRatio = (oil_pressure_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
-    valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
-
-    float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-
-    // Draw the needle
-    painter->save();
-    painter->translate(centerX, centerY); // Move origin to gauge center
-    painter->rotate(-1.0f * needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
-    
-    QPolygonF needlePolygon;
-    needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot
-                  << QPointF(needleLength, -needleTipWidth / 2.0f) // Bottom-right at tip
-                  << QPointF(needleLength, needleTipWidth / 2.0f)  // Top-right at tip
-                  << QPointF(0.0f, needleBaseWidth / 2.0f);   // Top-left at pivot
-    
-    painter->setPen(Qt::NoPen); // No border for the needle itself
-    painter->setBrush(needleColor);
-    painter->drawPolygon(needlePolygon);
-    
-    painter->restore();
-    
-    // Draw center pivot (dark grey/black, flat circle) - scaled down for sub-gauge
-    drawCenterHole(painter, centerX, centerY);
-    
-    // Draw oil icon below the pivot
-    painter->save();
-    
-    // Load and render the oil icon SVG
-    QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/oil_icon.svg"));
-    if (svgRenderer.isValid()) {
-        // Position the icon below the pivot
-        float iconHeight = 12.0f;
-        float iconWidth = 24.0f;
-        float iconX = centerX - 20.0f;
-        float iconY = centerY + 12.0f; // Position below the pivot
-        
-        // Render the SVG directly
-        svgRenderer.render(painter, QRectF(iconX, iconY, iconWidth, iconHeight));
-    }
-    
-    painter->restore();
-    
     painter->restore();
 }
 
 void Mercedes190EClusterGauge::drawCoolantTemperatureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
                                      float centerX, float centerY)
 {
+    QFont baseFont(m_fontFamily);
+    painter->setFont(baseFont);
+
+    constexpr float gaugeStartAngle = 135.0f; // Start at lower left
+    const std::vector<const char*> labels = {"40", nullptr, "80", nullptr, "120"};
+
+    constexpr const char* unitText = "°C";
+    constexpr float projectionSign = 1.0f;
+
+    // Optional unit (e.g., °C)
     painter->save();
-
-    const float tickRadius = 98.0f;
-
-    // Needle properties (Orange, tapered) - scaled down for sub-gauge
-    const QColor needleColor(255, 165, 0); // Orange like speedometer
-    const float needleBaseWidth = 3.0f;    // Width at the pivot (scaled down)
-    const float needleTipWidth = 2.0f;     // Width at the tip
-    const float needleLength = 50.0f;
-
-    // Coolant temperature gauge is on the left (9 o'clock position)
-    // The arc should span 90 degrees from bottom to top on the left side
-    const float gaugeSpan = 90.0f;
-    const float gaugeStartAngle = 135.0f; // Start at lower left
-
-    // Draw tick marks
-    const int numTicks = 5;
-    for (int i = 0; i < numTicks; ++i)
-    {
-        // Calculate the value ratio for this tick
-        float valueRatio = static_cast<float>(i) / (numTicks - 1);
-        
-        // Calculate the angle for this tick mark relative to sub-gauge center
-        float tickAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float tickAngleRad = degrees_to_radians(tickAngle);
-        
-        // For the left gauge, we need to calculate where this angle projects onto the main gauge edge
-        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(tickAngleRad), 
-                                         centerX + 50.0f * std::cos(tickAngleRad));
-        
-        // Position the tick on the outer edge of the main gauge
-        QPointF tickOuter(tickRadius * std::cos(projectedAngle),
-                         tickRadius * std::sin(projectedAngle));
-        
-        // Calculate the direction from the tick outer point toward the sub-gauge center
-        QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
-        
-        // Normalize the direction vector
-        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() + 
-                                   dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
-        if (dirLength > 0.0f) {
-            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
-            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
-        }
-        
-        // Calculate the inner tick point along the direction toward sub-gauge center
-        float tickLength = 8.0f;
-        QPointF tickInner = tickOuter + dirToSubGaugeCenter * tickLength;
-
-        float thickness = i % 2 == 0 ? 3.0f : 2.0f;
-        QPen tickPen(Qt::white, thickness);
-        painter->setPen(tickPen);
-        painter->drawLine(tickOuter, tickInner);
-    }
-
-    // Draw labels for coolant temperature
-    painter->save();
-    
-    // Set up font for labels
-    QFont labelFont(m_fontFamily);
-    labelFont.setPointSizeF(9.0f);
-    painter->setFont(labelFont);
-    painter->setPen(Qt::white);
-    QFontMetricsF fm(labelFont);
-    
-    // Label positions for coolant temperature: 40, 80, 120
-    const char* labels[] = {"40", nullptr, "80", nullptr, "120"};
-    
-    for (int i = 0; i < numTicks; ++i)
-    {
-        if (labels[i] == nullptr) continue;
-        
-        // Calculate the value ratio for this tick
-        float valueRatio = static_cast<float>(i) / (numTicks - 1);
-        
-        // Calculate the angle for this label relative to sub-gauge center
-        float labelAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-        float labelAngleRad = degrees_to_radians(labelAngle);
-        
-        // For the left gauge, calculate where this angle projects onto the main gauge
-        float projectedAngle = std::atan2(centerY + 50.0f * std::sin(labelAngleRad), 
-                                         centerX + 50.0f * std::cos(labelAngleRad));
-        
-        // Position the label inside the ticks
-        float labelRadius = 82.0f; // Position labels inside the ticks
-        QPointF labelPos(labelRadius * std::cos(projectedAngle),
-                        labelRadius * std::sin(projectedAngle));
-        
-        // Draw the label
-        QString labelText = QString::fromUtf8(labels[i]);
-        QRectF textRect = fm.boundingRect(labelText);
-        textRect.moveCenter(labelPos);
-        painter->drawText(textRect, Qt::AlignCenter, labelText);
-    }
-    
-    // Draw °C symbol
-    painter->save();
-    QFont unitFont(m_fontFamily);
-    unitFont.setPointSizeF(10.0f);
+    QFont unitFont(painter->font()); unitFont.setPointSizeF(kUnitFontPt);
     painter->setFont(unitFont);
-    
-    // Position °C to the right of the 120 label
-    float unitAngle = gaugeStartAngle + gaugeSpan;
+    float unitAngle = gaugeStartAngle + kGaugeSpanDegrees;
     float unitAngleRad = degrees_to_radians(unitAngle);
-    float projectedUnitAngle = std::atan2(centerY + 50.0f * std::sin(unitAngleRad), 
-                                         centerX + 50.0f * std::cos(unitAngleRad));
-    QPointF unitPos(82.0f * std::cos(projectedUnitAngle) - 10.0f,
-                   82.0f * std::sin(projectedUnitAngle) - 15.0f);
-    painter->drawText(unitPos, "°C");
-    painter->restore();
-    
+    float projectedUnitAngle = std::atan2(centerY + projectionSign * kNeedleLength * std::sin(unitAngleRad),
+                                            centerX + projectionSign * kNeedleLength * std::cos(unitAngleRad));
+    QPointF unitPos(kLabelRadius * std::cos(projectedUnitAngle) + kCoolantUnitOffsetX,
+                    kLabelRadius * std::sin(projectedUnitAngle) + kCoolantUnitOffsetY);
+    painter->drawText(unitPos, unitText);
     painter->restore();
 
-    // Calculate needle angle based on gauge value
-    float valueRatio = (coolant_temperature_gauge_current_value_ - gauge.min_value) / (gauge.max_value - gauge.min_value);
-    valueRatio = qBound(0.0f, valueRatio, 1.0f); // Clamp to 0-1 range
+    drawGaugeCommon(
+        painter, gauge,
+        centerX, centerY,
+        GaugeOrientation::Left,
+        5,
+        true,
+        labels,
+        coolant_temperature_gauge_current_value_
+    );
 
-    float needleAngle = gaugeStartAngle + (valueRatio * gaugeSpan);
-
-    // Draw the needle
     painter->save();
-    painter->translate(centerX, centerY); // Move origin to gauge center
-    painter->rotate(needleAngle); // Rotate the coordinate system... Positive is CLOCKWISE.
-    
-    QPolygonF needlePolygon;
-    needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)  // Bottom-left at pivot
-                  << QPointF(needleLength, -needleTipWidth / 2.0f) // Bottom-right at tip
-                  << QPointF(needleLength, needleTipWidth / 2.0f)  // Top-right at tip
-                  << QPointF(0.0f, needleBaseWidth / 2.0f);   // Top-left at pivot
-    
-    painter->setPen(Qt::NoPen); // No border for the needle itself
-    painter->setBrush(needleColor);
-    painter->drawPolygon(needlePolygon);
-    
-    painter->restore();
-    
-    // Draw center pivot (dark grey/black, flat circle) - scaled down for sub-gauge
-    drawCenterHole(painter, centerX, centerY);
-    
-    // Draw coolant icon below the pivot
-    painter->save();
-    
-    // Load and render the coolant icon SVG
-    QSvgRenderer svgRenderer(QString(":/mercedes_190e_cluster_gauge/coolant_icon.svg"));
-    if (svgRenderer.isValid()) {
-        // Position the icon below the pivot
-        float iconSize = 20.0f; // Size of the icon
-        float iconX = centerX - iconSize / 2.0f;
-        float iconY = centerY + 10.0f; // Position below the pivot
-        
-        // Render the SVG directly
-        svgRenderer.render(painter, QRectF(iconX, iconY, iconSize, iconSize));
+    if (coolant_icon_svg_renderer_.isValid())
+    {
+        float iconX = centerX - (kGaugeIconDefaultSize / 2.0f);
+        float iconY = centerY + kGaugeIconDefaultOffsetY;
+        coolant_icon_svg_renderer_.render(painter, QRectF(iconX, iconY, kGaugeIconDefaultSize, kGaugeIconDefaultSize));
     }
-    
     painter->restore();
-    
-    painter->restore();
-}
-
-// Direct widget subscriptions removed; handled by expression_parser
-
-// Data handlers for each sub-gauge
-void Mercedes190EClusterGauge::onTopGaugeEvaluated(float value)
-{
-    setTopGaugeValue(value);
-}
-
-void Mercedes190EClusterGauge::onRightGaugeEvaluated(float value)
-{
-    setRightGaugeValue(value);
-}
-
-void Mercedes190EClusterGauge::onBottomGaugeEvaluated(float value)
-{
-    setBottomGaugeValue(value);
-}
-
-void Mercedes190EClusterGauge::onLeftGaugeEvaluated(float value)
-{
-    setLeftGaugeValue(value);
 }
 
 #include "mercedes_190e_cluster_gauge/moc_mercedes_190e_cluster_gauge.cpp"

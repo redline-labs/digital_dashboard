@@ -3,7 +3,6 @@
 
 #include <array>
 #include <cstdint>
-#include <string>
 #include <string_view>
 
 #include <capnp/schema.h>
@@ -12,7 +11,7 @@ extern const std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> kAvailable
 
 typedef std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> available_schemas_t;
 
-capnp::Schema get_schema_by_name(const std::string& schema_name);
+capnp::Schema get_schema_by_name(const std::string_view& schema_name);
 
 constexpr available_schemas_t get_available_schemas() { return kAvailableSchemas; }
 

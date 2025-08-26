@@ -112,11 +112,6 @@ void Canvas::paintEvent(QPaintEvent* event)
     }
 }
 
-static QRect normalizedRectFromTopLeftSize(const QPoint& topLeft, const QSize& size)
-{
-    return QRect(topLeft, size);
-}
-
 QRect Canvas::widgetRect(QWidget* w) const
 {
     return QRect(w->pos(), w->size());
