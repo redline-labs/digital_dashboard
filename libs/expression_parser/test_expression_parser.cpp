@@ -119,6 +119,7 @@ void testVariableExtraction() {
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
+        (void)variables;
         assert(variables.size() == 1);
         assert(variables.find("speedMps") != variables.end());
         
@@ -131,6 +132,7 @@ void testVariableExtraction() {
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
+        (void)variables;
         assert(variables.size() == 2);
         assert(variables.find("speedMps") != variables.end());
         assert(variables.find("timestamp") != variables.end());
@@ -144,6 +146,7 @@ void testVariableExtraction() {
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
+        (void)variables;
         assert(variables.size() == 2);
         assert(variables.find("rpm") != variables.end());
         assert(variables.find("timestamp") != variables.end());
@@ -157,6 +160,7 @@ void testVariableExtraction() {
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
+        (void)variables;
         assert(variables.size() == 1);
         assert(variables.find("speedMps") != variables.end());
         
@@ -230,6 +234,7 @@ void testTemplatedEvaluation() {
         // Test with warning active
         auto payload = createBatteryWarningMessage(true, 12.6f, 1234567890ULL);
         bool result = parser.evaluate<bool>(payload);
+        (void)result;
         assert(result == true);
         SPDLOG_INFO("Boolean evaluation: isWarningActive = true");
         
@@ -417,6 +422,7 @@ void testErrorHandling() {
         
         try {
             double result = parser.evaluate(payload);
+            (void)result;
             assert(false);  // Should not reach here
         } catch (const std::runtime_error& e) {
             SPDLOG_INFO("Invalid parser correctly throws exception: {}", e.what());
@@ -433,6 +439,7 @@ void testErrorHandling() {
         
         try {
             double result = parser.evaluate(payload);
+            (void)result;
             // This might work or fail depending on internal CapnProto behavior
             // The important thing is it doesn't crash
             SPDLOG_INFO("Wrong payload schema handled gracefully");

@@ -4,6 +4,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ArashPartow/exprtk.git
     GIT_TAG cc1b800  # Latest commit as of search
     GIT_SHALLOW TRUE
+    PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/exprtk.patch
 )
 
 # Configure exprtk options
@@ -29,5 +30,10 @@ file(WRITE ${CMAKE_BINARY_DIR}/licenses/exprtk/fetch_info.txt
 Repository: https://github.com/ArashPartow/exprtk.git
 Tag/Version: cc1b800 (Latest master)
 Shallow Clone: TRUE
-Patches Applied: None
-") 
+Patches Applied: exprtk.patch
+")
+
+# Copy exprtk patches
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/exprtk/patches)
+file(COPY ${CMAKE_SOURCE_DIR}/patches/exprtk.patch
+     DESTINATION ${CMAKE_BINARY_DIR}/licenses/exprtk/patches)

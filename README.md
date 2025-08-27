@@ -98,7 +98,7 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 | [libusb-cmake](https://github.com/libusb/libusb-cmake) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
 | [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp) | 1.4.0 | EPL-2.0 / Apache-2.0 | Zero overhead pub/sub messaging | N |
 | [hidapi](https://github.com/libusb/hidapi.git) | 0.15.0 | GPL3 | HID library | N |
-| [exprtk](https://github.com/ArashPartow/exprtk) | 245c0d5 | MIT | Mathematical expression parsing and evaluation | N |
+| [exprtk](https://github.com/ArashPartow/exprtk) | 245c0d5 | MIT | Mathematical expression parsing and evaluation | Y |
 
 ## License
 
