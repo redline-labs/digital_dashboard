@@ -1,28 +1,12 @@
 #include "widget_palette.h"
 
 #include "palette_list.h"
+#include "widget_registry.h"
 #include <QVBoxLayout>
 #include <QDrag>
 #include <QMimeData>
 
-namespace {
-// Map of available widget types displayed in the palette.
-// The keys are user-friendly labels; the values are internal type keys.
-struct PaletteItem { const char* label; const char* typeKey; };
-constexpr PaletteItem kItems[] = {
-    {"Static Text", "static_text"},
-    {"Value Readout", "value_readout"},
-    {"Mercedes 190E Speedometer", "mercedes_190e_speedometer"},
-    {"Mercedes 190E Tachometer", "mercedes_190e_tachometer"},
-    {"Mercedes 190E Cluster Gauge", "mercedes_190e_cluster_gauge"},
-    {"Sparkline", "sparkline"},
-    {"Background Rect", "background_rect"},
-    {"Mercedes 190E Telltale", "mercedes_190e_telltale"},
-    {"MoTeC C125 Tachometer", "motec_c125_tachometer"},
-    {"MoTeC CDL3 Tachometer", "motec_cdl3_tachometer"},
-    {"CarPlay", "carplay"}
-};
-}
+namespace {}
 
 WidgetPalette::WidgetPalette(QWidget* parent)
     : QWidget(parent), list_(new PaletteList(this))
@@ -32,10 +16,11 @@ WidgetPalette::WidgetPalette(QWidget* parent)
     layout->addWidget(list_);
     setLayout(layout);
 
-    for (const auto& item : kItems)
+    for (const auto& info : widget_registry::kAllWidgets)
     {
-        auto* entry = new QListWidgetItem(QString::fromUtf8(item.label));
-        entry->setData(Qt::UserRole, QString::fromUtf8(item.typeKey));
+        auto* entry = new QListWidgetItem(QString::fromUtf8(info.label));
+        const std::string_view type_name = reflection::enum_traits<widget_type_t>::to_string(info.type);
+        entry->setData(Qt::UserRole, QString::fromUtf8(type_name.data(), static_cast<int>(type_name.size())));
         list_->addItem(entry);
     }
 

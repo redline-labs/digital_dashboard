@@ -14,17 +14,7 @@
 #include <QCheckBox>
 #include <QFrame>
 
-#include "static_text/static_text.h"
-#include "background_rect/background_rect.h"
-#include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
-#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
-#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
-#include "motec_c125_tachometer/motec_c125_tachometer.h"
-#include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
-#include "mercedes_190e_telltales/telltale.h"
-#include "sparkline/sparkline.h"
-#include "value_readout/value_readout.h"
-#include "carplay/carplay_widget.h"
+#include "widget_registry.h"
 
 #include "reflection/reflection.h"
 #include "spdlog/spdlog.h"
@@ -315,22 +305,6 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return;
     }
 
-    // Registry of supported widgets at compile time
-    struct Entry { const char* className; std::function<QWidget*(PropertiesPanel*)> builder; };
-    static const Entry registry[] = {
-        { "StaticTextWidget", [](PropertiesPanel* self){ return buildFormFromConfig<StaticTextWidget::config_t>(self); } },
-        { "BackgroundRectWidget", [](PropertiesPanel* self){ return buildFormFromConfig<BackgroundRectWidget::config_t>(self); } },
-        { "Mercedes190EClusterGauge", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190EClusterGauge::config_t>(self); } },
-        { "Mercedes190ESpeedometer", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190ESpeedometer::config_t>(self); } },
-        { "Mercedes190ETachometer", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190ETachometer::config_t>(self); } },
-        { "MotecC125Tachometer", [](PropertiesPanel* self){ return buildFormFromConfig<MotecC125Tachometer::config_t>(self); } },
-        { "MotecCdl3Tachometer", [](PropertiesPanel* self){ return buildFormFromConfig<MotecCdl3Tachometer::config_t>(self); } },
-        { "SparklineItem", [](PropertiesPanel* self){ return buildFormFromConfig<SparklineItem::config_t>(self); } },
-        { "ValueReadoutWidget", [](PropertiesPanel* self){ return buildFormFromConfig<ValueReadoutWidget::config_t>(self); } },
-        { "CarPlayWidget", [](PropertiesPanel* self){ return buildFormFromConfig<CarPlayWidget::config_t>(self); } },
-        { "Mercedes190ETelltale", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190ETelltale::config_t>(self); } },
-    };
-
     const QString qtClass = w->metaObject()->className();
     if (widgetPages_.contains(qtClass))
     {
@@ -338,16 +312,31 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return;
     }
 
-    for (const auto& e : registry)
+    // Map widget instance to type, then build a config form using the type.
+    const widget_type_t type = widget_registry::widgetTypeFor(w);
+    QWidget* page = nullptr;
+    switch (type)
     {
-        if (qtClass == e.className)
-        {
-            QWidget* page = e.builder(this);
-            widgetPages_.insert(qtClass, page);
-            stack_->addWidget(page);
-            stack_->setCurrentWidget(page);
-            return;
-        }
+        case widget_type_t::static_text: page = buildFormFromConfig<StaticTextWidget::config_t>(this); break;
+        case widget_type_t::background_rect: page = buildFormFromConfig<BackgroundRectWidget::config_t>(this); break;
+        case widget_type_t::mercedes_190e_cluster_gauge: page = buildFormFromConfig<Mercedes190EClusterGauge::config_t>(this); break;
+        case widget_type_t::mercedes_190e_speedometer: page = buildFormFromConfig<Mercedes190ESpeedometer::config_t>(this); break;
+        case widget_type_t::mercedes_190e_tachometer: page = buildFormFromConfig<Mercedes190ETachometer::config_t>(this); break;
+        case widget_type_t::motec_c125_tachometer: page = buildFormFromConfig<MotecC125Tachometer::config_t>(this); break;
+        case widget_type_t::motec_cdl3_tachometer: page = buildFormFromConfig<MotecCdl3Tachometer::config_t>(this); break;
+        case widget_type_t::sparkline: page = buildFormFromConfig<SparklineItem::config_t>(this); break;
+        case widget_type_t::value_readout: page = buildFormFromConfig<ValueReadoutWidget::config_t>(this); break;
+        case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this); break;
+        case widget_type_t::mercedes_190e_telltale: page = buildFormFromConfig<Mercedes190ETelltale::config_t>(this); break;
+        case widget_type_t::unknown: default: break;
+    }
+
+    if (page)
+    {
+        widgetPages_.insert(qtClass, page);
+        stack_->addWidget(page);
+        stack_->setCurrentWidget(page);
+        return;
     }
 
     // Other types unsupported for now

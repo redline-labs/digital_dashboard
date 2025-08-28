@@ -9,17 +9,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 
-#include "static_text/static_text.h"
-#include "value_readout/value_readout.h"
-#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
-#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
-#include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
-#include "mercedes_190e_telltales/telltale.h"
-#include "sparkline/sparkline.h"
-#include "background_rect/background_rect.h"
-#include "motec_c125_tachometer/motec_c125_tachometer.h"
-#include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
-#include "carplay/carplay_widget.h"
+#include "widget_registry.h"
 
 Canvas::Canvas(QWidget* parent)
     : QWidget(parent)
@@ -54,7 +44,8 @@ void Canvas::dragEnterEvent(QDragEnterEvent* event)
 void Canvas::dropEvent(QDropEvent* event)
 {
     const QString typeKey = event->mimeData()->text();
-    QWidget* w = createWidgetForType(typeKey, this);
+    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
+    QWidget* w = widget_registry::instantiateWidget(type, this);
     if (w) {
         w->setParent(this);
         const QPoint pos = event->position().toPoint();
@@ -231,73 +222,8 @@ void Canvas::keyPressEvent(QKeyEvent* event)
 
 QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
 {
-    if (typeKey == QLatin1String("static_text"))
-    {
-        StaticTextConfig_t cfg;
-        cfg.text = "Text";
-        cfg.font = "Futura";
-        cfg.font_size = 18;
-        cfg.color = "#FFFFFF";
-        return new StaticTextWidget(cfg, parent);
-    }
-    if (typeKey == QLatin1String("value_readout"))
-    {
-        ValueReadoutConfig_t cfg;
-        cfg.label_text = "WATER TMP";
-        cfg.alignment = ValueReadoutAlignment::left;
-        return new ValueReadoutWidget(cfg, parent);
-    }
-    if (typeKey == QLatin1String("mercedes_190e_speedometer"))
-    {
-        Mercedes190ESpeedometerConfig_t cfg;
-        cfg.max_speed = 125;
-        return new Mercedes190ESpeedometer(cfg, parent);
-    }
-    if (typeKey == QLatin1String("mercedes_190e_tachometer"))
-    {
-        Mercedes190ETachometerConfig_t cfg;
-        cfg.max_rpm = 7000;
-        cfg.redline_rpm = 6000;
-        cfg.show_clock = false;
-        return new Mercedes190ETachometer(cfg, parent);
-    }
-    if (typeKey == QLatin1String("mercedes_190e_cluster_gauge"))
-    {
-        Mercedes190EClusterGaugeConfig_t cfg;
-        return new Mercedes190EClusterGauge(cfg, parent);
-    }
-    if (typeKey == QLatin1String("sparkline")) {
-        SparklineConfig_t cfg;
-        cfg.units = "rpm";
-        return new SparklineItem(cfg, parent);
-    }
-    if (typeKey == QLatin1String("background_rect"))
-    {
-        BackgroundRectConfig_t cfg;
-        cfg.colors = {"#202020", "#101010"};
-        return new BackgroundRectWidget(cfg, parent);
-    }
-    if (typeKey == QLatin1String("mercedes_190e_telltale"))
-    {
-        Mercedes190ETelltaleConfig_t cfg;
-        return new Mercedes190ETelltale(cfg, parent);
-    }
-    if (typeKey == QLatin1String("motec_c125_tachometer"))
-    {
-        MotecC125TachometerConfig_t cfg;
-        return new MotecC125Tachometer(cfg, parent);
-    }
-    if (typeKey == QLatin1String("motec_cdl3_tachometer"))
-    {
-        MotecCdl3TachometerConfig_t cfg;
-        return new MotecCdl3Tachometer(cfg, parent);
-    }
-    if (typeKey == QLatin1String("carplay"))
-    {
-        CarplayConfig_t cfg;
-        return new CarPlayWidget(cfg);
-    }
-    return nullptr;
+    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
+    return widget_registry::instantiateWidget(type, parent);
 }
 
 
