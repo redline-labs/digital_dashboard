@@ -80,3 +80,12 @@ add_subdirectory(schemas)
 add_subdirectory(libs)
 add_subdirectory(dashboard)
 add_subdirectory(dashboard_editor)
+
+# Local docs preview (manual): serves the Jekyll site from the docs directory.
+# Usage: cmake --build . --target docs_serve
+add_custom_target(docs_serve
+    COMMAND bundle exec jekyll serve --baseurl=
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docs
+    USES_TERMINAL
+    COMMENT "Serving docs via Jekyll at http://127.0.0.1:4000 (baseurl='')"
+)
