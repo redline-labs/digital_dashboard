@@ -39,7 +39,8 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
     : QWidget(parent), selected_(nullptr), stack_(new QStackedWidget(this))
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(8);
     layout->addWidget(new QLabel("Properties"));
     layout->addWidget(stack_);
     layout->addStretch();
@@ -77,6 +78,8 @@ namespace
         if constexpr (std::is_same_v<FieldType, std::string>)
         {
             auto* line = new QLineEdit(parent);
+            line->setMinimumHeight(24);
+            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             return line;
         }
         else if constexpr (std::is_enum_v<FieldType>)
@@ -87,22 +90,30 @@ namespace
                 const std::string_view value_str = reflection::enum_traits<FieldType>::to_string(value);
                 combo->addItem(QString::fromUtf8(value_str.data(), static_cast<int>(value_str.size())));
             }
+            combo->setMinimumHeight(24);
+            combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             return combo;
         }
         else if constexpr (std::is_same_v<FieldType, bool>)
         {
             auto* check = new QCheckBox(parent);
+            check->setMinimumHeight(22);
+            check->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
             return check;
         }
         else if constexpr (std::is_integral_v<FieldType>)
         {
             auto* spin = new QSpinBox(parent);
+            spin->setMinimumHeight(24);
+            spin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
             return spin;
         }
         else if constexpr (std::is_floating_point_v<FieldType>)
         {
             auto* dspin = new QDoubleSpinBox(parent);
             dspin->setDecimals(3);
+            dspin->setMinimumHeight(24);
+            dspin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
             return dspin;
         }
         else
@@ -144,15 +155,15 @@ namespace
             // Items area
             auto* items = new QWidget(container);
             auto* itemsLayout = new QVBoxLayout(items);
-            itemsLayout->setContentsMargins(0,0,0,0);
-            itemsLayout->setSpacing(4);
+            itemsLayout->setContentsMargins(4,4,4,4);
+            itemsLayout->setSpacing(8);
 
             auto addRow = [items, itemsLayout, fieldName, typeName]()
             {
                 const int idx = itemsLayout->count();
                 auto* row = new QWidget(items);
                 auto* h = new QHBoxLayout(row);
-                h->setContentsMargins(0,0,0,0);
+                h->setContentsMargins(0,2,0,2);
                 h->setSpacing(6);
                 auto* idxLabel = new QLabel(QString("[%1]").arg(idx), row);
                 h->addWidget(idxLabel);
@@ -199,8 +210,12 @@ namespace
             frame->setStyleSheet("#insetStructFrame{ border:1px solid palette(mid); border-radius:4px; }");
 
             auto* form = new QFormLayout(frame);
-            form->setContentsMargins(6,6,6,6);
-            form->setSpacing(6);
+            form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+            form->setFormAlignment(Qt::AlignTop);
+            form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            form->setContentsMargins(8,8,8,8);
+            form->setHorizontalSpacing(10);
+            form->setVerticalSpacing(8);
 
             reflection::visit_fields(ref, [&](std::string_view childName, auto& childRef, std::string_view childType)
             {
@@ -223,6 +238,12 @@ namespace
     {
         auto* page = new QWidget(parent);
         auto* form = new QFormLayout(page);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->setFormAlignment(Qt::AlignTop);
+        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        form->setContentsMargins(8,8,8,8);
+        form->setHorizontalSpacing(12);
+        form->setVerticalSpacing(10);
         Config cfg{};
         reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
         {
@@ -241,6 +262,12 @@ void PropertiesPanel::buildWindowPage()
     if (windowPage_) return;
     windowPage_ = new QWidget(this);
     auto* form = new QFormLayout(windowPage_);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setFormAlignment(Qt::AlignTop);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->setContentsMargins(8,8,8,8);
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(10);
     winNameEdit_ = new QLineEdit(windowPage_);
     winWidthSpin_ = new QSpinBox(windowPage_);
     winWidthSpin_->setRange(100, 10000);

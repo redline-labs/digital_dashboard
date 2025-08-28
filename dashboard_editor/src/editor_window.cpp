@@ -18,15 +18,22 @@ EditorWindow::EditorWindow(QWidget* parent)
 {
     auto* splitter = new QSplitter(this);
 
-    // Left panel: palette + properties
-    auto* left = new QWidget(splitter);
-    auto* leftLayout = new QVBoxLayout(left);
-    leftLayout->setContentsMargins(0,0,0,0);
+    // Left panel: palette + properties in a vertical splitter (adjustable divider)
+    auto* left = new QSplitter(Qt::Vertical, splitter);
     widgetPalette_ = new WidgetPalette(left);
+
     auto* properties = new PropertiesPanel(left);
-    leftLayout->addWidget(widgetPalette_);
-    leftLayout->addWidget(properties);
-    left->setLayout(leftLayout);
+    auto* propertiesScroll = new QScrollArea(left);
+    propertiesScroll->setWidget(properties);
+    propertiesScroll->setWidgetResizable(true);
+    propertiesScroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    propertiesScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    propertiesScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    left->addWidget(widgetPalette_);
+    left->addWidget(propertiesScroll);
+    left->setStretchFactor(0, 0);
+    left->setStretchFactor(1, 1);
 
     canvas_ = new Canvas(nullptr);
     canvas_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
