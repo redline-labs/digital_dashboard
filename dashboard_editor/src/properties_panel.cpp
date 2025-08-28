@@ -20,9 +20,10 @@
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
+#include "mercedes_190e_telltales/telltale.h"
 #include "sparkline/sparkline.h"
 #include "value_readout/value_readout.h"
-//#include "carplay/carplay.h"
+#include "carplay/carplay_widget.h"
 
 #include "reflection/reflection.h"
 #include "spdlog/spdlog.h"
@@ -272,10 +273,10 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         { "Mercedes190ETachometer", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190ETachometer::config_t>(self); } },
         { "MotecC125Tachometer", [](PropertiesPanel* self){ return buildFormFromConfig<MotecC125Tachometer::config_t>(self); } },
         { "MotecCdl3Tachometer", [](PropertiesPanel* self){ return buildFormFromConfig<MotecCdl3Tachometer::config_t>(self); } },
-        //{ "Sparkline", [](PropertiesPanel* self){ return buildFormFromConfig<Sparkline::config_t>(self); } },
-        //{ "ValueReadout", [](PropertiesPanel* self){ return buildFormFromConfig<ValueReadout::config_t>(self); } },
-        //{ "Carplay", [](PropertiesPanel* self){ return buildFormFromConfig<Carplay::config_t>(self); } },
-        // Add more mappings here as widgets adopt REFLECT_STRUCT for their config
+        { "SparklineItem", [](PropertiesPanel* self){ return buildFormFromConfig<SparklineItem::config_t>(self); } },
+        { "ValueReadoutWidget", [](PropertiesPanel* self){ return buildFormFromConfig<ValueReadoutWidget::config_t>(self); } },
+        { "CarPlayWidget", [](PropertiesPanel* self){ return buildFormFromConfig<CarPlayWidget::config_t>(self); } },
+        { "Mercedes190ETelltale", [](PropertiesPanel* self){ return buildFormFromConfig<Mercedes190ETelltale::config_t>(self); } },
     };
 
     const QString qtClass = w->metaObject()->className();

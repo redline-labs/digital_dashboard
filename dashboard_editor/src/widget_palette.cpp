@@ -19,7 +19,8 @@ constexpr PaletteItem kItems[] = {
     {"Background Rect", "background_rect"},
     {"Mercedes 190E Telltale", "mercedes_190e_telltale"},
     {"MoTeC C125 Tachometer", "motec_c125_tachometer"},
-    {"MoTeC CDL3 Tachometer", "motec_cdl3_tachometer"}
+    {"MoTeC CDL3 Tachometer", "motec_cdl3_tachometer"},
+    {"CarPlay", "carplay"}
 };
 }
 

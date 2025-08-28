@@ -19,6 +19,7 @@
 #include "background_rect/background_rect.h"
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
+#include "carplay/carplay_widget.h"
 
 Canvas::Canvas(QWidget* parent)
     : QWidget(parent)
@@ -230,7 +231,8 @@ void Canvas::keyPressEvent(QKeyEvent* event)
 
 QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
 {
-    if (typeKey == QLatin1String("static_text")) {
+    if (typeKey == QLatin1String("static_text"))
+    {
         StaticTextConfig_t cfg;
         cfg.text = "Text";
         cfg.font = "Futura";
@@ -238,25 +240,29 @@ QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
         cfg.color = "#FFFFFF";
         return new StaticTextWidget(cfg, parent);
     }
-    if (typeKey == QLatin1String("value_readout")) {
+    if (typeKey == QLatin1String("value_readout"))
+    {
         ValueReadoutConfig_t cfg;
         cfg.label_text = "WATER TMP";
         cfg.alignment = ValueReadoutAlignment::left;
         return new ValueReadoutWidget(cfg, parent);
     }
-    if (typeKey == QLatin1String("mercedes_190e_speedometer")) {
+    if (typeKey == QLatin1String("mercedes_190e_speedometer"))
+    {
         Mercedes190ESpeedometerConfig_t cfg;
         cfg.max_speed = 125;
         return new Mercedes190ESpeedometer(cfg, parent);
     }
-    if (typeKey == QLatin1String("mercedes_190e_tachometer")) {
+    if (typeKey == QLatin1String("mercedes_190e_tachometer"))
+    {
         Mercedes190ETachometerConfig_t cfg;
         cfg.max_rpm = 7000;
         cfg.redline_rpm = 6000;
         cfg.show_clock = false;
         return new Mercedes190ETachometer(cfg, parent);
     }
-    if (typeKey == QLatin1String("mercedes_190e_cluster_gauge")) {
+    if (typeKey == QLatin1String("mercedes_190e_cluster_gauge"))
+    {
         Mercedes190EClusterGaugeConfig_t cfg;
         return new Mercedes190EClusterGauge(cfg, parent);
     }
@@ -265,25 +271,31 @@ QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
         cfg.units = "rpm";
         return new SparklineItem(cfg, parent);
     }
-    if (typeKey == QLatin1String("background_rect")) {
+    if (typeKey == QLatin1String("background_rect"))
+    {
         BackgroundRectConfig_t cfg;
         cfg.colors = {"#202020", "#101010"};
         return new BackgroundRectWidget(cfg, parent);
     }
-    if (typeKey == QLatin1String("mercedes_190e_telltale")) {
+    if (typeKey == QLatin1String("mercedes_190e_telltale"))
+    {
         Mercedes190ETelltaleConfig_t cfg;
         return new Mercedes190ETelltale(cfg, parent);
     }
-    if (typeKey == QLatin1String("motec_c125_tachometer")) {
+    if (typeKey == QLatin1String("motec_c125_tachometer"))
+    {
         MotecC125TachometerConfig_t cfg;
-        cfg.max_rpm = 8000;
-        cfg.center_page_digit = 5;
         return new MotecC125Tachometer(cfg, parent);
     }
-    if (typeKey == QLatin1String("motec_cdl3_tachometer")) {
+    if (typeKey == QLatin1String("motec_cdl3_tachometer"))
+    {
         MotecCdl3TachometerConfig_t cfg;
-        cfg.max_rpm = 9000;
         return new MotecCdl3Tachometer(cfg, parent);
+    }
+    if (typeKey == QLatin1String("carplay"))
+    {
+        CarplayConfig_t cfg;
+        return new CarPlayWidget(cfg);
     }
     return nullptr;
 }

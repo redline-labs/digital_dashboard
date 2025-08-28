@@ -5,39 +5,21 @@
 #include <cstdint>
 #include "reflection/reflection.h"
 
-enum class DriveType
-{
-    LHD = 0u,
+REFLECT_ENUM(DriveType,
+    LHD,
     RHD
-};
+)
 
-static constexpr std::string_view drive_type_to_string(DriveType type)
-{
-    switch (type)
-    {
-        case (DriveType::LHD):
-            return "LHD";
-
-        case (DriveType::RHD):
-            return "RHD";
-
-        default:
-            return "INVALID";
-    }
-}
-
-enum class WiFiType
-{
-    Disabled = 0u,
+REFLECT_ENUM(WiFiType,
+    Disabled,
     WiFi_2_4_GHz,
     WiFi_5_GHz
-};
+)
 
-enum class MicType
-{
-    Box = 0u,
+REFLECT_ENUM(MicType,
+    Box,
     OS
-};
+)
 
 REFLECT_STRUCT(carplay_phone_config_t,
     (int32_t, frame_interval, 30)
