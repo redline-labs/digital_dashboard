@@ -1,9 +1,10 @@
 title: Digital Dashboard
 description: Instrument cluster widgets, CarPlay, and more.
-theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs
 markdown: kramdown
 plugins:
   - jekyll-feed
+  - jekyll-remote-theme
 
 exclude:
   - Gemfile
