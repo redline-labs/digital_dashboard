@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QCheckBox>
+#include <QFrame>
 
 #include "static_text/static_text.h"
 #include "background_rect/background_rect.h"
@@ -155,7 +156,8 @@ namespace
                 h->setSpacing(6);
                 auto* idxLabel = new QLabel(QString("[%1]").arg(idx), row);
                 h->addWidget(idxLabel);
-                auto* childEditor = createLeafEditor<Elem>(row, fieldName, typeName);
+                Elem dummy{};
+                auto* childEditor = createEditorFor(row, fieldName, dummy, typeName);
                 h->addWidget(childEditor, 1);
                 row->setLayout(h);
                 itemsLayout->addWidget(row);
@@ -187,6 +189,29 @@ namespace
             container->setLayout(outer);
             return container;
         }
+        else if constexpr (reflection::is_reflected_struct<FieldType>::value)
+        {
+            // Build an inset group with the nested struct's fields
+            auto* frame = new QFrame(parent);
+            frame->setObjectName("insetStructFrame");
+            frame->setFrameShape(QFrame::StyledPanel);
+            frame->setFrameShadow(QFrame::Raised);
+            frame->setStyleSheet("#insetStructFrame{ border:1px solid palette(mid); border-radius:4px; }");
+
+            auto* form = new QFormLayout(frame);
+            form->setContentsMargins(6,6,6,6);
+            form->setSpacing(6);
+
+            reflection::visit_fields(ref, [&](std::string_view childName, auto& childRef, std::string_view childType)
+            {
+                const QString childLabel = QString::fromUtf8(childName.data(), static_cast<int>(childName.size()));
+                QWidget* childEditor = createEditorFor(frame, childName, childRef, childType);
+                form->addRow(childLabel, childEditor);
+            });
+
+            frame->setLayout(form);
+            return frame;
+        }
         else
         {
             return createLeafEditor<FieldType>(parent, fieldName, typeName);
@@ -201,7 +226,7 @@ namespace
         Config cfg{};
         reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
         {
-            QString label = QString::fromStdString(name.data());
+            const QString label = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
             QWidget* editor = createEditorFor(page, name, ref, type);
             form->addRow(label, editor);
         });

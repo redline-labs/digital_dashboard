@@ -12,6 +12,13 @@
 namespace reflection
 {
 
+// Trait to detect reflected structs (those generated via REFLECT_STRUCT)
+template <typename T, typename = void>
+struct is_reflected_struct : std::false_type {};
+
+template <typename T>
+struct is_reflected_struct<T, std::void_t<decltype(T::reflection_fields()), decltype(T::reflection_type_names())>> : std::true_type {};
+
 template <typename T>
 struct is_std_vector : std::false_type {};
 
