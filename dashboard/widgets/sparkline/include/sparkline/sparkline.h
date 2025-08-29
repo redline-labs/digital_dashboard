@@ -26,6 +26,7 @@ public:
     static constexpr std::string_view kWidgetName = "sparkline";
 
     explicit SparklineItem(const SparklineConfig_t& cfg, QWidget *parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
     void addDataPoint(double value);
     void setYAxisRange(double minVal, double maxVal);
     

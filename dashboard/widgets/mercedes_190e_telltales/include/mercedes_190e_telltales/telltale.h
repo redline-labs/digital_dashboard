@@ -28,6 +28,7 @@ public:
     static constexpr std::string_view kWidgetName = "mercedes_190e_telltale";
 
     explicit Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& cfg, QWidget *parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
     ~Mercedes190ETelltale();
 
     void setAsserted(bool asserted);

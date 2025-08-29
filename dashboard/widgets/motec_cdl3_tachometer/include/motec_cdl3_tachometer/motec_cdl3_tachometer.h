@@ -25,6 +25,7 @@ public:
     static constexpr std::string_view kWidgetName = "motec_cdl3_tachometer";
 
     explicit MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;

@@ -43,37 +43,60 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 	switch (type)
 	{
 		case widget_type_t::static_text: {
-			StaticTextConfig_t cfg; cfg.text = "Text"; cfg.font = "Futura"; cfg.font_size = 18; cfg.color = "#FFFFFF"; return new StaticTextWidget(cfg, parent);
+			StaticTextConfig_t cfg;
+			cfg.text = "Text";
+			cfg.font = "Futura";
+			cfg.font_size = 18;
+			cfg.color = "#FFFFFF";
+			return new StaticTextWidget(cfg, parent);
 		}
 		case widget_type_t::value_readout: {
-			ValueReadoutConfig_t cfg; cfg.label_text = "WATER TMP"; cfg.alignment = ValueReadoutAlignment::left; return new ValueReadoutWidget(cfg, parent);
+			ValueReadoutConfig_t cfg;
+			cfg.label_text = "WATER TMP";
+			cfg.alignment = ValueReadoutAlignment::left;
+			return new ValueReadoutWidget(cfg, parent);
 		}
 		case widget_type_t::mercedes_190e_speedometer: {
-			Mercedes190ESpeedometerConfig_t cfg; cfg.max_speed = 125; return new Mercedes190ESpeedometer(cfg, parent);
+			Mercedes190ESpeedometerConfig_t cfg;
+			cfg.max_speed = 125;
+			return new Mercedes190ESpeedometer(cfg, parent);
 		}
 		case widget_type_t::mercedes_190e_tachometer: {
-			Mercedes190ETachometerConfig_t cfg; cfg.max_rpm = 7000; cfg.redline_rpm = 6000; cfg.show_clock = false; return new Mercedes190ETachometer(cfg, parent);
+			Mercedes190ETachometerConfig_t cfg;
+			cfg.max_rpm = 7000;
+			cfg.redline_rpm = 6000;
+			cfg.show_clock = false;
+			return new Mercedes190ETachometer(cfg, parent);
 		}
 		case widget_type_t::mercedes_190e_cluster_gauge: {
-			Mercedes190EClusterGaugeConfig_t cfg; return new Mercedes190EClusterGauge(cfg, parent);
+			Mercedes190EClusterGaugeConfig_t cfg;
+			return new Mercedes190EClusterGauge(cfg, parent);
 		}
 		case widget_type_t::sparkline: {
-			SparklineConfig_t cfg; cfg.units = "rpm"; return new SparklineItem(cfg, parent);
+			SparklineConfig_t cfg;
+			cfg.units = "rpm";
+			return new SparklineItem(cfg, parent);
 		}
 		case widget_type_t::background_rect: {
-			BackgroundRectConfig_t cfg; cfg.colors = {"#202020", "#101010"}; return new BackgroundRectWidget(cfg, parent);
+			BackgroundRectConfig_t cfg;
+			cfg.colors = {"#202020", "#101010"};
+			return new BackgroundRectWidget(cfg, parent);
 		}
 		case widget_type_t::mercedes_190e_telltale: {
-			Mercedes190ETelltaleConfig_t cfg; return new Mercedes190ETelltale(cfg, parent);
+			Mercedes190ETelltaleConfig_t cfg;
+			return new Mercedes190ETelltale(cfg, parent);
 		}
 		case widget_type_t::motec_c125_tachometer: {
-			MotecC125TachometerConfig_t cfg; return new MotecC125Tachometer(cfg, parent);
+			MotecC125TachometerConfig_t cfg;
+			return new MotecC125Tachometer(cfg, parent);
 		}
 		case widget_type_t::motec_cdl3_tachometer: {
-			MotecCdl3TachometerConfig_t cfg; return new MotecCdl3Tachometer(cfg, parent);
+			MotecCdl3TachometerConfig_t cfg;
+			return new MotecCdl3Tachometer(cfg, parent);
 		}
 		case widget_type_t::carplay: {
-			CarplayConfig_t cfg; return new CarPlayWidget(cfg);
+			CarplayConfig_t cfg;
+			return new CarPlayWidget(cfg);
 		}
 		case widget_type_t::unknown:
 		default:

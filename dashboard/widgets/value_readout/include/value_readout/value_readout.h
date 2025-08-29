@@ -24,6 +24,7 @@ public:
 	static constexpr std::string_view kWidgetName = "value_readout";
 
 	explicit ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent = nullptr);
+	const config_t& getConfig() const { return _cfg; }
 
 	void setValue(double value);
 

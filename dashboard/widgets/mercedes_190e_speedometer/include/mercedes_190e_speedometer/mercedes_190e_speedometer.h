@@ -28,6 +28,7 @@ public:
     static constexpr std::string_view kWidgetName = "mercedes_190e_speedometer";
 
     explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
+    const config_t& getConfig() const { return cfg_; }
 
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     void setOdometerValue(int value); // Setter for odometer

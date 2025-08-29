@@ -16,6 +16,8 @@ class PropertiesPanel : public QWidget
 public:
     explicit PropertiesPanel(QWidget* parent = nullptr);
     void setCanvas(Canvas* canvas);
+    QWidget* selected() const { return selected_; }
+    Canvas* canvas() const { return canvas_; }
 
 public slots:
     void setSelectedWidget(QWidget* w);

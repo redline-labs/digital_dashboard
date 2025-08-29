@@ -17,6 +17,7 @@ public:
 	static constexpr std::string_view kWidgetName = "background_rect";
 
 	explicit BackgroundRectWidget(const BackgroundRectConfig_t& cfg, QWidget* parent = nullptr);
+	const config_t& getConfig() const { return _cfg; }
 
 protected:
 	void paintEvent(QPaintEvent* event) override;

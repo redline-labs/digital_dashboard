@@ -15,6 +15,7 @@ public:
     explicit Canvas(QWidget* parent = nullptr);
     void setBackgroundColor(const QString& hexColor);
     void setInterceptInteractions(bool intercept);
+    void replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& rect);
 
 signals:
     void selectionChanged(QWidget* selected);

@@ -16,6 +16,7 @@ public:
     static constexpr std::string_view kWidgetName = "static_text";
 
     explicit StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
 
 private:
     void applyConfig();

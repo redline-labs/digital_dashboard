@@ -44,6 +44,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
 
     CarPlayWidget(CarplayConfig_t cfg);
     ~CarPlayWidget();
+    const config_t& getConfig() const { return _cfg; }
 
     void setSize(uint32_t width_px, uint32_t height_px);
     

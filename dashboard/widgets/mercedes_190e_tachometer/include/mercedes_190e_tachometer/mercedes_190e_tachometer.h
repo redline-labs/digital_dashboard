@@ -30,6 +30,7 @@ public:
     static constexpr std::string_view kWidgetName = "mercedes_190e_tachometer";
 
     explicit Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
     float getRpm() const;

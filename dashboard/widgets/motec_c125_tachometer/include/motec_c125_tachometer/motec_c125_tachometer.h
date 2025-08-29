@@ -24,6 +24,7 @@ public:
     static constexpr std::string_view kWidgetName = "motec_c125_tachometer";
 
     explicit MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent = nullptr);
+    const config_t& getConfig() const { return _cfg; }
 
     void setRpm(float rpm);
 

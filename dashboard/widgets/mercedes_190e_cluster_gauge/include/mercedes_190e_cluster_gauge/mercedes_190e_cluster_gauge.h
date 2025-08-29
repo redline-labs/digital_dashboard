@@ -29,6 +29,7 @@ public:
     static constexpr std::string_view kWidgetName = "mercedes_190e_cluster_gauge";
 
     explicit Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent = nullptr);
+    const config_t& getConfig() const { return m_config; }
 
 private slots:
     // Setters for each sub-gauge value

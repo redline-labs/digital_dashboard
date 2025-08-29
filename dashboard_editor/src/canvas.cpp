@@ -301,4 +301,31 @@ QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
 }
 
 
+void Canvas::replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& rect)
+{
+    if (!oldWidget || !newWidget) return;
+    // Adopt under canvas
+    newWidget->setParent(this);
+    newWidget->setGeometry(rect);
+    newWidget->show();
+    setMouseTransparentRecursive(newWidget, interceptInteractions_);
+
+    // Swap in items_ list
+    for (auto& it : items_)
+    {
+        if (it.widget == oldWidget)
+        {
+            it.widget = newWidget;
+            it.position = rect.topLeft();
+            break;
+        }
+    }
+    // Remove old widget
+    if (selected_ == oldWidget) selected_ = newWidget;
+    oldWidget->deleteLater();
+    if (overlay_) overlay_->setSelectionRect(widgetRect(newWidget));
+    update();
+    emit selectionChanged(newWidget);
+}
+
 #include "dashboard_editor/moc_canvas.cpp"
