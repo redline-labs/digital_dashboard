@@ -1,6 +1,7 @@
 #include "dashboard_editor/canvas.h"
 #include "dashboard_editor/editor_constants.h"
 #include "dashboard_editor/widget_registry.h"
+#include "dashboard_editor/selection_overlay.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -9,6 +10,11 @@
 #include <QLabel>
 #include <QApplication>
 #include <QKeyEvent>
+
+namespace {
+    constexpr int kGridStepPx = 20;
+    constexpr QColor kGridColor = QColor(60,60,60);
+}
 
 Canvas::Canvas(QWidget* parent) :
   QWidget(parent),
@@ -24,6 +30,11 @@ Canvas::Canvas(QWidget* parent) :
     // Default size
     resize(editor_defaults::kDefaultCanvasWidth, editor_defaults::kDefaultCanvasHeight);
     setFocusPolicy(Qt::StrongFocus);
+
+    // Overlay draws selection/handles above child widgets
+    overlay_ = new SelectionOverlay(this);
+    overlay_->resize(size());
+    overlay_->raise();
 }
 
 void Canvas::setInterceptInteractions(bool intercept)
@@ -111,32 +122,24 @@ void Canvas::paintEvent(QPaintEvent* event)
     QWidget::paintEvent(event);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor(60,60,60)));
-    // Draw a simple grid
-    const int step = 20;
-    for (int x = 0; x < width(); x += step) p.drawLine(x, 0, x, height());
-    for (int y = 0; y < height(); y += step) p.drawLine(0, y, width(), y);
+    p.setPen(QPen(kGridColor));
 
-    // Optionally draw selection rect if needed (children draw themselves, so selection is overlayed here)
-    if (selected_) {
-        QPen pen(QColor(0,122,255));
-        pen.setCosmetic(true);
-        pen.setWidth(2);
-        p.setPen(pen);
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(widgetRect(selected_));
-        // draw simple corner handles
-        const QRect r = widgetRect(selected_);
-        const int s = 8;
-        const QRect handles[] = {
-            QRect(r.topLeft() - QPoint(s/2, s/2), QSize(s, s)),
-            QRect(QPoint(r.right() - s/2, r.top() - s/2), QSize(s, s)),
-            QRect(QPoint(r.left() - s/2, r.bottom() - s/2), QSize(s, s)),
-            QRect(QPoint(r.right() - s/2, r.bottom() - s/2), QSize(s, s))
-        };
-        p.setBrush(QColor(0,122,255));
-        for (const auto& h : handles) p.drawRect(h);
+    // Draw a simple grid
+    for (int x = 0; x < width(); x += kGridStepPx)
+    {
+        p.drawLine(x, 0, x, height());
     }
+
+    for (int y = 0; y < height(); y += kGridStepPx)
+    {
+        p.drawLine(0, y, width(), y);
+    }
+}
+
+void Canvas::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (overlay_) overlay_->resize(size());
 }
 
 QRect Canvas::widgetRect(QWidget* w) const
@@ -158,23 +161,17 @@ QWidget* Canvas::topLevelWidgetAt(const QPoint& pos) const
 
 Canvas::DragMode Canvas::hitTestHandles(const QRect& r, const QPoint& pos) const
 {
-    // Visual size of handles
-    constexpr int s = 10;
-    // Expand hit-test area to make grabbing easier
-    constexpr int hs = 16; // hit size
-    const QRect tl(r.topLeft() - QPoint(s/2, s/2), QSize(s, s));
-    const QRect tr(QPoint(r.right() - s/2, r.top() - s/2), QSize(s, s));
-    const QRect bl(QPoint(r.left() - s/2, r.bottom() - s/2), QSize(s, s));
-    const QRect br(QPoint(r.right() - s/2, r.bottom() - s/2), QSize(s, s));
-    const QRect tlHit = tl.marginsAdded(QMargins((hs - s)/2, (hs - s)/2, (hs - s)/2, (hs - s)/2));
-    const QRect trHit = tr.marginsAdded(QMargins((hs - s)/2, (hs - s)/2, (hs - s)/2, (hs - s)/2));
-    const QRect blHit = bl.marginsAdded(QMargins((hs - s)/2, (hs - s)/2, (hs - s)/2, (hs - s)/2));
-    const QRect brHit = br.marginsAdded(QMargins((hs - s)/2, (hs - s)/2, (hs - s)/2, (hs - s)/2));
-    if (tlHit.contains(pos)) return DragMode::ResizeTL;
-    if (trHit.contains(pos)) return DragMode::ResizeTR;
-    if (blHit.contains(pos)) return DragMode::ResizeBL;
-    if (brHit.contains(pos)) return DragMode::ResizeBR;
+    const QRect tl(r.topLeft() - QPoint(SelectionOverlay::kGrabHandleSizePx/2, SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
+    const QRect tr(QPoint(r.right() - SelectionOverlay::kGrabHandleSizePx/2, r.top() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
+    const QRect bl(QPoint(r.left() - SelectionOverlay::kGrabHandleSizePx/2, r.bottom() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
+    const QRect br(QPoint(r.right() - SelectionOverlay::kGrabHandleSizePx/2, r.bottom() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
+
+    if (tl.contains(pos)) return DragMode::ResizeTL;
+    if (tr.contains(pos)) return DragMode::ResizeTR;
+    if (bl.contains(pos)) return DragMode::ResizeBL;
+    if (br.contains(pos)) return DragMode::ResizeBR;
     if (r.contains(pos)) return DragMode::Move;
+
     return DragMode::None;
 }
 
@@ -186,21 +183,40 @@ void Canvas::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    const QPoint pos = event->pos();
     // Determine if clicking on a top-level child widget using stored layout (works with transparent children)
-    QWidget* topLevel = topLevelWidgetAt(event->pos());
-    if (topLevel) {
+    QWidget* topLevel = topLevelWidgetAt(pos);
+    if (topLevel)
+    {
         selected_ = topLevel;
         selectedRect_ = widgetRect(selected_);
-        dragMode_ = hitTestHandles(selectedRect_, event->pos());
-        dragStartPos_ = event->pos();
+        dragMode_ = hitTestHandles(selectedRect_, pos);
+        dragStartPos_ = pos;
         dragStartRect_ = selectedRect_;
+        if (overlay_) overlay_->setSelectionRect(selectedRect_);
         update();
         emit selectionChanged(selected_);
         return;
     }
-    // Click on empty area clears selection
+
+    // Not clicking inside any widget's rect. If we already have a selection, allow grabs on handles even if they extend outside the rect
+    if (selected_)
+    {
+        DragMode hm = hitTestHandles(selectedRect_, pos);
+        if (hm != DragMode::None)
+        {
+            dragMode_ = hm;
+            dragStartPos_ = pos;
+            dragStartRect_ = selectedRect_;
+            if (overlay_) overlay_->setSelectionRect(selectedRect_);
+            update();
+            return;
+        }
+    }
+    // Otherwise clear selection
     selected_ = nullptr;
     dragMode_ = DragMode::None;
+    if (overlay_) overlay_->setSelectionRect(QRect());
     update();
     emit selectionChanged(nullptr);
 }
@@ -243,6 +259,7 @@ void Canvas::mouseMoveEvent(QMouseEvent* event)
 
     selected_->move(r.topLeft());
     selected_->resize(r.size());
+    if (overlay_) overlay_->setSelectionRect(widgetRect(selected_));
     update();
     
 }

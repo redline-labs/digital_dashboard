@@ -30,13 +30,13 @@ void SelectionOverlay::paintEvent(QPaintEvent* event)
     p.drawRect(rect_);
 
     // Draw resize handles at corners
-    const int s = 8;
+    
     const QRect r = rect_;
     const QRect handles[] = {
-        QRect(r.topLeft() - QPoint(s/2, s/2), QSize(s, s)),
-        QRect(QPoint(r.right() - s/2, r.top() - s/2), QSize(s, s)),
-        QRect(QPoint(r.left() - s/2, r.bottom() - s/2), QSize(s, s)),
-        QRect(QPoint(r.right() - s/2, r.bottom() - s/2), QSize(s, s))
+        QRect(r.topLeft() - QPoint(kGrabHandleSizePx/2, kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+        QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.top() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+        QRect(QPoint(r.left() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+        QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx))
     };
     p.setBrush(QColor(0,122,255));
     for (const auto& h : handles) p.drawRect(h);

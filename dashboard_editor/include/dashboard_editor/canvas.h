@@ -6,6 +6,8 @@
 #include <QMouseEvent>
 #include <vector>
 
+class SelectionOverlay;
+
 class Canvas : public QWidget
 {
     Q_OBJECT
@@ -21,6 +23,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -41,6 +44,7 @@ private:
     QPoint dragStartPos_;
     QRect dragStartRect_;
     bool interceptInteractions_;
+    SelectionOverlay* overlay_ = nullptr;
 
     QWidget* createWidgetForType(const QString& typeKey, QWidget* parent);
     QRect widgetRect(QWidget* w) const;

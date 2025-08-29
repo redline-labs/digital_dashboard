@@ -8,6 +8,9 @@ class SelectionOverlay : public QWidget
 {
     Q_OBJECT
 public:
+    // Visual size of handles
+    constexpr static int kGrabHandleSizePx = 12;
+
     explicit SelectionOverlay(QWidget* parent = nullptr);
 
     void setSelectionRect(const QRect& rect);
