@@ -1,5 +1,6 @@
-#include "canvas.h"
-#include "editor_constants.h"
+#include "dashboard_editor/canvas.h"
+#include "dashboard_editor/editor_constants.h"
+#include "dashboard_editor/widget_registry.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -8,8 +9,6 @@
 #include <QLabel>
 #include <QApplication>
 #include <QKeyEvent>
-
-#include "widget_registry.h"
 
 Canvas::Canvas(QWidget* parent) :
   QWidget(parent),
@@ -285,3 +284,4 @@ QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
 }
 
 
+#include "dashboard_editor/moc_canvas.cpp"

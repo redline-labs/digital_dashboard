@@ -1,12 +1,10 @@
-#include "widget_palette.h"
+#include "dashboard_editor/widget_palette.h"
+#include "dashboard_editor/palette_list.h"
+#include "dashboard_editor/widget_registry.h"
 
-#include "palette_list.h"
-#include "widget_registry.h"
 #include <QVBoxLayout>
 #include <QDrag>
 #include <QMimeData>
-
-namespace {}
 
 WidgetPalette::WidgetPalette(QWidget* parent)
     : QWidget(parent), list_(new PaletteList(this))
@@ -38,4 +36,4 @@ WidgetPalette::WidgetPalette(QWidget* parent)
     // default which packs the selected text. The Canvas will accept both text/plain and our custom format.
 }
 
-
+#include "dashboard_editor/moc_widget_palette.cpp"

@@ -1,4 +1,7 @@
-#include "editor_window.h"
+#include "dashboard_editor/editor_window.h"
+#include "dashboard_editor/widget_palette.h"
+#include "dashboard_editor/properties_panel.h"
+#include "dashboard_editor/canvas.h"
 
 #include <QSplitter>
 #include <QListView>
@@ -10,10 +13,6 @@
 #include <QScrollArea>
 #include <QAction>
 #include <QToolButton>
-
-#include "widget_palette.h"
-#include "properties_panel.h"
-#include "canvas.h"
 
 EditorWindow::EditorWindow(QWidget* parent) :
   QMainWindow(parent),
@@ -88,4 +87,4 @@ EditorWindow::EditorWindow(QWidget* parent) :
     });
 }
 
-
+#include "dashboard_editor/moc_editor_window.cpp"

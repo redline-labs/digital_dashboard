@@ -1,4 +1,4 @@
-#include "palette_list.h"
+#include "dashboard_editor/palette_list.h"
 
 #include <QDrag>
 #include <QMimeData>
@@ -21,4 +21,4 @@ void PaletteList::startDrag(Qt::DropActions supportedActions)
     drag->exec(supportedActions, Qt::CopyAction);
 }
 
-
+#include "dashboard_editor/moc_palette_list.cpp"

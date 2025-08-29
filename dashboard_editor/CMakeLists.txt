@@ -10,7 +10,6 @@ qt_standard_project_setup()
 
 include_directories(
     include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../dashboard/include
 )
 
 qt_add_executable(dashboard_editor

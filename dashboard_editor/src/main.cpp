@@ -1,7 +1,7 @@
 #include <QApplication>
 #include <QSurfaceFormat>
 
-#include "editor_window.h"
+#include "dashboard_editor/editor_window.h"
 
 int main(int argc, char** argv)
 {

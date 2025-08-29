@@ -1,4 +1,4 @@
-#include "selection_overlay.h"
+#include "dashboard_editor/selection_overlay.h"
 
 #include <QPainter>
 
@@ -42,4 +42,4 @@ void SelectionOverlay::paintEvent(QPaintEvent* event)
     for (const auto& h : handles) p.drawRect(h);
 }
 
-
+#include "dashboard_editor/moc_selection_overlay.cpp"
