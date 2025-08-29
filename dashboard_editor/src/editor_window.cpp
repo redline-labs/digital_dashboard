@@ -8,13 +8,18 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QAction>
+#include <QToolButton>
 
 #include "widget_palette.h"
 #include "properties_panel.h"
 #include "canvas.h"
 
-EditorWindow::EditorWindow(QWidget* parent)
-    : QMainWindow(parent), widgetPalette_(nullptr), canvas_(nullptr)
+EditorWindow::EditorWindow(QWidget* parent) :
+  QMainWindow(parent),
+  widgetPalette_(nullptr),
+  canvas_(nullptr),
+  toggleInterceptAction_(nullptr)
 {
     auto* splitter = new QSplitter(this);
 
@@ -57,6 +62,30 @@ EditorWindow::EditorWindow(QWidget* parent)
     auto* tb = addToolBar("Main");
     tb->setMovable(false);
     statusBar()->showMessage("Drag widgets from the left onto the canvas");
+
+    // Add a toggle to control whether the canvas intercepts interactions
+    toggleInterceptAction_ = new QAction(this);
+    toggleInterceptAction_->setCheckable(true);
+    toggleInterceptAction_->setChecked(true);
+    toggleInterceptAction_->setText("Editor Mode");
+    toggleInterceptAction_->setToolTip("When enabled, clicks/drags are handled by the editor (selection & resize). When disabled, events pass through to the widget.");
+
+    auto* toggleBtn = new QToolButton(this);
+    toggleBtn->setDefaultAction(toggleInterceptAction_);
+    toggleBtn->setCheckable(true);
+    toggleBtn->setChecked(true);
+    toggleBtn->setAutoRaise(true);
+    toggleBtn->setStyleSheet("QToolButton:checked{ background: #2da44e; color: white; border-radius: 4px; padding: 2px 6px;} QToolButton{ padding: 2px 6px; }");
+
+    statusBar()->addPermanentWidget(toggleBtn);
+
+    connect(toggleInterceptAction_, &QAction::toggled, this, [this](bool on)
+    {
+        if (canvas_)
+        {
+            canvas_->setInterceptInteractions(on);
+        }
+    });
 }
 
 

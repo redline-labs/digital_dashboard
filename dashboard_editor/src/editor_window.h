@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 
+class QAction;
 class WidgetPalette;
 class Canvas;
 
@@ -16,6 +17,7 @@ public:
 private:
     WidgetPalette* widgetPalette_;
     Canvas* canvas_;
+    QAction* toggleInterceptAction_;
 };
 
 #endif // DASHBOARD_EDITOR_EDITOR_WINDOW_H

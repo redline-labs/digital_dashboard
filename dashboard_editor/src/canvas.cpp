@@ -11,8 +11,9 @@
 
 #include "widget_registry.h"
 
-Canvas::Canvas(QWidget* parent)
-    : QWidget(parent)
+Canvas::Canvas(QWidget* parent) :
+  QWidget(parent),
+  interceptInteractions_(true)
 {
     setAcceptDrops(true);
     setAutoFillBackground(true);
@@ -26,6 +27,17 @@ Canvas::Canvas(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
 }
 
+void Canvas::setInterceptInteractions(bool intercept)
+{
+    interceptInteractions_ = intercept;
+    // Toggle mouse transparency on all child widgets recursively
+    const auto children = findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* c : children)
+    {
+        setMouseTransparentRecursive(c, interceptInteractions_);
+    }
+}
+
 void Canvas::setBackgroundColor(const QString& hexColor)
 {
     QPalette pal = palette();
@@ -34,9 +46,25 @@ void Canvas::setBackgroundColor(const QString& hexColor)
     update();
 }
 
+void Canvas::setMouseTransparentRecursive(QWidget* w, bool on)
+{
+    if (!w)
+    {
+        return;
+    }
+
+    w->setAttribute(Qt::WA_TransparentForMouseEvents, on);
+    const auto children = w->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* c : children)
+    {
+        setMouseTransparentRecursive(c, on);
+    }
+}
+
 void Canvas::dragEnterEvent(QDragEnterEvent* event)
 {
-    if (event->mimeData()->hasText()) {
+    if (event->mimeData()->hasText())
+    {
         event->acceptProposedAction();
     }
 }
@@ -46,16 +74,24 @@ void Canvas::dropEvent(QDropEvent* event)
     const QString typeKey = event->mimeData()->text();
     const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
     QWidget* w = widget_registry::instantiateWidget(type, this);
-    if (w) {
+    if (w)
+    {
         w->setParent(this);
         const QPoint pos = event->position().toPoint();
         // Provide a reasonable default size for various widgets
         if (w->sizeHint().isValid())
+        {
             w->resize(w->sizeHint());
+        }
         else
+        {
             w->resize(200, 200);
+        }
+
         w->move(pos);
         w->show();
+        // Apply current intercept mode to the new widget subtree
+        setMouseTransparentRecursive(w, interceptInteractions_);
         Item item;
         item.widget = w;
         item.position = pos;
@@ -109,12 +145,24 @@ QRect Canvas::widgetRect(QWidget* w) const
     return QRect(w->pos(), w->size());
 }
 
+QWidget* Canvas::topLevelWidgetAt(const QPoint& pos) const
+{
+    // Iterate items_ in reverse so the most recently added (topmost) gets priority
+    for (auto it = items_.rbegin(); it != items_.rend(); ++it)
+    {
+        QWidget* w = it->widget;
+        if (!w || w->isHidden()) continue;
+        if (widgetRect(w).contains(pos)) return w;
+    }
+    return nullptr;
+}
+
 Canvas::DragMode Canvas::hitTestHandles(const QRect& r, const QPoint& pos) const
 {
     // Visual size of handles
-    const int s = 10;
+    constexpr int s = 10;
     // Expand hit-test area to make grabbing easier
-    const int hs = 16; // hit size
+    constexpr int hs = 16; // hit size
     const QRect tl(r.topLeft() - QPoint(s/2, s/2), QSize(s, s));
     const QRect tr(QPoint(r.right() - s/2, r.top() - s/2), QSize(s, s));
     const QRect bl(QPoint(r.left() - s/2, r.bottom() - s/2), QSize(s, s));
@@ -133,12 +181,14 @@ Canvas::DragMode Canvas::hitTestHandles(const QRect& r, const QPoint& pos) const
 
 void Canvas::mousePressEvent(QMouseEvent* event)
 {
-    // Determine if clicking on a child widget
-    QWidget* child = childAt(event->pos());
-    QWidget* topLevel = nullptr;
-    for (QWidget* c = child; c && c != this; c = c->parentWidget()) {
-        if (c->parentWidget() == this) { topLevel = c; break; }
+    if (!interceptInteractions_)
+    {
+        QWidget::mousePressEvent(event);
+        return;
     }
+
+    // Determine if clicking on a top-level child widget using stored layout (works with transparent children)
+    QWidget* topLevel = topLevelWidgetAt(event->pos());
     if (topLevel) {
         selected_ = topLevel;
         selectedRect_ = widgetRect(selected_);
@@ -154,11 +204,16 @@ void Canvas::mousePressEvent(QMouseEvent* event)
     dragMode_ = DragMode::None;
     update();
     emit selectionChanged(nullptr);
-    
 }
 
 void Canvas::mouseMoveEvent(QMouseEvent* event)
 {
+    if (!interceptInteractions_)
+    {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
     if (!selected_) { return; }
     const QPoint delta = event->pos() - dragStartPos_;
     QRect r = dragStartRect_;
@@ -182,7 +237,8 @@ void Canvas::mouseMoveEvent(QMouseEvent* event)
         return;
     }
     // Constrain minimal size
-    const int minW = 20, minH = 20;
+    constexpr int minW = 20;
+    constexpr int minH = 20;
     if (r.width() < minW) r.setWidth(minW);
     if (r.height() < minH) r.setHeight(minH);
 
@@ -194,9 +250,13 @@ void Canvas::mouseMoveEvent(QMouseEvent* event)
 
 void Canvas::mouseReleaseEvent(QMouseEvent* event)
 {
-    Q_UNUSED(event);
+    if (!interceptInteractions_)
+    {
+        QWidget::mouseReleaseEvent(event);
+        return;
+    }
+
     dragMode_ = DragMode::None;
-    
 }
 
 void Canvas::keyPressEvent(QKeyEvent* event)
@@ -217,8 +277,6 @@ void Canvas::keyPressEvent(QKeyEvent* event)
     }
     QWidget::keyPressEvent(event);
 }
-
-// Cursor changing functionality removed as requested
 
 QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
 {

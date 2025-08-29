@@ -12,6 +12,7 @@ class Canvas : public QWidget
 public:
     explicit Canvas(QWidget* parent = nullptr);
     void setBackgroundColor(const QString& hexColor);
+    void setInterceptInteractions(bool intercept);
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -39,11 +40,14 @@ private:
     DragMode dragMode_ = DragMode::None;
     QPoint dragStartPos_;
     QRect dragStartRect_;
+    bool interceptInteractions_;
 
     QWidget* createWidgetForType(const QString& typeKey, QWidget* parent);
     QRect widgetRect(QWidget* w) const;
     DragMode hitTestHandles(const QRect& r, const QPoint& pos) const;
     void updateSelectionOverlay();
+    void setMouseTransparentRecursive(QWidget* w, bool on);
+    QWidget* topLevelWidgetAt(const QPoint& pos) const;
 };
 
 #endif // DASHBOARD_EDITOR_CANVAS_H
