@@ -104,6 +104,7 @@ void Canvas::dropEvent(QDropEvent* event)
         setMouseTransparentRecursive(w, interceptInteractions_);
         Item item;
         item.widget = w;
+        item.type = type;
         item.position = pos;
         items_.push_back(std::move(item));
         update();
@@ -159,20 +160,12 @@ QWidget* Canvas::topLevelWidgetAt(const QPoint& pos) const
     return nullptr;
 }
 
-Canvas::DragMode Canvas::hitTestHandles(const QRect& r, const QPoint& pos) const
+DragMode Canvas::hitTestSelectionAt(const QPoint& pos)
 {
-    const QRect tl(r.topLeft() - QPoint(SelectionOverlay::kGrabHandleSizePx/2, SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
-    const QRect tr(QPoint(r.right() - SelectionOverlay::kGrabHandleSizePx/2, r.top() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
-    const QRect bl(QPoint(r.left() - SelectionOverlay::kGrabHandleSizePx/2, r.bottom() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
-    const QRect br(QPoint(r.right() - SelectionOverlay::kGrabHandleSizePx/2, r.bottom() - SelectionOverlay::kGrabHandleSizePx/2), QSize(SelectionOverlay::kGrabHandleSizePx, SelectionOverlay::kGrabHandleSizePx));
-
-    if (tl.contains(pos)) return DragMode::ResizeTL;
-    if (tr.contains(pos)) return DragMode::ResizeTR;
-    if (bl.contains(pos)) return DragMode::ResizeBL;
-    if (br.contains(pos)) return DragMode::ResizeBR;
-    if (r.contains(pos)) return DragMode::Move;
-
-    return DragMode::None;
+    if (!overlay_) return DragMode::None;
+    // Ensure overlay has current rect
+    if (selected_) overlay_->setSelectionRect(widgetRect(selected_));
+    return overlay_->hitTest(pos);
 }
 
 void Canvas::mousePressEvent(QMouseEvent* event)
@@ -190,10 +183,9 @@ void Canvas::mousePressEvent(QMouseEvent* event)
     {
         selected_ = topLevel;
         selectedRect_ = widgetRect(selected_);
-        dragMode_ = hitTestHandles(selectedRect_, pos);
+        dragMode_ = hitTestSelectionAt(pos);
         dragStartPos_ = pos;
         dragStartRect_ = selectedRect_;
-        if (overlay_) overlay_->setSelectionRect(selectedRect_);
         update();
         emit selectionChanged(selected_);
         return;
@@ -202,13 +194,12 @@ void Canvas::mousePressEvent(QMouseEvent* event)
     // Not clicking inside any widget's rect. If we already have a selection, allow grabs on handles even if they extend outside the rect
     if (selected_)
     {
-        DragMode hm = hitTestHandles(selectedRect_, pos);
+        DragMode hm = hitTestSelectionAt(pos);
         if (hm != DragMode::None)
         {
             dragMode_ = hm;
             dragStartPos_ = pos;
             dragStartRect_ = selectedRect_;
-            if (overlay_) overlay_->setSelectionRect(selectedRect_);
             update();
             return;
         }
@@ -285,6 +276,7 @@ void Canvas::keyPressEvent(QKeyEvent* event)
             items_.erase(it, items_.end());
             selected_->deleteLater();
             selected_ = nullptr;
+            if (overlay_) overlay_->setSelectionRect(QRect());
             update();
             emit selectionChanged(nullptr);
             event->accept();
@@ -317,6 +309,11 @@ void Canvas::replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& 
         {
             it.widget = newWidget;
             it.position = rect.topLeft();
+            // carry through type via property if needed
+            const QVariant v = newWidget->property("widgetType");
+            if (v.isValid()) {
+                it.type = static_cast<widget_type_t>(v.toInt());
+            }
             break;
         }
     }

@@ -6,6 +6,9 @@
 #include <QMouseEvent>
 #include <vector>
 
+#include "app_config.h"
+#include "dashboard_editor/selection_overlay.h"
+
 class SelectionOverlay;
 
 class Canvas : public QWidget
@@ -33,6 +36,7 @@ protected:
 private:
     struct Item {
         QWidget* widget;
+        widget_type_t type; // cached type for this widget
         QPoint position; // top-left position in canvas coordinates
     };
 
@@ -40,7 +44,7 @@ private:
 
     QWidget* selected_ = nullptr;
     QRect selectedRect_;
-    enum class DragMode { None, Move, ResizeTL, ResizeTR, ResizeBL, ResizeBR };
+
     DragMode dragMode_ = DragMode::None;
     QPoint dragStartPos_;
     QRect dragStartRect_;
@@ -49,10 +53,10 @@ private:
 
     QWidget* createWidgetForType(const QString& typeKey, QWidget* parent);
     QRect widgetRect(QWidget* w) const;
-    DragMode hitTestHandles(const QRect& r, const QPoint& pos) const;
     void updateSelectionOverlay();
     void setMouseTransparentRecursive(QWidget* w, bool on);
     QWidget* topLevelWidgetAt(const QPoint& pos) const;
+    DragMode hitTestSelectionAt(const QPoint& pos);
 };
 
 #endif // DASHBOARD_EDITOR_CANVAS_H

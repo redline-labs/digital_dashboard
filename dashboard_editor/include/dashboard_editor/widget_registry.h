@@ -40,6 +40,7 @@ constexpr std::array<WidgetInfo, 12> kAllWidgets =
 
 inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 {
+	QWidget* w = nullptr;
 	switch (type)
 	{
 		case widget_type_t::static_text: {
@@ -48,76 +49,87 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 			cfg.font = "Futura";
 			cfg.font_size = 18;
 			cfg.color = "#FFFFFF";
-			return new StaticTextWidget(cfg, parent);
+			w = new StaticTextWidget(cfg, parent);
+			break;
 		}
 		case widget_type_t::value_readout: {
 			ValueReadoutConfig_t cfg;
 			cfg.label_text = "WATER TMP";
 			cfg.alignment = ValueReadoutAlignment::left;
-			return new ValueReadoutWidget(cfg, parent);
+			w = new ValueReadoutWidget(cfg, parent);
+			break;
 		}
 		case widget_type_t::mercedes_190e_speedometer: {
 			Mercedes190ESpeedometerConfig_t cfg;
 			cfg.max_speed = 125;
-			return new Mercedes190ESpeedometer(cfg, parent);
+			w = new Mercedes190ESpeedometer(cfg, parent);
+			break;
 		}
 		case widget_type_t::mercedes_190e_tachometer: {
 			Mercedes190ETachometerConfig_t cfg;
 			cfg.max_rpm = 7000;
 			cfg.redline_rpm = 6000;
 			cfg.show_clock = false;
-			return new Mercedes190ETachometer(cfg, parent);
+			w = new Mercedes190ETachometer(cfg, parent);
+			break;
 		}
 		case widget_type_t::mercedes_190e_cluster_gauge: {
 			Mercedes190EClusterGaugeConfig_t cfg;
-			return new Mercedes190EClusterGauge(cfg, parent);
+			w = new Mercedes190EClusterGauge(cfg, parent);
+			break;
 		}
 		case widget_type_t::sparkline: {
 			SparklineConfig_t cfg;
 			cfg.units = "rpm";
-			return new SparklineItem(cfg, parent);
+			w = new SparklineItem(cfg, parent);
+			break;
 		}
 		case widget_type_t::background_rect: {
 			BackgroundRectConfig_t cfg;
 			cfg.colors = {"#202020", "#101010"};
-			return new BackgroundRectWidget(cfg, parent);
+			w = new BackgroundRectWidget(cfg, parent);
+			break;
 		}
 		case widget_type_t::mercedes_190e_telltale: {
 			Mercedes190ETelltaleConfig_t cfg;
-			return new Mercedes190ETelltale(cfg, parent);
+			w = new Mercedes190ETelltale(cfg, parent);
+			break;
 		}
 		case widget_type_t::motec_c125_tachometer: {
 			MotecC125TachometerConfig_t cfg;
-			return new MotecC125Tachometer(cfg, parent);
+			w = new MotecC125Tachometer(cfg, parent);
+			break;
 		}
 		case widget_type_t::motec_cdl3_tachometer: {
 			MotecCdl3TachometerConfig_t cfg;
-			return new MotecCdl3Tachometer(cfg, parent);
+			w = new MotecCdl3Tachometer(cfg, parent);
+			break;
 		}
 		case widget_type_t::carplay: {
 			CarplayConfig_t cfg;
-			return new CarPlayWidget(cfg);
+			w = new CarPlayWidget(cfg);
+			break;
 		}
 		case widget_type_t::unknown:
 		default:
-			return nullptr;
+			w = nullptr;
+			break;
 	}
+	if (w)
+	{
+		w->setProperty("widgetType", static_cast<int>(type));
+	}
+	return w;
 }
 
 inline widget_type_t widgetTypeFor(QWidget* w)
 {
 	if (!w) return widget_type_t::unknown;
-	if (qobject_cast<StaticTextWidget*>(w)) return widget_type_t::static_text;
-	if (qobject_cast<ValueReadoutWidget*>(w)) return widget_type_t::value_readout;
-	if (qobject_cast<Mercedes190ESpeedometer*>(w)) return widget_type_t::mercedes_190e_speedometer;
-	if (qobject_cast<Mercedes190ETachometer*>(w)) return widget_type_t::mercedes_190e_tachometer;
-	if (qobject_cast<Mercedes190EClusterGauge*>(w)) return widget_type_t::mercedes_190e_cluster_gauge;
-	if (qobject_cast<SparklineItem*>(w)) return widget_type_t::sparkline;
-	if (qobject_cast<BackgroundRectWidget*>(w)) return widget_type_t::background_rect;
-	if (qobject_cast<Mercedes190ETelltale*>(w)) return widget_type_t::mercedes_190e_telltale;
-	if (qobject_cast<MotecC125Tachometer*>(w)) return widget_type_t::motec_c125_tachometer;
-	if (qobject_cast<MotecCdl3Tachometer*>(w)) return widget_type_t::motec_cdl3_tachometer;
-	if (qobject_cast<CarPlayWidget*>(w)) return widget_type_t::carplay;
+	const QVariant v = w->property("widgetType");
+	if (v.isValid())
+	{
+		return static_cast<widget_type_t>(v.toInt());
+	}
 	return widget_type_t::unknown;
 }
 

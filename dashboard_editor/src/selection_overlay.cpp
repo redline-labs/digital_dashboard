@@ -42,4 +42,25 @@ void SelectionOverlay::paintEvent(QPaintEvent* event)
     for (const auto& h : handles) p.drawRect(h);
 }
 
+DragMode SelectionOverlay::hitTest(const QPoint& pos) const
+{
+    if (rect_.isNull())
+    {
+        return DragMode::None;
+    }
+
+    const QRect r = rect_;
+    const QRect tl(r.topLeft() - QPoint(kGrabHandleSizePx/2, kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
+    const QRect tr(QPoint(r.right() - kGrabHandleSizePx/2, r.top() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
+    const QRect bl(QPoint(r.left() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
+    const QRect br(QPoint(r.right() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
+
+    if (tl.contains(pos)) return DragMode::ResizeTL;
+    if (tr.contains(pos)) return DragMode::ResizeTR;
+    if (bl.contains(pos)) return DragMode::ResizeBL;
+    if (br.contains(pos)) return DragMode::ResizeBR;
+    if (r.contains(pos)) return DragMode::Move;
+    return DragMode::None;
+}
+
 #include "dashboard_editor/moc_selection_overlay.cpp"
