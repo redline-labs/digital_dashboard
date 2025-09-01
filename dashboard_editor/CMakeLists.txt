@@ -19,7 +19,7 @@ qt_add_executable(dashboard_editor
     src/palette_list.cpp
     src/canvas.cpp
     src/properties_panel.cpp
-    src/selection_overlay.cpp
+    src/selection_frame.cpp
     resources.qrc
 )
 

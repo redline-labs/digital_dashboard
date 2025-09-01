@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "app_config.h"
-#include "dashboard_editor/selection_overlay.h"
+#include "dashboard_editor/selection_frame.h"
 
-class SelectionOverlay;
+// No global selection overlay when using per-widget SelectionFrame
 
 class Canvas : public QWidget
 {
@@ -42,18 +42,17 @@ private:
 
     std::vector<Item> items_;
 
-    QWidget* selected_ = nullptr;
+    QWidget* selected_ = nullptr; // points to SelectionFrame now
     QRect selectedRect_;
 
+    enum class DragMode { None, Move, ResizeTL, ResizeTR, ResizeBL, ResizeBR };
     DragMode dragMode_ = DragMode::None;
     QPoint dragStartPos_;
     QRect dragStartRect_;
     bool interceptInteractions_;
-    SelectionOverlay* overlay_ = nullptr;
 
     QWidget* createWidgetForType(const QString& typeKey, QWidget* parent);
     QRect widgetRect(QWidget* w) const;
-    void updateSelectionOverlay();
     void setMouseTransparentRecursive(QWidget* w, bool on);
     QWidget* topLevelWidgetAt(const QPoint& pos) const;
     DragMode hitTestSelectionAt(const QPoint& pos);

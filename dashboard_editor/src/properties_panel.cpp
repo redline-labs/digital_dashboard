@@ -1,6 +1,7 @@
 #include "dashboard_editor/properties_panel.h"
 #include "dashboard_editor/widget_registry.h"
 #include "dashboard_editor/canvas.h"
+#include "dashboard_editor/selection_frame.h"
 #include "dashboard_editor/editor_constants.h"
 
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 #include <QCheckBox>
 #include <QFrame>
 
+#include <limits>
 
 #include "reflection/reflection.h"
 #include "spdlog/spdlog.h"
@@ -104,7 +106,10 @@ namespace
             auto* spin = new QSpinBox(parent);
             spin->setMinimumHeight(24);
             spin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-            spin->setValue(static_cast<int>(value));
+
+            // Remove implicit 0..99 default range; use a very permissive range
+            spin->setRange(std::numeric_limits<FieldType>::min(), std::numeric_limits<FieldType>::max());
+            spin->setValue(static_cast<FieldType>(value));
             spin->setObjectName(QString("field:%1").arg(path));
             return spin;
         }
@@ -114,6 +119,8 @@ namespace
             dspin->setDecimals(3);
             dspin->setMinimumHeight(24);
             dspin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+            // Remove implicit 0..99.99 default range; use a very permissive range
+            dspin->setRange(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max());
             dspin->setValue(static_cast<double>(value));
             dspin->setObjectName(QString("field:%1").arg(path));
             return dspin;
@@ -340,8 +347,10 @@ namespace
         {
             if (!that || !that->selected()) return;
             QWidget* w = that->selected();
-            const widget_type_t type = widget_registry::widgetTypeFor(w);
-            const QRect rect = QRect(w->pos(), w->size());
+            SelectionFrame* frame = qobject_cast<SelectionFrame*>(w);
+            QWidget* target = frame ? frame->child() : w;
+            const widget_type_t type = frame ? frame->type() : widget_registry::widgetTypeFor(target);
+            const QRect rect = frame ? QRect(frame->pos(), frame->size()) : QRect(w->pos(), w->size());
             switch (type)
             {
                 case widget_type_t::static_text:
@@ -349,7 +358,8 @@ namespace
                     StaticTextWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new StaticTextWidget(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::background_rect:
@@ -357,7 +367,8 @@ namespace
                     BackgroundRectWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new BackgroundRectWidget(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::mercedes_190e_cluster_gauge:
@@ -365,7 +376,8 @@ namespace
                     Mercedes190EClusterGauge::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190EClusterGauge(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::mercedes_190e_speedometer:
@@ -373,7 +385,8 @@ namespace
                     Mercedes190ESpeedometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ESpeedometer(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::mercedes_190e_tachometer:
@@ -381,7 +394,8 @@ namespace
                     Mercedes190ETachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ETachometer(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::motec_c125_tachometer:
@@ -389,7 +403,8 @@ namespace
                     MotecC125Tachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new MotecC125Tachometer(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::motec_cdl3_tachometer:
@@ -397,7 +412,8 @@ namespace
                     MotecCdl3Tachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new MotecCdl3Tachometer(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::sparkline:
@@ -405,7 +421,8 @@ namespace
                     SparklineItem::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new SparklineItem(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::value_readout:
@@ -413,7 +430,8 @@ namespace
                     ValueReadoutWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new ValueReadoutWidget(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::carplay:
@@ -421,7 +439,8 @@ namespace
                     CarPlayWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new CarPlayWidget(cfg);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::mercedes_190e_telltale:
@@ -429,7 +448,8 @@ namespace
                     Mercedes190ETelltale::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ETelltale(cfg, nullptr);
-                    that->canvas()->replaceWidget(w, nw, rect);
+                    nw->setProperty("widgetType", static_cast<int>(type));
+                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
                 case widget_type_t::unknown:
@@ -452,11 +472,16 @@ void PropertiesPanel::buildWindowPage()
     form->setContentsMargins(8,8,8,8);
     form->setHorizontalSpacing(12);
     form->setVerticalSpacing(10);
+
+
     winNameEdit_ = new QLineEdit(windowPage_);
+    
     winWidthSpin_ = new QSpinBox(windowPage_);
-    winWidthSpin_->setRange(100, 10000);
+    winWidthSpin_->setRange(100u, 10000u);
+
     winHeightSpin_ = new QSpinBox(windowPage_);
-    winHeightSpin_->setRange(100, 10000);
+    winHeightSpin_->setRange(100u, 10000u);
+
     winBgColorEdit_ = new QLineEdit(windowPage_);
     winBgColorEdit_->setPlaceholderText("#RRGGBB");
 
@@ -499,29 +524,37 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return;
     }
 
-    const QString qtClass = w->metaObject()->className();
+    // Unwrap SelectionFrame for UI classification
+    QWidget* uiWidget = w;
+    if (auto* frame = qobject_cast<SelectionFrame*>(uiWidget)) uiWidget = frame->child();
+    if (!uiWidget) uiWidget = w; // fallback
+    const QString qtClass = uiWidget->metaObject()->className();
     if (widgetPages_.contains(qtClass))
     {
         stack_->setCurrentWidget(widgetPages_.value(qtClass));
         return;
     }
 
-    // Map widget instance to type, then build a config form using the type.
-    const widget_type_t type = widget_registry::widgetTypeFor(w);
+    // Map widget instance to type, prefer SelectionFrame::type when available.
+    const widget_type_t type = [w, uiWidget]()
+    {
+        if (auto* f = qobject_cast<SelectionFrame*>(w)) return f->type();
+        return widget_registry::widgetTypeFor(uiWidget);
+    }();
     QWidget* page = nullptr;
     switch (type)
     {
-        case widget_type_t::static_text: page = buildFormFromConfig<StaticTextWidget::config_t>(this, static_cast<StaticTextWidget*>(w)->getConfig()); break;
-        case widget_type_t::background_rect: page = buildFormFromConfig<BackgroundRectWidget::config_t>(this, static_cast<BackgroundRectWidget*>(w)->getConfig()); break;
-        case widget_type_t::mercedes_190e_cluster_gauge: page = buildFormFromConfig<Mercedes190EClusterGauge::config_t>(this, static_cast<Mercedes190EClusterGauge*>(w)->getConfig()); break;
-        case widget_type_t::mercedes_190e_speedometer: page = buildFormFromConfig<Mercedes190ESpeedometer::config_t>(this, static_cast<Mercedes190ESpeedometer*>(w)->getConfig()); break;
-        case widget_type_t::mercedes_190e_tachometer: page = buildFormFromConfig<Mercedes190ETachometer::config_t>(this, static_cast<Mercedes190ETachometer*>(w)->getConfig()); break;
-        case widget_type_t::motec_c125_tachometer: page = buildFormFromConfig<MotecC125Tachometer::config_t>(this, static_cast<MotecC125Tachometer*>(w)->getConfig()); break;
-        case widget_type_t::motec_cdl3_tachometer: page = buildFormFromConfig<MotecCdl3Tachometer::config_t>(this, static_cast<MotecCdl3Tachometer*>(w)->getConfig()); break;
-        case widget_type_t::sparkline: page = buildFormFromConfig<SparklineItem::config_t>(this, static_cast<SparklineItem*>(w)->getConfig()); break;
-        case widget_type_t::value_readout: page = buildFormFromConfig<ValueReadoutWidget::config_t>(this, static_cast<ValueReadoutWidget*>(w)->getConfig()); break;
-        case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this, static_cast<CarPlayWidget*>(w)->getConfig()); break;
-        case widget_type_t::mercedes_190e_telltale: page = buildFormFromConfig<Mercedes190ETelltale::config_t>(this, static_cast<Mercedes190ETelltale*>(w)->getConfig()); break;
+        case widget_type_t::static_text: page = buildFormFromConfig<StaticTextWidget::config_t>(this, static_cast<StaticTextWidget*>(uiWidget)->getConfig()); break;
+        case widget_type_t::background_rect: page = buildFormFromConfig<BackgroundRectWidget::config_t>(this, static_cast<BackgroundRectWidget*>(uiWidget)->getConfig()); break;
+        case widget_type_t::mercedes_190e_cluster_gauge: page = buildFormFromConfig<Mercedes190EClusterGauge::config_t>(this, static_cast<Mercedes190EClusterGauge*>(uiWidget)->getConfig()); break;
+        case widget_type_t::mercedes_190e_speedometer: page = buildFormFromConfig<Mercedes190ESpeedometer::config_t>(this, static_cast<Mercedes190ESpeedometer*>(uiWidget)->getConfig()); break;
+        case widget_type_t::mercedes_190e_tachometer: page = buildFormFromConfig<Mercedes190ETachometer::config_t>(this, static_cast<Mercedes190ETachometer*>(uiWidget)->getConfig()); break;
+        case widget_type_t::motec_c125_tachometer: page = buildFormFromConfig<MotecC125Tachometer::config_t>(this, static_cast<MotecC125Tachometer*>(uiWidget)->getConfig()); break;
+        case widget_type_t::motec_cdl3_tachometer: page = buildFormFromConfig<MotecCdl3Tachometer::config_t>(this, static_cast<MotecCdl3Tachometer*>(uiWidget)->getConfig()); break;
+        case widget_type_t::sparkline: page = buildFormFromConfig<SparklineItem::config_t>(this, static_cast<SparklineItem*>(uiWidget)->getConfig()); break;
+        case widget_type_t::value_readout: page = buildFormFromConfig<ValueReadoutWidget::config_t>(this, static_cast<ValueReadoutWidget*>(uiWidget)->getConfig()); break;
+        case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this, static_cast<CarPlayWidget*>(uiWidget)->getConfig()); break;
+        case widget_type_t::mercedes_190e_telltale: page = buildFormFromConfig<Mercedes190ETelltale::config_t>(this, static_cast<Mercedes190ETelltale*>(uiWidget)->getConfig()); break;
         case widget_type_t::unknown: default: break;
     }
 
