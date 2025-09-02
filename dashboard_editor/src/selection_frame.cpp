@@ -1,6 +1,16 @@
 #include "dashboard_editor/selection_frame.h"
 
 #include <QPainter>
+#include <QEvent>
+
+namespace
+{
+    // Colors for selection chrome
+    // kSelectedOutlineColor: Active selection outline color (medium blue)
+    // kUnselectedOutlineColor: Non-selected frame outline color in editor mode (dark gray)
+    constexpr QColor kSelectedOutlineColor(0, 122, 255);
+    constexpr QColor kUnselectedOutlineColor(80, 80, 80);
+}
 
 SelectionFrame::SelectionFrame(widget_type_t type, QWidget* child, QWidget* parent)
     : QWidget(parent), type_(type), child_(child)
@@ -15,17 +25,30 @@ SelectionFrame::SelectionFrame(widget_type_t type, QWidget* child, QWidget* pare
         // size to child
         resize(child_->size());
     }
+    // Overlay that always draws above child
+    overlay_ = new QWidget(this);
+    overlay_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    overlay_->setAttribute(Qt::WA_NoSystemBackground, true);
+    overlay_->resize(size());
+    overlay_->raise();
+    overlay_->installEventFilter(this);
 }
 
 void SelectionFrame::setChild(QWidget* newChild)
 {
-    if (child_ == newChild) return;
+    if (child_ == newChild)
+    {
+        return;
+    }
+
     if (child_)
     {
         child_->setParent(nullptr);
         child_->deleteLater();
     }
+
     child_ = newChild;
+
     if (child_)
     {
         child_->setParent(this);
@@ -38,7 +61,11 @@ void SelectionFrame::setChild(QWidget* newChild)
 
 void SelectionFrame::setSelected(bool on)
 {
-    if (selected_ == on) return;
+    if (selected_ == on)
+    {
+        return;
+    }
+
     selected_ = on;
     update();
 }
@@ -46,7 +73,11 @@ void SelectionFrame::setSelected(bool on)
 void SelectionFrame::setEditorModeCapture(bool on)
 {
     editorMode_ = on;
-    if (child_) child_->setAttribute(Qt::WA_TransparentForMouseEvents, on);
+    if (child_)
+    {
+        child_->setAttribute(Qt::WA_TransparentForMouseEvents, on);
+    }
+
     update();
 }
 
@@ -66,46 +97,61 @@ SelectionFrame::Handle SelectionFrame::hitTestCanvasPos(const QPoint& canvasPos)
     return Handle::None;
 }
 
-void SelectionFrame::paintEvent(QPaintEvent* event)
+void SelectionFrame::paintEvent(QPaintEvent* /*event*/)
 {
-    Q_UNUSED(event);
-    if (!editorMode_) return; // no selection chrome in non-editor mode
-
-    // Colors for selection chrome
-    // kSelectedOutlineColor: Active selection outline color (medium blue)
-    // kUnselectedOutlineColor: Non-selected frame outline color in editor mode (dark gray)
-    constexpr QColor kSelectedOutlineColor(0, 122, 255);
-    constexpr QColor kUnselectedOutlineColor(80, 80, 80);
-
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    const bool drawHandles = selected_;
-    const QColor outline = selected_ ? kSelectedOutlineColor : kUnselectedOutlineColor;
-    QPen pen(outline);
-    pen.setWidth(2);
-    pen.setCosmetic(true);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(rect().adjusted(0, 0, -1, -1));
-
-    if (drawHandles)
+    // no selection chrome in non-editor mode
+    if (!editorMode_)
     {
-        const QRect r = rect().adjusted(0, 0, -1, -1);
-        const QRect handles[] = {
-            QRect(r.topLeft() - QPoint(kGrabHandleSizePx/2, kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
-            QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.top() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
-            QRect(QPoint(r.left() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
-            QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx))
-        };
-        p.setBrush(outline);
-        for (const auto& h : handles) p.drawRect(h);
+        return;
+    }
+    if (overlay_)
+    {
+        overlay_->raise();
+        overlay_->update();
     }
 }
 
 void SelectionFrame::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    if (child_) child_->resize(size());
+    if (child_)
+    {
+        child_->resize(size());
+    }
+    if (overlay_) overlay_->resize(size());
+}
+
+bool SelectionFrame::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == overlay_ && event->type() == QEvent::Paint)
+    {
+        if (!editorMode_) return false;
+        QPainter p(static_cast<QWidget*>(obj));
+        p.setRenderHint(QPainter::Antialiasing);
+        const bool drawHandles = selected_;
+        const QColor outline = selected_ ? kSelectedOutlineColor : kUnselectedOutlineColor;
+        QPen pen(outline);
+        pen.setWidth(2);
+        pen.setCosmetic(true);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        const QRect outer = static_cast<QWidget*>(obj)->rect().adjusted(0, 0, -1, -1);
+        p.drawRect(outer);
+        if (drawHandles)
+        {
+            const QRect r = outer;
+            const QRect handles[] = {
+                QRect(r.topLeft() - QPoint(kGrabHandleSizePx/2, kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+                QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.top() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+                QRect(QPoint(r.left() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx)),
+                QRect(QPoint(r.right() - kGrabHandleSizePx/2, r.bottom() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx))
+            };
+            p.setBrush(outline);
+            for (const auto& h : handles) p.drawRect(h);
+        }
+        return true;
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 #include "dashboard_editor/moc_selection_frame.cpp"

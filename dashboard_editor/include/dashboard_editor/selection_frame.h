@@ -31,12 +31,14 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     widget_type_t type_;
     QWidget* child_ = nullptr;
     bool selected_ = false;
     bool editorMode_ = true;
+    QWidget* overlay_ = nullptr; // draws selection chrome above child
 };
 
 #endif // DASHBOARD_EDITOR_SELECTION_FRAME_H
