@@ -16,7 +16,6 @@ qt_add_executable(dashboard_editor
     src/main.cpp
     src/editor_window.cpp
     src/widget_palette.cpp
-    src/palette_list.cpp
     src/canvas.cpp
     src/properties_panel.cpp
     src/selection_frame.cpp

@@ -1,19 +1,16 @@
 #ifndef DASHBOARD_EDITOR_WIDGET_PALETTE_H
 #define DASHBOARD_EDITOR_WIDGET_PALETTE_H
 
-#include <QWidget>
-#include <QStringList>
+#include <QListWidget>
 
-class PaletteList;
-
-class WidgetPalette : public QWidget
+class WidgetPalette : public QListWidget
 {
     Q_OBJECT
 public:
     explicit WidgetPalette(QWidget* parent = nullptr);
 
-private:
-    PaletteList* list_;
+protected:
+    void startDrag(Qt::DropActions supportedActions) override;
 };
 
 #endif // DASHBOARD_EDITOR_WIDGET_PALETTE_H
