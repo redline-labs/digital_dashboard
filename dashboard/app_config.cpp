@@ -44,8 +44,16 @@ struct convert<reflect_enum_name> \
     } \
     static bool decode(const Node& node, reflect_enum_name& rhs) \
     { \
-        rhs = reflection::enum_traits<reflect_enum_name>::from_string(node.as<std::string>()); \
-        return true; \
+        try \
+        { \
+            rhs = reflection::enum_traits<reflect_enum_name>::from_string(node.as<std::string>()); \
+            return true; \
+        } \
+        catch (const std::exception& e) \
+        { \
+            SPDLOG_ERROR("{}.", e.what()); \
+            return false; \
+        } \
     } \
 }
 
@@ -255,6 +263,10 @@ std::optional<app_config_t> load_app_config(const std::string& config_filepath)
     catch (const YAML::ParserException& e)
     {
         SPDLOG_ERROR("Failed to load app config: (YAML::ParserException : {})", e.what());
+    }
+    catch (const YAML::BadConversion& e)
+    {
+        SPDLOG_ERROR("Failed to load app config: (YAML::BadConversion : {})", e.what());
     }
     catch (const YAML::Exception& e)
     {
