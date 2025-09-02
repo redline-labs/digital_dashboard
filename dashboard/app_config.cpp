@@ -53,6 +53,7 @@ struct convert<reflect_enum_name> \
 // Convert from a YAML Node to a native config_t.
 namespace YAML {
 
+YAML_CONFIG_ENUM(schema_type_t);
 
 YAML_CONFIG_ENUM(ValueReadoutAlignment);
 YAML_CONFIG_STRUCT(ValueReadoutConfig_t);

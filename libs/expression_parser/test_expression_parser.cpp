@@ -80,20 +80,16 @@ std::vector<uint8_t> createBatteryWarningMessage(bool isWarningActive, float bat
 void testSchemaLookup() {
     SPDLOG_INFO("=== Testing Schema Lookup by Name ===");
     
-    // Test valid schema names
-    std::vector<std::string> validSchemas = {
-        "VehicleSpeed", "EngineRpm", "EngineTemperature", "BatteryWarning"
-    };
-    
-    for (const auto& schemaName : validSchemas) {
-        SPDLOG_INFO("Testing schema lookup for: {}", schemaName);
+    for (const auto& schema_type : kAvailableSchemas)
+    {
+        SPDLOG_INFO("Testing schema lookup for: {}", reflection::enum_traits<schema_type_t>::to_string(schema_type));
         
         // Create parser with a simple expression to test schema lookup
-        ExpressionParser parser(schemaName, "timestamp", "vehicle/speed_mps");
+        ExpressionParser parser(schema_type, "timestamp", "vehicle/speed_mps");
         
         // Check if schema was found and parser is valid
         assert(parser.isValid() == true);
-        assert(parser.getSchemaName() == schemaName);
+        assert(parser.getSchemaType() == schema_type);
         
         // Verify schema was actually loaded (has non-zero ID)
         assert(parser.getSchema().getProto().getId() != 0);

@@ -7,11 +7,18 @@
 
 #include <capnp/schema.h>
 
+#include "reflection/reflection.h"
+
+REFLECT_ENUM(schema_type_t@SCHEMA_ENUM_LIST@
+);
+
 extern const std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> kAvailableSchemas;
 
 typedef std::array<std::string_view, @SCHEMA_STATIC_ARRAY_SIZE@> available_schemas_t;
 
-capnp::Schema get_schema_by_name(const std::string_view& schema_name);
+capnp::Schema get_schema(const std::string_view& schema_name);
+
+capnp::Schema get_schema(schema_type_t schema_type);
 
 constexpr available_schemas_t get_available_schemas() { return kAvailableSchemas; }
 

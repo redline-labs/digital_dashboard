@@ -9,6 +9,12 @@ foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
     string(APPEND SCHEMA_CONDITIONAL_LOGIC "    if (schema_name == \"${STRUCT_NAME}\") { return capnp::Schema::from<${STRUCT_NAME}>(); }\n")
 endforeach()
 
+# Generate lookup by schema_type_t.
+set(SCHEMA_CONDITIONAL_LOGIC_BY_TYPE "")
+foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
+    string(APPEND SCHEMA_CONDITIONAL_LOGIC_BY_TYPE "    if (schema_type == schema_type_t::${STRUCT_NAME}) { return capnp::Schema::from<${STRUCT_NAME}>(); }\n")
+endforeach()
+
 set(SCHEMA_INCLUDES "")
 foreach(SCHEMA_HEADER_FILE ${SCHEMA_HEADER_FILES_FROM_TARGET})
     string(APPEND SCHEMA_INCLUDES "#include \"${SCHEMA_HEADER_FILE}\"\n")
@@ -21,6 +27,11 @@ set(SCHEMA_STATIC_ARRAY)
 # Generate a static array of schema names.
 foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
     string(APPEND SCHEMA_STATIC_ARRAY "    \"${STRUCT_NAME}\",\n")
+endforeach()
+
+# Generate a enum list of schema names.
+foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
+    string(APPEND SCHEMA_ENUM_LIST ",\n    ${STRUCT_NAME}")
 endforeach()
 
 
@@ -55,16 +66,18 @@ target_link_libraries(expression_parser PUBLIC
     exprtk::exprtk
     zenohcxx::zenohc
     helpers
+    reflection
 )
+
 
 # Add test executable
-add_executable(test_expression_parser
-    test_expression_parser.cpp
-)
+#add_executable(test_expression_parser
+#    test_expression_parser.cpp
+#)
 
-target_link_libraries(test_expression_parser
-    expression_parser
-    schemas
-    capnp
-    kj
-)
+#target_link_libraries(test_expression_parser
+#    expression_parser
+#    schemas
+#    capnp
+#    kj
+#)

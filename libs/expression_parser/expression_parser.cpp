@@ -3,6 +3,8 @@
 #include "spdlog/spdlog.h"
 #include "helpers/helpers.h"
 #include "expression_parser/session_manager.h"
+#include "expression_parser/schema_registry.h"
+#include "reflection/reflection.h"
 
 #include <stdexcept>
 #include <algorithm>
@@ -11,8 +13,8 @@
 
 namespace expression_parser {
 
-ExpressionParser::ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key):
-    schema_name_{schema_name},
+ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
+    schema_type_{schema_type},
     expression_{expression},
     variables_{},
     is_valid_{false},
@@ -30,12 +32,12 @@ ExpressionParser::ExpressionParser(const std::string& schema_name, const std::st
     is_valid_ = true;
 
     // Get the schema from the registry
-    schema_ = get_schema_by_name(schema_name);
+    schema_ = get_schema(schema_type_);
     
     // Check if schema was found
     if (schema_.getProto().getId() == 0)
     {
-        SPDLOG_ERROR("Schema '{}' not found in registry", schema_name);
+        SPDLOG_ERROR("Schema '{}' not found in registry", reflection::enum_traits<schema_type_t>::to_string(schema_type_));
         is_valid_ = false;
         return;
     }
@@ -145,7 +147,7 @@ void ExpressionParser::validateVariablesAgainstSchema()
     {
         if (schema_fields.find(var) == schema_fields.end())
         {
-            SPDLOG_ERROR("Variable '{}' not found in schema '{}'", var, schema_name_);
+            SPDLOG_ERROR("Variable '{}' not found in schema '{}'", var, reflection::enum_traits<schema_type_t>::to_string(schema_type_));
             is_valid_ = false;
         }
     }
@@ -169,9 +171,9 @@ std::unordered_set<std::string> ExpressionParser::getSchemaFieldNames(const capn
     return field_names;
 }
 
-const std::string& ExpressionParser::getSchemaName() const
+const schema_type_t& ExpressionParser::getSchemaType() const
 {
-    return schema_name_;
+    return schema_type_;
 }
 
 const std::string& ExpressionParser::getExpression() const

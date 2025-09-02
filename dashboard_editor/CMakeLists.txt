@@ -30,6 +30,7 @@ target_link_libraries(dashboard_editor PRIVATE
     # Reuse existing libraries and widgets
     common_logging
     helpers
+    expression_parser
     zenohcxx::zenohc
 
     # Widgets available for instantiation

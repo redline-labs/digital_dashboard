@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
@@ -10,7 +11,7 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (uint16_t, redline_rpm, 6000),
     (bool, show_clock, true),
     (std::string, zenoh_key, ""),
-    (std::string, schema_type, ""),
+    (schema_type_t, schema_type, schema_type_t::EngineRpm),
     (std::string, rpm_expression, "")
 )
 

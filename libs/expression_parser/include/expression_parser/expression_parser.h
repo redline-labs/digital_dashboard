@@ -44,13 +44,13 @@ class ExpressionParser
      * @param expression Mathematical expression string to be evaluated
      * @param zenoh_key Key expression to subscribe to via Zenoh
      */
-    ExpressionParser(const std::string& schema_name, const std::string& expression, const std::string& zenoh_key);
+    ExpressionParser(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key);
 
     /**
-     * Get the schema name being used
-     * @return The schema name
+     * Get the schema type being used
+     * @return The schema type
      */
-    const std::string& getSchemaName() const;
+    const schema_type_t& getSchemaType() const;
 
     /**
      * Get the expression string
@@ -116,7 +116,7 @@ class ExpressionParser
         capnp::DynamicValue::Type expected_type;
     };
 
-    std::string schema_name_;
+    schema_type_t schema_type_;
     std::string expression_;
     capnp::Schema schema_;
     std::map<std::string, double> variables_;

@@ -48,13 +48,13 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
         if (!rpm_expression_parser_->isValid())
         {
             SPDLOG_ERROR("Invalid RPM expression '{}' for schema '{}' in tachometer", 
-                        _cfg.rpm_expression, _cfg.schema_type);
+                        _cfg.rpm_expression, reflection::enum_traits<schema_type_t>::to_string(_cfg.schema_type));
             rpm_expression_parser_.reset(); // Disable expression parsing
         }
         else
         {
             SPDLOG_INFO("Tachometer initialized with RPM expression: '{}' (schema: '{}')", 
-                       _cfg.rpm_expression, _cfg.schema_type);
+                       _cfg.rpm_expression, reflection::enum_traits<schema_type_t>::to_string(_cfg.schema_type));
         }
     }
     catch (const std::exception& e)

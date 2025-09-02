@@ -262,8 +262,7 @@ namespace
         {
             if (auto* w = page->findChild<QComboBox*>(on))
             {
-                const QString t = w->currentText();
-                out = reflection::enum_traits<FieldType>::from_string(t.toStdString());
+                out = reflection::enum_traits<FieldType>::from_string(w->currentText().toStdString());
             }
         }
         else if constexpr (std::is_integral_v<FieldType>)

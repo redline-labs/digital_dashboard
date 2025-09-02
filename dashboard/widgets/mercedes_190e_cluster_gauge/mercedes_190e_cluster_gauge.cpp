@@ -241,24 +241,23 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     // Initialize expression parsers for each sub-gauge
     auto initializeSubGaugeParser = [](const sub_gauge_config_t& gauge_config,
                                           std::unique_ptr<expression_parser::ExpressionParser>& parser,
-                                          const char* gauge_name) {
-        if (!gauge_config.zenoh_key.empty() && !gauge_config.schema_type.empty() && !gauge_config.value_expression.empty()) {
-            try {
-                parser = std::make_unique<expression_parser::ExpressionParser>(
-                    gauge_config.schema_type,
-                    gauge_config.value_expression,
-                    gauge_config.zenoh_key
-                );
-                
-                if (!parser->isValid()) {
-                    SPDLOG_ERROR("Invalid {} gauge expression '{}' for schema '{}' in cluster gauge", 
-                                gauge_name, gauge_config.value_expression, gauge_config.schema_type);
-                    parser.reset();
-                }
-            } catch (const std::exception& e) {
-                SPDLOG_ERROR("Failed to initialize {} gauge expression parser: {}", gauge_name, e.what());
+                                          const char* gauge_name)
+    {
+        try {
+            parser = std::make_unique<expression_parser::ExpressionParser>(
+                gauge_config.schema_type,
+                gauge_config.value_expression,
+                gauge_config.zenoh_key
+            );
+            
+            if (!parser->isValid()) {
+                SPDLOG_ERROR("Invalid {} gauge expression '{}' for schema '{}' in cluster gauge", 
+                            gauge_name, gauge_config.value_expression, reflection::enum_traits<schema_type_t>::to_string(gauge_config.schema_type));
                 parser.reset();
             }
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Failed to initialize {} gauge expression parser: {}", gauge_name, e.what());
+            parser.reset();
         }
     };
     

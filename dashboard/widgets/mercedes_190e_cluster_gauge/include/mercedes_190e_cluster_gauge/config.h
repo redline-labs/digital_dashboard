@@ -3,13 +3,14 @@
 
 #include <cstdint>
 #include <string>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 REFLECT_STRUCT(sub_gauge_config_t,
     (float, min_value, 0.0),
     (float, max_value, 100.0),
     (std::string, zenoh_key, ""),
-    (std::string, schema_type, ""),
+    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
     (std::string, value_expression, "")
 )
 

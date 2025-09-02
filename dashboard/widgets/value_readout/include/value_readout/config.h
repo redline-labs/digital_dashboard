@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 REFLECT_ENUM(ValueReadoutAlignment,
@@ -15,7 +16,7 @@ REFLECT_STRUCT(ValueReadoutConfig_t,
 	(std::string, label_text, "Untitled"),
 	(ValueReadoutAlignment, alignment, ValueReadoutAlignment::left),
 	(std::string, zenoh_key, ""),
-	(std::string, schema_type, ""),
+	(schema_type_t, schema_type, schema_type_t::VehicleSpeed),
 	(std::string, value_expression, "")
 )
 

@@ -31,13 +31,13 @@ Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& c
         if (!_expression_parser->isValid())
         {
             SPDLOG_ERROR("Invalid expression '{}' for schema '{}' in telltale", 
-                        _cfg.condition_expression, _cfg.schema_type);
+                        _cfg.condition_expression, reflection::enum_traits<schema_type_t>::to_string(_cfg.schema_type));
             _expression_parser.reset(); // Disable expression parsing
         }
         else
         {
             SPDLOG_INFO("Telltale initialized with expression: '{}' (schema: '{}')", 
-                       _cfg.condition_expression, _cfg.schema_type);
+                       _cfg.condition_expression, reflection::enum_traits<schema_type_t>::to_string(_cfg.schema_type));
         }
     }
     catch (const std::exception& e)

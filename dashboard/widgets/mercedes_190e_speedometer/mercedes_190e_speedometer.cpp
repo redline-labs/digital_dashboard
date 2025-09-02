@@ -31,13 +31,13 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
         if (!speed_expression_parser_->isValid())
         {
             SPDLOG_ERROR("Invalid speed expression '{}' for schema '{}' in speedometer", 
-                        cfg_.speed_expression, cfg_.schema_type);
+                        cfg_.speed_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.schema_type));
             speed_expression_parser_.reset(); // Disable expression parsing
         }
         else
         {
             SPDLOG_INFO("Speedometer initialized with speed expression: '{}' (schema: '{}')", 
-                       cfg_.speed_expression, cfg_.schema_type);
+                       cfg_.speed_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.schema_type));
         }
     }
     catch (const std::exception& e)
@@ -47,38 +47,30 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     }
     
     // Initialize odometer expression parser (optional)
-    if (!cfg_.odometer_expression.empty())
+    try
     {
-        try
+        odometer_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+            cfg_.odometer_schema_type,
+            cfg_.odometer_expression,
+            cfg_.odometer_zenoh_key
+        );
+        
+        if (!odometer_expression_parser_->isValid())
         {
-            // Use odometer-specific schema type if odometer zenoh key is configured, otherwise fallback to speed schema
-            std::string odometer_schema = cfg_.odometer_zenoh_key.empty() ? cfg_.schema_type : cfg_.odometer_schema_type;
-            // Subscribe on odometer key if provided, otherwise reuse the speed key
-            std::string odometer_key = cfg_.odometer_zenoh_key.empty() ? cfg_.zenoh_key : cfg_.odometer_zenoh_key;
-            
-            odometer_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
-                odometer_schema,
-                cfg_.odometer_expression,
-                odometer_key
-            );
-            
-            if (!odometer_expression_parser_->isValid())
-            {
-                SPDLOG_ERROR("Invalid odometer expression '{}' for schema '{}' in speedometer", 
-                            cfg_.odometer_expression, odometer_schema);
-                odometer_expression_parser_.reset();
-            }
-            else
-            {
-                SPDLOG_INFO("Speedometer initialized with odometer expression: '{}' (schema: '{}')", 
-                           cfg_.odometer_expression, odometer_schema);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            SPDLOG_ERROR("Failed to initialize odometer expression parser for speedometer: {}", e.what());
+            SPDLOG_ERROR("Invalid odometer expression '{}' for schema '{}' in speedometer", 
+                        cfg_.odometer_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.odometer_schema_type));
             odometer_expression_parser_.reset();
         }
+        else
+        {
+            SPDLOG_INFO("Speedometer initialized with odometer expression: '{}' (schema: '{}')", 
+                        cfg_.odometer_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.odometer_schema_type));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to initialize odometer expression parser for speedometer: {}", e.what());
+        odometer_expression_parser_.reset();
     }
 
     if (speed_expression_parser_)

@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 
@@ -17,7 +18,7 @@ REFLECT_STRUCT(SparklineConfig_t,
     (uint16_t, font_size_units, 10),
     (uint16_t, update_rate, 30),
     (std::string, zenoh_key, ""),
-    (std::string, schema_type, ""),
+    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
     (std::string, value_expression, "")
 )
 

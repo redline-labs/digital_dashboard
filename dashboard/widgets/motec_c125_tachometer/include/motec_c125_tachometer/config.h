@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 REFLECT_STRUCT(MotecC125TachometerConfig_t,
@@ -11,7 +12,7 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (uint32_t, redline_rpm, 0),
     (uint8_t,  center_page_digit, 5),
     (std::string, zenoh_key, ""),
-    (std::string, schema_type, ""),
+    (schema_type_t, schema_type, schema_type_t::EngineRpm),
     (std::string, rpm_expression, "")
 )
 

@@ -30,6 +30,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     # Link common logging interface (wraps spdlog)
     common_logging
     helpers
+    expression_parser
     
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json

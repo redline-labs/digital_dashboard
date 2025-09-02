@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include "expression_parser/schema_registry.h"
 #include "reflection/reflection.h"
 
 
@@ -18,7 +19,7 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
     (std::string, warning_color, "#FF0000"),
     (std::string, normal_color, "#333333"),
     (std::string, zenoh_key, ""),
-    (std::string, schema_type, ""),
+    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
     (std::string, condition_expression, "")
 )
 
