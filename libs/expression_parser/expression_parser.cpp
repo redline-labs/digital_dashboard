@@ -11,7 +11,8 @@
 #include <sstream>
 #include <capnp/serialize.h>
 
-namespace expression_parser {
+namespace expression_parser
+{
 
 ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
     schema_type_{schema_type},
@@ -30,6 +31,13 @@ ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string&
     
     // Assume valid until proven otherwise
     is_valid_ = true;
+
+    if (zenoh_key_.empty() || expression_.empty())
+    {
+        SPDLOG_ERROR("Zenoh key ({}) or expression ({}) is empty", zenoh_key_, expression_);
+        is_valid_ = false;
+        return;
+    }
 
     // Get the schema from the registry
     schema_ = get_schema(schema_type_);
