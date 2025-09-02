@@ -347,9 +347,10 @@ namespace
             if (!that || !that->selected()) return;
             QWidget* w = that->selected();
             SelectionFrame* frame = qobject_cast<SelectionFrame*>(w);
-            QWidget* target = frame ? frame->child() : w;
-            const widget_type_t type = frame ? frame->type() : widget_registry::widgetTypeFor(target);
-            const QRect rect = frame ? QRect(frame->pos(), frame->size()) : QRect(w->pos(), w->size());
+            if (!frame) return; // editor always wraps in SelectionFrame
+
+            const widget_type_t type = frame->type();
+            const QRect rect(frame->pos(), frame->size());
             switch (type)
             {
                 case widget_type_t::static_text:
@@ -357,7 +358,7 @@ namespace
                     StaticTextWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new StaticTextWidget(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -366,7 +367,7 @@ namespace
                     BackgroundRectWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new BackgroundRectWidget(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -375,7 +376,7 @@ namespace
                     Mercedes190EClusterGauge::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190EClusterGauge(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -384,7 +385,7 @@ namespace
                     Mercedes190ESpeedometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ESpeedometer(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -393,7 +394,7 @@ namespace
                     Mercedes190ETachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ETachometer(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -402,7 +403,7 @@ namespace
                     MotecC125Tachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new MotecC125Tachometer(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -411,7 +412,7 @@ namespace
                     MotecCdl3Tachometer::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new MotecCdl3Tachometer(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -420,7 +421,7 @@ namespace
                     SparklineItem::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new SparklineItem(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -429,7 +430,7 @@ namespace
                     ValueReadoutWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new ValueReadoutWidget(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -438,7 +439,7 @@ namespace
                     CarPlayWidget::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new CarPlayWidget(cfg);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+                    
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -447,7 +448,7 @@ namespace
                     Mercedes190ETelltale::config_t cfg{};
                     readIntoConfig(page, "", cfg);
                     auto* nw = new Mercedes190ETelltale(cfg, nullptr);
-                    nw->setProperty("widgetType", static_cast<int>(type));
+
                     if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
                     break;
                 }
@@ -534,11 +535,11 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return;
     }
 
-    // Map widget instance to type, prefer SelectionFrame::type when available.
-    const widget_type_t type = [w, uiWidget]()
+    // Map widget instance to type; in editor we always have SelectionFrame
+    const widget_type_t type = [w]()
     {
         if (auto* f = qobject_cast<SelectionFrame*>(w)) return f->type();
-        return widget_registry::widgetTypeFor(uiWidget);
+        return widget_type_t::unknown;
     }();
     QWidget* page = nullptr;
     switch (type)

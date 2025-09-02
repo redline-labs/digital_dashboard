@@ -330,11 +330,6 @@ void Canvas::replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& 
         {
             it.widget = newWidget;
             it.position = rect.topLeft();
-            // carry through type via property if needed
-            const QVariant v = newWidget->property("widgetType");
-            if (v.isValid()) {
-                it.type = static_cast<widget_type_t>(v.toInt());
-            }
             break;
         }
     }

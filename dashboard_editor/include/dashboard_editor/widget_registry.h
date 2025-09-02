@@ -17,7 +17,8 @@
 namespace widget_registry
 {
 
-struct WidgetInfo {
+struct WidgetInfo
+{
 	widget_type_t type;
 	const std::string_view label;         // user-visible label
 	const std::string_view enum_name;     // stable enum string name (for DnD / config)
@@ -45,31 +46,21 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 	{
 		case widget_type_t::static_text: {
 			StaticTextConfig_t cfg;
-			cfg.text = "Text";
-			cfg.font = "Futura";
-			cfg.font_size = 18;
-			cfg.color = "#FFFFFF";
 			w = new StaticTextWidget(cfg, parent);
 			break;
 		}
 		case widget_type_t::value_readout: {
 			ValueReadoutConfig_t cfg;
-			cfg.label_text = "WATER TMP";
-			cfg.alignment = ValueReadoutAlignment::left;
 			w = new ValueReadoutWidget(cfg, parent);
 			break;
 		}
 		case widget_type_t::mercedes_190e_speedometer: {
 			Mercedes190ESpeedometerConfig_t cfg;
-			cfg.max_speed = 125;
 			w = new Mercedes190ESpeedometer(cfg, parent);
 			break;
 		}
 		case widget_type_t::mercedes_190e_tachometer: {
 			Mercedes190ETachometerConfig_t cfg;
-			cfg.max_rpm = 7000;
-			cfg.redline_rpm = 6000;
-			cfg.show_clock = false;
 			w = new Mercedes190ETachometer(cfg, parent);
 			break;
 		}
@@ -80,13 +71,11 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 		}
 		case widget_type_t::sparkline: {
 			SparklineConfig_t cfg;
-			cfg.units = "rpm";
 			w = new SparklineItem(cfg, parent);
 			break;
 		}
 		case widget_type_t::background_rect: {
 			BackgroundRectConfig_t cfg;
-			cfg.colors = {"#202020", "#101010"};
 			w = new BackgroundRectWidget(cfg, parent);
 			break;
 		}
@@ -115,22 +104,7 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 			w = nullptr;
 			break;
 	}
-	if (w)
-	{
-		w->setProperty("widgetType", static_cast<int>(type));
-	}
 	return w;
-}
-
-inline widget_type_t widgetTypeFor(QWidget* w)
-{
-	if (!w) return widget_type_t::unknown;
-	const QVariant v = w->property("widgetType");
-	if (v.isValid())
-	{
-		return static_cast<widget_type_t>(v.toInt());
-	}
-	return widget_type_t::unknown;
 }
 
 } // namespace widget_registry

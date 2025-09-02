@@ -13,6 +13,8 @@
 #include <QScrollArea>
 #include <QAction>
 #include <QToolButton>
+#include <QMenuBar>
+#include "spdlog/spdlog.h"
 
 EditorWindow::EditorWindow(QWidget* parent) :
   QMainWindow(parent),
@@ -85,6 +87,21 @@ EditorWindow::EditorWindow(QWidget* parent) :
             canvas_->setInterceptInteractions(on);
         }
     });
+
+    buildMenuBar();
+}
+
+void EditorWindow::buildMenuBar()
+{
+    auto* fileMenu = menuBar()->addMenu("File");
+
+    auto* actionLoad = new QAction("Load", this);
+    connect(actionLoad, &QAction::triggered, this, [](){ SPDLOG_WARN("Oops"); });
+    fileMenu->addAction(actionLoad);
+
+    auto* actionSave = new QAction("Save", this);
+    connect(actionSave, &QAction::triggered, this, [](){ SPDLOG_WARN("Oopsies"); });
+    fileMenu->addAction(actionSave);
 }
 
 #include "dashboard_editor/moc_editor_window.cpp"

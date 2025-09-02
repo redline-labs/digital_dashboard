@@ -15,6 +15,7 @@ public:
     ~EditorWindow() override = default;
 
 private:
+    void buildMenuBar();
     WidgetPalette* widgetPalette_;
     Canvas* canvas_;
     QAction* toggleInterceptAction_;
