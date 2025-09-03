@@ -1,6 +1,7 @@
 #include "dashboard_editor/selection_frame.h"
 
 #include <QPainter>
+#include "dashboard_editor/widget_registry.h"
 #include <QEvent>
 
 namespace
@@ -12,19 +13,13 @@ namespace
     constexpr QColor kUnselectedOutlineColor(80, 80, 80);
 }
 
-SelectionFrame::SelectionFrame(widget_type_t type, QWidget* child, QWidget* parent)
-    : QWidget(parent), type_(type), child_(child)
+SelectionFrame::SelectionFrame(widget_type_t type, QWidget* parent)
+    : QWidget(parent), type_(type), child_(nullptr)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_NoSystemBackground);
-    if (child_)
-    {
-        child_->setParent(this);
-        child_->move(0, 0);
-        child_->show();
-        // size to child
-        resize(child_->size());
-    }
+    QWidget* w = widget_registry::instantiateWidget(type_, nullptr);
+    setChild(w);
     // Overlay that always draws above child
     overlay_ = new QWidget(this);
     overlay_->setAttribute(Qt::WA_TransparentForMouseEvents, true);

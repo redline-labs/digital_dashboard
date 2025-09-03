@@ -77,8 +77,8 @@ static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
         (static_cast<uint32_t>(buffer[3]) << 24);
 }
 
-CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg) :
-    QOpenGLWidget(),
+CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
+    QOpenGLWidget(parent),
     m_shaderProgram(nullptr),
     m_textureY(0),
     m_textureU(0),

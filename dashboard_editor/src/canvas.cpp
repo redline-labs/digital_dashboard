@@ -1,6 +1,5 @@
 #include "dashboard_editor/canvas.h"
 #include "dashboard_editor/editor_constants.h"
-#include "dashboard_editor/widget_registry.h"
 #include "dashboard_editor/selection_frame.h"
 
 #include <QDragEnterEvent>
@@ -97,24 +96,22 @@ void Canvas::dropEvent(QDropEvent* event)
 {
     const QString typeKey = event->mimeData()->text();
     const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
-    QWidget* child = widget_registry::instantiateWidget(type, this);
-    if (child)
+    SelectionFrame* frame = new SelectionFrame(type, this);
+    if (frame)
     {
-        // Wrap in SelectionFrame
-        SelectionFrame* frame = new SelectionFrame(type, child, this);
         const QPoint pos = event->position().toPoint();
         // Provide a reasonable default size for various widgets
-        if (child->sizeHint().isValid())
+        if (frame->child() && frame->child()->sizeHint().isValid())
         {
-            child->resize(child->sizeHint());
+            frame->child()->resize(frame->child()->sizeHint());
         }
         else
         {
-            child->resize(200, 200);
+            if (frame->child()) frame->child()->resize(200, 200);
         }
 
         frame->move(pos);
-        frame->resize(child->size());
+        if (frame->child()) frame->resize(frame->child()->size());
         frame->show();
         // Apply current intercept mode to the new widget subtree
         frame->setEditorModeCapture(interceptInteractions_);
@@ -305,39 +302,6 @@ void Canvas::keyPressEvent(QKeyEvent* event)
         }
     }
     QWidget::keyPressEvent(event);
-}
-
-QWidget* Canvas::createWidgetForType(const QString& typeKey, QWidget* parent)
-{
-    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
-    return widget_registry::instantiateWidget(type, parent);
-}
-
-
-void Canvas::replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& rect)
-{
-    if (!oldWidget || !newWidget) return;
-    // Adopt under canvas
-    newWidget->setParent(this);
-    newWidget->setGeometry(rect);
-    newWidget->show();
-    setMouseTransparentRecursive(newWidget, interceptInteractions_);
-
-    // Swap in items_ list
-    for (auto& it : items_)
-    {
-        if (it.widget == oldWidget)
-        {
-            it.widget = newWidget;
-            it.position = rect.topLeft();
-            break;
-        }
-    }
-    // Remove old widget
-    if (selected_ == oldWidget) selected_ = newWidget;
-    oldWidget->deleteLater();
-    update();
-    emit selectionChanged(newWidget);
 }
 
 #include "dashboard_editor/moc_canvas.cpp"

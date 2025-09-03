@@ -42,7 +42,7 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     using config_t = CarplayConfig_t;
     static constexpr std::string_view kWidgetName = "carplay";
 
-    CarPlayWidget(CarplayConfig_t cfg);
+    CarPlayWidget(CarplayConfig_t cfg, QWidget* parent = nullptr);
     ~CarPlayWidget();
     const config_t& getConfig() const { return _cfg; }
 

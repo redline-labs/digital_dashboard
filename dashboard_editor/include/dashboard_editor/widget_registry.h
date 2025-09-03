@@ -39,6 +39,86 @@ constexpr std::array<WidgetInfo, 12> kAllWidgets =
 	{widget_type_t::carplay, "CarPlay", CarPlayWidget::kWidgetName}
 }};
 
+template <typename Config> struct widget_traits;
+
+template <>
+struct widget_traits<StaticTextWidget::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::static_text;
+	using widget_t = StaticTextWidget;
+};
+
+template <>
+struct widget_traits<BackgroundRectWidget::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::background_rect;
+	using widget_t = BackgroundRectWidget;
+};
+
+template <>
+struct widget_traits<Mercedes190EClusterGauge::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::mercedes_190e_cluster_gauge;
+	using widget_t = Mercedes190EClusterGauge;
+};
+
+template <>
+struct widget_traits<Mercedes190ESpeedometer::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::mercedes_190e_speedometer;
+	using widget_t = Mercedes190ESpeedometer;
+};
+
+template <>
+struct widget_traits<Mercedes190ETachometer::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::mercedes_190e_tachometer;
+	using widget_t = Mercedes190ETachometer;
+};
+
+template <>
+struct widget_traits<MotecC125Tachometer::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::motec_c125_tachometer;
+	using widget_t = MotecC125Tachometer;
+};
+
+template <>
+struct widget_traits<MotecCdl3Tachometer::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::motec_cdl3_tachometer;
+	using widget_t = MotecCdl3Tachometer;
+};
+
+template <>
+struct widget_traits<SparklineItem::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::sparkline;
+	using widget_t = SparklineItem;
+};
+
+template <>
+struct widget_traits<ValueReadoutWidget::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::value_readout;
+	using widget_t = ValueReadoutWidget;
+};
+
+template <>
+struct widget_traits<CarPlayWidget::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::carplay;
+	using widget_t = CarPlayWidget;
+};
+
+template <>
+struct widget_traits<Mercedes190ETelltale::config_t>
+{
+	static constexpr widget_type_t type = widget_type_t::mercedes_190e_telltale;
+	using widget_t = Mercedes190ETelltale;
+};
+
+
 inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 {
 	QWidget* w = nullptr;

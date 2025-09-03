@@ -18,7 +18,6 @@ public:
     explicit Canvas(QWidget* parent = nullptr);
     void setBackgroundColor(const QString& hexColor);
     void setInterceptInteractions(bool intercept);
-    void replaceWidget(QWidget* oldWidget, QWidget* newWidget, const QRect& rect);
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -51,7 +50,6 @@ private:
     QRect dragStartRect_;
     bool interceptInteractions_;
 
-    QWidget* createWidgetForType(const QString& typeKey, QWidget* parent);
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);
     QWidget* topLevelWidgetAt(const QPoint& pos) const;

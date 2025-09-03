@@ -65,6 +65,7 @@
         "algorithm": "cpp",
         "future": "cpp",
         "source_location": "cpp",
-        "type_traits": "cpp"
+        "type_traits": "cpp",
+        "__config": "cpp"
     }
 }

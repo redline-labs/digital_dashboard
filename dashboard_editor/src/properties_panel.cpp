@@ -276,8 +276,10 @@ namespace
     }
 
     template <typename Config>
-    void readIntoConfig(QWidget* page, const QString& basePath, Config& cfg)
+    Config readIntoConfig(QWidget* page, const QString& basePath = "")
     {
+        Config cfg{};
+
         reflection::visit_fields(cfg, [&](std::string_view name, auto& ref, std::string_view /*typeName*/)
         {
             const QString field = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
@@ -285,7 +287,7 @@ namespace
             using FieldType = std::decay_t<decltype(ref)>;
             if constexpr (reflection::is_reflected_struct<FieldType>::value)
             {
-                readIntoConfig(page, path, ref);
+                ref = readIntoConfig<FieldType>(page, path);
             }
             else if constexpr (reflection::is_std_vector<FieldType>::value)
             {
@@ -308,6 +310,8 @@ namespace
                 readLeafFromWidget(page, path, ref);
             }
         });
+
+        return cfg;
     }
 
     template <typename Config>
@@ -350,110 +354,77 @@ namespace
             if (!frame) return; // editor always wraps in SelectionFrame
 
             const widget_type_t type = frame->type();
-            const QRect rect(frame->pos(), frame->size());
             switch (type)
             {
                 case widget_type_t::static_text:
-                {
-                    StaticTextWidget::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new StaticTextWidget(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
+                    frame->applyConfig(
+                        readIntoConfig<StaticTextWidget::config_t>(page)
+                    );
                     break;
-                }
-                case widget_type_t::background_rect:
-                {
-                    BackgroundRectWidget::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new BackgroundRectWidget(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::mercedes_190e_cluster_gauge:
-                {
-                    Mercedes190EClusterGauge::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new Mercedes190EClusterGauge(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::mercedes_190e_speedometer:
-                {
-                    Mercedes190ESpeedometer::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new Mercedes190ESpeedometer(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::mercedes_190e_tachometer:
-                {
-                    Mercedes190ETachometer::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new Mercedes190ETachometer(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::motec_c125_tachometer:
-                {
-                    MotecC125Tachometer::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new MotecC125Tachometer(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::motec_cdl3_tachometer:
-                {
-                    MotecCdl3Tachometer::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new MotecCdl3Tachometer(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::sparkline:
-                {
-                    SparklineItem::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new SparklineItem(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::value_readout:
-                {
-                    ValueReadoutWidget::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new ValueReadoutWidget(cfg, nullptr);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::carplay:
-                {
-                    CarPlayWidget::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new CarPlayWidget(cfg);
-                    
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
-                    break;
-                }
-                case widget_type_t::mercedes_190e_telltale:
-                {
-                    Mercedes190ETelltale::config_t cfg{};
-                    readIntoConfig(page, "", cfg);
-                    auto* nw = new Mercedes190ETelltale(cfg, nullptr);
 
-                    if (frame) frame->setChild(nw); else that->canvas()->replaceWidget(w, nw, rect);
+                case widget_type_t::background_rect:
+                    frame->applyConfig(
+                        readIntoConfig<BackgroundRectWidget::config_t>(page)
+                    );
                     break;
-                }
+
+                case widget_type_t::mercedes_190e_cluster_gauge:
+                    frame->applyConfig(
+                        readIntoConfig<Mercedes190EClusterGauge::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::mercedes_190e_speedometer:
+                    frame->applyConfig(
+                        readIntoConfig<Mercedes190ESpeedometer::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::mercedes_190e_tachometer:
+                    frame->applyConfig(
+                        readIntoConfig<Mercedes190ETachometer::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::motec_c125_tachometer:
+                    frame->applyConfig(
+                        readIntoConfig<MotecC125Tachometer::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::motec_cdl3_tachometer:
+                    frame->applyConfig(
+                        readIntoConfig<MotecCdl3Tachometer::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::sparkline:
+                    frame->applyConfig(
+                        readIntoConfig<SparklineItem::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::value_readout:
+                    frame->applyConfig(
+                        readIntoConfig<ValueReadoutWidget::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::carplay:
+                    frame->applyConfig(
+                        readIntoConfig<CarPlayWidget::config_t>(page)
+                    );
+                    break;
+
+                case widget_type_t::mercedes_190e_telltale:
+                    frame->applyConfig(
+                        readIntoConfig<Mercedes190ETelltale::config_t>(page)
+                    );
+                    break;
+
                 case widget_type_t::unknown:
                 default:
+                    SPDLOG_WARN("Unknown/unhandled widget type: '{}'", reflection::enum_to_string(type));
                     break;
             }
         });
