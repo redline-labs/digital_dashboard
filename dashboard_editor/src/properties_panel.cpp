@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QCheckBox>
 #include <QFrame>
+#include <QScrollArea>
 
 #include <limits>
 
@@ -322,7 +323,11 @@ namespace
         auto* page = new QWidget(parent);
         auto* vbox = new QVBoxLayout(page);
         vbox->setContentsMargins(0,0,0,0);
-        vbox->setSpacing(8);
+        vbox->setSpacing(0);
+        auto* scroll = new QScrollArea(page);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto* scrollContent = new QWidget(scroll);
         auto* form = new QFormLayout();
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
         form->setFormAlignment(Qt::AlignTop);
@@ -333,18 +338,20 @@ namespace
         reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
         {
             const QString label = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
-            QWidget* editor = createEditorFor(page, name, ref, type, label);
+            QWidget* editor = createEditorFor(scrollContent, name, ref, type, label);
             form->addRow(label, editor);
         });
-        vbox->addLayout(form);
+        scrollContent->setLayout(form);
+        scroll->setWidget(scrollContent);
+        vbox->addWidget(scroll, 1); // let the scroll area take all remaining space
         auto* applyBtn = new QPushButton("Apply", page);
         applyBtn->setMinimumHeight(28);
-        applyBtn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        auto* hbox = new QHBoxLayout();
-        hbox->addStretch();
-        hbox->addWidget(applyBtn);
-        hbox->setContentsMargins(8,0,8,8);
-        vbox->addLayout(hbox);
+        applyBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto* bottom = new QHBoxLayout();
+        bottom->setContentsMargins(8,8,8,8);
+        bottom->addWidget(applyBtn);
+        bottom->setSizeConstraint(QLayout::SetMinimumSize);
+        vbox->addLayout(bottom, 0); // persistent bottom bar
         page->setLayout(vbox);
 
         PropertiesPanel* that = qobject_cast<PropertiesPanel*>(parent);
