@@ -8,8 +8,7 @@
 
 REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (uint32_t, max_rpm, 6000),
-    (uint32_t, warning_rpm, 5000),
-    (uint32_t, redline_rpm, 0),
+    (uint32_t, redline_rpm, 5000),
     (uint8_t,  center_page_digit, 5),
     (std::string, zenoh_key, ""),
     (schema_type_t, schema_type, schema_type_t::EngineRpm),

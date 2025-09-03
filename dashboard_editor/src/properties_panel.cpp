@@ -107,9 +107,11 @@ namespace
             spin->setMinimumHeight(24);
             spin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
-            // Remove implicit 0..99 default range; use a very permissive range
-            spin->setRange(std::numeric_limits<FieldType>::min(), std::numeric_limits<FieldType>::max());
-            spin->setValue(static_cast<FieldType>(value));
+            // QSpinBox supports int only; clamp ranges to int domain to avoid overflow on unsigned configs
+            const int minVal = std::is_signed_v<FieldType> ? std::numeric_limits<int>::min() : 0;
+            const int maxVal = std::numeric_limits<int>::max();
+            spin->setRange(minVal, maxVal);
+            spin->setValue(static_cast<int>(value));
             spin->setObjectName(QString("field:%1").arg(path));
             return spin;
         }
