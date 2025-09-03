@@ -17,7 +17,7 @@ namespace {
 
 Canvas::Canvas(QWidget* parent) :
   QWidget(parent),
-  interceptInteractions_(true)
+  editorMode_(true)
 {
     setAcceptDrops(true);
     setAutoFillBackground(true);
@@ -33,32 +33,33 @@ Canvas::Canvas(QWidget* parent) :
     // Using per-widget SelectionFrame; no global overlay
 }
 
-void Canvas::setInterceptInteractions(bool intercept)
+void Canvas::setEditorMode(bool enabled)
 {
-    interceptInteractions_ = intercept;
+    editorMode_ = enabled;
     // Toggle mouse transparency on all child widgets recursively
     const auto children = findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
     for (QWidget* c : children)
     {
-        setMouseTransparentRecursive(c, interceptInteractions_);
+        setMouseTransparentRecursive(c, editorMode_);
         if (auto* f = qobject_cast<SelectionFrame*>(c))
         {
-            f->setEditorModeCapture(interceptInteractions_);
+            f->setEditorModeCapture(editorMode_);
             // Deselect and hide selection chrome entirely when turning editor mode off
-            if (!interceptInteractions_)
+            if (!editorMode_)
             {
                 f->setSelected(false);
             }
         }
     }
     // Also update currently selected pointer
-    if (!interceptInteractions_)
+    if (!editorMode_)
     {
         selected_ = nullptr;
         dragMode_ = DragMode::None;
-        update();
         emit selectionChanged(nullptr);
     }
+    // Ensure the canvas repaints immediately to show/hide gridlines
+    update();
 }
 
 void Canvas::setBackgroundColor(const QString& hexColor)
@@ -113,8 +114,8 @@ void Canvas::dropEvent(QDropEvent* event)
         frame->move(pos);
         if (frame->child()) frame->resize(frame->child()->size());
         frame->show();
-        // Apply current intercept mode to the new widget subtree
-        frame->setEditorModeCapture(interceptInteractions_);
+        // Apply current editor mode to the new widget subtree
+        frame->setEditorModeCapture(editorMode_);
         Item item;
         item.widget = frame;
         item.type = type;
@@ -138,17 +139,18 @@ void Canvas::paintEvent(QPaintEvent* event)
     QWidget::paintEvent(event);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(kGridColor));
-
-    // Draw a simple grid
-    for (int x = 0; x < width(); x += kGridStepPx)
+    if (editorMode_)
     {
-        p.drawLine(x, 0, x, height());
-    }
-
-    for (int y = 0; y < height(); y += kGridStepPx)
-    {
-        p.drawLine(0, y, width(), y);
+        p.setPen(QPen(kGridColor));
+        // Draw a simple grid
+        for (int x = 0; x < width(); x += kGridStepPx)
+        {
+            p.drawLine(x, 0, x, height());
+        }
+        for (int y = 0; y < height(); y += kGridStepPx)
+        {
+            p.drawLine(0, y, width(), y);
+        }
     }
 }
 
@@ -187,7 +189,7 @@ Canvas::DragMode Canvas::hitTestSelectionAt(const QPoint& pos)
 
 void Canvas::mousePressEvent(QMouseEvent* event)
 {
-    if (!interceptInteractions_)
+    if (!editorMode_)
     {
         QWidget::mousePressEvent(event);
         return;
@@ -233,7 +235,7 @@ void Canvas::mousePressEvent(QMouseEvent* event)
 
 void Canvas::mouseMoveEvent(QMouseEvent* event)
 {
-    if (!interceptInteractions_)
+    if (!editorMode_)
     {
         QWidget::mouseMoveEvent(event);
         return;
@@ -275,7 +277,7 @@ void Canvas::mouseMoveEvent(QMouseEvent* event)
 
 void Canvas::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (!interceptInteractions_)
+    if (!editorMode_)
     {
         QWidget::mouseReleaseEvent(event);
         return;

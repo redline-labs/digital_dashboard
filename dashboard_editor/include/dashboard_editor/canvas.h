@@ -17,7 +17,8 @@ class Canvas : public QWidget
 public:
     explicit Canvas(QWidget* parent = nullptr);
     void setBackgroundColor(const QString& hexColor);
-    void setInterceptInteractions(bool intercept);
+    // Enable/disable editor mode (selection, resize, gridlines, event interception)
+    void setEditorMode(bool enabled);
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -48,7 +49,7 @@ private:
     DragMode dragMode_ = DragMode::None;
     QPoint dragStartPos_;
     QRect dragStartRect_;
-    bool interceptInteractions_;
+    bool editorMode_;
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);

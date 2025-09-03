@@ -84,7 +84,7 @@ EditorWindow::EditorWindow(QWidget* parent) :
     {
         if (canvas_)
         {
-            canvas_->setInterceptInteractions(on);
+            canvas_->setEditorMode(on);
         }
     });
 
