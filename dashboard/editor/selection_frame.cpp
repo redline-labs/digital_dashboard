@@ -1,7 +1,7 @@
-#include "dashboard_editor/selection_frame.h"
+#include "editor/selection_frame.h"
+#include "editor/widget_registry.h"
 
 #include <QPainter>
-#include "dashboard_editor/widget_registry.h"
 #include <QEvent>
 
 namespace
@@ -149,6 +149,6 @@ bool SelectionFrame::eventFilter(QObject* obj, QEvent* event)
     return QWidget::eventFilter(obj, event);
 }
 
-#include "dashboard_editor/moc_selection_frame.cpp"
+#include "editor/moc_selection_frame.cpp"
 
 

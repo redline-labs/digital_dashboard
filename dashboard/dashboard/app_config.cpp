@@ -1,4 +1,4 @@
-#include "app_config.h"
+#include "dashboard/app_config.h"
 #include <yaml-cpp/yaml.h>
 #include "reflection/reflection.h"
 

@@ -1,7 +1,7 @@
-#include "dashboard_editor/editor_window.h"
-#include "dashboard_editor/widget_palette.h"
-#include "dashboard_editor/properties_panel.h"
-#include "dashboard_editor/canvas.h"
+#include "editor/editor_window.h"
+#include "editor/widget_palette.h"
+#include "editor/properties_panel.h"
+#include "editor/canvas.h"
 
 #include <QSplitter>
 #include <QListView>
@@ -104,4 +104,4 @@ void EditorWindow::buildMenuBar()
     fileMenu->addAction(actionSave);
 }
 
-#include "dashboard_editor/moc_editor_window.cpp"
+#include "editor/moc_editor_window.cpp"

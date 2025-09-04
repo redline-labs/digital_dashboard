@@ -1,6 +1,6 @@
-#include "dashboard_editor/canvas.h"
-#include "dashboard_editor/editor_constants.h"
-#include "dashboard_editor/selection_frame.h"
+#include "editor/canvas.h"
+#include "editor/editor_constants.h"
+#include "editor/selection_frame.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -306,4 +306,4 @@ void Canvas::keyPressEvent(QKeyEvent* event)
     QWidget::keyPressEvent(event);
 }
 
-#include "dashboard_editor/moc_canvas.cpp"
+#include "editor/moc_canvas.cpp"

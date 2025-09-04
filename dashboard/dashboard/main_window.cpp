@@ -1,4 +1,4 @@
-#include "main_window.h"
+#include "dashboard/main_window.h"
 
 #include <spdlog/spdlog.h>
 #include <QDebug>
@@ -134,4 +134,4 @@ const std::string& MainWindow::getWindowName() const
     return _window_cfg.name;
 }
 
-#include "moc_main_window.cpp"
+#include "dashboard/moc_main_window.cpp"

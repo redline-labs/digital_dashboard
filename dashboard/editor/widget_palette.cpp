@@ -1,5 +1,5 @@
-#include "dashboard_editor/widget_palette.h"
-#include "dashboard_editor/widget_registry.h"
+#include "editor/widget_palette.h"
+#include "editor/widget_registry.h"
 
 #include <QVBoxLayout>
 #include <QDrag>
@@ -38,4 +38,4 @@ void WidgetPalette::startDrag(Qt::DropActions supportedActions)
     drag->exec(supportedActions, Qt::CopyAction);
 }
 
-#include "dashboard_editor/moc_widget_palette.cpp"
+#include "editor/moc_widget_palette.cpp"

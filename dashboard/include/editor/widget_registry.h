@@ -7,7 +7,7 @@
 #include <QString>
 #include <QWidget>
 
-#include "app_config.h"
+#include "dashboard/app_config.h"
 
 // Central registry for editor: single source of truth for
 // - available widget types and display labels

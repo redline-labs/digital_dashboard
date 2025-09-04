@@ -4,7 +4,7 @@
 #include <QWidget>
 #include <QRect>
 
-#include "app_config.h"
+#include "dashboard/app_config.h"
 
 // Widget headers for config types
 #include "static_text/config.h"
@@ -21,7 +21,7 @@
 
 #include <spdlog/spdlog.h>
 #include "reflection/reflection.h"
-#include "widget_registry.h"
+#include "editor/widget_registry.h"
 
 class SelectionFrame : public QWidget
 {

@@ -1,8 +1,8 @@
-#include "dashboard_editor/properties_panel.h"
-#include "dashboard_editor/widget_registry.h"
-#include "dashboard_editor/canvas.h"
-#include "dashboard_editor/selection_frame.h"
-#include "dashboard_editor/editor_constants.h"
+#include "editor/properties_panel.h"
+#include "editor/widget_registry.h"
+#include "editor/canvas.h"
+#include "editor/selection_frame.h"
+#include "editor/editor_constants.h"
 
 #include <QVBoxLayout>
 #include <QFormLayout>
@@ -566,5 +566,5 @@ void PropertiesPanel::applyWindowEdits()
     }
 }
 
-#include "dashboard_editor/moc_properties_panel.cpp"
+#include "editor/moc_properties_panel.cpp"
 

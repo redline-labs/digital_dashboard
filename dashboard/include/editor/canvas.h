@@ -6,8 +6,8 @@
 #include <QMouseEvent>
 #include <vector>
 
-#include "app_config.h"
-#include "dashboard_editor/selection_frame.h"
+#include "dashboard/app_config.h"
+#include "editor/selection_frame.h"
 
 // No global selection overlay when using per-widget SelectionFrame
 

@@ -14,10 +14,10 @@ include_directories(
 )
 
 qt_add_executable(${PROJECT_NAME}
-    main.cpp
-    app_config.cpp
-    main_window.cpp
-    command_line_args.cpp
+    dashboard/main.cpp
+    dashboard/app_config.cpp
+    dashboard/main_window.cpp
+    dashboard/command_line_args.cpp
     resources.qrc
 )
 
@@ -29,8 +29,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     
     # Link common logging interface (wraps spdlog)
     common_logging
-    helpers
     expression_parser
+    helpers
     
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json
@@ -57,19 +57,36 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     background_rect
 )
 
-# Add comprehensive test data publisher executable
-add_executable(test_data_publisher
-    test_data_publisher.cpp
+qt_add_executable(editor
+    editor/main.cpp
+    editor/editor_window.cpp
+    editor/widget_palette.cpp
+    editor/canvas.cpp
+    editor/properties_panel.cpp
+    editor/selection_frame.cpp
+    resources.qrc
 )
 
-target_link_libraries(test_data_publisher PRIVATE
-    # Link common logging interface (wraps spdlog)
+target_link_libraries(editor PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+
+    # Reuse existing libraries and widgets
     common_logging
-    
-    # Link zenoh-cpp
-    zenohcxx::zenohc
-    
-    # Link our schemas library
-    schemas
+    expression_parser
     helpers
+    zenohcxx::zenohc
+
+    # Widgets available for instantiation
+    mercedes_190e_telltales
+    carplay_widget
+    mercedes_190e_speedometer
+    mercedes_190e_tachometer
+    sparkline
+    mercedes_190e_cluster_gauge
+    motec_c125_tachometer
+    motec_cdl3_tachometer
+    static_text
+    value_readout
+    background_rect
 )

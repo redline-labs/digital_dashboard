@@ -1,4 +1,4 @@
-#include "command_line_args.h"
+#include "dashboard/command_line_args.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>

@@ -1,6 +1,6 @@
-#include "app_config.h"
-#include "command_line_args.h"
-#include "main_window.h"
+#include "dashboard/app_config.h"
+#include "dashboard/command_line_args.h"
+#include "dashboard/main_window.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
