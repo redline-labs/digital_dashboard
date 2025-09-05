@@ -3,6 +3,7 @@
 #include <thread>
 #include <cmath>
 #include <string>
+#include <string_view>
 #include <csignal>
 #include <cstdlib>
 #include <spdlog/spdlog.h>
@@ -51,6 +52,8 @@ public:
         try {
             // Create Zenoh configuration
             auto config = zenoh::Config::create_default();
+            //config.insert_json5("mode", "\"client\"");
+            //config.insert_json5("connect/endpoints", "[\"tcp/localhost:7447\"]");
             
             // Open Zenoh session
             mSession = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(config)));
@@ -128,6 +131,17 @@ public:
     }
     
 private:
+    static zenoh::Publisher::PutOptions capnpPutOptions(std::string_view schema)
+    {
+        auto opts = zenoh::Publisher::PutOptions::create_default();
+        opts.encoding.emplace("application/capnp");
+        opts.encoding->set_schema(schema);
+
+        //auto ts = mSession->new_timestamp();
+        //opts.timestamp = ts;
+        return opts;
+    }
+
     void generateAndPublishData(double elapsed) {
         try {
             // Vehicle speed (0-35 m/s, sine wave pattern) - using Cap'n Proto
@@ -198,7 +212,7 @@ private:
             std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)));
+            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:VehicleSpeed"));
             
             SPDLOG_DEBUG("Published speed data: {:.2f} m/s at timestamp {}", speedMps, timestamp);
             
@@ -235,7 +249,7 @@ private:
             std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)));
+            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:VehicleOdometer"));
             
             SPDLOG_DEBUG("Published odometer data: {} miles at timestamp {}", totalMiles, timestamp);
             
@@ -273,7 +287,7 @@ private:
             std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)));
+            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:EngineRpm"));
             
             SPDLOG_DEBUG("Published RPM data: {} RPM at timestamp {}", rpm, timestamp);
             
@@ -310,7 +324,7 @@ private:
             std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)));
+            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:EngineTemperature"));
             
             SPDLOG_DEBUG("Published temperature data: {:.1f}°C at timestamp {}", temperatureCelsius, timestamp);
             
@@ -350,7 +364,7 @@ private:
             std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
             
             // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)));
+            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:BatteryWarning"));
             
             SPDLOG_DEBUG("Published battery warning data: {} at timestamp {}", isWarningActive ? "ACTIVE" : "INACTIVE", timestamp);
             

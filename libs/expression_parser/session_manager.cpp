@@ -1,16 +1,24 @@
 #include "expression_parser/session_manager.h"
 #include "spdlog/spdlog.h"
+#include <condition_variable>
+#include <algorithm>
+#include <chrono>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
 
-namespace expression_parser {
+namespace expression_parser
+{
 
 std::mutex SessionManager::mutex_ = {};
 std::weak_ptr<zenoh::Session> SessionManager::weak_session_ = {};
-std::optional<zenoh::Config> SessionManager::default_config_ = std::nullopt;
+zenoh::Config SessionManager::zenoh_config_ = zenoh::Config::create_default();
 
-void SessionManager::setDefaultConfig(zenoh::Config&& config)
+void SessionManager::insertConfig(std::string key, std::string value)
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    default_config_.emplace(std::move(config));
+    zenoh_config_.insert_json5(key, value);
 }
 
 std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
@@ -21,12 +29,12 @@ std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
         return existing;
     }
 
+    //zenoh_config_.insert_json5("mode", "\"client\"");
+    //zenoh_config_.insert_json5("connect/endpoints", "[\"tcp/localhost:7447\"]");
+
     try
     {
-        zenoh::Config config = default_config_.has_value()
-            ? std::move(*default_config_)
-            : zenoh::Config::create_default();
-        auto session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(config)));
+        auto session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config_)));
         weak_session_ = session;
         SPDLOG_DEBUG("Created new zenoh session.");
         return session;
@@ -42,7 +50,6 @@ void SessionManager::shutdown()
 {
     std::lock_guard<std::mutex> lk(mutex_);
     weak_session_.reset();
-    default_config_.reset();
 }
 
 } // namespace expression_parser

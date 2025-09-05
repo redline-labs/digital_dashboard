@@ -12,7 +12,7 @@ class SessionManager
 {
   public:
     // Configure default Zenoh config to be used for the shared session
-    static void setDefaultConfig(zenoh::Config&& config);
+    static void insertConfig(std::string key, std::string value);
 
     // Get or create the shared Zenoh session (thread-safe)
     static std::shared_ptr<zenoh::Session> getOrCreate();
@@ -23,7 +23,7 @@ class SessionManager
   private:
     static std::mutex mutex_;
     static std::weak_ptr<zenoh::Session> weak_session_;
-    static std::optional<zenoh::Config> default_config_;
+    static zenoh::Config zenoh_config_;
 };
 
 } // namespace expression_parser
