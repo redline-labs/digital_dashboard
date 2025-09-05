@@ -1,9 +1,9 @@
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 
 #include "spdlog/spdlog.h"
 #include "helpers/helpers.h"
-#include "expression_parser/session_manager.h"
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/session_manager.h"
+#include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
 #include <stdexcept>
@@ -11,10 +11,10 @@
 #include <sstream>
 #include <capnp/serialize.h>
 
-namespace expression_parser
+namespace zenoh_subscriber
 {
 
-ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
+ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
     schema_type_{schema_type},
     expression_{expression},
     variables_{},
@@ -84,7 +84,7 @@ ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string&
 
     try
     {
-        zenoh_session_ = SessionManager::getOrCreate();
+        zenoh_session_ = zenoh_session_manager::SessionManager::getOrCreate();
         if (!zenoh_session_)
         {
             SPDLOG_ERROR("No zenoh session available to subscribe to '{}'", zenoh_key_);
@@ -124,7 +124,7 @@ ExpressionParser::ExpressionParser(schema_type_t schema_type, const std::string&
     }
 }
 
-void ExpressionParser::extractVariables()
+void ZenohSubscriber::extractVariables()
 {
     // Use ExprTk's collect_variables utility function
     std::vector<std::string> variable_list;
@@ -145,7 +145,7 @@ void ExpressionParser::extractVariables()
     }
 }
 
-void ExpressionParser::validateVariablesAgainstSchema()
+void ZenohSubscriber::validateVariablesAgainstSchema()
 {
     // Get all field names from the schema
     auto schema_fields = getSchemaFieldNames(schema_);
@@ -161,7 +161,7 @@ void ExpressionParser::validateVariablesAgainstSchema()
     }
 }
 
-std::unordered_set<std::string> ExpressionParser::getSchemaFieldNames(const capnp::Schema& schema)
+std::unordered_set<std::string> ZenohSubscriber::getSchemaFieldNames(const capnp::Schema& schema)
 {
     std::unordered_set<std::string> field_names;
     
@@ -179,32 +179,32 @@ std::unordered_set<std::string> ExpressionParser::getSchemaFieldNames(const capn
     return field_names;
 }
 
-const schema_type_t& ExpressionParser::getSchemaType() const
+const schema_type_t& ZenohSubscriber::getSchemaType() const
 {
     return schema_type_;
 }
 
-const std::string& ExpressionParser::getExpression() const
+const std::string& ZenohSubscriber::getExpression() const
 {
     return expression_;
 }
 
-const capnp::Schema& ExpressionParser::getSchema() const
+const capnp::Schema& ZenohSubscriber::getSchema() const
 {
     return schema_;
 }
 
-const std::map<std::string, double>& ExpressionParser::getVariables() const
+const std::map<std::string, double>& ZenohSubscriber::getVariables() const
 {
     return variables_;
 }
 
-bool ExpressionParser::isValid() const
+bool ZenohSubscriber::isValid() const
 {
     return is_valid_;
 }
 
-void ExpressionParser::buildFieldCache()
+void ZenohSubscriber::buildFieldCache()
 {
     field_cache_.clear();
     
@@ -252,7 +252,7 @@ void ExpressionParser::buildFieldCache()
     }
 }
 
-void ExpressionParser::extractFieldValues(capnp::DynamicStruct::Reader reader)
+void ZenohSubscriber::extractFieldValues(capnp::DynamicStruct::Reader reader)
 {
     // Use cached field information for fast extraction
     for (const auto& cached_field : field_cache_)

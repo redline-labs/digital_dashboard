@@ -1,4 +1,4 @@
-#include "expression_parser/session_manager.h"
+#include "pub_sub/session_manager.h"
 #include "spdlog/spdlog.h"
 #include <condition_variable>
 #include <algorithm>
@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace expression_parser
+namespace zenoh_session_manager
 {
 
 std::mutex SessionManager::mutex_ = {};
@@ -52,6 +52,6 @@ void SessionManager::shutdown()
     weak_session_.reset();
 }
 
-} // namespace expression_parser
+} // namespace zenoh_session_manager
 
 

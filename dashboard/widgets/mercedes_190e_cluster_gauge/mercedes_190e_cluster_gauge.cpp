@@ -8,7 +8,7 @@
 #include <spdlog/spdlog.h>
 
 // Expression parser
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 #include "helpers/helpers.h"
 
 #include <cmath>
@@ -240,11 +240,11 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     
     // Initialize expression parsers for each sub-gauge
     auto initializeSubGaugeParser = [](const sub_gauge_config_t& gauge_config,
-                                          std::unique_ptr<expression_parser::ExpressionParser>& parser,
+                                          std::unique_ptr<zenoh_subscriber::ZenohSubscriber>& parser,
                                           const char* gauge_name)
     {
         try {
-            parser = std::make_unique<expression_parser::ExpressionParser>(
+            parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
                 gauge_config.schema_type,
                 gauge_config.value_expression,
                 gauge_config.zenoh_key

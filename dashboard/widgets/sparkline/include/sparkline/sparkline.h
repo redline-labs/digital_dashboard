@@ -14,8 +14,8 @@
 
 #include <string_view>
 
-namespace expression_parser {
-    class ExpressionParser;
+namespace zenoh_subscriber {
+    class ZenohSubscriber;
 }
 
 class SparklineItem : public QWidget {
@@ -54,7 +54,7 @@ private:
     std::shared_ptr<zenoh::Session> _zenoh_session;
     
     // Expression parser owned subscription if configured
-    std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> _expression_parser;
 
     // Fallback direct subscription when schema/expression not provided
     std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;

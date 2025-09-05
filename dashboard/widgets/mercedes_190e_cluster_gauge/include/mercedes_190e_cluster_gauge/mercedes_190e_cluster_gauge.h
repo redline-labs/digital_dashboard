@@ -17,8 +17,8 @@
 #include <memory>
 
 // Forward declarations
-namespace expression_parser {
-    class ExpressionParser;
+namespace zenoh_subscriber {
+    class ZenohSubscriber;
 }
 
 class Mercedes190EClusterGauge : public QWidget
@@ -68,10 +68,10 @@ private:
     float economy_gauge_current_value_;
 
     // Expression parsers for each sub-gauge
-    std::unique_ptr<expression_parser::ExpressionParser> top_gauge_expression_parser_;
-    std::unique_ptr<expression_parser::ExpressionParser> right_gauge_expression_parser_;
-    std::unique_ptr<expression_parser::ExpressionParser> bottom_gauge_expression_parser_;
-    std::unique_ptr<expression_parser::ExpressionParser> left_gauge_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> top_gauge_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> right_gauge_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> bottom_gauge_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> left_gauge_expression_parser_;
 
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;

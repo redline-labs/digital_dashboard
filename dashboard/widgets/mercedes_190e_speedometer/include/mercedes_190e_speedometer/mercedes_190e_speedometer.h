@@ -16,8 +16,8 @@
 #include <memory>
 
 // Forward declarations
-namespace expression_parser {
-    class ExpressionParser;
+namespace zenoh_subscriber {
+    class ZenohSubscriber;
 }
 
 class Mercedes190ESpeedometer : public QWidget
@@ -106,8 +106,8 @@ private:
     QFont vdo_font_;
     
     // Expression parsers for speed and odometer calculations
-    std::unique_ptr<expression_parser::ExpressionParser> speed_expression_parser_;
-    std::unique_ptr<expression_parser::ExpressionParser> odometer_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> speed_expression_parser_;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> odometer_expression_parser_;
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

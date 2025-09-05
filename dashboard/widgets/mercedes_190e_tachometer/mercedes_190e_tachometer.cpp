@@ -7,7 +7,7 @@
 #include <spdlog/spdlog.h>
 
 // Expression parser
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 
 #include <cmath> // For std::cos, std::sin
 #include <memory>
@@ -39,7 +39,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
     // Initialize RPM expression parser
     try
     {
-        rpm_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+        rpm_expression_parser_ = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             _cfg.schema_type,
             _cfg.rpm_expression,
             _cfg.zenoh_key
@@ -362,7 +362,7 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     painter->restore(); // Restore from clock translation
 }
 
-// Direct subscriptions removed; expression_parser owns the subscription
+// Direct subscriptions removed; zenoh_subscriber owns the subscription
 
 void Mercedes190ETachometer::onRpmEvaluated(float rpm)
 {

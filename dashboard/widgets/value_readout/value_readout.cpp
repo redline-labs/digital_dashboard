@@ -6,7 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 
 ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent)
 	: QWidget(parent), _cfg{cfg}, _value{0.0}
@@ -21,7 +21,7 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 	_valueFont = QFont(family, 40, QFont::Bold);
 
 	try {
-		_expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+		_expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
 			_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key);
 		if (_expression_parser->isValid()) {
 			_expression_parser->setResultCallback<double>([this](double v) {

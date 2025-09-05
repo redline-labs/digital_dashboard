@@ -21,7 +21,7 @@ target_link_libraries(motec_c125_tachometer
     PRIVATE
         Qt6::Widgets
         common_logging
-        expression_parser
+        zenoh_pub_sub
         helpers
 )
 

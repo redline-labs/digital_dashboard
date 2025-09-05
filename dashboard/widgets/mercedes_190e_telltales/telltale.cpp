@@ -8,7 +8,7 @@
 #include <spdlog/spdlog.h>
 
 // Expression parser
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 
 // Colors
 static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
@@ -22,7 +22,7 @@ Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& c
 {
     // Initialize expression parser
     try {
-        _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             _cfg.schema_type,
             _cfg.condition_expression,
             _cfg.zenoh_key
@@ -187,7 +187,7 @@ void Mercedes190ETelltale::resizeEvent(QResizeEvent *event)
     update(); // Ensure the widget repaints with new size
 }
 
-// Direct widget subscription removed; handled by expression_parser
+// Direct widget subscription removed; handled by zenoh_subscriber
 
 void Mercedes190ETelltale::onConditionEvaluated(bool asserted)
 {

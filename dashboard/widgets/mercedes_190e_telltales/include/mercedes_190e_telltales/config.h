@@ -3,7 +3,7 @@
 
 #include <string>
 #include <cstdint>
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
 

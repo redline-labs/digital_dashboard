@@ -18,10 +18,10 @@
 #define exprtk_disable_caseinsensitivity
 #include <exprtk.hpp>
 
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/schema_registry.h"
 #include "spdlog/spdlog.h"
 
-namespace expression_parser
+namespace zenoh_subscriber
 {
 
 /**
@@ -33,7 +33,7 @@ namespace expression_parser
  * - Validates that all variables in the expression exist in the schema
  * - Provides functionality to evaluate expressions against message data
  */
-class ExpressionParser
+class ZenohSubscriber
 {
   public:
     /**
@@ -44,7 +44,7 @@ class ExpressionParser
      * @param expression Mathematical expression string to be evaluated
      * @param zenoh_key Key expression to subscribe to via Zenoh
      */
-    ExpressionParser(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key);
+    ZenohSubscriber(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key);
 
     /**
      * Get the schema type being used
@@ -169,7 +169,7 @@ class ExpressionParser
 
 // Template implementations
 template<typename T = float>
-T ExpressionParser::evaluate(const std::vector<uint8_t>& payload)
+T ZenohSubscriber::evaluate(const std::vector<uint8_t>& payload)
 {
     if (!is_valid_)
     {

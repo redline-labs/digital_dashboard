@@ -7,13 +7,15 @@
 #include <csignal>
 #include <cstdlib>
 #include <spdlog/spdlog.h>
-#include "zenoh.hxx"
+
 #include "helpers/helpers.h"
 
 // Cap'n Proto includes
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 #include <kj/io.h>
+#include <optional>
+#include "pub_sub/zenoh_publisher.h"
 #include "vehicle_speed.capnp.h"
 #include "vehicle_odometer.capnp.h"
 #include "engine_rpm.capnp.h"
@@ -22,12 +24,11 @@
 
 class TestDataPublisher {
 private:
-    std::unique_ptr<zenoh::Session> mSession;
-    std::unique_ptr<zenoh::Publisher> mSpeedPublisher;
-    std::unique_ptr<zenoh::Publisher> mOdometerPublisher;
-    std::unique_ptr<zenoh::Publisher> mRpmPublisher;
-    std::unique_ptr<zenoh::Publisher> mTemperaturePublisher;
-    std::unique_ptr<zenoh::Publisher> mBatteryWarningPublisher;
+    zenoh_publisher::ZenohPublisher<VehicleSpeed> mSpeedHelper;
+    zenoh_publisher::ZenohPublisher<VehicleOdometer> mOdometerHelper;
+    zenoh_publisher::ZenohPublisher<EngineRpm> mRpmHelper;
+    zenoh_publisher::ZenohPublisher<EngineTemperature> mTemperatureHelper;
+    zenoh_publisher::ZenohPublisher<BatteryWarning> mBatteryWarningHelper;
     bool mRunning;
     
     // Simulation parameters
@@ -42,59 +43,40 @@ private:
     mutable uint32_t mCurrentOdometer = 123456; // Starting odometer value in miles
     
 public:
-    TestDataPublisher() : mRunning(false) {}
+    TestDataPublisher(std::string_view vehicle_speed_key, std::string_view vehicle_odometer_key, std::string_view vehicle_rpm_key, std::string_view vehicle_temperature_key, std::string_view vehicle_battery_warning_key) :
+        mSpeedHelper(vehicle_speed_key),
+        mOdometerHelper(vehicle_odometer_key),
+        mRpmHelper(vehicle_rpm_key),
+        mTemperatureHelper(vehicle_temperature_key),
+        mBatteryWarningHelper(vehicle_battery_warning_key),
+        mRunning(false)
+    {
+    }
     
     ~TestDataPublisher() {
         stop();
     }
     
     bool initialize() {
-        try {
+        try
+        {
             // Create Zenoh configuration
-            auto config = zenoh::Config::create_default();
             //config.insert_json5("mode", "\"client\"");
             //config.insert_json5("connect/endpoints", "[\"tcp/localhost:7447\"]");
-            
-            // Open Zenoh session
-            mSession = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(config)));
-            SPDLOG_INFO("Zenoh session opened successfully");
-            
-            // Create publishers for different data types
-            mSpeedPublisher = std::make_unique<zenoh::Publisher>(
-                mSession->declare_publisher(zenoh::KeyExpr("vehicle/speed_mps"))
-            );
-            
-            mOdometerPublisher = std::make_unique<zenoh::Publisher>(
-                mSession->declare_publisher(zenoh::KeyExpr("vehicle/odometer"))
-            );
-            
-            mRpmPublisher = std::make_unique<zenoh::Publisher>(
-                mSession->declare_publisher(zenoh::KeyExpr("vehicle/engine/rpm"))
-            );
-            
-            mTemperaturePublisher = std::make_unique<zenoh::Publisher>(
-                mSession->declare_publisher(zenoh::KeyExpr("vehicle/engine/temperature_celsius"))
-            );
-            
-            mBatteryWarningPublisher = std::make_unique<zenoh::Publisher>(
-                mSession->declare_publisher(zenoh::KeyExpr("vehicle/telltales/battery_warning"))
-            );
-            
-            SPDLOG_INFO("All test data publishers created successfully");
+
+
             return true;
             
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to initialize Zenoh: {}", e.what());
             return false;
         }
     }
     
-    void start() {
-        if (!mSession) {
-            SPDLOG_ERROR("Publishers not initialized. Call initialize() first.");
-            return;
-        }
-        
+    void start()
+    {        
         mRunning = true;
         SPDLOG_INFO("Starting test data publisher at {} Hz", PUBLISH_RATE_HZ);
         SPDLOG_INFO("Publishing to the following keys:");
@@ -142,12 +124,14 @@ private:
         return opts;
     }
 
-    void generateAndPublishData(double elapsed) {
-        try {
+    void generateAndPublishData(double elapsed)
+    {
+        try
+        {
             // Vehicle speed (0-35 m/s, sine wave pattern) - using Cap'n Proto
             double speed_phase = (elapsed / SPEED_CYCLE_SEC) * 2.0 * M_PI;
             double speed_mps = 17.5 * (1.0 + std::sin(speed_phase)); // 0-35 m/s
-            publishSpeedData(mSpeedPublisher.get(), static_cast<float>(speed_mps));
+            publishSpeedData(static_cast<float>(speed_mps));
             
             // Odometer (simulated accumulation based on speed) - using Cap'n Proto
             static double last_odometer_time = 0.0;
@@ -157,7 +141,7 @@ private:
                 double distance_miles = (mps_to_mph(speed_mps) / 3600.0) * ODOMETER_UPDATE_SEC; // m/s to miles
                 distance_miles *= 50.0;  // Make it move so we can actually see it.
                 mCurrentOdometer += static_cast<uint32_t>(std::round(distance_miles));
-                publishOdometerData(mOdometerPublisher.get(), mCurrentOdometer);
+                publishOdometerData(mCurrentOdometer);
 
                 last_odometer_time = elapsed;
             }
@@ -166,209 +150,135 @@ private:
             double rpm_phase = (elapsed / RPM_CYCLE_SEC) * 2.0 * M_PI;
             double rpm = 3400 + 2600 * std::sin(rpm_phase); // 800-6000 RPM
             double oil_pressure = 40 + 20 * std::sin(rpm_phase); // 20-60 PSI
-            publishRpmData(mRpmPublisher.get(), static_cast<uint32_t>(rpm), static_cast<float>(oil_pressure));
+            publishRpmData(static_cast<uint32_t>(rpm), static_cast<float>(oil_pressure));
             
             // Engine temperature (60-120°C, slower variation) - using Cap'n Proto
             double temp_phase = (elapsed / TEMP_CYCLE_SEC) * 2.0 * M_PI;
             double temperature = 90 + 30 * std::sin(temp_phase); // 60-120°C
-            publishTemperatureData(mTemperaturePublisher.get(), static_cast<float>(temperature));
+            publishTemperatureData(static_cast<float>(temperature));
             
             // Battery warning (periodic toggle) - using Cap'n Proto
             double battery_phase = (elapsed / BATTERY_CYCLE_SEC) * 2.0 * M_PI;
             bool battery_warning = std::sin(battery_phase) > 0.8; // Occasional warning
-            publishBatteryWarningData(mBatteryWarningPublisher.get(), battery_warning);
+            publishBatteryWarningData(battery_warning);
             
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to generate/publish data: {}", e.what());
         }
     }
     
     
-    void publishSpeedData(zenoh::Publisher* publisher, float speedMps)
+    void publishSpeedData(float speedMps)
     {
-        if (!publisher) return;
+        if (!mSpeedHelper.isValid()) return;
         
-        try {
-            // Create a Cap'n Proto message
-            ::capnp::MallocMessageBuilder message;
-            VehicleSpeed::Builder vehicleSpeed = message.initRoot<VehicleSpeed>();
-            
-            // Set the speed value
-            vehicleSpeed.setSpeedMps(speedMps);
-            
-            // Set timestamp (current time in milliseconds)
+        try
+        {
+            // Set on helper builder and publish
+            mSpeedHelper.fields().setSpeedMps(speedMps);
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
             ).count();
-            vehicleSpeed.setTimestamp(static_cast<uint64_t>(timestamp));
+            mSpeedHelper.fields().setTimestamp(static_cast<uint64_t>(timestamp));
+            mSpeedHelper.put();
             
-            // Use VectorOutputStream to write to its internal buffer
-            kj::VectorOutputStream stream;
-            capnp::writeMessage(stream, message);
-            
-            // Get the data from the stream (single copy instead of double copy)
-            auto streamData = stream.getArray();
-            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
-            
-            // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:VehicleSpeed"));
-            
-            SPDLOG_DEBUG("Published speed data: {:.2f} m/s at timestamp {}", speedMps, timestamp);
-            
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to publish speed data: {}", e.what());
         }
     }
 
-    void publishOdometerData(zenoh::Publisher* publisher, uint32_t totalMiles)
+    void publishOdometerData(uint32_t totalMiles)
     {
-        if (!publisher) return;
+        if (!mOdometerHelper.isValid()) return;
         
-        try {
-            // Create a Cap'n Proto message
-            ::capnp::MallocMessageBuilder message;
-            VehicleOdometer::Builder vehicleOdometer = message.initRoot<VehicleOdometer>();
-            
-            // Set the odometer value
-            vehicleOdometer.setTotalMiles(totalMiles);
-            
-            // Set timestamp (current time in milliseconds)
+        try
+        {
+            mOdometerHelper.fields().setTotalMiles(totalMiles);
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
             ).count();
-            vehicleOdometer.setTimestamp(static_cast<uint64_t>(timestamp));
+            mOdometerHelper.fields().setTimestamp(static_cast<uint64_t>(timestamp));
+            mOdometerHelper.put();
             
-            // Use VectorOutputStream to write to its internal buffer
-            kj::VectorOutputStream stream;
-            capnp::writeMessage(stream, message);
-            
-            // Get the data from the stream (single copy instead of double copy)
-            auto streamData = stream.getArray();
-            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
-            
-            // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:VehicleOdometer"));
-            
-            SPDLOG_DEBUG("Published odometer data: {} miles at timestamp {}", totalMiles, timestamp);
-            
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to publish odometer data: {}", e.what());
         }
     }
 
-    void publishRpmData(zenoh::Publisher* publisher, uint32_t rpm, float oil_pressure)
+    void publishRpmData(uint32_t rpm, float oil_pressure)
     {
-        if (!publisher) return;
+        if (!mRpmHelper.isValid()) return;
         
-        try {
-            // Create a Cap'n Proto message
-            ::capnp::MallocMessageBuilder message;
-            EngineRpm::Builder engineRpm = message.initRoot<EngineRpm>();
-            
-            // Set the RPM value
-            engineRpm.setRpm(rpm);
-            engineRpm.setOilPressurePsi(oil_pressure);
-
-            // Set timestamp (current time in milliseconds)
+        try
+        {
+            // Set fields on the persistent builder and publish via helper
+            mRpmHelper.fields().setRpm(rpm);
+            mRpmHelper.fields().setOilPressurePsi(oil_pressure);
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
             ).count();
-            engineRpm.setTimestamp(static_cast<uint64_t>(timestamp));
+            mRpmHelper.fields().setTimestamp(static_cast<uint64_t>(timestamp));
+            mRpmHelper.put();
             
-            // Use VectorOutputStream to write to its internal buffer
-            kj::VectorOutputStream stream;
-            capnp::writeMessage(stream, message);
-            
-            // Get the data from the stream (single copy instead of double copy)
-            auto streamData = stream.getArray();
-            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
-            
-            // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:EngineRpm"));
-            
-            SPDLOG_DEBUG("Published RPM data: {} RPM at timestamp {}", rpm, timestamp);
-            
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to publish RPM data: {}", e.what());
         }
     }
 
-    void publishTemperatureData(zenoh::Publisher* publisher, float temperatureCelsius)
+    void publishTemperatureData(float temperatureCelsius)
     {
-        if (!publisher) return;
+        if (!mTemperatureHelper.isValid()) return;
         
-        try {
-            // Create a Cap'n Proto message
-            ::capnp::MallocMessageBuilder message;
-            EngineTemperature::Builder engineTemp = message.initRoot<EngineTemperature>();
-            
-            // Set the temperature value
-            engineTemp.setTemperatureCelsius(temperatureCelsius);
-            
-            // Set timestamp (current time in milliseconds)
+        try
+        {
+            mTemperatureHelper.fields().setTemperatureCelsius(temperatureCelsius);
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
             ).count();
-            engineTemp.setTimestamp(static_cast<uint64_t>(timestamp));
-            
-            // Use VectorOutputStream to write to its internal buffer
-            kj::VectorOutputStream stream;
-            capnp::writeMessage(stream, message);
-            
-            // Get the data from the stream (single copy instead of double copy)
-            auto streamData = stream.getArray();
-            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
-            
-            // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:EngineTemperature"));
-            
-            SPDLOG_DEBUG("Published temperature data: {:.1f}°C at timestamp {}", temperatureCelsius, timestamp);
-            
-        } catch (const std::exception& e) {
+            mTemperatureHelper.fields().setTimestamp(static_cast<uint64_t>(timestamp));
+            mTemperatureHelper.put();
+
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to publish temperature data: {}", e.what());
         }
     }
 
-    void publishBatteryWarningData(zenoh::Publisher* publisher, bool isWarningActive)
+    void publishBatteryWarningData(bool isWarningActive)
     {
         static float modifier = 0.0f;
-        if (!publisher) return;
+        if (!mBatteryWarningHelper.isValid()) return;
         
-        try {
-            // Create a Cap'n Proto message
-            ::capnp::MallocMessageBuilder message;
-            BatteryWarning::Builder batteryWarning = message.initRoot<BatteryWarning>();
-            
-            // Set the warning status
-            batteryWarning.setIsWarningActive(isWarningActive);
-            batteryWarning.setBatteryVoltage(12.0f + std::sin(modifier));
+        try
+        {
+            // Set via helper builder and publish
+            mBatteryWarningHelper.fields().setIsWarningActive(isWarningActive);
+            mBatteryWarningHelper.fields().setBatteryVoltage(12.0f + std::sin(modifier));
             modifier += 0.01f;
             
-            // Set timestamp (current time in milliseconds)
+            // Set timestamp and publish
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
             ).count();
-            batteryWarning.setTimestamp(static_cast<uint64_t>(timestamp));
-            
-            // Use VectorOutputStream to write to its internal buffer
-            kj::VectorOutputStream stream;
-            capnp::writeMessage(stream, message);
-            
-            // Get the data from the stream (single copy instead of double copy)
-            auto streamData = stream.getArray();
-            std::vector<uint8_t> buffer(streamData.begin(), streamData.end());
-            
-            // Create Zenoh payload and publish
-            publisher->put(zenoh::Bytes(std::move(buffer)), capnpPutOptions("capnp:BatteryWarning"));
-            
-            SPDLOG_DEBUG("Published battery warning data: {} at timestamp {}", isWarningActive ? "ACTIVE" : "INACTIVE", timestamp);
-            
-        } catch (const std::exception& e) {
+            mBatteryWarningHelper.fields().setTimestamp(static_cast<uint64_t>(timestamp));
+            mBatteryWarningHelper.put();
+        }
+        catch (const std::exception& e)
+        {
             SPDLOG_ERROR("Failed to publish battery warning data: {}", e.what());
         }
     }
@@ -377,14 +287,18 @@ private:
 int main(int /*argc*/, char* /*argv*/[])
 {
     // Set up logging
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
-    
-    SPDLOG_INFO("Starting Mercedes Dashboard Test Data Publisher");
-    SPDLOG_INFO("This will publish simulated vehicle data including odometer updates to demonstrate real-time widget updates");
+    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+
     SPDLOG_INFO("Press Ctrl+C to stop...");
     
-    TestDataPublisher publisher;
+    TestDataPublisher publisher(
+        "vehicle/speed_mps",
+        "vehicle/odometer",
+        "vehicle/engine/rpm",
+        "vehicle/engine/temperature_celsius",
+        "vehicle/telltales/battery_warning"
+    );
     
     if (!publisher.initialize())
     {

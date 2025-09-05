@@ -1,5 +1,5 @@
-#include "expression_parser/expression_parser.h"
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/zenoh_subscriber.h"
+#include "pub_sub/schema_registry.h"
 
 #include "spdlog/spdlog.h"
 #include "spdlog/fmt/ranges.h"
@@ -18,7 +18,7 @@
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 
-using namespace expression_parser;
+using namespace zenoh_subscriber;
 
 // Helper function to create a VehicleSpeed message
 std::vector<uint8_t> createVehicleSpeedMessage(float speedMps, uint64_t timestamp) {
@@ -85,7 +85,7 @@ void testSchemaLookup() {
         SPDLOG_INFO("Testing schema lookup for: {}", reflection::enum_traits<schema_type_t>::to_string(schema_type));
         
         // Create parser with a simple expression to test schema lookup
-        ExpressionParser parser(schema_type, "timestamp", "vehicle/speed_mps");
+        ZenohSubscriber parser(schema_type, "timestamp", "vehicle/speed_mps");
         
         // Check if schema was found and parser is valid
         assert(parser.isValid() == true);
@@ -99,7 +99,7 @@ void testSchemaLookup() {
     
     // Test invalid schema name
     SPDLOG_INFO("Testing invalid schema lookup...");
-    ExpressionParser invalidParser("NonExistentSchema", "timestamp", "vehicle/speed_mps");
+    ZenohSubscriber invalidParser("NonExistentSchema", "timestamp", "vehicle/speed_mps");
     assert(invalidParser.isValid() == false);
     SPDLOG_INFO("Invalid schema correctly rejected");
     
@@ -111,7 +111,7 @@ void testVariableExtraction() {
     
     // Test simple single variable expression
     {
-        ExpressionParser parser("VehicleSpeed", "speedMps", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
@@ -124,7 +124,7 @@ void testVariableExtraction() {
     
     // Test multiple variable expression
     {
-        ExpressionParser parser("VehicleSpeed", "speedMps * 3.6 + timestamp / 1000", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps * 3.6 + timestamp / 1000", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
@@ -138,7 +138,7 @@ void testVariableExtraction() {
     
     // Test complex mathematical expression
     {
-        ExpressionParser parser("EngineRpm", "sqrt(rpm) + sin(timestamp / 1000.0) * 100", "vehicle/engine/rpm");
+        ZenohSubscriber parser("EngineRpm", "sqrt(rpm) + sin(timestamp / 1000.0) * 100", "vehicle/engine/rpm");
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
@@ -152,7 +152,7 @@ void testVariableExtraction() {
     
     // Test expression with repeated variables (should only extract once)
     {
-        ExpressionParser parser("VehicleSpeed", "speedMps + speedMps * 2", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps + speedMps * 2", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         const auto& variables = parser.getVariables();
@@ -171,45 +171,45 @@ void testVariableSchemaMatching() {
     
     // Test valid variables that exist in schema
     {
-        ExpressionParser parser("VehicleSpeed", "speedMps + timestamp", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps + timestamp", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         SPDLOG_INFO("Valid VehicleSpeed fields matched correctly");
     }
     
     {
-        ExpressionParser parser("EngineRpm", "rpm * 60 + timestamp", "vehicle/engine/rpm");
+        ZenohSubscriber parser("EngineRpm", "rpm * 60 + timestamp", "vehicle/engine/rpm");
         assert(parser.isValid() == true);
         SPDLOG_INFO("Valid EngineRpm fields matched correctly");
     }
     
     {
-        ExpressionParser parser("EngineTemperature", "temperatureCelsius * 1.8 + 32", "vehicle/engine/temperature_celsius");
+        ZenohSubscriber parser("EngineTemperature", "temperatureCelsius * 1.8 + 32", "vehicle/engine/temperature_celsius");
         assert(parser.isValid() == true);
         SPDLOG_INFO("Valid EngineTemperature fields matched correctly");
     }
     
     {
-        ExpressionParser parser("BatteryWarning", "isWarningActive + batteryVoltage", "vehicle/telltales/battery_warning");
+        ZenohSubscriber parser("BatteryWarning", "isWarningActive + batteryVoltage", "vehicle/telltales/battery_warning");
         assert(parser.isValid() == true);
         SPDLOG_INFO("Valid BatteryWarning fields matched correctly");
     }
     
     // Test invalid variables that don't exist in schema
     {
-        ExpressionParser parser("VehicleSpeed", "invalidField + speedMps", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "invalidField + speedMps", "vehicle/speed_mps");
         assert(parser.isValid() == false);
         SPDLOG_INFO("Invalid field correctly rejected");
     }
     
     {
-        ExpressionParser parser("EngineRpm", "horsepower + rpm", "vehicle/engine/rpm");
+        ZenohSubscriber parser("EngineRpm", "horsepower + rpm", "vehicle/engine/rpm");
         assert(parser.isValid() == false);
         SPDLOG_INFO("Non-existent field correctly rejected");
     }
     
     // Test mixed valid/invalid variables
     {
-        ExpressionParser parser("VehicleSpeed", "speedMps + nonExistentField", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps + nonExistentField", "vehicle/speed_mps");
         assert(parser.isValid() == false);
         SPDLOG_INFO("Mixed valid/invalid fields correctly rejected");
     }
@@ -224,7 +224,7 @@ void testTemplatedEvaluation() {
     {
         SPDLOG_INFO("Testing boolean evaluation...");
         
-        ExpressionParser parser("BatteryWarning", "isWarningActive", "vehicle/telltales/battery_warning");
+        ZenohSubscriber parser("BatteryWarning", "isWarningActive", "vehicle/telltales/battery_warning");
         assert(parser.isValid() == true);
         
         // Test with warning active
@@ -241,7 +241,7 @@ void testTemplatedEvaluation() {
         SPDLOG_INFO("Boolean evaluation: isWarningActive = false");
         
         // Test boolean expression with threshold
-        ExpressionParser thresholdParser("BatteryWarning", "batteryVoltage > 12.0", "vehicle/telltales/battery_warning");
+        ZenohSubscriber thresholdParser("BatteryWarning", "batteryVoltage > 12.0", "vehicle/telltales/battery_warning");
         assert(thresholdParser.isValid() == true);
         
         payload = createBatteryWarningMessage(false, 12.6f, 1234567890ULL);
@@ -259,7 +259,7 @@ void testTemplatedEvaluation() {
     {
         SPDLOG_INFO("Testing float evaluation...");
         
-        ExpressionParser parser("VehicleSpeed", "speedMps * 3.6", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "speedMps * 3.6", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         auto payload = createVehicleSpeedMessage(20.0f, 1234567890ULL);
@@ -272,7 +272,7 @@ void testTemplatedEvaluation() {
     {
         SPDLOG_INFO("Testing integer evaluation...");
         
-        ExpressionParser parser("EngineRpm", "rpm / 100", "vehicle/engine/rpm");
+        ZenohSubscriber parser("EngineRpm", "rpm / 100", "vehicle/engine/rpm");
         assert(parser.isValid() == true);
         
         auto payload = createEngineRpmMessage(3567, 1234567890ULL);
@@ -285,7 +285,7 @@ void testTemplatedEvaluation() {
     {
         SPDLOG_INFO("Testing long evaluation...");
         
-        ExpressionParser parser("VehicleSpeed", "timestamp", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "timestamp", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         auto payload = createVehicleSpeedMessage(10.0f, 1234567890ULL);
@@ -304,7 +304,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing VehicleSpeed evaluation...");
         
-        ExpressionParser parser("VehicleSpeed", "speedMps * 3.6", "vehicle/speed_mps");  // Convert m/s to km/h
+        ZenohSubscriber parser("VehicleSpeed", "speedMps * 3.6", "vehicle/speed_mps");  // Convert m/s to km/h
         assert(parser.isValid() == true);
         
         // Create test data: 20 m/s should convert to 72 km/h
@@ -320,7 +320,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing EngineRpm evaluation...");
         
-        ExpressionParser parser("EngineRpm", "rpm / 1000.0", "vehicle/engine/rpm");  // Convert RPM to thousands
+        ZenohSubscriber parser("EngineRpm", "rpm / 1000.0", "vehicle/engine/rpm");  // Convert RPM to thousands
         assert(parser.isValid() == true);
         
         // Create test data: 3500 RPM
@@ -336,7 +336,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing EngineTemperature evaluation...");
         
-        ExpressionParser parser("EngineTemperature", "temperatureCelsius * 1.8 + 32", "vehicle/engine/temperature_celsius");  // Celsius to Fahrenheit
+        ZenohSubscriber parser("EngineTemperature", "temperatureCelsius * 1.8 + 32", "vehicle/engine/temperature_celsius");  // Celsius to Fahrenheit
         assert(parser.isValid() == true);
         
         // Create test data: 90°C should convert to 194°F
@@ -352,7 +352,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing BatteryWarning evaluation...");
         
-        ExpressionParser parser("BatteryWarning", "isWarningActive * 10 + batteryVoltage", "vehicle/telltales/battery_warning");
+        ZenohSubscriber parser("BatteryWarning", "isWarningActive * 10 + batteryVoltage", "vehicle/telltales/battery_warning");
         assert(parser.isValid() == true);
         
         // Create test data: warning active (true = 1), battery voltage 12.6V
@@ -376,7 +376,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing complex mathematical expression...");
         
-        ExpressionParser parser("VehicleSpeed", "sqrt(speedMps * speedMps + 1) + sin(timestamp / 1000000.0)", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "sqrt(speedMps * speedMps + 1) + sin(timestamp / 1000000.0)", "vehicle/speed_mps");
         assert(parser.isValid() == true);
         
         auto payload = createVehicleSpeedMessage(3.0f, 1000000ULL);  // 3 m/s, timestamp chosen for sin(1) ≈ 0.841
@@ -392,7 +392,7 @@ void testExpressionEvaluation() {
     {
         SPDLOG_INFO("Testing timestamp field usage...");
         
-        ExpressionParser parser("VehicleSpeed", "timestamp / 1000000.0", "vehicle/speed_mps");  // Convert µs to seconds
+        ZenohSubscriber parser("VehicleSpeed", "timestamp / 1000000.0", "vehicle/speed_mps");  // Convert µs to seconds
         assert(parser.isValid() == true);
         
         auto payload = createVehicleSpeedMessage(10.0f, 1234567890ULL);
@@ -411,7 +411,7 @@ void testErrorHandling() {
     
     // Test evaluation with invalid parser
     {
-        ExpressionParser parser("VehicleSpeed", "invalidField + speedMps", "vehicle/speed_mps");
+        ZenohSubscriber parser("VehicleSpeed", "invalidField + speedMps", "vehicle/speed_mps");
         assert(parser.isValid() == false);
         
         auto payload = createVehicleSpeedMessage(10.0f, 1234567890ULL);
@@ -427,7 +427,7 @@ void testErrorHandling() {
     
     // Test evaluation with wrong schema payload
     {
-        ExpressionParser parser("EngineRpm", "rpm + timestamp", "vehicle/engine/rpm");
+        ZenohSubscriber parser("EngineRpm", "rpm + timestamp", "vehicle/engine/rpm");
         assert(parser.isValid() == true);
         
         // Try to evaluate with VehicleSpeed payload instead of EngineRpm

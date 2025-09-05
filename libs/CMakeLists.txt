@@ -1,5 +1,5 @@
 add_subdirectory(helpers)
 add_subdirectory(apple_mfi_ic) 
-add_subdirectory(expression_parser)
+add_subdirectory(pub_sub)
 add_subdirectory(mcp2221a)
 add_subdirectory(reflection)

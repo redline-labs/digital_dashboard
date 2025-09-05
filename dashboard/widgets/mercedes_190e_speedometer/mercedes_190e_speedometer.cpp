@@ -8,7 +8,7 @@
 #include <spdlog/spdlog.h>
 
 // Expression parser
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +22,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     // Initialize speed expression parser
     try
     {
-        speed_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+        speed_expression_parser_ = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             cfg_.schema_type,
             cfg_.speed_expression,
             cfg_.zenoh_key
@@ -49,7 +49,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     // Initialize odometer expression parser (optional)
     try
     {
-        odometer_expression_parser_ = std::make_unique<expression_parser::ExpressionParser>(
+        odometer_expression_parser_ = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             cfg_.odometer_schema_type,
             cfg_.odometer_expression,
             cfg_.odometer_zenoh_key
@@ -496,9 +496,9 @@ void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
     painter->restore();
 }
 
-// Removed direct widget subscriptions; handled by expression_parser
+// Removed direct widget subscriptions; handled by zenoh_subscriber
 
-// Removed direct widget subscriptions; handled by expression_parser
+// Removed direct widget subscriptions; handled by zenoh_subscriber
 
 void Mercedes190ESpeedometer::onSpeedEvaluated(float mph)
 {

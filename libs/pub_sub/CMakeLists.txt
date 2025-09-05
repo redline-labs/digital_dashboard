@@ -42,24 +42,24 @@ configure_file(
 )
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/expression_parser/schema_registry.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/include/expression_parser/schema_registry.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/pub_sub/schema_registry.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/pub_sub/schema_registry.h"
     @ONLY
 )
 
-add_library(expression_parser STATIC
+add_library(zenoh_pub_sub STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp
-    expression_parser.cpp
+    zenoh_subscriber.cpp
     session_manager.cpp
 )
 
-target_include_directories(expression_parser PUBLIC
+target_include_directories(zenoh_pub_sub PUBLIC
     include
     "${CMAKE_CURRENT_BINARY_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../include"  # TODO: This is a hack to get the helpers.h file included.
 )
 
-target_link_libraries(expression_parser PUBLIC
+target_link_libraries(zenoh_pub_sub PUBLIC
     capnp
     schemas
     common_logging

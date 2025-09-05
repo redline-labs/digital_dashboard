@@ -3,7 +3,7 @@
 
 #include <cstdint>
 #include <string>
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
 REFLECT_ENUM(ValueReadoutAlignment,

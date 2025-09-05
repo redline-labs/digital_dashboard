@@ -1,12 +1,13 @@
-#ifndef EXPRESSION_PARSER_SESSION_MANAGER_H
-#define EXPRESSION_PARSER_SESSION_MANAGER_H
+#ifndef ZENOH_SESSION_MANAGER_H
+#define ZENOH_SESSION_MANAGER_H
 
 #include "zenoh.hxx"
 #include <memory>
 #include <mutex>
 #include <optional>
 
-namespace expression_parser {
+namespace zenoh_session_manager
+{
 
 class SessionManager
 {
@@ -26,8 +27,8 @@ class SessionManager
     static zenoh::Config zenoh_config_;
 };
 
-} // namespace expression_parser
+} // namespace zenoh_session_manager
 
-#endif // EXPRESSION_PARSER_SESSION_MANAGER_H
+#endif // ZENOH_SESSION_MANAGER_H
 
 

@@ -11,7 +11,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 #include "helpers/helpers.h"
 
 namespace {
@@ -50,7 +50,7 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
     // Optional expression parser hookup
     try
     {
-        _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
         if (_expression_parser->isValid())
         {

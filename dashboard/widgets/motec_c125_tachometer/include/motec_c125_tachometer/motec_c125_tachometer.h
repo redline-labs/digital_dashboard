@@ -9,8 +9,8 @@
 #include <memory>
 #include <string_view>
 
-namespace expression_parser {
-class ExpressionParser;
+namespace zenoh_subscriber {
+class ZenohSubscriber;
 }
 
 class QPainter;
@@ -48,7 +48,7 @@ private:
     QFont _digitFont;
 
     // Optional live data support
-    std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> _expression_parser;
 };
 
 #endif // MOTEC_C125_TACHOMETER_H

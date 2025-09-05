@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
 // Widget-specific configuration structs

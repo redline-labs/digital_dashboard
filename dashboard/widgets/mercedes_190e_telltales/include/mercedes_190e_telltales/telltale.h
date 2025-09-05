@@ -14,8 +14,8 @@
 // Forward declarations
 class QSvgRenderer;
 
-namespace expression_parser {
-    class ExpressionParser;
+namespace zenoh_subscriber {
+    class ZenohSubscriber;
 }
 
 
@@ -54,7 +54,7 @@ private:
     QString mSvgAlias;
 
     // Expression parser for condition evaluation
-    std::unique_ptr<expression_parser::ExpressionParser> _expression_parser;
+    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> _expression_parser;
 };
 
 #endif // TELLTALEWIDGET_H

@@ -10,7 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <QMetaObject>
-#include "expression_parser/expression_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
 #include <memory>
 #include <map>
 
@@ -65,7 +65,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
 
     try
     {
-        _expression_parser = std::make_unique<expression_parser::ExpressionParser>(
+        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
             _cfg.schema_type,
             _cfg.value_expression,
             _cfg.zenoh_key

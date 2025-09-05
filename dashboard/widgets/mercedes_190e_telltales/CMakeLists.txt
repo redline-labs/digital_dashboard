@@ -30,7 +30,6 @@ target_link_libraries(mercedes_190e_telltales
         zenohcxx::zenohc  # For Zenoh functionality
         common_logging    # For spdlog
         schemas           # For Cap'n Proto schemas
-        CapnProto::capnp  # Cap'n Proto runtime library
-        expression_parser # For condition evaluation
+        zenoh_pub_sub     # For condition evaluation
         helpers
 )

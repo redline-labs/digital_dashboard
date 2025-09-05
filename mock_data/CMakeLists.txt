@@ -7,10 +7,8 @@ target_link_libraries(test_data_publisher PRIVATE
     # Link common logging interface (wraps spdlog)
     common_logging
     
-    # Link zenoh-cpp
-    zenohcxx::zenohc
-    
     # Link our schemas library
     schemas
     helpers
+    zenoh_pub_sub
 )

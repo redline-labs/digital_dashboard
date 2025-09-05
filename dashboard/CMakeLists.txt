@@ -29,7 +29,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     
     # Link common logging interface (wraps spdlog)
     common_logging
-    expression_parser
+    zenoh_pub_sub
     helpers
     
     # Link nlohmann/json (now fetched via FetchContent)
@@ -40,8 +40,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     
     # Link yaml-cpp (now fetched via FetchContent)
     yaml-cpp::yaml-cpp
-
-    zenohcxx::zenohc
 
     # Link the carplay widget library
     carplay_widget
@@ -73,9 +71,8 @@ target_link_libraries(editor PRIVATE
 
     # Reuse existing libraries and widgets
     common_logging
-    expression_parser
+    zenoh_pub_sub
     helpers
-    zenohcxx::zenohc
 
     # Widgets available for instantiation
     mercedes_190e_telltales

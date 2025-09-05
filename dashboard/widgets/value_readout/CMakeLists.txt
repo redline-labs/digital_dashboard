@@ -21,7 +21,7 @@ target_link_libraries(value_readout PUBLIC
     Qt6::Widgets
     spdlog::spdlog
     common_logging
-    expression_parser
+    zenoh_pub_sub
 )
 
 

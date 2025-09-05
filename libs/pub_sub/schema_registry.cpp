@@ -1,4 +1,4 @@
-#include "expression_parser/schema_registry.h"
+#include "pub_sub/schema_registry.h"
 
 // Include all known schemas to get their IDs.  This gets populated by the CMake script.
 @SCHEMA_INCLUDES@
