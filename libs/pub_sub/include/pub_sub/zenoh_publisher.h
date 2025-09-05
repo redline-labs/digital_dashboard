@@ -63,11 +63,20 @@ public:
     // Publish current message state via zenoh without specifying encoding for now.
     void put()
     {
-        kj::VectorOutputStream stream;
-        capnp::writeMessage(stream, mMessage);
-        auto data = stream.getArray();
-        std::vector<uint8_t> bytes(data.begin(), data.end());
-        mPublisher->put(zenoh::Bytes(std::move(bytes)));
+        // Avoid extra copy: flatten to a contiguous KJ array and transfer lifetime via deleter.
+        // We move the owning kj::Array into the lambda capture. Zenoh stores this callable and
+        // invokes it when it's done with the payload. Destroying the lambda destroys the captured
+        // kj::Array, freeing the buffer at the correct time. The uint8_t* parameter is ignored
+        // because the pointer simply aliases memory owned by the captured kj::Array.
+        kj::Array<capnp::word> words = capnp::messageToFlatArray(mMessage);
+        auto bytesView = words.asBytes();
+        uint8_t* ptr = reinterpret_cast<uint8_t*>(bytesView.begin());
+        const size_t len = bytesView.size();
+        auto deleter = [arr = kj::mv(words)](uint8_t* /*unused*/ ) mutable {
+            // Destruction of 'arr' here releases the buffer.
+        };
+
+        mPublisher->put(zenoh::Bytes(ptr, len, std::move(deleter)));
     }
 
 private:
