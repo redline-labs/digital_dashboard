@@ -1,0 +1,106 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: LTC_1
+
+BO_ 1120 LTC_1_ID1: 8 LTC_1
+ SG_ LTC1_Index M : 7|8 @0+ (1,0) [0|255] "unitless:" Vector__XXX
+ SG_ LTC1_Lambda m0 : 15|16 @0+ (0.001,0) [0|65.535] "afr:LA" Vector__XXX
+ SG_ LTC1_Ipn m0 : 31|16 @0- (0.001,0) [-32.768|32.767] "current:mA" Vector__XXX
+ SG_ LTC1_InternalTemp m0 : 47|8 @0- (1,0) [-128|127] "temperature:C" Vector__XXX
+ SG_ LTC1_SensorControlFault m0 : 54|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_InternalFault m0 : 53|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_SensorWireShort m0 : 52|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_HeaterFailedtoHeat m0 : 51|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_HeaterOpenCircuit m0 : 50|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_HeaterShorttoVBATT m0 : 49|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_HeaterShorttoGND m0 : 48|1 @0+ (1,0) [0|1] "unitless:" Vector__XXX
+ SG_ LTC1_HeaterDutyCycle m0 : 63|8 @0- (1,0) [-128|127] "fraction:%" Vector__XXX
+ SG_ LTC1_SensorState m1 : 15|8 @0+ (1,0) [0|255] "unitless:" Vector__XXX
+ SG_ LTC1_BattVolts m1 : 23|16 @0- (0.01,0) [-327.68|327.67] "voltage:V" Vector__XXX
+ SG_ LTC1_Ip m1 : 39|16 @0- (0.001,0) [-32.768|32.767] "current:mA" Vector__XXX
+ SG_ LTC1_Ri m1 : 55|16 @0- (1,0) [-32768|32767] "resistance:ohm" Vector__XXX
+
+CM_ SG_ 1120 LTC1_Ipn "Normalised pump cell current";
+CM_ SG_ 1120 LTC1_InternalTemp "Live internal temperature readings of the LTC Unit (not the sensor!)";
+CM_ SG_ 1120 LTC1_SensorWireShort "A short circuit has been detected in the sensor wiring";
+CM_ SG_ 1120 LTC1_HeaterFailedtoHeat "The measured sensor temperature is not responding to sensor heating. This fault may indicate a fault with the sensor wiring.";
+CM_ SG_ 1120 LTC1_HeaterOpenCircuit "An open circuit has been detected in the heater wiring";
+CM_ SG_ 1120 LTC1_HeaterShorttoVBATT "A short circuit to battery+ has been detected in the heater wiring";
+CM_ SG_ 1120 LTC1_HeaterShorttoGND "A short circuit to ground has been detected in the heater wiring";
+CM_ SG_ 1120 LTC1_Ip "Raw pump cell current";
+CM_ SG_ 1120 LTC1_Ri "Sensor cell impedence N/A for LTC-NTK";
+
+BA_DEF_ BO_  "DBC_Author" STRING ;
+BA_DEF_ BU_  "TpNodeBaseAddress" HEX 0 65535;
+BA_DEF_ BO_  "GenMsgSendType" STRING ;
+BA_DEF_  "ProtocolType" STRING ;
+BA_DEF_  "NmType" STRING ;
+BA_DEF_ BO_  "GenMsgCycleTime" INT 1 10000;
+BA_DEF_ BO_  "GenMsgILSupport" ENUM  "No","Yes";
+BA_DEF_ BU_  "ILUsed" ENUM  "No","Yes";
+BA_DEF_  "VersionNumber" INT 0 10000;
+BA_DEF_  "VersionDay" INT 1 31;
+BA_DEF_  "VersionMonth" INT 1 12;
+BA_DEF_  "VersionYear" INT 2016 3000;
+BA_DEF_  "BusType" STRING ;
+BA_DEF_ BO_  "DBC_Author_Contact" STRING ;
+BA_DEF_DEF_  "DBC_Author_Contact" "CANbusInfo@AEMelectronics.com";
+BA_DEF_DEF_  "DBC_Author" "AEM_Performance_Electronics";
+BA_DEF_DEF_  "TpNodeBaseAddress" 0;
+BA_DEF_DEF_  "GenMsgSendType" "Cyclic";
+BA_DEF_DEF_  "ProtocolType" "";
+BA_DEF_DEF_  "NmType" "";
+BA_DEF_DEF_  "GenMsgCycleTime" 5;
+BA_DEF_DEF_  "GenMsgILSupport" "Yes";
+BA_DEF_DEF_  "ILUsed" "Yes";
+BA_DEF_DEF_  "VersionNumber" 0;
+BA_DEF_DEF_  "VersionDay" 15;
+BA_DEF_DEF_  "VersionMonth" 12;
+BA_DEF_DEF_  "VersionYear" 2016;
+BA_DEF_DEF_  "BusType" "Can";
+BA_ "BusType" "CAN";
+BA_ "VersionMonth" 12;
+BA_ "VersionDay" 15;
+BA_ "VersionNumber" 0;
+
+VAL_ 1120 LTC1_SensorControlFault 1 "Fault" 0 "OK" ;
+VAL_ 1120 LTC1_InternalFault 1 "Fault" 0 "OK" ;
+VAL_ 1120 LTC1_SensorWireShort 1 "Shorted" 0 "OK" ;
+VAL_ 1120 LTC1_HeaterFailedtoHeat 1 "Failed to Heat" 0 "OK" ;
+VAL_ 1120 LTC1_HeaterOpenCircuit 1 "Open Circuit" 0 "OK" ;
+VAL_ 1120 LTC1_HeaterShorttoVBATT 1 "Shorted" 0 "OK" ;
+VAL_ 1120 LTC1_HeaterShorttoGND 1 "Shorted" 0 "OK" ;
+VAL_ 1120 LTC1_SensorState 10 "PUMP OFF" 9 "PUMP START" 8 "COOLING" 7 "RUNNING" 6 "HEATING" 5 "PAUSED" 4 "POST CAL" 3 "CALIBRATION" 2 "PRE CAL" 1 "DIAGNOSTICS" 0 "START" ;

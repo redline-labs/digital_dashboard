@@ -1,0 +1,292 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_:
+VAL_TABLE_ Output_Status 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+
+
+BO_ 1285 PDM_Input_Voltage_0x505: 8 Vector__XXX
+ SG_ PDM_Serial_Number_Low m4 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Serial_Number_High m4 : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Firmware_Version_Letter m4 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Firmware_Version_Minor m4 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Firmware_Version_Major m4 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Input_Voltage_9 m1 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_8 m1 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_7 m0 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_6 m0 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_5 m0 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_4 m0 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_3 m0 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_23 m3 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_22 m3 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_21 m2 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_20 m2 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_2 m0 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_19 m2 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_18 m2 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_17 m2 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_16 m2 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_15 m2 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_14 m1 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_13 m1 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_12 m1 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_11 m1 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_10 m1 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_1 m0 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Input_Voltage_MP M : 7|8@0+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1284 PDM_Output_Status_0x504: 8 Vector__XXX
+ SG_ PDM_Output_Status_9 m1 : 5|6@0+ (1,0) [0|63] "" Vector__XXX
+ SG_ PDM_Output_Status_8 m0 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_7 m0 : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_6 m0 : 47|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_5 m0 : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_4 m0 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_32 m3 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_31 m3 : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_30 m3 : 47|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_3 m0 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_29 m3 : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_28 m3 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_27 m3 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_26 m3 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_25 m3 : 5|6@0+ (1,0) [0|63] "" Vector__XXX
+ SG_ PDM_Output_Status_24 m2 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_23 m2 : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_22 m2 : 47|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_21 m2 : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_20 m2 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_2 m0 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_19 m2 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_18 m2 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_17 m2 : 5|6@0+ (1,0) [0|63] "" Vector__XXX
+ SG_ PDM_Output_Status_16 m1 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_15 m1 : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_14 m1 : 47|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_13 m1 : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_12 m1 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_11 m1 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_10 m1 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Output_Status_1 m0 : 5|6@0+ (1,0) [0|63] "" Vector__XXX
+ SG_ PDM_Output_Status_MP_0x504 M : 7|2@0+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1283 PDM_Output_Voltage_0x503: 8 Vector__XXX
+ SG_ PDM_Output_Voltage_9 m1 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_8 m1 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_7 m0 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_6 m0 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_5 m0 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_4 m0 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_32 m4 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_31 m4 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_30 m4 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_3 m0 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_29 m4 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_28 m3 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_27 m3 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_26 m3 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_25 m3 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_24 m3 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_23 m3 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_22 m3 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_21 m2 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_20 m2 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_2 m0 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_19 m2 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_18 m2 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_17 m2 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_16 m2 : 23|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_15 m2 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_14 m1 : 63|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_13 m1 : 55|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_12 m1 : 47|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_11 m1 : 39|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_10 m1 : 31|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+ SG_ PDM_Output_Voltage_MP_0x503 M : 7|8@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Output_Voltage_1 m0 : 15|8@0+ (0.2,0) [0|51] "V" Vector__XXX
+
+BO_ 1282 PDM_Output_Load_0x502: 8 Vector__XXX
+ SG_ PDM_Output_Load_MP_0x502 M : 7|8@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Output_Load_9 m1 : 23|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_8 m1 : 15|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_7 m0 : 63|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_6 m0 : 55|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_5 m0 : 47|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_4 m0 : 39|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_32 m4 : 39|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_31 m4 : 31|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_30 m4 : 23|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_3 m0 : 31|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_29 m4 : 15|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_28 m3 : 63|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_27 m3 : 55|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_26 m3 : 47|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_25 m3 : 39|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_24 m3 : 31|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_23 m3 : 23|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_22 m3 : 15|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_21 m2 : 63|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_20 m2 : 55|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_2 m0 : 23|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_19 m2 : 47|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_18 m2 : 39|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_17 m2 : 31|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_16 m2 : 23|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_15 m2 : 15|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_14 m1 : 63|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_13 m1 : 55|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_12 m1 : 47|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_11 m1 : 39|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_10 m1 : 31|8@0+ (1,0) [0|255] "%" Vector__XXX
+ SG_ PDM_Output_Load_1 m0 : 15|8@0+ (1,0) [0|255] "%" Vector__XXX
+
+BO_ 1281 PDM_Output_Current_0x501: 8 Vector__XXX
+ SG_ PDM_Output_Current_9 m1 : 23|8@0+ (1,0) [0|255] "A" Vector__XXX
+ SG_ PDM_Output_Current_8 m1 : 15|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_7 m0 : 63|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_6 m0 : 55|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_5 m0 : 47|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_4 m0 : 39|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_32 m4 : 39|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_31 m4 : 31|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_30 m4 : 23|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_3 m0 : 31|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_29 m4 : 15|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_28 m3 : 63|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_27 m3 : 55|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_26 m3 : 47|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_25 m3 : 39|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_24 m3 : 31|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_23 m3 : 23|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_22 m3 : 15|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_21 m2 : 63|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_20 m2 : 55|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_2 m0 : 23|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_19 m2 : 47|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_18 m2 : 39|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_17 m2 : 31|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_16 m2 : 23|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_15 m2 : 15|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_14 m1 : 63|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_13 m1 : 55|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_12 m1 : 47|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_11 m1 : 39|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_10 m1 : 31|8@0+ (0.2,0) [0|51] "A" Vector__XXX
+ SG_ PDM_Output_Current_1 m0 : 15|8@0+ (0.5,0) [0|127.5] "A" Vector__XXX
+ SG_ PDM_Output_Current_0x501_MP M : 7|8@0+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1280 PDM_Input_State_0x500: 8 Vector__XXX
+ SG_ PDM_Reset_Source m3 : 55|8@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_9V5_Internal_Rail_Voltage m3 : 47|8@0+ (0.0615,0) [0|0] "V" Vector__XXX
+ SG_ PDM_Total_Current m3 : 39|8@0+ (1,0) [0|255] "A" Vector__XXX
+ SG_ PDM_Global_Error_Flag m3 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ PDM_Battery_Voltage m3 : 23|8@0+ (0.1216,0) [0|31] "V" Vector__XXX
+ SG_ PDM_Internal_Temperature m3 : 15|8@0+ (1,0) [0|125] "C" Vector__XXX
+ SG_ PDM_Input_9 m1 : 0|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_8 m0 : 56|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_7 m0 : 48|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_6 m0 : 40|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_5 m0 : 32|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_4 m0 : 24|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_3 m0 : 16|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_23 m2 : 48|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_22 m2 : 40|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_21 m2 : 32|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_20 m2 : 24|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_2 m0 : 8|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_19 m2 : 16|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_18 m2 : 8|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_17 m2 : 0|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_16 m1 : 56|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_15 m1 : 48|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_14 m1 : 40|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_13 m1 : 32|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_12 m1 : 24|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_11 m1 : 16|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_10 m1 : 8|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_1 m0 : 0|1@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ PDM_Input_State_0x500_MP M : 7|4@0+ (1,0) [0|0] "" Vector__XXX
+
+
+
+BA_DEF_  "BusType" STRING ;
+BA_DEF_ BU_  "NodeLayerModules" STRING ;
+BA_DEF_ BU_  "ECU" STRING ;
+BA_DEF_ BU_  "CANoeJitterMax" INT 0 0;
+BA_DEF_ BU_  "CANoeJitterMin" INT 0 0;
+BA_DEF_ BU_  "CANoeDrift" INT 0 0;
+BA_DEF_ BU_  "CANoeStartDelay" INT 0 0;
+BA_DEF_DEF_  "BusType" "";
+BA_DEF_DEF_  "NodeLayerModules" "";
+BA_DEF_DEF_  "ECU" "";
+BA_DEF_DEF_  "CANoeJitterMax" 0;
+BA_DEF_DEF_  "CANoeJitterMin" 0;
+BA_DEF_DEF_  "CANoeDrift" 0;
+BA_DEF_DEF_  "CANoeStartDelay" 0;
+BA_ "BusType" "CAN";
+VAL_ 1284 PDM_Output_Status_9 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_8 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_7 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_6 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_5 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_4 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_32 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_31 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_30 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_3 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_29 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_28 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_27 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_26 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_25 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_24 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_23 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_22 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_21 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_20 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_2 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_19 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_18 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_17 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_16 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_15 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_14 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_13 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_12 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_11 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_10 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+VAL_ 1284 PDM_Output_Status_1 8 "Output Retries Reached" 4 "Output Over Current Error" 2 "Output Fault Error" 1 "Output On" 0 "Output Off" ;
+

@@ -1,0 +1,350 @@
+VERSION "Mar 18, 2019"
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: M1
+
+
+BO_ 1600 M1_GEN_0x640: 8 M1
+ SG_ Engine_Speed : 7|16@0+ (1,0) [0|65535] "angular_speed:rpm" Vector__XXX
+ SG_ Inlet_Manifold_Pressure : 23|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+ SG_ Inlet_Manifold_Temperature : 39|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+ SG_ Throttle_Position : 55|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+
+BO_ 1601 M1_GEN_0x641: 8 M1
+ SG_ Fuel_Volume : 7|16@0+ (1,0) [0|65535] "volume:ul" Vector__XXX
+ SG_ Fuel_Mixture_Aim : 23|16@0+ (0.01,0) [0|655.35] "afr:LA" Vector__XXX
+ SG_ Fuel_Pressure_Sensor : 39|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Injector_Duty_Cycle : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Efficiency : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1602 M1_GEN_0x642: 8 M1
+ SG_ Throttle_Pedal : 7|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+ SG_ Engine_Load : 23|16@0+ (1,0) [0|65535] "mass:mg" Vector__XXX
+ SG_ Ignition_Timing : 39|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Fuel_Timing : 55|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+
+BO_ 1603 M1_GEN_0x643: 8 M1
+ SG_ Engine_Cylinder_1_Knock_Level : 7|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_2_Knock_Level : 15|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_3_Knock_Level : 23|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_4_Knock_Level : 31|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_5_Knock_Level : 39|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_6_Knock_Level : 47|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_7_Knock_Level : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_8_Knock_Level : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1604 M1_GEN_0x644: 8 M1
+ SG_ Ignition_Output_Cut_Count : 7|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Fuel_Output_Cut_Count : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Ignition_Output_Cut_Average : 23|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Output_Cut_Average : 31|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Cyl_1_Output_Pulse_Width : 39|8@0+ (0.1,0) [0|25.5] "time:ms" Vector__XXX
+ SG_ Ignition_Cut_Request_State : 43|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Ignition_Timing_State : 47|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Engine_Oil_Pressure : 55|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+
+BO_ 1605 M1_GEN_0x645: 8 M1
+ SG_ Boost_Pressure : 7|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Boost_Aim : 23|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+ SG_ Boost_Actuator_Output_Duty_Cycle : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Gear_Lever_Force : 63|8@0- (5,0) [-640|635] "force:N" Vector__XXX
+
+BO_ 1606 M1_GEN_0x646: 8 M1
+ SG_ Inlet_Camshaft_Aim : 7|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Inlet_Camshaft_Bank_1_Position : 23|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Inlet_Camshaft_Bank_2_Position : 39|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Inlet_Cam_Bk_1_Output_Duty_Cycle : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Inlet_Cam_Bk_2_Output_Duty_Cycle : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1607 M1_GEN_0x647: 8 M1
+ SG_ Exhaust_Camshaft_Aim : 7|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Exhaust_Camshaft_Bank_1_Position : 23|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Exhaust_Camshaft_Bank_2_Position : 39|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Exh_Cam_Bk_1_Output_Duty_Cycle : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Exh_Cam_Bk_2_Output_Duty_Cycle : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1608 M1_GEN_0x648: 8 M1
+ SG_ Wheel_Speed_Front_Left : 7|16@0+ (0.1,0) [0|6553.5] "speed:km/h" Vector__XXX
+ SG_ Wheel_Speed_Front_Right : 23|16@0+ (0.1,0) [0|6553.5] "speed:km/h" Vector__XXX
+ SG_ Wheel_Speed_Rear_Left : 39|16@0+ (0.1,0) [0|6553.5] "speed:km/h" Vector__XXX
+ SG_ Wheel_Speed_Rear_Right : 55|16@0+ (0.1,0) [0|6553.5] "speed:km/h" Vector__XXX
+
+BO_ 1609 M1_GEN_0x649: 8 M1
+ SG_ Coolant_Temperature : 7|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Engine_Oil_Temperature : 15|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Fuel_Temperature : 23|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Ambient_Temperature : 31|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Airbox_Temperature : 39|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ ECU_Battery_Voltage : 47|8@0+ (0.1,0) [0|25.5] "voltage:V" Vector__XXX
+ SG_ Fuel_Used : 55|16@0+ (0.01,0) [0|655.35] "volume:L" Vector__XXX
+
+BO_ 1610 M1_GEN_0x64A: 8 M1
+ SG_ Exhaust_Temperature : 7|16@0+ (0.1,0) [0|6553.5] "temperature:C" Vector__XXX
+ SG_ Engine_Load_Average : 23|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+ SG_ Engine_Speed_Limit_Ignition : 39|16@0+ (1,0) [0|65535] "angular_speed:rpm" Vector__XXX
+ SG_ Ambient_Pressure : 55|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+
+BO_ 1611 M1_GEN_0x64B: 8 M1
+ SG_ Ignition_Cyl_1_Trim_Knock : 7|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_2_Trim_Knock : 15|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_3_Trim_Knock : 23|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_4_Trim_Knock : 31|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_5_Trim_Knock : 39|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_6_Trim_Knock : 47|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_7_Trim_Knock : 55|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_8_Trim_Knock : 63|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+
+BO_ 1612 M1_GEN_0x64C: 8 M1
+ SG_ Engine_Run_Time : 7|16@0+ (1,0) [0|65535] "time:s" Vector__XXX
+ SG_ ECU_Up_Time : 23|16@0+ (1,0) [0|65535] "time:s" Vector__XXX
+ SG_ Warning_Source : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Fuel_Pressure_Warning : 40|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Crankcase_Pressure_Warning : 41|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Engine_Oil_Pressure_Warning : 43|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Engine_Oil_Temperature_Warning : 44|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Engine_Speed_Warning : 45|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Coolant_Pressure_Warning : 46|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Coolant_Temperature_Warning : 47|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Knock_Warning : 55|1@0+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1613 M1_GEN_0x64D: 8 M1
+ SG_ Fuel_Pump_State : 3|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Engine_State : 7|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Launch_State : 11|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Anti_Lag_State : 15|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Engine_Speed_Limit_State : 19|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Boost_Aim_State : 23|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Fuel_Cut_State : 27|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Engine_Overrun_State : 31|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Knock_State : 35|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Fuel_Purge_State : 39|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Fuel_Closed_Loop_State : 43|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Throttle_Aim_State : 47|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Gear : 51|4@0- (1,0) [-8|7] "" Vector__XXX
+ SG_ Engine_Speed_Reference_State : 55|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Engine_Speed_Limit_State : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1614 M1_GEN_0x64E: 8 M1
+ SG_ Launch_Diagnostic : 3|4@0- (1,0) [-8|7] "" Vector__XXX
+ SG_ Anti_Lag_Diagnostic : 7|4@0- (1,0) [-8|7] "" Vector__XXX
+ SG_ Fuel_Cut_State : 11|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Boost_Control_Diagnostic : 15|4@0- (1,0) [-8|7] "" Vector__XXX
+ SG_ Fuel_Closed_Loop_Diagnostic : 23|4@0- (1,0) [-8|7] "" Vector__XXX
+ SG_ Neutral_Switch : 24|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Engine_Run_Switch : 25|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Anti_Lag_Switch : 26|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Brake_State : 27|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Traction_Enable_Switch : 28|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Launch_Enable_Switch : 29|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Pit_Switch : 30|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Engine_Oil_Pressure_Low_Switch : 31|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Boost_Limit_Disable_Switch : 36|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Throttle_Pedal_Trans_Switch : 37|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Race_Time_Reset_Switch : 38|1@0+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1615 M1_GEN_0x64F: 8 M1
+ SG_ Engine_Run_Hours_Total : 7|16@0+ (0.1,0) [0|6553.5] "time:h" Vector__XXX
+ SG_ Fuel_Closed_Loop_Ctrl_Bk_1_Trim : 23|8@0+ (0.005,0) [0|1.275] "fraction:frac" Vector__XXX
+ SG_ Fuel_Closed_Loop_Ctrl_Bk_2_Trim : 31|8@0+ (0.005,0) [0|1.275] "fraction:frac" Vector__XXX
+ SG_ Gearbox_Temperature : 39|8@0- (1,-40) [-168|87] "temperature:C" Vector__XXX
+ SG_ Fuel_Tank_Level : 47|8@0+ (1,0) [0|255] "volume:L" Vector__XXX
+
+BO_ 1616 M1_GEN_0x650: 8 M1
+ SG_ Driver_Rotary_Switch_1 : 7|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_2 : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_3 : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_4 : 31|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_5 : 39|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_6 : 47|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Driver_Switch_8 : 56|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_7 : 57|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_6 : 58|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_5 : 59|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_4 : 60|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_3 : 61|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_2 : 62|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Driver_Switch_1 : 63|1@0+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1617 M1_GEN_0x651: 8 M1
+ SG_ Exhaust_Lambda : 7|8@0+ (0.01,0) [0|2.55] "afr:LA" Vector__XXX
+ SG_ Exhaust_Lambda_Bank_1 : 23|8@0+ (0.01,0) [0|2.55] "afr:LA" Vector__XXX
+ SG_ Exhaust_Lambda_Bank_2 : 31|8@0+ (0.01,0) [0|2.55] "afr:LA" Vector__XXX
+ SG_ Exhaust_Temp_Bank_1 : 39|16@0+ (1,0) [0|65535] "temperature:C" Vector__XXX
+ SG_ Exhaust_Temp_Bank_2 : 55|16@0+ (1,0) [0|65535] "temperature:C" Vector__XXX
+
+BO_ 1618 M1_GEN_0x652: 8 M1
+ SG_ Fuel_Injector_Sec_Contribution : 7|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+ SG_ Fuel_Timing_Secondary : 23|16@0- (0.1,0) [-3276.8|3276.7] "angle:deg" Vector__XXX
+ SG_ Fuel_Injector_Duty_Cycle_Secdry : 39|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1619 M1_GEN_0x653: 8 M1
+ SG_ Fuel_Pressure_Direct : 7|16@0+ (1,0) [0|65535] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Pressure_Direct_Aim : 23|16@0+ (1,0) [0|65535] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Pressure_Direct_Control : 39|8@0+ (0.5,0) [0|127.5] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_Feed_Fwd : 47|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_Prop : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_Integral : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1620 M1_GEN_0x654: 8 M1
+ SG_ Fuel_Pressure_Direct_B2 : 7|16@0+ (1,0) [0|65535] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Pressure_Direct_B2_Aim : 23|16@0+ (1,0) [0|65535] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Pressure_Direct_B2_Control : 39|8@0+ (0.5,0) [0|127.5] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_B2_Feed_Fwd : 47|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_B2_Prop : 55|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Fuel_Pressure_Direct_B2_Integral : 63|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1621 M1_GEN_0x655: 8 M1
+ SG_ Brake_Pressure_Front : 7|16@0- (0.01,0) [-327.68|327.67] "pressure:bar" Vector__XXX
+ SG_ Brake_Pressure_Rear : 23|16@0- (0.01,0) [-327.68|327.67] "pressure:bar" Vector__XXX
+ SG_ Coolant_Pressure : 39|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+ SG_ Power_Steer_Pressure : 55|16@0+ (0.1,0) [0|6553.5] "pressure:kPa" Vector__XXX
+
+BO_ 1622 M1_GEN_0x656: 8 M1
+ SG_ Steering_Angle : 7|16@0- (0.1,0) [-3276.8|3276.7] "" Vector__XXX
+ SG_ Inlet_Mass_Flow : 23|16@0+ (0.1,0) [0|6553.5] "mass_flow:g/s" Vector__XXX
+ SG_ Airbox_Mass_Flow : 39|16@0+ (0.1,0) [0|6553.5] "mass_flow:g/s" Vector__XXX
+ SG_ Fuel_Flow : 55|16@0+ (0.01,0) [0|655.35] "volume_flow:ml/s" Vector__XXX
+
+BO_ 1623 M1_GEN_0x657: 8 M1
+ SG_ Fuel_Injector_Primary_Pressure : 7|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Fuel_Injector_Secondary_Pressure : 23|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Gear_Input_Shaft_Speed : 39|16@0+ (1,0) [0|65535] "angular_speed:rpm" Vector__XXX
+ SG_ Gear_Output_Shaft_Speed : 55|16@0+ (1,0) [0|65535] "angular_speed:rpm" Vector__XXX
+
+BO_ 1624 M1_GEN_0x658: 8 M1
+ SG_ Vehicle_Accel_Lateral : 7|16@0- (0.001,0) [-32.768|32.767] "acceleration:G" Vector__XXX
+ SG_ Vehicle_Accel_Longitudinal : 23|16@0- (0.001,0) [-32.768|32.767] "acceleration:G" Vector__XXX
+ SG_ Vehicle_Accel_Vertical : 39|16@0- (0.001,0) [-32.768|32.767] "acceleration:G" Vector__XXX
+ SG_ Vehicle_Yaw_Rate : 55|16@0- (0.1,0) [-3276.8|3276.7] "deg/s" Vector__XXX
+
+BO_ 1625 M1_GEN_0x659: 8 M1
+ SG_ Engine_Cylinder_9_Knock_Level : 7|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_10_Knock_Level : 15|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_11_Knock_Level : 23|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+ SG_ Engine_Cylinder_12_Knock_Level : 31|8@0+ (1,0) [0|255] "fraction:%" Vector__XXX
+
+BO_ 1626 M1_GEN_0x65A: 8 M1
+ SG_ Ignition_Cyl_9_Trim_Knock : 7|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_10_Trim_Knock : 15|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_11_Trim_Knock : 23|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+ SG_ Ignition_Cyl_12_Trim_Knock : 31|8@0+ (0.1,0) [0|25.5] "angle:deg" Vector__XXX
+
+BO_ 1627 M1_GEN_0x65B: 8 M1
+ SG_ Lap_Time : 7|16@0+ (0.01,0) [0|655.35] "time:s" Vector__XXX
+ SG_ Lap_Time_Running : 23|16@0+ (0.01,0) [0|655.35] "time:s" Vector__XXX
+ SG_ Lap_Number : 39|16@0+ (1,0) [0|65535] "" Vector__XXX
+ SG_ Lap_Distance : 55|16@0+ (1,0) [0|65535] "distance:m" Vector__XXX
+
+BO_ 1628 M1_GEN_0x65C: 8 M1
+ SG_ Differential_Temperature_Front : 7|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+ SG_ Driver_Rotary_Switch_7 : 23|8@0- (1,0) [-128|127] "" Vector__XXX
+ SG_ Driver_Rotary_Switch_8 : 31|8@0- (1,0) [-128|127] "" Vector__XXX
+
+BO_ 1629 M1_GEN_0x65D: 8 M1
+ SG_ Brake_Temperature_Front_Left : 7|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+ SG_ Brake_Temperature_Front_Right : 23|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+ SG_ Brake_Temperature_Rear_Left : 39|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+ SG_ Brake_Temperature_Rear_Right : 55|16@0- (0.1,0) [-3276.8|3276.7] "temperature:C" Vector__XXX
+
+BO_ 1630 M1_GEN_0x65E: 8 M1
+ SG_ Exhaust_Pressure_Bank_1 : 7|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Exhaust_Pressure_Bank_2 : 23|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Engine_Crank_Case_Pressure : 39|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+ SG_ Alternator_Current : 55|16@0+ (0.01,0) [0|655.35] "current:A" Vector__XXX
+
+BO_ 1631 M1_GEN_0x65F: 8 M1
+ SG_ Knock_Threshold : 7|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+ SG_ Logging_System_1_Used : 23|16@0+ (0.1,0) [0|6553.5] "fraction:%" Vector__XXX
+ SG_ Vehicle_Pit_Speed_Limit : 39|16@0+ (0.1,0) [0|6553.5] "speed:km/h" Vector__XXX
+
+BO_ 1696 M1_GEN_0x6A0: 8 M1
+ SG_ Aux_Output_1_Duty_Cycle : 7|16@0- (0.1,0) [-3276.8|3276.7] "fraction:%" Vector__XXX
+ SG_ Aux_Output_2_Duty_Cycle : 23|16@0- (0.1,0) [-3276.8|3276.7] "fraction:%" Vector__XXX
+ SG_ Aux_Output_3_Duty_Cycle : 39|16@0- (0.1,0) [-3276.8|3276.7] "fraction:%" Vector__XXX
+ SG_ Aux_Output_4_Duty_Cycle : 55|16@0- (0.1,0) [-3276.8|3276.7] "fraction:%" Vector__XXX
+
+BO_ 1697 M1_GEN_0x6A1: 8 M1
+ SG_ Aux_Output_5_Duty_Cycle : 7|16@0- (0.1,0) [-3276.8|3276.7] "fraction:%" Vector__XXX
+
+BO_ 1702 M1_GEN_0x6A6: 8 M1
+ SG_ Turbo_Bank_1_Speed : 7|16@0+ (0.1,0) [0|6553.5] "frequency:Hz" Vector__XXX
+ SG_ Turbo_Bank_1_Inlet_Temp : 23|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Turbo_Bank_1_Temp_Outlet : 31|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Turbo_Bank_1_Pressure_Inlet : 39|16@0- (0.1,0) [-3276.8|3276.7] "pressure:kPa" Vector__XXX
+
+BO_ 1703 M1_GEN_0x6A7: 8 M1
+ SG_ Turbo_Bank_2_Speed : 7|16@0+ (0.1,0) [0|6553.5] "frequency:Hz" Vector__XXX
+ SG_ Turbo_Bank_2_Inlet_Temp : 23|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+ SG_ Turbo_Bank_2_Temp_Outlet : 31|8@0+ (1,-40) [-40|215] "temperature:C" Vector__XXX
+
+
+
+CM_ SG_ 1602 Ignition_Timing "-ve means BTDC";
+CM_ SG_ 1602 Fuel_Timing "-ve means BTDC";
+CM_ SG_ 1604 Ignition_Output_Cut_Count "Rolls over at 255";
+CM_ SG_ 1604 Fuel_Output_Cut_Count "Rolls over at 255";
+CM_ SG_ 1604 Ignition_Output_Cut_Average "Rolls over at 255";
+CM_ SG_ 1604 Fuel_Output_Cut_Average "Rolls over at 255";
+CM_ SG_ 1606 Inlet_Camshaft_Aim "-ve means BTDC";
+CM_ SG_ 1606 Inlet_Camshaft_Bank_1_Position "-ve means BTDC";
+CM_ SG_ 1606 Inlet_Camshaft_Bank_2_Position "-ve means BTDC";
+CM_ SG_ 1607 Exhaust_Camshaft_Aim "-ve means BTDC";
+CM_ SG_ 1607 Exhaust_Camshaft_Bank_1_Position "-ve means BTDC";
+CM_ SG_ 1607 Exhaust_Camshaft_Bank_2_Position "-ve means BTDC";
+CM_ SG_ 1611 Ignition_Cyl_1_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_2_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_3_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_4_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_5_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_6_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_7_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1611 Ignition_Cyl_8_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1612 Engine_Run_Time "Does not roll over";
+CM_ SG_ 1612 ECU_Up_Time "Does not roll over";
+CM_ SG_ 1615 Engine_Run_Hours_Total "Does not roll over";
+CM_ SG_ 1618 Fuel_Timing_Secondary "-ve means BTDC";
+CM_ SG_ 1625 Engine_Cylinder_9_Knock_Level "+ve means ATDC";
+CM_ SG_ 1625 Engine_Cylinder_10_Knock_Level "+ve means ATDC";
+CM_ SG_ 1625 Engine_Cylinder_11_Knock_Level "+ve means ATDC";
+CM_ SG_ 1625 Engine_Cylinder_12_Knock_Level "+ve means ATDC";
+CM_ SG_ 1626 Ignition_Cyl_9_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1626 Ignition_Cyl_10_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1626 Ignition_Cyl_11_Trim_Knock "+ve means ATDC";
+CM_ SG_ 1626 Ignition_Cyl_12_Trim_Knock "+ve means ATDC";
+BA_DEF_ BO_  "DBC_Author" STRING ;
+BA_DEF_ BO_  "DBC_Author_Contact" STRING ;
+BA_DEF_DEF_  "DBC_Author" "AEM_Performance_Electronics";
+BA_DEF_DEF_  "DBC_Author_Contact" "CANbusInfo@AEMelectronics.com";
+
