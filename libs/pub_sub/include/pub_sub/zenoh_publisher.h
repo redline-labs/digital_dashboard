@@ -11,6 +11,7 @@
 #include <capnp/serialize.h>
 #include <kj/io.h>
 
+#include "pub_sub/schema_registry.h"
 #include "pub_sub/session_manager.h"
 
 #include <string_view>
@@ -76,7 +77,11 @@ public:
             // Destruction of 'arr' here releases the buffer.
         };
 
-        mPublisher->put(zenoh::Bytes(ptr, len, std::move(deleter)));
+        auto opts = zenoh::Publisher::PutOptions::create_default();
+        opts.encoding.emplace("application/capnp");
+        opts.encoding->set_schema(schema_traits<SchemaT>::name);
+
+        mPublisher->put(zenoh::Bytes(ptr, len, std::move(deleter)), std::move(opts));
     }
 
 private:
@@ -84,7 +89,6 @@ private:
     std::unique_ptr<zenoh::Publisher> mPublisher;
     ::capnp::MallocMessageBuilder mMessage;
     SchemaBuilder mBuilder;
-    
 };
 
 }  // namespace zenoh_publisher

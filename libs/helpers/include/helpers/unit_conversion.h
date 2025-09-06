@@ -1,5 +1,5 @@
-#ifndef HELPERS_H_
-#define HELPERS_H_
+#ifndef UNIT_CONVERSION_H_
+#define UNIT_CONVERSION_H_
 
 #include <numbers>
 
@@ -7,7 +7,7 @@
 template<typename T = float>
 constexpr T degrees_to_radians(T degrees)
 {
-    return degrees * (std::numbers::pi_v<T> / 180.0f);
+    return degrees * (std::numbers::pi_v<T> / static_cast<T>(180.0));
 }
 
 template<typename T = float>
@@ -60,4 +60,4 @@ constexpr T fahrenheit_to_celsius(T fahrenheit)
 
 
 
-#endif // HELPERS_H_
+#endif // UNIT_CONVERSION_H_

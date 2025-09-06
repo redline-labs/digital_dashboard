@@ -66,6 +66,9 @@
         "future": "cpp",
         "source_location": "cpp",
         "type_traits": "cpp",
-        "__config": "cpp"
+        "__config": "cpp",
+        "ostream": "cpp",
+        "*.md": "cpp",
+        "codecvt": "cpp"
     }
 }

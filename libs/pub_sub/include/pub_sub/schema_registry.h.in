@@ -9,6 +9,8 @@
 
 #include "reflection/reflection.h"
 
+@SCHEMA_INCLUDES@
+
 REFLECT_ENUM(schema_type_t@SCHEMA_ENUM_LIST@
 );
 
@@ -21,5 +23,11 @@ capnp::Schema get_schema(const std::string_view& schema_name);
 capnp::Schema get_schema(schema_type_t schema_type);
 
 constexpr available_schemas_t get_available_schemas() { return kAvailableSchemas; }
+
+// Type traits for each of the schemas.
+template <typename Schema>
+struct schema_traits;
+
+@SCHEMA_TYPE_TRAITS@
 
 #endif // SCHEMA_REGISTRY_H 

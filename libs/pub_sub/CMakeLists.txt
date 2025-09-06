@@ -34,6 +34,11 @@ foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
     string(APPEND SCHEMA_ENUM_LIST ",\n    ${STRUCT_NAME}")
 endforeach()
 
+# Generate some "type traits" for each of the schemas.
+foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
+    string(APPEND SCHEMA_TYPE_TRAITS "template <> struct schema_traits<${STRUCT_NAME}> { static constexpr std::string_view name = \"${STRUCT_NAME}\"; };\n")
+endforeach()
+
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/schema_registry.cpp"
