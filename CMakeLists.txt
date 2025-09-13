@@ -80,6 +80,7 @@ add_subdirectory(schemas)
 add_subdirectory(libs)
 add_subdirectory(dashboard)
 add_subdirectory(mock_data)
+add_subdirectory(nodes)
 
 # Local docs preview (manual): serves the Jekyll site from the docs directory.
 # Usage: cmake --build . --target docs_serve

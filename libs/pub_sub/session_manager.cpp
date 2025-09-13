@@ -29,8 +29,9 @@ std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
         return existing;
     }
 
-    //zenoh_config_.insert_json5("mode", "\"client\"");
-    //zenoh_config_.insert_json5("connect/endpoints", "[\"tcp/localhost:7447\"]");
+    // Prefer local peer-to-peer discovery by default for dev
+    // Callers can override via insertConfig() before first getOrCreate().
+    zenoh_config_.insert_json5("mode", "\"peer\"");
 
     try
     {

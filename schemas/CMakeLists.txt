@@ -6,6 +6,8 @@ set(SCHEMA_FILES
     engine_rpm.capnp
     engine_temperature.capnp
     vehicle_warnings.capnp
+
+    racegrade_tc8_configure.capnp
 )
 
 set(GENERATED_SOURCES)
