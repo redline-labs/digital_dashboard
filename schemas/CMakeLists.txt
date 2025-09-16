@@ -8,6 +8,7 @@ set(SCHEMA_FILES
     vehicle_warnings.capnp
 
     racegrade_tc8_configure.capnp
+    racegrade_tc8_signals.capnp
 )
 
 set(GENERATED_SOURCES)

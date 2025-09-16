@@ -1,10 +1,73 @@
+#include "motec_e888_rev1.h"
+#include "pub_sub/zenoh_service.h"
+#include "pub_sub/zenoh_publisher.h"
+#include "racegrade_tc8_configure.capnp.h"
+#include "racegrade_tc8_signals.capnp.h"
+#include "racegrade_tc8/tc8_can_frame_parser.h"
+
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 #include <zenoh.hxx>
+
+#include <array>
 #include <thread>
 #include <chrono>
-#include <pub_sub/zenoh_service.h>
-#include "racegrade_tc8_configure.capnp.h"
+
+static void handle_service_request(const RaceGradeTc8ConfigureRequest::Reader& req, RaceGradeTc8ConfigureResponse::Builder& resp)
+{
+    SPDLOG_INFO("Received request: messageFormat={}, transmitRate={}, canId={}",
+                static_cast<int>(req.getMessageFormat()),
+                static_cast<int>(req.getTransmitRate()),
+                req.getCanId());
+
+    resp.setResponse(true);
+}
+
+static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, zenoh_publisher::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
+{
+    auto& outputs = inputs_pub.fields();
+    outputs.setVoltage1(msg.AV1);
+    outputs.setVoltage2(msg.AV2);
+    outputs.setVoltage3(msg.AV3);
+    outputs.setVoltage4(msg.AV4);
+    outputs.setVoltage5(msg.AV5);
+    outputs.setVoltage6(msg.AV6);
+    outputs.setVoltage7(msg.AV7);
+    outputs.setVoltage8(msg.AV8);
+    outputs.setTemperature1(msg.TC1);
+    outputs.setTemperature2(msg.TC2);
+    outputs.setTemperature3(msg.TC3);
+    outputs.setTemperature4(msg.TC4);
+    outputs.setTemperature5(msg.TC5);
+    outputs.setTemperature6(msg.TC6);
+    outputs.setTemperature7(msg.TC7);
+    outputs.setTemperature8(msg.TC8);
+    outputs.setFrequency1(msg.Freq1);
+    outputs.setFrequency2(msg.Freq2);
+    outputs.setFrequency3(msg.Freq3);
+    outputs.setFrequency4(msg.Freq4);
+
+    SPDLOG_INFO("Ready to publish 'Inputs' message.");
+}
+
+static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg, zenoh_publisher::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
+{
+    auto& outputs = diagnostics_pub.fields();
+    outputs.setColdJunctionComp1(msg.Cold_Junct_Comp1);
+    outputs.setColdJunctionComp2(msg.Cold_Junct_Comp2);
+    outputs.setE888IntTemp(msg.E888_Int_Temp);
+    outputs.setDig1InState(msg.Dig_1_In_State);
+    outputs.setDig2InState(msg.Dig_2_In_State);
+    outputs.setDig3InState(msg.Dig_3_In_State);
+    outputs.setDig4InState(msg.Dig_4_In_State);
+    outputs.setDig5InState(msg.Dig_5_In_State);
+    outputs.setDig6InState(msg.Dig_6_In_State);
+    outputs.setBatteryVolts(msg.Battery_Volts);
+    outputs.setE888StatusFlags(msg.E888_Status_Flags);
+    outputs.setFirmwareVersion(msg.Firmware_Version);
+
+    SPDLOG_INFO("Ready to publish 'Diagnostics' message.");
+}
 
 int main(int argc, char** argv)
 {
@@ -22,37 +85,51 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    // Create the publishers for the Inputs and Diagnostics messages
+    zenoh_publisher::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
+    zenoh_publisher::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
+
+    Tc8CanFrameParser parser;
+    parser.set_Input_message_handler([&inputs_pub](const motec_e888_rev1::Inputs_t& msg){
+        handle_input_message(msg, inputs_pub);
+    });
+
+    parser.set_Diagnostics_message_handler([&diagnostics_pub](const motec_e888_rev1::Diagnostics_t& msg){
+        handle_diagnostics_message(msg, diagnostics_pub);
+    });
+
     // Open a zenoh session with default config
     try
     {
         const char* keyexpr = "nodes/racegrade_tc8/hello";
         SPDLOG_INFO("Declaring queryable on '{}'", keyexpr);
 
-        pub_sub::ZenohService<RaceGradeTc8ConfigureRequest, RaceGradeTc8ConfigureResponse> svc(
-            keyexpr,
-            [](const RaceGradeTc8ConfigureRequest::Reader& req, RaceGradeTc8ConfigureResponse::Builder& resp)
-            {
-                SPDLOG_INFO("Received request: messageFormat={}, transmitRate={}, canId={}",
-                            static_cast<int>(req.getMessageFormat()),
-                            static_cast<int>(req.getTransmitRate()),
-                            req.getCanId());
-                resp.setResponse(true);
-            }
-        );
+        pub_sub::ZenohService<RaceGradeTc8ConfigureRequest, RaceGradeTc8ConfigureResponse> service(
+            keyexpr, handle_service_request);
 
-        SPDLOG_INFO("hello world (zenoh queryable ready)");
-
-        // Keep the process alive; Ctrl+C to exit
-        for (;;)
-        {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
+        
     }
     catch (const std::exception& e)
     {
         SPDLOG_ERROR("Failed to start zenoh queryable: {}", e.what());
         return 1;
     }
+
+    // Example synthetic frames for all mux groups (payloads arbitrary)
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x60,0,0,0,0,0,0,0}); // mux=3
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x80,0,0,0,0,0,0,0}); // mux=4
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x00,0,0,0,0,0,0,0}); // mux=0
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x20,0,0,0,0,0,0,0}); // mux=1
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x40,0,0,0,0,0,0,0}); // mux=2
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x60,0,0,0,0,0,0,0}); // mux=3
+    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x80,0,0,0,0,0,0,0}); // mux=4
+
+    // Keep the process alive; Ctrl+C to exit
+    for (;;)
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    
     return 0;
 }
 

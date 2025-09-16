@@ -53,6 +53,12 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
     fmt::print(out, "#include <cmath>\n");
     fmt::print(out, "\n");
 
+    fmt::print(out, "namespace {}\n", base);
+    fmt::print(out, "{{\n");
+
+    // ------------------------------------------------------------
+    // Create a struct for each message.
+    // ------------------------------------------------------------
     for (const auto& message : db.messages)
     {
         //  Find the name of the multiplexor signal, and then create a method to return a ref for it.
@@ -76,6 +82,10 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
             }
         }
 
+        // Lets assume the lowest multiplexed group index is the "start" of each batch.
+        // We'll latch onto this multiplexor index before we start marking the multiplexed group indexes as seen.
+        uint32_t start_mux_group_index = *std::min_element(valid_mux_group_indexes.begin(), valid_mux_group_indexes.end());
+
         fmt::print(out, "struct {}_t\n", message.name);
         fmt::print(out, "{{\n");
         fmt::print(out, "    static constexpr std::string_view name = \"{}\";\n", message.name);
@@ -92,6 +102,7 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         {
             fmt::print(out, "    static constexpr std::string_view mutiplexor_name = \"{}\";\n", muxSigPtr->name);
             fmt::print(out, "    static constexpr std::array<uint32_t, {}> multiplexor_group_indexes = {{{}}};\n", valid_mux_group_indexes.size(), fmt::join(valid_mux_group_indexes, ", "));
+            fmt::print(out, "    static constexpr uint32_t start_mux_group_index = {}u;\n", start_mux_group_index);
         }
 
         fmt::print(out, "\n");
@@ -170,22 +181,47 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         }
         fmt::print(out, "\n");
 
+        // If the message is multiplexed, keep a bool for each of the multiplexed group indexes.
+        if (message.isMultiplexed == true)
+        {
+            fmt::print(out, "    // Keep a bool for when we observe each of the multiplexed group indexes.\n");
+            for (const auto& group_index : valid_mux_group_indexes)
+            {
+                fmt::print(out, "    bool seen_mux_{};\n", group_index);
+            }
+            fmt::print(out, "\n");
+        }
+
         // Declare the struct constructor
         fmt::print(out, "    constexpr {}_t(){}\n", message.name, message.signals.size() > 0 ? " :" : "");
         
         for (size_t i = 0; i < message.signals.size(); ++i)
         {
             const auto& signal = message.signals[i];
-            bool last = i == message.signals.size() - 1;
+            bool last = (i == message.signals.size() - 1) && (message.isMultiplexed == false);
 
             fmt::print(out, "      {}{{}}{}\n", signal.name, last ? "" : ",");  //  Brace initialization for all the signals.
         }
+
+        if (message.isMultiplexed == true)
+        {
+            size_t i = 0;
+            for (const auto& group_index : valid_mux_group_indexes)
+            {
+                bool last = (i == valid_mux_group_indexes.size() - 1);
+                ++i;
+
+                fmt::print(out, "      seen_mux_{}{{false}}{}\n", group_index, last ? "" : ",");
+            }
+        }
+
         fmt::print(out, "    {{\n");
         fmt::print(out, "    }}\n");
         fmt::print(out, "\n");
 
         if (message.isMultiplexed == true)
         {
+            // Helper to get the value of the multiplexor signal.
             if (muxSigPtr)
             {
                 fmt::print(out, "    sig_{}_t::Type& mux()\n", muxSigPtr->name);
@@ -365,18 +401,39 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         fmt::print(out, "\n");
 
         // Create the decode function for the message struct using extract
-        fmt::print(out, "    static constexpr {}_t decode(const std::array<uint8_t, {}u>& data)\n", message.name, message.dlc);
+        fmt::print(out, "    constexpr bool decode(const std::array<uint8_t, {}u>& data)\n", message.dlc);
         fmt::print(out, "    {{\n");
-        fmt::print(out, "        {}_t msg = {{}};\n", message.name);
+
         if (message.isMultiplexed)
         {
-            fmt::print(out, "        msg.{} = extract<sig_{}_t>(data);\n", muxSigPtr->name, muxSigPtr->name);
+            fmt::print(out, "        {} = extract<sig_{}_t>(data);\n", muxSigPtr->name, muxSigPtr->name);
             fmt::print(out, "\n");
 
             for (const auto& group_index : valid_mux_group_indexes)
             {
-                fmt::print(out, "        if (msg.{} == {}u)\n", muxSigPtr->name, group_index);
+                fmt::print(out, "        if ({} == {}u)\n", muxSigPtr->name, group_index);
                 fmt::print(out, "        {{\n");
+                
+                // If this is the first group index, mark it as seen and clear out the seen flags
+                // for all the other group indexes.  This is to align our decoding to the start
+                // of the batch.
+                if (group_index == start_mux_group_index)
+                {
+                    fmt::print(out, "            // Special case for the first group index.  Clear the seen flags for all the other group indexes.\n");
+                    fmt::print(out, "            seen_mux_{} = true;\n", group_index);
+                    for (const auto& seen_idx : valid_mux_group_indexes)
+                    {
+                        if (seen_idx != start_mux_group_index)
+                        {
+                            fmt::print(out, "            seen_mux_{} = false;\n", seen_idx);
+                        }
+                    }
+                }
+                else
+                {
+                    fmt::print(out, "            seen_mux_{} = true;\n", group_index);
+                }
+                fmt::print(out, "\n");
 
                 for (const auto& signal : message.signals)
                 {
@@ -390,7 +447,7 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
                         continue;
                     }
 
-                    fmt::print(out, "            msg.{} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
+                    fmt::print(out, "            {} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
                 }
 
                 fmt::print(out, "        }}\n");
@@ -401,7 +458,7 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
             {
                 if ((signal.isMultiplex == false) && (signal.isMultiplexor == false))
                 {
-                    fmt::print(out, "        msg.{} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
+                    fmt::print(out, "        {} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
                 }
             }
         }
@@ -409,10 +466,10 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         {
             for (const auto& signal : message.signals)
             {
-                fmt::print(out, "        msg.{} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
+                fmt::print(out, "        {} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
             }
         }
-        fmt::print(out, "        return msg;\n");
+        fmt::print(out, "        return true;\n");
         fmt::print(out, "    }}\n");
         fmt::print(out, "\n");
 
@@ -436,6 +493,33 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         fmt::print(out, "    }}\n");
         fmt::print(out, "\n");
 
+        // Create a method that returns true if all the multiplexed group indexes have been seen.
+        fmt::print(out, "    constexpr bool all_multiplexed_indexes_seen() const\n");
+        fmt::print(out, "    {{\n");
+        fmt::print(out, "        return ");
+        size_t i = 0;
+        for (const auto& group_index : valid_mux_group_indexes)
+        {
+            bool last = (i == valid_mux_group_indexes.size() - 1);
+            ++i;
+            fmt::print(out, "seen_mux_{}{}", group_index, last ? "" : " && ");
+        }
+
+        fmt::print(out, ";\n");
+        fmt::print(out, "    }}\n");
+        fmt::print(out, "\n");
+
+
+        // Create a method that clears all the flags for the multiplexed group indexes.
+        fmt::print(out, "    constexpr void clear_seen_multiplexed_indexes()\n");
+        fmt::print(out, "    {{\n");
+        for (const auto& group_index : valid_mux_group_indexes)
+        {
+            fmt::print(out, "        seen_mux_{} = false;\n", group_index);
+        }
+        fmt::print(out, "    }}\n");
+        fmt::print(out, "\n");
+
         fmt::print(out, "}};  // struct {}_t\n", message.name);   // fmtlib escape sequence for '}'
         fmt::print(out, "\n");
     }
@@ -447,13 +531,27 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         message_ids.insert(message.id);
     }
 
+    // ------------------------------------------------------------
     // Create a overall struct for the database.
+    // ------------------------------------------------------------
     fmt::print(out, "struct {}_t\n", base);
     fmt::print(out, "{{\n");
     fmt::print(out, "    static constexpr std::string_view name = \"{}\";\n", base);
     fmt::print(out, "    static constexpr std::array<uint32_t, {}u> message_ids = {{{:#08x}}};\n", message_ids.size(), fmt::join(message_ids, ", "));
     fmt::print(out, "\n");
-    
+
+    // Create an enum for all the messages present in attempt to normalize against message Ids.
+    fmt::print(out, "    enum class Messages : uint32_t\n");
+    fmt::print(out, "    {{\n");
+    fmt::print(out, "        Unknown = 0,\n");
+    for (const auto& message : db.messages)
+    {
+        fmt::print(out, "        {} = {:#08x},\n", message.name, message.id);
+    }
+    fmt::print(out, "    }};\n");
+    fmt::print(out, "\n");
+
+    // Actual instances of the messages.
     for (const auto& message : db.messages)
     {
         fmt::print(out, "    {}_t {};\n", message.name, message.name);
@@ -476,9 +574,9 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
     // Create the decode function for the overall struct.
     fmt::print(out, "    // Decode a message from the database.\n");
     fmt::print(out, "    // Returns true if the message was decoded, false otherwise.\n");
-    fmt::print(out, "    constexpr bool decode(uint32_t message_id, const std::array<uint8_t, 8u>& data)\n", base);
+    fmt::print(out, "    constexpr Messages decode(uint32_t message_id, const std::array<uint8_t, 8u>& data)\n", base);
     fmt::print(out, "    {{\n");
-    fmt::print(out, "        bool decoded = false;\n");
+    fmt::print(out, "        Messages decoded = Messages::Unknown;\n");
     fmt::print(out, "\n");
 
     for (size_t i = 0; i < db.messages.size(); ++i)
@@ -494,8 +592,8 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
             fmt::print(out, "        else if (message_id == {}_t::id)\n", message.name);
         }
         fmt::print(out, "        {{\n");
-        fmt::print(out, "            {} = {}_t::decode(data);\n", message.name, message.name);
-        fmt::print(out, "            decoded = true;\n");
+        fmt::print(out, "            {}.decode(data);\n", message.name);
+        fmt::print(out, "            decoded = Messages::{};\n", message.name);
         fmt::print(out, "        }}\n");
     }
 
@@ -504,8 +602,43 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
     fmt::print(out, "    }}\n");
     fmt::print(out, "\n");
 
+    // Create a method that accepts a Messages enum and returns the string name of the message.
+    fmt::print(out, "    static constexpr std::string_view get_message_name(Messages msg) noexcept\n");
+    fmt::print(out, "    {{\n");
+    fmt::print(out, "        switch (msg)\n");
+    fmt::print(out, "        {{\n");
+    for (const auto& message : db.messages)
+    {
+        fmt::print(out, "        case Messages::{}:\n", message.name);
+        fmt::print(out, "            return \"{}\";\n", message.name);
+        fmt::print(out, "\n");
+    }
+    fmt::print(out, "        case Messages::Unknown:\n");
+    fmt::print(out, "        default:\n");
+    fmt::print(out, "            return \"Unknown\";\n");
+    fmt::print(out, "        }}\n");
+    fmt::print(out, "    }}\n");
+    fmt::print(out, "\n");
+
+    // Create a method that accepts a message ID  and returns the string name of the message.
+    fmt::print(out, "    static constexpr std::string_view get_message_name(uint32_t message_id) noexcept\n");
+    fmt::print(out, "    {{\n");
+    fmt::print(out, "        switch (message_id)\n");
+    fmt::print(out, "        {{\n");
+    for (const auto& message : db.messages)
+    {
+        fmt::print(out, "        case {}_t::id:\n", message.name);
+        fmt::print(out, "            return \"{}\";\n", message.name);
+        fmt::print(out, "\n");
+    }
+    fmt::print(out, "        default:\n");
+    fmt::print(out, "            return \"Unknown\";\n");
+    fmt::print(out, "        }}\n");
+    fmt::print(out, "    }}\n");
+    fmt::print(out, "\n");
+
     fmt::print(out, "}};\n");
-    
+    fmt::print(out, "}}  // namespace {}\n", base);
 
     fmt::print(out, "#endif  // {}_H_\n", base_upper);
 }

@@ -27,10 +27,10 @@ int main()
         {"PDM_Input_Voltage_MP", 0.0},
     };
 
-    motec_pdm_generic_output_t db;
+    motec_pdm_generic_output::motec_pdm_generic_output_t db;
     std::array<uint8_t, 8> data = {0x00, 0x05, 0x0a, 0x0f, 0x14, 0x19, 0x1e, 0x23};
-    bool decoded = db.decode(0x000505, data);
-    SPDLOG_INFO("decoded = {}", decoded);
+    auto decoded = db.decode(0x000505, data);
+    SPDLOG_INFO("decoded = {}", db.get_message_name(decoded));
 
     db.PDM_Input_Voltage_0x505.visit([&](const auto& value, const auto type_tag)
     {

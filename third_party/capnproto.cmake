@@ -30,4 +30,11 @@ Repository: https://github.com/capnproto/capnproto.git
 Tag/Version: 6846dff
 Shallow Clone: TRUE
 Patches Applied: None
-") 
+")
+
+# Create a custom target for calling `capnp id`.
+add_custom_target(capnp_id
+    COMMAND $<TARGET_FILE:capnp_tool> id
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS capnp_tool
+)
