@@ -47,6 +47,8 @@ static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, zenoh_pub
     outputs.setFrequency3(msg.Freq3);
     outputs.setFrequency4(msg.Freq4);
 
+    inputs_pub.put();
+
     SPDLOG_INFO("Ready to publish 'Inputs' message.");
 }
 
@@ -65,6 +67,8 @@ static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg
     outputs.setBatteryVolts(msg.Battery_Volts);
     outputs.setE888StatusFlags(msg.E888_Status_Flags);
     outputs.setFirmwareVersion(msg.Firmware_Version);
+
+    diagnostics_pub.put();
 
     SPDLOG_INFO("Ready to publish 'Diagnostics' message.");
 }

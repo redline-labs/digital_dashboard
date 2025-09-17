@@ -1,3 +1,5 @@
 add_subdirectory(racegrade_tc8)
 
+add_subdirectory(inspect)
+
 
