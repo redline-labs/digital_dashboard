@@ -4,6 +4,8 @@
 #include "racegrade_tc8_configure.capnp.h"
 #include "racegrade_tc8_signals.capnp.h"
 #include "racegrade_tc8/tc8_can_frame_parser.h"
+#include "pub_sub/zenoh_subscriber.h"
+#include "can_frame.capnp.h"
 
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
@@ -48,8 +50,6 @@ static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, zenoh_pub
     outputs.setFrequency4(msg.Freq4);
 
     inputs_pub.put();
-
-    SPDLOG_INFO("Ready to publish 'Inputs' message.");
 }
 
 static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg, zenoh_publisher::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
@@ -69,8 +69,6 @@ static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg
     outputs.setFirmwareVersion(msg.Firmware_Version);
 
     diagnostics_pub.put();
-
-    SPDLOG_INFO("Ready to publish 'Diagnostics' message.");
 }
 
 int main(int argc, char** argv)
@@ -102,31 +100,30 @@ int main(int argc, char** argv)
         handle_diagnostics_message(msg, diagnostics_pub);
     });
 
-    // Open a zenoh session with default config
-    try
-    {
-        const char* keyexpr = "nodes/racegrade_tc8/hello";
-        SPDLOG_INFO("Declaring queryable on '{}'", keyexpr);
+// Open a zenoh session with default config
+    const char* keyexpr = "nodes/racegrade_tc8/hello";
+    SPDLOG_INFO("Declaring queryable on '{}'", keyexpr);
 
-        pub_sub::ZenohService<RaceGradeTc8ConfigureRequest, RaceGradeTc8ConfigureResponse> service(
-            keyexpr, handle_service_request);
+    pub_sub::ZenohService<RaceGradeTc8ConfigureRequest, RaceGradeTc8ConfigureResponse> service(
+        keyexpr, handle_service_request);
 
-        
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to start zenoh queryable: {}", e.what());
-        return 1;
-    }
+    // Subscribe to CAN frames and feed parser using typed subscriber
+    zenoh_typed_subscriber::ZenohTypedSubscriber<CanFrame> can_subscriber(
+        "vehicle/can0/rx",
+        [&parser](CanFrame::Reader frame)
+        {
+            uint32_t id = frame.getId();
+            uint8_t len = frame.getLen();
+            auto dataList = frame.getData();
 
-    // Example synthetic frames for all mux groups (payloads arbitrary)
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x60,0,0,0,0,0,0,0}); // mux=3
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x80,0,0,0,0,0,0,0}); // mux=4
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x00,0,0,0,0,0,0,0}); // mux=0
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x20,0,0,0,0,0,0,0}); // mux=1
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x40,0,0,0,0,0,0,0}); // mux=2
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x60,0,0,0,0,0,0,0}); // mux=3
-    parser.handle_can_frame(motec_e888_rev1::Inputs_t::id, std::array<uint8_t, 8u>{0x80,0,0,0,0,0,0,0}); // mux=4
+            std::array<uint8_t, 8u> bytes{};
+            const size_t n = std::min<size_t>(8u, std::min<size_t>(len, dataList.size()));
+            for (size_t i = 0; i < n; ++i)
+            {
+                bytes[i] = static_cast<uint8_t>(dataList[i]);
+            }
+            parser.handle_can_frame(id, bytes);
+        });
 
     // Keep the process alive; Ctrl+C to exit
     for (;;)

@@ -6,7 +6,7 @@
 #include <mutex>
 #include <optional>
 
-namespace zenoh_session_manager
+namespace pub_sub
 {
 
 class SessionManager
@@ -27,7 +27,7 @@ class SessionManager
     static zenoh::Config zenoh_config_;
 };
 
-} // namespace zenoh_session_manager
+} // namespace pub_sub
 
 #endif // ZENOH_SESSION_MANAGER_H
 

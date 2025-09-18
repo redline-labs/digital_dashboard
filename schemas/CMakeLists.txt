@@ -9,6 +9,7 @@ set(SCHEMA_FILES
 
     racegrade_tc8_configure.capnp
     racegrade_tc8_signals.capnp
+    can_frame.capnp
 )
 
 set(GENERATED_SOURCES)

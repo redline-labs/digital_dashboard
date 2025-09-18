@@ -16,7 +16,7 @@
 
 #include <string_view>
 
-namespace zenoh_publisher
+namespace pub_sub
 {
 
 // Helper that owns a zenoh::Publisher and a Cap'n Proto message builder for schema T.
@@ -91,7 +91,7 @@ private:
     SchemaBuilder mBuilder;
 };
 
-}  // namespace zenoh_publisher
+}  // namespace pub_sub
 
 #endif // ZENOH_PUBLISHER_H_
 

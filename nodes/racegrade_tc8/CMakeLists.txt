@@ -22,11 +22,11 @@ target_link_libraries(racegrade_tc8 PRIVATE
     motec_e888_rev1
 )
 
-add_executable(racegrade_tc8_querier
-    test/main.cpp
+add_executable(test_racegrade_tc8_query
+    test/test_racegrade_tc8_query.cpp
 )
 
-target_link_libraries(racegrade_tc8_querier PRIVATE
+target_link_libraries(test_racegrade_tc8_query PRIVATE
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

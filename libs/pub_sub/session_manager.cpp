@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace zenoh_session_manager
+namespace pub_sub
 {
 
 std::mutex SessionManager::mutex_ = {};
@@ -53,6 +53,6 @@ void SessionManager::shutdown()
     weak_session_.reset();
 }
 
-} // namespace zenoh_session_manager
+} // namespace pub_sub
 
 

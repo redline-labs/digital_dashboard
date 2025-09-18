@@ -1,5 +1,8 @@
 #include "pub_sub/schema_registry.h"
 
+namespace pub_sub
+{
+
 // Include all known schemas to get their IDs.  This gets populated by the CMake script.
 @SCHEMA_INCLUDES@
 
@@ -27,3 +30,5 @@ capnp::Schema get_schema(schema_type_t schema_type)
 
     return {};
 }
+
+} // namespace pub_sub

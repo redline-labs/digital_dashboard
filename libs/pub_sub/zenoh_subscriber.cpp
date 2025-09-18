@@ -11,7 +11,7 @@
 #include <sstream>
 #include <capnp/serialize.h>
 
-namespace zenoh_subscriber
+namespace pub_sub
 {
 
 ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
@@ -289,4 +289,4 @@ void ZenohSubscriber::extractFieldValues(capnp::DynamicStruct::Reader reader)
     }
 }
 
-} // namespace expression_parser
+} // namespace pub_sub

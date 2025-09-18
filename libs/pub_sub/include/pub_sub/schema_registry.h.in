@@ -1,5 +1,5 @@
-#ifndef SCHEMA_REGISTRY_H
-#define SCHEMA_REGISTRY_H
+#ifndef SCHEMA_REGISTRY_H_
+#define SCHEMA_REGISTRY_H_
 
 #include <array>
 #include <cstdint>
@@ -10,6 +10,9 @@
 #include "reflection/reflection.h"
 
 @SCHEMA_INCLUDES@
+
+namespace pub_sub
+{
 
 REFLECT_ENUM(schema_type_t@SCHEMA_ENUM_LIST@
 );
@@ -30,4 +33,6 @@ struct schema_traits;
 
 @SCHEMA_TYPE_TRAITS@
 
-#endif // SCHEMA_REGISTRY_H 
+} // namespace pub_sub
+
+#endif // SCHEMA_REGISTRY_H_

@@ -18,7 +18,7 @@
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 
-using namespace zenoh_subscriber;
+using namespace pub_sub;
 
 // Helper function to create a VehicleSpeed message
 std::vector<uint8_t> createVehicleSpeedMessage(float speedMps, uint64_t timestamp) {
