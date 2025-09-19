@@ -5,6 +5,11 @@ project(inspect)
 add_executable(inspect
     main.cpp
     dump.cpp
+    info.cpp
+)
+
+target_include_directories(inspect PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(inspect PRIVATE

@@ -1,4 +1,4 @@
-#include "dump.h"
+#include "inspect/dump.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>

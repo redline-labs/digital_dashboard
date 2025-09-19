@@ -3,32 +3,67 @@
 #include <string>
 #include <vector>
 
-#include "dump.h"
+#include "inspect/dump.h"
+#include "inspect/info.h"
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
-    if (argc < 2) {
-        SPDLOG_INFO("Usage: inspect <verb> [options]\n  Verbs:\n    dump   Subscribe and print payloads\n");
+    // Parse only the verb here; allow unrecognised options so per-verb flags can be parsed by handlers.
+    cxxopts::Options options("inspect", "Zenoh inspector");
+    options.allow_unrecognised_options();
+    options.add_options()
+        ("h,help", "Print usage")
+        ("verb", "Verb to execute", cxxopts::value<std::string>())
+        ("debug", "Enable debug logging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
+
+    options.parse_positional({"verb"});
+
+    cxxopts::ParseResult parsed;
+    try
+    {
+        parsed = options.parse(argc, argv);
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("{}", e.what());
+        SPDLOG_INFO("Usage: inspect <verb> [options]\n  Verbs:\n    dump   Subscribe and print payloads\n    info   Show schema and publisher info");
+        return 1;
+    }
+
+    if (parsed["debug"].as<bool>())
+    {
+        spdlog::set_level(spdlog::level::debug);
+    }
+
+    if (parsed.count("help") && parsed.count("verb") == 0)
+    {
+        SPDLOG_INFO(
+            "Usage: inspect <verb> [options]\n"
+            "\n"
+            " --debug  Enable debug logging\n"
+            "\n"
+            "  Verbs:\n"
+            "    dump   Subscribe and print payloads\n"
+            "    info   Show schema and publisher info"
+        );
         return 0;
     }
 
-    // Extract verb and forward remaining args to verb handler.
-    const std::string verb = argv[1];
+    const std::string verb = parsed["verb"].as<std::string>();
 
-    // Build argv slice for the verb: program name becomes "inspect <verb>"
-    // We will pass (argc-1, argv+1) so that verb handler sees its own argv[0] as the verb.
-    int verb_argc = argc - 1;
-    char** verb_argv = argv + 1;
-
-    if (verb == "dump") {
-        return run_dump(verb_argc, verb_argv);
+    if (verb == "dump")
+    {
+        return run_dump(argc, argv);
+    }
+    if (verb == "info")
+    {
+        return run_info(argc, argv);
     }
 
     SPDLOG_ERROR("Unknown verb: '{}'", verb);
-    SPDLOG_INFO("Available verbs: dump");
+    SPDLOG_INFO("Available verbs: dump, info");
     return 1;
 }
 
