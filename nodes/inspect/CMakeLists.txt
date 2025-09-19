@@ -8,6 +8,7 @@ add_executable(inspect
     info.cpp
     list.cpp
     nodes.cpp
+    hz.cpp
 )
 
 target_include_directories(inspect PRIVATE

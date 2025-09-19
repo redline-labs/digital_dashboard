@@ -7,6 +7,7 @@
 #include "inspect/info.h"
 #include "inspect/list.h"
 #include "inspect/nodes.h"
+#include "inspect/hz.h"
 
 int main(int argc, char** argv)
 {
@@ -50,7 +51,8 @@ int main(int argc, char** argv)
             "    dump   Subscribe and print payloads\n"
             "    info   Show schema and publisher info\n"
             "    list   List available keys (optional -k filter, default **)\n"
-            "    nodes  List peers and routers in the system"
+            "    nodes  List peers and routers in the system\n"
+            "    hz     Print per-second message rate for a key"
         );
         return 0;
     }
@@ -72,6 +74,10 @@ int main(int argc, char** argv)
     if (verb == "nodes")
     {
         return run_nodes(argc, argv);
+    }
+    if (verb == "hz")
+    {
+        return run_hz(argc, argv);
     }
 
     SPDLOG_ERROR("Unknown verb: '{}'", verb);
