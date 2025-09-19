@@ -5,6 +5,7 @@
 
 #include "inspect/dump.h"
 #include "inspect/info.h"
+#include "inspect/list.h"
 
 int main(int argc, char** argv)
 {
@@ -46,7 +47,8 @@ int main(int argc, char** argv)
             "\n"
             "  Verbs:\n"
             "    dump   Subscribe and print payloads\n"
-            "    info   Show schema and publisher info"
+            "    info   Show schema and publisher info\n"
+            "    list   List available keys (optional -k filter, default **)"
         );
         return 0;
     }
@@ -60,6 +62,10 @@ int main(int argc, char** argv)
     if (verb == "info")
     {
         return run_info(argc, argv);
+    }
+    if (verb == "list")
+    {
+        return run_list(argc, argv);
     }
 
     SPDLOG_ERROR("Unknown verb: '{}'", verb);
