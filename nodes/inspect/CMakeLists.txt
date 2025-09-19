@@ -4,6 +4,7 @@ project(inspect)
 
 add_executable(inspect
     main.cpp
+    dump.cpp
 )
 
 target_link_libraries(inspect PRIVATE
