@@ -17,9 +17,7 @@
 class QPainter;
 
 // Forward declarations
-namespace zenoh_subscriber {
-    class ZenohSubscriber;
-}
+namespace pub_sub { class ZenohExpressionSubscriber; }
 
 class Mercedes190ETachometer : public QWidget
 {
@@ -79,7 +77,7 @@ private:
     void updateClockTime();
 
     // Expression parser for RPM calculation
-    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> rpm_expression_parser_;
+    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> rpm_expression_parser_;
 };
 
 #endif // TACHOMETERWIDGET_H 

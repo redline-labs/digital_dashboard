@@ -24,11 +24,11 @@
 
 class TestDataPublisher {
 private:
-    zenoh_publisher::ZenohPublisher<VehicleSpeed> mSpeedHelper;
-    zenoh_publisher::ZenohPublisher<VehicleOdometer> mOdometerHelper;
-    zenoh_publisher::ZenohPublisher<EngineRpm> mRpmHelper;
-    zenoh_publisher::ZenohPublisher<EngineTemperature> mTemperatureHelper;
-    zenoh_publisher::ZenohPublisher<BatteryWarning> mBatteryWarningHelper;
+    pub_sub::ZenohPublisher<VehicleSpeed> mSpeedHelper;
+    pub_sub::ZenohPublisher<VehicleOdometer> mOdometerHelper;
+    pub_sub::ZenohPublisher<EngineRpm> mRpmHelper;
+    pub_sub::ZenohPublisher<EngineTemperature> mTemperatureHelper;
+    pub_sub::ZenohPublisher<BatteryWarning> mBatteryWarningHelper;
     bool mRunning;
     
     // Simulation parameters

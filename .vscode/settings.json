@@ -69,6 +69,7 @@
         "__config": "cpp",
         "ostream": "cpp",
         "*.md": "cpp",
-        "codecvt": "cpp"
+        "codecvt": "cpp",
+        "*.in": "cpp"
     }
 }

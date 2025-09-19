@@ -91,7 +91,7 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
     // Optional expression parser hookup
     try
     {
-        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
             _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
         if (_expression_parser->isValid())
         {

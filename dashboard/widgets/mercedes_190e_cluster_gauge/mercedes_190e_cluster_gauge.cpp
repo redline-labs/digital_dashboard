@@ -240,11 +240,11 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     
     // Initialize expression parsers for each sub-gauge
     auto initializeSubGaugeParser = [](const sub_gauge_config_t& gauge_config,
-                                          std::unique_ptr<zenoh_subscriber::ZenohSubscriber>& parser,
+                                          std::unique_ptr<pub_sub::ZenohExpressionSubscriber>& parser,
                                           const char* gauge_name)
     {
         try {
-            parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+            parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
                 gauge_config.schema_type,
                 gauge_config.value_expression,
                 gauge_config.zenoh_key
@@ -252,7 +252,7 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
             
             if (!parser->isValid()) {
                 SPDLOG_ERROR("Invalid {} gauge expression '{}' for schema '{}' in cluster gauge", 
-                            gauge_name, gauge_config.value_expression, reflection::enum_traits<schema_type_t>::to_string(gauge_config.schema_type));
+                            gauge_name, gauge_config.value_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(gauge_config.schema_type));
                 parser.reset();
             }
         } catch (const std::exception& e) {

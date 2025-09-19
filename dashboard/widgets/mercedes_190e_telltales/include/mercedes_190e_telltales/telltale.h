@@ -14,9 +14,7 @@
 // Forward declarations
 class QSvgRenderer;
 
-namespace zenoh_subscriber {
-    class ZenohSubscriber;
-}
+namespace pub_sub { class ZenohExpressionSubscriber; }
 
 
 class Mercedes190ETelltale : public QWidget
@@ -54,7 +52,7 @@ private:
     QString mSvgAlias;
 
     // Expression parser for condition evaluation
-    std::unique_ptr<zenoh_subscriber::ZenohSubscriber> _expression_parser;
+    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
 };
 
 #endif // TELLTALEWIDGET_H

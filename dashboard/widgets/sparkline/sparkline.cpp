@@ -65,7 +65,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
 
     try
     {
-        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
             _cfg.schema_type,
             _cfg.value_expression,
             _cfg.zenoh_key
@@ -78,7 +78,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
         }
         else
         {
-            SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, reflection::enum_traits<schema_type_t>::to_string(_cfg.schema_type));
+            SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(_cfg.schema_type));
             _expression_parser.reset();
         }
     }

@@ -22,7 +22,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     // Initialize speed expression parser
     try
     {
-        speed_expression_parser_ = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+        speed_expression_parser_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
             cfg_.schema_type,
             cfg_.speed_expression,
             cfg_.zenoh_key
@@ -31,13 +31,13 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
         if (!speed_expression_parser_->isValid())
         {
             SPDLOG_ERROR("Invalid speed expression '{}' for schema '{}' in speedometer", 
-                        cfg_.speed_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.schema_type));
+                        cfg_.speed_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.schema_type));
             speed_expression_parser_.reset(); // Disable expression parsing
         }
         else
         {
             SPDLOG_INFO("Speedometer initialized with speed expression: '{}' (schema: '{}')", 
-                       cfg_.speed_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.schema_type));
+                       cfg_.speed_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.schema_type));
         }
     }
     catch (const std::exception& e)
@@ -49,7 +49,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     // Initialize odometer expression parser (optional)
     try
     {
-        odometer_expression_parser_ = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+        odometer_expression_parser_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
             cfg_.odometer_schema_type,
             cfg_.odometer_expression,
             cfg_.odometer_zenoh_key
@@ -58,13 +58,13 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
         if (!odometer_expression_parser_->isValid())
         {
             SPDLOG_ERROR("Invalid odometer expression '{}' for schema '{}' in speedometer", 
-                        cfg_.odometer_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.odometer_schema_type));
+                        cfg_.odometer_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.odometer_schema_type));
             odometer_expression_parser_.reset();
         }
         else
         {
             SPDLOG_INFO("Speedometer initialized with odometer expression: '{}' (schema: '{}')", 
-                        cfg_.odometer_expression, reflection::enum_traits<schema_type_t>::to_string(cfg_.odometer_schema_type));
+                        cfg_.odometer_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.odometer_schema_type));
         }
     }
     catch (const std::exception& e)

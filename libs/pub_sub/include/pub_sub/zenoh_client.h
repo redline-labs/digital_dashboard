@@ -27,7 +27,7 @@ class ZenohClient
     using ResponseReader = typename ResponseT::Reader;
 
     ZenohClient(const std::string& keyexpr, uint64_t timeoutMs) :
-        mSession(zenoh_session_manager::SessionManager::getOrCreate()),
+        mSession(pub_sub::SessionManager::getOrCreate()),
         mRequest(mBuilder.template initRoot<RequestT>()),
         mKeyExpr(keyexpr),
         mTimeoutMs(timeoutMs)

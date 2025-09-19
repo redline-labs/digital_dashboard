@@ -20,8 +20,8 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 	_labelFont = QFont(family, 14, QFont::DemiBold);
 	_valueFont = QFont(family, 40, QFont::Bold);
 
-	try {
-		_expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+    try {
+        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
 			_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key);
 		if (_expression_parser->isValid()) {
 			_expression_parser->setResultCallback<double>([this](double v) {

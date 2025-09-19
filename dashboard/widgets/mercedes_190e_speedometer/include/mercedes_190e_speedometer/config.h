@@ -12,11 +12,11 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
     (uint32_t, odometer_value, 0),
     (uint16_t, max_speed, 125),
     (std::string, zenoh_key, ""),
-    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
     (std::string, speed_expression, ""),
     (std::string, odometer_expression, ""),
     (std::string, odometer_zenoh_key, ""),
-    (schema_type_t, odometer_schema_type, schema_type_t::VehicleOdometer),
+    (pub_sub::schema_type_t, odometer_schema_type, pub_sub::schema_type_t::VehicleOdometer),
     (std::vector<uint8_t>, shift_box_markers, {})
 )
 

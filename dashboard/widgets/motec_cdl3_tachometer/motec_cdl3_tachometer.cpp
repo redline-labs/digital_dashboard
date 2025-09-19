@@ -50,16 +50,14 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
     // Optional expression parser hookup
     try
     {
-        _expression_parser = std::make_unique<zenoh_subscriber::ZenohSubscriber>(
+        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
             _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
-        if (_expression_parser->isValid())
+        if (_expression_parser && _expression_parser->isValid())
         {
             _expression_parser->setResultCallback<float>([this](float rpm)
             {
                 QMetaObject::invokeMethod(this, "setRpm", Qt::QueuedConnection, Q_ARG(float, rpm));
             });
-        } else {
-            _expression_parser.reset();
         }
     }
     catch (const std::exception& e)

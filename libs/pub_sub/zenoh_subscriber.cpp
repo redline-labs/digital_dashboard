@@ -14,7 +14,7 @@
 namespace pub_sub
 {
 
-ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
+ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, const std::string& expression, const std::string& zenoh_key) :
     schema_type_{schema_type},
     expression_{expression},
     variables_{},
@@ -45,7 +45,7 @@ ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& e
     // Check if schema was found
     if (schema_.getProto().getId() == 0)
     {
-        SPDLOG_ERROR("Schema '{}' not found in registry", reflection::enum_traits<schema_type_t>::to_string(schema_type_));
+        SPDLOG_ERROR("Schema '{}' not found in registry", reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type_));
         is_valid_ = false;
         return;
     }
@@ -84,7 +84,7 @@ ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& e
 
     try
     {
-        zenoh_session_ = zenoh_session_manager::SessionManager::getOrCreate();
+        zenoh_session_ = SessionManager::getOrCreate();
         if (!zenoh_session_)
         {
             SPDLOG_ERROR("No zenoh session available to subscribe to '{}'", zenoh_key_);
@@ -124,7 +124,7 @@ ZenohSubscriber::ZenohSubscriber(schema_type_t schema_type, const std::string& e
     }
 }
 
-void ZenohSubscriber::extractVariables()
+void ZenohExpressionSubscriber::extractVariables()
 {
     // Use ExprTk's collect_variables utility function
     std::vector<std::string> variable_list;
@@ -145,7 +145,7 @@ void ZenohSubscriber::extractVariables()
     }
 }
 
-void ZenohSubscriber::validateVariablesAgainstSchema()
+void ZenohExpressionSubscriber::validateVariablesAgainstSchema()
 {
     // Get all field names from the schema
     auto schema_fields = getSchemaFieldNames(schema_);
@@ -155,13 +155,13 @@ void ZenohSubscriber::validateVariablesAgainstSchema()
     {
         if (schema_fields.find(var) == schema_fields.end())
         {
-            SPDLOG_ERROR("Variable '{}' not found in schema '{}'", var, reflection::enum_traits<schema_type_t>::to_string(schema_type_));
+            SPDLOG_ERROR("Variable '{}' not found in schema '{}'", var, reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type_));
             is_valid_ = false;
         }
     }
 }
 
-std::unordered_set<std::string> ZenohSubscriber::getSchemaFieldNames(const capnp::Schema& schema)
+std::unordered_set<std::string> ZenohExpressionSubscriber::getSchemaFieldNames(const capnp::Schema& schema)
 {
     std::unordered_set<std::string> field_names;
     
@@ -179,32 +179,32 @@ std::unordered_set<std::string> ZenohSubscriber::getSchemaFieldNames(const capnp
     return field_names;
 }
 
-const schema_type_t& ZenohSubscriber::getSchemaType() const
+const schema_type_t& ZenohExpressionSubscriber::getSchemaType() const
 {
     return schema_type_;
 }
 
-const std::string& ZenohSubscriber::getExpression() const
+const std::string& ZenohExpressionSubscriber::getExpression() const
 {
     return expression_;
 }
 
-const capnp::Schema& ZenohSubscriber::getSchema() const
+const capnp::Schema& ZenohExpressionSubscriber::getSchema() const
 {
     return schema_;
 }
 
-const std::map<std::string, double>& ZenohSubscriber::getVariables() const
+const std::map<std::string, double>& ZenohExpressionSubscriber::getVariables() const
 {
     return variables_;
 }
 
-bool ZenohSubscriber::isValid() const
+bool ZenohExpressionSubscriber::isValid() const
 {
     return is_valid_;
 }
 
-void ZenohSubscriber::buildFieldCache()
+void ZenohExpressionSubscriber::buildFieldCache()
 {
     field_cache_.clear();
     
@@ -252,7 +252,7 @@ void ZenohSubscriber::buildFieldCache()
     }
 }
 
-void ZenohSubscriber::extractFieldValues(capnp::DynamicStruct::Reader reader)
+void ZenohExpressionSubscriber::extractFieldValues(capnp::DynamicStruct::Reader reader)
 {
     // Use cached field information for fast extraction
     for (const auto& cached_field : field_cache_)

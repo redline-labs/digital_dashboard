@@ -25,7 +25,7 @@ static void handle_service_request(const RaceGradeTc8ConfigureRequest::Reader& r
     resp.setResponse(true);
 }
 
-static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, zenoh_publisher::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
+static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
 {
     auto& outputs = inputs_pub.fields();
     outputs.setVoltage1(msg.AV1);
@@ -52,7 +52,7 @@ static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, zenoh_pub
     inputs_pub.put();
 }
 
-static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg, zenoh_publisher::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
+static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
 {
     auto& outputs = diagnostics_pub.fields();
     outputs.setColdJunctionComp1(msg.Cold_Junct_Comp1);
@@ -88,8 +88,8 @@ int main(int argc, char** argv)
     }
 
     // Create the publishers for the Inputs and Diagnostics messages
-    zenoh_publisher::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
-    zenoh_publisher::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
+    pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
+    pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
 
     Tc8CanFrameParser parser;
     parser.set_Input_message_handler([&inputs_pub](const motec_e888_rev1::Inputs_t& msg){
@@ -108,7 +108,7 @@ int main(int argc, char** argv)
         keyexpr, handle_service_request);
 
     // Subscribe to CAN frames and feed parser using typed subscriber
-    zenoh_typed_subscriber::ZenohTypedSubscriber<CanFrame> can_subscriber(
+    pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
         [&parser](CanFrame::Reader frame)
         {

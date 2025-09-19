@@ -32,7 +32,7 @@ class ZenohService
     ZenohService(std::string keyexpr, Handler handler) :
         mKeyExpr(std::move(keyexpr)),
         mHandler(std::move(handler)),
-        mSession(zenoh_session_manager::SessionManager::getOrCreate())
+        mSession(pub_sub::SessionManager::getOrCreate())
     {
         
         auto on_query = [this](const zenoh::Query& query)

@@ -10,7 +10,7 @@ REFLECT_STRUCT(sub_gauge_config_t,
     (float, min_value, 0.0),
     (float, max_value, 100.0),
     (std::string, zenoh_key, ""),
-    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
     (std::string, value_expression, "")
 )
 

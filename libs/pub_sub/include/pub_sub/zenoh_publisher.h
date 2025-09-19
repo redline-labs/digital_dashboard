@@ -32,7 +32,7 @@ public:
     using SchemaBuilder = typename SchemaT::Builder;
 
     ZenohPublisher(std::string_view keyexpr) :
-        zenoh_session_(zenoh_session_manager::SessionManager::getOrCreate()),
+        zenoh_session_(pub_sub::SessionManager::getOrCreate()),
         mPublisher(std::make_unique<zenoh::Publisher>(zenoh_session_->declare_publisher(keyexpr))),
         mMessage{},
         mBuilder(mMessage.initRoot<SchemaT>())

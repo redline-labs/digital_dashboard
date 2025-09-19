@@ -19,6 +19,7 @@
 #include <exprtk.hpp>
 
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/session_manager.h"
 #include "spdlog/spdlog.h"
 
 namespace pub_sub
@@ -222,7 +223,7 @@ class ZenohTypedSubscriber
     ZenohTypedSubscriber(const std::string& zenoh_key,
                          std::function<void(Reader)> on_message) :
         zenoh_key_{zenoh_key},
-        zenoh_session_{zenoh_session_manager::SessionManager::getOrCreate()},
+        zenoh_session_{SessionManager::getOrCreate()},
         zenoh_subscriber_{}
     {
         if (!zenoh_session_)

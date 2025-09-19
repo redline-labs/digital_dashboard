@@ -60,7 +60,7 @@ int main(int argc, char** argv)
 
     try
     {
-        auto session = zenoh_session_manager::SessionManager::getOrCreate();
+        auto session = pub_sub::SessionManager::getOrCreate();
         if (!session)
         {
             SPDLOG_ERROR("Failed to obtain zenoh session");
@@ -83,7 +83,7 @@ int main(int argc, char** argv)
             if (found_schema == false)
             {
                 cached_schema_name = serialized_msg.get_encoding().as_string();
-                cached_schema = get_schema(cached_schema_name);
+                cached_schema = pub_sub::get_schema(cached_schema_name);
 
                 found_schema = cached_schema.getProto().getId() != 0;
                 if (found_schema == true)

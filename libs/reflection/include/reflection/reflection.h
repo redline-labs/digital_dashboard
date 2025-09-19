@@ -172,7 +172,42 @@ struct StructName { \
 // =========================
 
 template <typename Enum>
-struct enum_traits;
+struct enum_traits
+{
+    static constexpr auto names()
+    {
+        // ADL: finds enum_names(Enum{}) in the enum's namespace
+        return enum_names(Enum{});
+    }
+
+    static constexpr auto values()
+    {
+        // ADL: finds enum_values(Enum{}) in the enum's namespace
+        return enum_values(Enum{});
+    }
+
+    static constexpr std::string_view to_string(Enum v)
+    {
+        constexpr auto n = names();
+        constexpr auto vs = values();
+        for (std::size_t i = 0; i < n.size(); ++i)
+        {
+            if (vs[i] == v) return n[i];
+        }
+        return std::string_view{};
+    }
+
+    static constexpr Enum from_string(std::string_view s)
+    {
+        constexpr auto n = names();
+        constexpr auto vs = values();
+        for (std::size_t i = 0; i < n.size(); ++i)
+        {
+            if (n[i] == s) return vs[i];
+        }
+        throw std::invalid_argument("Invalid string for enum");
+    }
+};
 
 template <typename Enum>
 constexpr std::string_view enum_to_string(Enum v)
@@ -194,30 +229,12 @@ constexpr std::string_view enum_to_string(Enum v)
 enum class EnumName { \
     REFLECTION_FOR_EACH_LIST(REFLECTION_ENUM_DECLARE_VALUE, EnumName, __VA_ARGS__) \
 }; \
-template <> struct ::reflection::enum_traits<EnumName> { \
-    static constexpr auto names() { \
-        return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_ENUM_NAME_ITEM, EnumName, __VA_ARGS__) }; \
-    } \
-    static constexpr auto values() { \
-        return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_ENUM_VALUE_ITEM, EnumName, __VA_ARGS__) }; \
-    } \
-    static constexpr std::string_view to_string(EnumName v) { \
-        switch (v) { \
-            REFLECTION_FOR_EACH_SEQ(REFLECTION_ENUM_SWITCH_CASE, EnumName, __VA_ARGS__) \
-            default: return std::string_view{}; \
-        } \
-    } \
-    static constexpr EnumName from_string(std::string_view s) { \
-        constexpr auto n = names(); \
-        constexpr auto v = values(); \
-        for (std::size_t i = 0; i < n.size(); ++i) { \
-            if (n[i] == s) \
-            { \
-                return v[i]; \
-            } \
-        } \
-        throw std::invalid_argument("Invalid string for enum '" REFLECTION_STRINGIZE(EnumName) "'"); \
-    } \
-};
+/* Provide ADL hooks in the enum's namespace */ \
+constexpr auto enum_names(EnumName) { \
+    return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_ENUM_NAME_ITEM, EnumName, __VA_ARGS__) }; \
+} \
+constexpr auto enum_values(EnumName) { \
+    return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_ENUM_VALUE_ITEM, EnumName, __VA_ARGS__) }; \
+}
 
 }  // namespace reflection

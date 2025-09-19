@@ -31,7 +31,7 @@ int main(int argc, char** argv)
     const std::string key = result["key"].as<std::string>();
     SPDLOG_INFO("Publishing simulated TC8 CAN frames to '{}'", key);
 
-    zenoh_publisher::ZenohPublisher<CanFrame> pub(key);
+    pub_sub::ZenohPublisher<CanFrame> pub(key);
 
     // Initialize fixed-size payload buffer ONCE and reuse it to avoid message growth.
     pub.fields().setLen(8u);

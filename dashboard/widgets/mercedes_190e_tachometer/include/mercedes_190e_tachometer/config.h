@@ -11,7 +11,7 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (uint16_t, redline_rpm, 6000),
     (bool, show_clock, true),
     (std::string, zenoh_key, ""),
-    (schema_type_t, schema_type, schema_type_t::EngineRpm),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm),
     (std::string, rpm_expression, "")
 )
 

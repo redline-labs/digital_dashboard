@@ -19,7 +19,7 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
     (std::string, warning_color, "#FF0000"),
     (std::string, normal_color, "#333333"),
     (std::string, zenoh_key, ""),
-    (schema_type_t, schema_type, schema_type_t::VehicleSpeed),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
     (std::string, condition_expression, "")
 )
 

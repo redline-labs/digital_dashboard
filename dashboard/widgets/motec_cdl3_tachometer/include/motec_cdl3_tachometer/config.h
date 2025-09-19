@@ -9,7 +9,7 @@
 REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
     (uint32_t, max_rpm, 6000),
     (std::string, zenoh_key, ""),
-    (schema_type_t, schema_type, schema_type_t::EngineRpm),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm),
     (std::string, rpm_expression, "")
 )
 
