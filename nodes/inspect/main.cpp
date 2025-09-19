@@ -6,6 +6,7 @@
 #include "inspect/dump.h"
 #include "inspect/info.h"
 #include "inspect/list.h"
+#include "inspect/nodes.h"
 
 int main(int argc, char** argv)
 {
@@ -48,7 +49,8 @@ int main(int argc, char** argv)
             "  Verbs:\n"
             "    dump   Subscribe and print payloads\n"
             "    info   Show schema and publisher info\n"
-            "    list   List available keys (optional -k filter, default **)"
+            "    list   List available keys (optional -k filter, default **)\n"
+            "    nodes  List peers and routers in the system"
         );
         return 0;
     }
@@ -66,6 +68,10 @@ int main(int argc, char** argv)
     if (verb == "list")
     {
         return run_list(argc, argv);
+    }
+    if (verb == "nodes")
+    {
+        return run_nodes(argc, argv);
     }
 
     SPDLOG_ERROR("Unknown verb: '{}'", verb);

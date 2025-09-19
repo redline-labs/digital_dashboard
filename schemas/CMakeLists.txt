@@ -55,7 +55,7 @@ foreach(SCHEMA_FILE ${SCHEMA_FILES})
                 -oc++:${CMAKE_CURRENT_BINARY_DIR}
                 --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
                 ${CMAKE_CURRENT_SOURCE_DIR}/${SCHEMA_FILE}
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${SCHEMA_FILE} capnp_tool capnpc_cpp
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${SCHEMA_FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Generating C++ code from ${SCHEMA_FILE}"
         VERBATIM
@@ -71,9 +71,8 @@ foreach(SCHEMA_FILE ${SCHEMA_FILES})
 endforeach()
 
 # Create a library for all schemas
-add_library(schemas STATIC
-    ${GENERATED_SOURCES}
-)
+add_library(schemas STATIC ${GENERATED_SOURCES})
+set_source_files_properties(${GENERATED_SOURCES} PROPERTIES GENERATED TRUE)
 
 # Include directories
 target_include_directories(schemas PUBLIC

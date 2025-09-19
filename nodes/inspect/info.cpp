@@ -86,7 +86,7 @@ int run_info(int argc, char** argv)
             SPDLOG_INFO("schema: (unknown - no sample received)");
         }
 
-#if defined(ZENOHCXX) && defined(Z_FEATURE_UNSTABLE_API)
+#if defined(Z_FEATURE_UNSTABLE_API)
         if (publisher_id.has_value()) {
             SPDLOG_INFO("publisher: {}", *publisher_id);
         } else {

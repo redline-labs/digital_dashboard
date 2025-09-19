@@ -7,6 +7,7 @@ add_executable(inspect
     dump.cpp
     info.cpp
     list.cpp
+    nodes.cpp
 )
 
 target_include_directories(inspect PRIVATE
