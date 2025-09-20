@@ -36,7 +36,7 @@ constexpr std::array<WidgetInfo, 12> kAllWidgets =
 	{widget_type_t::mercedes_190e_telltale, "Mercedes 190E Telltale", Mercedes190ETelltale::kWidgetName},
 	{widget_type_t::motec_c125_tachometer, "MoTeC C125 Tachometer", MotecC125Tachometer::kWidgetName},
 	{widget_type_t::motec_cdl3_tachometer, "MoTeC CDL3 Tachometer", MotecCdl3Tachometer::kWidgetName},
-	{widget_type_t::carplay, "CarPlay", CarPlayWidget::kWidgetName}
+	//{widget_type_t::carplay, "CarPlay", CarPlayWidget::kWidgetName}
 }};
 
 template <typename Config> struct widget_traits;
@@ -104,12 +104,12 @@ struct widget_traits<ValueReadoutWidget::config_t>
 	using widget_t = ValueReadoutWidget;
 };
 
-template <>
+/*template <>
 struct widget_traits<CarPlayWidget::config_t>
 {
 	static constexpr widget_type_t type = widget_type_t::carplay;
 	using widget_t = CarPlayWidget;
-};
+};*/
 
 template <>
 struct widget_traits<Mercedes190ETelltale::config_t>
@@ -174,11 +174,11 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 			w = new MotecCdl3Tachometer(cfg, parent);
 			break;
 		}
-		case widget_type_t::carplay: {
+		/*case widget_type_t::carplay: {
 			CarplayConfig_t cfg;
 			w = new CarPlayWidget(cfg);
 			break;
-		}
+		}*/
 		case widget_type_t::unknown:
 		default:
 			w = nullptr;

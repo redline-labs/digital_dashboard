@@ -419,11 +419,11 @@ namespace
                     );
                     break;
 
-                case widget_type_t::carplay:
+                /*case widget_type_t::carplay:
                     frame->applyConfig(
                         readIntoConfig<CarPlayWidget::config_t>(page)
                     );
-                    break;
+                    break;*/
 
                 case widget_type_t::mercedes_190e_telltale:
                     frame->applyConfig(
@@ -533,7 +533,7 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         case widget_type_t::motec_cdl3_tachometer: page = buildFormFromConfig<MotecCdl3Tachometer::config_t>(this, static_cast<MotecCdl3Tachometer*>(uiWidget)->getConfig()); break;
         case widget_type_t::sparkline: page = buildFormFromConfig<SparklineItem::config_t>(this, static_cast<SparklineItem*>(uiWidget)->getConfig()); break;
         case widget_type_t::value_readout: page = buildFormFromConfig<ValueReadoutWidget::config_t>(this, static_cast<ValueReadoutWidget*>(uiWidget)->getConfig()); break;
-        case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this, static_cast<CarPlayWidget*>(uiWidget)->getConfig()); break;
+        /*case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this, static_cast<CarPlayWidget*>(uiWidget)->getConfig()); break;*/
         case widget_type_t::mercedes_190e_telltale: page = buildFormFromConfig<Mercedes190ETelltale::config_t>(this, static_cast<Mercedes190ETelltale*>(uiWidget)->getConfig()); break;
         case widget_type_t::unknown: default: break;
     }

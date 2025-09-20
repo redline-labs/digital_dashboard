@@ -9,7 +9,7 @@
 
 #include "reflection/reflection.h"
 
-#include "carplay/carplay_widget.h"
+//#include "carplay/carplay_widget.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "mercedes_190e_telltales/telltale.h"
@@ -32,7 +32,7 @@ REFLECT_ENUM(widget_type_t,
     value_readout,
     background_rect,
     sparkline,
-    carplay,
+    //carplay,
     unknown
 )
 
@@ -54,7 +54,7 @@ struct widget_config_t {
 
     std::variant<
         Mercedes190ESpeedometer::config_t,
-        CarPlayWidget::config_t,
+        //CarPlayWidget::config_t,
         Mercedes190ETachometer::config_t,
         Mercedes190ETelltale::config_t,
         SparklineItem::config_t,

@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.10)
 # Define the library name
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
-find_package(OpenGL REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets Multimedia)
 
 
@@ -38,7 +37,6 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::OpenGL
         Qt6::OpenGLWidgets
         Qt6::Multimedia
-        OpenGL::GL
         # Link nlohmann/json (now available from parent CMakeLists.txt)
         nlohmann_json::nlohmann_json
         reflection

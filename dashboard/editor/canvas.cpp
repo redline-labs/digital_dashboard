@@ -1,6 +1,7 @@
 #include "editor/canvas.h"
 #include "editor/editor_constants.h"
 #include "editor/selection_frame.h"
+//#include "carplay/carplay_widget.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -9,6 +10,7 @@
 #include <QLabel>
 #include <QApplication>
 #include <QKeyEvent>
+#include <variant>
 
 namespace {
     constexpr int kGridStepPx = 20;
@@ -31,6 +33,74 @@ Canvas::Canvas(QWidget* parent) :
     setFocusPolicy(Qt::StrongFocus);
 
     // Using per-widget SelectionFrame; no global overlay
+}
+
+void Canvas::clearAll()
+{
+    // Deselect existing
+    if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
+    selected_ = nullptr;
+    // Delete widgets
+    for (auto& item : items_)
+    {
+        if (item.widget)
+        {
+            item.widget->deleteLater();
+        }
+    }
+    items_.clear();
+    update();
+    emit selectionChanged(nullptr);
+}
+
+void Canvas::loadFromWindowConfig(const window_config_t& window_cfg)
+{
+    // Canvas adopts window size and background color
+    resize(window_cfg.width, window_cfg.height);
+    setBackgroundColor(QString::fromStdString(window_cfg.background_color));
+
+    // Remove existing
+    clearAll();
+
+    // Create and place widgets per config
+    for (const auto& wcfg : window_cfg.widgets)
+    {
+        SelectionFrame* frame = new SelectionFrame(wcfg.type, this);
+        if (!frame)
+        {
+            continue;
+        }
+
+        // Apply typed widget configuration
+        std::visit([&](auto const& cfg){ frame->applyConfig(cfg); }, wcfg.config);
+
+        // If child provides a size hint, prefer it, otherwise use config size
+        QSize targetSize(wcfg.width, wcfg.height);
+
+        frame->move(wcfg.x, wcfg.y);
+        if (frame->child()) frame->child()->resize(targetSize);
+        // Some widgets require explicit size propagation to internal content
+        /*if (auto* cp = qobject_cast<CarPlayWidget*>(frame->child()))
+        {
+            cp->setSize(targetSize.width(), targetSize.height());
+        }*/
+        frame->resize(targetSize);
+        frame->show();
+
+        // Apply editor mode mouse transparency
+        frame->setEditorModeCapture(editorMode_);
+
+        Item item;
+        item.widget = frame;
+        item.type = wcfg.type;
+        item.position = QPoint(wcfg.x, wcfg.y);
+        items_.push_back(std::move(item));
+    }
+
+    // No selection after load
+    selected_ = nullptr;
+    dragMode_ = DragMode::None;
+    update();
 }
 
 void Canvas::setEditorMode(bool enabled)

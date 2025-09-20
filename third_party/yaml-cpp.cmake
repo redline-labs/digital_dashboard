@@ -2,7 +2,7 @@
 FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG aa8d4e4
+    GIT_TAG 4fe2fb83fe77c3ebc49f56ef3a1fa24c77688d84
     GIT_SHALLOW TRUE
 )
 
@@ -23,7 +23,7 @@ file(COPY ${yaml-cpp_SOURCE_DIR}/LICENSE ${yaml-cpp_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/yaml-cpp/fetch_info.txt
 "Library: yaml-cpp
 Repository: https://github.com/jbeder/yaml-cpp.git
-Tag/Version: aa8d4e4
+Tag/Version: 4fe2fb83fe77c3ebc49f56ef3a1fa24c77688d84
 Shallow Clone: TRUE
 Patches Applied: None
 ")

@@ -42,7 +42,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     yaml-cpp::yaml-cpp
 
     # Link the carplay widget library
-    carplay_widget
+    #carplay_widget
     mercedes_190e_telltales
     mercedes_190e_speedometer
     mercedes_190e_tachometer
@@ -62,6 +62,9 @@ qt_add_executable(editor
     editor/canvas.cpp
     editor/properties_panel.cpp
     editor/selection_frame.cpp
+
+    dashboard/app_config.cpp  # TODO, kinda hack.
+
     resources.qrc
 )
 
@@ -71,12 +74,13 @@ target_link_libraries(editor PRIVATE
 
     # Reuse existing libraries and widgets
     common_logging
+    yaml-cpp::yaml-cpp
     zenoh_pub_sub
     helpers
 
     # Widgets available for instantiation
     mercedes_190e_telltales
-    carplay_widget
+    #carplay_widget
     mercedes_190e_speedometer
     mercedes_190e_tachometer
     sparkline

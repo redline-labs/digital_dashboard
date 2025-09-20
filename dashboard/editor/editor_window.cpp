@@ -14,7 +14,9 @@
 #include <QAction>
 #include <QToolButton>
 #include <QMenuBar>
+#include <QFileDialog>
 #include "spdlog/spdlog.h"
+#include "dashboard/app_config.h"
 
 EditorWindow::EditorWindow(QWidget* parent) :
   QMainWindow(parent),
@@ -95,8 +97,37 @@ void EditorWindow::buildMenuBar()
 {
     auto* fileMenu = menuBar()->addMenu("File");
 
+    auto loadFn = [this]()
+    {
+        QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
+        const QString path = QFileDialog::getOpenFileName(this,
+                                                          "Open Dashboard Config",
+                                                          startDir,
+                                                          "YAML Files (*.yaml *.yml)");
+        if (path.isEmpty())
+        {
+            return;
+        }
+        SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
+        auto cfg = load_app_config(path.toStdString());
+        if (!cfg || cfg->windows.empty())
+        {
+            SPDLOG_ERROR("Config has no windows or failed to load: {}", path.toStdString());
+            return;
+        }
+        const window_config_t& win = cfg->windows.front();
+        if (canvas_)
+        {
+            canvas_->loadFromWindowConfig(win);
+            statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
+                                     .arg(QString::fromStdString(win.name))
+                                     .arg(win.width)
+                                     .arg(win.height), 3000);
+        }
+    };
+
     auto* actionLoad = new QAction("Load", this);
-    connect(actionLoad, &QAction::triggered, this, [](){ SPDLOG_WARN("Oops"); });
+    connect(actionLoad, &QAction::triggered, this, loadFn);
     fileMenu->addAction(actionLoad);
 
     auto* actionSave = new QAction("Save", this);

@@ -2,7 +2,7 @@
 #define MAIN_WINDOW_H_
 
 #include "app_config.h"
-#include "carplay/carplay_widget.h"
+//#include "carplay/carplay_widget.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "sparkline/sparkline.h"

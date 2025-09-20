@@ -19,6 +19,8 @@ public:
     void setBackgroundColor(const QString& hexColor);
     // Enable/disable editor mode (selection, resize, gridlines, event interception)
     void setEditorMode(bool enabled);
+    // Clear and populate from a dashboard window configuration
+    void loadFromWindowConfig(const window_config_t& window_cfg);
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -55,6 +57,7 @@ private:
     void setMouseTransparentRecursive(QWidget* w, bool on);
     QWidget* topLevelWidgetAt(const QPoint& pos) const;
     DragMode hitTestSelectionAt(const QPoint& pos);
+    void clearAll();
 };
 
 #endif // DASHBOARD_EDITOR_CANVAS_H

@@ -16,7 +16,7 @@
 #include "motec_cdl3_tachometer/config.h"
 #include "sparkline/config.h"
 #include "value_readout/config.h"
-#include "carplay/config.h"
+//#include "carplay/config.h"
 #include "mercedes_190e_telltales/config.h"
 
 #include <spdlog/spdlog.h>
