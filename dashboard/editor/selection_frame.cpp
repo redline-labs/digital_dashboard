@@ -102,7 +102,6 @@ void SelectionFrame::paintEvent(QPaintEvent* /*event*/)
     if (overlay_)
     {
         overlay_->raise();
-        overlay_->update();
     }
 }
 
@@ -113,7 +112,10 @@ void SelectionFrame::resizeEvent(QResizeEvent* event)
     {
         child_->resize(size());
     }
-    if (overlay_) overlay_->resize(size());
+    if (overlay_)
+    {
+        overlay_->resize(size());
+    }
 }
 
 bool SelectionFrame::eventFilter(QObject* obj, QEvent* event)
