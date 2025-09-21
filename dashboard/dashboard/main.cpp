@@ -44,22 +44,12 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
 
     // Create windows from configuration
-    std::vector<std::unique_ptr<MainWindow>> windows;
+    MainWindow window(cfg.value());
 
     // Create configured windows
-    for (const auto& window_cfg : cfg.value().windows)
-    {
-        auto main_window = std::make_unique<MainWindow>(window_cfg);
+    window.show();
 
-        main_window->show();
-        windows.push_back(std::move(main_window));
-
-        SPDLOG_INFO("Created window '{}' ({}x{}) with {} widget{}.",
-                   window_cfg.name, window_cfg.width, window_cfg.height, window_cfg.widgets.size(),
-                   window_cfg.widgets.size() == 1 ? "" : "s");
-    }
-
-    SPDLOG_INFO("Starting with {} window{}.", windows.size(), windows.size() == 1 ? "" : "s");
+    SPDLOG_INFO("Starting with window '{}'.", window.getWindowName());
 
     std::signal(SIGINT, [](int /* signum */)
     {

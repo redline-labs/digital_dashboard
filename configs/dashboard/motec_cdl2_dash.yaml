@@ -1,33 +1,32 @@
 # Minimal configuration showing only the new circle_tachometer widget
-windows:
-  - name: "main"
+name: "main"
+width: 600
+height: 300
+background_color: "#73C3D0"
+widgets:
+  - type: motec_cdl3_tachometer
+    x: 20
+    y: -60 # TODO: our widget assumes its a square.
     width: 600
-    height: 300
-    background_color: "#73C3D0"
-    widgets:
-      - type: motec_cdl3_tachometer
-        x: 20
-        y: -60 # TODO: our widget assumes its a square.
-        width: 600
-        height: 600 # TODO: our widget assumes its a square.
-        config:
-          max_rpm: 6000
-          warning_rpm: 6500
-          center_page_digit: 5
-          zenoh_key: "vehicle/engine/rpm"
-          schema_type: "EngineRpm"
-          rpm_expression: "rpm"
+    height: 600 # TODO: our widget assumes its a square.
+    config:
+      max_rpm: 6000
+      warning_rpm: 6500
+      center_page_digit: 5
+      zenoh_key: "vehicle/engine/rpm"
+      schema_type: "EngineRpm"
+      rpm_expression: "rpm"
 
-      - type: static_text
-        x: 50
-        y: 240
-        width: 400
-        height: 50
-        config:
-          text: "CLUB DASH"
-          font: "DSEG14 Classic"
-          font_size: 50
-          color: "#000000"
+  - type: static_text
+    x: 50
+    y: 240
+    width: 400
+    height: 50
+    config:
+      text: "CLUB DASH"
+      font: "DSEG14 Classic"
+      font_size: 50
+      color: "#000000"
 
 
 

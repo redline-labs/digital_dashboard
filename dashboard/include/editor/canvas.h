@@ -20,9 +20,9 @@ public:
     // Enable/disable editor mode (selection, resize, gridlines, event interception)
     void setEditorMode(bool enabled);
     // Clear and populate from a dashboard window configuration
-    void loadFromWindowConfig(const window_config_t& window_cfg);
+    void loadFromAppConfig(const app_config_t& app_cfg);
     // Export current canvas as a window configuration with given name
-    window_config_t exportWindowConfig(const std::string& window_name) const;
+    app_config_t exportAppConfig(const std::string& window_name) const;
 
 signals:
     void selectionChanged(QWidget* selected);

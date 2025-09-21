@@ -1,163 +1,161 @@
-# Multi-window layout configuration with Zenoh real-time data subscriptions
-windows:
   # Instrument cluster window with gauges and telltales
-  - name: "instrument_cluster"
-    width: 1200
-    height: 450
-    background_color: "#555555"
-    widgets:
-      # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
-      - type: mercedes_190e_speedometer
-        x: 350
-        y: 15
-        width: 250
-        height: 250
-        config:
-          odometer_value: 123456  # Initial odometer value.
-          max_speed: 160  # Maximum speed to display on the arc in miles per hour.
-          shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
+name: "instrument_cluster"
+width: 1200
+height: 450
+background_color: "#000000"
+widgets:
+  # Mercedes 190E Speedometer on the left - subscribes to vehicle speed
+  - type: mercedes_190e_speedometer
+    x: 350
+    y: 15
+    width: 250
+    height: 250
+    config:
+      odometer_value: 123456  # Initial odometer value.
+      max_speed: 160  # Maximum speed to display on the arc in miles per hour.
+      shift_box_markers: [28, 54, 87]  # Boxes drawn on the arc to indicate points, in MPH.
+
+      # Data source for indicated speed. 
+      zenoh_key: "vehicle/speed_mps"
+      schema_type: "VehicleSpeed"
+      speed_expression: "mps_to_mph(speedMps)"
+      
+      # Data source for odometer.
+      odometer_zenoh_key: "vehicle/odometer"  # Real-time odometer data
+      odometer_schema_type: "VehicleOdometer"
+      odometer_expression: "totalMiles"  # Extract miles from odometer data
+
+
+  # Mercedes 190E Tachometer on the right
+  - type: mercedes_190e_tachometer
+    x: 650
+    y: 15
+    width: 250
+    height: 250
+    config:
+      zenoh_key: "vehicle/engine/rpm"
+      schema_type: "EngineRpm"
+      rpm_expression: "rpm"
+
+      max_rpm: 8000
+      redline_rpm: 7000
+      show_clock: true
+      
   
-          # Data source for indicated speed. 
-          zenoh_key: "vehicle/speed_mps"
-          schema_type: "VehicleSpeed"
-          speed_expression: "mps_to_mph(speedMps)"
-          
-          # Data source for odometer.
-          odometer_zenoh_key: "vehicle/odometer"  # Real-time odometer data
-          odometer_schema_type: "VehicleOdometer"
-          odometer_expression: "totalMiles"  # Extract miles from odometer data
-
-
-      # Mercedes 190E Tachometer on the right
-      - type: mercedes_190e_tachometer
-        x: 650
-        y: 15
-        width: 250
-        height: 250
-        config:
-          zenoh_key: "vehicle/engine/rpm"
-          schema_type: "EngineRpm"
-          rpm_expression: "rpm"
-
-          max_rpm: 8000
-          redline_rpm: 7000
-          show_clock: true
-          
+  # Telltale indicator - subscribes to a condition and shows an icon
+  - type: mercedes_190e_telltale
+    x: 50
+    y: 400
+    width: 30
+    height: 30
+    config:
+      telltale_type: battery  # one of: battery, brake_system, high_beam, windshield_washer
       
-      # Telltale indicator - subscribes to a condition and shows an icon
-      - type: mercedes_190e_telltale
-        x: 50
-        y: 400
-        width: 30
-        height: 30
-        config:
-          telltale_type: battery  # one of: battery, brake_system, high_beam, windshield_washer
-          
-          zenoh_key: "vehicle/telltales/battery_warning"
-          schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+      zenoh_key: "vehicle/telltales/battery_warning"
+      schema_type: "BatteryWarning"  # Cap'n Proto schema type
+      condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
-          normal_color: "#333333"
-          warning_color: "#FF0000"
-          
+      normal_color: "#333333"
+      warning_color: "#FF0000"
       
-      - type: mercedes_190e_telltale
-        x: 90
-        y: 400
-        width: 30
-        height: 30
-        config:
-          telltale_type: brake_system  # one of: battery, brake_system, high_beam, windshield_washer
+  
+  - type: mercedes_190e_telltale
+    x: 90
+    y: 400
+    width: 30
+    height: 30
+    config:
+      telltale_type: brake_system  # one of: battery, brake_system, high_beam, windshield_washer
 
-          zenoh_key: "vehicle/telltales/battery_warning"
-          schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+      zenoh_key: "vehicle/telltales/battery_warning"
+      schema_type: "BatteryWarning"  # Cap'n Proto schema type
+      condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
-          normal_color: "#333333"
-          warning_color: "#FF0000"
-          
-      - type: mercedes_190e_telltale
-        x: 130
-        y: 400
-        width: 30
-        height: 30
-        config:
-          telltale_type: high_beam  # one of: battery, brake_system, high_beam, windshield_washer
+      normal_color: "#333333"
+      warning_color: "#FF0000"
+      
+  - type: mercedes_190e_telltale
+    x: 130
+    y: 400
+    width: 30
+    height: 30
+    config:
+      telltale_type: high_beam  # one of: battery, brake_system, high_beam, windshield_washer
 
-          zenoh_key: "vehicle/telltales/battery_warning"
-          schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+      zenoh_key: "vehicle/telltales/battery_warning"
+      schema_type: "BatteryWarning"  # Cap'n Proto schema type
+      condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
-          normal_color: "#333333"
-          warning_color: "#FF0000"
-          
-      - type: mercedes_190e_telltale
-        x: 170
-        y: 400
-        width: 30
-        height: 30
-        config:
-          telltale_type: windshield_washer  # one of: battery, brake_system, high_beam, windshield_washer
-          
-          zenoh_key: "vehicle/telltales/battery_warning"
-          schema_type: "BatteryWarning"  # Cap'n Proto schema type
-          condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
+      normal_color: "#333333"
+      warning_color: "#FF0000"
+      
+  - type: mercedes_190e_telltale
+    x: 170
+    y: 400
+    width: 30
+    height: 30
+    config:
+      telltale_type: windshield_washer  # one of: battery, brake_system, high_beam, windshield_washer
+      
+      zenoh_key: "vehicle/telltales/battery_warning"
+      schema_type: "BatteryWarning"  # Cap'n Proto schema type
+      condition_expression: "batteryVoltage < 12.0"  # Uses batteryVoltage from BatteryWarning schema
 
-          normal_color: "#333333"
-          warning_color: "#FF0000"
-          
+      normal_color: "#333333"
+      warning_color: "#FF0000"
+      
 
-      # Sparkline for engine data on top - subscribes to engine temperature
-      - type: sparkline
-        x: 950
-        y: 15
-        width: 200
-        height: 40
-        config:
-          zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
-          schema_type: "EngineTemperature"
-          value_expression: "temperatureCelsius"
+  # Sparkline for engine data on top - subscribes to engine temperature
+  - type: sparkline
+    x: 950
+    y: 15
+    width: 200
+    height: 40
+    config:
+      zenoh_key: "vehicle/engine/temperature_celsius"  # Real-time temperature data
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius"
 
-          units: "Coolant (C)"
-          min_value: -40
-          max_value: 120
-          line_color: "#FFA500"
-          text_color: "#FFFFFF"
-          font_family: "Futura"
-          update_rate: 30
+      units: "Coolant (C)"
+      min_value: -40
+      max_value: 120
+      line_color: "#FFA500"
+      text_color: "#FFFFFF"
+      font_family: "Futura"
+      update_rate: 30
 
-      # Cluster gauge for all gauges
-      - type: mercedes_190e_cluster_gauge
-        x: 50
-        y: 15
-        width: 250
-        height: 250
-        config:
-          fuel_gauge:
-            min_value: 0
-            max_value: 100
+  # Cluster gauge for all gauges
+  - type: mercedes_190e_cluster_gauge
+    x: 50
+    y: 15
+    width: 250
+    height: 250
+    config:
+      fuel_gauge:
+        min_value: 0
+        max_value: 100
 
-            zenoh_key: "vehicle/speed_mps"
-            schema_type: "VehicleSpeed"
-            value_expression: "speedMps"
-          right_gauge:
-            min_value: 0
-            max_value: 3
+        zenoh_key: "vehicle/speed_mps"
+        schema_type: "VehicleSpeed"
+        value_expression: "speedMps"
+      right_gauge:
+        min_value: 0
+        max_value: 3
 
-            zenoh_key: "vehicle/speed_mps"
-            schema_type: "VehicleSpeed"
-            value_expression: "psi_to_bar(speedMps)"
-          bottom_gauge:
-            min_value: 0
-            max_value: 80
+        zenoh_key: "vehicle/speed_mps"
+        schema_type: "VehicleSpeed"
+        value_expression: "psi_to_bar(speedMps)"
+      bottom_gauge:
+        min_value: 0
+        max_value: 80
 
-            zenoh_key: "vehicle/engine/temperature_celsius"
-            schema_type: "EngineTemperature"
-            value_expression: "temperatureCelsius"
-          left_gauge:
-            min_value: 40
-            max_value: 120
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        value_expression: "temperatureCelsius"
+      left_gauge:
+        min_value: 40
+        max_value: 120
 
-            zenoh_key: "vehicle/engine/temperature_celsius"
-            schema_type: "EngineTemperature"
-            value_expression: "temperatureCelsius"
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        value_expression: "temperatureCelsius"

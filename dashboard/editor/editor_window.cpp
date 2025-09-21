@@ -122,19 +122,19 @@ void EditorWindow::loadConfig()
     }
     SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
     auto cfg = load_app_config(path.toStdString());
-    if (!cfg || cfg->windows.empty())
+    if (!cfg)
     {
-        SPDLOG_ERROR("Config has no windows or failed to load: {}", path.toStdString());
+        SPDLOG_ERROR("Config failed to load: {}", path.toStdString());
         return;
     }
-    const window_config_t& win = cfg->windows.front();
+
     if (canvas_)
     {
-        canvas_->loadFromWindowConfig(win);
+        canvas_->loadFromAppConfig(cfg.value());
         statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
-                                 .arg(QString::fromStdString(win.name))
-                                 .arg(win.width)
-                                 .arg(win.height), 3000);
+                                 .arg(QString::fromStdString(cfg.value().name))
+                                 .arg(cfg.value().width)
+                                 .arg(cfg.value().height), 3000);
     }
 }
 
@@ -150,9 +150,7 @@ void EditorWindow::saveConfig()
     if (path.isEmpty()) return;
 
     // Export current canvas to a single-window app config
-    window_config_t win = canvas_->exportWindowConfig("editor_window");
-    app_config_t app;
-    app.windows.push_back(std::move(win));
+    app_config_t app = canvas_->exportAppConfig("editor_window");
 
     try
     {

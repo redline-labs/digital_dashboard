@@ -69,19 +69,13 @@ struct widget_config_t {
         BackgroundRectWidget::config_t> config;
 };
 
-REFLECT_STRUCT(window_config_t,
+REFLECT_STRUCT(app_config_t,
     (std::string, name, ""),
     (uint16_t, width, 800),
     (uint16_t, height, 480),
     (std::string, background_color, "#000000"),
     (std::vector<widget_config_t>, widgets, {})
 )
-
-REFLECT_STRUCT(app_config_t,
-    (std::vector<window_config_t>, windows, {})
-)
-
-
 
 
 #define YAML_CONFIG_STRUCT(reflect_struct_name) \
@@ -168,7 +162,6 @@ YAML_CONFIG_STRUCT(carplay_phone_config_t);
 YAML_CONFIG_STRUCT(android_auto_phone_config_t);
 YAML_CONFIG_STRUCT(CarplayConfig_t);
 */
-YAML_CONFIG_STRUCT(window_config_t);
 YAML_CONFIG_STRUCT(app_config_t);
 
 

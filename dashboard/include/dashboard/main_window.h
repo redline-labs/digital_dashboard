@@ -29,7 +29,7 @@ class MainWindow : public QWidget
     Q_OBJECT
 
   public:
-    MainWindow(const window_config_t& window_cfg);
+    MainWindow(const app_config_t& app_cfg);
     ~MainWindow();
 
     // Get the window name for identification
@@ -39,7 +39,7 @@ class MainWindow : public QWidget
     void createWidgetsFromConfig();
     QWidget* createWidget(const widget_config_t& widget_config);
 
-    window_config_t _window_cfg;
+    app_config_t _app_cfg;
     std::vector<std::unique_ptr<QWidget>> _widgets;
 };  // class MainWindow
 

@@ -53,17 +53,17 @@ void Canvas::clearAll()
     emit selectionChanged(nullptr);
 }
 
-void Canvas::loadFromWindowConfig(const window_config_t& window_cfg)
+void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 {
     // Canvas adopts window size and background color
-    resize(window_cfg.width, window_cfg.height);
-    setBackgroundColor(QString::fromStdString(window_cfg.background_color));
+    resize(app_cfg.width, app_cfg.height);
+    setBackgroundColor(QString::fromStdString(app_cfg.background_color));
 
     // Remove existing
     clearAll();
 
     // Create and place widgets per config
-    for (const auto& wcfg : window_cfg.widgets)
+    for (const auto& wcfg : app_cfg.widgets)
     {
         SelectionFrame* frame = new SelectionFrame(wcfg.type, this);
         if (!frame)
@@ -103,13 +103,13 @@ void Canvas::loadFromWindowConfig(const window_config_t& window_cfg)
     update();
 }
 
-window_config_t Canvas::exportWindowConfig(const std::string& window_name) const
+app_config_t Canvas::exportAppConfig(const std::string& window_name) const
 {
-    window_config_t wcfg;
-    wcfg.name = window_name;
-    wcfg.width = static_cast<uint16_t>(width());
-    wcfg.height = static_cast<uint16_t>(height());
-    wcfg.background_color = backgroundColorHex_.toStdString();
+    app_config_t cfg;
+    cfg.name = window_name;
+    cfg.width = static_cast<uint16_t>(width());
+    cfg.height = static_cast<uint16_t>(height());
+    cfg.background_color = backgroundColorHex_.toStdString();
 
     for (const auto& item : items_)
     {
@@ -117,10 +117,11 @@ window_config_t Canvas::exportWindowConfig(const std::string& window_name) const
         const QRect rect = widgetRect(item.widget);
         if (auto* frame = qobject_cast<SelectionFrame*>(item.widget))
         {
-            wcfg.widgets.push_back(frame->toWidgetConfig(rect));
+            cfg.widgets.push_back(frame->toWidgetConfig(rect));
         }
     }
-    return wcfg;
+
+    return cfg;
 }
 
 void Canvas::setEditorMode(bool enabled)

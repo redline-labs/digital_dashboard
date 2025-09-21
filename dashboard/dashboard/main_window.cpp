@@ -9,16 +9,16 @@
 
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
 
-MainWindow::MainWindow(const window_config_t& window_cfg):
+MainWindow::MainWindow(const app_config_t& app_cfg):
     QWidget{},
-    _window_cfg{window_cfg}
+    _app_cfg{app_cfg}
 {
-    setWindowTitle(QString("Redline Dash - %1").arg(QString::fromStdString(_window_cfg.name)));
-    setFixedSize(_window_cfg.width, _window_cfg.height);
+    setWindowTitle(QString("Redline Dash - %1").arg(QString::fromStdString(_app_cfg.name)));
+    setFixedSize(_app_cfg.width, _app_cfg.height);
 
     // Set background color from configuration
     setStyleSheet(QString("MainWindow { background-color: %1; }")
-                 .arg(QString::fromStdString(_window_cfg.background_color)));
+                 .arg(QString::fromStdString(_app_cfg.background_color)));
 
     // Create widgets from configuration
     createWidgetsFromConfig();
@@ -32,7 +32,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::createWidgetsFromConfig()
 {
-    for (const auto& widget_config : _window_cfg.widgets)
+    for (const auto& widget_config : _app_cfg.widgets)
     {
         QWidget* widget = createWidget(widget_config);
         if (widget)
@@ -51,13 +51,13 @@ void MainWindow::createWidgetsFromConfig()
                 widget_config.y, 
                 widget_config.width,
                 widget_config.height,
-                _window_cfg.name);
+                _app_cfg.name);
         }
         else
         {
             SPDLOG_ERROR("Failed to create widget of type '{}' in window '{}'", 
                 reflection::enum_to_string(widget_config.type),
-                _window_cfg.name);
+                _app_cfg.name);
         }
     }
 }
@@ -131,7 +131,7 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
 
 const std::string& MainWindow::getWindowName() const
 {
-    return _window_cfg.name;
+    return _app_cfg.name;
 }
 
 #include "dashboard/moc_main_window.cpp"

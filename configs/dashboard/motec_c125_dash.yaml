@@ -1,141 +1,140 @@
 # Minimal configuration showing only the new circle_tachometer widget
-windows:
-  - name: "main"
+name: "main"
+width: 800
+height: 480
+background_color: "#000000"
+widgets:
+
+  # Center tachometer.
+  - type: motec_c125_tachometer
+    x: 150
+    y: 10
+    width: 500
+    height: 500
+    config:
+      max_rpm: 6000
+      redline_rpm: 5000
+      center_page_digit: 5
+      zenoh_key: "vehicle/engine/rpm"
+      schema_type: "EngineRpm"
+      rpm_expression: "rpm"
+
+  # Left Side.
+  - type: value_readout
+    x: 10
+    y: 40
+    width: 240
+    height: 120
+    config:
+      label_text: "ENGINE OIL TMP"
+      alignment: left
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius"
+
+  - type: value_readout
+    x: 10
+    y: 140
+    width: 240
+    height: 120
+    config:
+      label_text: "GBOX OIL TMP"
+      alignment: left
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius * 2"
+
+  - type: value_readout
+    x: 10
+    y: 240
+    width: 240
+    height: 120
+    config:
+      label_text: "DIFF OIL TMP"
+      alignment: left
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
+
+  # Right Side.
+  - type: value_readout
+    x: 550
+    y: 40
+    width: 240
+    height: 120
+    config:
+      label_text: "WATER TMP"
+      alignment: right
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius"
+
+  - type: value_readout
+    x: 550
+    y: 140
+    width: 240
+    height: 120
+    config:
+      label_text: "OIL PRESS"
+      alignment: right
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius * 2"
+
+  - type: value_readout
+    x: 550
+    y: 240
+    width: 240
+    height: 120
+    config:
+      label_text: "FUEL PRESS"
+      alignment: right
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
+
+  # Bottom bar.
+  - type: background_rect
+    x: 0
+    y: 350
     width: 800
-    height: 480
-    background_color: "#000000"
-    widgets:
+    height: 130
+    config:
+      colors: ["#222222", "#111111"]
+      direction: vertical
 
-      # Center tachometer.
-      - type: motec_c125_tachometer
-        x: 150
-        y: 10
-        width: 500
-        height: 500
-        config:
-          max_rpm: 6000
-          redline_rpm: 5000
-          center_page_digit: 5
-          zenoh_key: "vehicle/engine/rpm"
-          schema_type: "EngineRpm"
-          rpm_expression: "rpm"
+  - type: value_readout
+    x: 10
+    y: 360
+    width: 240
+    height: 120
+    config:
+      label_text: "REFERENCE LAP"
+      alignment: left
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "1 + temperatureCelsius"
 
-      # Left Side.
-      - type: value_readout
-        x: 10
-        y: 40
-        width: 240
-        height: 120
-        config:
-          label_text: "ENGINE OIL TMP"
-          alignment: left
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "temperatureCelsius"
+  - type: value_readout
+    x: 280
+    y: 360
+    width: 240
+    height: 120
+    config:
+      label_text: "GAIN/LOSS"
+      alignment: center
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "(temperatureCelsius - 90) * 0.5"
 
-      - type: value_readout
-        x: 10
-        y: 140
-        width: 240
-        height: 120
-        config:
-          label_text: "GBOX OIL TMP"
-          alignment: left
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "temperatureCelsius * 2"
-
-      - type: value_readout
-        x: 10
-        y: 240
-        width: 240
-        height: 120
-        config:
-          label_text: "DIFF OIL TMP"
-          alignment: left
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
-
-      # Right Side.
-      - type: value_readout
-        x: 550
-        y: 40
-        width: 240
-        height: 120
-        config:
-          label_text: "WATER TMP"
-          alignment: right
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "temperatureCelsius"
-
-      - type: value_readout
-        x: 550
-        y: 140
-        width: 240
-        height: 120
-        config:
-          label_text: "OIL PRESS"
-          alignment: right
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "temperatureCelsius * 2"
-
-      - type: value_readout
-        x: 550
-        y: 240
-        width: 240
-        height: 120
-        config:
-          label_text: "FUEL PRESS"
-          alignment: right
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
-
-      # Bottom bar.
-      - type: background_rect
-        x: 0
-        y: 350
-        width: 800
-        height: 130
-        config:
-          colors: ["#222222", "#111111"]
-          direction: vertical
-
-      - type: value_readout
-        x: 10
-        y: 360
-        width: 240
-        height: 120
-        config:
-          label_text: "REFERENCE LAP"
-          alignment: left
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "1 + temperatureCelsius"
-
-      - type: value_readout
-        x: 280
-        y: 360
-        width: 240
-        height: 120
-        config:
-          label_text: "GAIN/LOSS"
-          alignment: center
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "(temperatureCelsius - 90) * 0.5"
-
-      - type: value_readout
-        x: 550
-        y: 360
-        width: 240
-        height: 120
-        config:
-          label_text: "RUNNING LAP"
-          alignment: right
-          zenoh_key: "vehicle/engine/temperature_celsius"
-          schema_type: "EngineTemperature"
-          value_expression: "-0.5 * temperatureCelsius"
+  - type: value_readout
+    x: 550
+    y: 360
+    width: 240
+    height: 120
+    config:
+      label_text: "RUNNING LAP"
+      alignment: right
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "-0.5 * temperatureCelsius"
