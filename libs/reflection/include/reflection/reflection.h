@@ -141,7 +141,10 @@ constexpr void visit_fields(const Struct& object, Visitor&& visitor) {
 #define REFLECTION_FOR_EACH_SEQ(macro, StructName, ...) REFLECTION_EXPAND(GET_MACRO_1_20(__VA_ARGS__, REFLECTION_APPLY_SEQ_20, REFLECTION_APPLY_SEQ_19, REFLECTION_APPLY_SEQ_18, REFLECTION_APPLY_SEQ_17, REFLECTION_APPLY_SEQ_16, REFLECTION_APPLY_SEQ_15, REFLECTION_APPLY_SEQ_14, REFLECTION_APPLY_SEQ_13, REFLECTION_APPLY_SEQ_12, REFLECTION_APPLY_SEQ_11, REFLECTION_APPLY_SEQ_10, REFLECTION_APPLY_SEQ_9, REFLECTION_APPLY_SEQ_8, REFLECTION_APPLY_SEQ_7, REFLECTION_APPLY_SEQ_6, REFLECTION_APPLY_SEQ_5, REFLECTION_APPLY_SEQ_4, REFLECTION_APPLY_SEQ_3, REFLECTION_APPLY_SEQ_2, REFLECTION_APPLY_SEQ_1)(macro, StructName, __VA_ARGS__))
 
 // Initializer-supporting variant: each field must be a triple (Type, name, init)
-#define REFLECTION_INIT_EXPR(StructName, triple) REFLECTION_FIELD_NAME(triple){ REFLECTION_FIELD_INITVAL(triple) }
+// Use parentheses in member initializers so that `{}` becomes `field({})`.
+// This avoids accidental nested-brace initialization like `field{{}}`
+// which can construct a container with a single default element.
+#define REFLECTION_INIT_EXPR(StructName, triple) REFLECTION_FIELD_NAME(triple)( REFLECTION_FIELD_INITVAL(triple) )
 #define REFLECTION_DECLARE_MEMBER_FROM_TRIPLE(StructName, triple) REFLECTION_FIELD_TYPE(triple) REFLECTION_FIELD_NAME(triple);
 
 #define REFLECTION_FIELD_INFO_TRIPLE(StructName, triple) \

@@ -65,6 +65,11 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
     // Create and place widgets per config
     for (const auto& wcfg : app_cfg.widgets)
     {
+        if (wcfg.type == widget_type_t::unknown)
+        {
+            SPDLOG_WARN("Skipping widget with unknown type at ({}, {})", wcfg.x, wcfg.y);
+            continue;
+        }
         SelectionFrame* frame = new SelectionFrame(wcfg.type, this);
         if (!frame)
         {

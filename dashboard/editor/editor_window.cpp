@@ -111,10 +111,9 @@ void EditorWindow::buildMenuBar()
 
 void EditorWindow::loadConfig()
 {
-    QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
     const QString path = QFileDialog::getOpenFileName(this,
                                                       "Open Dashboard Config",
-                                                      startDir,
+                                                      "",
                                                       "YAML Files (*.yaml *.yml)");
     if (path.isEmpty())
     {
@@ -142,10 +141,9 @@ void EditorWindow::saveConfig()
 {
     if (!canvas_) return;
     // Ask for a filename in configs/dashboard
-    QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
     const QString path = QFileDialog::getSaveFileName(this,
                                                         "Save Dashboard Config",
-                                                        startDir + "/untitled.yaml",
+                                                        "untitled.yaml",
                                                         "YAML Files (*.yaml *.yml)");
     if (path.isEmpty()) return;
 
