@@ -55,12 +55,12 @@ void Canvas::clearAll()
 
 void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 {
+    // Remove existing first
+    clearAll();
+
     // Canvas adopts window size and background color
     resize(app_cfg.width, app_cfg.height);
     setBackgroundColor(QString::fromStdString(app_cfg.background_color));
-
-    // Remove existing
-    clearAll();
 
     // Create and place widgets per config
     for (const auto& wcfg : app_cfg.widgets)
