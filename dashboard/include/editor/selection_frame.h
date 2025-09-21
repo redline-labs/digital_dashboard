@@ -63,6 +63,66 @@ public:
         setChild(new widget_t(cfg, nullptr));
     }
 
+    // Convert the contained widget back into a widget_config_t for saving
+    widget_config_t toWidgetConfig(const QRect& frameRect) const
+    {
+        widget_config_t wc;
+        wc.type = type_;
+        wc.x = static_cast<int16_t>(frameRect.x());
+        wc.y = static_cast<int16_t>(frameRect.y());
+        wc.width = static_cast<uint16_t>(frameRect.width());
+        wc.height = static_cast<uint16_t>(frameRect.height());
+
+        if (!child_)
+        {
+            return wc;
+        }
+
+        switch (type_)
+        {
+            case widget_type_t::static_text:
+                wc.config = static_cast<StaticTextWidget*>(child_)->getConfig();
+                break;
+            case widget_type_t::background_rect:
+                wc.config = static_cast<BackgroundRectWidget*>(child_)->getConfig();
+                break;
+            case widget_type_t::mercedes_190e_cluster_gauge:
+                wc.config = static_cast<Mercedes190EClusterGauge*>(child_)->getConfig();
+                break;
+            case widget_type_t::mercedes_190e_speedometer:
+                wc.config = static_cast<Mercedes190ESpeedometer*>(child_)->getConfig();
+                break;
+            case widget_type_t::mercedes_190e_tachometer:
+                wc.config = static_cast<Mercedes190ETachometer*>(child_)->getConfig();
+                break;
+            case widget_type_t::motec_c125_tachometer:
+                wc.config = static_cast<MotecC125Tachometer*>(child_)->getConfig();
+                break;
+            case widget_type_t::motec_cdl3_tachometer:
+                wc.config = static_cast<MotecCdl3Tachometer*>(child_)->getConfig();
+                break;
+            case widget_type_t::sparkline:
+                wc.config = static_cast<SparklineItem*>(child_)->getConfig();
+                break;
+            case widget_type_t::value_readout:
+                wc.config = static_cast<ValueReadoutWidget*>(child_)->getConfig();
+                break;
+            case widget_type_t::mercedes_190e_telltale:
+                wc.config = static_cast<Mercedes190ETelltale*>(child_)->getConfig();
+                break;
+            //case widget_type_t::carplay:
+                // CarPlayWidget may be disabled; guard cast
+                // If enabled, prefer to read its config via getConfig
+                // wc.config = static_cast<CarPlayWidget*>(child_)->getConfig();
+                break;
+            case widget_type_t::unknown:
+            default:
+                break;
+        }
+
+        return wc;
+    }
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;

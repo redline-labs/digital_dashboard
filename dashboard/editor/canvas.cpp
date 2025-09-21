@@ -103,6 +103,26 @@ void Canvas::loadFromWindowConfig(const window_config_t& window_cfg)
     update();
 }
 
+window_config_t Canvas::exportWindowConfig(const std::string& window_name) const
+{
+    window_config_t wcfg;
+    wcfg.name = window_name;
+    wcfg.width = static_cast<uint16_t>(width());
+    wcfg.height = static_cast<uint16_t>(height());
+    wcfg.background_color = backgroundColorHex_.toStdString();
+
+    for (const auto& item : items_)
+    {
+        if (!item.widget) continue;
+        const QRect rect = widgetRect(item.widget);
+        if (auto* frame = qobject_cast<SelectionFrame*>(item.widget))
+        {
+            wcfg.widgets.push_back(frame->toWidgetConfig(rect));
+        }
+    }
+    return wcfg;
+}
+
 void Canvas::setEditorMode(bool enabled)
 {
     editorMode_ = enabled;
@@ -137,6 +157,7 @@ void Canvas::setBackgroundColor(const QString& hexColor)
     QPalette pal = palette();
     pal.setColor(QPalette::Window, QColor(hexColor));
     setPalette(pal);
+    backgroundColorHex_ = hexColor;
     update();
 }
 

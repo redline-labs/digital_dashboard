@@ -21,6 +21,8 @@ public:
     void setEditorMode(bool enabled);
     // Clear and populate from a dashboard window configuration
     void loadFromWindowConfig(const window_config_t& window_cfg);
+    // Export current canvas as a window configuration with given name
+    window_config_t exportWindowConfig(const std::string& window_name) const;
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -52,6 +54,7 @@ private:
     QPoint dragStartPos_;
     QRect dragStartRect_;
     bool editorMode_;
+    QString backgroundColorHex_ = "#1e1e1e";
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);

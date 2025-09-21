@@ -1,0 +1,50 @@
+windows:
+  - name: ""
+    width: 800
+    height: 480
+    background_color: "#000000"
+    widgets:
+      - x: 0
+        y: 0
+        width: 100
+        height: 100
+        type: unknown
+  - name: editor_window
+    width: 800
+    height: 600
+    background_color: "#1e1e1e"
+    widgets:
+      - x: 0
+        y: 0
+        width: 100
+        height: 100
+        type: unknown
+      - x: 65
+        y: 65
+        width: 200
+        height: 200
+        type: background_rect
+        config:
+          colors:
+            - "#FFFFFF"
+            - "#000000"
+            - "#FF0000"
+          direction: vertical
+      - x: 424
+        y: 133
+        width: 104
+        height: 63
+        type: sparkline
+        config:
+          units: Poop
+          min_value: 0
+          max_value: 100
+          line_color: "#0000FF"
+          text_color: "#FFFFFF"
+          font_family: Arial
+          font_size_value: 24
+          font_size_units: 10
+          update_rate: 30
+          zenoh_key: ""
+          schema_type: VehicleSpeed
+          value_expression: ""

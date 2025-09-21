@@ -16,6 +16,9 @@ public:
 
 private:
     void buildMenuBar();
+    void loadConfig();
+    void saveConfig();
+
     WidgetPalette* widgetPalette_;
     Canvas* canvas_;
     QAction* toggleInterceptAction_;

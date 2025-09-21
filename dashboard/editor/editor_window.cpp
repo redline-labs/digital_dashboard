@@ -18,6 +18,9 @@
 #include "spdlog/spdlog.h"
 #include "dashboard/app_config.h"
 
+#include <yaml-cpp/yaml.h>
+#include <fstream>
+
 EditorWindow::EditorWindow(QWidget* parent) :
   QMainWindow(parent),
   widgetPalette_(nullptr),
@@ -97,42 +100,76 @@ void EditorWindow::buildMenuBar()
 {
     auto* fileMenu = menuBar()->addMenu("File");
 
-    auto loadFn = [this]()
-    {
-        QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
-        const QString path = QFileDialog::getOpenFileName(this,
-                                                          "Open Dashboard Config",
-                                                          startDir,
-                                                          "YAML Files (*.yaml *.yml)");
-        if (path.isEmpty())
-        {
-            return;
-        }
-        SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
-        auto cfg = load_app_config(path.toStdString());
-        if (!cfg || cfg->windows.empty())
-        {
-            SPDLOG_ERROR("Config has no windows or failed to load: {}", path.toStdString());
-            return;
-        }
-        const window_config_t& win = cfg->windows.front();
-        if (canvas_)
-        {
-            canvas_->loadFromWindowConfig(win);
-            statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
-                                     .arg(QString::fromStdString(win.name))
-                                     .arg(win.width)
-                                     .arg(win.height), 3000);
-        }
-    };
-
     auto* actionLoad = new QAction("Load", this);
-    connect(actionLoad, &QAction::triggered, this, loadFn);
+    connect(actionLoad, &QAction::triggered, this, &EditorWindow::loadConfig);
     fileMenu->addAction(actionLoad);
 
     auto* actionSave = new QAction("Save", this);
-    connect(actionSave, &QAction::triggered, this, [](){ SPDLOG_WARN("Oopsies"); });
+    connect(actionSave, &QAction::triggered, this, &EditorWindow::saveConfig);
     fileMenu->addAction(actionSave);
 }
+
+void EditorWindow::loadConfig()
+{
+    QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
+    const QString path = QFileDialog::getOpenFileName(this,
+                                                      "Open Dashboard Config",
+                                                      startDir,
+                                                      "YAML Files (*.yaml *.yml)");
+    if (path.isEmpty())
+    {
+        return;
+    }
+    SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
+    auto cfg = load_app_config(path.toStdString());
+    if (!cfg || cfg->windows.empty())
+    {
+        SPDLOG_ERROR("Config has no windows or failed to load: {}", path.toStdString());
+        return;
+    }
+    const window_config_t& win = cfg->windows.front();
+    if (canvas_)
+    {
+        canvas_->loadFromWindowConfig(win);
+        statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
+                                 .arg(QString::fromStdString(win.name))
+                                 .arg(win.width)
+                                 .arg(win.height), 3000);
+    }
+}
+
+void EditorWindow::saveConfig()
+{
+    if (!canvas_) return;
+    // Ask for a filename in configs/dashboard
+    QString startDir = QString::fromUtf8("/Users/ryan/src/mercedes_dashboard/configs/dashboard");
+    const QString path = QFileDialog::getSaveFileName(this,
+                                                        "Save Dashboard Config",
+                                                        startDir + "/untitled.yaml",
+                                                        "YAML Files (*.yaml *.yml)");
+    if (path.isEmpty()) return;
+
+    // Export current canvas to a single-window app config
+    window_config_t win = canvas_->exportWindowConfig("editor_window");
+    app_config_t app;
+    app.windows.push_back(std::move(win));
+
+    try
+    {
+        YAML::Node node = YAML::convert<app_config_t>::encode(app);
+        YAML::Emitter emitter;
+        emitter << node;
+        std::ofstream ofs(path.toStdString());
+        ofs << emitter.c_str();
+        ofs.close();
+        statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
+        SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to save config: {}", e.what());
+    }
+}
+
 
 #include "editor/moc_editor_window.cpp"
