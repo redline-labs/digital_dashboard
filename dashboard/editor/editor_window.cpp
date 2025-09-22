@@ -134,6 +134,10 @@ void EditorWindow::loadConfig()
                                  .arg(QString::fromStdString(cfg.value().name))
                                  .arg(cfg.value().width)
                                  .arg(cfg.value().height), 3000);
+        if (auto* props = findChild<PropertiesPanel*>())
+        {
+            props->syncFromCanvas();
+        }
     }
 }
 

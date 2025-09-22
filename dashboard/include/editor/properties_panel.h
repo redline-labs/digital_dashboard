@@ -21,6 +21,7 @@ public:
 
 public slots:
     void setSelectedWidget(QWidget* w);
+    void syncFromCanvas();
 
 private:
     QPointer<QWidget> selected_;
@@ -36,7 +37,8 @@ private:
     QSpinBox* winWidthSpin_;
     QSpinBox* winHeightSpin_;
     QLineEdit* winBgColorEdit_;
-    Canvas* canvas_ = nullptr;
+    Canvas* canvas_;
+    bool isSyncing_;
 
     void showUnsupported(const QString& name);
     void buildWindowPage();

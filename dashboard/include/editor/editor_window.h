@@ -6,6 +6,7 @@
 class QAction;
 class WidgetPalette;
 class Canvas;
+class PropertiesPanel;
 
 class EditorWindow : public QMainWindow
 {

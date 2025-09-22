@@ -15,6 +15,7 @@
 namespace {
     constexpr int kGridStepPx = 20;
     constexpr QColor kGridColor = QColor(60,60,60);
+    constexpr QColor kDefaultBackgroundColor = QColor(30,30,30);
 }
 
 Canvas::Canvas(QWidget* parent) :
@@ -25,9 +26,10 @@ Canvas::Canvas(QWidget* parent) :
     setAutoFillBackground(true);
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(30,30,30));
-    setPalette(pal);
+
+    // Set the background color to the default.
+    setBackgroundColor(kDefaultBackgroundColor.name());
+
     // Default size
     resize(editor_defaults::kDefaultCanvasWidth, editor_defaults::kDefaultCanvasHeight);
     setFocusPolicy(Qt::StrongFocus);
@@ -114,7 +116,7 @@ app_config_t Canvas::exportAppConfig(const std::string& window_name) const
     cfg.name = window_name;
     cfg.width = static_cast<uint16_t>(width());
     cfg.height = static_cast<uint16_t>(height());
-    cfg.background_color = backgroundColorHex_.toStdString();
+    cfg.background_color = getBackgroundColorHex().toStdString();
 
     for (const auto& item : items_)
     {
@@ -163,7 +165,7 @@ void Canvas::setBackgroundColor(const QString& hexColor)
     QPalette pal = palette();
     pal.setColor(QPalette::Window, QColor(hexColor));
     setPalette(pal);
-    backgroundColorHex_ = hexColor;
+
     update();
 }
 
@@ -401,6 +403,11 @@ void Canvas::keyPressEvent(QKeyEvent* event)
         }
     }
     QWidget::keyPressEvent(event);
+}
+
+QString Canvas::getBackgroundColorHex() const
+{
+    return palette().color(QPalette::Window).name();
 }
 
 #include "editor/moc_canvas.cpp"

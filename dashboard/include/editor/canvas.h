@@ -23,6 +23,8 @@ public:
     void loadFromAppConfig(const app_config_t& app_cfg);
     // Export current canvas as a window configuration with given name
     app_config_t exportAppConfig(const std::string& window_name) const;
+    // Current background color hex string (e.g. "#1e1e1e")
+    QString getBackgroundColorHex() const;
 
 signals:
     void selectionChanged(QWidget* selected);
@@ -54,7 +56,6 @@ private:
     QPoint dragStartPos_;
     QRect dragStartRect_;
     bool editorMode_;
-    QString backgroundColorHex_ = "#1e1e1e";
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);

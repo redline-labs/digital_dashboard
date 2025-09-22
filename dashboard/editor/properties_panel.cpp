@@ -18,6 +18,7 @@
 #include <QCheckBox>
 #include <QFrame>
 #include <QScrollArea>
+#include <QSignalBlocker>
 
 #include <limits>
 
@@ -27,8 +28,12 @@
 #include <string>
 #include <vector>
 
-PropertiesPanel::PropertiesPanel(QWidget* parent)
-    : QWidget(parent), selected_(nullptr), stack_(new QStackedWidget(this))
+PropertiesPanel::PropertiesPanel(QWidget* parent):
+  QWidget(parent),
+  selected_(nullptr),
+  stack_(new QStackedWidget(this)),
+  canvas_(nullptr),
+  isSyncing_(false)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
@@ -52,11 +57,7 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
     canvas_ = canvas;
     if (canvas_ && windowPage_)
     {
-        winWidthSpin_->setValue(canvas_->width());
-        winHeightSpin_->setValue(canvas_->height());
-        // Set bg color field from palette if desired
-        const QColor c = canvas_->palette().color(QPalette::Window);
-        winBgColorEdit_->setText(c.name());
+        syncFromCanvas();
     }
 }
 
@@ -496,10 +497,7 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         if (windowPage_) stack_->setCurrentWidget(windowPage_);
         if (canvas_)
         {
-            winWidthSpin_->setValue(canvas_->width());
-            winHeightSpin_->setValue(canvas_->height());
-            const QColor c = canvas_->palette().color(QPalette::Window);
-            winBgColorEdit_->setText(c.name());
+            syncFromCanvas();
         }
         return;
     }
@@ -555,15 +553,31 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
 
 void PropertiesPanel::applyWindowEdits()
 {
+    if (isSyncing_) return; // avoid pushing during UI sync
     if (!canvas_) return;
     // Apply background immediately; name/size can be used for serialization later
-    if (!winBgColorEdit_->text().isEmpty()) {
+    if (!winBgColorEdit_->text().isEmpty())
+    {
         canvas_->setBackgroundColor(winBgColorEdit_->text());
     }
     if (winWidthSpin_->value() > 0 && winHeightSpin_->value() > 0) {
         // Resize the central canvas viewport for preview purposes
         canvas_->resize(winWidthSpin_->value(), winHeightSpin_->value());
     }
+}
+
+void PropertiesPanel::syncFromCanvas()
+{
+    if (!canvas_ || !windowPage_) return;
+    const QSignalBlocker b1(winNameEdit_);
+    const QSignalBlocker b2(winWidthSpin_);
+    const QSignalBlocker b3(winHeightSpin_);
+    const QSignalBlocker b4(winBgColorEdit_);
+    isSyncing_ = true;
+    winWidthSpin_->setValue(canvas_->width());
+    winHeightSpin_->setValue(canvas_->height());
+    winBgColorEdit_->setText(canvas_->getBackgroundColorHex());
+    isSyncing_ = false;
 }
 
 #include "editor/moc_properties_panel.cpp"
