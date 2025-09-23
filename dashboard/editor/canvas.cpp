@@ -15,7 +15,7 @@
 namespace {
     constexpr int kGridStepPx = 20;
     constexpr QColor kGridColor = QColor(60,60,60);
-    constexpr QColor kDefaultBackgroundColor = QColor(30,30,30);
+    constexpr QColor kDefaultBackgroundColor = QColor(0, 0, 0);
 }
 
 Canvas::Canvas(QWidget* parent) :

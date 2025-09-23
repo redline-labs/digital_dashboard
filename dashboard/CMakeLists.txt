@@ -68,6 +68,21 @@ qt_add_executable(editor
     resources.qrc
 )
 
+# macOS: ensure the app bundle displays the desired name in the menu bar
+if (APPLE)
+    #set(DEFAULT_EDITOR_ICON "${CMAKE_SOURCE_DIR}/dashboard/resources/icons/editor.icns")
+
+    # Set the bundle icon name (filename only)
+    set_target_properties(editor PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Dashboard Editor"
+        #MACOSX_BUNDLE_ICON_FILE "editor.icns"
+    )
+    # Add the .icns to the target and place it in the app bundle Resources
+    #target_sources(editor PRIVATE "${DEFAULT_EDITOR_ICON}")
+    #set_source_files_properties("${DEFAULT_EDITOR_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+endif()
+
 target_link_libraries(editor PRIVATE
     Qt6::Core
     Qt6::Widgets
