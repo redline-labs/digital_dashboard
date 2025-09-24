@@ -6,15 +6,8 @@
 #include "carplay/config.h"
 #include "carplay/device_step.h"
 
-#include <QAudioDevice>
-#include <QAudioFormat>
-#include <QAudioSink>
-#include <QMediaDevices>
-
-#include <QOpenGLWidget>
-#include <QOpenGLFunctions>
-#include <QOpenGLShaderProgram>
-#include <QMouseEvent>
+#include <QtWidgets/QWidget>
+#include <QtGui/QMouseEvent>
 
 #include <atomic>
 #include <condition_variable>
@@ -34,7 +27,9 @@ struct AVPacket;
 struct libusb_device_handle;
 
 
-class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
+class MetalWindow;  // forward declaration
+
+class CarPlayWidget : public QWidget
 {
     Q_OBJECT
 
@@ -63,18 +58,15 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void touchEvent(TouchAction action, uint32_t x, uint32_t y);
 
   protected:
-    void initializeGL() override;
-    void paintGL() override;
-    void resizeGL(int w, int h) override;
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
   private:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
 
-    void setupShaders();
-    void setupTextures();
-    void uploadYUVTextures(const AVFrame* frame);
+    void renderLatestFrame();
     
     // Integrated decoding methods
     void initializeDecoder();
@@ -93,13 +85,9 @@ class CarPlayWidget : public QOpenGLWidget, protected QOpenGLFunctions
     void decode_dongle_response(MessageHeader header, const uint8_t* buffer);
     void send_touch_event_internal(TouchAction action, uint32_t x, uint32_t y);
 
-    // Simplified OpenGL rendering members
-    QOpenGLShaderProgram* m_shaderProgram;
-    GLuint m_textureY;
-    GLuint m_textureU;
-    GLuint m_textureV;
-    GLuint m_vbo;
-    
+    // Metal rendering members
+    QWidget* _metal_container;
+    MetalWindow* _metal_window;
     bool m_hasFrame;
     
     // Integrated decode thread members

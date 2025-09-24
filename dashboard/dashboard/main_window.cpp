@@ -84,13 +84,13 @@ QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
         auto* telltale = new Mercedes190ETelltale(std::get<Mercedes190ETelltaleConfig_t>(widget_config.config));
         return telltale;
     }
-    /*else if (widget_config.type == widget_type_t::carplay)
+    else if (widget_config.type == widget_type_t::carplay)
     {
         // CarPlay widget needs special handling due to its constructor parameters
         auto* carplay = new CarPlayWidget(std::get<CarplayConfig_t>(widget_config.config));
         carplay->setSize(widget_config.width, widget_config.height);
         return carplay;
-    }*/
+    }
     else if (widget_config.type == widget_type_t::mercedes_190e_cluster_gauge)
     {
         auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));

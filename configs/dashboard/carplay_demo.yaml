@@ -22,13 +22,13 @@ widgets:
       drive_type: "LHD"
       media_delay: 300
       audio_transfer_mode: false
-      wifi_type: "5Ghz"
-      mic_type: "OS"
+      wifi_type: WiFi_5_GHz
+      mic_type: OS
       phone_config:
         car_play:
           frame_interval: 5000
         android_auto:
-          frame_interval: null
+          frame_interval: 5000
 
       # Audio device buffer size (bytes) on the host.
       audio_device_buffer_size: 16384

@@ -1,5 +1,5 @@
 #include "carplay/carplay_widget.h"
-#include "carplay/opengl_shaders.h"
+#include "carplay/metal_renderer.h"
 #include "carplay/touch_action.h"
 #include "carplay/dongle_config_file.h"
 #include "carplay/audio_type.h"
@@ -7,7 +7,11 @@
 #include "carplay/libusb_helpers.h"
 
 #include <spdlog/spdlog.h>
-#include <QOpenGLShaderProgram>
+#include <QtGui/QWindow>
+#include <QtMultimedia/QAudioDevice>
+#include <QtMultimedia/QAudioFormat>
+#include <QtMultimedia/QAudioSink>
+#include <QtMultimedia/QMediaDevices>
 #include <vector>
 #include <chrono>
 #include <libusb.h>
@@ -78,12 +82,9 @@ static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
 }
 
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
-    QOpenGLWidget(parent),
-    m_shaderProgram(nullptr),
-    m_textureY(0),
-    m_textureU(0),
-    m_textureV(0),
-    m_vbo(0),
+    QWidget(parent),
+    _metal_container(nullptr),
+    _metal_window(nullptr),
     m_hasFrame(false),
     _codec(nullptr),
     _parser(nullptr),
@@ -103,7 +104,7 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _audio_ready_callback{nullptr},
     _phone_connect_event_callback{nullptr}
 {
-    setStyleSheet("QOpenGLWidget { background-color : black; }");
+    setStyleSheet("QWidget { background-color : black; }");
     initializeDecoder();
     initializeDongleDriver();
 
@@ -138,6 +139,13 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
+    // Create Metal rendering window and embed into this widget
+    _metal_window = new MetalWindow();
+    _metal_container = QWidget::createWindowContainer(_metal_window, this);
+    _metal_container->setFocusPolicy(Qt::NoFocus);
+    _metal_container->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    _metal_container->setGeometry(rect());
+
     // Start the integrated dongle functionality
     start_dongle();
 
@@ -158,14 +166,6 @@ CarPlayWidget::~CarPlayWidget()
             av_frame_free(&_current_frame);
         }
     }
-    
-    makeCurrent();
-    if (m_textureY) glDeleteTextures(1, &m_textureY);
-    if (m_textureU) glDeleteTextures(1, &m_textureU);
-    if (m_textureV) glDeleteTextures(1, &m_textureV);
-    if (m_vbo) glDeleteBuffers(1, &m_vbo);
-    delete m_shaderProgram;
-    doneCurrent();
 }
 
 void CarPlayWidget::setSize(uint32_t width_px, uint32_t height_px)
@@ -173,63 +173,11 @@ void CarPlayWidget::setSize(uint32_t width_px, uint32_t height_px)
     setFixedSize({static_cast<int>(width_px), static_cast<int>(height_px)});
 }
 
-void CarPlayWidget::initializeGL()
-{
-    initializeOpenGLFunctions();
-    
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_TEXTURE_2D);
-    
-    setupShaders();
-    setupTextures();
-    
-    // Fullscreen quad setup
-    float vertices[] = {
-        -1.0f,  1.0f,  0.0f, 0.0f,  // top left
-        -1.0f, -1.0f,  0.0f, 1.0f,  // bottom left
-         1.0f, -1.0f,  1.0f, 1.0f,  // bottom right
-         1.0f,  1.0f,  1.0f, 0.0f   // top right
-    };
-    unsigned int indices[] = {0, 1, 2, 2, 3, 0};
-    
-    glGenBuffers(1, &m_vbo);
-    GLuint ebo;
-    glGenBuffers(1, &ebo);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-}
+// OpenGL initialization removed; Metal is managed by MetalWindow
 
-void CarPlayWidget::setupShaders()
-{
-    m_shaderProgram = new QOpenGLShaderProgram();
-    
-    if (!m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource) ||
-        !m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSource) ||
-        !m_shaderProgram->link()) {
-        SPDLOG_ERROR("Shader compilation failed");
-        return;
-    }
-}
+// OpenGL shaders removed
 
-void CarPlayWidget::setupTextures()
-{
-    glGenTextures(1, &m_textureY);
-    glGenTextures(1, &m_textureU);
-    glGenTextures(1, &m_textureV);
-    
-    // Configure all textures with same settings
-    for (GLuint texture : {m_textureY, m_textureU, m_textureV}) {
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    }
-    glBindTexture(GL_TEXTURE_2D, 0);
-}
+// OpenGL textures removed
 
 void CarPlayWidget::initializeDecoder()
 {
@@ -352,78 +300,26 @@ void CarPlayWidget::notifyFrameReady()
     QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
 }
 
-void CarPlayWidget::paintGL()
+void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    if (!m_hasFrame || !m_shaderProgram) return;
-    
-    // Upload new frame if available
+    if (!m_hasFrame || _metal_window == nullptr) return;
     if (_new_frame_available.load()) {
         std::lock_guard<std::mutex> lock(_frame_mutex);
         if (_current_frame) {
-            uploadYUVTextures(_current_frame);
+            _metal_window->presentYUV420P(_current_frame);
             _new_frame_available = false;
         }
     }
-    
-    // Render
-    m_shaderProgram->bind();
-    m_shaderProgram->setUniformValue("textureY", 0);
-    m_shaderProgram->setUniformValue("textureU", 1);
-    m_shaderProgram->setUniformValue("textureV", 2);
-    
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, m_textureV);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    GLint posAttrib = m_shaderProgram->attributeLocation("aPos");
-    GLint texAttrib = m_shaderProgram->attributeLocation("aTexCoord");
-    
-    glEnableVertexAttribArray(posAttrib);
-    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(texAttrib);
-    glVertexAttribPointer(texAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 
-                         reinterpret_cast<void*>(2 * sizeof(float)));
-    
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-    
-    glDisableVertexAttribArray(posAttrib);
-    glDisableVertexAttribArray(texAttrib);
-    m_shaderProgram->release();
 }
 
-void CarPlayWidget::resizeGL(int w, int h)
+void CarPlayWidget::resizeEvent(QResizeEvent* /*event*/)
 {
-    glViewport(0, 0, w, h);
+    if (_metal_container) {
+        _metal_container->setGeometry(rect());
+    }
 }
 
-void CarPlayWidget::uploadYUVTextures(const AVFrame* frame)
-{
-    if (!frame || !frame->data[0]) return;
-    
-    // Direct texture upload
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_textureY);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[0]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width, frame->height, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[0]);
-    
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_textureU);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[1]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[1]);
-    
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, m_textureV);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame->linesize[2]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, frame->width/2, frame->height/2, 
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, frame->data[2]);
-    
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-}
+// OpenGL texture upload removed; handled by MetalWindow
 
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
 {

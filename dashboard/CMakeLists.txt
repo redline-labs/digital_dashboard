@@ -42,7 +42,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     yaml-cpp::yaml-cpp
 
     # Link the carplay widget library
-    #carplay_widget
+    carplay_widget
     mercedes_190e_telltales
     mercedes_190e_speedometer
     mercedes_190e_tachometer
@@ -95,7 +95,7 @@ target_link_libraries(editor PRIVATE
 
     # Widgets available for instantiation
     mercedes_190e_telltales
-    #carplay_widget
+    carplay_widget
     mercedes_190e_speedometer
     mercedes_190e_tachometer
     sparkline

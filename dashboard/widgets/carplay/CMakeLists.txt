@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 # Define the library name
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia Gui)
 
 
 # Create the library with all the carplay source files
@@ -12,7 +12,7 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
     libusb_helpers.cpp
     message.cpp
-    opengl_shaders.cpp
+    metal_renderer.mm
 )
 
 # Set up include directories for this library
@@ -34,8 +34,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         PkgConfig::LIBAV
         Qt6::Core
         Qt6::Widgets
-        Qt6::OpenGL
-        Qt6::OpenGLWidgets
+        Qt6::Gui
         Qt6::Multimedia
         # Link nlohmann/json (now available from parent CMakeLists.txt)
         nlohmann_json::nlohmann_json
@@ -44,6 +43,16 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
         common_logging
 )
+
+# Link Apple frameworks for Metal
+if(APPLE)
+  target_link_libraries(${CARPLAY_WIDGET_LIB} PRIVATE
+    "-framework Metal"
+    "-framework QuartzCore"
+  )
+  # Ensure Objective-C++ and ARC for the Metal implementation file
+  set_source_files_properties(metal_renderer.mm PROPERTIES LANGUAGE OBJCXX COMPILE_FLAGS "-fobjc-arc")
+endif()
 
 # Set C++ standard
 target_compile_features(${CARPLAY_WIDGET_LIB} PUBLIC cxx_std_20)

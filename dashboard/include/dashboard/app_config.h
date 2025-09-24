@@ -9,7 +9,7 @@
 
 #include "reflection/reflection.h"
 
-//#include "carplay/carplay_widget.h"
+#include "carplay/carplay_widget.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "mercedes_190e_telltales/telltale.h"
@@ -35,7 +35,7 @@ REFLECT_ENUM(widget_type_t,
     value_readout,
     background_rect,
     sparkline,
-    //carplay,
+    carplay,
     unknown
 )
 
@@ -57,7 +57,7 @@ struct widget_config_t {
 
     std::variant<
         Mercedes190ESpeedometer::config_t,
-        //CarPlayWidget::config_t,
+        CarPlayWidget::config_t,
         Mercedes190ETachometer::config_t,
         Mercedes190ETelltale::config_t,
         SparklineItem::config_t,
@@ -153,7 +153,7 @@ YAML_CONFIG_STRUCT(Mercedes190ETelltaleConfig_t);
 
 YAML_CONFIG_STRUCT(sub_gauge_config_t);
 YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
-/*
+
 YAML_CONFIG_ENUM(DriveType);
 YAML_CONFIG_ENUM(WiFiType);
 YAML_CONFIG_ENUM(MicType);
@@ -161,7 +161,7 @@ YAML_CONFIG_STRUCT(phone_config_t);
 YAML_CONFIG_STRUCT(carplay_phone_config_t);
 YAML_CONFIG_STRUCT(android_auto_phone_config_t);
 YAML_CONFIG_STRUCT(CarplayConfig_t);
-*/
+
 YAML_CONFIG_STRUCT(app_config_t);
 
 
@@ -179,11 +179,11 @@ struct convert<widget_config_t> {
 
         node["type"] = reflection::enum_to_string(rhs.type);
 
-        /*if (rhs.type == widget_type_t::carplay)
+        if (rhs.type == widget_type_t::carplay)
         {
             node["config"] = std::get<CarPlayWidget::config_t>(rhs.config);
         }
-        else */if (rhs.type == widget_type_t::mercedes_190e_speedometer)
+        else if (rhs.type == widget_type_t::mercedes_190e_speedometer)
         {
             node["config"] = std::get<Mercedes190ESpeedometer::config_t>(rhs.config);
         }
@@ -243,12 +243,12 @@ struct convert<widget_config_t> {
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
 
-        /*if (type == CarPlayWidget::kWidgetName)
+        if (type == CarPlayWidget::kWidgetName)
         {
             rhs.type = widget_type_t::carplay;
             rhs.config = node["config"].as<CarplayConfig_t>();
         }
-        else */if (type == Mercedes190ESpeedometer::kWidgetName)
+        else if (type == Mercedes190ESpeedometer::kWidgetName)
         {
             rhs.type = widget_type_t::mercedes_190e_speedometer;
             rhs.config = node["config"].as<Mercedes190ESpeedometerConfig_t>();
