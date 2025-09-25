@@ -22,5 +22,5 @@ target_link_libraries(mock_racegrade_tc8_frames PRIVATE
     schemas
     zenoh_pub_sub
     cxxopts::cxxopts
-    motec_e888_rev1
+    dbc_motec_e888_rev1
 )

@@ -80,5 +80,5 @@ CM_ SG_ 1764 temperature_internal "Internal temperature";
 CM_ SG_ 1764 load_current "Current through Master Relay";
 CM_ SG_ 1764 voltage_out "Voltage on output terminal";
 VAL_ 1765 config_CAN_kill 2 "ADR" 1 "Enabled" 0 "Disabled";
-VAL_ 1765 config_CAN_baud 2 "250 Kbps" 1 "500 Kbps" 0 "1 Mbps";
+VAL_ 1765 config_CAN_baud 2 "Baud 250 Kbps" 1 "Baud 500 Kbps" 0 "Baud 1 Mbps";
 VAL_ 1765 config_output_drive 6 "Active-Lo, Low Side" 5 "Active-Lo, High Side" 4 "Active-Lo, Half Bridge" 2 "Active-Hi, Low Side" 1 "Active-Hi, High Side" 0 "Active-Hi, Half Bridge";

@@ -5,13 +5,13 @@
 #include <cstdint>
 #include <functional>
 
-#include "motec_e888_rev1.h"
+#include "dbc_motec_e888_rev1.h"
 
 
 class Tc8CanFrameParser
 {
-    using Inputs_message_handler_t = std::function<void(const motec_e888_rev1::Inputs_t&)>;
-    using Diagnostics_message_handler_t = std::function<void(const motec_e888_rev1::Diagnostics_t&)>;
+    using Inputs_message_handler_t = std::function<void(const dbc_motec_e888_rev1::Inputs_t&)>;
+    using Diagnostics_message_handler_t = std::function<void(const dbc_motec_e888_rev1::Diagnostics_t&)>;
  
   public:
     Tc8CanFrameParser();
@@ -22,7 +22,7 @@ class Tc8CanFrameParser
     void set_Diagnostics_message_handler(Diagnostics_message_handler_t handler);
 
   private:
-    motec_e888_rev1::motec_e888_rev1_t db_;
+    dbc_motec_e888_rev1::dbc_motec_e888_rev1_t db_;
     Inputs_message_handler_t Input_message_handler_;
     Diagnostics_message_handler_t Diagnostics_message_handler_;
 };

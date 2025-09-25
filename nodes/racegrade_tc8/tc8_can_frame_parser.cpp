@@ -10,8 +10,11 @@ Tc8CanFrameParser::Tc8CanFrameParser() :
 
 void Tc8CanFrameParser::handle_can_frame(uint32_t id, const std::array<uint8_t, 8u>& data)
 {
+    // Enum that contains all the messages in the DBC.
+    using Messages = dbc_motec_e888_rev1::dbc_motec_e888_rev1_t::Messages;
+    
     auto m = db_.decode(id, data);
-    if (m == motec_e888_rev1::motec_e888_rev1_t::Messages::Inputs)
+    if (m == Messages::Inputs)
     {
         // Once we've seen all defined groups, report and reset
         if (db_.Inputs.all_multiplexed_indexes_seen() == true)
@@ -24,7 +27,7 @@ void Tc8CanFrameParser::handle_can_frame(uint32_t id, const std::array<uint8_t, 
             }
         }
     }
-    else if (m == motec_e888_rev1::motec_e888_rev1_t::Messages::Diagnostics)
+    else if (m == Messages::Diagnostics)
     {
         if (db_.Diagnostics.all_multiplexed_indexes_seen() == true)
         {

@@ -9,7 +9,7 @@
 #include "pub_sub/zenoh_publisher.h"
 #include "can_frame.capnp.h"
 
-#include "motec_e888_rev1.h"
+#include "dbc_motec_e888_rev1.h"
 
 int main(int argc, char** argv)
 {
@@ -39,9 +39,9 @@ int main(int argc, char** argv)
     {
         (void)pub.fields().initData(8u);
     }
-    pub.fields().setId(motec_e888_rev1::Inputs_t::id);
+    pub.fields().setId(dbc_motec_e888_rev1::Inputs_t::id);
 
-    motec_e888_rev1::Inputs_t msg = {};
+    dbc_motec_e888_rev1::Inputs_t msg = {};
 
     float iteration = 0.0f;
     while (true)
@@ -69,7 +69,7 @@ int main(int argc, char** argv)
 
         iteration += 0.01f;
 
-        for (const auto& multiplexor_index : motec_e888_rev1::Inputs_t::multiplexor_group_indexes)
+        for (const auto& multiplexor_index : dbc_motec_e888_rev1::Inputs_t::multiplexor_group_indexes)
         {
             msg.mux() = multiplexor_index;
 

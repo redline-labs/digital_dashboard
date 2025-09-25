@@ -19,7 +19,7 @@ target_link_libraries(racegrade_tc8 PRIVATE
     capnp
     schemas
     zenoh_pub_sub
-    motec_e888_rev1
+    dbc_motec_e888_rev1
 )
 
 add_executable(test_racegrade_tc8_query
@@ -33,5 +33,5 @@ target_link_libraries(test_racegrade_tc8_query PRIVATE
     capnp
     schemas
     zenoh_pub_sub
-    motec_e888_rev1
+    dbc_motec_e888_rev1
 )

@@ -1,4 +1,4 @@
-#include "motec_e888_rev1.h"
+#include "dbc_motec_e888_rev1.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "racegrade_tc8_configure.capnp.h"
@@ -25,7 +25,7 @@ static void handle_service_request(const RaceGradeTc8ConfigureRequest::Reader& r
     resp.setResponse(true);
 }
 
-static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
+static void handle_input_message(const dbc_motec_e888_rev1::Inputs_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
 {
     auto& outputs = inputs_pub.fields();
     outputs.setVoltage1(msg.AV1);
@@ -52,7 +52,7 @@ static void handle_input_message(const motec_e888_rev1::Inputs_t& msg, pub_sub::
     inputs_pub.put();
 }
 
-static void handle_diagnostics_message(const motec_e888_rev1::Diagnostics_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
+static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
 {
     auto& outputs = diagnostics_pub.fields();
     outputs.setColdJunctionComp1(msg.Cold_Junct_Comp1);
@@ -92,11 +92,11 @@ int main(int argc, char** argv)
     pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
 
     Tc8CanFrameParser parser;
-    parser.set_Input_message_handler([&inputs_pub](const motec_e888_rev1::Inputs_t& msg){
+    parser.set_Input_message_handler([&inputs_pub](const dbc_motec_e888_rev1::Inputs_t& msg){
         handle_input_message(msg, inputs_pub);
     });
 
-    parser.set_Diagnostics_message_handler([&diagnostics_pub](const motec_e888_rev1::Diagnostics_t& msg){
+    parser.set_Diagnostics_message_handler([&diagnostics_pub](const dbc_motec_e888_rev1::Diagnostics_t& msg){
         handle_diagnostics_message(msg, diagnostics_pub);
     });
 
