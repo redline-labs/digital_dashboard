@@ -494,31 +494,34 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
         fmt::print(out, "\n");
 
         // Create a method that returns true if all the multiplexed group indexes have been seen.
-        fmt::print(out, "    constexpr bool all_multiplexed_indexes_seen() const\n");
-        fmt::print(out, "    {{\n");
-        fmt::print(out, "        return ");
-        size_t i = 0;
-        for (const auto& group_index : valid_mux_group_indexes)
+        if (message.isMultiplexed == true)
         {
-            bool last = (i == valid_mux_group_indexes.size() - 1);
-            ++i;
-            fmt::print(out, "seen_mux_{}{}", group_index, last ? "" : " && ");
+            fmt::print(out, "    constexpr bool all_multiplexed_indexes_seen() const\n");
+            fmt::print(out, "    {{\n");
+            fmt::print(out, "        return ");
+            size_t i = 0;
+            for (const auto& group_index : valid_mux_group_indexes)
+            {
+                bool last = (i == valid_mux_group_indexes.size() - 1);
+                ++i;
+                fmt::print(out, "seen_mux_{}{}", group_index, last ? "" : " && ");
+            }
+
+            fmt::print(out, ";\n");
+            fmt::print(out, "    }}\n");
+            fmt::print(out, "\n");
+
+
+            // Create a method that clears all the flags for the multiplexed group indexes.
+            fmt::print(out, "    constexpr void clear_seen_multiplexed_indexes()\n");
+            fmt::print(out, "    {{\n");
+            for (const auto& group_index : valid_mux_group_indexes)
+            {
+                fmt::print(out, "        seen_mux_{} = false;\n", group_index);
+            }
+            fmt::print(out, "    }}\n");
+            fmt::print(out, "\n");
         }
-
-        fmt::print(out, ";\n");
-        fmt::print(out, "    }}\n");
-        fmt::print(out, "\n");
-
-
-        // Create a method that clears all the flags for the multiplexed group indexes.
-        fmt::print(out, "    constexpr void clear_seen_multiplexed_indexes()\n");
-        fmt::print(out, "    {{\n");
-        for (const auto& group_index : valid_mux_group_indexes)
-        {
-            fmt::print(out, "        seen_mux_{} = false;\n", group_index);
-        }
-        fmt::print(out, "    }}\n");
-        fmt::print(out, "\n");
 
         fmt::print(out, "}};  // struct {}_t\n", message.name);   // fmtlib escape sequence for '}'
         fmt::print(out, "\n");

@@ -1,0 +1,84 @@
+VERSION ""
+
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEF_REL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_: 
+BU_: Master_Relay 
+BO_ 1765 Master_Relay_0x6E5: 8 Vector__XXX
+   SG_ shutdown_cause_2 : 63|4@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ shutdown_cause : 59|4@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ time_since_shutdown : 55|8@0+ (0.1,0) [0|26] "s" Vector__XXX
+   SG_ config_shutdown_delay : 47|8@0+ (0.1,0) [0|26] "s" Vector__XXX
+   SG_ config_CAN_kill : 39|2@0+ (1,0) [0|3] "" Vector__XXX
+   SG_ config_CAN_baud : 37|2@0+ (1,0) [0|3] "" Vector__XXX
+   SG_ config_output_drive : 35|4@0+ (1,0) [0|3] "" Vector__XXX
+   SG_ serial_no : 23|16@0+ (1,0) [0|65000] "" Vector__XXX
+   SG_ voltage_in : 7|16@0+ (0.01,0) [0|20] "V" Vector__XXX
+
+BO_ 1764 Master_Relay_0x6E4: 8 Vector__XXX
+   SG_ status : 63|8@0+ (1,0) [0|0] "" Vector__XXX
+   SG_ over_temp_warn : 48|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ external_kill : 54|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ driver_kill : 53|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ over_temp_kill : 52|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ high_voltage_warn : 51|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ low_voltage_warn : 50|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ over_current_warn : 49|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ CAN_kill : 55|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ temperature_internal : 39|16@0- (0.1,0) [0|200] "C" Vector__XXX
+   SG_ load_current : 23|16@0- (0.1,0) [0|6553.5] "A" Vector__XXX
+   SG_ voltage_out : 7|16@0+ (0.01,0) [0|20] "V" Vector__XXX
+
+BA_DEF_ BO_ "GenMsgBackgroundColor" STRING ;
+BA_DEF_ BO_ "GenMsgForegroundColor" STRING ;
+BA_DEF_ BO_ "isj1939dbc" INT 0 0;
+BA_DEF_DEF_ "GenMsgBackgroundColor" "#ffffff";
+BA_DEF_DEF_ "GenMsgForegroundColor" "#000000";
+BA_DEF_DEF_ "isj1939dbc" 0;
+CM_ BO_ 1765 "Transmitted at 10Hz";
+CM_ SG_ 1765 shutdown_cause_2 "Cause of second to last shutdown";
+CM_ SG_ 1765 shutdown_cause "Cause of last shutdown";
+CM_ SG_ 1765 time_since_shutdown "Time since last shutdown event";
+CM_ SG_ 1765 config_shutdown_delay "Delay before isolating";
+CM_ SG_ 1765 config_CAN_kill "CAN Kill Enabled";
+CM_ SG_ 1765 config_CAN_baud "CAN Baud Rate Config";
+CM_ SG_ 1765 config_output_drive "PDM output drive config";
+CM_ SG_ 1765 serial_no "Serial Number";
+CM_ SG_ 1765 voltage_in "Voltage on input terminal";
+CM_ BO_ 1764 "Transmitted at 10Hz";
+CM_ SG_ 1764 status "Status";
+CM_ SG_ 1764 temperature_internal "Internal temperature";
+CM_ SG_ 1764 load_current "Current through Master Relay";
+CM_ SG_ 1764 voltage_out "Voltage on output terminal";
+VAL_ 1765 config_CAN_kill 2 "ADR" 1 "Enabled" 0 "Disabled";
+VAL_ 1765 config_CAN_baud 2 "250 Kbps" 1 "500 Kbps" 0 "1 Mbps";
+VAL_ 1765 config_output_drive 6 "Active-Lo, Low Side" 5 "Active-Lo, High Side" 4 "Active-Lo, Half Bridge" 2 "Active-Hi, Low Side" 1 "Active-Hi, High Side" 0 "Active-Hi, Half Bridge";

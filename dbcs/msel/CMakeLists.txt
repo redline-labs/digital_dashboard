@@ -1,0 +1,1 @@
+generate_dbc_code(msel_master_relay ${CMAKE_CURRENT_SOURCE_DIR}/MSEMR_CAN_Information_141119.dbc)
