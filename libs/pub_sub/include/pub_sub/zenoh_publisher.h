@@ -15,6 +15,7 @@
 #include "pub_sub/session_manager.h"
 
 #include <string_view>
+#include "spdlog/spdlog.h"
 
 namespace pub_sub
 {
@@ -37,6 +38,7 @@ public:
         mMessage{},
         mBuilder(mMessage.initRoot<SchemaT>())
     {
+        SPDLOG_DEBUG("Publisher active on '{}' for schema '{}'", keyexpr, schema_traits<SchemaT>::name);
     }
 
     bool isValid() const

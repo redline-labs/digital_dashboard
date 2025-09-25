@@ -1,9 +1,8 @@
-#include "dbc_motec_e888_rev1.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "racegrade_tc8_configure.capnp.h"
 #include "racegrade_tc8_signals.capnp.h"
-#include "racegrade_tc8/tc8_can_frame_parser.h"
+#include "dbc_motec_e888_rev1_parser.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
 
@@ -91,12 +90,11 @@ int main(int argc, char** argv)
     pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
     pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
 
-    Tc8CanFrameParser parser;
-    parser.set_Input_message_handler([&inputs_pub](const dbc_motec_e888_rev1::Inputs_t& msg){
+    dbc_motec_e888_rev1::dbc_motec_e888_rev1_parser parser;
+    parser.on_Inputs([&inputs_pub](const dbc_motec_e888_rev1::Inputs_t& msg){
         handle_input_message(msg, inputs_pub);
     });
-
-    parser.set_Diagnostics_message_handler([&diagnostics_pub](const dbc_motec_e888_rev1::Diagnostics_t& msg){
+    parser.on_Diagnostics([&diagnostics_pub](const dbc_motec_e888_rev1::Diagnostics_t& msg){
         handle_diagnostics_message(msg, diagnostics_pub);
     });
 

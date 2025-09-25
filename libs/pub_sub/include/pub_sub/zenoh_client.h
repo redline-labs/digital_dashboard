@@ -32,6 +32,7 @@ class ZenohClient
         mKeyExpr(keyexpr),
         mTimeoutMs(timeoutMs)
     {
+        SPDLOG_DEBUG("Client active on '{}' for schemas '{}'->'{}'", mKeyExpr, schema_traits<RequestT>::name, schema_traits<ResponseT>::name);
     }
 
     // Accessor to the owned request builder

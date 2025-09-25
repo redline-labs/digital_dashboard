@@ -4,7 +4,6 @@ project(msel_master_relay)
 
 add_executable(msel_master_relay
     main.cpp
-    msel_can_frame_parser.cpp
 )
 
 target_include_directories(msel_master_relay PRIVATE

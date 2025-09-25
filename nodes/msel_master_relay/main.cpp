@@ -1,5 +1,4 @@
-#include "dbc_msel_master_relay.h"
-#include "msel_master_relay/msel_can_frame_parser.h"
+#include "dbc_msel_master_relay_parser.h"
 
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
@@ -9,8 +8,6 @@
 #include <cxxopts.hpp>
 
 #include <array>
-#include <thread>
-#include <chrono>
 
 static void publish_status(const dbc_msel_master_relay::Master_Relay_0x6E4_t& msg,
                            pub_sub::ZenohPublisher<MselMasterRelayStatus>& status_pub)
@@ -66,11 +63,11 @@ int main(int argc, char** argv)
     pub_sub::ZenohPublisher<MselMasterRelayStatus> status_pub("nodes/msel_master_relay/status");
     pub_sub::ZenohPublisher<MselMasterRelayInfo> info_pub("nodes/msel_master_relay/info");
 
-    MselCanFrameParser parser;
-    parser.on_status([&](const dbc_msel_master_relay::Master_Relay_0x6E4_t& msg){
+    dbc_msel_master_relay::dbc_msel_master_relay_parser parser;
+    parser.on_Master_Relay_0x6E4([&](const dbc_msel_master_relay::Master_Relay_0x6E4_t& msg){
         publish_status(msg, status_pub);
     });
-    parser.on_info([&](const dbc_msel_master_relay::Master_Relay_0x6E5_t& msg){
+    parser.on_Master_Relay_0x6E5([&](const dbc_msel_master_relay::Master_Relay_0x6E5_t& msg){
         publish_info(msg, info_pub);
     });
 

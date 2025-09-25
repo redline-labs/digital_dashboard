@@ -116,18 +116,29 @@ int main(int argc, char **argv)
             return 13;
         }
         std::filesystem::path hPath = outputDir / (base + ".h");
+        std::filesystem::path phPath = outputDir / (base + "_parser.h");
+        std::filesystem::path psPath = outputDir / (base + "_parser.cpp");
         SPDLOG_INFO("Writing header: {}", hPath.string());
 
         // Open files with truncation
         std::ofstream hout(hPath, std::ios::out | std::ios::trunc);
+        std::ofstream phout(phPath, std::ios::out | std::ios::trunc);
+        std::ofstream psout(psPath, std::ios::out | std::ios::trunc);
         if (!hout)
         {
             SPDLOG_ERROR("Failed to open header for writing: {}", hPath.string());
             return 11;
         }
+        if (!phout || !psout)
+        {
+            SPDLOG_ERROR("Failed to open parser outputs for writing: {} or {}", phPath.string(), psPath.string());
+            return 12;
+        }
 
         // Invoke generators
         dbc_codegen::generate_cpp_header(*db, base,hout);
+        dbc_codegen::generate_cpp_parser_header(*db, base, phout);
+        dbc_codegen::generate_cpp_parser_source(*db, base, psout);
 
         SPDLOG_INFO("Generation completed.");
         return 0;

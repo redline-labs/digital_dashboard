@@ -4,7 +4,6 @@ project(racegrade_tc8)
 
 add_executable(racegrade_tc8
     main.cpp
-    tc8_can_frame_parser.cpp
 )
 
 target_include_directories(racegrade_tc8 PRIVATE
@@ -33,5 +32,4 @@ target_link_libraries(test_racegrade_tc8_query PRIVATE
     capnp
     schemas
     zenoh_pub_sub
-    dbc_motec_e888_rev1
 )

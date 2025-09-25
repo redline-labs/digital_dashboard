@@ -86,6 +86,8 @@ class ZenohService
             on_drop,
             zenoh::Session::QueryableOptions::create_default()
         );
+
+        SPDLOG_DEBUG("Service active on '{}' for schemas '{}'->'{}'", mKeyExpr, schema_traits<RequestT>::name, schema_traits<ResponseT>::name);
     }
 
     ~ZenohService()

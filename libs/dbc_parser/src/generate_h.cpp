@@ -646,4 +646,112 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
     fmt::print(out, "#endif  // {}_H_\n", base_upper);
 }
 
+// -----------------------------------------------------------------------------
+// Parser generation: emits a thin wrapper that owns the db struct and exposes
+// - void handle_can_frame(uint32_t id, const std::array<uint8_t, 8u>& data)
+// - one setter per message to register callbacks
+// -----------------------------------------------------------------------------
+void generate_cpp_parser_header(const dbc_parser::Database &db, const std::string &base, std::ofstream &out)
+{
+    std::string base_upper = base;
+    std::transform(base_upper.begin(), base_upper.end(), base_upper.begin(), ::toupper);
+
+    fmt::print(out, "#ifndef {}_PARSER_H_\n", base_upper);
+    fmt::print(out, "#define {}_PARSER_H_\n\n", base_upper);
+    fmt::print(out, "#include <array>\n");
+    fmt::print(out, "#include <cstdint>\n");
+    fmt::print(out, "#include <functional>\n\n");
+    fmt::print(out, "#include \"{}.h\"\n\n", base);
+
+    fmt::print(out, "namespace {}\n{{\n", base);
+    fmt::print(out, "class {}_parser\n{{\n", base);
+    fmt::print(out, "  public:\n");
+    fmt::print(out, "    using db_t = {}_t;\n", base);
+    for (const auto& msg : db.messages)
+    {
+        fmt::print(out, "    using {}_handler_t = std::function<void(const {}_t&)>;\n", msg.name, msg.name);
+    }
+    fmt::print(out, "\n");
+    fmt::print(out, "    {}_parser();\n", base);
+    fmt::print(out, "    bool handle_can_frame(uint32_t id, const std::array<uint8_t, 8u>& data);\n\n");
+    for (const auto& msg : db.messages)
+    {
+        fmt::print(out, "    void on_{}({}_handler_t handler);\n", msg.name, msg.name);
+    }
+    fmt::print(out, "\n  private:\n");
+    fmt::print(out, "    db_t db_;\n");
+    for (const auto& msg : db.messages)
+    {
+        fmt::print(out, "    {}_handler_t {}_handler_;\n", msg.name, msg.name);
+    }
+    fmt::print(out, "}};\n\n");
+    fmt::print(out, "}} // namespace {}\n\n", base);
+    fmt::print(out, "#endif // {}_PARSER_H_\n", base_upper);
+}
+
+void generate_cpp_parser_source(const dbc_parser::Database &db, const std::string &base, std::ofstream &out)
+{
+    fmt::print(out, "#include \"{}_parser.h\"\n\n", base);
+    fmt::print(out, "namespace {}\n{{\n", base);
+    
+    fmt::print(out, "{}_parser::{}_parser() :\n", base, base);
+    fmt::print(out, "    db_{{}},\n");
+    
+    for (size_t i = 0; i < db.messages.size(); ++i)
+    {
+        const auto& msg = db.messages[i];
+        bool last = i == db.messages.size() - 1;
+        fmt::print(out, "    {}_handler_{{}}{}\n", msg.name, last == true ? "" : ",");
+    }
+
+    fmt::print(out, "{{\n");
+    fmt::print(out, "}}\n");
+    fmt::print(out, "\n");
+    fmt::print(out, "bool {}_parser::handle_can_frame(uint32_t id, const std::array<uint8_t, 8u>& data)\n{{\n", base);
+    fmt::print(out, "    auto m = db_.decode(id, data);\n");
+    fmt::print(out, "    switch (m)\n    {{\n");
+    fmt::print(out, "        case {}_t::Messages::Unknown:\n", base);
+    fmt::print(out, "           break;\n");
+    fmt::print(out, "\n");
+    for (const auto& msg : db.messages)
+    {
+        fmt::print(out, "        case {}_t::Messages::{}:\n", base, msg.name);
+        if (msg.isMultiplexed)
+        {
+            fmt::print(out, "            if (db_.{}.all_multiplexed_indexes_seen() == true)\n", msg.name);
+            fmt::print(out, "            {{\n");
+            fmt::print(out, "                db_.{}.clear_seen_multiplexed_indexes();\n", msg.name);
+            fmt::print(out, "                if ({}_handler_)\n", msg.name);
+            fmt::print(out, "                {{\n");
+            fmt::print(out, "                    {}_handler_(db_.{});\n", msg.name, msg.name);
+            fmt::print(out, "                }}\n");
+            fmt::print(out, "            }}\n");
+        }
+        else
+        {
+            fmt::print(out, "            if ({}_handler_)\n", msg.name);
+            fmt::print(out, "            {{\n");
+            fmt::print(out, "                {}_handler_(db_.{});\n", msg.name, msg.name);
+            fmt::print(out, "            }}\n");
+        }
+        
+        fmt::print(out, "            break;\n\n");
+    }
+    
+    fmt::print(out, "    }}\n");
+    fmt::print(out, "\n");
+    fmt::print(out, "    return m != {}_t::Messages::Unknown;\n", base);
+    fmt::print(out, "}}\n");
+    fmt::print(out, "\n");
+    for (const auto& msg : db.messages)
+    {
+        fmt::print(out, "void {}_parser::on_{}({}_handler_t handler)\n", base, msg.name, msg.name);
+        fmt::print(out, "{{\n");
+        fmt::print(out, "    {}_handler_ = handler;\n", msg.name);
+        fmt::print(out, "}}\n");
+        fmt::print(out, "\n");
+    }
+    fmt::print(out, "}} // namespace {}\n", base);
+}
+
 }  // namespace dbc_codegen
