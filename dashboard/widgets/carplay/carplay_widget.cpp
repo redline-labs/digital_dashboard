@@ -1,5 +1,5 @@
 #include "carplay/carplay_widget.h"
-#include "carplay/metal_renderer.h"
+#include <QtGui/QImage>
 #include "carplay/touch_action.h"
 #include "carplay/dongle_config_file.h"
 #include "carplay/audio_type.h"
@@ -15,11 +15,47 @@
 #include <vector>
 #include <chrono>
 #include <libusb.h>
+#include <QPainter>
 
-extern "C"
-{
+extern "C" {
 #include <libavcodec/avcodec.h>
 }
+QImage CarPlayWidget::convertYuv420ToRgbImage(const AVFrame* frame)
+{
+    if (!frame || !frame->data[0] || frame->format != AV_PIX_FMT_YUV420P) return {};
+    const int w = frame->width;
+    const int h = frame->height;
+    QImage img(w, h, QImage::Format_RGB888);
+    if (img.isNull()) return {};
+
+    const uint8_t* yPlane = frame->data[0];
+    const uint8_t* uPlane = frame->data[1];
+    const uint8_t* vPlane = frame->data[2];
+    const int yStride = frame->linesize[0];
+    const int uStride = frame->linesize[1];
+    const int vStride = frame->linesize[2];
+
+    for (int j = 0; j < h; ++j) {
+        uint8_t* dst = img.scanLine(j);
+        const uint8_t* yRow = yPlane + j * yStride;
+        const uint8_t* uRow = uPlane + (j / 2) * uStride;
+        const uint8_t* vRow = vPlane + (j / 2) * vStride;
+        for (int i = 0; i < w; ++i) {
+            int Y = yRow[i];
+            int U = uRow[i / 2] - 128;
+            int V = vRow[i / 2] - 128;
+            int R = Y + ((91881 * V) >> 16);
+            int G = Y - ((22554 * U + 46802 * V) >> 16);
+            int B = Y + ((116130 * U) >> 16);
+            dst[3*i + 0] = static_cast<uint8_t>(std::clamp(B, 0, 255));
+            dst[3*i + 1] = static_cast<uint8_t>(std::clamp(G, 0, 255));
+            dst[3*i + 2] = static_cast<uint8_t>(std::clamp(R, 0, 255));
+        }
+    }
+    return img;
+}
+
+// moved AV includes above
 
 // Libusb helper functions
 static void libusb_log(libusb_context* /*ctx*/, enum libusb_log_level level, const char* str)
@@ -83,8 +119,6 @@ static uint32_t read_uint32_t_little_endian(const uint8_t* buffer)
 
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     QWidget(parent),
-    _metal_container(nullptr),
-    _metal_window(nullptr),
     m_hasFrame(false),
     _codec(nullptr),
     _parser(nullptr),
@@ -139,13 +173,6 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
         audio_buffer->write(reinterpret_cast<const char*>(buffer), buffer_len);
     });
 
-    // Create Metal rendering window and embed into this widget
-    _metal_window = new MetalWindow();
-    _metal_container = QWidget::createWindowContainer(_metal_window, this);
-    _metal_container->setFocusPolicy(Qt::NoFocus);
-    _metal_container->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    _metal_container->setGeometry(rect());
-
     // Start the integrated dongle functionality
     start_dongle();
 
@@ -173,7 +200,7 @@ void CarPlayWidget::setSize(uint32_t width_px, uint32_t height_px)
     setFixedSize({static_cast<int>(width_px), static_cast<int>(height_px)});
 }
 
-// OpenGL initialization removed; Metal is managed by MetalWindow
+// OpenGL initialization removed; rendering handled in paintEvent
 
 // OpenGL shaders removed
 
@@ -302,22 +329,21 @@ void CarPlayWidget::notifyFrameReady()
 
 void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    if (!m_hasFrame || _metal_window == nullptr) return;
+    if (!m_hasFrame) return;
     if (_new_frame_available.load()) {
         std::lock_guard<std::mutex> lock(_frame_mutex);
         if (_current_frame) {
-            _metal_window->presentYUV420P(_current_frame);
+            QImage img = convertYuv420ToRgbImage(_current_frame);
             _new_frame_available = false;
+            if (!img.isNull()) {
+                QPainter p(this);
+                p.drawImage(rect(), img);
+            }
         }
     }
 }
 
-void CarPlayWidget::resizeEvent(QResizeEvent* /*event*/)
-{
-    if (_metal_container) {
-        _metal_container->setGeometry(rect());
-    }
-}
+// no-op resize; QWidget handles repaint
 
 // OpenGL texture upload removed; handled by MetalWindow
 

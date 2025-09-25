@@ -27,8 +27,6 @@ struct AVPacket;
 struct libusb_device_handle;
 
 
-class MetalWindow;  // forward declaration
-
 class CarPlayWidget : public QWidget
 {
     Q_OBJECT
@@ -59,7 +57,6 @@ class CarPlayWidget : public QWidget
 
   protected:
     void paintEvent(QPaintEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
 
   private:
     void mousePressEvent(QMouseEvent* e) override;
@@ -67,6 +64,7 @@ class CarPlayWidget : public QWidget
     void mouseMoveEvent(QMouseEvent* e) override;
 
     void renderLatestFrame();
+    QImage convertYuv420ToRgbImage(const AVFrame* frame);
     
     // Integrated decoding methods
     void initializeDecoder();
@@ -85,9 +83,6 @@ class CarPlayWidget : public QWidget
     void decode_dongle_response(MessageHeader header, const uint8_t* buffer);
     void send_touch_event_internal(TouchAction action, uint32_t x, uint32_t y);
 
-    // Metal rendering members
-    QWidget* _metal_container;
-    MetalWindow* _metal_window;
     bool m_hasFrame;
     
     // Integrated decode thread members
