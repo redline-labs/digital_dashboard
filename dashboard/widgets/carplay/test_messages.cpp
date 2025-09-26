@@ -102,14 +102,12 @@ int main(int /*argc*/, char** /*argv*/)
     test("SendDPI", usb_request, kGSSendDPI);
 
     auto cfg_tmp = cfg;
-    cfg_tmp.width_px = 689;
-    cfg_tmp.height_px = 731;
     cfg_tmp.fps = 60;
     cfg_tmp.format = 5;
     cfg_tmp.packet_max = 49152;
     cfg_tmp.i_box_version = 2;
     cfg_tmp.phone_work_mode = 2;
-    usb_request = SendOpen(cfg_tmp).serialize();
+    usb_request = SendOpen(cfg_tmp, 689, 731).serialize();
     test("SendOpen", usb_request, kGSSendOpen);
 
     usb_request = SendBoolean(DongleConfigFile::NightMode, cfg.night_mode).serialize();
@@ -124,7 +122,7 @@ int main(int /*argc*/, char** /*argv*/)
     usb_request = SendString(DongleConfigFile::BoxName, cfg.box_name).serialize();
     test("SendBoxName", usb_request, kGSSendBoxName);
 
-    usb_request = SendBoxSettings(cfg_tmp, 1722743632).serialize();
+    usb_request = SendBoxSettings(cfg_tmp, 1722743632, 689, 731).serialize();
     test("SendBoxSettings", usb_request, kGSSendBoxCfg);
 
     usb_request = Command(CommandMapping::WifiEnable).serialize();

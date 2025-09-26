@@ -40,8 +40,6 @@ REFLECT_STRUCT(phone_config_t,
 
 REFLECT_STRUCT(CarplayConfig_t,
     (bool, libusb_debug, false),
-    (uint16_t, width_px, 800),
-    (uint16_t, height_px, 600),
     (uint8_t, fps, 30),
     (uint16_t, dpi, 100),
     (uint8_t, format, 0),

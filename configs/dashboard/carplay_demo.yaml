@@ -9,8 +9,6 @@ widgets:
     width: 800
     height: 600
     config:
-      width_px: 800
-      height_px: 600
       fps: 30
       dpi: 160
       format: 5

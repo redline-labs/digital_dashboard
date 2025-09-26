@@ -538,15 +538,15 @@ SendString::SendString(DongleConfigFile file, std::string value) :
 /* ---------------------------------------------------------------------------- */
 /* SendBoxSettings                                                              */
 /* ---------------------------------------------------------------------------- */
-SendBoxSettings::SendBoxSettings(const CarplayConfig_t& cfg, uint64_t sync_time) :
+SendBoxSettings::SendBoxSettings(const CarplayConfig_t& cfg, uint64_t sync_time, uint32_t width_px, uint32_t height_px) :
   Message({0u, MessageType::BoxSettings})
 {
     nlohmann::ordered_json j;   // Probably doesn't have to be ordered, but makes it easier to test.
 
     j["mediaDelay"] = cfg.media_delay;
     j["syncTime"] = sync_time;
-    j["androidAutoSizeW"] = cfg.width_px;
-    j["androidAutoSizeH"] = cfg.height_px;
+    j["androidAutoSizeW"] = width_px;
+    j["androidAutoSizeH"] = height_px;
 
     _output = j.dump();
 }
@@ -570,9 +570,11 @@ const std::string& SendBoxSettings::get_string()
 /* ---------------------------------------------------------------------------- */
 /* SendOpen                                                                     */
 /* ---------------------------------------------------------------------------- */
-SendOpen::SendOpen(const CarplayConfig_t& config) :
+SendOpen::SendOpen(const CarplayConfig_t& config, uint32_t width_px, uint32_t height_px) :
   Message({0u, MessageType::Open}),
-  _config{config}
+  _config{config},
+  _width_px{width_px},
+  _height_px{height_px}
 {
 }
 
@@ -583,8 +585,8 @@ uint16_t SendOpen::get_payload_size()
 
 void SendOpen::write_payload(uint8_t* buffer)
 {
-    write_uint32_t_little_endian(_config.width_px,          &buffer[ 0]);
-    write_uint32_t_little_endian(_config.height_px,         &buffer[ 4]);
+    write_uint32_t_little_endian(_width_px,                 &buffer[ 0]);
+    write_uint32_t_little_endian(_height_px,                &buffer[ 4]);
     write_uint32_t_little_endian(_config.fps,               &buffer[ 8]);
     write_uint32_t_little_endian(_config.format,            &buffer[12]);
     write_uint32_t_little_endian(_config.packet_max,        &buffer[16]);

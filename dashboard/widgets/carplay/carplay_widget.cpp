@@ -143,7 +143,6 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     initializeDecoder();
     initializeDongleDriver();
 
-
     QAudioFormat format;
     format.setSampleRate(44100);
     format.setChannelCount(2);
@@ -201,12 +200,6 @@ void CarPlayWidget::setSize(uint32_t width_px, uint32_t height_px)
 {
     setFixedSize({static_cast<int>(width_px), static_cast<int>(height_px)});
 }
-
-// OpenGL initialization removed; rendering handled in paintEvent
-
-// OpenGL shaders removed
-
-// OpenGL textures removed
 
 void CarPlayWidget::initializeDecoder()
 {
@@ -331,15 +324,22 @@ void CarPlayWidget::notifyFrameReady()
 
 void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    if (!m_hasFrame) return;
+    if (!m_hasFrame)
+    {
+        QPainter p(this);
+        p.fillRect(rect(), Qt::black);
+        return;
+    }
     if (_new_frame_available.load()) {
         std::lock_guard<std::mutex> lock(_frame_mutex);
         if (_current_frame) {
             QImage img = convertYuv420ToRgbImage(_current_frame);
             _new_frame_available = false;
+            QPainter p(this);
             if (!img.isNull()) {
-                QPainter p(this);
                 p.drawImage(rect(), img);
+            } else {
+                p.fillRect(rect(), Qt::black);
             }
         }
     }
@@ -510,7 +510,7 @@ void CarPlayWidget::step()
             
         case (DeviceStep::SendOpen):
             SPDLOG_DEBUG("Sending config (Open).");
-            _usb_request = SendOpen(_cfg).serialize();
+            _usb_request = SendOpen(_cfg, width(), height()).serialize();
             _current_step = DeviceStep::SendNightMode;  // Next step on success;
             break;
             
@@ -540,7 +540,7 @@ void CarPlayWidget::step()
             
         case (DeviceStep::SendBoxSettings):
             SPDLOG_DEBUG("Sending config (box settings).");
-            _usb_request = SendBoxSettings(_cfg).serialize();
+            _usb_request = SendBoxSettings(_cfg, 8u, width(), height()).serialize();
             _current_step = DeviceStep::SendWiFiEnable;  // Next step on success;
             break;
             
@@ -866,9 +866,13 @@ void CarPlayWidget::send_touch_event_internal(TouchAction action, uint32_t x, ui
         return;
     }
     
-    // We have to scale from 0....10,000.
-    uint32_t scaled_x = static_cast<uint32_t>((static_cast<float>(x) / static_cast<float>(_cfg.width_px)) * 10000.0f);
-    uint32_t scaled_y = static_cast<uint32_t>((static_cast<float>(y) / static_cast<float>(_cfg.height_px)) * 10000.0f);
+    // We have to scale from 0....10,000 using the actual widget size.
+    const float w = static_cast<float>(width());
+    const float h = static_cast<float>(height());
+    const float sx = (w > 0.0f) ? (static_cast<float>(x) / w) : 0.0f;
+    const float sy = (h > 0.0f) ? (static_cast<float>(y) / h) : 0.0f;
+    uint32_t scaled_x = static_cast<uint32_t>(sx * 10000.0f);
+    uint32_t scaled_y = static_cast<uint32_t>(sy * 10000.0f);
     
     std::vector<uint8_t> usb_request = SendTouch(action, scaled_x, scaled_y).serialize();
     
