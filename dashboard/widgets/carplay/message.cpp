@@ -65,7 +65,8 @@ size_t MessageHeader::get_message_length()
 
 uint32_t MessageHeader::get_message_type_check()
 {
-    return (static_cast<uint32_t>(_type) ^ -1) & 0xffffffff;
+    const uint32_t t = static_cast<uint32_t>(_type);
+    return static_cast<uint32_t>(~t);
 }
 
 
