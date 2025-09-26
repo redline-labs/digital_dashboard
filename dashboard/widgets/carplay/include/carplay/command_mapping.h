@@ -109,6 +109,9 @@ constexpr std::string_view command_mapping_to_string(CommandMapping cmd)
         case (CommandMapping::Back):
             return "Back";
 
+        case (CommandMapping::Up):
+            return "Up";
+
         case (CommandMapping::Down):
             return "Down";
 
@@ -121,11 +124,20 @@ constexpr std::string_view command_mapping_to_string(CommandMapping cmd)
         case (CommandMapping::Pause):
             return "Pause";
 
+        case (CommandMapping::PlayOrPause):
+            return "PlayOrPause";
+
         case (CommandMapping::Next):
             return "Next";
 
         case (CommandMapping::Prev):
             return "Prev";
+
+        case (CommandMapping::AcceptPhone):
+            return "AcceptPhone";
+
+        case (CommandMapping::RejectPhone):
+            return "RejectPhone";
 
         case (CommandMapping::RequestVideoFocus):
             return "RequestVideoFocus";

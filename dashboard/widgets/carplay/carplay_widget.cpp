@@ -72,6 +72,7 @@ static void libusb_log(libusb_context* /*ctx*/, enum libusb_log_level level, con
             SPDLOG_INFO(str);
             break;
         case LIBUSB_LOG_LEVEL_DEBUG:
+        case LIBUSB_LOG_LEVEL_NONE:
         default:
             SPDLOG_DEBUG(str);
             break;
@@ -151,7 +152,8 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     const auto devices = QMediaDevices::audioOutputs();
     for (const QAudioDevice &device : devices)
     {
-        SPDLOG_DEBUG("Found audio device: {}",  device.description().toStdString());
+        const auto description_str = device.description().toStdString();
+        SPDLOG_DEBUG("Found audio device: {}",  description_str);
     }
 
     QAudioDevice info(QMediaDevices::defaultAudioOutput());
@@ -375,6 +377,7 @@ void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 void CarPlayWidget::initializeDongleDriver()
 {
     const auto version = libusb_get_version();
+    (void)version;  // Suppress unused variable warning since we're only using it for debugging.
     SPDLOG_DEBUG("Using libusb {}.{}.{}", version->major, version->minor, version->micro);
     
     libusb_init_context(nullptr, nullptr, /*num_options=*/0);
@@ -768,6 +771,7 @@ void CarPlayWidget::decode_dongle_response(MessageHeader header, const uint8_t* 
         case (MessageType::Command):
             {
                 auto cmd = Command(&buffer[0]);
+                (void)cmd;  // Suppress unused variable warning since we're only using it for debugging.
                 SPDLOG_DEBUG("Received Command::{} ({}), length = {}.", command_mapping_to_string(cmd.get_value()),
                     static_cast<uint32_t>(cmd.get_value()), header.get_message_length());
             }
@@ -783,10 +787,15 @@ void CarPlayWidget::decode_dongle_response(MessageHeader header, const uint8_t* 
                 uint32_t decode_type = read_uint32_t_little_endian(&buffer[0]);
                 float volume = static_cast<float>(read_uint32_t_little_endian(&buffer[4]));
                 uint32_t audio_type = read_uint32_t_little_endian(&buffer[8]);
+
+                (void)decode_type;  // Suppress unused variable warning since we're only using it for debugging.
+                (void)volume;
+                (void)audio_type;
                 
                 if (header.get_message_length() == 13)
                 {
                     AudioCommand cmd = static_cast<AudioCommand>(buffer[12]);
+                    (void)cmd;  // Suppress unused variable warning since we're only using it for debugging.
                     SPDLOG_DEBUG("Audio Command {}, decode_type = {}, volume = {}, audio_type = {}",
                         audio_command_to_string(cmd),
                         decode_type,
@@ -796,6 +805,7 @@ void CarPlayWidget::decode_dongle_response(MessageHeader header, const uint8_t* 
                 else if (header.get_message_length() == 16)
                 {
                     uint32_t volume_duration = read_uint32_t_little_endian(&buffer[12]);
+                    (void)volume_duration;  // Suppress unused variable warning since we're only using it for debugging.
                     SPDLOG_DEBUG("volume_duration = {}, decode_type = {}, volume = {}, audio_type = {}",
                         volume_duration,
                         decode_type,
@@ -820,7 +830,28 @@ void CarPlayWidget::decode_dongle_response(MessageHeader header, const uint8_t* 
                 SPDLOG_DEBUG("Dongle software version: {}", cmd.version());
             }
             break;
-            
+        
+        case (MessageType::Open):
+        case (MessageType::Plugged):
+        case (MessageType::Phase):
+        case (MessageType::Unplugged):
+        case (MessageType::Touch):
+        case (MessageType::LogoType):
+        case (MessageType::BluetoothAddress):
+        case (MessageType::BluetoothPIN):
+        case (MessageType::BluetoothDeviceName):
+        case (MessageType::WifiDeviceName):
+        case (MessageType::BluetoothPairedList):
+        case (MessageType::MediaData):
+        case (MessageType::SendFile):
+        case (MessageType::DisconnectPhone):
+        case (MessageType::ManufacturerInfo):
+        case (MessageType::CloseDongle):
+        case (MessageType::MultiTouch):
+        case (MessageType::HiCarLink):
+        case (MessageType::BoxSettings):
+        case (MessageType::HeartBeat):
+        case (MessageType::Invalid):
         default:
             SPDLOG_WARN("Received unknown message {}.", msg_type_to_string(header.get_message_type()));
             break;

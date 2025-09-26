@@ -172,7 +172,7 @@ std::unordered_set<std::string> ZenohExpressionSubscriber::getSchemaFieldNames(c
         
         for (auto field : fields)
         {
-            field_names.insert(field.getProto().getName());
+            field_names.insert(field.getProto().getName().cStr());
         }
     }
     
@@ -220,7 +220,7 @@ void ZenohExpressionSubscriber::buildFieldCache()
     for (const auto& [var_name, _] : variables_)
     {
         // Find the field in the schema
-        auto field = struct_schema.getFieldByName(var_name);
+        auto field = struct_schema.getFieldByName(var_name.c_str());
         
         // Determine the expected type for optimized extraction
         capnp::DynamicValue::Type expected_type = capnp::DynamicValue::UNKNOWN;
@@ -280,6 +280,14 @@ void ZenohExpressionSubscriber::extractFieldValues(capnp::DynamicStruct::Reader 
                 break;
 
             case capnp::DynamicValue::TEXT:
+            case capnp::DynamicValue::UNKNOWN:
+            case capnp::DynamicValue::VOID:
+            case capnp::DynamicValue::DATA:
+            case capnp::DynamicValue::LIST:
+            case capnp::DynamicValue::ENUM:
+            case capnp::DynamicValue::STRUCT:
+            case capnp::DynamicValue::CAPABILITY:
+            case capnp::DynamicValue::ANY_POINTER:
             default:
                 SPDLOG_WARN("Skipping field '{}' in expression evaluation", cached_field.name);
                 numeric_value = 0.0;

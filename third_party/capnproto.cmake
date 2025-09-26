@@ -2,7 +2,7 @@
 FetchContent_Declare(
     capnproto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG 6846dff
+    GIT_TAG 4af6d742d88c131f6b1b4d315707483eb6897cb5
     GIT_SHALLOW TRUE
 )
 
@@ -27,7 +27,7 @@ file(COPY ${capnproto_SOURCE_DIR}/LICENSE ${capnproto_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/capnproto/fetch_info.txt
 "Library: capnproto
 Repository: https://github.com/capnproto/capnproto.git
-Tag/Version: 6846dff
+Tag/Version: 4af6d742d88c131f6b1b4d315707483eb6897cb5
 Shallow Clone: TRUE
 Patches Applied: None
 ")

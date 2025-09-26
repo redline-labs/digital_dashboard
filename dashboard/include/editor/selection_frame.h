@@ -110,10 +110,8 @@ public:
             case widget_type_t::mercedes_190e_telltale:
                 wc.config = static_cast<Mercedes190ETelltale*>(child_)->getConfig();
                 break;
-            //case widget_type_t::carplay:
-                // CarPlayWidget may be disabled; guard cast
-                // If enabled, prefer to read its config via getConfig
-                // wc.config = static_cast<CarPlayWidget*>(child_)->getConfig();
+            case widget_type_t::carplay:
+                wc.config = static_cast<CarPlayWidget*>(child_)->getConfig();
                 break;
             case widget_type_t::unknown:
             default:

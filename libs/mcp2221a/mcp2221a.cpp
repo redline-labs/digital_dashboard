@@ -199,7 +199,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
 
     std::vector<uint8_t> response(64, 0);
     int bytes_read = hid_read(device_.get(), response.data(), response.size());
-    if (bytes_read < 64u)
+    if (bytes_read < 64)
     {
         SPDLOG_ERROR("Failed to read enough data for status response (read {} bytes)", bytes_read);
         return std::nullopt;
@@ -298,8 +298,9 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     std::vector<uint8_t> response(64, 0);
     int res = hid_read_timeout(device_.get(), response.data(), response.size(), 100u);
 
-    if (response[0] != 0x90 || response[1] != 0x00) {
-        SPDLOG_ERROR("I2C write failed for address 0x{:02X}, response[0]=0x{:02X}, response[1]=0x{:02X}", address, response[0], response[1]);
+    if ((res <= 0) || (response[0] != 0x90) || (response[1] != 0x00))
+    {
+        SPDLOG_ERROR("I2C write failed for address 0x{:02X}, res = {}, response[0]=0x{:02X}, response[1]=0x{:02X}", address, res, response[0], response[1]);
         return false;
     }
 

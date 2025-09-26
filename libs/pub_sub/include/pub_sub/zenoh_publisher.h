@@ -72,11 +72,13 @@ public:
         // kj::Array, freeing the buffer at the correct time. The uint8_t* parameter is ignored
         // because the pointer simply aliases memory owned by the captured kj::Array.
         kj::Array<capnp::word> words = capnp::messageToFlatArray(mMessage);
-        auto bytesView = words.asBytes();
+        auto words_ptr = std::make_shared<kj::Array<capnp::word>>(kj::mv(words));
+        auto bytesView = words_ptr->asBytes();
         uint8_t* ptr = reinterpret_cast<uint8_t*>(bytesView.begin());
         const size_t len = bytesView.size();
-        auto deleter = [arr = kj::mv(words)](uint8_t* /*unused*/ ) mutable {
-            // Destruction of 'arr' here releases the buffer.
+        auto deleter = [words_ptr = std::move(words_ptr)](uint8_t* /*unused*/ ) noexcept {
+            // Shared ownership keeps buffer alive until zenoh releases it.
+            // No action needed; 'words_ptr' will destruct here.
         };
 
         auto opts = zenoh::Publisher::PutOptions::create_default();

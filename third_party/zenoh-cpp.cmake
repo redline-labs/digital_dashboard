@@ -2,7 +2,7 @@
 FetchContent_Declare(
     zenoh-cpp
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh-cpp.git
-    GIT_TAG 1.4.0  # Latest stable release
+    GIT_TAG 1.5.1  # Latest stable release
     GIT_SHALLOW TRUE
 )
 
@@ -25,7 +25,7 @@ file(COPY ${zenoh-cpp_SOURCE_DIR}/LICENSE ${zenoh-cpp_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/zenoh-cpp/fetch_info.txt
 "Library: zenoh-cpp
 Repository: https://github.com/eclipse-zenoh/zenoh-cpp.git
-Tag/Version: 1.4.0 (Latest stable release)
+Tag/Version: 1.5.1
 Shallow Clone: TRUE
 Patches Applied: None
 ") 

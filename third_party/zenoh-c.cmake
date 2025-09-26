@@ -5,7 +5,7 @@ set(ENV{MACOSX_DEPLOYMENT_TARGET} ${CMAKE_OSX_DEPLOYMENT_TARGET})
 FetchContent_Declare(
     zenohc
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh-c.git
-    GIT_TAG 1.5.0
+    GIT_TAG 1.5.1
     GIT_SHALLOW TRUE
     OVERRIDE_FIND_PACKAGE
 )
@@ -27,7 +27,7 @@ file(COPY ${zenohc_SOURCE_DIR}/LICENSE ${zenohc_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/zenohc/fetch_info.txt
 "Library: zenoh-c
 Repository: https://github.com/eclipse-zenoh/zenoh-c.git
-Tag/Version: 1.5.0
+Tag/Version: 1.5.1
 Shallow Clone: TRUE
 Patches Applied: None
 ")

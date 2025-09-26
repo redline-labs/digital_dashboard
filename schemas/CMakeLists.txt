@@ -78,11 +78,11 @@ set_source_files_properties(${GENERATED_SOURCES} PROPERTIES GENERATED TRUE)
 # Include directories
 target_include_directories(schemas PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${capnproto_SOURCE_DIR}/c++/src
+    #${capnproto_SOURCE_DIR}/c++/src
 )
 
 # Link with capnproto
-target_link_libraries(schemas PUBLIC
+target_link_libraries(schemas PRIVATE
     capnp
     kj
 )

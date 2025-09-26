@@ -40,28 +40,11 @@ message("-- Build Type: ${CMAKE_BUILD_TYPE}")
 #    -Wl,--gc-sections
 #)
 
+# Compiler options for all the code including third party dependencies.
 add_compile_options(
-    #$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
-    #$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
-
-    $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>
-    $<$<COMPILE_LANGUAGE:CXX>:-Wsuggest-override>
-
     #-Werror
     -Wall
     -Wextra
-    #-Wcast-align
-    #-Wconversion
-    #-Wsign-conversion
-    #$<$<COMPILE_LANGUAGE:CXX>:-Wno-volatile>
-
-    -Wshadow
-    #-Wlogical-op
-
-    #-Wsuggest-final-types
-    #-Wsuggest-final-methods
-
-    -Wno-expansion-to-defined
 
     # Debugging.
     -DNDEBUG
@@ -74,8 +57,34 @@ add_compile_options(
     #-flto
 )
 
-# Pull in third party dependencies.
 add_subdirectory(third_party)
+
+
+# Additional compiler options for all our code.
+add_compile_options(
+    #$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+    #$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+
+    $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>
+    $<$<COMPILE_LANGUAGE:CXX>:-Wsuggest-override>
+
+    #-Werror
+    #-Wcast-align
+    #-Wconversion
+    #-Wsign-conversion
+    #$<$<COMPILE_LANGUAGE:CXX>:-Wno-volatile>
+
+    -Wshadow
+    #-Wlogical-op
+
+    #-Wsuggest-final-types
+    #-Wsuggest-final-methods
+
+    -Wno-expansion-to-defined
+    -Wswitch-enum
+)
+
+
 add_subdirectory(schemas)
 add_subdirectory(libs)
 add_subdirectory(dbcs)
