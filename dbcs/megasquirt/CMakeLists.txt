@@ -1,0 +1,2 @@
+generate_dbc_code(dbc_megasquirt_realtime_data ${CMAKE_CURRENT_SOURCE_DIR}/Megasquirt_CAN-2014-10-27.dbc)
+generate_dbc_code(dbc_megasquirt_dash_data ${CMAKE_CURRENT_SOURCE_DIR}/Megasquirt_simplified_dash_broadcast.dbc)

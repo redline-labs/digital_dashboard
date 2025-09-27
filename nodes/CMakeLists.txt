@@ -1,3 +1,4 @@
 add_subdirectory(racegrade_tc8)
 add_subdirectory(inspect)
 add_subdirectory(msel_master_relay)
+add_subdirectory(megasquirt)

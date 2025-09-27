@@ -10,6 +10,7 @@ set(SCHEMA_FILES
     racegrade_tc8_configure.capnp
     racegrade_tc8_signals.capnp
     msel_master_relay.capnp
+    megasquirt.capnp
     can_frame.capnp
 )
 
