@@ -733,7 +733,8 @@ void generate_cpp_parser_header(const dbc_parser::Database &db, const std::strin
     fmt::print(out, "        register_all(parser, std::make_index_sequence<sizeof...(Ms)>{{}});\n");
     fmt::print(out, "    }}\n");
     fmt::print(out, "\n");
-    fmt::print(out, "    void reset() {{\n");
+    fmt::print(out, "    void reset()\n");
+    fmt::print(out, "    {{\n");
     fmt::print(out, "        seen_.fill(false);\n");
     fmt::print(out, "    }}\n");
     fmt::print(out, "\n");
@@ -741,7 +742,8 @@ void generate_cpp_parser_header(const dbc_parser::Database &db, const std::strin
     fmt::print(out, "    template <std::size_t I> void mark_seen_index()\n");
     fmt::print(out, "    {{\n");
     fmt::print(out, "        static_assert(I < sizeof...(Ms));\n");
-    fmt::print(out, "        seen_[I] = seen_[0];\n");
+    fmt::print(out, "        // We want to align to the first message.  so only mark other messages as received if the first has been received.\n");
+    fmt::print(out, "        seen_[I] = I == 0 ? true : seen_[0];\n");
     fmt::print(out, "        if (std::all_of(seen_.begin(), seen_.end(), [](bool b){{ return b; }}))\n");
     fmt::print(out, "        {{\n");
     fmt::print(out, "            if (on_complete_)\n");
