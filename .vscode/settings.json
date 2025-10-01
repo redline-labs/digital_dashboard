@@ -70,6 +70,7 @@
         "ostream": "cpp",
         "*.md": "cpp",
         "codecvt": "cpp",
-        "*.in": "cpp"
+        "*.in": "cpp",
+        "cstddef": "cpp"
     }
 }

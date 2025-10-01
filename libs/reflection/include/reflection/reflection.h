@@ -1,5 +1,44 @@
 #pragma once
 
+// ============================================================================
+// Reflection Library - Struct and Enum Reflection with Metadata Support
+// ============================================================================
+//
+// This library provides compile-time reflection for structs and enums with
+// optional field metadata (friendly names, etc.).
+//
+// Basic Usage:
+// -----------
+// 
+// 1. Define a reflected struct:
+//    REFLECT_STRUCT(MyStruct,
+//        (int, id, 0),
+//        (std::string, name, ""),
+//        (double, value, 0.0)
+//    )
+//
+// 2. Optionally add metadata with friendly names (and optional descriptions):
+//    REFLECT_METADATA(MyStruct,
+//        (id, "Unique Identifier", "A unique identifier for this item"),
+//        (value, "Numeric Value", "The numeric value to display"),
+//        (name, "Display Name")  // Description is optional, and you can skip fields
+//    )
+//    Note: You can provide metadata for a subset of fields. Omitted fields will
+//          use their field name as the display name.
+//
+// 3. Use reflection:
+//    - Visit fields: reflection::visit_fields(obj, [](auto name, auto& field, auto type){...})
+//    - Get friendly name: reflection::get_friendly_name<MyStruct>("id")
+//    - Get description: reflection::get_description<MyStruct>("id")
+//    - Check for metadata: reflection::field_metadata_traits<MyStruct>::has_metadata
+//
+// 4. Define reflected enums:
+//    REFLECT_ENUM(Color, Red, Green, Blue)
+//    - Convert to string: reflection::enum_to_string(Color::Green)
+//    - Convert from string: reflection::enum_traits<Color>::from_string("Green")
+//
+// ============================================================================
+
 #include <array>
 #include <cstddef>
 #include <string_view>
@@ -25,6 +64,17 @@ struct is_std_vector : std::false_type {};
 template <typename U, typename Alloc>
 struct is_std_vector<std::vector<U, Alloc>> : std::true_type { using value_type = U; };
 
+
+// Field metadata storage
+struct FieldMetadata {
+    std::string_view field_name;
+    std::string_view friendly_name;
+    std::string_view description;
+    
+    constexpr FieldMetadata() : field_name(""), friendly_name(""), description("") {}
+    constexpr explicit FieldMetadata(std::string_view field, std::string_view fn, std::string_view desc = "") 
+        : field_name(field), friendly_name(fn), description(desc) {}
+};
 
 // Field metadata
 template <typename Struct, typename FieldType>
@@ -169,6 +219,106 @@ struct StructName { \
         return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_FIELD_TYPE_NAME, StructName, __VA_ARGS__) }; \
     } \
 };
+
+// =========================
+// Field metadata utilities
+// =========================
+
+// Default metadata traits - can be specialized for each struct
+template <typename T>
+struct field_metadata_traits {
+    static constexpr auto metadata() {
+        // Return empty array by default (size 0)
+        return std::array<FieldMetadata, 0>{};
+    }
+    static constexpr bool has_metadata = false;
+};
+
+// Helper implementation - search metadata by field name
+template <typename Struct, typename MetadataArray, std::size_t... I>
+constexpr std::string_view get_friendly_name_impl(
+    const MetadataArray& metadata, 
+    std::string_view field_name,
+    std::index_sequence<I...>)
+{
+    std::string_view result = field_name;
+    (void)((metadata[I].field_name == field_name && !metadata[I].friendly_name.empty() ? 
+        (result = metadata[I].friendly_name, true) : false) || ...);
+    return result;
+}
+
+// Helper to get friendly name for a field by name
+template <typename Struct>
+constexpr std::string_view get_friendly_name(std::string_view field_name)
+{
+    if constexpr (field_metadata_traits<Struct>::has_metadata)
+    {
+        constexpr auto metadata = field_metadata_traits<Struct>::metadata();
+        return get_friendly_name_impl<Struct>(metadata, field_name, std::make_index_sequence<metadata.size()>{});
+    }
+    else
+    {
+        return field_name;
+    }
+}
+
+// Helper implementation for description lookup - search metadata by field name
+template <typename Struct, typename MetadataArray, std::size_t... I>
+constexpr std::string_view get_description_impl(
+    const MetadataArray& metadata, 
+    std::string_view field_name,
+    std::index_sequence<I...>)
+{
+    std::string_view result = "";
+    (void)((metadata[I].field_name == field_name && !metadata[I].description.empty() ? 
+        (result = metadata[I].description, true) : false) || ...);
+    return result;
+}
+
+// Helper to get description for a field by name
+template <typename Struct>
+constexpr std::string_view get_description(std::string_view field_name)
+{
+    if constexpr (field_metadata_traits<Struct>::has_metadata)
+    {
+        constexpr auto metadata = field_metadata_traits<Struct>::metadata();
+        return get_description_impl<Struct>(metadata, field_name, std::make_index_sequence<metadata.size()>{});
+    }
+    else
+    {
+        return "";
+    }
+}
+
+// Macro helpers for metadata - use different extractors to avoid conflicts
+#define REFLECTION_METADATA_GET_FIELD(field, friendly, ...) field
+#define REFLECTION_METADATA_GET_FRIENDLY(field, friendly, ...) friendly
+#define REFLECTION_METADATA_GET_DESCRIPTION(field, friendly, ...) __VA_ARGS__
+
+#define REFLECTION_METADATA_PAIR_FIELD(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_FIELD pair)
+#define REFLECTION_METADATA_PAIR_FRIENDLY(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_FRIENDLY pair)
+#define REFLECTION_METADATA_PAIR_DESCRIPTION(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_DESCRIPTION pair)
+
+// Helper to create a FieldMetadata entry for a tuple (field_name, "Friendly Name") or (field_name, "Friendly Name", "Description")
+// The field name is stringified and stored so we can do name-based lookups
+#define REFLECTION_MAKE_METADATA_ENTRY(StructName, pair) \
+    ::reflection::FieldMetadata{REFLECTION_STRINGIZE(REFLECTION_METADATA_PAIR_FIELD(pair)), REFLECTION_METADATA_PAIR_FRIENDLY(pair), REFLECTION_METADATA_PAIR_DESCRIPTION(pair)}
+
+// Macro to define metadata for a struct by specializing field_metadata_traits
+// Usage: REFLECT_METADATA(MyStruct, (field1, "Friendly Field 1"), (field2, "Friendly Field 2"))
+// Note: You can provide metadata for a subset of fields - omitted fields will use their field name as the friendly name
+#define REFLECT_METADATA(StructName, ...) \
+namespace reflection { \
+template <> \
+struct field_metadata_traits<StructName> { \
+    static constexpr auto metadata() { \
+        return std::array{ \
+            REFLECTION_FOR_EACH_LIST(REFLECTION_MAKE_METADATA_ENTRY, StructName, __VA_ARGS__) \
+        }; \
+    } \
+    static constexpr bool has_metadata = true; \
+}; \
+}
 
 // =========================
 // Enum reflection utilities
