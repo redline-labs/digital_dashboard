@@ -1,4 +1,4 @@
-#include "motec_pdm_generic_output.h"
+#include "dbc_motec_pdm_generic_output.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 
@@ -27,7 +27,7 @@ int main()
         {"PDM_Input_Voltage_MP", 0.0},
     };
 
-    motec_pdm_generic_output::motec_pdm_generic_output_t db;
+    dbc_motec_pdm_generic_output::dbc_motec_pdm_generic_output_t db;
     std::array<uint8_t, 8> data = {0x00, 0x05, 0x0a, 0x0f, 0x14, 0x19, 0x1e, 0x23};
     auto decoded = db.decode(0x000505, data);
     SPDLOG_INFO("decoded = {}", db.get_message_name(decoded));

@@ -36,7 +36,9 @@ target_link_libraries(dbc_parser_parse
 # Code generator executable
 add_executable(dbc_code_gen
     src/dbc_code_gen.cpp
-    src/generate_h.cpp
+    src/generate_cpp_header.cpp
+    src/generate_cpp_parser_header.cpp
+    src/generate_cpp_parser_source.cpp
 )
 
 target_link_libraries(dbc_code_gen
@@ -73,12 +75,12 @@ macro(generate_dbc_code library_name dbc_file)
     target_include_directories(${library_name} PUBLIC ${output_dir})
 endmacro()
 
-#add_executable(test_dbc_code_gen
-#    tests/test_dbc_code_gen.cpp
-#)
+add_executable(test_dbc_code_gen
+    tests/test_dbc_code_gen.cpp
+)
 
-#target_link_libraries(test_dbc_code_gen
-#    PRIVATE
-#    spdlog::spdlog
-#    motec_pdm_generic_output
-#)
+target_link_libraries(test_dbc_code_gen
+    PRIVATE
+    spdlog::spdlog
+    dbc_motec_pdm_generic_output
+)
