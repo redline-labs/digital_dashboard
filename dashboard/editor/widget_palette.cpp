@@ -12,7 +12,7 @@ WidgetPalette::WidgetPalette(QWidget* parent)
     for (const auto& info : widget_registry::kAllWidgets)
     {
         auto* entry = new QListWidgetItem(QString::fromUtf8(info.label));
-        const std::string_view type_name = reflection::enum_traits<widget_type_t>::to_string(info.type);
+        const std::string_view type_name = reflection::enum_to_string(info.type);
         entry->setData(Qt::UserRole, QString::fromUtf8(type_name.data(), static_cast<int>(type_name.size())));
         addItem(entry);
     }

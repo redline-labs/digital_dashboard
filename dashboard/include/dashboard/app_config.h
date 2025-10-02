@@ -9,6 +9,7 @@
 
 #include "reflection/reflection.h"
 
+#include "editor/widget_registry_list.h"
 #include "carplay/carplay_widget.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
@@ -179,55 +180,10 @@ struct convert<widget_config_t> {
 
         node["type"] = reflection::enum_to_string(rhs.type);
 
-        if (rhs.type == widget_type_t::carplay)
-        {
-            node["config"] = std::get<CarPlayWidget::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::mercedes_190e_speedometer)
-        {
-            node["config"] = std::get<Mercedes190ESpeedometer::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::mercedes_190e_tachometer)
-        {
-            node["config"] = std::get<Mercedes190ETachometer::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::sparkline)
-        {
-            node["config"] = std::get<SparklineItem::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::mercedes_190e_telltale)
-        {
-            node["config"] = std::get<Mercedes190ETelltale::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::mercedes_190e_cluster_gauge)
-        {
-            node["config"] = std::get<Mercedes190EClusterGauge::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::motec_c125_tachometer)
-        {
-            node["config"] = std::get<MotecC125Tachometer::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::motec_cdl3_tachometer)
-        {
-            node["config"] = std::get<MotecCdl3Tachometer::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::static_text)
-        {
-            node["config"] = std::get<StaticTextWidget::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::value_readout)
-        {
-            node["config"] = std::get<ValueReadoutWidget::config_t>(rhs.config);
-        }
-        else if (rhs.type == widget_type_t::background_rect)
-        {
-            node["config"] = std::get<BackgroundRectWidget::config_t>(rhs.config);
-        }
-        else
-        {
-            SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", reflection::enum_to_string(rhs.type));
-            node["type"] = "unknown";
-        }
+        // Use std::visit to encode whichever config is active in the variant
+        std::visit([&](const auto& cfg) {
+            node["config"] = cfg;
+        }, rhs.config);
 
         return node;
     }
@@ -243,69 +199,27 @@ struct convert<widget_config_t> {
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
 
-        if (type == CarPlayWidget::kWidgetName)
-        {
-            rhs.type = widget_type_t::carplay;
-            rhs.config = node["config"].as<CarplayConfig_t>();
+        // Use FOR_EACH_WIDGET to generate if-else chain
+        bool matched = false;
+        
+#define DECODE_CONFIG_IF(enum_val, widget_class, label) \
+        if (!matched && type == widget_class::kWidgetName) { \
+            rhs.type = widget_type_t::enum_val; \
+            rhs.config = node["config"].as<widget_class::config_t>(); \
+            matched = true; \
         }
-        else if (type == Mercedes190ESpeedometer::kWidgetName)
-        {
-            rhs.type = widget_type_t::mercedes_190e_speedometer;
-            rhs.config = node["config"].as<Mercedes190ESpeedometerConfig_t>();
-        }
-        else if (type == Mercedes190ETachometer::kWidgetName)
-        {
-            rhs.type = widget_type_t::mercedes_190e_tachometer;
-            rhs.config = node["config"].as<Mercedes190ETachometerConfig_t>();
-        }
-        else if (type == SparklineItem::kWidgetName)
-        {
-            rhs.type = widget_type_t::sparkline;
-            rhs.config = node["config"].as<SparklineConfig_t>();
-        }
-        else if (type == Mercedes190ETelltale::kWidgetName)
-        {
+        
+        FOR_EACH_WIDGET(DECODE_CONFIG_IF)
+#undef DECODE_CONFIG_IF
+        
+        // Backward compatibility for old widget type names
+        if (!matched && type == "mercedes_190e_battery_telltale") {
             rhs.type = widget_type_t::mercedes_190e_telltale;
-            rhs.config = node["config"].as<Mercedes190ETelltaleConfig_t>();
+            rhs.config = node["config"].as<Mercedes190ETelltale::config_t>();
+            matched = true;
         }
-        else if (type == std::string("mercedes_190e_battery_telltale"))
-        {
-            // Backward compatibility with old widget type
-            rhs.type = widget_type_t::mercedes_190e_telltale;
-            rhs.config = node["config"].as<Mercedes190ETelltaleConfig_t>();
-        }
-        else if (type == Mercedes190EClusterGauge::kWidgetName)
-        {
-            rhs.type = widget_type_t::mercedes_190e_cluster_gauge;
-            rhs.config = node["config"].as<Mercedes190EClusterGaugeConfig_t>();
-        }
-        else if (type == MotecC125Tachometer::kWidgetName)
-        {
-            rhs.type = widget_type_t::motec_c125_tachometer;
-            rhs.config = node["config"].as<MotecC125TachometerConfig_t>();
-        }
-        else if (type == MotecCdl3Tachometer::kWidgetName)
-        {
-            rhs.type = widget_type_t::motec_cdl3_tachometer;
-            rhs.config = node["config"].as<MotecCdl3TachometerConfig_t>();
-        }
-        else if (type == StaticTextWidget::kWidgetName)
-        {
-            rhs.type = widget_type_t::static_text;
-            rhs.config = node["config"].as<StaticTextConfig_t>();
-        }
-        else if (type == ValueReadoutWidget::kWidgetName)
-        {
-            rhs.type = widget_type_t::value_readout;
-            rhs.config = node["config"].as<ValueReadoutConfig_t>();
-        }
-        else if (type == BackgroundRectWidget::kWidgetName)
-        {
-            rhs.type = widget_type_t::background_rect;
-            rhs.config = node["config"].as<BackgroundRectConfig_t>();
-        }
-        else
-        {
+        
+        if (!matched) {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", type);
             rhs.type = widget_type_t::unknown;
         }

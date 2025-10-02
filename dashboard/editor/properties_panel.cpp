@@ -466,77 +466,20 @@ namespace
             if (!frame) return; // editor always wraps in SelectionFrame
 
             const widget_type_t type = frame->type();
+            
+            // Use FOR_EACH_WIDGET to generate switch cases
             switch (type)
             {
-                case widget_type_t::static_text:
-                    frame->applyConfig(
-                        readIntoConfig<StaticTextWidget::config_t>(page)
-                    );
+#define APPLY_CONFIG_CASE(enum_val, widget_class, label) \
+                case widget_type_t::enum_val: \
+                    frame->applyConfig(readIntoConfig<widget_class::config_t>(page)); \
                     break;
-
-                case widget_type_t::background_rect:
-                    frame->applyConfig(
-                        readIntoConfig<BackgroundRectWidget::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::mercedes_190e_cluster_gauge:
-                    frame->applyConfig(
-                        readIntoConfig<Mercedes190EClusterGauge::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::mercedes_190e_speedometer:
-                    frame->applyConfig(
-                        readIntoConfig<Mercedes190ESpeedometer::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::mercedes_190e_tachometer:
-                    frame->applyConfig(
-                        readIntoConfig<Mercedes190ETachometer::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::motec_c125_tachometer:
-                    frame->applyConfig(
-                        readIntoConfig<MotecC125Tachometer::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::motec_cdl3_tachometer:
-                    frame->applyConfig(
-                        readIntoConfig<MotecCdl3Tachometer::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::sparkline:
-                    frame->applyConfig(
-                        readIntoConfig<SparklineItem::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::value_readout:
-                    frame->applyConfig(
-                        readIntoConfig<ValueReadoutWidget::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::carplay:
-                    frame->applyConfig(
-                        readIntoConfig<CarPlayWidget::config_t>(page)
-                    );
-                    break;
-
-                case widget_type_t::mercedes_190e_telltale:
-                    frame->applyConfig(
-                        readIntoConfig<Mercedes190ETelltale::config_t>(page)
-                    );
-                    break;
-
+                
+                FOR_EACH_WIDGET(APPLY_CONFIG_CASE)
+#undef APPLY_CONFIG_CASE
+                
                 case widget_type_t::unknown:
                 default:
-                    SPDLOG_WARN("Unknown/unhandled widget type: '{}'", reflection::enum_to_string(type));
                     break;
             }
         });
@@ -621,21 +564,22 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         if (auto* f = qobject_cast<SelectionFrame*>(w)) return f->type();
         return widget_type_t::unknown;
     }();
+    
+    // Use FOR_EACH_WIDGET to generate switch cases
     QWidget* page = nullptr;
     switch (type)
     {
-        case widget_type_t::static_text: page = buildFormFromConfig<StaticTextWidget::config_t>(this, static_cast<StaticTextWidget*>(uiWidget)->getConfig()); break;
-        case widget_type_t::background_rect: page = buildFormFromConfig<BackgroundRectWidget::config_t>(this, static_cast<BackgroundRectWidget*>(uiWidget)->getConfig()); break;
-        case widget_type_t::mercedes_190e_cluster_gauge: page = buildFormFromConfig<Mercedes190EClusterGauge::config_t>(this, static_cast<Mercedes190EClusterGauge*>(uiWidget)->getConfig()); break;
-        case widget_type_t::mercedes_190e_speedometer: page = buildFormFromConfig<Mercedes190ESpeedometer::config_t>(this, static_cast<Mercedes190ESpeedometer*>(uiWidget)->getConfig()); break;
-        case widget_type_t::mercedes_190e_tachometer: page = buildFormFromConfig<Mercedes190ETachometer::config_t>(this, static_cast<Mercedes190ETachometer*>(uiWidget)->getConfig()); break;
-        case widget_type_t::motec_c125_tachometer: page = buildFormFromConfig<MotecC125Tachometer::config_t>(this, static_cast<MotecC125Tachometer*>(uiWidget)->getConfig()); break;
-        case widget_type_t::motec_cdl3_tachometer: page = buildFormFromConfig<MotecCdl3Tachometer::config_t>(this, static_cast<MotecCdl3Tachometer*>(uiWidget)->getConfig()); break;
-        case widget_type_t::sparkline: page = buildFormFromConfig<SparklineItem::config_t>(this, static_cast<SparklineItem*>(uiWidget)->getConfig()); break;
-        case widget_type_t::value_readout: page = buildFormFromConfig<ValueReadoutWidget::config_t>(this, static_cast<ValueReadoutWidget*>(uiWidget)->getConfig()); break;
-        case widget_type_t::carplay: page = buildFormFromConfig<CarPlayWidget::config_t>(this, static_cast<CarPlayWidget*>(uiWidget)->getConfig()); break;
-        case widget_type_t::mercedes_190e_telltale: page = buildFormFromConfig<Mercedes190ETelltale::config_t>(this, static_cast<Mercedes190ETelltale*>(uiWidget)->getConfig()); break;
-        case widget_type_t::unknown: default: break;
+#define BUILD_FORM_CASE(enum_val, widget_class, label) \
+        case widget_type_t::enum_val: \
+            page = buildFormFromConfig<widget_class::config_t>(this, static_cast<widget_class*>(uiWidget)->getConfig()); \
+            break;
+        
+        FOR_EACH_WIDGET(BUILD_FORM_CASE)
+#undef BUILD_FORM_CASE
+        
+        case widget_type_t::unknown:
+        default:
+            break;
     }
 
     if (page)

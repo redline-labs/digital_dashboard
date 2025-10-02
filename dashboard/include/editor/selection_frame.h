@@ -48,7 +48,7 @@ public:
     template <typename Config>
     void applyConfig(const Config& cfg)
     {
-        using traits = widget_registry::widget_traits<Config>;
+        using traits = widget_registry::config_traits<Config>;
         using widget_t = typename traits::widget_t;
         static_assert(!std::is_void_v<widget_t>, "Unsupported config type");
 
@@ -78,41 +78,17 @@ public:
             return wc;
         }
 
+        // Use FOR_EACH_WIDGET to generate switch cases
         switch (type_)
         {
-            case widget_type_t::static_text:
-                wc.config = static_cast<StaticTextWidget*>(child_)->getConfig();
+#define GET_CONFIG_CASE(enum_val, widget_class, label) \
+            case widget_type_t::enum_val: \
+                wc.config = static_cast<widget_class*>(child_)->getConfig(); \
                 break;
-            case widget_type_t::background_rect:
-                wc.config = static_cast<BackgroundRectWidget*>(child_)->getConfig();
-                break;
-            case widget_type_t::mercedes_190e_cluster_gauge:
-                wc.config = static_cast<Mercedes190EClusterGauge*>(child_)->getConfig();
-                break;
-            case widget_type_t::mercedes_190e_speedometer:
-                wc.config = static_cast<Mercedes190ESpeedometer*>(child_)->getConfig();
-                break;
-            case widget_type_t::mercedes_190e_tachometer:
-                wc.config = static_cast<Mercedes190ETachometer*>(child_)->getConfig();
-                break;
-            case widget_type_t::motec_c125_tachometer:
-                wc.config = static_cast<MotecC125Tachometer*>(child_)->getConfig();
-                break;
-            case widget_type_t::motec_cdl3_tachometer:
-                wc.config = static_cast<MotecCdl3Tachometer*>(child_)->getConfig();
-                break;
-            case widget_type_t::sparkline:
-                wc.config = static_cast<SparklineItem*>(child_)->getConfig();
-                break;
-            case widget_type_t::value_readout:
-                wc.config = static_cast<ValueReadoutWidget*>(child_)->getConfig();
-                break;
-            case widget_type_t::mercedes_190e_telltale:
-                wc.config = static_cast<Mercedes190ETelltale*>(child_)->getConfig();
-                break;
-            case widget_type_t::carplay:
-                wc.config = static_cast<CarPlayWidget*>(child_)->getConfig();
-                break;
+            
+            FOR_EACH_WIDGET(GET_CONFIG_CASE)
+#undef GET_CONFIG_CASE
+            
             case widget_type_t::unknown:
             default:
                 break;
