@@ -19,10 +19,12 @@
 #include <QFrame>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QColorDialog>
 
 #include <limits>
 
 #include "reflection/reflection.h"
+#include "helpers/color.h"
 #include "spdlog/spdlog.h"
 
 #include <string>
@@ -82,6 +84,62 @@ namespace
             line->setText(QString::fromUtf8(value.data(), static_cast<int>(value.size())));
             line->setObjectName(QString("field:%1").arg(path));
             return line;
+        }
+        else if constexpr (std::is_same_v<FieldType, helpers::Color>)
+        {
+            // Create a widget with text field and color picker button
+            auto* container = new QWidget(parent);
+            auto* layout = new QHBoxLayout(container);
+            layout->setContentsMargins(0, 0, 0, 0);
+            layout->setSpacing(4);
+            
+            auto* line = new QLineEdit(container);
+            line->setMinimumHeight(24);
+            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            line->setText(QString::fromStdString(value.value()));
+            line->setObjectName(QString("field:%1").arg(path));
+            layout->addWidget(line);
+            
+            // Color preview/picker button
+            auto* colorBtn = new QPushButton(container);
+            colorBtn->setMinimumHeight(24);
+            colorBtn->setMaximumWidth(48);
+            colorBtn->setText("🎨");
+            colorBtn->setToolTip("Choose color");
+            
+            // Set button background to current color
+            QColor currentColor(QString::fromStdString(value.value()));
+            if (currentColor.isValid())
+            {
+                colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(currentColor.name()));
+            }
+            
+            // Connect color picker
+            QObject::connect(colorBtn, &QPushButton::clicked, container, [line, colorBtn]()
+            {
+                QColor current(line->text());
+                QColor picked = QColorDialog::getColor(current, colorBtn->parentWidget(), "Choose Color");
+                if (picked.isValid())
+                {
+                    line->setText(picked.name());
+                    colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(picked.name()));
+                }
+            });
+            
+            // Update button color when text changes
+            QObject::connect(line, &QLineEdit::textChanged, colorBtn, [colorBtn](const QString& text)
+            {
+                QColor color(text);
+                if (color.isValid())
+                {
+                    colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(color.name()));
+                }
+            });
+            
+            layout->addWidget(colorBtn);
+            container->setLayout(layout);
+            container->setObjectName(QString("field:%1").arg(path));
+            return container;
         }
         else if constexpr (std::is_enum_v<FieldType>)
         {
@@ -264,6 +322,10 @@ namespace
         {
             if (auto* w = page->findChild<QLineEdit*>(on)) out = w->text().toStdString();
         }
+        else if constexpr (std::is_same_v<FieldType, helpers::Color>)
+        {
+            if (auto* w = page->findChild<QLineEdit*>(on)) out = helpers::Color(w->text().toStdString());
+        }
         else if constexpr (std::is_same_v<FieldType, bool>)
         {
             if (auto* w = page->findChild<QCheckBox*>(on)) out = w->isChecked();
@@ -347,7 +409,8 @@ namespace
             // Use friendly name from metadata if available, otherwise use field name
             std::string_view displayName = reflection::get_friendly_name<Config>(name);
             const QString labelText = QString::fromUtf8(displayName.data(), static_cast<int>(displayName.size()));
-            QWidget* editor = createEditorFor(scrollContent, name, ref, type, labelText);
+            const QString fieldPath = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
+            QWidget* editor = createEditorFor(scrollContent, name, ref, type, fieldPath);
             
             // Check if there's a description for this field
             std::string_view description = reflection::get_description<Config>(name);

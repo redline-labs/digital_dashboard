@@ -5,14 +5,15 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "helpers/color.h"
 
 
 REFLECT_STRUCT(SparklineConfig_t,
     (std::string, units, "Untitled"),
     (double, min_value, 0.0),
     (double, max_value, 100.0),
-    (std::string, line_color, "#0000FF"),
-    (std::string, text_color, "#FFFFFF"),
+    (helpers::Color, line_color, "#0000FF"),
+    (helpers::Color, text_color, "#FFFFFF"),
     (std::string, font_family, "Arial"),
     (uint16_t, font_size_value, 24),
     (uint16_t, font_size_units, 10),

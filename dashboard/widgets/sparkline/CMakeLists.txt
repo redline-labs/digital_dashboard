@@ -21,9 +21,9 @@ target_include_directories(sparkline PUBLIC
 target_link_libraries(sparkline
     PUBLIC
         reflection
+        helpers
     PRIVATE
         Qt6::Widgets
         common_logging    # For spdlog
         zenoh_pub_sub   # For expression evaluation if configured
-        helpers
 )

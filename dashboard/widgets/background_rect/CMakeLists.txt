@@ -17,6 +17,7 @@ target_include_directories(background_rect PUBLIC
 target_link_libraries(background_rect PRIVATE
     Qt6::Widgets
     reflection
+    helpers
     common_logging
 )
 

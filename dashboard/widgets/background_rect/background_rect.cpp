@@ -19,11 +19,14 @@ void BackgroundRectWidget::drawRect(QPainter* painter)
 {
 	QRectF r(0, 0, width(), height());
 
-	// Build gradient stops from provided colors
-	if (_cfg.colors.empty() || _cfg.colors.size() == 1)
+	if (_cfg.colors.empty())
 	{
-		// Uniform fill
-		painter->fillRect(r, QColor(QString::fromStdString(_cfg.colors.empty() ? std::string("#000000") : _cfg.colors.front())));
+		painter->fillRect(r, QColor(QString::fromStdString("#000000")));
+		return;
+	}
+	else if (_cfg.colors.size() == 1)
+	{
+		painter->fillRect(r, QColor(QString::fromStdString(_cfg.colors.front().value())));
 		return;
 	}
 
@@ -35,7 +38,7 @@ void BackgroundRectWidget::drawRect(QPainter* painter)
 	for (int i = 0; i < n; ++i)
 	{
 		const double pos = static_cast<double>(i) / static_cast<double>(n - 1);
-		grad.setColorAt(pos, QColor(QString::fromStdString(_cfg.colors[static_cast<size_t>(i)])));
+		grad.setColorAt(pos, QColor(QString::fromStdString(_cfg.colors[static_cast<size_t>(i)].value())));
 	}
 
 	painter->fillRect(r, grad);

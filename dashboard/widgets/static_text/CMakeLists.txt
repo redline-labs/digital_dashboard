@@ -18,6 +18,7 @@ target_include_directories(static_text PUBLIC
 target_link_libraries(static_text
     PUBLIC
         reflection
+        helpers
     PRIVATE
         Qt6::Widgets
         common_logging

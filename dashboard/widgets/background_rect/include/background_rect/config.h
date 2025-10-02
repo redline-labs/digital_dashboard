@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "helpers/color.h"
 #include "reflection/reflection.h"
 
 REFLECT_ENUM(GradientDirection,
@@ -12,7 +13,7 @@ REFLECT_ENUM(GradientDirection,
 )
 
 REFLECT_STRUCT(BackgroundRectConfig_t,
-    (std::vector<std::string>, colors, {}),
+    (std::vector<helpers::Color>, colors, {}),
     (GradientDirection, direction, GradientDirection::vertical)
 )
 

@@ -4,6 +4,8 @@
 #include <string>
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
+
+#include "helpers/color.h"
 #include "reflection/reflection.h"
 
 
@@ -16,8 +18,8 @@ REFLECT_ENUM(Mercedes190ETelltaleType,
 
 REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
     (Mercedes190ETelltaleType, telltale_type, Mercedes190ETelltaleType::battery),
-    (std::string, warning_color, "#FF0000"),
-    (std::string, normal_color, "#333333"),
+    (helpers::Color, warning_color, "#FF0000"),
+    (helpers::Color, normal_color, "#333333"),
     (std::string, zenoh_key, ""),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
     (std::string, condition_expression, "")

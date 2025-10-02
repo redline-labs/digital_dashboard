@@ -56,7 +56,7 @@ void StaticTextWidget::applyConfig()
     _label->setFont(font);
 
     _label->setText(QString::fromStdString(_cfg.text));
-    _label->setStyleSheet(QString("color: %1;").arg(QString::fromStdString(_cfg.color)));
+    _label->setStyleSheet(QString("color: %1;").arg(QString::fromStdString(_cfg.color.value())));
     _label->setAlignment(Qt::AlignCenter);
 }
 

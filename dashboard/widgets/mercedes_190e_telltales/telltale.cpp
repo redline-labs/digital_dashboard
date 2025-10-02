@@ -110,12 +110,12 @@ void Mercedes190ETelltale::updateColors()
 {
     if (mAsserted)
     {
-        mBackgroundColor = QColor::fromString(_cfg.warning_color);
+        mBackgroundColor = QColor::fromString(_cfg.warning_color.value());
         mIconColor = kAssertedIcon;
     }
     else
     {
-        mBackgroundColor = QColor::fromString(_cfg.normal_color);
+        mBackgroundColor = QColor::fromString(_cfg.normal_color.value());
         mIconColor = kNormalIcon;
     }
 }
