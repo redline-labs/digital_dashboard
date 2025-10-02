@@ -12,6 +12,13 @@ REFLECT_STRUCT(StaticTextConfig_t,
     (std::string, color, "#000000")
 )
 
+REFLECT_METADATA(StaticTextConfig_t,
+    (text, "Text Content", "The text to display"),
+    (font, "Font Family", "Font family name (e.g., Arial, Times New Roman)"),
+    (font_size, "Font Size", "Size of the font in points"),
+    (color, "Text Color", "Color in hex format (e.g., #000000 for black)")
+)
+
 #endif // STATIC_TEXT_CONFIG_H
 
 

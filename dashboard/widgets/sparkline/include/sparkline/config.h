@@ -22,4 +22,19 @@ REFLECT_STRUCT(SparklineConfig_t,
     (std::string, value_expression, "")
 )
 
+REFLECT_METADATA(SparklineConfig_t,
+    (units, "Units Label", "Units text to display (e.g., mph, °C)"),
+    (min_value, "Minimum Value", "Minimum value for the Y-axis scale"),
+    (max_value, "Maximum Value", "Maximum value for the Y-axis scale"),
+    (line_color, "Line Color", "Color of the sparkline graph"),
+    (text_color, "Text Color", "Color of the value and units text"),
+    (font_family, "Font Family", "Font family for the displayed text"),
+    (font_size_value, "Value Font Size", "Font size for the numeric value"),
+    (font_size_units, "Units Font Size", "Font size for the units label"),
+    (update_rate, "Update Rate (Hz)", "Graph update rate in Hertz"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (value_expression, "Value Expression", "Expression to extract/compute the value")
+)
+
 #endif // SPARKLINE_CONFIG_H

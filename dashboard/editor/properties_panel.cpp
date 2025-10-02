@@ -338,9 +338,42 @@ namespace
         form->setVerticalSpacing(10);
         reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
         {
-            const QString label = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
-            QWidget* editor = createEditorFor(scrollContent, name, ref, type, label);
-            form->addRow(label, editor);
+            // Use friendly name from metadata if available, otherwise use field name
+            std::string_view displayName = reflection::get_friendly_name<Config>(name);
+            const QString labelText = QString::fromUtf8(displayName.data(), static_cast<int>(displayName.size()));
+            QWidget* editor = createEditorFor(scrollContent, name, ref, type, labelText);
+            
+            // Check if there's a description for this field
+            std::string_view description = reflection::get_description<Config>(name);
+            
+            if (!description.empty())
+            {
+                // Create a label widget with info icon for fields with descriptions
+                auto* labelWidget = new QWidget(scrollContent);
+                auto* labelLayout = new QHBoxLayout(labelWidget);
+                labelLayout->setContentsMargins(0, 0, 0, 0);
+                labelLayout->setSpacing(4);
+                
+                auto* textLabel = new QLabel(labelText, labelWidget);
+                labelLayout->addWidget(textLabel);
+                
+                // Add info icon with tooltip
+                auto* infoIcon = new QLabel("ⓘ", labelWidget);
+                infoIcon->setStyleSheet("QLabel { color: #0066cc; font-size: 12px; }");
+                const QString tooltip = QString::fromUtf8(description.data(), static_cast<int>(description.size()));
+                infoIcon->setToolTip(tooltip);
+                labelLayout->addWidget(infoIcon);
+                
+                labelLayout->addStretch();
+                labelWidget->setLayout(labelLayout);
+                
+                form->addRow(labelWidget, editor);
+            }
+            else
+            {
+                // No description, use simple text label
+                form->addRow(labelText, editor);
+            }
         });
         scrollContent->setLayout(form);
         scroll->setWidget(scrollContent);
