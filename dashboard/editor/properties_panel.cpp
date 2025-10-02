@@ -32,6 +32,12 @@ PropertiesPanel::PropertiesPanel(QWidget* parent):
   QWidget(parent),
   selected_(nullptr),
   stack_(new QStackedWidget(this)),
+  widgetPages_(),
+  windowPage_(nullptr),
+  winNameEdit_(nullptr),
+  winWidthSpin_(nullptr),
+  winHeightSpin_(nullptr),
+  winBgColorEdit_(nullptr),
   canvas_(nullptr),
   isSyncing_(false)
 {

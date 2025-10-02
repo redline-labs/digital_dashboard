@@ -72,6 +72,8 @@ add_compile_options(
     #-Wcast-align
     #-Wconversion
     #-Wsign-conversion
+    -Wuninitialized
+    -Wmissing-field-initializers
     #$<$<COMPILE_LANGUAGE:CXX>:-Wno-volatile>
 
     -Wshadow
