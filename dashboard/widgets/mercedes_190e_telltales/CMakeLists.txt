@@ -14,6 +14,7 @@ add_library(mercedes_190e_telltales STATIC
 
 # Set up include directories for this library
 target_include_directories(mercedes_190e_telltales PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
     #${exprtk_SOURCE_DIR}  # ExprTk is header-only
     ${CMAKE_CURRENT_BINARY_DIR}/../../_deps/exprtk-src

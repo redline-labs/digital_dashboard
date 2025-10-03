@@ -16,6 +16,7 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
 
 # Set up include directories for this library
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
     ${CMAKE_SOURCE_DIR}/include
 )

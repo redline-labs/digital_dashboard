@@ -2,6 +2,7 @@
 #define TACHOMETERWIDGET_H
 
 #include "mercedes_190e_tachometer/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QString>
@@ -25,7 +26,8 @@ class Mercedes190ETachometer : public QWidget
 
 public:
     using config_t = Mercedes190ETachometerConfig_t;
-    static constexpr std::string_view kWidgetName = "mercedes_190e_tachometer";
+    static constexpr std::string_view kFriendlyName = "Mercedes 190E Tachometer";
+    static constexpr widget_type_t kWidgetType = widget_type_t::mercedes_190e_tachometer;
 
     explicit Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

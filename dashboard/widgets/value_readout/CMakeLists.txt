@@ -11,6 +11,7 @@ add_library(value_readout
 )
 
 target_include_directories(value_readout PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/dashboard/widgets/value_readout/include
 )

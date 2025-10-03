@@ -470,8 +470,8 @@ namespace
             // Use FOR_EACH_WIDGET to generate switch cases
             switch (type)
             {
-#define APPLY_CONFIG_CASE(enum_val, widget_class, label) \
-                case widget_type_t::enum_val: \
+#define APPLY_CONFIG_CASE(widget_class) \
+                case widget_class::kWidgetType: \
                     frame->applyConfig(readIntoConfig<widget_class::config_t>(page)); \
                     break;
                 
@@ -569,8 +569,8 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
     QWidget* page = nullptr;
     switch (type)
     {
-#define BUILD_FORM_CASE(enum_val, widget_class, label) \
-        case widget_type_t::enum_val: \
+#define BUILD_FORM_CASE(widget_class) \
+        case widget_class::kWidgetType: \
             page = buildFormFromConfig<widget_class::config_t>(this, static_cast<widget_class*>(uiWidget)->getConfig()); \
             break;
         

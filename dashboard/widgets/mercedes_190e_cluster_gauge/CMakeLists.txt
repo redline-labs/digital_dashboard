@@ -14,6 +14,7 @@ add_library(mercedes_190e_cluster_gauge STATIC
 
 # Set up include directories for this library
 target_include_directories(mercedes_190e_cluster_gauge PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
 )
 

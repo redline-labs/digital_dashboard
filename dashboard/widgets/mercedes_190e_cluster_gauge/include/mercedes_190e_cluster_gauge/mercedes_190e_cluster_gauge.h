@@ -2,6 +2,7 @@
 #define MERCEDES_190E_CLUSTER_GAUGE_H
 
 #include "mercedes_190e_cluster_gauge/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QPainter>
@@ -24,7 +25,8 @@ class Mercedes190EClusterGauge : public QWidget
     Q_OBJECT
 public:
     using config_t = Mercedes190EClusterGaugeConfig_t;
-    static constexpr std::string_view kWidgetName = "mercedes_190e_cluster_gauge";
+    static constexpr std::string_view kFriendlyName = "Mercedes 190E Cluster Gauge";
+    static constexpr widget_type_t kWidgetType = widget_type_t::mercedes_190e_cluster_gauge;
 
     explicit Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return m_config; }

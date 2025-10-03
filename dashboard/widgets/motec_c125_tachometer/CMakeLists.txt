@@ -12,6 +12,7 @@ add_library(motec_c125_tachometer STATIC
 )
 
 target_include_directories(motec_c125_tachometer PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
 )
 

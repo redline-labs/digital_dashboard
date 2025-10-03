@@ -2,6 +2,7 @@
 #define MOTEC_CDL3_TACHOMETER_H
 
 #include "motec_cdl3_tachometer/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QFont>
@@ -20,7 +21,8 @@ class MotecCdl3Tachometer : public QWidget {
 
 public:
     using config_t = MotecCdl3TachometerConfig_t;
-    static constexpr std::string_view kWidgetName = "motec_cdl3_tachometer";
+    static constexpr std::string_view kFriendlyName = "MoTeC CDL3 Tachometer";
+    static constexpr widget_type_t kWidgetType = widget_type_t::motec_cdl3_tachometer;
 
     explicit MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

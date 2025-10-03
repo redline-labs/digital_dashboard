@@ -14,6 +14,7 @@ add_library(mercedes_190e_speedometer STATIC
 
 # Set up include directories for this library
 target_include_directories(mercedes_190e_speedometer PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )

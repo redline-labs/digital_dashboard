@@ -2,6 +2,7 @@
 #define TELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QPainter>
@@ -23,7 +24,8 @@ class Mercedes190ETelltale : public QWidget
 
 public:
     using config_t = Mercedes190ETelltaleConfig_t;
-    static constexpr std::string_view kWidgetName = "mercedes_190e_telltale";
+    static constexpr std::string_view kFriendlyName = "Mercedes 190E Telltale";
+    static constexpr widget_type_t kWidgetType = widget_type_t::mercedes_190e_telltale;
 
     explicit Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

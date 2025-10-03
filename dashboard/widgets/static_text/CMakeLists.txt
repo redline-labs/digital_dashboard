@@ -12,6 +12,7 @@ add_library(static_text STATIC
 )
 
 target_include_directories(static_text PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
 )
 

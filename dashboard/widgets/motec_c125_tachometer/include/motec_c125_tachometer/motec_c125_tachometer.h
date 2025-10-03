@@ -2,6 +2,7 @@
 #define MOTEC_C125_TACHOMETER_H
 
 #include "motec_c125_tachometer/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QFont>
@@ -19,7 +20,8 @@ class MotecC125Tachometer : public QWidget
 
 public:
     using config_t = MotecC125TachometerConfig_t;
-    static constexpr std::string_view kWidgetName = "motec_c125_tachometer";
+    static constexpr std::string_view kFriendlyName = "MoTeC C125 Tachometer";
+    static constexpr widget_type_t kWidgetType = widget_type_t::motec_c125_tachometer;
 
     explicit MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

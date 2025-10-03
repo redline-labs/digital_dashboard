@@ -14,6 +14,7 @@ add_library(sparkline STATIC
 
 # Set up include directories for this library
 target_include_directories(sparkline PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     include
 )
 

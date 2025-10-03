@@ -5,6 +5,7 @@
 #include "carplay/message.h"
 #include "carplay/config.h"
 #include "carplay/device_step.h"
+#include "dashboard/widget_types.h"
 
 #include <QtWidgets/QWidget>
 #include <QtGui/QMouseEvent>
@@ -33,7 +34,8 @@ class CarPlayWidget : public QWidget
 
   public:
     using config_t = CarplayConfig_t;
-    static constexpr std::string_view kWidgetName = "carplay";
+    static constexpr std::string_view kFriendlyName = "CarPlay";
+    static constexpr widget_type_t kWidgetType = widget_type_t::carplay;
 
     CarPlayWidget(CarplayConfig_t cfg, QWidget* parent = nullptr);
     ~CarPlayWidget();

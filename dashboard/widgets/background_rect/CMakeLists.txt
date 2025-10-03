@@ -11,6 +11,7 @@ add_library(background_rect
 )
 
 target_include_directories(background_rect PUBLIC
+    ${CMAKE_SOURCE_DIR}/dashboard/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 

@@ -2,6 +2,7 @@
 #define SPARKLINEITEM_H
 
 #include "sparkline/config.h"
+#include "dashboard/widget_types.h"
 
 #include "zenoh.hxx"
 
@@ -21,7 +22,8 @@ class SparklineItem : public QWidget {
 
 public:
     using config_t = SparklineConfig_t;
-    static constexpr std::string_view kWidgetName = "sparkline";
+    static constexpr std::string_view kFriendlyName = "Sparkline";
+    static constexpr widget_type_t kWidgetType = widget_type_t::sparkline;
 
     explicit SparklineItem(const SparklineConfig_t& cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

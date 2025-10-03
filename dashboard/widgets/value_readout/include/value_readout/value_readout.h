@@ -2,6 +2,7 @@
 #define VALUE_READOUT_WIDGET_H
 
 #include "value_readout/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QFont>
@@ -19,7 +20,8 @@ class ValueReadoutWidget : public QWidget
 
 public:
 	using config_t = ValueReadoutConfig_t;
-	static constexpr std::string_view kWidgetName = "value_readout";
+	static constexpr std::string_view kFriendlyName = "Value Readout";
+	static constexpr widget_type_t kWidgetType = widget_type_t::value_readout;
 
 	explicit ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent = nullptr);
 	const config_t& getConfig() const { return _cfg; }

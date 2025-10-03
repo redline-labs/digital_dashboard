@@ -8,37 +8,13 @@
 #include <vector>
 
 #include "reflection/reflection.h"
+#include "dashboard/widget_types.h"
+#include "helpers/color.h"
 
-#include "editor/widget_registry_list.h"
-#include "carplay/carplay_widget.h"
-#include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
-#include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
-#include "mercedes_190e_telltales/telltale.h"
-#include "sparkline/sparkline.h"
-#include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
-#include "motec_c125_tachometer/motec_c125_tachometer.h"
-#include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
-#include "static_text/static_text.h"
-#include "value_readout/value_readout.h"
-#include "background_rect/background_rect.h"
+#include "editor/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
 #include <spdlog/spdlog.h>
-
-REFLECT_ENUM(widget_type_t,
-    mercedes_190e_speedometer,
-    mercedes_190e_tachometer,
-    mercedes_190e_telltale,
-    mercedes_190e_cluster_gauge,
-    motec_c125_tachometer,
-    motec_cdl3_tachometer,
-    static_text,
-    value_readout,
-    background_rect,
-    sparkline,
-    carplay,
-    unknown
-)
 
 struct widget_config_t {
     widget_config_t() :
@@ -74,7 +50,7 @@ REFLECT_STRUCT(app_config_t,
     (std::string, name, ""),
     (uint16_t, width, 800),
     (uint16_t, height, 480),
-    (std::string, background_color, "#000000"),
+    (helpers::Color, background_color, "#000000"),
     (std::vector<widget_config_t>, widgets, {})
 )
 
@@ -202,9 +178,9 @@ struct convert<widget_config_t> {
         // Use FOR_EACH_WIDGET to generate if-else chain
         bool matched = false;
         
-#define DECODE_CONFIG_IF(enum_val, widget_class, label) \
-        if (!matched && type == widget_class::kWidgetName) { \
-            rhs.type = widget_type_t::enum_val; \
+#define DECODE_CONFIG_IF(widget_class) \
+        if (!matched && type == reflection::enum_to_string(widget_class::kWidgetType)) { \
+            rhs.type = widget_class::kWidgetType; \
             rhs.config = node["config"].as<widget_class::config_t>(); \
             matched = true; \
         }

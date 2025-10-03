@@ -9,13 +9,18 @@
 WidgetPalette::WidgetPalette(QWidget* parent)
     : QListWidget(parent)
 {
-    for (const auto& info : widget_registry::kAllWidgets)
-    {
-        auto* entry = new QListWidgetItem(QString::fromUtf8(info.label));
-        const std::string_view type_name = reflection::enum_to_string(info.type);
-        entry->setData(Qt::UserRole, QString::fromUtf8(type_name.data(), static_cast<int>(type_name.size())));
-        addItem(entry);
+
+// Add each of the available widgets to the palette.
+ #define WIDGET_INFO_ENTRY(widget_class) \
+    { \
+        auto* entry = new QListWidgetItem(QString::fromUtf8(widget_class::kFriendlyName)); \
+        const std::string_view type_name = reflection::enum_to_string(widget_class::kWidgetType); \
+        entry->setData(Qt::UserRole, QString::fromUtf8(type_name.data(), static_cast<int>(type_name.size()))); \
+        addItem(entry); \
     }
+
+    FOR_EACH_WIDGET(WIDGET_INFO_ENTRY)
+#undef WIDGET_INFO_ENTRY
 
     setSelectionMode(QAbstractItemView::SingleSelection);
     setDragEnabled(true);

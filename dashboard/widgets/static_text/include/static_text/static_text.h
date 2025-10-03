@@ -2,6 +2,7 @@
 #define STATIC_TEXT_WIDGET_H
 
 #include "static_text/config.h"
+#include "dashboard/widget_types.h"
 
 #include <QWidget>
 #include <QLabel>
@@ -13,7 +14,8 @@ class StaticTextWidget : public QWidget {
 
 public:
     using config_t = StaticTextConfig_t;
-    static constexpr std::string_view kWidgetName = "static_text";
+    static constexpr std::string_view kFriendlyName = "Static Text";
+    static constexpr widget_type_t kWidgetType = widget_type_t::static_text;
 
     explicit StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }
