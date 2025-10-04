@@ -6,6 +6,7 @@
 
 #include <QWidget>
 #include <QFont>
+#include <QRectF>
 
 #include <memory>
 #include <string_view>
@@ -38,9 +39,9 @@ private:
     void drawSweepBands(QPainter* painter); // segmented arc fill for current RPM
     void drawTicksAndLabels(QPainter* painter); // triangles and single-digit labels
 
-    // mapping helpers
-    float mapRpmToAngleDeg(float rpm) const;  // non-constant radius sweep
-    float mapAngleToRadius(float angle_deg) const; // varying radius function for the path
+    // transform helpers
+    QRectF computeContentBounds() const; // world-space rect that bounds all drawn content
+    void applyViewportTransform(QPainter& painter, const QRectF& contentBounds); // center/scale to widget
 
     // precomputed arc-length LUT (baseline ellipse) for even spacing
     void buildArcLUT();

@@ -22,6 +22,8 @@ constexpr float kSweepStartDeg = 170.0f; // start at left shoulder (0 RPM)
 constexpr float kSweepEndDeg   = 70.0f;  // end at right shoulder  (max RPM)
 constexpr float kEllipseA = 100.0f;
 constexpr float kEllipseB = 60.0f;
+// Extra margin to include ticks/labels so they don't clip at edges
+constexpr float kDecorationMargin = 14.0f;
 
 // Piecewise angle mapping to imitate a slightly non-linear scale seen on CDL3
 // We'll bias low range to sweep faster (bigger angle per 1000) and compress near top.
@@ -65,7 +67,8 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
         SPDLOG_ERROR("MotecCdl3Tachometer: expression parser init failed: {}", e.what());
         _expression_parser.reset();
     }
-    // Precompute LUT and static geometry for even spacing and fast drawing
+    // Why: Precompute a LUT and static geometry so drawing stays O(segments)
+    // with consistent visual spacing, regardless of widget size.
     buildArcLUT();
     buildStaticGeometry();
 }
@@ -82,19 +85,47 @@ void MotecCdl3Tachometer::paintEvent(QPaintEvent* e)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    // Scale to fit the actual computed outer extents so nothing is clipped
-    const float normA = (_maxOuterA > 0.0f) ? _maxOuterA : (kEllipseA + 20.0f);
-    const float normB = (_maxOuterB > 0.0f) ? _maxOuterB : (kEllipseB + 20.0f);
-    const float boxW = 2.0f * normA;
-    const float boxH = 2.0f * normB;
-    const float sx = static_cast<float>(width()) / boxW;
-    const float sy = static_cast<float>(height()) / boxH;
-    const float s = std::min(sx, sy);
-    p.translate(width() / 2.0, height() / 2.0);
-    p.scale(s, s);
+    const QRectF bounds = computeContentBounds();
+    applyViewportTransform(p, bounds);
 
     drawSweepBands(&p);
     drawTicksAndLabels(&p);
+}
+
+QRectF MotecCdl3Tachometer::computeContentBounds() const
+{
+    // Why: scale to exactly what we draw so the widget uses its space efficiently.
+    const float baseA = (_maxOuterA > 0.0f) ? _maxOuterA : (kEllipseA + 0.0f);
+    const float baseB = (_maxOuterB > 0.0f) ? _maxOuterB : (kEllipseB + 0.0f);
+
+    const float tStart = static_cast<float>(std::numbers::pi) * kSweepStartDeg / 180.0f;
+    const float tEnd   = static_cast<float>(std::numbers::pi) * kSweepEndDeg   / 180.0f;
+
+    const float x0 = baseA * std::cos(tStart);
+    const float x1 = baseA * std::cos(tEnd);
+    const float minX = std::min(x0, x1) - kDecorationMargin;
+    const float maxX = std::max(x0, x1) + kDecorationMargin;
+
+    // Device-space vertical range: everything is at or above the x-axis after mirror
+    const float yMin = -baseB - kDecorationMargin;
+    const float yMax = 0.0f;
+
+    return QRectF(QPointF(minX, yMin), QPointF(maxX, yMax));
+}
+
+void MotecCdl3Tachometer::applyViewportTransform(QPainter& p, const QRectF& content)
+{
+    // Why: keep scale/centering logic isolated and easy to reason about.
+    const float contentW = static_cast<float>(content.width());
+    const float contentH = static_cast<float>(content.height());
+    const float sx = static_cast<float>(width()) / std::max(1e-6f, contentW);
+    const float sy = static_cast<float>(height()) / std::max(1e-6f, contentH);
+    const float s = std::min(sx, sy);
+
+    const QPointF c = content.center();
+    p.translate(width() / 2.0, height() / 2.0);
+    p.scale(s, s);
+    p.translate(-c.x(), -c.y());
 }
 
 void MotecCdl3Tachometer::buildArcLUT()
@@ -150,7 +181,7 @@ void MotecCdl3Tachometer::buildStaticGeometry()
     // Compute total baseline arc length using LUT
     const float totalLen = _lutLengths.back();
 
-    // Desired fixed pixel gap between segments along the baseline path
+    // Why: Use a tiny constant pixel gap along the baseline path for even spacing
     constexpr float gap_px = 0.1f;
     constexpr float total_gaps = static_cast<float>(kSegments - 1) * gap_px;
     const float alloc_for_segments = std::max(0.0f, totalLen - total_gaps);
@@ -179,13 +210,13 @@ void MotecCdl3Tachometer::buildStaticGeometry()
         float a_start = angleAtArcLen(segStartArc);
         float a_end   = angleAtArcLen(segEndArc);
 
-        // Moving clockwise from kSweepStartDeg to kSweepEndDeg, angles decrease.
-        // We store start angle (greater) and negative span for QPainter drawArc in mirrored space
+        // Why: Angles decrease clockwise on our mirrored ellipse; store start and span
+        // in degrees as QPainter expects, keeping signs consistent with the mirror.
         float span_deg = a_end - a_start; // will be negative magnitude
         _segmentStartAngles[i] = a_start;
         _segmentSpanDeg[i] = span_deg;
 
-        // Thickness and radial rect per segment (same as before, but keep center offset constant)
+        // Why: Slightly increase segment thickness along the sweep for a dynamic taper.
         const float s = static_cast<float>(i) / static_cast<float>(kSegments - 1);
         const float length_px = length_min + (length_max - length_min) * s;
         _segmentLengthPx[i] = length_px;
@@ -193,7 +224,7 @@ void MotecCdl3Tachometer::buildStaticGeometry()
         _segmentRectAX[i] = kEllipseA + center_offset;
         _segmentRectBY[i] = kEllipseB + center_offset;
 
-        // Track max outer extents to prevent clipping during scaling
+        // Why: Track max outer extents so computeContentBounds can avoid clipping
         _maxOuterA = std::max(_maxOuterA, _segmentRectAX[i] + 0.5f * _segmentLengthPx[i]);
         _maxOuterB = std::max(_maxOuterB, _segmentRectBY[i] + 0.5f * _segmentLengthPx[i]);
 
@@ -209,49 +240,11 @@ void MotecCdl3Tachometer::buildStaticGeometry()
     }
 }
 
-// Non-linear mapping from RPM proportion to angle. We use a simple quadratic ease-out near top.
-float MotecCdl3Tachometer::mapRpmToAngleDeg(float rpm) const
-{
-    const float proportion = std::clamp(rpm / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
-    // ease: y = 1 - (1 - x)^2 -> fast at start, slow near end (matches perceived spacing)
-    const float eased = 1.0f - (1.0f - proportion) * (1.0f - proportion);
-    constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg)
-                               ? (kSweepStartDeg - kSweepEndDeg)
-                               : (kSweepStartDeg + 360.0f - kSweepEndDeg);
-    // Decrease angle with rpm so sweep proceeds CLOCKWISE from left to right
-    return kSweepStartDeg - sweep_cw * eased;
-}
-
-// The visible band radius varies with angle to mimic the CDL3 taper (shallower near start, deeper near middle)
-float MotecCdl3Tachometer::mapAngleToRadius(float angle_deg) const
-{
-    // Normalize to 0..1 across the sweep (clockwise)
-    constexpr float sweep_cw = (kSweepEndDeg >= kSweepStartDeg) ? (kSweepEndDeg - kSweepStartDeg)
-                                                           : (kSweepEndDeg + 360.0f - kSweepStartDeg);
-    float pos = angle_deg - kSweepStartDeg;
-    if (pos < 0.0f)
-    {
-        pos += 360.0f;
-    }
-    const float t = std::clamp(pos / sweep_cw, 0.0f, 1.0f);
-
-    // Flatten at higher RPMs by increasing radius with t (non-constant radius path)
-    // Start narrower (more curved), end wider (flatter)
-    constexpr float base_inner = 60.0f;
-    constexpr float base_outer = 86.0f; // target outer bound for the channel center
-
-    // Use a smoothstep-like curve and a small mid bulge to avoid a perfectly circular feel
-    const float grow = std::pow(t, 0.55f); // faster growth early, gentle near end
-    const float bulge = 0.06f * std::sin(static_cast<float>(std::numbers::pi) * t);
-    const float center = base_inner + (base_outer - base_inner) * (0.70f + 0.25f * grow + bulge);
-    return center;
-}
-
 void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
 {
     painter->save();
 
-    // Elliptical path to mimic CDL3: top arc flatter than sides
+    // Why: draw arc segments along an ellipse (flatter top, steeper shoulders)
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
 
     constexpr QColor onColor(30, 30, 30);
@@ -260,13 +253,13 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
     QPen pen(Qt::black);
     pen.setCapStyle(Qt::FlatCap);
 
-    // Mirror vertically so the arc bows downward (rainbow shape)
+    // Why: mirror vertically so the arc bows downward (dashboard-like rainbow)
     painter->save();
     painter->scale(1.0f, -1.0f);
 
     // Use precomputed LUT
 
-    // Draw a thin baseline track under segments and ticks
+    // Why: provide a subtle baseline track for alignment under segments and ticks
     {
         QPen basePen(QColor(25, 25, 25));
         basePen.setWidthF(1.0f);
@@ -299,12 +292,12 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
 void MotecCdl3Tachometer::drawTicksAndLabels(QPainter* painter) {
     painter->save();
 
-    // Ticks only at 1000 RPM with small triangles pointing inward along the varying-radius path
+    // Why: Discrete 1000-RPM ticks; compact triangles read well at small sizes
     constexpr QColor tickColor(20, 20, 20);
     painter->setPen(Qt::NoPen);
     painter->setBrush(tickColor);
 
-    // Label font (small, single digit)
+    // Why: Single-digit labels keep visual noise low while still readable
     QFont labelFont = _segmentFont;
     labelFont.setPointSizeF(5.0f);
     painter->setFont(labelFont);

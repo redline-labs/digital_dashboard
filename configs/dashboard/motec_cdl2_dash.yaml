@@ -5,8 +5,8 @@ height: 300
 background_color: "#73C3D0"
 widgets:
   - type: motec_cdl3_tachometer
-    x: 20
-    y: -60 # TODO: our widget assumes its a square.
+    x: -32
+    y: -190 # TODO: our widget assumes its a square.
     width: 600
     height: 600 # TODO: our widget assumes its a square.
     config:
@@ -18,9 +18,9 @@ widgets:
       rpm_expression: "rpm"
 
   - type: static_text
-    x: 50
+    x: 0
     y: 240
-    width: 400
+    width: 600
     height: 50
     config:
       text: "CLUB DASH"
