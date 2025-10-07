@@ -1,3 +1,4 @@
 generate_dbc_code(dbc_motec_pdm_generic_output ${CMAKE_CURRENT_SOURCE_DIR}/PDM_Generic_Output.dbc)
 generate_dbc_code(dbc_motec_e888_rev1 ${CMAKE_CURRENT_SOURCE_DIR}/Motec_E888_Rev1.dbc)
 generate_dbc_code(dbc_motec_ltc_rev1 ${CMAKE_CURRENT_SOURCE_DIR}/Motec_LTC_Rev1.dbc)
+generate_dbc_code(dbc_motec_m1_rev3 ${CMAKE_CURRENT_SOURCE_DIR}/Motec_M1_Rev3.dbc)

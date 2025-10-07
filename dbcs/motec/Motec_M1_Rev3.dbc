@@ -154,7 +154,7 @@ BO_ 1613 M1_GEN_0x64D: 8 M1
  SG_ Throttle_Aim_State : 47|4@0+ (1,0) [0|15] "" Vector__XXX
  SG_ Gear : 51|4@0- (1,0) [-8|7] "" Vector__XXX
  SG_ Engine_Speed_Reference_State : 55|4@0+ (1,0) [0|15] "" Vector__XXX
- SG_ Engine_Speed_Limit_State : 63|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ Engine_Speed_Limit_State2 : 63|8@0+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1614 M1_GEN_0x64E: 8 M1
  SG_ Launch_Diagnostic : 3|4@0- (1,0) [-8|7] "" Vector__XXX

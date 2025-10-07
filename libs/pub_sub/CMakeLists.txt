@@ -40,16 +40,18 @@ foreach(STRUCT_NAME ${SCHEMA_STRUCTS_FROM_TARGET})
 endforeach()
 
 
+## Reconfigure when any schema changes so configure_file re-runs
+file(GLOB SCHEMA_CAPNP_FILES "${CMAKE_SOURCE_DIR}/schemas/*.capnp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SCHEMA_CAPNP_FILES})
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/schema_registry.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp"
-    @ONLY
 )
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pub_sub/schema_registry.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/pub_sub/schema_registry.h"
-    @ONLY
 )
 
 add_library(zenoh_pub_sub STATIC
