@@ -7,7 +7,7 @@
 #include "can_frame.capnp.h"
 
 #include <spdlog/spdlog.h>
-#include <cxxopts.hpp>
+#include "core/core.h"
 #include <zenoh.hxx>
 
 #include <array>
@@ -72,19 +72,7 @@ static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t&
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::debug);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
-    cxxopts::Options options("racegrade_tc8", "Racegrade TC8 node");
-    options.add_options()
-        ("h,help", "Print usage");
-
-    auto result = options.parse(argc, argv);
-    if (result.count("help"))
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
+    core::init_core(argc, argv);
 
     // Create the publishers for the Inputs and Diagnostics messages
     pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");

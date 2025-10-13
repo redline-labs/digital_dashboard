@@ -71,6 +71,7 @@
         "*.md": "cpp",
         "codecvt": "cpp",
         "*.in": "cpp",
-        "cstddef": "cpp"
+        "cstddef": "cpp",
+        "thread": "cpp"
     }
 }

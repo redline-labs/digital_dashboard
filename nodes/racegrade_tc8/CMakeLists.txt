@@ -19,6 +19,7 @@ target_link_libraries(racegrade_tc8 PRIVATE
     schemas
     zenoh_pub_sub
     dbc_motec_e888_rev1
+    core
 )
 
 add_executable(test_racegrade_tc8_query

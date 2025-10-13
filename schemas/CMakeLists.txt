@@ -12,6 +12,7 @@ set(SCHEMA_FILES
     msel_master_relay.capnp
     megasquirt.capnp
     motec_m1.capnp
+    motec_pdm.capnp
     motec_ltc.capnp
     can_frame.capnp
 )

@@ -4,6 +4,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <new>
 
 #include "zenoh.hxx"
 
@@ -63,6 +64,11 @@ public:
         return mBuilder;
     }
 
+    std::string_view keyexpr() const
+    {
+        return mPublisher->get_keyexpr().as_string_view();
+    }
+
     // Publish current message state via zenoh without specifying encoding for now.
     void put()
     {
@@ -86,6 +92,12 @@ public:
         opts.encoding->set_schema(schema_traits<SchemaT>::name);
 
         mPublisher->put(zenoh::Bytes(ptr, len, std::move(deleter)), std::move(opts));
+
+        // IMPORTANT: Reset the Cap'n Proto builder after publishing to avoid arena growth.
+        // MallocMessageBuilder is non-copyable/non-movable, so reconstruct it in-place.
+        mMessage.~MallocMessageBuilder();
+        new (&mMessage) ::capnp::MallocMessageBuilder();
+        mBuilder = mMessage.initRoot<SchemaT>();
     }
 
 private:
