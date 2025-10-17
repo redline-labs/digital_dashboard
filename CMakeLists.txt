@@ -90,6 +90,7 @@ add_compile_options(
 add_subdirectory(schemas)
 add_subdirectory(libs)
 add_subdirectory(dbcs)
+add_subdirectory(eds)
 add_subdirectory(dashboard)
 add_subdirectory(mock_data)
 add_subdirectory(nodes)

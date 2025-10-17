@@ -72,6 +72,16 @@
         "codecvt": "cpp",
         "*.in": "cpp",
         "cstddef": "cpp",
-        "thread": "cpp"
+        "thread": "cpp",
+        "scoped_allocator": "cpp",
+        "*.tcc": "cpp",
+        "chrono": "cpp",
+        "expected": "cpp",
+        "format": "cpp",
+        "ranges": "cpp",
+        "system_error": "cpp",
+        "functional": "cpp",
+        "tuple": "cpp",
+        "utility": "cpp"
     }
 }

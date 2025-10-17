@@ -15,6 +15,7 @@ set(SCHEMA_FILES
     motec_pdm.capnp
     motec_ltc.capnp
     can_frame.capnp
+    grayhill_keypad.capnp
 )
 
 set(GENERATED_SOURCES)
