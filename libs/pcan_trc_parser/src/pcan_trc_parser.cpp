@@ -1,5 +1,12 @@
 #include "pcan_trc_parser/pcan_trc_parser.h"
 
+#include <lexy/action/parse.hpp>
+#include <lexy/callback.hpp>
+#include <lexy/callback/bind.hpp>
+#include <lexy/dsl.hpp>
+#include <lexy/input/string_input.hpp>
+#include <lexy_ext/report_error.hpp>
+
 #include <charconv>
 #include <cctype>
 #include <cstdio>
@@ -15,160 +22,132 @@ namespace pcan_trc_parser
 
 namespace
 {
+namespace dsl = lexy::dsl;
 
-static bool is_hex_digit(char c)
+struct payload_list
 {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
+    // Collect hex bytes until end-of-line (LF) or EOF
+    static constexpr auto rule =
+        dsl::terminator(dsl::newline | dsl::eof).opt_list(dsl::integer<std::uint8_t, dsl::hex>);
+    static constexpr auto value = lexy::as_list<std::vector<std::uint8_t>>;
+};
 
-static bool parse_hex_uint(std::string_view s, std::uint32_t& value_out)
+struct line_prod
 {
-    std::uint32_t value = 0;
-    if (s.empty()) return false;
-    for (char c : s) {
-        if (!is_hex_digit(c)) return false;
-        value <<= 4;
-        if (c >= '0' && c <= '9') value |= static_cast<std::uint32_t>(c - '0');
-        else if (c >= 'a' && c <= 'f') value |= static_cast<std::uint32_t>(10 + (c - 'a'));
-        else value |= static_cast<std::uint32_t>(10 + (c - 'A'));
-    }
-    value_out = value;
-    return true;
-}
+    static constexpr auto whitespace = dsl::ascii::blank;
+    static constexpr auto rule =
+        dsl::integer<std::uint64_t>                           // message number
+        + dsl::capture(dsl::token(dsl::while_one(dsl::ascii::character - dsl::ascii::blank))) // timestamp
+        + dsl::token(dsl::while_one(dsl::ascii::alpha))       // type token, ignored
+        + dsl::integer<std::uint32_t, dsl::hex>               // id
+        + dsl::capture(dsl::token(LEXY_LIT("Rx") | LEXY_LIT("Tx"))) // Rx/Tx
+        + dsl::integer<std::uint8_t>                          // dlc
+        + dsl::p<payload_list>;                               // payload bytes (ends at EOL/EOF)
 
-static inline void trim_left(std::string_view& s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-}
+    static constexpr auto value = lexy::callback<helpers::CanFrame>(
+        [](std::uint64_t /*num*/, auto /*ts_lex*/, std::uint32_t id, auto /*dir_lex*/, std::uint8_t dlc, std::vector<std::uint8_t>&& bytes) {
+            helpers::CanFrame f{};
+            
+            // Make sure the number of bytes matches the dlc, and also that its smaller
+            // than our max frame size.
+            size_t num_bytes = std::min(static_cast<size_t>(dlc), bytes.size());
+            num_bytes = std::min(num_bytes, f.data.size());
 
-static inline std::string_view take_token(std::string_view& s)
-{
-    trim_left(s);
-    std::size_t i = 0;
-    while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i]))) ++i;
-    std::string_view token = s.substr(0, i);
-    s.remove_prefix(i);
-    return token;
-}
+            f.id = id;
+            f.len = num_bytes;
 
-static bool parse_line(std::string_view line, PcanTrcFrame& out_frame)
-{
-    // Ignore comments/headers that start with ';' or empty lines
-    std::string_view sv = line;
-    trim_left(sv);
-    if (sv.empty() || sv.front() == ';') return false;
+            std::copy(bytes.begin(), bytes.begin() + num_bytes, f.data.begin());
 
-    // Expected column mapping per sample:
-    // Number, TimeOffset(ms), Type("DT"), ID(hex), Direction(Rx/Tx), DLC, 8 bytes (hex)
-    // Example:
-    // "      1 4294967269.343 DT     0500 Rx 8  40 00 00 00 00 00 00 00"
-
-    PcanTrcFrame frame{};
-
-    // Message number
-    {
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) return false;
-        std::uint64_t num = 0;
-        for (char c : tok) {
-            if (!std::isdigit(static_cast<unsigned char>(c))) return false;
-            num = num * 10 + static_cast<unsigned>(c - '0');
+            return f;
         }
-        frame.messageNumber = num;
-    }
+    );
+};
 
-    // Timestamp (ms, can be very large / fractional)
-    {
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) return false;
-        std::string tmp(tok);
-        char* end = nullptr;
-        frame.timestampMs = std::strtod(tmp.c_str(), &end);
-        if (end == tmp.c_str()) return false;
-    }
+// Comment/header line starting with ';' (consume until LF)
+struct comment_line
+{
+    static constexpr auto rule = LEXY_LIT(";") + dsl::until(dsl::newline) + dsl::opt(dsl::newline);
+    static constexpr auto value = lexy::noop;
+};
 
-    // Type (often "DT"), skip token but validate minimal length
-    {
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) return false;  // require presence, but we don't store it
-    }
+// Blank line (CRLF or LF)
+struct blank_line
+{
+    static constexpr auto rule = dsl::opt(LEXY_LIT("\r")) + dsl::newline;
+    static constexpr auto value = lexy::noop;
+};
 
-    // ID (hex)
-    {
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) return false;
-        std::uint32_t id_temp = 0;
-        if (!parse_hex_uint(tok, id_temp)) return false;
-        frame.id = id_temp;
-    }
+// A frame line wrapped as optional
+struct frame_line
+{
+    static constexpr auto rule = dsl::p<line_prod> + dsl::opt(LEXY_LIT("\r")) + dsl::opt(dsl::newline);
+    static constexpr auto value = lexy::callback<helpers::CanFrame>(
+        [](helpers::CanFrame&& f) { return std::move(f); },
+        [](helpers::CanFrame&& f, lexy::nullopt) { return std::move(f); },
+        [](helpers::CanFrame&& f, lexy::nullopt, lexy::nullopt) { return std::move(f); }
+    );
+};
 
-    // Direction (Rx/Tx)
-    {
-        std::string_view tok = take_token(sv);
-        if (tok == "Rx") frame.direction = direction_t::Rx;
-        else if (tok == "Tx") frame.direction = direction_t::Tx;
-        else return false;
-    }
-
-    // DLC
-    {
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) return false;
-        std::uint32_t dlc = 0;
-        for (char c : tok) {
-            if (!std::isdigit(static_cast<unsigned char>(c))) return false;
-            dlc = dlc * 10 + static_cast<unsigned>(c - '0');
-            if (dlc > 64) return false;  // sanity
-        }
-        frame.dlc = static_cast<std::uint8_t>(dlc);
-        frame.payload.reserve(frame.dlc);
-    }
-
-    // Payload bytes (hex, separated by spaces) - may be fewer than DLC in some files
-    for (std::size_t i = 0; i < frame.dlc; ++i) {
-        trim_left(sv);
-        if (sv.empty()) break;
-        std::string_view tok = take_token(sv);
-        if (tok.empty()) break;
-        std::uint32_t byte_val = 0;
-        if (!parse_hex_uint(tok, byte_val) || byte_val > 0xFFu) return false;
-        frame.payload.push_back(static_cast<std::uint8_t>(byte_val));
-    }
-
-    out_frame = std::move(frame);
-    return true;
-}
+// Entire TRC file → vector of frames only
+struct trc_file
+{
+    static constexpr auto whitespace = dsl::ascii::blank;
+    static constexpr auto rule = dsl::terminator(dsl::eof).opt_list(
+        dsl::while_( (dsl::peek(LEXY_LIT(";")) >> dsl::p<comment_line>)
+                   | (dsl::peek(dsl::newline)   >> dsl::p<blank_line>) )
+        + dsl::p<frame_line>
+    );
+    static constexpr auto value = lexy::as_list<std::vector<helpers::CanFrame>>;
+};
 
 }  // namespace
 
 std::size_t parse_file(const std::string& path,
-                       const std::function<bool(const PcanTrcFrame&)>& on_frame)
+                       const std::function<bool(const helpers::CanFrame&)>& on_frame)
 {
-    std::ifstream in(path);
-    if (!in.is_open()) return 0;
-    std::size_t delivered = 0;
-    std::string line;
-    while (std::getline(in, line)) {
-        PcanTrcFrame f{};
-        if (!parse_line(line, f)) continue;
-        if (!on_frame(f)) break;
-        ++delivered;
+    if (on_frame == nullptr)
+    {
+        return 0;
     }
-    return delivered;
+
+    std::ifstream in(path);
+    if (!in.is_open())
+    {
+        return 0;
+    }
+
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string contents = ss.str();
+    return parse_string(contents.c_str(), on_frame);
 }
 
 std::size_t parse_string(const char* trc_contents,
-                         const std::function<bool(const PcanTrcFrame&)>& on_frame)
+                         const std::function<bool(const helpers::CanFrame&)>& on_frame)
 {
-    if (trc_contents == nullptr) return 0;
-    std::istringstream in{std::string(trc_contents)};
+    if (trc_contents == nullptr)
+    {
+        return 0;
+    }
+
+    if (on_frame == nullptr)
+    {
+        return 0;
+    }
+
+    const std::string_view sv{trc_contents};
+    auto input = lexy::string_input<lexy::utf8_encoding>(sv.data(), sv.size());
+
+    auto result = lexy::parse<trc_file>(input, lexy_ext::report_error);
+    if (!result.has_value())
+    {
+        return 0;
+    }
+    const auto& lines = result.value();
     std::size_t delivered = 0;
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        PcanTrcFrame f{};
-        if (!parse_line(std::string_view(line), f)) continue;
-        if (!on_frame(f)) break;
+    for (const auto& frame : lines)
+    {
+        if (!on_frame(frame)) break;
         ++delivered;
     }
     return delivered;

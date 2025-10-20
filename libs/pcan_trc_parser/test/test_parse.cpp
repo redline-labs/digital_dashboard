@@ -1,5 +1,6 @@
 #include "pcan_trc_parser/pcan_trc_parser.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -37,11 +38,11 @@ static constexpr const char kSampleTrc[] =
 int main()
 {
     std::size_t count = 0;
-    PcanTrcFrame first{};
-    PcanTrcFrame last{};
+    helpers::CanFrame first{};
+    helpers::CanFrame last{};
     bool first_seen = false;
 
-    auto on_frame = [&](const PcanTrcFrame& f)
+    auto on_frame = [&](const helpers::CanFrame& f)
     {
         if (!first_seen) {
             first = f;
@@ -50,13 +51,12 @@ int main()
         last = f;
         ++count;
 
-        SPDLOG_INFO("messageNumber: {}, timestamp: {}, id: {}, direction: {}, dlc: {}, payload: [{:02X}]",
-            f.messageNumber,
-            f.timestampMs,
+        //const auto data = std::span<const uint8_t>(f.data.begin(), std::min(static_cast<std::size_t>(f.len), f.data.size()));
+
+        SPDLOG_INFO("id: 0x{:08X}, len: {}, data: [{:02X}]",
             f.id,
-            f.direction == direction_t::Rx ? "Rx" : "Tx",
-            f.dlc,
-            fmt::join(f.payload, ", ")
+            f.len,
+            fmt::join(f.data_span(), ", ")
         );
         
         return true; // continue
@@ -72,26 +72,20 @@ int main()
     assert(count == 10);
 
     // Validate first frame
-    assert(first.messageNumber == 1);
     assert(first.id == 0x0500);
-    assert(first.direction == direction_t::Rx);
-    assert(first.dlc == 8);
-    assert(first.payload.size() == 8);
-    assert(first.payload[0] == 0x40);
-    for (std::size_t i = 1; i < first.payload.size(); ++i)
+    assert(first.len == 8);
+    assert(first.data[0] == 0x40);
+    for (std::size_t i = 1; i < first.len; ++i)
     {
-        assert(first.payload[i] == 0x00);
+        assert(first.data[i] == 0x00);
     }
 
     // Validate last frame
-    assert(last.messageNumber == 10);
     assert(last.id == 0x0504);
-    assert(last.direction == direction_t::Rx);
-    assert(last.dlc == 8);
-    for (std::uint8_t b : last.payload)
+    assert(last.len == 8);
+    for (std::size_t i = 0; i < last.len; ++i)
     {
-        (void)b;
-        assert(b == 0x00);
+        assert(last.data[i] == 0x00);
     }
 
     return 0;

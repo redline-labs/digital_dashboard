@@ -63,21 +63,13 @@ int main(int argc, char** argv)
     while (true)
     {
         std::size_t num_published = 0;
-        double first_ts = -1.0;
-        double prev_ts = -1.0;
-        auto on_frame = [&](const pcan_trc_parser::PcanTrcFrame& f) {
-            if (first_ts < 0.0) {
-                first_ts = f.timestampMs;
-                prev_ts = f.timestampMs;
-            } else {
-                const double delta_ms = f.timestampMs - prev_ts;
-                if (delta_ms > 0.0 && delta_ms < 10'000.0) {
-                    std::this_thread::sleep_for(milliseconds(static_cast<int64_t>(delta_ms)));
-                }
-                prev_ts = f.timestampMs;
+        auto on_frame = [&](const helpers::CanFrame& f) {
+            std::vector<uint8_t> bytes;
+            bytes.reserve(f.len);
+            for (uint8_t i = 0; i < f.len; ++i) {
+                bytes.push_back(f.data[i]);
             }
-
-            set_payload(pub, f.id, f.payload);
+            set_payload(pub, f.id, bytes);
             pub.put();
             ++num_published;
             return true;

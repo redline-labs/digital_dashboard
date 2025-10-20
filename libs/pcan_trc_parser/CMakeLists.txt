@@ -7,7 +7,12 @@ target_include_directories(pcan_trc_parser
         include
 )
 
-target_compile_features(pcan_trc_parser PUBLIC cxx_std_23)
+target_link_libraries(pcan_trc_parser
+    PRIVATE
+        spdlog::spdlog
+        lexy_core
+        helpers
+)
 
 # Consumers can link with pcan_trc_parser via this alias
 add_library(pcan::trc_parser ALIAS pcan_trc_parser)
@@ -20,6 +25,7 @@ target_link_libraries(test_pcan_trc_parser
     PRIVATE
         pcan::trc_parser
         spdlog::spdlog
+        helpers
 )
 
 
