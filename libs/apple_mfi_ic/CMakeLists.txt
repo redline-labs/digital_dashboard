@@ -19,7 +19,7 @@ target_link_libraries(apple_mfi_ic PUBLIC
 
     PRIVATE
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
-        common_logging
+        spdlog::spdlog
 )
 
 # Demo executable to test out the library.
@@ -28,5 +28,5 @@ add_executable(apple_mfi_demo apple_mfi_demo.cpp)
 target_link_libraries(apple_mfi_demo PRIVATE
     apple_mfi_ic
     # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
-    common_logging
+    spdlog::spdlog
 )

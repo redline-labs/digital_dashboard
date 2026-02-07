@@ -48,6 +48,7 @@ private:
     QLabel *unitsLabel;
     QTimer *m_repaintTimer;
     double m_lastValue;
+    int m_writeIndex = 0;
     static const int MAX_DATA_POINTS = 100; // Max points to display in sparkline
     
     // Zenoh-related members

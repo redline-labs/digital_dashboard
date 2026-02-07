@@ -128,7 +128,6 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _pkt(nullptr),
     _receive_length(0),
     _should_terminate(false),
-    _current_frame(nullptr),
     _new_frame_available(false),
     _cfg{cfg},
     _device_handle{nullptr},
@@ -187,13 +186,6 @@ CarPlayWidget::~CarPlayWidget()
     cleanupDecoder();
     cleanupDongleDriver();
     
-    {
-        std::lock_guard<std::mutex> lock(_frame_mutex);
-        if (_current_frame) {
-            av_frame_unref(_current_frame);
-            av_frame_free(&_current_frame);
-        }
-    }
 }
 
 void CarPlayWidget::setSize(uint32_t width_px, uint32_t height_px)
@@ -296,24 +288,19 @@ void CarPlayWidget::decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pk
             continue;
         }
 
-        // Update frame buffer
+        QImage img = convertYuv420ToRgbImage(frame);
+        if (img.isNull()) {
+            continue;
+        }
+
         {
             std::lock_guard<std::mutex> lock(_frame_mutex);
-            
-            // Clean up previous frame
-            if (_current_frame) {
-                av_frame_unref(_current_frame);
-            } else {
-                _current_frame = av_frame_alloc();
-            }
-            
-            // Create a reference to the current frame
-            if (_current_frame && av_frame_ref(_current_frame, frame) >= 0) {
-                _new_frame_available = true;
-                m_hasFrame = true;
-                notifyFrameReady();
-            }
+            _current_image = std::move(img);
+            _new_frame_available = true;
+            m_hasFrame = true;
         }
+
+        notifyFrameReady();
     }
 }
 
@@ -330,18 +317,18 @@ void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
         p.fillRect(rect(), Qt::black);
         return;
     }
-    if (_new_frame_available.load()) {
+    QImage img;
+    {
         std::lock_guard<std::mutex> lock(_frame_mutex);
-        if (_current_frame) {
-            QImage img = convertYuv420ToRgbImage(_current_frame);
-            _new_frame_available = false;
-            QPainter p(this);
-            if (!img.isNull()) {
-                p.drawImage(rect(), img);
-            } else {
-                p.fillRect(rect(), Qt::black);
-            }
-        }
+        img = _current_image;
+        _new_frame_available = false;
+    }
+
+    QPainter p(this);
+    if (!img.isNull()) {
+        p.drawImage(rect(), img);
+    } else {
+        p.fillRect(rect(), Qt::black);
     }
 }
 

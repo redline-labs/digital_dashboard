@@ -29,7 +29,7 @@ target_link_libraries(mercedes_190e_telltales
         Qt6::Widgets
         Qt6::Svg
         zenohcxx::zenohc  # For Zenoh functionality
-        common_logging    # For spdlog
+        spdlog::spdlog
         schemas           # For Cap'n Proto schemas
         zenoh_pub_sub     # For condition evaluation
         helpers

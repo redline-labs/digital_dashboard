@@ -41,7 +41,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         reflection
     PRIVATE
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
-        common_logging
+        spdlog::spdlog
 )
 
 # Set C++ standard
@@ -65,7 +65,7 @@ target_compile_features(carplay_test_messages PRIVATE cxx_std_20)
 
 # Link common logging interface to the test executable too
 target_link_libraries(carplay_test_messages PRIVATE
-    common_logging
+    spdlog::spdlog
     nlohmann_json::nlohmann_json
     cxxopts::cxxopts
     reflection

@@ -5,7 +5,7 @@ add_executable(test_data_publisher
 
 target_link_libraries(test_data_publisher PRIVATE
     # Link common logging interface (wraps spdlog)
-    common_logging
+    spdlog::spdlog
     
     # Link our schemas library
     schemas
@@ -18,7 +18,7 @@ add_executable(mock_racegrade_tc8_frames
 )
 
 target_link_libraries(mock_racegrade_tc8_frames PRIVATE
-    common_logging
+    spdlog::spdlog
     schemas
     zenoh_pub_sub
     cxxopts::cxxopts

@@ -8,5 +8,5 @@ target_include_directories(core PUBLIC
 
 target_link_libraries(core PRIVATE
     cxxopts
-    common_logging
+    spdlog::spdlog
 )

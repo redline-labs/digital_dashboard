@@ -118,14 +118,15 @@ void Mercedes190ETachometer::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    int side = qMin(width(), height());
-    painter.translate(width() / 2.0f, height() / 2.0f);
-    painter.scale(side / 200.0f, side / 200.0f);
+    if (static_cache_.size() != size()) {
+        updateStaticCache();
+    }
 
-    drawBackground(&painter);
-    drawRedZone(&painter); // Draw red zone first so ticks can overlay if needed
-    drawScaleAndNumbers(&painter);
-    drawStaticText(&painter);
+    if (!static_cache_.isNull()) {
+        painter.drawPixmap(0, 0, static_cache_);
+    }
+
+    applyGaugeTransform(&painter);
 
     if (_cfg.show_clock == true)
     {
@@ -133,6 +134,33 @@ void Mercedes190ETachometer::paintEvent(QPaintEvent *event) {
     }
 
     drawNeedle(&painter);
+}
+
+void Mercedes190ETachometer::applyGaugeTransform(QPainter *painter) const
+{
+    int side = qMin(width(), height());
+    painter->translate(width() / 2.0f, height() / 2.0f);
+    painter->scale(side / 200.0f, side / 200.0f);
+}
+
+void Mercedes190ETachometer::updateStaticCache()
+{
+    if (width() <= 0 || height() <= 0) {
+        static_cache_ = QPixmap();
+        return;
+    }
+
+    static_cache_ = QPixmap(size());
+    static_cache_.fill(Qt::transparent);
+
+    QPainter cachePainter(&static_cache_);
+    cachePainter.setRenderHint(QPainter::Antialiasing);
+    applyGaugeTransform(&cachePainter);
+
+    drawBackground(&cachePainter);
+    drawRedZone(&cachePainter); // Draw red zone first so ticks can overlay if needed
+    drawScaleAndNumbers(&cachePainter);
+    drawStaticText(&cachePainter);
 }
 
 void Mercedes190ETachometer::drawBackground(QPainter *painter) {

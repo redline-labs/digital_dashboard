@@ -25,7 +25,7 @@ target_link_libraries(mercedes_190e_speedometer
         reflection
     PRIVATE
         Qt6::Widgets
-        common_logging    # For spdlog
+        spdlog::spdlog
         zenoh_pub_sub     # For expression evaluation
         helpers
 )

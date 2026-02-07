@@ -13,6 +13,7 @@
 #include <QColor>
 #include <QFontDatabase>
 #include <QSvgRenderer>
+#include <QPixmap>
 
 #include <string_view>
 #include <memory>
@@ -43,12 +44,20 @@ protected:
 
 private:
     void drawBackground(QPainter *painter);
-    void drawFuelGauge(QPainter *painter, const sub_gauge_config_t& gauge, 
-                       float centerX, float centerY);
-    void drawOilPressureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
-                              float centerX, float centerY);
-    void drawCoolantTemperatureGauge(QPainter *painter, const sub_gauge_config_t& gauge,
-                                     float centerX, float centerY);
+    void drawFuelGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
+                           float centerX, float centerY);
+    void drawFuelGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
+                             float centerX, float centerY);
+    void drawOilPressureGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
+                                  float centerX, float centerY);
+    void drawOilPressureGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
+                                    float centerX, float centerY);
+    void drawCoolantTemperatureGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
+                                         float centerX, float centerY);
+    void drawCoolantTemperatureGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
+                                           float centerX, float centerY);
+    void updateStaticCache();
+    void applyGaugeTransform(QPainter *painter) const;
     
     float valueToAngle(float value, float minVal, float maxVal);
 
@@ -76,6 +85,8 @@ private:
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;
     QSvgRenderer coolant_icon_svg_renderer_;
+
+    QPixmap static_cache_;
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

@@ -69,7 +69,7 @@ target_include_directories(zenoh_pub_sub PUBLIC
 target_link_libraries(zenoh_pub_sub PUBLIC
     capnp
     schemas
-    common_logging
+    spdlog::spdlog
     exprtk::exprtk
     zenohcxx::zenohc
     helpers

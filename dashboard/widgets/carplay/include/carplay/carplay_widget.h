@@ -9,6 +9,7 @@
 
 #include <QtWidgets/QWidget>
 #include <QtGui/QMouseEvent>
+#include <QImage>
 
 #include <atomic>
 #include <condition_variable>
@@ -104,8 +105,8 @@ class CarPlayWidget : public QWidget
     
     // Simplified frame buffer (single frame, direct notification)
     std::mutex _frame_mutex;
-    AVFrame* _current_frame;
     std::atomic<bool> _new_frame_available;
+    QImage _current_image;
     
     // Dongle driver constants
     static constexpr uint16_t kUsbVid = 0x1314u;

@@ -11,6 +11,7 @@
 #include <QColor>
 #include <QTimer>
 #include <QTime>
+#include <QPixmap>
 
 #include <string_view>
 #include <memory>
@@ -50,6 +51,8 @@ private:
     void drawStaticText(QPainter *painter);
     void drawNeedle(QPainter *painter);
     void drawClock(QPainter *painter);
+    void updateStaticCache();
+    void applyGaugeTransform(QPainter *painter) const;
 
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
 
@@ -80,6 +83,8 @@ private:
 
     // Expression parser for RPM calculation
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> rpm_expression_parser_;
+
+    QPixmap static_cache_;
 };
 
 #endif // TACHOMETERWIDGET_H 

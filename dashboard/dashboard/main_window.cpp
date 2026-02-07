@@ -7,7 +7,7 @@
 
 #include "reflection/reflection.h"
 
-#include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
+#include "dashboard/widget_factory.h"
 
 MainWindow::MainWindow(const app_config_t& app_cfg):
     QWidget{},
@@ -37,8 +37,7 @@ void MainWindow::createWidgetsFromConfig()
         QWidget* widget = createWidget(widget_config);
         if (widget)
         {
-            // Set parent and position
-            widget->setParent(this);
+            // Set position
             widget->setGeometry(widget_config.x, widget_config.y, widget_config.width, widget_config.height);
             widget->show();
             
@@ -64,68 +63,12 @@ void MainWindow::createWidgetsFromConfig()
 
 QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
 {    
-    if (widget_config.type == widget_type_t::mercedes_190e_speedometer)
+    QWidget* widget = widget_factory::createWidgetFromConfig(widget_config, this);
+    if (!widget)
     {
-        auto* speedometer = new Mercedes190ESpeedometer(std::get<Mercedes190ESpeedometerConfig_t>(widget_config.config));
-        return speedometer;
+        SPDLOG_WARN("Unknown or mismatched widget type: '{}'", reflection::enum_to_string(widget_config.type));
     }
-    else if (widget_config.type == widget_type_t::mercedes_190e_tachometer)
-    {
-        auto* tachometer = new Mercedes190ETachometer(std::get<Mercedes190ETachometerConfig_t>(widget_config.config));
-        return tachometer;
-    }
-    else if (widget_config.type == widget_type_t::sparkline)
-    {
-        auto* sparkline = new SparklineItem(std::get<SparklineConfig_t>(widget_config.config));
-        return sparkline;
-    }
-    else if (widget_config.type == widget_type_t::mercedes_190e_telltale)
-    {
-        auto* telltale = new Mercedes190ETelltale(std::get<Mercedes190ETelltaleConfig_t>(widget_config.config));
-        return telltale;
-    }
-    else if (widget_config.type == widget_type_t::carplay)
-    {
-        // CarPlay widget needs special handling due to its constructor parameters
-        auto* carplay = new CarPlayWidget(std::get<CarplayConfig_t>(widget_config.config));
-        carplay->setSize(widget_config.width, widget_config.height);
-        return carplay;
-    }
-    else if (widget_config.type == widget_type_t::mercedes_190e_cluster_gauge)
-    {
-        auto* cluster_gauge = new Mercedes190EClusterGauge(std::get<Mercedes190EClusterGaugeConfig_t>(widget_config.config));
-        return cluster_gauge;
-    }
-    else if (widget_config.type == widget_type_t::motec_c125_tachometer)
-    {
-        auto* circle_tach = new MotecC125Tachometer(std::get<MotecC125TachometerConfig_t>(widget_config.config));
-        return circle_tach;
-    }
-    else if (widget_config.type == widget_type_t::motec_cdl3_tachometer)
-    {
-        auto* tach = new MotecCdl3Tachometer(std::get<MotecCdl3TachometerConfig_t>(widget_config.config));
-        return tach;
-    }
-    else if (widget_config.type == widget_type_t::static_text)
-    {
-        auto* txt = new StaticTextWidget(std::get<StaticTextConfig_t>(widget_config.config));
-        return txt;
-    }
-    else if (widget_config.type == widget_type_t::value_readout)
-    {
-        auto* readout = new ValueReadoutWidget(std::get<ValueReadoutConfig_t>(widget_config.config));
-        return readout;
-    }
-    else if (widget_config.type == widget_type_t::background_rect)
-    {
-        auto* rect = new BackgroundRectWidget(std::get<BackgroundRectConfig_t>(widget_config.config));
-        return rect;
-    }
-    else
-    {
-        SPDLOG_WARN("Unknown widget type: '{}'", reflection::enum_to_string(widget_config.type));
-        return nullptr;
-    }
+    return widget;
 }
 
 

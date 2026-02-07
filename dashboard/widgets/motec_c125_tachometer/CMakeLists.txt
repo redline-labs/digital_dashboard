@@ -21,7 +21,7 @@ target_link_libraries(motec_c125_tachometer
         reflection
     PRIVATE
         Qt6::Widgets
-        common_logging
+        spdlog::spdlog
         zenoh_pub_sub
         helpers
 )

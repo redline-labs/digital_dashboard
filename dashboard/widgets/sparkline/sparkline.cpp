@@ -57,10 +57,10 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     setMinimumHeight(60);
 
     // Initialize dataPoints with default values to ensure it's always full for scrolling
-    for (int i = 0; i < MAX_DATA_POINTS; ++i) {
-        dataPoints.append(0.0); // Initialize with a baseline value, e.g., 0
-    }
+    dataPoints.resize(MAX_DATA_POINTS);
+    dataPoints.fill(0.0);
     m_lastValue = 0.0; // Keep track of the last real value
+    m_writeIndex = 0;
 
 
     try
@@ -116,20 +116,8 @@ void SparklineItem::forceRepaint() {
     // This method is called by the timer at 30Hz
     // To simulate continuous scrolling, we shift the data
     if (!dataPoints.isEmpty()) {
-        dataPoints.removeFirst();
-        // When adding m_lastValue, we might want to clamp it to the fixed Y range
-        // if strict adherence to the range is required for new points.
-        // double valueToAppend = qBound(_cfg.min_value, m_lastValue, _cfg.max_value);
-        // dataPoints.append(valueToAppend);
-        dataPoints.append(m_lastValue); // Using unclamped m_lastValue for now
-    }
-    // Ensure dataPoints always has MAX_DATA_POINTS after manipulation
-    // This should ideally not be needed if logic is correct but acts as a safeguard.
-    while(dataPoints.size() < MAX_DATA_POINTS && MAX_DATA_POINTS > 0) {
-        dataPoints.prepend(0.0f); // Pad with last known value if it got too short
-    }
-    while(dataPoints.size() > MAX_DATA_POINTS) {
-        dataPoints.removeFirst(); // Trim if it got too long
+        dataPoints[m_writeIndex] = m_lastValue;
+        m_writeIndex = (m_writeIndex + 1) % dataPoints.size();
     }
 
     valueLabel->setText(QString::number(m_lastValue, 'f', 1)); // Display value with 1 decimal place
@@ -148,7 +136,7 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     }
     
     // Ensure dataPoints is not empty before trying to access its elements for min/max or drawing
-    if (dataPoints.isEmpty()) { 
+    if (dataPoints.isEmpty()) {
         return;
     }
 
@@ -192,11 +180,15 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     // dataPoints should always contain MAX_DATA_POINTS elements now
     int pointsToDraw = dataPoints.size(); // Should be MAX_DATA_POINTS
     if (pointsToDraw < 2) return; 
+    const auto getPoint = [&](int i) -> double {
+        const int idx = (m_writeIndex + i) % dataPoints.size();
+        return dataPoints[idx];
+    };
 
     float currentX = graphRect.left();
     // Clamp the y-value calculation to the graphRect boundaries
     // This prevents drawing outside the box if data points exceed _cfg.min_value/_cfg.max_value
-    float firstDataY = dataPoints[0];
+    float firstDataY = static_cast<float>(getPoint(0));
     float firstNormY = (firstDataY - minVal) / yRange;
     // float firstClampedNormY = qBound(0.0f, static_cast<float>(firstNormY), 1.0f);
     // float currentY = graphRect.bottom() - (firstClampedNormY * graphRect.height());
@@ -205,7 +197,7 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
 
     for (int i = 1; i < pointsToDraw; ++i) {
         currentX += xStep;
-        float dataY = dataPoints[i];
+        float dataY = static_cast<float>(getPoint(i));
         float normY = (dataY - minVal) / yRange;
         // float clampedNormY = qBound(0.0f, static_cast<float>(normY), 1.0f);
         // float yPos = graphRect.bottom() - (clampedNormY * graphRect.height());

@@ -22,7 +22,7 @@ target_link_libraries(static_text
         helpers
     PRIVATE
         Qt6::Widgets
-        common_logging
+        spdlog::spdlog
 )
 
 

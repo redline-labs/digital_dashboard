@@ -28,10 +28,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     
     # Link common logging interface (wraps spdlog)
-    common_logging
     zenoh_pub_sub
     helpers
     
+    # Link spdlog
+    spdlog::spdlog
+
     # Link nlohmann/json (now fetched via FetchContent)
     nlohmann_json::nlohmann_json
     
@@ -88,7 +90,7 @@ target_link_libraries(editor PRIVATE
     Qt6::Widgets
 
     # Reuse existing libraries and widgets
-    common_logging
+    spdlog::spdlog
     yaml-cpp::yaml-cpp
     zenoh_pub_sub
     helpers

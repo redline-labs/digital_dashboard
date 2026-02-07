@@ -12,6 +12,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QFontMetrics>
+#include <QPixmap>
 
 #include <string_view>
 #include <memory>
@@ -87,6 +88,8 @@ private:
     void drawNeedle(QPainter *painter);
     void drawOverlayText(QPainter *painter); // For "miles", "km/h mph" stack etc.
     void drawOdometer(QPainter *painter); // New method for odometer
+    void updateStaticCache();
+    void applyGaugeTransform(QPainter *painter) const;
 
     float valueToAngle(float value, float maxVal); // Changed to float
 
@@ -104,6 +107,8 @@ private:
     QFont kmh_text_font_;
     QFont unit_font_;
     QFont vdo_font_;
+
+    QPixmap static_cache_;
     
     // Expression parsers for speed and odometer calculations
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> speed_expression_parser_;

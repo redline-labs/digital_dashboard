@@ -44,7 +44,7 @@ add_executable(dbc_code_gen
 target_link_libraries(dbc_code_gen
     PRIVATE
     dbc::parser
-    common_logging
+    spdlog::spdlog
     cxxopts
 )
 

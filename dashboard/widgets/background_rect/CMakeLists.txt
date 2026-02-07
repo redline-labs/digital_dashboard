@@ -19,7 +19,7 @@ target_link_libraries(background_rect PRIVATE
     Qt6::Widgets
     reflection
     helpers
-    common_logging
+    spdlog::spdlog
 )
 
 

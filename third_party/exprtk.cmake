@@ -2,7 +2,7 @@
 FetchContent_Declare(
     exprtk
     GIT_REPOSITORY https://github.com/ArashPartow/exprtk.git
-    GIT_TAG cc1b800  # Latest commit as of search
+    GIT_TAG 196a73144808a0039ea145095d7a55986dcf4435
     GIT_SHALLOW TRUE
 )
 
@@ -27,7 +27,7 @@ file(COPY ${exprtk_SOURCE_DIR}/license.txt ${exprtk_SOURCE_DIR}/readme.txt
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/exprtk/fetch_info.txt
 "Library: exprtk
 Repository: https://github.com/ArashPartow/exprtk.git
-Tag/Version: cc1b800 (Latest master)
+Tag/Version: 196a73144808a0039ea145095d7a55986dcf4435
 Shallow Clone: TRUE
 Patches Applied: None
 ")

@@ -2,7 +2,7 @@
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG 6fa3601  # Version 1.15.3
+    GIT_TAG v1.17.0
     GIT_SHALLOW TRUE
     PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/spdlog_tweakme.patch
 )
@@ -26,7 +26,7 @@ file(COPY ${spdlog_SOURCE_DIR}/LICENSE ${spdlog_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/spdlog/fetch_info.txt
 "Library: spdlog
 Repository: https://github.com/gabime/spdlog.git
-Tag/Version: 6fa3601 (Version 1.15.3)
+Tag/Version: v1.17.0
 Shallow Clone: TRUE
 Patches Applied: spdlog_tweakme.patch
 ")

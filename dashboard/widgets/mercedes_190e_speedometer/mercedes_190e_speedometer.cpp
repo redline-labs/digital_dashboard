@@ -161,16 +161,44 @@ void Mercedes190ESpeedometer::paintEvent(QPaintEvent */*event*/)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    int side = std::min(width(), height());
-    painter.translate(width() / 2.0, height() / 2.0); // Origin to center
-    painter.scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
+    if (static_cache_.size() != size()) {
+        updateStaticCache();
+    }
 
-    drawBackground(&painter);
-    drawOdometer(&painter); // Draw odometer before some overlay elements but after background
-    drawMphTicksAndNumbers(&painter);
-    drawKmhTicksAndNumbers(&painter);
-    drawOverlayText(&painter);
+    if (!static_cache_.isNull()) {
+        painter.drawPixmap(0, 0, static_cache_);
+    }
+
+    applyGaugeTransform(&painter);
+    drawOdometer(&painter); // Dynamic digits
     drawNeedle(&painter); // Draw needle last so it's on top
+}
+
+void Mercedes190ESpeedometer::applyGaugeTransform(QPainter *painter) const
+{
+    int side = std::min(width(), height());
+    painter->translate(width() / 2.0, height() / 2.0); // Origin to center
+    painter->scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
+}
+
+void Mercedes190ESpeedometer::updateStaticCache()
+{
+    if (width() <= 0 || height() <= 0) {
+        static_cache_ = QPixmap();
+        return;
+    }
+
+    static_cache_ = QPixmap(size());
+    static_cache_.fill(Qt::transparent);
+
+    QPainter cachePainter(&static_cache_);
+    cachePainter.setRenderHint(QPainter::Antialiasing);
+    applyGaugeTransform(&cachePainter);
+
+    drawBackground(&cachePainter);
+    drawMphTicksAndNumbers(&cachePainter);
+    drawKmhTicksAndNumbers(&cachePainter);
+    drawOverlayText(&cachePainter);
 }
 
 void Mercedes190ESpeedometer::drawBackground(QPainter *painter)

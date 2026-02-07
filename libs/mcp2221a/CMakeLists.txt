@@ -10,7 +10,7 @@ target_link_libraries(mcp2221a PUBLIC
 
     PRIVATE
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
-        common_logging
+        spdlog::spdlog
 ) 
 
 # Demo executable to test out the library.
@@ -20,5 +20,5 @@ target_link_libraries(mcp2221a_i2c_scan PRIVATE
     mcp2221a
 
     # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
-    common_logging
+    spdlog::spdlog
 ) 

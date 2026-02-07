@@ -25,6 +25,6 @@ target_link_libraries(sparkline
         helpers
     PRIVATE
         Qt6::Widgets
-        common_logging    # For spdlog
+        spdlog::spdlog
         zenoh_pub_sub   # For expression evaluation if configured
 )
