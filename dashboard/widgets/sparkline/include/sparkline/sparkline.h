@@ -4,8 +4,6 @@
 #include "sparkline/config.h"
 #include "dashboard/widget_types.h"
 
-#include "zenoh.hxx"
-
 #include <QWidget>
 #include <QPainter>
 #include <QTimer>
@@ -13,6 +11,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <memory>
 #include <string_view>
 
 namespace pub_sub { class ZenohExpressionSubscriber; }
@@ -27,18 +26,14 @@ public:
 
     explicit SparklineItem(const SparklineConfig_t& cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return _cfg; }
-    void addDataPoint(double value);
+    void setLatestValue(double value);
     void setYAxisRange(double minVal, double maxVal);
-    
-    // Set Zenoh session for data subscription
-    void setZenohSession(std::shared_ptr<zenoh::Session> session);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
 
 private slots:
     void forceRepaint();
-    void onDataEvaluated(double value);
 
 private:
     SparklineConfig_t _cfg;
@@ -48,17 +43,18 @@ private:
     QLabel *unitsLabel;
     QTimer *m_repaintTimer;
     double m_lastValue;
+    QString m_lastValueText;
+
+    // Paint resources derived from config once at construction.
+    QColor m_lineColor;
+    QColor m_gradientStartColor;
+    QColor m_gradientEndColor;
+    QPen m_linePen;
     int m_writeIndex = 0;
     static const int MAX_DATA_POINTS = 100; // Max points to display in sparkline
-    
-    // Zenoh-related members
-    std::shared_ptr<zenoh::Session> _zenoh_session;
-    
+
     // Expression parser owned subscription if configured
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
-
-    // Fallback direct subscription when schema/expression not provided
-    std::unique_ptr<zenoh::Subscriber<void>> _zenoh_subscriber;
 };
 
 #endif // SPARKLINEITEM_H 

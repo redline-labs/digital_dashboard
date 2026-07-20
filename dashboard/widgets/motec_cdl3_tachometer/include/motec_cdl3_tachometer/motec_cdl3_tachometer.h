@@ -2,6 +2,7 @@
 #define MOTEC_CDL3_TACHOMETER_H
 
 #include "motec_cdl3_tachometer/config.h"
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -17,7 +18,7 @@ namespace pub_sub { class ZenohExpressionSubscriber; }
 
 class QPainter;
 
-class MotecCdl3Tachometer : public QWidget {
+class MotecCdl3Tachometer : public dashboard::CachedPaintWidget {
     Q_OBJECT
 
 public:
@@ -29,19 +30,17 @@ public:
     const config_t& getConfig() const { return _cfg; }
 
 protected:
-    void paintEvent(QPaintEvent* event) override;
-
-private slots:
-    void setRpm(float rpm);
+    void applyPaintTransform(QPainter& painter) const override;
+    void paintStaticUnderlay(QPainter& painter) override;  // baseline arc track
+    void paintDynamic(QPainter& painter) override;         // on-segments for current RPM
+    void paintStaticOverlay(QPainter& painter) override;   // triangles and single-digit labels
+    bool hasStaticOverlay() const override { return true; }
 
 private:
-    // drawing helpers
-    void drawSweepBands(QPainter* painter); // segmented arc fill for current RPM
-    void drawTicksAndLabels(QPainter* painter); // triangles and single-digit labels
+    void setRpm(float rpm);
 
     // transform helpers
     QRectF computeContentBounds() const; // world-space rect that bounds all drawn content
-    void applyViewportTransform(QPainter& painter, const QRectF& contentBounds); // center/scale to widget
 
     // precomputed arc-length LUT (baseline ellipse) for even spacing
     void buildArcLUT();
@@ -75,6 +74,10 @@ private:
     // Maximum outer extents (centerline radius + half pen width) for safe scaling
     float _maxOuterA;
     float _maxOuterB;
+
+    // Content bounds computed once after buildStaticGeometry(); drawn geometry
+    // depends only on constants and config.
+    QRectF _contentBounds;
 };
 
 #endif // MOTEC_CDL3_TACHOMETER_H

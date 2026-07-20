@@ -31,9 +31,6 @@ public:
 protected:
 	void paintEvent(QPaintEvent* event) override;
 
-private slots:
-	void onValueEvaluated(double v);
-
 private:
 	void drawContents(QPainter* painter);
 

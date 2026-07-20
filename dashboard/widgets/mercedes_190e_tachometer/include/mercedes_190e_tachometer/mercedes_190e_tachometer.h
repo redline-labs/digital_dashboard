@@ -2,6 +2,7 @@
 #define TACHOMETERWIDGET_H
 
 #include "mercedes_190e_tachometer/config.h"
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -21,7 +22,7 @@ class QPainter;
 // Forward declarations
 namespace pub_sub { class ZenohExpressionSubscriber; }
 
-class Mercedes190ETachometer : public QWidget
+class Mercedes190ETachometer : public dashboard::CachedPaintWidget
 {
     Q_OBJECT
 
@@ -37,22 +38,18 @@ public:
     float getRpm() const;
 
 protected:
-    void paintEvent(QPaintEvent *event) override;
-
-private slots:
-    void onRpmEvaluated(float rpm);
+    void applyPaintTransform(QPainter& painter) const override;
+    void paintStaticUnderlay(QPainter& painter) override;
+    void paintDynamic(QPainter& painter) override;
 
 private:
     float valueToAngle(float value) const;
 
-    void drawBackground(QPainter *painter);
     void drawScaleAndNumbers(QPainter *painter);
     void drawRedZone(QPainter *painter);
     void drawStaticText(QPainter *painter);
     void drawNeedle(QPainter *painter);
     void drawClock(QPainter *painter);
-    void updateStaticCache();
-    void applyGaugeTransform(QPainter *painter) const;
 
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
 
@@ -83,8 +80,6 @@ private:
 
     // Expression parser for RPM calculation
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> rpm_expression_parser_;
-
-    QPixmap static_cache_;
 };
 
 #endif // TACHOMETERWIDGET_H 

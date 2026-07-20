@@ -2,9 +2,13 @@
 
 #include <QHBoxLayout>
 #include <QFont>
-#include <QFontDatabase>
+
+#include <map>
+#include <string>
 
 #include <spdlog/spdlog.h>
+
+#include "dashboard/widget_fonts.h"
 
 StaticTextWidget::StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* parent)
     : QWidget(parent), _cfg{cfg}, _label{new QLabel(this)}
@@ -19,36 +23,19 @@ StaticTextWidget::StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* paren
 
 void StaticTextWidget::applyConfig()
 {
-    // Try to match a resource font if provided name looks like known resources
-    // Caller should pass the family name; we also try to load common fonts from resources.
-    // Attempt to load DSEG7 if specified
-    if (_cfg.font == "DSEG7 Classic")
+    // Known bundled fonts are loaded from resources on demand; any other name
+    // falls through to the system font lookup below.
+    static const std::map<std::string, const char*> kResourceFonts = {
+        {"DSEG7 Classic", ":/fonts/DSEG7Classic-Bold.ttf"},
+        {"DSEG7 Classic Mini", ":/fonts/DSEG7ClassicMini-Bold.ttf"},
+        {"DSEG14 Classic", ":/fonts/DSEG14Classic-Regular.ttf"},
+        {"futura", ":/fonts/futura.ttf"},
+        {"Futura", ":/fonts/futura.ttf"},
+        {"futura.ttf", ":/fonts/futura.ttf"},
+    };
+    if (auto it = kResourceFonts.find(_cfg.font); it != kResourceFonts.end())
     {
-        int id = QFontDatabase::addApplicationFont(":/fonts/DSEG7Classic-Bold.ttf");
-        if (id == -1) {
-            SPDLOG_WARN("StaticTextWidget: failed to load DSEG7Classic-Bold.ttf, using system font");
-        }
-    }
-    else if (_cfg.font == "DSEG7 Classic Mini")
-    {
-        int id = QFontDatabase::addApplicationFont(":/fonts/DSEG7ClassicMini-Bold.ttf");
-        if (id == -1) {
-            SPDLOG_WARN("StaticTextWidget: failed to load DSEG7ClassicMini-Bold.ttf, using system font");
-        }
-    }
-    else if (_cfg.font == "DSEG14 Classic")
-    {
-        int id = QFontDatabase::addApplicationFont(":/fonts/DSEG14Classic-Regular.ttf");
-        if (id == -1) {
-            SPDLOG_WARN("StaticTextWidget: failed to load DSEG14Classic-Regular.ttf, using system font");
-        }
-    }
-    else if (_cfg.font == "futura" || _cfg.font == "Futura" || _cfg.font == "futura.ttf")
-    {
-        int id = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-        if (id == -1) {
-            SPDLOG_WARN("StaticTextWidget: failed to load futura.ttf, using system font");
-        }
+        dashboard::loadResourceFont(it->second);
     }
 
     QFont font(QString::fromStdString(_cfg.font));

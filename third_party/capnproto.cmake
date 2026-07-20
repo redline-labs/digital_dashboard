@@ -2,7 +2,7 @@
 FetchContent_Declare(
     capnproto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG v1.3.0
+    GIT_TAG v1.5.0
     GIT_SHALLOW TRUE
 )
 

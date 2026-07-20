@@ -13,6 +13,22 @@ include_directories(
     include
 )
 
+# Widget libraries linked by both the dashboard and the editor. Add new
+# widgets here (and in FOR_EACH_WIDGET / widget_types.h / YAML_CONFIG_STRUCT).
+set(WIDGET_LIBS
+    carplay_widget
+    mercedes_190e_telltales
+    mercedes_190e_speedometer
+    mercedes_190e_tachometer
+    sparkline
+    mercedes_190e_cluster_gauge
+    motec_c125_tachometer
+    motec_cdl3_tachometer
+    static_text
+    value_readout
+    background_rect
+)
+
 qt_add_executable(${PROJECT_NAME}
     dashboard/main.cpp
     dashboard/app_config.cpp
@@ -43,18 +59,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     # Link yaml-cpp (now fetched via FetchContent)
     yaml-cpp::yaml-cpp
 
-    # Link the carplay widget library
-    carplay_widget
-    mercedes_190e_telltales
-    mercedes_190e_speedometer
-    mercedes_190e_tachometer
-    sparkline
-    mercedes_190e_cluster_gauge
-    motec_c125_tachometer
-    motec_cdl3_tachometer
-    static_text
-    value_readout
-    background_rect
+    ${WIDGET_LIBS}
 )
 
 qt_add_executable(editor
@@ -95,16 +100,5 @@ target_link_libraries(editor PRIVATE
     zenoh_pub_sub
     helpers
 
-    # Widgets available for instantiation
-    mercedes_190e_telltales
-    carplay_widget
-    mercedes_190e_speedometer
-    mercedes_190e_tachometer
-    sparkline
-    mercedes_190e_cluster_gauge
-    motec_c125_tachometer
-    motec_cdl3_tachometer
-    static_text
-    value_readout
-    background_rect
+    ${WIDGET_LIBS}
 )

@@ -24,17 +24,13 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
     createWidgetsFromConfig();
 }
 
-MainWindow::~MainWindow()
-{
-    // Zenoh session will be automatically cleaned up by shared_ptr
-    // Individual widgets will clean up their own subscriptions
-}
+MainWindow::~MainWindow() = default;
 
 void MainWindow::createWidgetsFromConfig()
 {
     for (const auto& widget_config : _app_cfg.widgets)
     {
-        QWidget* widget = createWidget(widget_config);
+        QWidget* widget = widget_factory::createWidgetFromConfig(widget_config, this);
         if (widget)
         {
             // Set position
@@ -60,17 +56,6 @@ void MainWindow::createWidgetsFromConfig()
         }
     }
 }
-
-QWidget* MainWindow::createWidget(const widget_config_t& widget_config)
-{    
-    QWidget* widget = widget_factory::createWidgetFromConfig(widget_config, this);
-    if (!widget)
-    {
-        SPDLOG_WARN("Unknown or mismatched widget type: '{}'", reflection::enum_to_string(widget_config.type));
-    }
-    return widget;
-}
-
 
 const std::string& MainWindow::getWindowName() const
 {

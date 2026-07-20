@@ -1,26 +1,20 @@
 #include <QTime> // Added for current time
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include <QPainter>
-#include <QFontDatabase>
-#include <QMetaObject>
 
 #include <spdlog/spdlog.h>
 
-// Expression parser
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
+#include "dashboard/widget_fonts.h"
 
 #include <cmath> // For std::cos, std::sin
 #include <memory>
-#include <numbers>
 
-// Helper for degree to radian conversion
-constexpr float degreesToRadians(float degrees)
-{
-    return degrees * (std::numbers::pi_v<float> / 180.0f);
-}
+#include "helpers/unit_conversion.h"
 
 Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent)
-    : QWidget(parent),
+    : dashboard::CachedPaintWidget(parent),
       m_currentRpmValue(0.0f),
 
       m_angleStart_deg(160.0f),    // 0 RPM at 7 o'clock
@@ -36,47 +30,11 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
       _cfg{cfg},
       m_currentTime(QTime::currentTime()) // Initialize current time
 {
-    // Initialize RPM expression parser
-    try
-    {
-        rpm_expression_parser_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            _cfg.schema_type,
-            _cfg.rpm_expression,
-            _cfg.zenoh_key
-        );
-        
-        if (!rpm_expression_parser_->isValid())
-        {
-            SPDLOG_ERROR("Invalid RPM expression '{}' for schema '{}' in tachometer", 
-                        _cfg.rpm_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(_cfg.schema_type));
-            rpm_expression_parser_.reset(); // Disable expression parsing
-        }
-        else
-        {
-            SPDLOG_INFO("Tachometer initialized with RPM expression: '{}' (schema: '{}')", 
-                       _cfg.rpm_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(_cfg.schema_type));
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to initialize RPM expression parser for tachometer: {}", e.what());
-        rpm_expression_parser_.reset();
-    }
+    rpm_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
+        this, &Mercedes190ETachometer::setRpm, "tachometer rpm");
 
-    if (rpm_expression_parser_)
-    {
-        rpm_expression_parser_->setResultCallback<float>([this](float rpm) {
-            QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
-        });
-    }
-    
-    int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-    if (fontId == -1) {
-        SPDLOG_WARN("Failed to load Futura font. Using default.");
-        m_fontFamily = QFont().family();
-    } else {
-        m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
-    }
+    m_fontFamily = dashboard::loadResourceFont(":/fonts/futura.ttf");
     // Adjusted font sizes based on new reference image (numbers are quite large)
     m_dialFont = QFont(m_fontFamily, 12, QFont::Normal);
     m_labelFont = QFont(m_fontFamily, 7, QFont::Normal);
@@ -109,66 +67,30 @@ float Mercedes190ETachometer::getRpm() const {
 }
 
 float Mercedes190ETachometer::valueToAngle(float value) const {
-    if (_cfg.max_rpm <= 0.0f) return m_angleStart_deg;
-    float proportion = value / _cfg.max_rpm;
-    return m_angleStart_deg + proportion * m_angleSweep_deg;
+    return gauge_paint::valueToAngleDeg(value, 0.0f, _cfg.max_rpm, m_angleStart_deg, m_angleSweep_deg);
 }
 
-void Mercedes190ETachometer::paintEvent(QPaintEvent *event) {
-    Q_UNUSED(event);
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    if (static_cache_.size() != size()) {
-        updateStaticCache();
-    }
+void Mercedes190ETachometer::applyPaintTransform(QPainter& painter) const
+{
+    gauge_paint::applyCenteredScale(painter, *this);
+}
 
-    if (!static_cache_.isNull()) {
-        painter.drawPixmap(0, 0, static_cache_);
-    }
+void Mercedes190ETachometer::paintStaticUnderlay(QPainter& painter)
+{
+    gauge_paint::drawCircularBackground(painter);
+    drawRedZone(&painter); // Draw red zone first so ticks can overlay if needed
+    drawScaleAndNumbers(&painter);
+    drawStaticText(&painter);
+}
 
-    applyGaugeTransform(&painter);
-
+void Mercedes190ETachometer::paintDynamic(QPainter& painter)
+{
     if (_cfg.show_clock == true)
     {
-        drawClock(&painter); // Draw clock
+        drawClock(&painter);
     }
 
     drawNeedle(&painter);
-}
-
-void Mercedes190ETachometer::applyGaugeTransform(QPainter *painter) const
-{
-    int side = qMin(width(), height());
-    painter->translate(width() / 2.0f, height() / 2.0f);
-    painter->scale(side / 200.0f, side / 200.0f);
-}
-
-void Mercedes190ETachometer::updateStaticCache()
-{
-    if (width() <= 0 || height() <= 0) {
-        static_cache_ = QPixmap();
-        return;
-    }
-
-    static_cache_ = QPixmap(size());
-    static_cache_.fill(Qt::transparent);
-
-    QPainter cachePainter(&static_cache_);
-    cachePainter.setRenderHint(QPainter::Antialiasing);
-    applyGaugeTransform(&cachePainter);
-
-    drawBackground(&cachePainter);
-    drawRedZone(&cachePainter); // Draw red zone first so ticks can overlay if needed
-    drawScaleAndNumbers(&cachePainter);
-    drawStaticText(&cachePainter);
-}
-
-void Mercedes190ETachometer::drawBackground(QPainter *painter) {
-    painter->save();
-    painter->setBrush(Qt::black);
-    painter->setPen(Qt::NoPen);
-    painter->drawEllipse(QPointF(0,0), 100.0f, 100.0f); 
-    painter->restore();
 }
 
 void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
@@ -184,7 +106,7 @@ void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
     for (float displayed_val_iter = 0; displayed_val_iter <= displayedMax; displayed_val_iter += 5.0f) {
         float actualRpmValue = displayed_val_iter * 100.0f; // Convert displayed value to actual RPM for angle calculation
         float angleDeg = valueToAngle(actualRpmValue);
-        float angleRad = degreesToRadians(angleDeg);
+        float angleRad = degrees_to_radians(angleDeg);
         float tickLength;
         QPen currentPen(Qt::white);
         currentPen.setCapStyle(Qt::FlatCap);
@@ -243,7 +165,7 @@ void Mercedes190ETachometer::drawStaticText(QPainter *painter) {
     QString text1 = "x100";
     QString text2 = "1/min";
 
-    float textAngleRad = degreesToRadians(-90.f);
+    float textAngleRad = degrees_to_radians(-90.f);
     float radialDist = m_pivotRadius + 20.0f;
 
     QPointF basePos(radialDist * std::cos(textAngleRad), radialDist * std::sin(textAngleRad));
@@ -261,32 +183,9 @@ void Mercedes190ETachometer::drawStaticText(QPainter *painter) {
 
 void Mercedes190ETachometer::drawNeedle(QPainter *painter) {
     painter->save();
-    // Use tachometer's valueToAngle and m_currentRpmValue (which is now direct RPM)
-    float angle = valueToAngle(m_currentRpmValue);
-    painter->rotate(angle);
-
-    // Needle properties (Orange, tapered - from Mercedes190ESpeedometer)
-    QColor needleColor(255, 165, 0); // Orange
-    float needleBaseWidth = 4.0f;    // Width at the pivot
-    float needleTipWidth = 2.0f;     // Width at the tip
-
-    QPolygonF needlePolygon;
-    // Use m_needleLength from this class
-    needlePolygon << QPointF(0.0f, -needleBaseWidth / 2.0f)        // Bottom-left at pivot
-                  << QPointF(m_needleLength, -needleTipWidth / 2.0f) // Bottom-right at tip
-                  << QPointF(m_needleLength, needleTipWidth / 2.0f)  // Top-right at tip
-                  << QPointF(0.0f, needleBaseWidth / 2.0f);       // Top-left at pivot
-
-    painter->setPen(Qt::NoPen); // No border for the needle itself
-    painter->setBrush(needleColor);
-    painter->drawPolygon(needlePolygon);
-    
-    // Central pivot (dark grey/black, flat circle)
-    float pivotRadius = 8.0f; // Larger pivot as per image
-    painter->setBrush(QColor(40, 40, 40)); // Dark grey
-    // painter->setPen(QColor(20,20,20)); // Optional subtle border for pivot
-    painter->drawEllipse(QPointF(0.0f,0.0f), pivotRadius, pivotRadius); 
-
+    painter->rotate(valueToAngle(m_currentRpmValue));
+    gauge_paint::drawTaperedNeedle(*painter, m_needleLength, 4.0f, 2.0f);
+    gauge_paint::drawPivot(*painter, 8.0f);
     painter->restore();
 }
 
@@ -331,7 +230,7 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     // Draw clock tick marks and numbers
     for (int i = 0; i < 12; ++i) { // 12 hours
         float angleDeg = static_cast<float>(i) * 30.0f - 90.0f; // -90 to make 0 (12 o'clock) point upwards
-        float angleRad = degreesToRadians(angleDeg);
+        float angleRad = degrees_to_radians(angleDeg);
 
         bool isMajorHour = (i % 3 == 0); // True for 0 (12), 3, 6, 9
         float currentTickLength = isMajorHour ? majorTickLength : tickLength;
@@ -355,46 +254,22 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     }
     
     // Draw hour hand
-    painter->save(); // Save for hour hand rotation
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(handColor);
+    painter->save();
     float hourAngle = (m_currentTime.hour() % 12 + m_currentTime.minute() / 60.0f) * 30.0f - 90.0f; // 30 degrees per hour, -90 to start at 12
     painter->rotate(hourAngle);
-    QPolygonF hourHandPolygon;
-    hourHandPolygon << QPointF(0.0f, -hourHandBaseWidth / 2.0f)
-                    << QPointF(hourHandLength, -hourHandTipWidth / 2.0f)
-                    << QPointF(hourHandLength, hourHandTipWidth / 2.0f)
-                    << QPointF(0.0f, hourHandBaseWidth / 2.0f);
-    painter->drawPolygon(hourHandPolygon);
-    painter->restore(); // Restore from hour hand rotation
+    gauge_paint::drawTaperedNeedle(*painter, hourHandLength, hourHandBaseWidth, hourHandTipWidth, handColor);
+    painter->restore();
 
     // Draw minute hand
-    painter->save(); // Save for minute hand rotation
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(handColor);
+    painter->save();
     float minuteAngle = (m_currentTime.minute()) * 6.0f - 90.0f; // 6 degrees per minute, -90 to start at 12
     painter->rotate(minuteAngle);
-    QPolygonF minuteHandPolygon;
-    minuteHandPolygon << QPointF(0.0f, -minuteHandBaseWidth / 2.0f)
-                      << QPointF(minuteHandLength, -minuteHandTipWidth / 2.0f)
-                      << QPointF(minuteHandLength, minuteHandTipWidth / 2.0f)
-                      << QPointF(0.0f, minuteHandBaseWidth / 2.0f);
-    painter->drawPolygon(minuteHandPolygon);
-    painter->restore(); // Restore from minute hand rotation
+    gauge_paint::drawTaperedNeedle(*painter, minuteHandLength, minuteHandBaseWidth, minuteHandTipWidth, handColor);
+    painter->restore();
 
-    // Draw central pivot for the clock
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(pivotColor);
-    painter->drawEllipse(QPointF(0.0f, 0.0f), clockPivotRadius, clockPivotRadius);
+    gauge_paint::drawPivot(*painter, clockPivotRadius, pivotColor);
 
     painter->restore(); // Restore from clock translation
-}
-
-// Direct subscriptions removed; zenoh_subscriber owns the subscription
-
-void Mercedes190ETachometer::onRpmEvaluated(float rpm)
-{
-    setRpm(rpm);
 }
 
 #include "mercedes_190e_tachometer/moc_mercedes_190e_tachometer.cpp"

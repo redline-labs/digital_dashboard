@@ -2,102 +2,31 @@
 #include "helpers/unit_conversion.h"
 
 #include <QPaintEvent>
-#include <QMetaObject>
-#include <QFontDatabase>
 
 #include <spdlog/spdlog.h>
 
-// Expression parser
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
+#include "dashboard/widget_fonts.h"
 
 #include <algorithm>
 #include <cmath>
 
 Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerConfig_t& cfg, QWidget *parent):
-    QWidget(parent),
+    dashboard::CachedPaintWidget(parent),
     current_speed_mph_(0.0f),
     cfg_{cfg},
     odometer_value_(cfg.odometer_value)
 {
-    // Initialize speed expression parser
-    try
-    {
-        speed_expression_parser_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            cfg_.schema_type,
-            cfg_.speed_expression,
-            cfg_.zenoh_key
-        );
-        
-        if (!speed_expression_parser_->isValid())
-        {
-            SPDLOG_ERROR("Invalid speed expression '{}' for schema '{}' in speedometer", 
-                        cfg_.speed_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.schema_type));
-            speed_expression_parser_.reset(); // Disable expression parsing
-        }
-        else
-        {
-            SPDLOG_INFO("Speedometer initialized with speed expression: '{}' (schema: '{}')", 
-                       cfg_.speed_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.schema_type));
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to initialize speed expression parser for speedometer: {}", e.what());
-        speed_expression_parser_.reset();
-    }
-    
-    // Initialize odometer expression parser (optional)
-    try
-    {
-        odometer_expression_parser_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            cfg_.odometer_schema_type,
-            cfg_.odometer_expression,
-            cfg_.odometer_zenoh_key
-        );
-        
-        if (!odometer_expression_parser_->isValid())
-        {
-            SPDLOG_ERROR("Invalid odometer expression '{}' for schema '{}' in speedometer", 
-                        cfg_.odometer_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.odometer_schema_type));
-            odometer_expression_parser_.reset();
-        }
-        else
-        {
-            SPDLOG_INFO("Speedometer initialized with odometer expression: '{}' (schema: '{}')", 
-                        cfg_.odometer_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(cfg_.odometer_schema_type));
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to initialize odometer expression parser for speedometer: {}", e.what());
-        odometer_expression_parser_.reset();
-    }
+    speed_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        cfg_.schema_type, cfg_.speed_expression, cfg_.zenoh_key,
+        this, &Mercedes190ESpeedometer::setSpeed, "speedometer speed");
 
-    if (speed_expression_parser_)
-    {
-        speed_expression_parser_->setResultCallback<float>([this](float mph) {
-            QMetaObject::invokeMethod(this, "onSpeedEvaluated", Qt::QueuedConnection, Q_ARG(float, mph));
-        });
-    }
+    odometer_expression_parser_ = dashboard::makeExpressionSubscription<int>(
+        cfg_.odometer_schema_type, cfg_.odometer_expression, cfg_.odometer_zenoh_key,
+        this, &Mercedes190ESpeedometer::setOdometerValue, "speedometer odometer");
 
-    if (odometer_expression_parser_)
-    {
-        odometer_expression_parser_->setResultCallback<int>([this](int miles) {
-            QMetaObject::invokeMethod(this, "onOdometerEvaluated", Qt::QueuedConnection, Q_ARG(int, miles));
-        });
-    }
-    
-    // Load font from Qt resources
-    QString font_family = "sans-serif";
-    int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf"); // Use resource path
-    if (fontId != -1)
-    {
-        font_family = QFontDatabase::applicationFontFamilies(fontId).at(0);
-    }
-    else
-    {
-        SPDLOG_WARN("Failed to load futura.ttf from resources. Using default sans-serif.");
-    }
+    QString font_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
     // Set up the odometer font
     odo_font_ = QFont(font_family);
@@ -139,15 +68,7 @@ void Mercedes190ESpeedometer::setSpeed(float speed) // speed in MPH
 
 float Mercedes190ESpeedometer::valueToAngle(float value, float maxVal)
 {
-    float constrainedValue = std::clamp(value, 0.0f, maxVal);
-    float factor = 0.0f;
-    
-    if (maxVal != 0.0f)
-    {
-        factor = constrainedValue / maxVal;
-    }
-
-    return kAngleMinDeg + factor * kAngleSweepDeg;
+    return gauge_paint::valueToAngleDeg(value, 0.0f, maxVal, kAngleMinDeg, kAngleSweepDeg);
 }
 
 void Mercedes190ESpeedometer::setOdometerValue(int value)
@@ -156,58 +77,23 @@ void Mercedes190ESpeedometer::setOdometerValue(int value)
     update();
 }
 
-void Mercedes190ESpeedometer::paintEvent(QPaintEvent */*event*/)
+void Mercedes190ESpeedometer::applyPaintTransform(QPainter& painter) const
 {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
+    gauge_paint::applyCenteredScale(painter, *this);
+}
 
-    if (static_cache_.size() != size()) {
-        updateStaticCache();
-    }
+void Mercedes190ESpeedometer::paintStaticUnderlay(QPainter& painter)
+{
+    gauge_paint::drawCircularBackground(painter);
+    drawMphTicksAndNumbers(&painter);
+    drawKmhTicksAndNumbers(&painter);
+    drawOverlayText(&painter);
+}
 
-    if (!static_cache_.isNull()) {
-        painter.drawPixmap(0, 0, static_cache_);
-    }
-
-    applyGaugeTransform(&painter);
+void Mercedes190ESpeedometer::paintDynamic(QPainter& painter)
+{
     drawOdometer(&painter); // Dynamic digits
     drawNeedle(&painter); // Draw needle last so it's on top
-}
-
-void Mercedes190ESpeedometer::applyGaugeTransform(QPainter *painter) const
-{
-    int side = std::min(width(), height());
-    painter->translate(width() / 2.0, height() / 2.0); // Origin to center
-    painter->scale(side / 200.0, side / 200.0); // Logical 200x200 unit square
-}
-
-void Mercedes190ESpeedometer::updateStaticCache()
-{
-    if (width() <= 0 || height() <= 0) {
-        static_cache_ = QPixmap();
-        return;
-    }
-
-    static_cache_ = QPixmap(size());
-    static_cache_.fill(Qt::transparent);
-
-    QPainter cachePainter(&static_cache_);
-    cachePainter.setRenderHint(QPainter::Antialiasing);
-    applyGaugeTransform(&cachePainter);
-
-    drawBackground(&cachePainter);
-    drawMphTicksAndNumbers(&cachePainter);
-    drawKmhTicksAndNumbers(&cachePainter);
-    drawOverlayText(&cachePainter);
-}
-
-void Mercedes190ESpeedometer::drawBackground(QPainter *painter)
-{
-    painter->save();
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(Qt::black);
-    painter->drawEllipse(QPointF(0.0f, 0.0f), 100.0f, 100.0f); // Background circle
-    painter->restore();
 }
 
 void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
@@ -503,39 +389,10 @@ void Mercedes190ESpeedometer::drawOverlayText(QPainter *painter)
 void Mercedes190ESpeedometer::drawNeedle(QPainter *painter)
 {
     painter->save();
-    float rawNeedleAngle = valueToAngle(current_speed_mph_, static_cast<float>(cfg_.max_speed));
-    painter->rotate(-rawNeedleAngle); 
-
-    // Needle properties (Orange, tapered)
-    QPolygonF needlePolygon;
-    needlePolygon << QPointF(0.0f, -kNeedleBaseWidth / 2.0f)  // Bottom-left at pivot
-                  << QPointF(kNeedleLength, -kNeedleTipWidth / 2.0f) // Bottom-right at tip
-                  << QPointF(kNeedleLength, kNeedleTipWidth / 2.0f)  // Top-right at tip
-                  << QPointF(0.0f, kNeedleBaseWidth / 2.0f);   // Top-left at pivot
-
-    painter->setPen(Qt::NoPen); // No border for the needle itself
-    painter->setBrush(kNeedleColor);
-    painter->drawPolygon(needlePolygon);
-    
-    // Central pivot (dark grey/black, flat circle)
-    painter->setBrush(kPivotColor); // Dark grey
-    painter->drawEllipse(QPointF(0.0f,0.0f), kPivotRadius, kPivotRadius); 
-
+    painter->rotate(-valueToAngle(current_speed_mph_, static_cast<float>(cfg_.max_speed)));
+    gauge_paint::drawTaperedNeedle(*painter, kNeedleLength, kNeedleBaseWidth, kNeedleTipWidth, kNeedleColor);
+    gauge_paint::drawPivot(*painter, kPivotRadius, kPivotColor);
     painter->restore();
-}
-
-// Removed direct widget subscriptions; handled by zenoh_subscriber
-
-// Removed direct widget subscriptions; handled by zenoh_subscriber
-
-void Mercedes190ESpeedometer::onSpeedEvaluated(float mph)
-{
-    setSpeed(mph);
-}
-
-void Mercedes190ESpeedometer::onOdometerEvaluated(int miles)
-{
-    setOdometerValue(miles);
 }
 
 #include "mercedes_190e_speedometer/moc_mercedes_190e_speedometer.cpp"

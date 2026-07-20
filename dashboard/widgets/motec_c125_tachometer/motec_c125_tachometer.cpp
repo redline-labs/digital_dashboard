@@ -1,14 +1,14 @@
 #include "motec_c125_tachometer/motec_c125_tachometer.h"
 
 #include <QPainter>
-#include <QFontDatabase>
-#include <QMetaObject>
 
 #include <cmath>
 
 #include <spdlog/spdlog.h>
 
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
+#include "dashboard/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
 namespace
@@ -72,44 +72,16 @@ constexpr QColor kFillValueColor   = QColor(255, 180, 0);       // yellow overla
 }
 
 MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent):
-  QWidget(parent),
+  dashboard::CachedPaintWidget(parent),
   _cfg{cfg},
   _rpm{0.0f}
 {
     // font for the center digit (use bundled Futura if available)
-    int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-    if (fontId == -1)
-    {
-        _digitFont = QFont("Helvetica", 40, QFont::Bold);
-    }
-    else
-    {
-        const QString family = QFontDatabase::applicationFontFamilies(fontId).at(0);
-        _digitFont = QFont(family, 40, QFont::Bold);
-    }
+    _digitFont = QFont(dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica"), 40, QFont::Bold);
 
-    // Optional expression parser hookup
-    try
-    {
-        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
-        if (_expression_parser->isValid())
-        {
-            _expression_parser->setResultCallback<float>([this](float rpm)
-            {
-                QMetaObject::invokeMethod(this, "onRpmEvaluated", Qt::QueuedConnection, Q_ARG(float, rpm));
-            });
-        }
-        else
-        {
-            _expression_parser.reset();
-        }
-    } 
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Expression parser init failed: {}", e.what());
-        _expression_parser.reset();
-    }
+    _expression_parser = dashboard::makeExpressionSubscription<float>(
+        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
+        this, &MotecC125Tachometer::setRpm, "C125 tachometer rpm");
 }
 
 void MotecC125Tachometer::setRpm(float rpm)
@@ -118,51 +90,58 @@ void MotecC125Tachometer::setRpm(float rpm)
     update();
 }
 
-void MotecC125Tachometer::onRpmEvaluated(float rpm)
+void MotecC125Tachometer::applyPaintTransform(QPainter& painter) const
 {
-    setRpm(rpm);
+    gauge_paint::applyCenteredScale(painter, *this); // normalize to 200x200 box
 }
 
-void MotecC125Tachometer::paintEvent(QPaintEvent* e)
+void MotecC125Tachometer::paintStaticUnderlay(QPainter& painter)
 {
-    Q_UNUSED(e);
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-
-    const int side = qMin(width(), height());
-    p.translate(width() / 2.0, height() / 2.0);
-    p.scale(side / 200.0, side / 200.0); // normalize to 200x200 box
-
     // Solid background shape under everything (keeps bottom truncated)
-    drawBackdrop(&p);
-    // Draw the fill band first so it sits beneath outlines and ticks
-    drawFilledArc(&p);
-    // Then outlines and ticks on top
-    drawDial(&p);
-    drawTicks(&p);
-    drawCenterDigit(&p);
+    drawBackdrop(&painter);
+    // Full-span white fill band; the yellow value arc is drawn over it per frame
+    drawBaseArc(&painter);
+}
 
+void MotecC125Tachometer::paintDynamic(QPainter& painter)
+{
+    drawValueArc(&painter);
+}
+
+void MotecC125Tachometer::paintStaticOverlay(QPainter& painter)
+{
+    // Outlines and ticks sit on top of the fill band
+    drawDial(&painter);
+    drawTicks(&painter);
+    drawCenterDigit(&painter);
+    drawRedline(&painter);
+}
+
+void MotecC125Tachometer::drawRedline(QPainter* painter)
+{
     // Redline overlay along outer arc (thin red stroke from configured RPM to end of arc)
-    if (_cfg.redline_rpm > 0 && _cfg.redline_rpm <= _cfg.max_rpm)
+    if (_cfg.redline_rpm == 0 || _cfg.redline_rpm > _cfg.max_rpm)
     {
-        p.save();
-        // Map redline RPM into sweep space, then convert to absolute angle along the visual arc
-        const float proportion = std::clamp(static_cast<float>(_cfg.redline_rpm) / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
-        const float sweep_at_red = kSweepTotalDeg * proportion; // degrees after sweep start
-        const float redline_start_deg = kValueStartOffsetDeg + sweep_at_red; // relative to visual arc start
-
-        QPen redPen(QColor(220, 0, 0));
-        redPen.setWidthF(2.0f);
-        redPen.setCapStyle(Qt::FlatCap);
-        p.setPen(redPen);
-
-        const QRectF outerRect(-kOuterRingRadius, -kOuterRingRadius, 2*kOuterRingRadius, 2*kOuterRingRadius);
-        // Start from arc start + redline angle, draw to the visual arc end clockwise (negative span)
-        const int start_qt = static_cast<int>(-(kArcStartDeg + redline_start_deg) * 16.0f);
-        const int span_qt  = static_cast<int>(-(kArcTotalDeg - redline_start_deg) * 16.0f);
-        p.drawArc(outerRect, start_qt, span_qt);
-        p.restore();
+        return;
     }
+
+    painter->save();
+    // Map redline RPM into sweep space, then convert to absolute angle along the visual arc
+    const float proportion = std::clamp(static_cast<float>(_cfg.redline_rpm) / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
+    const float sweep_at_red = kSweepTotalDeg * proportion; // degrees after sweep start
+    const float redline_start_deg = kValueStartOffsetDeg + sweep_at_red; // relative to visual arc start
+
+    QPen redPen(QColor(220, 0, 0));
+    redPen.setWidthF(2.0f);
+    redPen.setCapStyle(Qt::FlatCap);
+    painter->setPen(redPen);
+
+    const QRectF outerRect(-kOuterRingRadius, -kOuterRingRadius, 2*kOuterRingRadius, 2*kOuterRingRadius);
+    // Start from arc start + redline angle, draw to the visual arc end clockwise (negative span)
+    const int start_qt = static_cast<int>(-(kArcStartDeg + redline_start_deg) * 16.0f);
+    const int span_qt  = static_cast<int>(-(kArcTotalDeg - redline_start_deg) * 16.0f);
+    painter->drawArc(outerRect, start_qt, span_qt);
+    painter->restore();
 }
 
 void MotecC125Tachometer::drawDial(QPainter* painter)
@@ -256,7 +235,24 @@ void MotecC125Tachometer::drawTicks(QPainter* painter)
     painter->restore();
 }
 
-void MotecC125Tachometer::drawFilledArc(QPainter* painter)
+void MotecC125Tachometer::drawBaseArc(QPainter* painter)
+{
+    painter->save();
+
+    // Match the widened gap between inner and outer rings so the fill overlays that channel with no gap
+    constexpr QRectF rect(-kFillArcRadius, -kFillArcRadius, 2 * kFillArcRadius, 2 * kFillArcRadius);
+
+    // The entire visual arc span in white as the background so it matches the gray rings
+    QPen bgPen(kFillBaseColor);
+    bgPen.setWidthF(kFillArcThickness);
+    bgPen.setCapStyle(Qt::FlatCap);
+    painter->setPen(bgPen);
+    painter->drawArc(rect, static_cast<int>(-kArcStartDeg * 16.0f), static_cast<int>(-kArcTotalDeg * 16.0f));
+
+    painter->restore();
+}
+
+void MotecC125Tachometer::drawValueArc(QPainter* painter)
 {
     painter->save();
 
@@ -264,17 +260,9 @@ void MotecC125Tachometer::drawFilledArc(QPainter* painter)
     const float proportion = std::clamp(static_cast<float>(_rpm) / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
     const float sweep_deg = kSweepTotalDeg * proportion;
 
-    // Match the widened gap between inner and outer rings so the fill overlays that channel with no gap
     constexpr QRectF rect(-kFillArcRadius, -kFillArcRadius, 2 * kFillArcRadius, 2 * kFillArcRadius);
 
-    // First draw the entire visual arc span in white as the background so it matches the gray rings
-    QPen bgPen(kFillBaseColor);
-    bgPen.setWidthF(kFillArcThickness);
-    bgPen.setCapStyle(Qt::FlatCap);
-    painter->setPen(bgPen);
-    painter->drawArc(rect, static_cast<int>(-kArcStartDeg * 16.0f), static_cast<int>(-kArcTotalDeg * 16.0f));
-
-    // Then overlay the current portion in yellow; start from the visual arc start so
+    // Overlay the current portion in yellow; start from the visual arc start so
     // a small pre-zero yellow segment is visible up to the 0 tick
     QPen valPen(kFillValueColor);
     valPen.setWidthF(kFillArcThickness);

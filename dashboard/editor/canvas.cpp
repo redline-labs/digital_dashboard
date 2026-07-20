@@ -79,7 +79,12 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         }
 
         // Apply typed widget configuration
-        std::visit([&](auto const& cfg){ frame->applyConfig(cfg); }, wcfg.config);
+        std::visit([&](auto const& cfg){
+            if constexpr (!std::is_same_v<std::decay_t<decltype(cfg)>, std::monostate>)
+            {
+                frame->applyConfig(cfg);
+            }
+        }, wcfg.config);
 
         // If child provides a size hint, prefer it, otherwise use config size
         QSize targetSize(wcfg.width, wcfg.height);

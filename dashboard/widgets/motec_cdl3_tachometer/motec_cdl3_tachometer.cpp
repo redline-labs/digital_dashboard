@@ -1,8 +1,6 @@
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
 
 #include <QPainter>
-#include <QFontDatabase>
-#include <QMetaObject>
 
 #include <cmath>
 #include <numbers>
@@ -11,7 +9,8 @@
 
 #include <spdlog/spdlog.h>
 
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
 namespace {
@@ -30,47 +29,23 @@ constexpr float kDecorationMargin = 14.0f;
 }
 
 MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent):
-  QWidget(parent),
+  dashboard::CachedPaintWidget(parent),
   _cfg{cfg},
   _rpm{0.0f},
   _maxOuterA{0.0f},
   _maxOuterB{0.0f}
 {
     // Load segmented display font (DSEG)
-    int dsegId = QFontDatabase::addApplicationFont(":/fonts/DSEG7Classic-Bold.ttf");
-    if (dsegId == -1)
-    {
-        _segmentFont = QFont("Helvetica", 10, QFont::Bold);
-        SPDLOG_WARN("Failed to load DSEG font, falling back to system font");
-    }
-    else
-    {
-        const QString family = QFontDatabase::applicationFontFamilies(dsegId).at(0);
-        _segmentFont = QFont(family, 10, QFont::Bold);
-    }
+    _segmentFont = QFont(dashboard::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf", "Helvetica"), 10, QFont::Bold);
 
-    // Optional expression parser hookup
-    try
-    {
-        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key);
-        if (_expression_parser && _expression_parser->isValid())
-        {
-            _expression_parser->setResultCallback<float>([this](float rpm)
-            {
-                QMetaObject::invokeMethod(this, "setRpm", Qt::QueuedConnection, Q_ARG(float, rpm));
-            });
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("MotecCdl3Tachometer: expression parser init failed: {}", e.what());
-        _expression_parser.reset();
-    }
+    _expression_parser = dashboard::makeExpressionSubscription<float>(
+        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
+        this, &MotecCdl3Tachometer::setRpm, "CDL3 tachometer rpm");
     // Why: Precompute a LUT and static geometry so drawing stays O(segments)
     // with consistent visual spacing, regardless of widget size.
     buildArcLUT();
     buildStaticGeometry();
+    _contentBounds = computeContentBounds();
 }
 
 void MotecCdl3Tachometer::setRpm(float rpm)
@@ -79,17 +54,19 @@ void MotecCdl3Tachometer::setRpm(float rpm)
     update();
 }
 
-void MotecCdl3Tachometer::paintEvent(QPaintEvent* e)
+void MotecCdl3Tachometer::applyPaintTransform(QPainter& p) const
 {
-    Q_UNUSED(e);
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
+    // Why: keep scale/centering logic isolated and easy to reason about.
+    const float contentW = static_cast<float>(_contentBounds.width());
+    const float contentH = static_cast<float>(_contentBounds.height());
+    const float sx = static_cast<float>(width()) / std::max(1e-6f, contentW);
+    const float sy = static_cast<float>(height()) / std::max(1e-6f, contentH);
+    const float s = std::min(sx, sy);
 
-    const QRectF bounds = computeContentBounds();
-    applyViewportTransform(p, bounds);
-
-    drawSweepBands(&p);
-    drawTicksAndLabels(&p);
+    const QPointF c = _contentBounds.center();
+    p.translate(width() / 2.0, height() / 2.0);
+    p.scale(s, s);
+    p.translate(-c.x(), -c.y());
 }
 
 QRectF MotecCdl3Tachometer::computeContentBounds() const
@@ -111,21 +88,6 @@ QRectF MotecCdl3Tachometer::computeContentBounds() const
     const float yMax = 0.0f;
 
     return QRectF(QPointF(minX, yMin), QPointF(maxX, yMax));
-}
-
-void MotecCdl3Tachometer::applyViewportTransform(QPainter& p, const QRectF& content)
-{
-    // Why: keep scale/centering logic isolated and easy to reason about.
-    const float contentW = static_cast<float>(content.width());
-    const float contentH = static_cast<float>(content.height());
-    const float sx = static_cast<float>(width()) / std::max(1e-6f, contentW);
-    const float sy = static_cast<float>(height()) / std::max(1e-6f, contentH);
-    const float s = std::min(sx, sy);
-
-    const QPointF c = content.center();
-    p.translate(width() / 2.0, height() / 2.0);
-    p.scale(s, s);
-    p.translate(-c.x(), -c.y());
 }
 
 void MotecCdl3Tachometer::buildArcLUT()
@@ -240,37 +202,39 @@ void MotecCdl3Tachometer::buildStaticGeometry()
     }
 }
 
-void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
+void MotecCdl3Tachometer::paintStaticUnderlay(QPainter& painter)
 {
-    painter->save();
-
-    // Why: draw arc segments along an ellipse (flatter top, steeper shoulders)
+    // Why: provide a subtle baseline track for alignment under segments and ticks
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
 
+    painter.save();
+    // Why: mirror vertically so the arc bows downward (dashboard-like rainbow)
+    painter.scale(1.0f, -1.0f);
+
+    QPen basePen(QColor(25, 25, 25));
+    basePen.setWidthF(1.0f);
+    basePen.setCapStyle(Qt::FlatCap);
+    painter.setPen(basePen);
+    QRectF rect(-kEllipseA, -kEllipseB, 2 * kEllipseA, 2 * kEllipseB);
+    // Match segment orientation: use negative angles in mirrored space
+    painter.drawArc(rect, static_cast<int>(-kSweepStartDeg * 16.0f), static_cast<int>(sweep_cw * 16.0f));
+
+    painter.restore(); // undo vertical mirror
+}
+
+void MotecCdl3Tachometer::paintDynamic(QPainter& painter)
+{
     constexpr QColor onColor(30, 30, 30);
 
     // Segment rendering uses variable radial length (pen width) while keeping the inner edge at a fixed offset
-    QPen pen(Qt::black);
+    QPen pen(onColor);
     pen.setCapStyle(Qt::FlatCap);
 
+    painter.save();
     // Why: mirror vertically so the arc bows downward (dashboard-like rainbow)
-    painter->save();
-    painter->scale(1.0f, -1.0f);
+    painter.scale(1.0f, -1.0f);
 
-    // Use precomputed LUT
-
-    // Why: provide a subtle baseline track for alignment under segments and ticks
-    {
-        QPen basePen(QColor(25, 25, 25));
-        basePen.setWidthF(1.0f);
-        basePen.setCapStyle(Qt::FlatCap);
-        painter->setPen(basePen);
-        QRectF rect(-kEllipseA, -kEllipseB, 2 * kEllipseA, 2 * kEllipseB);
-        // Match segment orientation: use negative angles in mirrored space
-        painter->drawArc(rect, static_cast<int>(-kSweepStartDeg * 16.0f), static_cast<int>(sweep_cw * 16.0f));
-    }
-
-    // Overlay the active proportion as dark segments; each segment is either on or off (no partials).
+    // The active proportion as dark segments; each segment is either on or off (no partials).
     const float p_now = std::clamp(_rpm / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
     const int on_segments = std::clamp(static_cast<int>(std::floor(p_now * static_cast<float>(kSegments) + 1e-4f)), 0, kSegments);
 
@@ -280,16 +244,15 @@ void MotecCdl3Tachometer::drawSweepBands(QPainter* painter)
         const float span = _segmentSpanDeg[i];
         QRectF rect(-_segmentRectAX[i], -_segmentRectBY[i], 2 * _segmentRectAX[i], 2 * _segmentRectBY[i]);
         pen.setWidthF(_segmentLengthPx[i]);
-        pen.setColor(onColor);
-        painter->setPen(pen);
-        painter->drawArc(rect, static_cast<int>(-a0 * 16.0f), static_cast<int>(-std::abs(span) * 16.0f));
+        painter.setPen(pen);
+        painter.drawArc(rect, static_cast<int>(-a0 * 16.0f), static_cast<int>(-std::abs(span) * 16.0f));
     }
 
-    painter->restore(); // undo vertical mirror
-    painter->restore();
+    painter.restore(); // undo vertical mirror
 }
 
-void MotecCdl3Tachometer::drawTicksAndLabels(QPainter* painter) {
+void MotecCdl3Tachometer::paintStaticOverlay(QPainter& p) {
+    QPainter* painter = &p;
     painter->save();
 
     // Why: Discrete 1000-RPM ticks; compact triangles read well at small sizes

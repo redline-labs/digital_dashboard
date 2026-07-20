@@ -19,26 +19,33 @@ inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWi
     QWidget* widget = nullptr;
     std::visit([&](const auto& cfg) {
         using cfg_t = std::decay_t<decltype(cfg)>;
-        using traits = widget_registry::config_traits<cfg_t>;
-        using widget_t = typename traits::widget_t;
-
-        if (widget_config.type != traits::type)
+        if constexpr (std::is_same_v<cfg_t, std::monostate>)
         {
-            SPDLOG_WARN("Widget config type mismatch: expected '{}', got '{}'",
-                        reflection::enum_to_string(traits::type),
-                        reflection::enum_to_string(widget_config.type));
-            return;
-        }
-
-        if constexpr (std::is_same_v<widget_t, CarPlayWidget>)
-        {
-            auto* carplay = new widget_t(cfg, parent);
-            carplay->setSize(widget_config.width, widget_config.height);
-            widget = carplay;
+            // Unknown widget type; nothing to construct.
         }
         else
         {
-            widget = new widget_t(cfg, parent);
+            using traits = widget_registry::config_traits<cfg_t>;
+            using widget_t = typename traits::widget_t;
+
+            if (widget_config.type != traits::type)
+            {
+                SPDLOG_WARN("Widget config type mismatch: expected '{}', got '{}'",
+                            reflection::enum_to_string(traits::type),
+                            reflection::enum_to_string(widget_config.type));
+                return;
+            }
+
+            if constexpr (std::is_same_v<widget_t, CarPlayWidget>)
+            {
+                auto* carplay = new widget_t(cfg, parent);
+                carplay->setSize(widget_config.width, widget_config.height);
+                widget = carplay;
+            }
+            else
+            {
+                widget = new widget_t(cfg, parent);
+            }
         }
     }, widget_config.config);
 

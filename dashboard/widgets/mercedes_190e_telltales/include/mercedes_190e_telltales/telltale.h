@@ -2,6 +2,7 @@
 #define TELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -18,7 +19,7 @@ class QSvgRenderer;
 namespace pub_sub { class ZenohExpressionSubscriber; }
 
 
-class Mercedes190ETelltale : public QWidget
+class Mercedes190ETelltale : public dashboard::CachedPaintWidget
 {
     Q_OBJECT
 
@@ -36,11 +37,10 @@ public:
     QSize sizeHint() const override;
 
 protected:
-    void paintEvent(QPaintEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
-
-private slots:
-    void onConditionEvaluated(bool asserted);
+    // The whole telltale (background, border, tinted icon) only changes with
+    // size or asserted state, so it is all cached static content.
+    void paintStaticUnderlay(QPainter& painter) override;
+    void paintDynamic(QPainter& painter) override;
 
 private:
     void updateColors();

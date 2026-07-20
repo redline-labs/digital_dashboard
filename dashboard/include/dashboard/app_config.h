@@ -23,7 +23,7 @@ struct widget_config_t {
         y{0},
         width{100},
         height{100},
-        config{}
+        config{std::monostate{}}
     {}
 
     widget_type_t type;
@@ -32,18 +32,11 @@ struct widget_config_t {
     uint16_t width;
     uint16_t height;
 
-    std::variant<
-        Mercedes190ESpeedometer::config_t,
-        CarPlayWidget::config_t,
-        Mercedes190ETachometer::config_t,
-        Mercedes190ETelltale::config_t,
-        SparklineItem::config_t,
-        Mercedes190EClusterGauge::config_t,
-        MotecC125Tachometer::config_t,
-        MotecCdl3Tachometer::config_t,
-        StaticTextWidget::config_t,
-        ValueReadoutWidget::config_t,
-        BackgroundRectWidget::config_t> config;
+    // Alternatives are derived from the widget registry; std::monostate is the
+    // "unknown" state (and absorbs the trailing comma from the macro).
+#define WIDGET_CONFIG_ALT(widget_class) widget_class::config_t,
+    std::variant<FOR_EACH_WIDGET(WIDGET_CONFIG_ALT) std::monostate> config;
+#undef WIDGET_CONFIG_ALT
 };
 
 REFLECT_STRUCT(app_config_t,
@@ -158,7 +151,10 @@ struct convert<widget_config_t> {
 
         // Use std::visit to encode whichever config is active in the variant
         std::visit([&](const auto& cfg) {
-            node["config"] = cfg;
+            if constexpr (!std::is_same_v<std::decay_t<decltype(cfg)>, std::monostate>)
+            {
+                node["config"] = cfg;
+            }
         }, rhs.config);
 
         return node;
@@ -187,14 +183,7 @@ struct convert<widget_config_t> {
         
         FOR_EACH_WIDGET(DECODE_CONFIG_IF)
 #undef DECODE_CONFIG_IF
-        
-        // Backward compatibility for old widget type names
-        if (!matched && type == "mercedes_190e_battery_telltale") {
-            rhs.type = widget_type_t::mercedes_190e_telltale;
-            rhs.config = node["config"].as<Mercedes190ETelltale::config_t>();
-            matched = true;
-        }
-        
+
         if (!matched) {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", type);
             rhs.type = widget_type_t::unknown;

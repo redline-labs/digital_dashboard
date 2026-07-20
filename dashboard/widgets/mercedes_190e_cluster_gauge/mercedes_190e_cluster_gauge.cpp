@@ -1,14 +1,13 @@
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
 #include <QPaintEvent>
 #include <QFontMetrics>
-#include <QDebug>
 #include <QSvgRenderer>
-#include <QMetaObject>
 
 #include <spdlog/spdlog.h>
 
-// Expression parser
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
+#include "dashboard/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
 #include <cmath>
@@ -103,7 +102,8 @@ static GaugeOrientationInfo getOrientationInfo(GaugeOrientation orientation)
             info.projectionSign = 1.0f;
             break;
         case GaugeOrientation::Down:
-            info.orientationAngleDeg = 270.0f;
+            // Qt's y axis points down, so screen-down is 90 degrees.
+            info.orientationAngleDeg = 90.0f;
             info.rotateClockwiseNegative = false;
             info.invertValueMapping = true;
             info.projectionSign = 1.0f;
@@ -216,96 +216,40 @@ static void drawGaugeNeedle(
     painter->save();
     painter->translate(centerX, centerY);
     painter->rotate(info.rotateClockwiseNegative ? (-1.0f * needleAngle) : needleAngle);
-
-    QPolygonF needlePolygon;
-    needlePolygon << QPointF(0.0f, -kNeedleBaseWidth / 2.0f)
-                  << QPointF(kNeedleLength, -kNeedleTipWidth / 2.0f)
-                  << QPointF(kNeedleLength,  kNeedleTipWidth / 2.0f)
-                  << QPointF(0.0f,  kNeedleBaseWidth / 2.0f);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(kNeedleColor);
-    painter->drawPolygon(needlePolygon);
+    gauge_paint::drawTaperedNeedle(*painter, kNeedleLength, kNeedleBaseWidth, kNeedleTipWidth, kNeedleColor);
     painter->restore();
 
     painter->save();
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(40, 40, 40));
-    painter->drawEllipse(QPointF(centerX, centerY), kPivotRadius, kPivotRadius);
+    painter->translate(centerX, centerY);
+    gauge_paint::drawPivot(*painter, kPivotRadius);
     painter->restore();
 }
 
 Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent):
-  QWidget(parent),
+  dashboard::CachedPaintWidget(parent),
   m_config(cfg),
   fuel_gauge_current_value_(0.0f),
   oil_pressure_gauge_current_value_(0.0f),
   coolant_temperature_gauge_current_value_(0.0f),
   economy_gauge_current_value_(0.0f)
 {
-    // Load font from Qt resources
-    int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-    if (fontId != -1) {
-        m_fontFamily = QFontDatabase::applicationFontFamilies(fontId).at(0);
-    } else {
-        qWarning("Failed to load futura.ttf from resources. Using default sans-serif.");
-        m_fontFamily = "sans-serif";
-    }
-    
-    // Initialize expression parsers for each sub-gauge
-    auto initializeSubGaugeParser = [](const sub_gauge_config_t& gauge_config,
-                                          std::unique_ptr<pub_sub::ZenohExpressionSubscriber>& parser,
-                                          const char* gauge_name)
-    {
-        try {
-            parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-                gauge_config.schema_type,
-                gauge_config.value_expression,
-                gauge_config.zenoh_key
-            );
-            
-            if (!parser->isValid()) {
-                SPDLOG_ERROR("Invalid {} gauge expression '{}' for schema '{}' in cluster gauge", 
-                            gauge_name, gauge_config.value_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(gauge_config.schema_type));
-                parser.reset();
-            }
-        } catch (const std::exception& e) {
-            SPDLOG_ERROR("Failed to initialize {} gauge expression parser: {}", gauge_name, e.what());
-            parser.reset();
-        }
-    };
-    
-    // Initialize parsers for all sub-gauges
-    initializeSubGaugeParser(m_config.fuel_gauge, top_gauge_expression_parser_, "top");
-    initializeSubGaugeParser(m_config.right_gauge, right_gauge_expression_parser_, "right");
-    initializeSubGaugeParser(m_config.bottom_gauge, bottom_gauge_expression_parser_, "bottom");
-    initializeSubGaugeParser(m_config.left_gauge, left_gauge_expression_parser_, "left");
+    m_fontFamily = dashboard::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
-    if (top_gauge_expression_parser_) {
-        top_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, [this, v]() { setFuelGaugeValue(v); }, Qt::QueuedConnection);
-        });
-    }
+    top_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        m_config.fuel_gauge.schema_type, m_config.fuel_gauge.value_expression, m_config.fuel_gauge.zenoh_key,
+        this, &Mercedes190EClusterGauge::setFuelGaugeValue, "cluster top gauge");
 
-    if (right_gauge_expression_parser_)
-    {
-        right_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, [this, v]() { setOilPressureGaugeValue(v); }, Qt::QueuedConnection);
-        });
-    }
+    right_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        m_config.right_gauge.schema_type, m_config.right_gauge.value_expression, m_config.right_gauge.zenoh_key,
+        this, &Mercedes190EClusterGauge::setOilPressureGaugeValue, "cluster right gauge");
 
-    if (bottom_gauge_expression_parser_)
-    {
-        bottom_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, [this, v](){ setEconomyGaugeValue(v); }, Qt::QueuedConnection);
-        });
-    }
+    bottom_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        m_config.bottom_gauge.schema_type, m_config.bottom_gauge.value_expression, m_config.bottom_gauge.zenoh_key,
+        this, &Mercedes190EClusterGauge::setEconomyGaugeValue, "cluster bottom gauge");
 
-    if (left_gauge_expression_parser_)
-    {
-        left_gauge_expression_parser_->setResultCallback<float>([this](float v) {
-            QMetaObject::invokeMethod(this, [this, v]() { setCoolantTemperatureGaugeValue(v); }, Qt::QueuedConnection);
-        });
-    }
+    left_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
+        m_config.left_gauge.schema_type, m_config.left_gauge.value_expression, m_config.left_gauge.zenoh_key,
+        this, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue, "cluster left gauge");
 
     // Initialize SVG renderers
     fuel_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));
@@ -350,76 +294,29 @@ void Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue(float value)
     update();
 }
 
-float Mercedes190EClusterGauge::valueToAngle(float value, float minVal, float maxVal)
+void Mercedes190EClusterGauge::applyPaintTransform(QPainter& painter) const
 {
-    if (maxVal == minVal)
-    {
-        return 0.0f;
-    }
-
-    float constrainedValue = std::clamp(value, minVal, maxVal);
-    float factor = (constrainedValue - minVal) / (maxVal - minVal);
-
-    return factor * kGaugeSpanDegrees;
+    gauge_paint::applyCenteredScale(painter, *this, kCanvasLogicalSize);
 }
 
-void Mercedes190EClusterGauge::paintEvent(QPaintEvent *event)
+void Mercedes190EClusterGauge::paintDynamic(QPainter& painter)
 {
-    Q_UNUSED(event);
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    if (static_cache_.size() != size()) {
-        updateStaticCache();
-    }
-
-    if (!static_cache_.isNull()) {
-        painter.drawPixmap(0, 0, static_cache_);
-    }
-
-    applyGaugeTransform(&painter);
-
     float subGaugeRadius = kSubGaugeRadius;
     drawFuelGaugeNeedle(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);
     drawOilPressureGaugeNeedle(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
     drawCoolantTemperatureGaugeNeedle(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f);
+    drawEconomyGaugeNeedle(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius);
 }
 
-void Mercedes190EClusterGauge::applyGaugeTransform(QPainter *painter) const
+void Mercedes190EClusterGauge::paintStaticUnderlay(QPainter& painter)
 {
-    int side = std::min(width(), height());
-    painter->translate(width() / 2.0, height() / 2.0);
-    painter->scale(side / kCanvasLogicalSize, side / kCanvasLogicalSize);
-}
-
-void Mercedes190EClusterGauge::updateStaticCache()
-{
-    if (width() <= 0 || height() <= 0) {
-        static_cache_ = QPixmap();
-        return;
-    }
-
-    static_cache_ = QPixmap(size());
-    static_cache_.fill(Qt::transparent);
-
-    QPainter cachePainter(&static_cache_);
-    cachePainter.setRenderHint(QPainter::Antialiasing);
-    applyGaugeTransform(&cachePainter);
-
-    drawBackground(&cachePainter);
+    gauge_paint::drawCircularBackground(painter, kMainGaugeRadius);
 
     float subGaugeRadius = kSubGaugeRadius;
-    drawFuelGaugeBase(&cachePainter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);
-    drawOilPressureGaugeBase(&cachePainter, m_config.right_gauge, subGaugeRadius, 0.0f);
-    drawCoolantTemperatureGaugeBase(&cachePainter, m_config.left_gauge, -subGaugeRadius, 0.0f);
-}
-
-void Mercedes190EClusterGauge::drawBackground(QPainter *painter)
-{
-    painter->save();
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(Qt::black);
-    painter->drawEllipse(QPointF(0.0f, 0.0f), kMainGaugeRadius, kMainGaugeRadius); // Main background circle
-    painter->restore();
+    drawFuelGaugeBase(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);
+    drawOilPressureGaugeBase(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
+    drawCoolantTemperatureGaugeBase(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f);
+    drawEconomyGaugeBase(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius);
 }
 
 void Mercedes190EClusterGauge::drawFuelGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
@@ -530,6 +427,25 @@ void Mercedes190EClusterGauge::drawCoolantTemperatureGaugeNeedle(QPainter *paint
                                            float centerX, float centerY)
 {
     drawGaugeNeedle(painter, gauge, centerX, centerY, GaugeOrientation::Left, coolant_temperature_gauge_current_value_);
+}
+
+void Mercedes190EClusterGauge::drawEconomyGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
+                                                    float centerX, float centerY)
+{
+    Q_UNUSED(gauge);
+    QFont baseFont(m_fontFamily);
+    painter->setFont(baseFont);
+
+    // The 190E economy gauge has an unlabeled scale from economical (left) to
+    // uneconomical (right); ticks only.
+    const std::vector<const char*> labels = {};
+    drawGaugeBase(painter, centerX, centerY, GaugeOrientation::Down, 5, true, labels);
+}
+
+void Mercedes190EClusterGauge::drawEconomyGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
+                                                      float centerX, float centerY)
+{
+    drawGaugeNeedle(painter, gauge, centerX, centerY, GaugeOrientation::Down, economy_gauge_current_value_);
 }
 
 #include "mercedes_190e_cluster_gauge/moc_mercedes_190e_cluster_gauge.cpp"

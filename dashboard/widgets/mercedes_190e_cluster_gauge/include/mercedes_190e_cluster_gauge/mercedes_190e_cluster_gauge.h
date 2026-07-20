@@ -2,6 +2,7 @@
 #define MERCEDES_190E_CLUSTER_GAUGE_H
 
 #include "mercedes_190e_cluster_gauge/config.h"
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -21,7 +22,7 @@
 // Forward declarations
 namespace pub_sub { class ZenohExpressionSubscriber; }
 
-class Mercedes190EClusterGauge : public QWidget
+class Mercedes190EClusterGauge : public dashboard::CachedPaintWidget
 {
     Q_OBJECT
 public:
@@ -40,10 +41,11 @@ private slots:
     void setEconomyGaugeValue(float value);
 
 protected:
-    void paintEvent(QPaintEvent *event) override;
+    void applyPaintTransform(QPainter& painter) const override;
+    void paintStaticUnderlay(QPainter& painter) override;
+    void paintDynamic(QPainter& painter) override;
 
 private:
-    void drawBackground(QPainter *painter);
     void drawFuelGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
                            float centerX, float centerY);
     void drawFuelGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
@@ -56,10 +58,10 @@ private:
                                          float centerX, float centerY);
     void drawCoolantTemperatureGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
                                            float centerX, float centerY);
-    void updateStaticCache();
-    void applyGaugeTransform(QPainter *painter) const;
-    
-    float valueToAngle(float value, float minVal, float maxVal);
+    void drawEconomyGaugeBase(QPainter *painter, const sub_gauge_config_t& gauge,
+                              float centerX, float centerY);
+    void drawEconomyGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,
+                                float centerX, float centerY);
 
     Mercedes190EClusterGaugeConfig_t m_config;
     QString m_fontFamily; // Font family for text rendering
@@ -85,8 +87,6 @@ private:
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;
     QSvgRenderer coolant_icon_svg_renderer_;
-
-    QPixmap static_cache_;
 };
 
 #endif // MERCEDES_190E_CLUSTER_GAUGE_H 

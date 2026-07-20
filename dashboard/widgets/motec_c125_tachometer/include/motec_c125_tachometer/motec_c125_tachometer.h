@@ -2,6 +2,7 @@
 #define MOTEC_C125_TACHOMETER_H
 
 #include "motec_c125_tachometer/config.h"
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -14,7 +15,7 @@ namespace pub_sub { class ZenohExpressionSubscriber; }
 
 class QPainter;
 
-class MotecC125Tachometer : public QWidget
+class MotecC125Tachometer : public dashboard::CachedPaintWidget
 {
     Q_OBJECT
 
@@ -29,15 +30,18 @@ public:
     void setRpm(float rpm);
 
 protected:
-    void paintEvent(QPaintEvent* event) override;
-
-private slots:
-    void onRpmEvaluated(float rpm);
+    void applyPaintTransform(QPainter& painter) const override;
+    void paintStaticUnderlay(QPainter& painter) override;  // backdrop + white base arc
+    void paintDynamic(QPainter& painter) override;         // yellow value arc
+    void paintStaticOverlay(QPainter& painter) override;   // rings, ticks, digit, redline
+    bool hasStaticOverlay() const override { return true; }
 
 private:
     void drawDial(QPainter* painter);
     void drawBackdrop(QPainter* painter);
-    void drawFilledArc(QPainter* painter);
+    void drawBaseArc(QPainter* painter);
+    void drawValueArc(QPainter* painter);
+    void drawRedline(QPainter* painter);
     void drawTicks(QPainter* painter);
     void drawCenterDigit(QPainter* painter);
 

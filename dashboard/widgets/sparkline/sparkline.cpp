@@ -9,10 +9,9 @@
 #include <QtGlobal> // For qBound if needed, or std::clamp in C++17
 #include <spdlog/spdlog.h>
 
-#include <QMetaObject>
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include <algorithm>
 #include <memory>
-#include <map>
 
 SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     : QWidget(parent), _cfg{cfg}
@@ -62,36 +61,23 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     m_lastValue = 0.0; // Keep track of the last real value
     m_writeIndex = 0;
 
+    // Build paint resources once; they only depend on config.
+    m_lineColor = QColor::fromString(_cfg.line_color.c_str());
+    m_gradientStartColor = m_lineColor.darker(120);
+    m_gradientEndColor = m_gradientStartColor;
+    m_gradientEndColor.setAlpha(0x00); // Fade to transparent at the bottom
+    m_linePen = QPen(m_lineColor);
+    m_linePen.setWidth(2);
 
-    try
-    {
-        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-            _cfg.schema_type,
-            _cfg.value_expression,
-            _cfg.zenoh_key
-        );
-        if (_expression_parser->isValid())
-        {
-            _expression_parser->setResultCallback<double>([this](double value) {
-                QMetaObject::invokeMethod(this, "onDataEvaluated", Qt::QueuedConnection, Q_ARG(double, value));
-            });
-        }
-        else
-        {
-            SPDLOG_ERROR("SparklineItem: invalid expression '{}' for schema '{}'", _cfg.value_expression, reflection::enum_traits<pub_sub::schema_type_t>::to_string(_cfg.schema_type));
-            _expression_parser.reset();
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("SparklineItem: failed to init expression parser: {}", e.what());
-        _expression_parser.reset();
-    }
+
+    _expression_parser = dashboard::makeExpressionSubscription<double>(
+        _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
+        this, &SparklineItem::setLatestValue, "sparkline value");
 
     // Initialize and start the repaint timer
     m_repaintTimer = new QTimer(this);
     connect(m_repaintTimer, &QTimer::timeout, this, &SparklineItem::forceRepaint);
-    m_repaintTimer->start(1000 / 30); // 30 Hz, approx 33ms interval
+    m_repaintTimer->start(1000 / std::max<uint16_t>(1, _cfg.update_rate));
 }
 
 void SparklineItem::setYAxisRange(double minVal, double maxVal) {
@@ -106,10 +92,9 @@ void SparklineItem::setYAxisRange(double minVal, double maxVal) {
     // No need to call update() here, as paintEvent will use these values on next repaint
 }
 
-void SparklineItem::addDataPoint(double value) {
-    m_lastValue = value; 
+void SparklineItem::setLatestValue(double value) {
+    m_lastValue = value;
     // The actual data points are shifted in forceRepaint.
-    // We don't directly modify dataPoints here anymore based on latest user changes.
 }
 
 void SparklineItem::forceRepaint() {
@@ -120,7 +105,13 @@ void SparklineItem::forceRepaint() {
         m_writeIndex = (m_writeIndex + 1) % dataPoints.size();
     }
 
-    valueLabel->setText(QString::number(m_lastValue, 'f', 1)); // Display value with 1 decimal place
+    // Only touch the QLabel (relayout/repaint) when the displayed text changes.
+    QString valueText = QString::number(m_lastValue, 'f', 1);
+    if (valueText != m_lastValueText)
+    {
+        m_lastValueText = valueText;
+        valueLabel->setText(valueText);
+    }
 
     update(); // Schedule a repaint
 }
@@ -161,11 +152,6 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     if (maxVal == minVal) {
         maxVal += 1.0; // Or handle as an error / no plot
     }
-
-    QColor lineColor = QColor::fromString(_cfg.line_color.c_str()); //= Qt::blue;
-    QColor gradientStartColor = lineColor.darker(120); // Slightly darker blue
-    QColor gradientEndColor = gradientStartColor;
-    gradientEndColor.setAlpha(0x00); // Semi-transparent blue for the bottom of the gradient
 
     QPainterPath linePath;
     // Ensure MAX_DATA_POINTS is greater than 1 to avoid division by zero if graphRect.width() is > 0
@@ -219,22 +205,15 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
 
     // Define the gradient
     QLinearGradient gradient(graphRect.topLeft(), graphRect.bottomLeft());
-    gradient.setColorAt(0, gradientStartColor); // Start color (top)
-    gradient.setColorAt(1, gradientEndColor);   // End color (bottom)
+    gradient.setColorAt(0, m_gradientStartColor); // Start color (top)
+    gradient.setColorAt(1, m_gradientEndColor);   // End color (bottom)
 
     // Fill the area under the line
     painter.fillPath(fillPath, QBrush(gradient));
 
     // Draw the line itself on top
-    QPen pen(lineColor);
-    pen.setWidth(2);
-    painter.setPen(pen);
+    painter.setPen(m_linePen);
     painter.drawPath(linePath);
-}
-
-void SparklineItem::onDataEvaluated(double value)
-{
-    addDataPoint(value);
 }
 
 #include "sparkline/moc_sparkline.cpp"

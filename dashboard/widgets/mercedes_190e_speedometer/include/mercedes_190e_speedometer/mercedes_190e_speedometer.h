@@ -2,6 +2,7 @@
 #define SPEEDOMETERWIDGETMPH_H
 
 #include "mercedes_190e_speedometer/config.h"
+#include "dashboard/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -20,7 +21,7 @@
 // Forward declarations
 namespace pub_sub { class ZenohExpressionSubscriber; }
 
-class Mercedes190ESpeedometer : public QWidget
+class Mercedes190ESpeedometer : public dashboard::CachedPaintWidget
 {
     Q_OBJECT
 public:
@@ -35,11 +36,9 @@ public:
     void setOdometerValue(int value); // Setter for odometer
     
 protected:
-    void paintEvent(QPaintEvent *event) override;
-
-private slots:
-    void onSpeedEvaluated(float mph);
-    void onOdometerEvaluated(int miles);
+    void applyPaintTransform(QPainter& painter) const override;
+    void paintStaticUnderlay(QPainter& painter) override;
+    void paintDynamic(QPainter& painter) override;
 
 private:
     // Speedometer properties.
@@ -81,15 +80,12 @@ private:
     static constexpr float kKmhMajorTickLen = 6.0f;
     static constexpr float kKmhMinorTickLen = 3.0f;
 
-    void drawBackground(QPainter *painter);
     void drawMphTicksAndNumbers(QPainter *painter);
     void drawKmhTicksAndNumbers(QPainter *painter);
     void drawBoxesAtMPH(QPainter *painter, float mphValue, int numBoxes);
     void drawNeedle(QPainter *painter);
     void drawOverlayText(QPainter *painter); // For "miles", "km/h mph" stack etc.
     void drawOdometer(QPainter *painter); // New method for odometer
-    void updateStaticCache();
-    void applyGaugeTransform(QPainter *painter) const;
 
     float valueToAngle(float value, float maxVal); // Changed to float
 
@@ -108,8 +104,6 @@ private:
     QFont unit_font_;
     QFont vdo_font_;
 
-    QPixmap static_cache_;
-    
     // Expression parsers for speed and odometer calculations
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> speed_expression_parser_;
     std::unique_ptr<pub_sub::ZenohExpressionSubscriber> odometer_expression_parser_;

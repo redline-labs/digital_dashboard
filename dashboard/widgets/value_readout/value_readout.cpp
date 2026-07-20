@@ -1,50 +1,29 @@
 #include "value_readout/value_readout.h"
 
 #include <QPainter>
-#include <QFontDatabase>
-#include <QMetaObject>
 
 #include <spdlog/spdlog.h>
 
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/expression_subscription.h"
+#include "dashboard/widget_fonts.h"
 
 ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent)
 	: QWidget(parent), _cfg{cfg}, _value{0.0}
 {
 	// Load fonts similar to other widgets
-	int fontId = QFontDatabase::addApplicationFont(":/fonts/futura.ttf");
-	QString family = (fontId == -1)
-		? QStringLiteral("Helvetica")
-		: QFontDatabase::applicationFontFamilies(fontId).at(0);
-
+	QString family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 	_labelFont = QFont(family, 14, QFont::DemiBold);
 	_valueFont = QFont(family, 40, QFont::Bold);
 
-    try {
-        _expression_parser = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-			_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key);
-		if (_expression_parser->isValid()) {
-			_expression_parser->setResultCallback<double>([this](double v) {
-				QMetaObject::invokeMethod(this, "onValueEvaluated", Qt::QueuedConnection, Q_ARG(double, v));
-			});
-		} else {
-			_expression_parser.reset();
-		}
-	} catch (const std::exception& e) {
-		SPDLOG_ERROR("ValueReadout expression parser init failed: {}", e.what());
-		_expression_parser.reset();
-	}
+	_expression_parser = dashboard::makeExpressionSubscription<double>(
+		_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
+		this, &ValueReadoutWidget::setValue, "value readout");
 }
 
 void ValueReadoutWidget::setValue(double value)
 {
 	_value = value;
 	update();
-}
-
-void ValueReadoutWidget::onValueEvaluated(double v)
-{
-	setValue(v);
 }
 
 void ValueReadoutWidget::paintEvent(QPaintEvent* e)
