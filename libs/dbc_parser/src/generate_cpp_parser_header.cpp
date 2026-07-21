@@ -30,6 +30,7 @@ void generate_cpp_parser_header(const dbc_parser::Database &db, const std::strin
     fmt::print(out, "#include <array>\n");
     fmt::print(out, "#include <cstdint>\n");
     fmt::print(out, "#include <functional>\n");
+    fmt::print(out, "#include <memory>\n");
     fmt::print(out, "#include <tuple>\n");
     fmt::print(out, "#include <type_traits>\n");
     fmt::print(out, "#include <algorithm>\n");

@@ -11,7 +11,7 @@ add_executable(carplay
 # libavcodec is used by --simulate to generate a synthetic H.264 stream (and
 # later for AAC/Opus decode of the phone's audio).
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
+pkg_check_modules(CARPLAY_NODE_LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
 
 target_include_directories(carplay PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -25,7 +25,7 @@ target_link_libraries(carplay PRIVATE
     zenoh_pub_sub
     iap2
     airplay
-    PkgConfig::LIBAV
+    PkgConfig::CARPLAY_NODE_LIBAV
 )
 
 # The USB transport (usbfs/TUN) only exists on Linux; everything above it

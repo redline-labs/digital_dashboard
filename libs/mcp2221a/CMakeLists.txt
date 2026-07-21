@@ -6,7 +6,8 @@ target_include_directories(mcp2221a PUBLIC
 )
 
 target_link_libraries(mcp2221a PUBLIC
-    hidapi
+    # Alias for the platform's backend: hidraw on Linux, darwin on macOS.
+    hidapi::hidapi
 
     PRIVATE
         # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt

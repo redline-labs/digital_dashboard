@@ -17,15 +17,19 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-# libavcodec for software H.264/H.265 decode of the zenoh video stream.
+# libavcodec for software H.264/H.265 decode of the zenoh video stream, plus
+# libavutil for the AVFrame/AVPacket allocators the decode loop calls directly.
+# The prefix is target-specific: PkgConfig::<prefix> is a global name, and
+# nodes/carplay declares its own ffmpeg dependency.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+pkg_check_modules(CARPLAY_WIDGET_LIBAV REQUIRED IMPORTED_TARGET
     libavcodec
+    libavutil
 )
 
 target_link_libraries(${CARPLAY_WIDGET_LIB}
     PUBLIC
-        PkgConfig::LIBAV
+        PkgConfig::CARPLAY_WIDGET_LIBAV
         Qt6::Core
         Qt6::Widgets
         Qt6::Gui

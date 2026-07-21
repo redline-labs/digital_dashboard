@@ -22,7 +22,7 @@ if(APPLE)
 endif()
 
 # project name
-project(dashboard LANGUAGES C CXX OBJC OBJCXX)
+project(dashboard LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

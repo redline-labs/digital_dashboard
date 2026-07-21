@@ -11,9 +11,10 @@
 #include <thread>
 #include <vector>
 
-// libplist forward declaration to keep the header dependency-light.
-struct plist_data_s;
-typedef plist_data_s* plist_t;
+// libplist's plist_t is an opaque `void*`; repeating the typedef verbatim keeps
+// this header free of the libplist dependency and is a legal redeclaration when
+// <plist/plist.h> is also in scope.
+typedef void* plist_t;
 
 namespace apple_usb
 {
