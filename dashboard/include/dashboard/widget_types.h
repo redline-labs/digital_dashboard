@@ -17,6 +17,7 @@ REFLECT_ENUM(widget_type_t,
     background_rect,
     sparkline,
     carplay,
+    now_playing,
     unknown
 )
 

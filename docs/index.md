@@ -27,7 +27,7 @@ Screenshots (single binary, different YAML configs):
 
 ![Motec C125](images/motec_c125_dash_demo.png)
 
-CarPlay window (requires a compatible CarlinKit dongle such as CPC200‑CCPA):
+CarPlay window (native wired CarPlay via the Linux‑only `carplay` driver node; requires an Apple MFi authentication coprocessor):
 
 ![CarPlay Window](images/carplay_demo.png)
 

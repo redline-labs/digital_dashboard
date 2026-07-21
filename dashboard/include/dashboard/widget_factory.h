@@ -36,16 +36,7 @@ inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWi
                 return;
             }
 
-            if constexpr (std::is_same_v<widget_t, CarPlayWidget>)
-            {
-                auto* carplay = new widget_t(cfg, parent);
-                carplay->setSize(widget_config.width, widget_config.height);
-                widget = carplay;
-            }
-            else
-            {
-                widget = new widget_t(cfg, parent);
-            }
+            widget = new widget_t(cfg, parent);
         }
     }, widget_config.config);
 

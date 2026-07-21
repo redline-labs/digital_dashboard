@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include "carplay/carplay_widget.h"
+#include "now_playing/now_playing.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
 #include "mercedes_190e_telltales/telltale.h"
@@ -54,7 +55,8 @@ namespace widget_registry
 	X(Mercedes190ETelltale) \
 	X(MotecC125Tachometer) \
 	X(MotecCdl3Tachometer) \
-	X(CarPlayWidget)
+	X(CarPlayWidget) \
+	X(NowPlayingWidget)
 
 
 // Generate config_traits specializations from FOR_EACH_WIDGET.

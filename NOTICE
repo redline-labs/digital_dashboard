@@ -16,3 +16,14 @@ libusb:
 - Git commit: See licenses/libusb/fetch_info.txt
 
 For a copy of the LGPL licenses, see the respective license files in this directory.
+
+Adapted GPL Source Code
+=======================
+
+The wired CarPlay implementation (libs/apple_usb, libs/iap2, libs/airplay,
+nodes/carplay, and the carplay dashboard widget) is a C++ port adapted from
+the LIVI project:
+- Source: https://github.com/f-io/LIVI
+- Ported from commit: 8952f3236c53b8ea52e7b6c58d7d83273e92231a (2026-07-19)
+- License: GPL-3.0-or-later, Copyright (C) 2025 Lasse Heitgres
+Ported files carry an SPDX header and a reference to the original source file.

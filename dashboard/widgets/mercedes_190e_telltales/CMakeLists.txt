@@ -7,7 +7,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Svg)
 
-# Create the library with all the carplay source files
+# Create the widget library
 add_library(mercedes_190e_telltales STATIC
     telltale.cpp
 )

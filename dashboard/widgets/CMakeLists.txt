@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.10)
 # Add all widget subdirectories
 add_subdirectory(mercedes_190e_telltales)
 add_subdirectory(carplay)
+add_subdirectory(now_playing)
 add_subdirectory(mercedes_190e_speedometer)
 add_subdirectory(mercedes_190e_tachometer)
 add_subdirectory(mercedes_190e_cluster_gauge)

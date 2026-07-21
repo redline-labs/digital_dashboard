@@ -124,13 +124,8 @@ YAML_CONFIG_STRUCT(Mercedes190ETelltaleConfig_t);
 YAML_CONFIG_STRUCT(sub_gauge_config_t);
 YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
 
-YAML_CONFIG_ENUM(DriveType);
-YAML_CONFIG_ENUM(WiFiType);
-YAML_CONFIG_ENUM(MicType);
-YAML_CONFIG_STRUCT(phone_config_t);
-YAML_CONFIG_STRUCT(carplay_phone_config_t);
-YAML_CONFIG_STRUCT(android_auto_phone_config_t);
 YAML_CONFIG_STRUCT(CarplayConfig_t);
+YAML_CONFIG_STRUCT(NowPlayingConfig_t);
 
 YAML_CONFIG_STRUCT(app_config_t);
 

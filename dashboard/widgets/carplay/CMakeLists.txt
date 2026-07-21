@@ -1,72 +1,41 @@
 # CarPlay Widget Library
 cmake_minimum_required(VERSION 3.10)
 
-# Define the library name
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
+# Multimedia is used for PCM playback/mic capture of the driver's audio stream.
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia Gui)
 
-
-# Create the library with all the carplay source files
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
-    libusb_helpers.cpp
-    message.cpp
+    include/carplay/carplay_widget.h
 )
 
-# Set up include directories for this library
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     ${CMAKE_SOURCE_DIR}/dashboard/include
     include
     ${CMAKE_SOURCE_DIR}/include
 )
 
-# Find required packages for this widget
+# libavcodec for software H.264/H.265 decode of the zenoh video stream.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavcodec
 )
 
-# Link required libraries to this widget
-target_link_libraries(${CARPLAY_WIDGET_LIB} 
+target_link_libraries(${CARPLAY_WIDGET_LIB}
     PUBLIC
-        usb-1.0
         PkgConfig::LIBAV
         Qt6::Core
         Qt6::Widgets
         Qt6::Gui
         Qt6::Multimedia
-        # Link nlohmann/json (now available from parent CMakeLists.txt)
-        nlohmann_json::nlohmann_json
         reflection
+        schemas
+        zenoh_pub_sub
+        zenohcxx::zenohc
     PRIVATE
-        # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
         spdlog::spdlog
 )
 
-# Set C++ standard
-target_compile_features(${CARPLAY_WIDGET_LIB} PUBLIC cxx_std_20)
-
-# Set AUTOMOC property for Qt
 set_target_properties(${CARPLAY_WIDGET_LIB} PROPERTIES AUTOMOC ON)
-
-# Also create the test_messages executable for this widget
-add_executable(carplay_test_messages
-    test_messages.cpp
-    message.cpp
-)
-
-target_include_directories(carplay_test_messages PRIVATE
-    include
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-target_compile_features(carplay_test_messages PRIVATE cxx_std_20)
-
-# Link common logging interface to the test executable too
-target_link_libraries(carplay_test_messages PRIVATE
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
-    cxxopts::cxxopts
-    reflection
-) 

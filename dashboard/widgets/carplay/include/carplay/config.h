@@ -2,59 +2,17 @@
 #define CARPLAY_CONFIG_H
 
 #include <string>
-#include <cstdint>
 #include "reflection/reflection.h"
 
-REFLECT_ENUM(DriveType,
-    LHD,
-    RHD
-)
-
-REFLECT_ENUM(WiFiType,
-    Disabled,
-    WiFi_2_4_GHz,
-    WiFi_5_GHz
-)
-
-REFLECT_ENUM(MicType,
-    Box,
-    OS
-)
-
-REFLECT_STRUCT(carplay_phone_config_t,
-    (int32_t, frame_interval, 30)
-)
-
-// Defaults previously set here are handled elsewhere
-
-REFLECT_STRUCT(android_auto_phone_config_t,
-    (int32_t, frame_interval, 30)
-)
-
-// Defaults previously set here are handled elsewhere
-
-REFLECT_STRUCT(phone_config_t,
-    (carplay_phone_config_t, car_play, carplay_phone_config_t{}),
-    (android_auto_phone_config_t, android_auto, android_auto_phone_config_t{})
-)
-
+// Configuration for the CarPlay widget. The widget is a thin client of the
+// carplay driver node (nodes/carplay), which owns the USB/iAP2/AirPlay
+// session with the phone. These keys must match the driver's configuration.
 REFLECT_STRUCT(CarplayConfig_t,
-    (bool, libusb_debug, false),
-    (uint8_t, fps, 30),
-    (uint16_t, dpi, 100),
-    (uint8_t, format, 0),
-    (uint8_t, i_box_version, 0),
-    (uint16_t, phone_work_mode, 0),
-    (uint32_t, packet_max, 1024),
-    (std::string, box_name, ""),
-    (bool, night_mode, false),
-    (DriveType, drive_type, DriveType::LHD),
-    (uint16_t, media_delay, 0),
-    (bool, audio_transfer_mode, false),
-    (WiFiType, wifi_type, WiFiType::Disabled),
-    (MicType, mic_type, MicType::Box),
-    (phone_config_t, phone_config, phone_config_t{}),
-    (uint32_t, audio_device_buffer_size, 1024)
+    (std::string, video_key,   "nodes/carplay/video"),
+    (std::string, audio_key,   "nodes/carplay/audio"),
+    (std::string, mic_key,     "nodes/carplay/mic"),
+    (std::string, input_key,   "nodes/carplay/input"),
+    (std::string, session_key, "nodes/carplay/session")
 )
 
 #endif // CARPLAY_CONFIG_H

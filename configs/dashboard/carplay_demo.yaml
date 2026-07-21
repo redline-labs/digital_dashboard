@@ -1,7 +1,7 @@
 name: "carplay"
-width: 800
+width: 1000
 height: 600
-background_color: "#000000"
+background_color: "#555555"
 widgets:
   - type: carplay
     x: 0
@@ -9,24 +9,23 @@ widgets:
     width: 800
     height: 600
     config:
-      fps: 30
-      dpi: 160
-      format: 5
-      i_box_version: 2
-      phone_work_mode: 2
-      packet_max: 49152
-      box_name: "nodePlay"
-      night_mode: false
-      drive_type: "LHD"
-      media_delay: 300
-      audio_transfer_mode: false
-      wifi_type: WiFi_5_GHz
-      mic_type: OS
-      phone_config:
-        car_play:
-          frame_interval: 5000
-        android_auto:
-          frame_interval: 5000
+      # Zenoh keys published/subscribed by the carplay driver node
+      # (nodes/carplay). Only override these if the driver was started
+      # with a non-default --key-prefix.
+      video_key: "nodes/carplay/video"
+      audio_key: "nodes/carplay/audio"
+      mic_key: "nodes/carplay/mic"
+      input_key: "nodes/carplay/input"
+      session_key: "nodes/carplay/session"
 
-      # Audio device buffer size (bytes) on the host.
-      audio_device_buffer_size: 16384
+  # Supplemental widget fed by the same driver node -- demonstrates that
+  # CarPlay metadata is reusable outside the projected video surface.
+  - type: now_playing
+    x: 810
+    y: 20
+    width: 180
+    height: 120
+    config:
+      zenoh_key: "nodes/carplay/nowplaying"
+      show_album_art: true
+      show_progress: true

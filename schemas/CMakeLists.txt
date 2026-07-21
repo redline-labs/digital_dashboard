@@ -16,6 +16,14 @@ set(SCHEMA_FILES
     motec_ltc.capnp
     can_frame.capnp
     grayhill_keypad.capnp
+
+    carplay_video.capnp
+    carplay_audio.capnp
+    carplay_input.capnp
+    carplay_session.capnp
+    carplay_nav.capnp
+    carplay_nowplaying.capnp
+    carplay_call.capnp
 )
 
 set(GENERATED_SOURCES)

@@ -7,7 +7,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-# Create the library with all the carplay source files
+# Create the widget library
 add_library(sparkline STATIC
     sparkline.cpp
 )

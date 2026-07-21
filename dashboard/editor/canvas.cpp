@@ -1,7 +1,6 @@
 #include "editor/canvas.h"
 #include "editor/editor_constants.h"
 #include "editor/selection_frame.h"
-//#include "carplay/carplay_widget.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -91,11 +90,6 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 
         frame->move(wcfg.x, wcfg.y);
         if (frame->child()) frame->child()->resize(targetSize);
-        // Some widgets require explicit size propagation to internal content
-        /*if (auto* cp = qobject_cast<CarPlayWidget*>(frame->child()))
-        {
-            cp->setSize(targetSize.width(), targetSize.height());
-        }*/
         frame->resize(targetSize);
         frame->show();
 

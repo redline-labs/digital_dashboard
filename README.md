@@ -22,7 +22,7 @@ With additional "sparklines" widget on the right.
 ![Screengrab](/docs/images/motec_c125_dash_demo.png)
 
 ### (Work in Progress) CarPlay Window.
-Requires a CarlinKit dongle such as CPC200-CCPA
+Native wired CarPlay (no dongle required): the `carplay` driver node (Linux-only) talks to the iPhone directly over USB — Apple MFi authentication coprocessor required — and streams video/audio/metadata over zenoh to the dashboard widgets.  Ported to C++ from the [LIVI](https://github.com/f-io/LIVI) project (GPL-3.0-or-later).
 ![Screengrab](/docs/images/carplay_demo.png)
 
 ## Dashboard Editor
@@ -81,7 +81,33 @@ brew install qt@6
 
 - `-c`: Path to YAML configuration file (see config directory for examples)
 - `--debug`: Enable debug logging
-- `--libusb_debug`: Enable LibUSB debugging logging
+
+### Native Wired CarPlay
+
+CarPlay runs as a separate driver node that owns the USB/iAP2/AirPlay session with the
+iPhone and publishes video, audio, input and metadata over zenoh.  The dashboard widgets
+are thin subscribers, so supplemental widgets (e.g. `now_playing`) can consume CarPlay
+data without touching the projection stack.
+
+```bash
+# terminal 1 - the driver (Linux only; needs USB + TUN privileges)
+sudo ./nodes/carplay/carplay --verbose
+
+# terminal 2 - the dashboard
+./dashboard/dashboard -c ../configs/dashboard/carplay_demo.yaml
+```
+
+No hardware handy?  `--simulate` publishes a synthetic session (H.264 test pattern, audio
+tone, rotating metadata) on the real topics so the whole dashboard side can be exercised
+on any platform:
+
+```bash
+./nodes/carplay/carplay --simulate
+```
+
+Hardware bring-up is documented step-by-step in [docs/carplay_bringup.md](docs/carplay_bringup.md).
+Native CarPlay requires an Apple MFi authentication coprocessor (see `libs/apple_mfi_ic`)
+and the `libimobiledevice`/`libplist` development packages.
 
 
 ## Third-Party Libraries

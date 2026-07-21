@@ -17,6 +17,7 @@ include_directories(
 # widgets here (and in FOR_EACH_WIDGET / widget_types.h / YAML_CONFIG_STRUCT).
 set(WIDGET_LIBS
     carplay_widget
+    now_playing
     mercedes_190e_telltales
     mercedes_190e_speedometer
     mercedes_190e_tachometer
