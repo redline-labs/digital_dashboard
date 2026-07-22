@@ -1,5 +1,5 @@
-# Wired CarPlay bring-up: grant the driver raw access to the two devices it
-# needs, so it does not have to run as root. See docs/carplay_bringup.md.
+# Wired CarPlay bring-up: grant the driver raw access to the devices it needs,
+# so it does not have to run as root. See docs/carplay_bringup.md.
 #
 # Install:
 #   sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
@@ -13,17 +13,22 @@
 # claims, bulk IO), so this single rule covers the config switch, the usbmux
 # interface, and the NCM interfaces.
 #
-# TAG+="uaccess" additionally grants the user at the active seat, which keeps
-# things working across re-enumeration when logged in locally.
-#
 # ATTR{idVendor} only exists on usb_device nodes, so this matches the device
 # and not its interfaces -- which is what usbfs access is keyed on. It re-fires
 # on every re-add, so it survives the config switch's re-enumeration.
+#
+# TAG+="uaccess" additionally grants the user at the active seat, which keeps
+# things working across re-enumeration when logged in locally.
 SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
-# --- MCP2221A -> MFi coprocessor --------------------------------------------
-# hidapi uses the hidraw backend on Linux, so the hidraw node is what matters.
-KERNEL=="hidraw*", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-
-# Also expose the underlying USB device for the libusb backend fallback.
-SUBSYSTEM=="usb", ATTR{idVendor}=="04d8", ATTR{idProduct}=="00dd", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# --- MFi coprocessor, reached over I2C --------------------------------------
+# On Linux the MCP2221A is driven by the in-kernel hid_mcp2221 driver, which
+# registers it as a standard I2C adapter; we talk to the MFi chip through
+# /dev/i2c-N rather than through hidraw. (macOS has no such driver, so it uses
+# the userspace hidapi backend instead -- see libs/mfi_i2c.)
+#
+# Scoped to the bridge's VID/PID via the parent chain so this does not hand out
+# every I2C bus on the machine, which on real hardware includes buses that have
+# nothing to do with CarPlay.
+SUBSYSTEM=="i2c-dev", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", \
+    MODE="0660", GROUP="plugdev", TAG+="uaccess"

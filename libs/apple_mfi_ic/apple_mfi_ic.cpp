@@ -1,5 +1,5 @@
 #include "apple_mfi_ic/apple_mfi_ic.h"
-#include "mcp2221a/mcp2221a.h"
+#include "i2c_bus/i2c_bus.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h> // Required for fmt::join
 #include <sstream>
@@ -17,7 +17,7 @@
 #include <openssl/asn1.h>
 
 AppleMFIIC::AppleMFIIC() 
-    : mcp2221a_{}
+    : bus_{}
     , connected_(false) 
 {
 }
@@ -27,30 +27,67 @@ AppleMFIIC::~AppleMFIIC()
     close();
 }
 
+namespace
+{
+// The MFi coprocessor stops acknowledging after a short idle period; the NACK
+// that costs is itself the wake-up, and the next attempt succeeds. Measured on
+// hardware: a 0.7 s gap between opening the bus and the next access was enough
+// to put it back to sleep, so every transaction retries rather than only the
+// first one after connect.
+constexpr int kTransactionAttempts = 8;
+constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(20);
+}  // namespace
+
+bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
+{
+    for (int attempt = 0; attempt < kTransactionAttempts; ++attempt)
+    {
+        if (bus_->write(I2C_ADDRESS, data))
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(kTransactionRetryDelay);
+    }
+    return false;
+}
+
+bool AppleMFIIC::wake()
+{
+    // The coprocessor ignores the first transaction after it has been idle;
+    // that NACK *is* the wake-up, and the next access succeeds. Retry rather
+    // than treating one failure as absence.
+    constexpr int kAttempts = 8;
+    for (int attempt = 0; attempt < kAttempts; ++attempt)
+    {
+        if (!bus_->read(I2C_ADDRESS, 1).empty())
+        {
+            if (attempt > 0)
+            {
+                SPDLOG_DEBUG("Apple MFI IC answered on wake attempt {}", attempt + 1);
+            }
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
 bool AppleMFIIC::init()
 {
-    if (!mcp2221a_.open())
+    bus_ = i2c::makeBus();
+    if (!bus_ || !bus_->open())
     {
-        SPDLOG_ERROR("Failed to open MCP2221A device");
-        return false;
-    }
-    
-    // Set I2C speed to 400kHz (standard speed for MFI communication)
-    if (!mcp2221a_.set_i2c_speed(100000)) {
-        SPDLOG_ERROR("Failed to set I2C speed");
+        SPDLOG_ERROR("Failed to open the I2C bus for the Apple MFI IC");
         return false;
     }
 
-    // We need to do a dummy read to the MFi IC to "wake it up".  Not sure why,
-    // but it doesn't seem to respond to the first interaction.
-    if (mcp2221a_.i2c_write(I2C_ADDRESS, {}) == false)
+    if (!wake())
     {
-        SPDLOG_ERROR("Failed to write to Apple MFI IC");
+        SPDLOG_ERROR("Apple MFI IC at 0x{:02x} did not respond on {}. Check power, the SDA/SCL "
+                     "wiring, and that the RESET pin is released.",
+                     I2C_ADDRESS, bus_->description());
         return false;
     }
-
-    mcp2221a_.cancel();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     connected_ = true;
     return true;
@@ -59,10 +96,14 @@ bool AppleMFIIC::init()
 void AppleMFIIC::close()
 {
     connected_ = false;
+    if (bus_)
+    {
+        bus_->close();
+    }
 }
 
 bool AppleMFIIC::is_connected() const {
-    return connected_ && mcp2221a_.is_open();
+    return connected_ && bus_ && bus_->is_open();
 }
 
 std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size_t length)
@@ -73,23 +114,29 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
         return std::nullopt;
     }
     
-    // Write the register address
-    std::vector<uint8_t> reg_addr = {static_cast<uint8_t>(reg)};
-    if (!mcp2221a_.i2c_write(I2C_ADDRESS, reg_addr))
+    // Select the register, then read it back as a *separate* transaction: this
+    // part rejects a combined write/read with a repeated START.
+    //
+    // The pair is retried as a unit because the coprocessor stops answering
+    // after even a short idle period and wakes on the NACK. Retrying only the
+    // read would leave the register pointer unset.
+    const std::vector<uint8_t> reg_addr = {static_cast<uint8_t>(reg)};
+    for (int attempt = 0; attempt < kTransactionAttempts; ++attempt)
     {
-        SPDLOG_ERROR("Failed to write register address 0x{:02x}", static_cast<uint8_t>(reg));
-        return std::nullopt;
+        if (bus_->write(I2C_ADDRESS, reg_addr))
+        {
+            auto data = bus_->read(I2C_ADDRESS, length);
+            if (!data.empty())
+            {
+                return data;
+            }
+        }
+        std::this_thread::sleep_for(kTransactionRetryDelay);
     }
-    
-    // Read the register value
-    auto data = mcp2221a_.i2c_read(I2C_ADDRESS, length);
-    if (data.empty())
-    {
-        SPDLOG_ERROR("Failed to read register 0x{:02x}", static_cast<uint8_t>(reg));
-        return std::nullopt;
-    }
-    
-    return data;
+
+    SPDLOG_ERROR("Failed to read register 0x{:02x} after {} attempts",
+                 static_cast<uint8_t>(reg), kTransactionAttempts);
+    return std::nullopt;
 }
 
 std::optional<AppleMFIIC::DeviceInfo> AppleMFIIC::query_device_info() {
@@ -369,7 +416,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
         static_cast<uint8_t>(challenge_length & 0xFF)          // Low byte
     };
     
-    if (!mcp2221a_.i2c_write(I2C_ADDRESS, length_write)) {
+    if (!write_with_retry(length_write)) {
         SPDLOG_ERROR("Failed to write challenge data length");
         return std::nullopt;
     }
@@ -381,7 +428,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     challenge_write.push_back(static_cast<uint8_t>(Register::ChallengeData));
     challenge_write.insert(challenge_write.end(), challenge_data.begin(), challenge_data.end());
     
-    if (!mcp2221a_.i2c_write(I2C_ADDRESS, challenge_write)) {
+    if (!write_with_retry(challenge_write)) {
         SPDLOG_ERROR("Failed to write challenge data");
         return std::nullopt;
     }
@@ -397,7 +444,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
         0x01
     };
     
-    if (!mcp2221a_.i2c_write(I2C_ADDRESS, auth_start_write)) {
+    if (!write_with_retry(auth_start_write)) {
         SPDLOG_ERROR("Failed to start authentication process");
         return std::nullopt;
     }

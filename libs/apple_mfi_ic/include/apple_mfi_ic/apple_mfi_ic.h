@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mcp2221a/mcp2221a.h"
+#include "i2c_bus/i2c_bus.h"
 
 #include <cstdint>
 #include <optional>
@@ -97,6 +97,15 @@ public:
     std::optional<DeviceInfo> query_device_info();
     
 private:
-    MCP2221A mcp2221a_;
+    // Retries a transaction that the coprocessor ignores while idle. The chip
+    // does not answer the first access after a quiet period -- the NACK is the
+    // wake-up -- so a single failure means nothing. Verified on hardware: a
+    // bus scan that probes each address once walks straight past it.
+    bool wake();
+
+    // Single write transaction, retried through the coprocessor's idle NACKs.
+    bool write_with_retry(const std::vector<uint8_t>& data);
+
+    std::unique_ptr<i2c::Bus> bus_;
     bool connected_;
 }; 

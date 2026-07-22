@@ -13,7 +13,7 @@ target_include_directories(apple_mfi_ic PUBLIC
 )
 
 target_link_libraries(apple_mfi_ic PUBLIC
-    mcp2221a
+    i2c_bus
     OpenSSL::SSL
     OpenSSL::Crypto
 

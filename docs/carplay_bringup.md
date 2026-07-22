@@ -2,8 +2,14 @@
 
 This is the iterative test plan for the native wired CarPlay stack. The code was
 written in bulk on a macOS dev box **without** an iPhone, MFi coprocessor, or Linux
-host attached, so **none of the hardware paths have been executed yet**. This
-document is the script for stepping through them on a Linux host, in order.
+host attached. This document is the script for stepping through the hardware
+paths on a Linux host, in order.
+
+**Status: stages 1–5 are verified on hardware (2026-07-21)** — USB config
+switch, usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
+identification, and MFi authentication all run against a real iPhone, ending
+with the phone reporting wired CarPlay available. Stages 6–10 still need code:
+the NCM bridge is unwired and the AirPlay session layer does not exist.
 
 Work the stages in sequence — each one depends on the previous. Every stage lists
 what to run, what you should observe, and how to triage the common failures.
@@ -88,8 +94,8 @@ cmake -S . -B build && cmake --build build -j 2>&1 | grep -i apple_usb
 # BAD:  "libimobiledevice/libplist not found; wired CarPlay lockdown disabled"
 ```
 
-**Privileges.** The driver needs raw USB access (usbfs) for the phone, a hidraw
-node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
+**Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
+adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
 all three. To run unprivileged instead, install the rules shipped in the repo —
 this is a one-time step per machine:
 
@@ -117,22 +123,40 @@ configureInterface()` shells out to `ip link set`, and file capabilities set wit
 permitted`. Until those shell-outs are replaced with in-process netlink, stage 6
 needs root.
 
-**The MFi coprocessor needs the kernel driver out of the way.** If your kernel
-has `hid_mcp2221` (most distros do), it binds the MCP2221A and re-exports it as
-an I²C/GPIO/hwmon device via `industrialio`. It never requests a HIDRAW
-connection, so **no `/dev/hidraw` node is created for the chip** and hidapi has
-nothing to open. The symptom is confusing: the device shows up fine in `lsusb`
-and `usbhid` appears bound, but every hidraw node on the box belongs to some
-other device.
+**The MFi coprocessor is reached over I²C.** On Linux the in-kernel
+`hid_mcp2221` driver binds the MCP2221A and registers it as a standard I²C
+adapter, which `i2c-dev` exposes as `/dev/i2c-N`; the driver talks to the
+coprocessor through that. macOS has no such driver and uses the userspace
+hidapi backend instead. The backend is chosen at configure time:
 
 ```bash
-lsmod | grep hid_mcp2221                       # if this hits, the chip is captured
-sudo cp nodes/carplay/udev/blacklist-hid-mcp2221.conf /etc/modprobe.d/
-sudo modprobe -r hid_mcp2221
+cmake -S . -B build -DI2C_BUS_BACKEND=auto      # linux -> i2c-dev, else hidapi
+cmake -S . -B build -DI2C_BUS_BACKEND=linux     # force kernel i2c-dev
+cmake -S . -B build -DI2C_BUS_BACKEND=mcp2221a  # force userspace hidapi
 ```
 
-`hid-generic` then binds instead and the hidraw node appears. Confirm with
-`ls /sys/bus/hid/devices/*04D8*/hidraw/`.
+Load the two modules (they are not autoloaded by anything here):
+
+```bash
+sudo cp nodes/carplay/udev/carplay-i2c.conf /etc/modules-load.d/
+sudo modprobe hid_mcp2221 && sudo modprobe i2c-dev
+i2cdetect -l          # expect "MCP2221 usb-i2c bridge"
+i2cdetect -y 0        # expect a device at 0x11
+```
+
+`i2c-tools` is worth installing purely as an independent cross-check of the
+driver: two separate implementations probing the same bus is the fastest way to
+tell a wiring fault from a software one.
+
+**If you force `-DI2C_BUS_BACKEND=mcp2221a` on Linux** you must keep the kernel
+driver off the chip, or it will own the bridge and no hidraw node will ever
+appear (the symptom is confusing: `lsusb` shows the device and `usbhid` looks
+bound, but every hidraw node on the box belongs to something else):
+
+```bash
+echo 'blacklist hid_mcp2221' | sudo tee /etc/modprobe.d/blacklist-hid-mcp2221.conf
+sudo modprobe -r hid_mcp2221
+```
 
 **Conflicting daemons.** The system `usbmuxd` will fight us for the phone (this is
 the core reason we run our own mux). It is not merely untidy: it holds
@@ -331,7 +355,18 @@ held asserted), not a software one. Note the library has no GPIO support, so if
 your breakout wires MFi RESET to one of the bridge's GP0–GP3 pins, nothing
 releases it and every address will NACK.
 
-**Two MCP2221A behaviours worth knowing**, both verified on hardware here:
+**The coprocessor sleeps, and the first access after it wakes is NACKed.**
+This is the single most misleading behaviour on this board. A bus scan that
+probes each address once walks straight past it: the wake-up NACK at `0x11` is
+read as "nothing here" and the scan moves on to `0x12`, never coming back. Two
+consecutive `i2cdetect` runs show it clearly — the first finds nothing, the
+second finds `0x11`. It also re-sleeps quickly: a **0.7 s** gap between opening
+the bus and the next access was enough. Every transaction in `AppleMFIIC` is
+therefore retried (8 attempts, 20 ms apart) rather than only the first one after
+connect. Do not "simplify" that away.
+
+**Two MCP2221A behaviours worth knowing** (these apply to the hidapi backend;
+the kernel driver handles them itself):
 
 - *A cancel issued while the I²C engine is Idle wedges it.* The engine drives a
   STOP that never completes and latches `StopTimeout` (0x62), which refuses
@@ -542,8 +577,8 @@ Not all stages below are implemented yet. Current state:
 | Layer | State |
 |---|---|
 | USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
-| iAP2 link layer + identification | **verified on hardware 2026-07-21** (stage 5, up to MFi) |
-| iAP2 MFi auth, metadata decode | written, unit-tested; blocked on the coprocessor |
+| iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
+| iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | written, differentially verified vs LIVI |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session** (pair-setup/verify, auth-setup, /info, SETUP, RECORD, HID, screen + audio streams) | **NOT YET WRITTEN** |
@@ -576,20 +611,14 @@ dashboard.
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
 
-1. **MFi coprocessor** — currently NACKs at every I²C address (the MCP2221A
-   bridge itself is proven healthy). This now **blocks everything downstream**:
-   the phone demands the certificate before it will send `CarPlayAvailability`,
-   so stages 5b–10 cannot be reached at all until the board answers.
-2. **Zero-length iAP2 bools** → `CarPlayStartSession` silently never sent
-   (stage 5). Cheap to check, high impact — but gated behind #1. Run with
-   `--iap2-zero-bool-true` to test the alternative decode.
-3. **NCM enumeration** (not framing) — sysfs endpoint discovery after
+1. **NCM enumeration** (not framing) — sysfs endpoint discovery after
    `SETINTERFACE`, and the hardcoded altsetting 1. Note config 6 exposes **two**
    NCM function pairs (If3+If4 and If5+If6); the kernel's `cdc_ncm` claims the
    first pair as soon as the configuration is applied, so the bridge must both
    detach it and select the right pair. Neither is covered by the differential
    framing tests.
-4. **Audio pacing** — timing-dependent, cannot be desk-checked.
+2. **Audio pacing** — timing-dependent, cannot be desk-checked.
+3. **AirPlay session layer** — still unwritten, so stages 7–10 are untouched.
 
 **Retired by the 2026-07-21 hardware session:**
 - ~~usbmuxd socket bridge~~ — `idevice_id -l` and `ideviceinfo` both work through
@@ -602,6 +631,13 @@ Ranked by remaining uncertainty (highest first):
 - ~~iAP2 retransmission/EAK timers~~ — not a risk on this path: the phone
   advertises `max_retransmissions=0 max_ack=0`, so they never run.
 - ~~Outbound fragmentation off-by-ten~~ — `max_len` is 65535 as assumed.
+- ~~MFi authentication~~ — certificate (908 B) accepted and a 20-byte SHA-1
+  challenge signed; the phone answers `AuthenticationSucceeded`. Protocol major
+  is **2** on this CP2.0C part, so the SHA-1/20-byte branch is the live one.
+- ~~Zero-length iAP2 bools~~ — **did not occur.** The phone sends a proper
+  1-byte boolean, so `wired_available` decodes as `true` and
+  `CarPlayStartSession` is not suppressed. `--iap2-zero-bool-true` remains for
+  a phone that behaves differently.
 
 Deliberately *lower* risk than they look, because they are verified:
 NTB16 framing (byte-identical to LIVI across 30 cases), the crypto primitives
