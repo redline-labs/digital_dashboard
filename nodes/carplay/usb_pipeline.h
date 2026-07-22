@@ -17,10 +17,10 @@ namespace carplay
 
 struct UsbPipelineOptions
 {
-    // Highest docs/carplay_bringup.md stage to attempt (2..6). Lower values stop
+    // Highest docs/carplay_bringup.md stage to attempt (2..7). Lower values stop
     // early, which keeps a failure at one layer from being masked by the noise
     // of the next one failing as a consequence.
-    int max_stage = 6;
+    int max_stage = 7;
 
     // Where pair records and the accessory identity live. Empty selects a
     // default under the user's runtime directory.

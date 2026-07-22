@@ -16,6 +16,9 @@ add_library(airplay STATIC
     srp.cpp
     plist.cpp
     nalu.cpp
+    rtsp.cpp
+    receiver.cpp
+    timing.cpp
 )
 
 target_include_directories(airplay PUBLIC

@@ -105,14 +105,23 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     iap2::LinkLayer link(transport, config);
 
     // --- MFi coprocessor -----------------------------------------------------
-    std::unique_ptr<iap2::Mcp2221aMfiSigner> signer;
+    std::unique_ptr<iap2::Mcp2221aMfiSigner> owned_signer;
+    iap2::MfiSigner* signer = options.signer;
     std::unique_ptr<iap2::MfiAuthenticator> authenticator;
+    if (signer != nullptr)
+    {
+        SPDLOG_INFO("[mfi] using the shared coprocessor, protocol major {}",
+                    signer->protocolMajor());
+        authenticator = std::make_unique<iap2::MfiAuthenticator>(*signer);
+    }
+    else
     {
         auto candidate = std::make_unique<iap2::Mcp2221aMfiSigner>();
         if (candidate->init())
         {
             SPDLOG_INFO("[mfi] coprocessor ready, protocol major {}", candidate->protocolMajor());
-            signer = std::move(candidate);
+            owned_signer = std::move(candidate);
+            signer = owned_signer.get();
             authenticator = std::make_unique<iap2::MfiAuthenticator>(*signer);
         }
         else if (options.allow_missing_mfi)

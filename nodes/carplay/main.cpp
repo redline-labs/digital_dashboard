@@ -53,8 +53,8 @@ int main(int argc, char** argv)
         ("sim-width", "Simulated video width", cxxopts::value<int>()->default_value("800"))
         ("sim-height", "Simulated video height", cxxopts::value<int>()->default_value("600"))
         ("sim-fps", "Simulated video frame rate", cxxopts::value<int>()->default_value("30"))
-        ("max-stage", "Highest docs/carplay_bringup.md stage to attempt (2-6)",
-         cxxopts::value<int>()->default_value("6"))
+        ("max-stage", "Highest docs/carplay_bringup.md stage to attempt (2-7)",
+         cxxopts::value<int>()->default_value("7"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
         ("v,verbose", "Enable debug logging")

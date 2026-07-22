@@ -7,6 +7,7 @@
 #define CARPLAY_IAP2_SESSION_H_
 
 #include "apple_usb/lockdown.h"
+#include "iap2/mfi_signer.h"
 
 #include <atomic>
 #include <functional>
@@ -23,6 +24,10 @@ struct Iap2SessionOptions
     // phone's own message traffic are still exercised -- which is worth doing
     // while the MFi board is being repaired.
     bool allow_missing_mfi = false;
+
+    // Shared with the AirPlay receiver, which needs the same coprocessor for
+    // /auth-setup. Owned by the caller; null means open one internally.
+    iap2::MfiSigner* signer = nullptr;
 
     // Seconds to wait for the link to negotiate before giving up.
     unsigned negotiate_timeout_ms = 10000;

@@ -5,6 +5,15 @@ written in bulk on a macOS dev box **without** an iPhone, MFi coprocessor, or Li
 host attached. This document is the script for stepping through the hardware
 paths on a Linux host, in order.
 
+**Reference implementation.** This stack is a port of LIVI
+(https://github.com/f-io/LIVI, GPL-3.0). Its AirPlay/RTSP layer lives in
+`src/main/services/projection/driver/cp/stack/` — `cpStack.ts` (request
+dispatch), `getInfo.ts` (the `/info` plist), `timingServer.ts`, `screenStream.ts`,
+`hid.ts`. When a handshake step is rejected by the phone and the reason is not
+observable, read the corresponding file there rather than permuting: the
+`/auth-setup` byte layout and the `/info` display keys were both settled that
+way in minutes after an hour of guessing.
+
 **Status: stages 1–6 are verified on hardware (2026-07-21)** — USB config
 switch, usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
 identification, MFi authentication, and the NCM ↔ TAP bridge all run against a
@@ -532,6 +541,39 @@ completing, `/pair-verify` completing, `/auth-setup` (MFiSAP) completing,
 `GET /info` answered, `SETUP` for stream 110 (main screen), `RECORD`, then a
 `VideoConfig` (avcC) arriving.
 
+**Verified on hardware (2026-07-21), in order:** `/pair-setup` M1→M6, then
+`/pair-verify` M1→M4, then the encrypted control channel, then `/auth-setup`.
+The phone proceeds to `SETUP` (session), `GET /info` and `RECORD`. It then sends
+`TEARDOWN` **without ever requesting a stream** — that is the open item.
+
+Details worth not rediscovering:
+
+- **pair-setup is transient SRP with password `3939`.** Username is
+  `Pair-Setup`, as the triage note below says. M5/M6 exchange long-term Ed25519
+  identities under `Pair-Setup-Encrypt-Salt`/`-Info` with nonces `PS-Msg05`/`06`.
+- **`A` is occasionally 383 bytes, not 384.** Roughly one run in 256 the phone
+  strips a leading zero from its SRP public key. `srp::Server::verify()` re-pads
+  from the BIGNUM so this is handled, but a 456-byte M3 body instead of 457 is
+  the tell if a proof is ever rejected for no apparent reason.
+- **After pair-verify M4 the control channel is encrypted** and stays that way:
+  2-byte little-endian length, ciphertext, 16-byte Poly1305 tag, the length
+  doubling as AAD, separate counter nonces per direction starting at zero. The
+  accessory *sends* with `Control-Read-Encryption-Key` and *receives* with
+  `Control-Write-Encryption-Key` — the naming is from the controller's point of
+  view. Get this wrong and the phone simply goes quiet, because our parser sits
+  waiting for an RTSP header that never comes.
+- **`/auth-setup` layout**, which is not guessable and cost the most time:
+  request is `<1 mode><32 device X25519 pk>`; response is
+  `<32 our pk><4 cert length BE><cert><4 signature length BE><signature>`. The
+  signature is over `SHA-1(our_pk | their_pk)` signed by the coprocessor, then
+  **encrypted with AES-128-CTR** where the key is `SHA-1("AES-KEY" | shared)[0:16]`
+  and the IV is `SHA-1("AES-IV" | shared)[0:16]`. Note SHA-**1**, not SHA-512 —
+  that single mistake looks identical to every other failure mode from outside.
+- **The clock sync is mandatory.** The session SETUP body carries the phone's
+  `timingPort`; we must bind our own UDP port, advertise it, and drive RTCP-style
+  type-210 requests at it (see `libs/airplay/timing.cpp`). LIVI's comment is
+  explicit that the phone tears the session down without it.
+
 **The crypto primitives are proven; suspect labels and framing, not math.**
 `airplay_test_crypto` is 90 assertions against published vectors: SHA-1/256/512,
 HKDF-SHA512 (RFC 5869 TC1, plus multi-block expansion and the real
@@ -636,7 +678,8 @@ Not all stages below are implemented yet. Current state:
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
-| **AirPlay RTSP session** (pair-setup/verify, auth-setup, /info, SETUP, RECORD, HID, screen + audio streams) | **NOT YET WRITTEN** |
+| **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
+| **AirPlay screen/audio streams** (the phone does not yet request them) | **NOT YET WORKING** |
 | **Node orchestration**, stages 2–6 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
 | **Node orchestration** wiring NCM → airplay | **NOT YET WRITTEN** |
 | zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
@@ -666,9 +709,14 @@ dashboard.
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
 
-1. **AirPlay session layer** — still unwritten, so stages 7–10 are untouched.
-   The phone is already sending `POST /pair-setup`, so this is the only thing
-   standing between here and a picture.
+1. **The phone completes the whole AirPlay handshake and then tears down
+   without asking for a stream.** Everything through `RECORD` is accepted;
+   `TEARDOWN` follows ~1 ms later. Since it is instant it is not the clock-sync
+   timeout. The remaining suspects are all in the `GET /info` plist or the
+   session SETUP response — most likely `hidDevices` (only the touch device is
+   declared; LIVI also sends knob, media and telephony), the `features` bitfield,
+   or a missing `viewAreas`/`initialViewArea` on the display entry. Compare
+   field-by-field against LIVI's `getInfo.ts`, which is the fastest path.
 2. **Audio pacing** — timing-dependent, cannot be desk-checked.
 
 **Retired by the 2026-07-21 hardware session:**

@@ -6,6 +6,9 @@
 #include "apple_usb/lockdown.h"
 #include "apple_usb/muxd.h"
 #include "apple_usb/ncm_bridge.h"
+
+#include "airplay/receiver.h"
+#include "iap2/mcp2221a_mfi_signer.h"
 #include "apple_usb/usb_device.h"
 #include "apple_usb/usbmuxd_server.h"
 
@@ -15,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -229,11 +233,58 @@ bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
         }
     }
 
+    // --- Stage 7: the AirPlay RTSP receiver ----------------------------------
+    //
+    // Started before the iAP2 session for the same reason the NCM bridge is:
+    // the phone dials port 7000 within milliseconds of CarPlayStartSession, and
+    // anything not listening by then just gets connection-refused.
+    // One coprocessor, two consumers: iAP2 authentication and AirPlay
+    // /auth-setup. It sits on a single I2C bus, and the two run on different
+    // threads, so access is serialised.
+    auto mfi_signer = std::make_unique<iap2::Mcp2221aMfiSigner>();
+    auto mfi_mutex = std::make_shared<std::mutex>();
+    if (!mfi_signer->init())
+    {
+        SPDLOG_WARN("[mfi] coprocessor unavailable");
+        mfi_signer.reset();
+    }
+
+    std::unique_ptr<airplay::Receiver> receiver;
+    if (ok && options.max_stage >= 7)
+    {
+        airplay::ReceiverConfig receiver_config;
+        if (mfi_signer)
+        {
+            iap2::MfiSigner* signer = mfi_signer.get();
+            receiver_config.mfi_certificate = [signer, mfi_mutex]() -> std::vector<uint8_t> {
+                std::lock_guard<std::mutex> lock(*mfi_mutex);
+                return signer->certificate().value_or(std::vector<uint8_t>{});
+            };
+            receiver_config.mfi_sign =
+                [signer, mfi_mutex](const std::vector<uint8_t>& digest) -> std::vector<uint8_t> {
+                std::lock_guard<std::mutex> lock(*mfi_mutex);
+                return signer->signChallenge(digest).value_or(std::vector<uint8_t>{});
+            };
+            receiver_config.mfi_protocol_major = [signer, mfi_mutex]() {
+                std::lock_guard<std::mutex> lock(*mfi_mutex);
+                return signer->protocolMajor();
+            };
+        }
+        receiver = std::make_unique<airplay::Receiver>(receiver_config);
+        if (!receiver->start())
+        {
+            SPDLOG_ERROR("[airplay] receiver did not start");
+            receiver.reset();
+            ok = false;
+        }
+    }
+
     // --- Stage 5: iAP2 link layer, identification, MFi auth ------------------
     if (ok && carkit && options.max_stage >= 5)
     {
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
+        iap2_options.signer = mfi_signer.get();
 
         if (ncm)
         {
@@ -266,6 +317,10 @@ bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
     }
 
     SPDLOG_INFO("[node] tearing down the USB pipeline");
+    if (receiver)
+    {
+        receiver->stop();
+    }
     if (ncm)
     {
         ncm->stop();
