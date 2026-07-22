@@ -9,6 +9,8 @@
 #ifndef CARPLAY_USB_PIPELINE_H_
 #define CARPLAY_USB_PIPELINE_H_
 
+#include "zenoh_bridge.h"
+
 #include <atomic>
 #include <string>
 
@@ -34,7 +36,8 @@ struct UsbPipelineOptions
 // prefixes docs/carplay_bringup.md greps for. Blocks until `stop` is set once
 // the requested stages have come up. Returns true if every attempted stage
 // succeeded.
-bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop);
+bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
+                    std::atomic<bool>& stop);
 
 }  // namespace carplay
 

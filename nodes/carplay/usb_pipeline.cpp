@@ -132,7 +132,8 @@ std::optional<apple_usb::DeviceInfo> stageDetectAndSwitch()
 
 }  // namespace
 
-bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
+bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
+                    std::atomic<bool>& stop)
 {
     const std::string state_dir =
         options.state_dir.empty() ? defaultStateDir() : options.state_dir;
@@ -271,6 +272,40 @@ bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
             };
         }
         receiver = std::make_unique<airplay::Receiver>(receiver_config);
+
+        // Hand decoded access units straight to the dashboard. The parameter
+        // sets are cached and re-sent ahead of every keyframe because zenoh has
+        // no retained messages: a widget that starts late would otherwise never
+        // sync.
+        auto parameter_sets = std::make_shared<std::vector<uint8_t>>();
+        receiver->setVideoHandler([&bridge, parameter_sets,
+                                   &receiver_config](const airplay::VideoPacket& packet) {
+            if (packet.is_config)
+            {
+                *parameter_sets = packet.data;
+                return;
+            }
+
+            VideoFrame frame;
+            frame.codec = VideoCodec::H264;
+            frame.is_keyframe = packet.keyframe;
+            frame.width_px = static_cast<uint16_t>(receiver_config.width);
+            frame.height_px = static_cast<uint16_t>(receiver_config.height);
+
+            if (packet.keyframe && !parameter_sets->empty())
+            {
+                std::vector<uint8_t> unit = *parameter_sets;
+                unit.insert(unit.end(), packet.data.begin(), packet.data.end());
+                frame.data = unit.data();
+                frame.len = unit.size();
+                bridge.publishVideo(frame);
+                return;
+            }
+
+            frame.data = packet.data.data();
+            frame.len = packet.data.size();
+            bridge.publishVideo(frame);
+        });
         if (!receiver->start())
         {
             SPDLOG_ERROR("[airplay] receiver did not start");

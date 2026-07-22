@@ -541,10 +541,40 @@ completing, `/pair-verify` completing, `/auth-setup` (MFiSAP) completing,
 `GET /info` answered, `SETUP` for stream 110 (main screen), `RECORD`, then a
 `VideoConfig` (avcC) arriving.
 
-**Verified on hardware (2026-07-21), in order:** `/pair-setup` M1→M6, then
-`/pair-verify` M1→M4, then the encrypted control channel, then `/auth-setup`.
-The phone proceeds to `SETUP` (session), `GET /info` and `RECORD`. It then sends
-`TEARDOWN` **without ever requesting a stream** — that is the open item.
+**Verified on hardware (2026-07-21):** the complete handshake runs and the phone
+streams H.264. In order: `/pair-setup` M1→M6, `/pair-verify` M1→M4, the encrypted
+control channel, `/auth-setup`, session `SETUP`, `GET /info`, `RECORD`,
+`POST /command`, stream `SETUP` (type 110), then a video data connection
+carrying the avcC config and encrypted frames:
+
+```
+[airplay] stream type 110 -> dataPort 35141 (connectionID 7411721103110128217)
+[video]   screen stream connected
+[video]   codec config: H.264 (32 bytes Annex-B)
+[video]   FIRST FRAME decoded: 116 bytes Annex-B
+```
+
+**`viewAreas` is what unblocked the stream.** Before it, the phone accepted
+everything through `RECORD` and then sent `TEARDOWN` ~1 ms later without ever
+requesting a stream. The display entry must carry `viewAreas` (with a nested
+`safeArea`) and `initialViewArea` — we were advertising `viewAreas` in the
+session SETUP `enabledFeatures` while supplying none, which is worse than not
+claiming it at all.
+
+**The screen stream format:** a 128-byte header followed by a body whose length
+is the header's leading little-endian `uint32`. `header[4]` is the opcode: 1 is
+the codec config (an avcC atom, in the clear), 0 is a frame, ChaCha20-Poly1305
+sealed with the entire 128-byte header as AAD and a counter nonce that advances
+**only on frames**. The key is
+`HKDF-SHA512(pair-verify shared, "DataStream-Salt<streamConnectionID>",
+"DataStream-Output-Encryption-Key", 32)`.
+
+**⚠ `streamConnectionID` is unsigned.** It goes into that salt as a decimal
+string, and roughly half of all sessions produce a value above `INT64_MAX`,
+which a signed plist decode renders negative — a different salt, a different
+key, and every frame failing to decrypt. Verified on hardware:
+`4663436911794014275` worked, `-3498692594036096197` (really
+`14948051479673455419`) did not. Format it as `uint64_t`.
 
 Details worth not rediscovering:
 
@@ -709,14 +739,14 @@ dashboard.
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
 
-1. **The phone completes the whole AirPlay handshake and then tears down
-   without asking for a stream.** Everything through `RECORD` is accepted;
-   `TEARDOWN` follows ~1 ms later. Since it is instant it is not the clock-sync
-   timeout. The remaining suspects are all in the `GET /info` plist or the
-   session SETUP response — most likely `hidDevices` (only the touch device is
-   declared; LIVI also sends knob, media and telephony), the `features` bitfield,
-   or a missing `viewAreas`/`initialViewArea` on the display entry. Compare
-   field-by-field against LIVI's `getInfo.ts`, which is the fastest path.
+1. **The phone sends the codec config and one frame, then stops.** The session
+   stays healthy — `/feedback` keepalives continue every 2 s and `/command`
+   `modesChanged` arrives — but no further video. The event channel is the
+   likely cause: LIVI encrypts it from the first byte with **Events keys**
+   (`Events-Salt` / `Events-Read`/`Write-Encryption-Key`) and pushes commands
+   over it after RECORD, whereas we accept the connection and only drain it.
+   See `cpStack.ts:_openEventChannel` and `_sendEventCommand`. Until the phone
+   is told the screen is taken, it has no reason to keep drawing.
 2. **Audio pacing** — timing-dependent, cannot be desk-checked.
 
 **Retired by the 2026-07-21 hardware session:**

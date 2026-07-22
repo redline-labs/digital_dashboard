@@ -113,7 +113,7 @@ int main(int argc, char** argv)
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
 
-    const bool usb_ok = carplay::runUsbPipeline(usb_options, g_stop);
+    const bool usb_ok = carplay::runUsbPipeline(usb_options, bridge, g_stop);
     if (!usb_ok)
     {
         SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/carplay_bringup.md");

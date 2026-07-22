@@ -2,6 +2,7 @@
 #include "airplay/receiver.h"
 
 #include "airplay/plist.h"
+#include "airplay/nalu.h"
 #include "airplay/srp.h"
 #include "airplay/tlv8.h"
 
@@ -620,6 +621,13 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
                            "GET_PARAMETER, SET_PARAMETER, POST, GET");
         return response;
     }
+    if (request.uri == "/feedback" || request.uri == "/command")
+    {
+        // Keepalive and phone-initiated UI events. Answering 501 here makes the
+        // phone treat the session as broken.
+        SPDLOG_DEBUG("[airplay] {} {} acknowledged", request.method, request.uri);
+        return rtsp::makeResponse(200, "OK", "", {});
+    }
     if (request.method == "GET_PARAMETER" || request.method == "SET_PARAMETER" ||
         request.method == "FLUSH" || request.method == "TEARDOWN")
     {
@@ -1151,6 +1159,8 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
     }
 
     // Phase 2: one entry per media stream the phone wants to open.
+    constexpr int64_t kStreamMainScreen = 110;
+
     SPDLOG_INFO("[airplay] SETUP with {} stream(s)", streams->size());
     std::vector<plist::Value> out_streams;
 
@@ -1159,6 +1169,9 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
         const plist::Value& stream = streams->valueAt(i);
         const plist::Value* type = stream.find("type");
         const int64_t stream_type = type != nullptr ? type->asInteger() : -1;
+        const plist::Value* connection_id = stream.find("streamConnectionID");
+        const int64_t stream_connection_id =
+            connection_id != nullptr ? connection_id->asInteger() : 0;
 
         uint16_t data_port = 0;
         const int fd = openEphemeralListener(data_port);
@@ -1169,12 +1182,32 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             return rtsp::makeResponse(500, "Internal Server Error", "", {});
         }
 
-        SPDLOG_INFO("[airplay] stream type {} -> dataPort {}", stream_type, data_port);
+        SPDLOG_INFO("[airplay] stream type {} -> dataPort {} (connectionID {})", stream_type,
+                    data_port, stream_connection_id);
+
+        if (stream_type == kStreamMainScreen)
+        {
+            // Frames are sealed with a key derived from the pair-verify shared
+            // secret and this stream's connection id.
+            // The phone sends streamConnectionID as an *unsigned* 64-bit value
+            // and it lands in the HKDF salt as a decimal string. Roughly half of
+            // all sessions produce one above INT64_MAX, which our plist decoder
+            // surfaces as a negative number -- rendering that signed yields a
+            // different salt, a different key, and every frame failing to
+            // decrypt. Verified on hardware: 4663436911794014275 worked while
+            // -3498692594036096197 (really 14948051479673455419) did not.
+            const auto connection_id_text =
+                std::to_string(static_cast<uint64_t>(stream_connection_id));
+            const Bytes key = crypto::hkdfSha512(state_->verify_shared,
+                                                 "DataStream-Salt" + connection_id_text,
+                                                 "DataStream-Output-Encryption-Key", 32);
+            session_threads_.emplace_back(
+                [this, fd, key] { screenStreamLoop(fd, key); });
+        }
 
         plist::Value entry = plist::Value::dict();
         entry.set("type", plist::Value::integer(stream_type));
         entry.set("dataPort", plist::Value::integer(data_port));
-        entry.set("streamID", plist::Value::integer(static_cast<int64_t>(i + 1)));
         out_streams.push_back(std::move(entry));
 
         state_->stream_fds.push_back(fd);
@@ -1184,6 +1217,142 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
     reply.set("streams", plist::Value::array(std::move(out_streams)));
     return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
                               plist::encode(reply));
+}
+
+// The phone's screen stream: a 128-byte header followed by a body whose length
+// is the header's first little-endian uint32. Opcode 1 is the codec config
+// (avcC, in the clear); opcode 0 is a frame, ChaCha20-Poly1305 sealed with the
+// whole header as AAD and a counter nonce that advances only on frames.
+void Receiver::screenStreamLoop(int listen_fd, Bytes key)
+{
+    constexpr size_t kHeaderLength = 128;
+    constexpr size_t kMaxBody = 8 * 1024 * 1024;
+    constexpr uint8_t kOpVideoFrame = 0;
+    constexpr uint8_t kOpVideoConfig = 1;
+
+    while (run_.load())
+    {
+        pollfd listen_pfd{listen_fd, POLLIN, 0};
+        if (::poll(&listen_pfd, 1, 200) <= 0)
+        {
+            continue;
+        }
+        const int client = ::accept(listen_fd, nullptr, nullptr);
+        if (client < 0)
+        {
+            continue;
+        }
+        SPDLOG_INFO("[video] screen stream connected");
+
+        Bytes buffer;
+        Bytes chunk(65536);
+        uint64_t counter = 0;
+        uint64_t frames = 0;
+
+        while (run_.load())
+        {
+            pollfd pfd{client, POLLIN, 0};
+            const int ready = ::poll(&pfd, 1, 200);
+            if (ready < 0)
+            {
+                break;
+            }
+            if (ready == 0)
+            {
+                continue;
+            }
+            const ssize_t n = ::recv(client, chunk.data(), chunk.size(), 0);
+            if (n <= 0)
+            {
+                break;
+            }
+            buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + n);
+
+            while (buffer.size() >= kHeaderLength)
+            {
+                const size_t body_size = static_cast<size_t>(buffer[0]) |
+                                         (static_cast<size_t>(buffer[1]) << 8) |
+                                         (static_cast<size_t>(buffer[2]) << 16) |
+                                         (static_cast<size_t>(buffer[3]) << 24);
+                if (body_size > kMaxBody)
+                {
+                    SPDLOG_ERROR("[video] implausible body size {}, dropping connection",
+                                 body_size);
+                    buffer.clear();
+                    break;
+                }
+                if (buffer.size() < kHeaderLength + body_size)
+                {
+                    break;
+                }
+
+                const Bytes header(buffer.begin(), buffer.begin() + kHeaderLength);
+                const Bytes body(buffer.begin() + kHeaderLength,
+                                 buffer.begin() + kHeaderLength + body_size);
+                buffer.erase(buffer.begin(),
+                             buffer.begin() + static_cast<long>(kHeaderLength + body_size));
+
+                const uint8_t opcode = header[4];
+                if (opcode == kOpVideoConfig)
+                {
+                    const auto config = nalu::configToAnnexB(body);
+                    if (!config)
+                    {
+                        SPDLOG_WARN("[video] could not parse the codec config ({} bytes)",
+                                    body.size());
+                        continue;
+                    }
+                    SPDLOG_INFO("[video] codec config: {} ({} bytes Annex-B)",
+                                config->codec == nalu::Codec::H265 ? "H.265" : "H.264",
+                                config->annex_b.size());
+                    if (video_handler_)
+                    {
+                        VideoPacket packet;
+                        packet.data = config->annex_b;
+                        packet.is_config = true;
+                        video_handler_(packet);
+                    }
+                }
+                else if (opcode == kOpVideoFrame)
+                {
+                    Bytes payload = body;
+                    if (body.size() >= 16)
+                    {
+                        const auto opened =
+                            crypto::chachaOpen(key, crypto::nonce64(counter), body, header);
+                        if (!opened)
+                        {
+                            SPDLOG_WARN("[video] frame {} failed to decrypt", counter);
+                            continue;
+                        }
+                        ++counter;
+                        payload = *opened;
+                    }
+
+                    const Bytes annex_b = nalu::avccFrameToAnnexB(payload);
+                    if (++frames == 1)
+                    {
+                        SPDLOG_INFO("[video] FIRST FRAME decoded: {} bytes Annex-B",
+                                    annex_b.size());
+                    }
+                    else if (frames % 100 == 0)
+                    {
+                        SPDLOG_INFO("[video] {} frames received", frames);
+                    }
+                    if (video_handler_)
+                    {
+                        VideoPacket packet;
+                        packet.data = annex_b;
+                        packet.keyframe = nalu::annexBContainsKeyframe(annex_b, nalu::Codec::H264);
+                        video_handler_(packet);
+                    }
+                }
+            }
+        }
+
+        SPDLOG_INFO("[video] screen stream closed after {} frames", frames);
+        ::close(client);
+    }
 }
 
 rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
@@ -1228,6 +1397,27 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
     display.set("features",
                 plist::Value::integer(kDisplayFeatureHighFidelityTouch | kDisplayFeatureKnobs));
     display.set("primaryInputDevice", plist::Value::integer(kPrimaryInputTouch));
+
+    // The drawable region, and inside it the region safe from occlusion. LIVI
+    // always sends these, and we advertise "viewAreas" in enabledFeatures --
+    // claiming the feature and then supplying no areas leaves the phone unable
+    // to lay anything out. Zero insets means the whole panel is usable.
+    plist::Value safe_area = plist::Value::dict();
+    safe_area.set("widthPixels", plist::Value::integer(config_.width));
+    safe_area.set("heightPixels", plist::Value::integer(config_.height));
+    safe_area.set("originXPixels", plist::Value::integer(0));
+    safe_area.set("originYPixels", plist::Value::integer(0));
+    safe_area.set("drawUIOutsideSafeArea", plist::Value::boolean(true));
+
+    plist::Value view_area = plist::Value::dict();
+    view_area.set("widthPixels", plist::Value::integer(config_.width));
+    view_area.set("heightPixels", plist::Value::integer(config_.height));
+    view_area.set("originXPixels", plist::Value::integer(0));
+    view_area.set("originYPixels", plist::Value::integer(0));
+    view_area.set("safeArea", std::move(safe_area));
+
+    display.set("viewAreas", plist::Value::array({std::move(view_area)}));
+    display.set("initialViewArea", plist::Value::integer(0));
 
     // Resource arbitration: we are willing to hand the screen and audio over at
     // any time, at a low priority.

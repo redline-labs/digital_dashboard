@@ -55,9 +55,12 @@ struct ReceiverConfig
 // Decoded media handed to the node for publishing on zenoh.
 struct VideoPacket
 {
-    Bytes data;          // Annex-B
+    Bytes data;  // Annex-B
     uint64_t timestamp = 0;
     bool keyframe = false;
+    // True for the codec parameter sets rather than a frame. zenoh has no
+    // retained messages, so the node republishes these before every keyframe.
+    bool is_config = false;
 };
 
 struct AudioPacket
@@ -103,6 +106,10 @@ class Receiver
     // Opens a listening TCP socket on an ephemeral port. Returns the fd and
     // writes the chosen port, which is what gets advertised to the phone.
     int openEphemeralListener(uint16_t& port);
+
+    // Accepts the phone's video data connection and pumps frames until it
+    // closes. `key` is the per-stream ChaCha20-Poly1305 key.
+    void screenStreamLoop(int listen_fd, Bytes key);
 
     ReceiverConfig config_;
     VideoHandler video_handler_;
