@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h> // Required for fmt::join
 
+#include <chrono>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -128,7 +129,11 @@ constexpr Report_t make_report<MCP2221ACommands::StatusSetParameters, bool, uint
         0x00, // Reserved
         cancel_i2c ? 0x10 : 0x00,
         speed_hz > 1000u ? 0x20 : 0x00,
-        (12000000 / speed_hz) - 3
+        // The divider is only consumed when the byte above requests a speed
+        // change, so guard the division: callers that only cancel (or only read
+        // status) pass speed_hz == 0, and dividing by that is undefined
+        // behaviour -- it traps on x86 and silently yields garbage on AArch64.
+        speed_hz > 1000u ? (12000000 / speed_hz) - 3 : 0
     );
 }
 
@@ -152,29 +157,92 @@ bool MCP2221A::open()
     device_ = {hid_open(kVendorId, kProductId, nullptr), hid_close};
     if (!device_)
     {
-        SPDLOG_ERROR("MCP2221A device not found.");
+        SPDLOG_ERROR("MCP2221A device not found. If it is present in lsusb, check that a "
+                     "/dev/hidraw node exists for it and is readable -- the in-kernel "
+                     "hid_mcp2221 driver claims the chip without ever creating one, so it "
+                     "has to be blacklisted.");
         return false;
     }
-    
-    // Reset the device.
-    auto report = make_report<MCP2221ACommands::Reset>();
 
+    // A pure status query: no cancel, no speed change. It proves the handle is
+    // backed by a live device (a successful hid_open() alone does not, since it
+    // can land on a node that is about to disappear) and tells us whether the
+    // I2C engine is usable.
+    const auto status = get_status();
+    if (!status)
+    {
+        SPDLOG_ERROR("MCP2221A did not answer a status query after open");
+        device_.reset();
+        return false;
+    }
+
+    if (status->i2c_state == I2CState::Idle)
+    {
+        return true;
+    }
+
+    // The engine is latched in a non-idle state -- typically StopTimeout (0x62)
+    // left behind by an earlier run, since nothing power-cycles the chip
+    // between processes. Every parameter change is refused while it persists.
+    //
+    // Only a device Reset clears this. Cancel does not: verified on hardware,
+    // five consecutive cancels were acknowledged and left the state at 0x62.
+    // Reset costs a full USB re-enumeration, so it is deliberately conditional
+    // on the engine actually being wedged rather than run on every open.
+    SPDLOG_WARN("MCP2221A I2C engine is in state 0x{:02x}, not idle; resetting the device",
+                static_cast<uint8_t>(status->i2c_state));
+    return reset_and_reopen();
+}
+
+bool MCP2221A::reset_and_reopen()
+{
+    auto report = make_report<MCP2221ACommands::Reset>();
     if (hid_write(device_.get(), report, report.size()) == -1)
     {
         SPDLOG_ERROR("Failed to send reset command");
         return false;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // The handle dies with the old USB device.
+    device_.reset();
 
-    device_ = {hid_open(kVendorId, kProductId, nullptr), hid_close};
-    if (!device_)
+    // Re-enumeration means: the kernel re-adds the device, binds hid-generic,
+    // creates a fresh hidraw node, and udev applies its ownership rule to it.
+    // The node path is recycled, so it cannot be used to tell the new device
+    // from the old one -- instead every candidate handle has to prove itself
+    // with a real transaction, which also rejects a handle opened against the
+    // old node in the window before it disappears.
+    //
+    // Measured at ~6 s through VMware USB passthrough, so the budget is
+    // generous; bare metal is far quicker and exits the loop early.
+    constexpr auto kPollInterval = std::chrono::milliseconds(100);
+    constexpr auto kTimeout = std::chrono::seconds(20);
+
+    const auto deadline = std::chrono::steady_clock::now() + kTimeout;
+    while (std::chrono::steady_clock::now() < deadline)
     {
-        SPDLOG_ERROR("MCP2221A device not found after reset.");
-        return false;
+        std::this_thread::sleep_for(kPollInterval);
+
+        decltype(device_) candidate{hid_open(kVendorId, kProductId, nullptr), hid_close};
+        if (!candidate)
+        {
+            continue;
+        }
+
+        device_ = std::move(candidate);
+        if (const auto status = get_status(); status && status->i2c_state == I2CState::Idle)
+        {
+            SPDLOG_INFO("MCP2221A reset complete; I2C engine idle");
+            return true;
+        }
+        device_.reset();
     }
 
-    return true;
+    SPDLOG_ERROR("MCP2221A did not come back in a usable state after reset. If it is present "
+                 "in lsusb, check that a /dev/hidraw node exists for it and is readable -- "
+                 "the in-kernel hid_mcp2221 driver claims the chip without ever creating "
+                 "one, so it has to be blacklisted.");
+    return false;
 }
 
 bool MCP2221A::is_open() const
@@ -253,7 +321,25 @@ bool MCP2221A::cancel()
     {
         return false;
     }
-    
+
+    // Cancelling with no transfer in progress is not a harmless no-op on this
+    // part. The engine drives a STOP condition to unwind the transfer; with
+    // nothing to unwind that STOP never completes and the state machine latches
+    // StopTimeout (0x62), which refuses every subsequent parameter change and
+    // survives process exit. Recovering from it needs a full device reset.
+    // Verified on hardware: reset to Idle, one cancel, and the engine is stuck.
+    //
+    // So treat "already idle" as success and do not touch the bus.
+    const auto current = get_status();
+    if (!current)
+    {
+        return false;
+    }
+    if (current->i2c_state == I2CState::Idle)
+    {
+        return true;
+    }
+
     auto status = get_status_set_parameters(true);
     if (!status) {
         SPDLOG_ERROR("Failed to cancel I2C.");

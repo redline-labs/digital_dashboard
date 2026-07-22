@@ -79,6 +79,11 @@ public:
 private:
     std::optional<MCP2221AStatus> get_status_set_parameters(bool cancel_i2c = false, uint32_t speed_hz = 0);
 
+    // Resets the device and waits for it to re-enumerate into a usable state.
+    // Only called when the I2C engine is found latched in a non-idle state,
+    // because it costs a full USB re-enumeration.
+    bool reset_and_reopen();
+
     std::unique_ptr<hid_device, void(*)(hid_device*)> device_;
 
     static constexpr uint16_t kVendorId = 0x04D8;

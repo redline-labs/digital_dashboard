@@ -1,0 +1,29 @@
+# Wired CarPlay bring-up: grant the driver raw access to the two devices it
+# needs, so it does not have to run as root. See docs/carplay_bringup.md.
+#
+# Install:
+#   sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Members of "plugdev" get access; adjust GROUP if your distro differs.
+
+# --- iPhone -----------------------------------------------------------------
+# Raw usbfs access to /dev/bus/usb/BBB/DDD for every Apple device. The driver
+# drives the phone entirely through usbfs ioctls (control transfers, interface
+# claims, bulk IO), so this single rule covers the config switch, the usbmux
+# interface, and the NCM interfaces.
+#
+# TAG+="uaccess" additionally grants the user at the active seat, which keeps
+# things working across re-enumeration when logged in locally.
+#
+# ATTR{idVendor} only exists on usb_device nodes, so this matches the device
+# and not its interfaces -- which is what usbfs access is keyed on. It re-fires
+# on every re-add, so it survives the config switch's re-enumeration.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# --- MCP2221A -> MFi coprocessor --------------------------------------------
+# hidapi uses the hidraw backend on Linux, so the hidraw node is what matters.
+KERNEL=="hidraw*", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# Also expose the underlying USB device for the libusb backend fallback.
+SUBSYSTEM=="usb", ATTR{idVendor}=="04d8", ATTR{idProduct}=="00dd", MODE="0660", GROUP="plugdev", TAG+="uaccess"

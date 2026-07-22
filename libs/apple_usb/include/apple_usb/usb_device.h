@@ -38,6 +38,17 @@ std::optional<int> openDevice(const DeviceInfo& device);
 // re-enumeration invalidates any open usbfs fd. Returns true on success.
 bool switchToCarPlayConfiguration(const DeviceInfo& device);
 
+// Interface numbers on this device that currently have a kernel driver bound.
+// Reads the sysfs "driver" symlink of each interface.
+std::vector<unsigned int> boundInterfaces(const DeviceInfo& device);
+
+// Ask the kernel to release an interface from whatever driver holds it
+// (USBDEVFS_DISCONNECT). Needed before changing the configuration -- the kernel
+// refuses USBDEVFS_SETCONFIGURATION with EBUSY while any interface is claimed --
+// and before claiming an interface that ipheth or cdc_ncm has taken.
+// Best-effort: returns false if the ioctl fails.
+bool usbDisconnectKernelDriver(int fd, unsigned int iface);
+
 // --- Low-level usbfs wrappers (Linux). Throw std::system_error on failure. ---
 
 // Claim an interface (USBDEVFS_CLAIMINTERFACE).

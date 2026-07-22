@@ -170,23 +170,112 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         }
     }
 
-    // Apply config 6 via sysfs (a usbfs SET_CONFIGURATION would race the
-    // re-enumeration above and invalidate open fds).
     const auto d = findBySerial(device.serial);
     if (!d)
     {
         return false;
     }
-    if (configFromSysfs(d->sysfs_path) != kCarPlayConfiguration)
+    if (configFromSysfs(d->sysfs_path) == kCarPlayConfiguration)
     {
-        std::ofstream out(fs::path(d->sysfs_path) / "bConfigurationValue");
-        out << static_cast<int>(kCarPlayConfiguration);
-        out.close();
-        if (!out)
+        return true;
+    }
+
+    // Prefer usbfs SET_CONFIGURATION: it needs only the usbfs node (which a
+    // udev rule can hand to a normal user) whereas the sysfs attribute is
+    // root-only, and unlike the vendor request above it does not re-enumerate
+    // the device -- so open fds and, on a VM, the hypervisor's passthrough
+    // binding both survive.
+    //
+    // The kernel returns EBUSY while any interface is claimed, so every bound
+    // driver (ipheth, cdc_ncm, an earlier usbfs client) has to be released
+    // first. Nothing else in this library detaches drivers, which is why this
+    // is done explicitly here.
+    if (const auto fd = openDevice(*d); fd)
+    {
+        for (const auto iface : boundInterfaces(*d))
         {
-            SPDLOG_ERROR("Failed to write bConfigurationValue for {}", d->serial);
-            return false;
+            if (usbDisconnectKernelDriver(*fd, iface))
+            {
+                SPDLOG_DEBUG("released interface {} from its kernel driver", iface);
+            }
         }
+
+        unsigned int configuration = kCarPlayConfiguration;
+        const bool ok = ::ioctl(*fd, USBDEVFS_SETCONFIGURATION, &configuration) >= 0;
+        const int saved_errno = errno;
+        ::close(*fd);
+
+        if (ok)
+        {
+            return true;
+        }
+        SPDLOG_DEBUG("USBDEVFS_SETCONFIGURATION({}) failed: {}; falling back to sysfs",
+                     kCarPlayConfiguration, std::strerror(saved_errno));
+    }
+
+    // Fallback for hosts where the usbfs node is unavailable but we are root.
+    std::ofstream out(fs::path(d->sysfs_path) / "bConfigurationValue");
+    out << static_cast<int>(kCarPlayConfiguration);
+    out.close();
+    if (!out)
+    {
+        SPDLOG_ERROR("Failed to set configuration {} for {}: the usbfs ioctl failed and "
+                     "{}/bConfigurationValue is not writable (it is root-only). Either run "
+                     "as root or install nodes/carplay/udev/99-carplay.rules.",
+                     kCarPlayConfiguration, d->serial, d->sysfs_path);
+        return false;
+    }
+    return true;
+}
+
+std::vector<unsigned int> boundInterfaces(const DeviceInfo& device)
+{
+    std::vector<unsigned int> interfaces;
+    const fs::path sysfs(device.sysfs_path);
+
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(sysfs.parent_path(), ec))
+    {
+        // Interface directories are named "<device>:<config>.<interface>".
+        const std::string name = entry.path().filename().string();
+        if (name.rfind(sysfs.filename().string() + ":", 0) != 0)
+        {
+            continue;
+        }
+        const auto dot = name.rfind('.');
+        if (dot == std::string::npos)
+        {
+            continue;
+        }
+
+        if (!fs::exists(entry.path() / "driver", ec))
+        {
+            continue;
+        }
+
+        unsigned int iface = 0;
+        const std::string number = name.substr(dot + 1);
+        if (std::from_chars(number.data(), number.data() + number.size(), iface).ec ==
+            std::errc{})
+        {
+            interfaces.push_back(iface);
+        }
+    }
+    return interfaces;
+}
+
+bool usbDisconnectKernelDriver(int fd, unsigned int iface)
+{
+    usbdevfs_ioctl command{};
+    command.ifno = static_cast<int>(iface);
+    command.ioctl_code = USBDEVFS_DISCONNECT;
+    command.data = nullptr;
+
+    if (::ioctl(fd, USBDEVFS_IOCTL, &command) < 0)
+    {
+        SPDLOG_DEBUG("USBDEVFS_DISCONNECT on interface {} failed: {}", iface,
+                     std::strerror(errno));
+        return false;
     }
     return true;
 }
@@ -266,6 +355,9 @@ bool switchToCarPlayConfiguration(const DeviceInfo&)
     SPDLOG_ERROR("CarPlay USB configuration switch is only supported on Linux");
     return false;
 }
+
+std::vector<unsigned int> boundInterfaces(const DeviceInfo&) { return {}; }
+bool usbDisconnectKernelDriver(int, unsigned int) { return false; }
 
 void usbClaimInterface(int, unsigned int) { throw std::system_error(ENOSYS, std::generic_category()); }
 std::vector<uint8_t> usbControl(int, uint8_t, uint8_t, uint16_t, uint16_t, uint16_t, const uint8_t*, unsigned)

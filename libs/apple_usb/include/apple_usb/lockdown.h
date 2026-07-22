@@ -25,6 +25,12 @@ class CarkitChannel
     virtual std::vector<uint8_t> recv(size_t max_len, unsigned timeout_ms) = 0;
 
     virtual void close() = 0;
+
+    // False once the underlying connection has failed. recv() returns an empty
+    // vector both for "timed out with no data" and for a dead connection, so a
+    // caller that treats empty as "no data yet" -- the iAP2 link layer does --
+    // needs this to tell the two apart. Without it a dead link spins forever.
+    virtual bool alive() const = 0;
 };
 
 // Establish the carkit iAP2 channel for a phone reachable through the given

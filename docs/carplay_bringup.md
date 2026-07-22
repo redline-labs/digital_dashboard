@@ -88,16 +88,72 @@ cmake -S . -B build && cmake --build build -j 2>&1 | grep -i apple_usb
 # BAD:  "libimobiledevice/libplist not found; wired CarPlay lockdown disabled"
 ```
 
-**Privileges.** The driver needs raw USB and TUN access. For bring-up just run it
-as root; for deployment add a udev rule granting the Apple VID to a group and
-grant `CAP_NET_ADMIN` for the TAP device.
+**Privileges.** The driver needs raw USB access (usbfs) for the phone, a hidraw
+node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
+all three. To run unprivileged instead, install the rules shipped in the repo —
+this is a one-time step per machine:
+
+```bash
+sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+`udevadm trigger` re-applies the rules to already-plugged devices, so you do not
+have to unplug anything. Verify — the phone's node should be group `plugdev`
+with an ACL (the trailing `+`):
+
+```bash
+ls -l /dev/bus/usb/002/007          # crw-rw----+ 1 usbmux plugdev
+```
+
+The devnum changes on every re-enumeration (and the config switch in stage 2
+forces one), so that path moves; the rule is keyed on the Apple VID, so it
+follows. You must be in `plugdev` (`id -nG | grep plugdev`).
+
+This covers stages 2–5. **It is not sufficient for stage 6**: `NcmBridge::
+configureInterface()` shells out to `ip link set`, and file capabilities set with
+`setcap` on the driver binary are *not* inherited by child processes, so
+`cap_net_admin+ep` on `carplay` leaves the `ip` calls failing with `Operation not
+permitted`. Until those shell-outs are replaced with in-process netlink, stage 6
+needs root.
+
+**The MFi coprocessor needs the kernel driver out of the way.** If your kernel
+has `hid_mcp2221` (most distros do), it binds the MCP2221A and re-exports it as
+an I²C/GPIO/hwmon device via `industrialio`. It never requests a HIDRAW
+connection, so **no `/dev/hidraw` node is created for the chip** and hidapi has
+nothing to open. The symptom is confusing: the device shows up fine in `lsusb`
+and `usbhid` appears bound, but every hidraw node on the box belongs to some
+other device.
+
+```bash
+lsmod | grep hid_mcp2221                       # if this hits, the chip is captured
+sudo cp nodes/carplay/udev/blacklist-hid-mcp2221.conf /etc/modprobe.d/
+sudo modprobe -r hid_mcp2221
+```
+
+`hid-generic` then binds instead and the hidraw node appears. Confirm with
+`ls /sys/bus/hid/devices/*04D8*/hidraw/`.
 
 **Conflicting daemons.** The system `usbmuxd` will fight us for the phone (this is
-the core reason we run our own mux). Stop it before testing:
+the core reason we run our own mux). It is not merely untidy: it holds
+interface 1, the exact vendor-specific interface our mux claims
+(`kMuxInterface = 1`). Stop it before testing:
 
 ```bash
 sudo systemctl stop usbmuxd.socket usbmuxd.service
 ```
+
+Some distros ship only the service unit and no socket unit; drop
+`usbmuxd.socket` from the command if systemd reports it does not exist. If the
+service comes back on its own, socket activation restarted it — `sudo systemctl
+mask usbmuxd.socket usbmuxd.service` (reverse with `unmask`).
+
+**Running in a VM.** USB passthrough works, but the stage 2 config switch
+deliberately re-enumerates the phone, and hypervisors commonly hand a
+re-enumerating device back to the *host* instead of the guest. If the phone
+disappears and never returns within the code's 5 s window, suspect passthrough
+before suspecting the driver — re-attach it to the guest and confirm with
+`lsusb` that the VID is still visible from inside.
 
 ## 2. USB detection and the config-6 switch
 
@@ -115,9 +171,34 @@ cat /sys/bus/usb/devices/<dev>/bNumConfigurations   # want >= 6 after the vendor
 cat /sys/bus/usb/devices/<dev>/bConfigurationValue  # want 6
 ```
 
+**Verified on hardware (2026-07-21)**, iPhone `00008140…` — the constants in
+`usb_device.h`/`muxd.cpp` are all correct for this generation:
+
+| Expectation | Result |
+|---|---|
+| `0xC0/0x52` reveals extra configurations | ✓ 5 → **6** configurations |
+| `kCarPlayConfiguration = 6` | ✓ config 6 = `PTP + Apple Mobile Device + Apple USB Ethernet + NCM` |
+| `kMuxInterface = 1`, `kEpOut 0x04` / `kEpIn 0x85` | ✓ If1, vendor-specific 255/254/2 |
+| `kNcmDataAltSetting = 1` | ✓ bulk endpoints live on alt 1 |
+
+Note the vendor request is *sticky but not idempotent-looking*: before it the
+phone advertises 5 configurations (config 5 is `…+ NCM`, which looks tempting
+but is **not** the CarPlay config), after it 6. Do not "fix" the constant to 5.
+
+**Applying the configuration needs the kernel drivers out of the way.** The
+switch is done with `USBDEVFS_SETCONFIGURATION` on the usbfs node, which a udev
+rule can grant to a normal user, rather than the root-only sysfs attribute. The
+kernel returns **`EBUSY` while any interface is claimed**, so every bound driver
+is released first with `USBDEVFS_DISCONNECT` (`ipheth` and an earlier usbfs
+client both hold interfaces in config 4). Unlike the vendor request this does
+**not** re-enumerate the device — config 6 is active in ~100 ms and, on a VM, the
+passthrough binding survives.
+
 **Triage.**
 - Stuck at 4 configurations → the `0xC0/0x52` vendor request failed; check for
   `EPERM` (run as root) or that the phone is unlocked and trusted.
+- `Failed to set configuration … not writable` → neither path worked: the usbfs
+  ioctl failed *and* sysfs is root-only. Install the udev rules from stage 1.
 - Config reverts to 4 → something re-enumerated it, usually the system usbmuxd
   (stage 1) or `usb_storage`/`ipheth` grabbing the device.
 - Device vanishes after the switch → expected briefly; the code waits up to 5s for
@@ -161,9 +242,34 @@ USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/<our-socket> idevice_id -l   # should list the 
 USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/<our-socket> ideviceinfo     # should dump device info
 ```
 
+**Verified on hardware (2026-07-21):** `idevice_id -l` returns the UDID through
+our socket and `[carkit] carkit TLS channel up (iAP2)` appears ~113 ms after
+start. This exercised the whole chain — mux, the plist framing, the `Connect`
+relay, lockdown pairing and TLS — so stages 3 and 4 are no longer speculative.
+
+**The phone must be UNLOCKED, not merely trusted.** These are different things
+and only one of them prompts you. With the screen locked, lockdown returns
+`Password protected (-17)` and every stage-4 attempt fails while stages 2–3 look
+perfect. Tapping "Trust" does not clear it — enter the passcode and keep the
+phone awake.
+
+**UDID form matters.** libusbmuxd normalises a modern 24-character serial into
+the 25-character `XXXXXXXX-XXXXXXXXXXXXXXXX` form, and `idevice_new_with_options`
+matches against *that*. The serial we read from sysfs has no dash, so it is
+converted in `openCarkitChannel` before the lookup. Verified differentially:
+
+```
+ideviceinfo -u 00008140000138EE0184801C   -> ERROR: Device ... not found!
+ideviceinfo -u 00008140-000138EE0184801C  -> reaches lockdownd
+```
+
+Without that conversion stage 4 fails at `idevice_new` with a "device not found"
+that looks like a mux bug but is a string-format bug.
+
 **Triage.**
 - `idevice_id -l` empty → our `UsbmuxdServer` ListDevices reply is wrong; check the
   plist packet header framing (little-endian length/version/message/tag).
+- `Password protected (-17)` → the phone's screen is locked. Unlock it.
 - Handshake fails with a pairing error → tap "Trust" on the phone; confirm pair
   records are being written under `--state-dir`. Delete the state dir to force a
   fresh pair.
@@ -179,6 +285,64 @@ sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep -E '\[iap2\]|\[mfi\]'
 
 **Expect:** link SYN/ACK established, identification accepted, MFi certificate read
 and a challenge signed, then the phone reporting CarPlay availability.
+
+**Verified on hardware (2026-07-21)** up to the MFi handshake — the link layer
+and the wired identification encoding are correct:
+
+```
+carkit > SYN     seq=99  ack=0   len=29
+carkit < SYN|ACK seq=101 ack=99  len=29
+carkit > ACK     seq=99  ack=101
+[iap2] link negotiated (state -> normal)
+[iap2] IdentificationInformation encoded: 344 bytes, 19 params
+[iap2] <- StartIdentification (0x1d00)
+[iap2] <- IdentificationAccepted (0x1d02)     <- accepted first try, no rejection
+[iap2] <- RequestAuthenticationCertificate (0xaa00)
+```
+
+The phone advertises `max_outgoing=4 max_len=65535 rto=0ms ack_timeout=0ms
+max_retransmissions=0 max_ack=0` and three sessions (10 control v2, 11 external
+accessory v1, 12 file transfer v2). Two of the caveats below are settled by those
+numbers: `max_len` really is 65535 so the fragmentation off-by-ten is invisible,
+and the phone advertises **zero** retransmissions/acks, confirming the wired path
+never exercises the retransmission/EAK timers.
+
+**The phone requests the MFi certificate immediately after accepting
+identification**, before sending anything else. So `CarPlayAvailability` — and
+with it the zero-length-boolean question below — **cannot be reached until the
+coprocessor works**. `--iap2-allow-missing-mfi` runs everything up to that point
+anyway, which is the right way to exercise the link while the board is out.
+
+**Isolating the MFi board (do this before blaming iAP2).** The bridge and the
+coprocessor are separate failure domains, and the MCP2221A tells you which one
+is at fault if you read its status. `apple_mfi_demo` narrates both:
+
+| Symptom | Layer | Meaning |
+|---|---|---|
+| `MCP2221A device not found` | host | no `/dev/hidraw` node — `hid_mcp2221` is still bound (see stage 1) |
+| `I2C engine is in state 0x62, not idle; resetting` | bridge | expected once after an unclean exit; the driver self-heals |
+| `I2C speed set to 100000 Hz` | bridge | **bridge is fully healthy from here on** |
+| `state: 0x25` (`AddressNACKed`) | board | nothing is answering at that address |
+
+`mcp2221a_i2c_scan` finding **no** devices while the bridge reports
+`SCL=1 SDA=1` means the I²C lines are pulled up and free but the coprocessor is
+not acknowledging — i.e. a board problem (power, wiring, or the MFi RESET pin
+held asserted), not a software one. Note the library has no GPIO support, so if
+your breakout wires MFi RESET to one of the bridge's GP0–GP3 pins, nothing
+releases it and every address will NACK.
+
+**Two MCP2221A behaviours worth knowing**, both verified on hardware here:
+
+- *A cancel issued while the I²C engine is Idle wedges it.* The engine drives a
+  STOP that never completes and latches `StopTimeout` (0x62), which refuses
+  every later parameter change and survives process exit. `MCP2221A::cancel()`
+  therefore returns early when already idle — do not "helpfully" remove that
+  guard.
+- *Only a device Reset clears a latched 0x62.* Cancel does not; five consecutive
+  cancels were acknowledged and left the state unchanged. Reset costs a full USB
+  re-enumeration (measured ~6 s through VMware USB passthrough, and the hidraw
+  node path is recycled, so a handle opened too early lands on the dying node),
+  so `open()` resets **only** when it finds the engine non-idle.
 
 **Triage.**
 - No `[mfi]` certificate → coprocessor not reachable. Test it standalone first with
@@ -208,9 +372,11 @@ zero-length bools to `true` is the one-line experiment.
 - Retransmission/EAK timers are a structural port that has never run against a
   phone in either codebase — only the zero-ack wired path is exercised in
   practice. Suspect them if the link is unstable under load rather than at setup.
-- The link layer treats an empty `recv()` as "no data yet", never as EOF. The
-  transport must signal death some other way or a dead link will spin; watch for
-  this when `CarkitChannel` is wired to `Iap2Transport`.
+- ~~The link layer treats an empty `recv()` as "no data yet", never as EOF.~~
+  **Fixed.** This was real: `LibimobiledeviceCarkitChannel::recv()` returned an
+  empty vector for both a timeout and a hard error, and a failed `send()` was
+  discarded, so a dead link would have spun forever. `CarkitChannel` now exposes
+  `alive()`, which the stage 5 transport adapter checks every poll.
 
 **Verified without hardware:** `iap2_test_framing` covers 20 groups / ~150
 assertions — byte-exact checksums, header round-trips, the full start sequence,
@@ -375,36 +541,67 @@ Not all stages below are implemented yet. Current state:
 
 | Layer | State |
 |---|---|
-| USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | written, never run |
-| iAP2 link layer, identification, MFi auth, metadata decode | written, unit-tested |
+| USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
+| iAP2 link layer + identification | **verified on hardware 2026-07-21** (stage 5, up to MFi) |
+| iAP2 MFi auth, metadata decode | written, unit-tested; blocked on the coprocessor |
 | NCM ↔ TAP bridge | written, differentially verified vs LIVI |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session** (pair-setup/verify, auth-setup, /info, SETUP, RECORD, HID, screen + audio streams) | **NOT YET WRITTEN** |
-| **Node orchestration** wiring apple_usb → iap2 → airplay | **NOT YET WRITTEN** — `nodes/carplay/main.cpp` still runs a placeholder loop |
+| **Node orchestration**, stages 2–5 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
+| **Node orchestration** wiring iap2 → NCM → airplay | **NOT YET WRITTEN** |
 | zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
 
-So stages 2–6 can be attempted now; **stages 7–10 need the AirPlay session layer
-and the node orchestration first**. Until then the driver publishes only idle
-session state, and `--simulate` is the way to exercise the dashboard.
+Stages 2–4 run today via `--max-stage`, which stops the pipeline at a chosen
+stage so a failure at one layer is not buried under the next layer failing as a
+consequence:
+
+```bash
+./build/nodes/carplay/carplay --max-stage 2 --verbose   # detect + config switch
+./build/nodes/carplay/carplay --max-stage 3 --verbose   # + mux + usbmuxd socket
+./build/nodes/carplay/carplay --max-stage 4 --verbose   # + lockdown/carkit TLS
+./build/nodes/carplay/carplay --max-stage 5 --verbose   # + iAP2 link, identification, MFi
+
+# While the MFi board is out, run everything up to the certificate request:
+./build/nodes/carplay/carplay --max-stage 5 --iap2-allow-missing-mfi --verbose
+```
+
+No `sudo` is needed for these once the stage 1 udev rules are installed.
+**Stages 5–10 still need code**: the carkit channel is not yet wired to
+`Iap2Transport`, and the AirPlay session layer does not exist. Until then the
+driver publishes only idle session state, and `--simulate` exercises the
+dashboard.
 
 ## Known-unverified list
 
-Nothing in the USB → iAP2 → AirPlay path has executed against a phone. Ranked by
-remaining uncertainty (highest first):
+Everything from USB up to the carkit TLS channel has now run against a phone.
+Ranked by remaining uncertainty (highest first):
 
-1. **usbmuxd socket bridge** (`usbmuxd_server.cpp`) — plist packet framing and the
-   `Connect` relay have *no test coverage at all*. Stage 4's `idevice_id -l` check
-   is the first real exercise of it. This is now the weakest link.
-2. **Lockdown/carkit glue** (`lockdown.cpp`) — never compiled on this machine
-   (libimobiledevice absent on macOS); stage 1's build check is its first
-   compile. Watch for API drift in `idevice_new_with_options` / SSL enable.
-3. **Zero-length iAP2 bools** → `CarPlayStartSession` silently never sent
-   (stage 5). Cheap to check, high impact.
+1. **MFi coprocessor** — currently NACKs at every I²C address (the MCP2221A
+   bridge itself is proven healthy). This now **blocks everything downstream**:
+   the phone demands the certificate before it will send `CarPlayAvailability`,
+   so stages 5b–10 cannot be reached at all until the board answers.
+2. **Zero-length iAP2 bools** → `CarPlayStartSession` silently never sent
+   (stage 5). Cheap to check, high impact — but gated behind #1. Run with
+   `--iap2-zero-bool-true` to test the alternative decode.
+3. **NCM enumeration** (not framing) — sysfs endpoint discovery after
+   `SETINTERFACE`, and the hardcoded altsetting 1. Note config 6 exposes **two**
+   NCM function pairs (If3+If4 and If5+If6); the kernel's `cdc_ncm` claims the
+   first pair as soon as the configuration is applied, so the bridge must both
+   detach it and select the right pair. Neither is covered by the differential
+   framing tests.
 4. **Audio pacing** — timing-dependent, cannot be desk-checked.
-5. **NCM enumeration** (not framing) — sysfs endpoint discovery after
-   `SETINTERFACE`, and the hardcoded altsetting 1.
-6. **iAP2 retransmission/EAK timers** — structural port, never exercised in
-   either codebase on the wired zero-ack path.
+
+**Retired by the 2026-07-21 hardware session:**
+- ~~usbmuxd socket bridge~~ — `idevice_id -l` and `ideviceinfo` both work through
+  our socket, exercising the plist framing and the `Connect` relay.
+- ~~Lockdown/carkit glue~~ — compiles and reaches
+  `[carkit] carkit TLS channel up (iAP2)`. One real bug found and fixed: the
+  sysfs UDID needs the libusbmuxd dash normalisation (stage 4).
+- ~~iAP2 link layer and wired identification~~ — negotiates against a real phone
+  and identification is **accepted first try**, no rejection round needed.
+- ~~iAP2 retransmission/EAK timers~~ — not a risk on this path: the phone
+  advertises `max_retransmissions=0 max_ack=0`, so they never run.
+- ~~Outbound fragmentation off-by-ten~~ — `max_len` is 65535 as assumed.
 
 Deliberately *lower* risk than they look, because they are verified:
 NTB16 framing (byte-identical to LIVI across 30 cases), the crypto primitives

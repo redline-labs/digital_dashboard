@@ -46,6 +46,9 @@ class LibimobiledeviceCarkitChannel : public CarkitChannel
                 static_cast<uint32_t>(len - sent_total), &sent);
             if (err != IDEVICE_E_SUCCESS || sent == 0)
             {
+                SPDLOG_DEBUG("[carkit] send failed after {}/{} bytes (err {})", sent_total, len,
+                             static_cast<int>(err));
+                alive_ = false;
                 return false;
             }
             sent_total += sent;
@@ -62,14 +65,21 @@ class LibimobiledeviceCarkitChannel : public CarkitChannel
             &received, timeout_ms);
         if (err != IDEVICE_E_SUCCESS && err != IDEVICE_E_TIMEOUT)
         {
+            // Distinguished from a timeout only through alive(); the empty
+            // return value looks identical to the caller.
+            SPDLOG_DEBUG("[carkit] receive failed (err {})", static_cast<int>(err));
+            alive_ = false;
             return {};
         }
         buf.resize(received);
         return buf;
     }
 
+    bool alive() const override { return alive_; }
+
     void close() override
     {
+        alive_ = false;
         if (connection_ != nullptr)
         {
             idevice_disconnect(connection_);
@@ -91,7 +101,24 @@ class LibimobiledeviceCarkitChannel : public CarkitChannel
     idevice_t device_;
     lockdownd_client_t lockdown_;
     idevice_connection_t connection_;
+    bool alive_ = true;
 };
+
+// libusbmuxd normalises a modern 24-character serial into the 25-character
+// "XXXXXXXX-XXXXXXXXXXXXXXXX" form, and idevice_new_with_options() matches the
+// requested UDID against that normalised string. The serial we read from sysfs
+// carries no dash, so passing it through unchanged makes the lookup fail with a
+// misleading "device not found" even though the device is right there.
+// Verified on hardware: the undashed form reports "Device ... not found!" while
+// the dashed form reaches lockdownd.
+std::string normalizeUdid(const std::string& udid)
+{
+    if (udid.size() == 24 && udid.find('-') == std::string::npos)
+    {
+        return udid.substr(0, 8) + "-" + udid.substr(8);
+    }
+    return udid;
+}
 
 }  // namespace
 
@@ -108,11 +135,14 @@ std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
         ::setenv("USBMUXD_LOCKDOWN_PATH", pair_record_dir.c_str(), 1);
     }
 
+    const std::string lookup_udid = normalizeUdid(udid);
+
     idevice_t device = nullptr;
-    if (idevice_new_with_options(&device, udid.c_str(), IDEVICE_LOOKUP_USBMUX) != IDEVICE_E_SUCCESS ||
+    if (idevice_new_with_options(&device, lookup_udid.c_str(), IDEVICE_LOOKUP_USBMUX) !=
+            IDEVICE_E_SUCCESS ||
         device == nullptr)
     {
-        SPDLOG_ERROR("[carkit] idevice_new failed for udid={}", udid.substr(0, 8));
+        SPDLOG_ERROR("[carkit] idevice_new failed for udid={}", lookup_udid.substr(0, 8));
         return nullptr;
     }
 

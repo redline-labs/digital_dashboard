@@ -8,6 +8,8 @@ add_executable(carplay
     simulate.cpp
 )
 
+# The USB bring-up pipeline is Linux-only; it is added below alongside apple_usb.
+
 # libavcodec is used by --simulate to generate a synthetic H.264 stream (and
 # later for AAC/Opus decode of the phone's audio).
 find_package(PkgConfig REQUIRED)
@@ -31,6 +33,7 @@ target_link_libraries(carplay PRIVATE
 # The USB transport (usbfs/TUN) only exists on Linux; everything above it
 # stays portable so the node skeleton builds on macOS for development.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(carplay PRIVATE usb_pipeline.cpp iap2_session.cpp)
     target_link_libraries(carplay PRIVATE apple_usb)
     target_compile_definitions(carplay PRIVATE CARPLAY_HAVE_APPLE_USB=1)
 endif()
