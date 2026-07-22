@@ -72,10 +72,14 @@ void logAvailability(const iap2::csm::Message& message, const iap2::CarPlayAvail
 
     if (wired != nullptr && wired->data.empty())
     {
+        // Not observed on the phone tested during bring-up, which sends a
+        // proper one-byte boolean. Kept as a loud warning because the failure
+        // it causes is otherwise silent: availability decodes as absent and
+        // CarPlayStartSession is simply never sent. See
+        // docs/carplay_bringup.md if this ever fires.
         SPDLOG_WARN("[iap2] CarPlayAvailability wired parameter is ZERO LENGTH -- decoded as "
-                    "absent, so CarPlayStartSession would be skipped. This is the case "
-                    "docs/carplay_bringup.md flags; re-run with --iap2-zero-bool-true to "
-                    "treat it as present.");
+                    "absent, so CarPlayStartSession will be skipped and the session will "
+                    "never start. See docs/carplay_bringup.md.");
     }
 
     SPDLOG_INFO("[iap2] CarPlayAvailability: has_wired={} wired_available={} usb_transport_id={}",
@@ -129,6 +133,7 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     iap2::IdentificationConfig identification;
     bool identified = false;
     bool authenticated = false;
+    bool session_started = false;
     bool failed = false;
 
     link.setControlMessageHandler([&](const std::vector<uint8_t>& frame) {
@@ -225,13 +230,34 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 }
                 logAvailability(*message, *availability);
 
-                const bool wired_ok =
-                    availability->wired_available.value_or(options.zero_length_bool_is_true);
-                if (wired_ok)
+                if (availability->wired_available.value_or(false))
                 {
-                    SPDLOG_INFO("[iap2] phone reports wired CarPlay AVAILABLE. "
-                                "CarPlayStartSession needs the NCM link-local address "
-                                "(stage 6), which is not wired up yet.");
+                    SPDLOG_INFO("[iap2] phone reports wired CarPlay AVAILABLE");
+
+                    if (!options.endpoint_provider)
+                    {
+                        SPDLOG_WARN("[iap2] no accessory endpoint available, so "
+                                    "CarPlayStartSession will not be sent (stage 6 not run)");
+                        break;
+                    }
+                    const auto endpoint = options.endpoint_provider();
+                    if (!endpoint)
+                    {
+                        SPDLOG_ERROR("[iap2] the NCM link is not up, so there is no address to "
+                                     "hand the phone -- CarPlayStartSession not sent");
+                        break;
+                    }
+
+                    iap2::CarPlayStartSession session;
+                    session.ip_addresses = {endpoint->link_local_address};
+                    session.port = endpoint->port;
+                    session.device_identifier = endpoint->device_identifier;
+
+                    SPDLOG_INFO("[iap2] sending CarPlayStartSession -> [{}]:{} id={}",
+                                endpoint->link_local_address, endpoint->port,
+                                endpoint->device_identifier);
+                    link.sendControlMessage(iap2::encodeCarPlayStartSession(session));
+                    session_started = true;
                 }
                 else
                 {
@@ -285,7 +311,8 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
         }
     }
 
-    SPDLOG_INFO("[iap2] session ending: identified={} authenticated={}", identified, authenticated);
+    SPDLOG_INFO("[iap2] session ending: identified={} authenticated={} session_started={}",
+                identified, authenticated, session_started);
     link.close();
 
     return identified && (authenticated || (options.allow_missing_mfi && !failed));

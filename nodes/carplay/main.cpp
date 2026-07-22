@@ -53,12 +53,10 @@ int main(int argc, char** argv)
         ("sim-width", "Simulated video width", cxxopts::value<int>()->default_value("800"))
         ("sim-height", "Simulated video height", cxxopts::value<int>()->default_value("600"))
         ("sim-fps", "Simulated video frame rate", cxxopts::value<int>()->default_value("30"))
-        ("max-stage", "Highest docs/carplay_bringup.md stage to attempt (2-5)",
-         cxxopts::value<int>()->default_value("5"))
+        ("max-stage", "Highest docs/carplay_bringup.md stage to attempt (2-6)",
+         cxxopts::value<int>()->default_value("6"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
-        ("iap2-zero-bool-true",
-         "Treat a zero-length iAP2 boolean as true (CarPlayAvailability experiment)")
         ("v,verbose", "Enable debug logging")
         ("h,help", "Print usage");
 
@@ -114,7 +112,6 @@ int main(int argc, char** argv)
     usb_options.max_stage = args["max-stage"].as<int>();
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
-    usb_options.zero_length_bool_is_true = args.count("iap2-zero-bool-true") > 0;
 
     const bool usb_ok = carplay::runUsbPipeline(usb_options, g_stop);
     if (!usb_ok)

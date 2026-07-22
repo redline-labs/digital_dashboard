@@ -49,6 +49,13 @@ std::vector<unsigned int> boundInterfaces(const DeviceInfo& device);
 // Best-effort: returns false if the ioctl fails.
 bool usbDisconnectKernelDriver(int fd, unsigned int iface);
 
+// Reset an endpoint's halt condition and, importantly, its data toggle
+// (USBDEVFS_CLEAR_HALT). Required after taking an endpoint over from a kernel
+// driver: if the device's toggle and ours disagree it treats everything we send
+// as a duplicate and NAKs forever, which surfaces as bulk writes timing out
+// while reads on the same interface keep working.
+bool usbClearHalt(int fd, uint8_t endpoint);
+
 // --- Low-level usbfs wrappers (Linux). Throw std::system_error on failure. ---
 
 // Claim an interface (USBDEVFS_CLAIMINTERFACE).

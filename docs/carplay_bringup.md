@@ -5,11 +5,12 @@ written in bulk on a macOS dev box **without** an iPhone, MFi coprocessor, or Li
 host attached. This document is the script for stepping through the hardware
 paths on a Linux host, in order.
 
-**Status: stages 1–5 are verified on hardware (2026-07-21)** — USB config
+**Status: stages 1–6 are verified on hardware (2026-07-21)** — USB config
 switch, usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
-identification, and MFi authentication all run against a real iPhone, ending
-with the phone reporting wired CarPlay available. Stages 6–10 still need code:
-the NCM bridge is unwired and the AirPlay session layer does not exist.
+identification, MFi authentication, and the NCM ↔ TAP bridge all run against a
+real iPhone. The phone now opens TCP to the accessory on port 7000 and sends
+`POST /pair-setup RTSP/1.0`. **Only the AirPlay session layer (stages 7–10) is
+missing.**
 
 Work the stages in sequence — each one depends on the previous. Every stage lists
 what to run, what you should observe, and how to triage the common failures.
@@ -126,14 +127,9 @@ needs root.
 **The MFi coprocessor is reached over I²C.** On Linux the in-kernel
 `hid_mcp2221` driver binds the MCP2221A and registers it as a standard I²C
 adapter, which `i2c-dev` exposes as `/dev/i2c-N`; the driver talks to the
-coprocessor through that. macOS has no such driver and uses the userspace
-hidapi backend instead. The backend is chosen at configure time:
-
-```bash
-cmake -S . -B build -DI2C_BUS_BACKEND=auto      # linux -> i2c-dev, else hidapi
-cmake -S . -B build -DI2C_BUS_BACKEND=linux     # force kernel i2c-dev
-cmake -S . -B build -DI2C_BUS_BACKEND=mcp2221a  # force userspace hidapi
-```
+coprocessor through that. macOS has no such driver and drives the bridge over
+USB HID from userspace instead. The backend follows the host platform and is not
+configurable — there is only one right answer per OS.
 
 Load the two modules (they are not autoloaded by anything here):
 
@@ -147,16 +143,6 @@ i2cdetect -y 0        # expect a device at 0x11
 `i2c-tools` is worth installing purely as an independent cross-check of the
 driver: two separate implementations probing the same bus is the fastest way to
 tell a wiring fault from a software one.
-
-**If you force `-DI2C_BUS_BACKEND=mcp2221a` on Linux** you must keep the kernel
-driver off the chip, or it will own the bridge and no hidraw node will ever
-appear (the symptom is confusing: `lsusb` shows the device and `usbhid` looks
-bound, but every hidraw node on the box belongs to something else):
-
-```bash
-echo 'blacklist hid_mcp2221' | sudo tee /etc/modprobe.d/blacklist-hid-mcp2221.conf
-sudo modprobe -r hid_mcp2221
-```
 
 **Conflicting daemons.** The system `usbmuxd` will fight us for the phone (this is
 the core reason we run our own mux). It is not merely untidy: it holds
@@ -365,8 +351,9 @@ the bus and the next access was enough. Every transaction in `AppleMFIIC` is
 therefore retried (8 attempts, 20 ms apart) rather than only the first one after
 connect. Do not "simplify" that away.
 
-**Two MCP2221A behaviours worth knowing** (these apply to the hidapi backend;
-the kernel driver handles them itself):
+**Two MCP2221A behaviours worth knowing.** These bit us on the userspace hidapi
+path used on macOS; the kernel driver handles both itself, so they are invisible
+on Linux:
 
 - *A cancel issued while the I²C engine is Idle wedges it.* The engine drives a
   STOP that never completes and latches `StopTimeout` (0x62), which refuses
@@ -394,9 +381,15 @@ the kernel driver handles them itself):
 check this first.** LIVI decodes a zero-length `bool` iAP2 parameter as `None`,
 which makes `CarPlayAvailability.wired_available` falsy and silently skips
 sending `CarPlayStartSession`. That behaviour was ported faithfully (returns
-`nullopt`) but the spec arguably intends presence-as-value here. It is logged at
-DEBUG — run with `--verbose` and grep for the availability decode. Flipping
-zero-length bools to `true` is the one-line experiment.
+`nullopt`), but the spec arguably intends presence-as-value here.
+
+**Not observed on the phone tested during bring-up** — it sends a proper
+one-byte boolean (`wired=true available=1`), so this did not fire. It is not
+worth a runtime switch, but it is worth recognising: `runIap2Session` logs a
+loud warning naming the zero-length case specifically, because the resulting
+failure is otherwise completely silent — availability simply decodes as absent
+and no session is ever requested. If that warning appears, changing
+`csm::getBool()` to treat a zero-length boolean as `true` is the one-line fix.
 
 **Other iAP2 caveats to keep in mind:**
 - Outbound fragmentation chunks at `max_len - 10` (header+checksum overhead),
@@ -434,16 +427,78 @@ ping6 -c3 fe80::<phone>%cpusb0
 **Expect:** the NCM interface pair claimed, `cpusb0` created and up, and the phone
 answering on its link-local address.
 
+**⚠ The single most important thing on this stage: drain the control
+interface's interrupt endpoint.** CDC devices announce link state there
+(`NETWORK_CONNECTION`, `CONNECTION_SPEED_CHANGE`) and the kernel's `cdc_ncm`
+always keeps a URB queued on it. If the host never reads it, **the phone refuses
+to service the bulk OUT endpoint entirely** — every write times out while reads
+on the same interface keep working perfectly. It is a maddening signature
+because nothing looks wrong: the pair is claimed, the altsetting is right, the
+endpoints match the descriptors, and downlink is flowing. Draining the endpoint
+took this from 11 failed writes out of 12 to **3960 writes with zero errors**.
+
+**Verified on hardware (2026-07-21):** `cpusb0` up with the phone-dictated MAC,
+3960 NTBs out / 10026 in with no errors, and the phone opening TCP to
+`[fe80::…]:7000` and sending `POST /pair-setup RTSP/1.0`
+(`User-Agent: AirPlay/950.7.1`). Stage 6 is done; that request is stage 7's
+first message.
+
+**Running unprivileged.** Creating a TAP needs `CAP_NET_ADMIN`, but *attaching*
+to a persistent one you already own does not — and `setcap` on the binary is
+lost on every rebuild, since it lives on the inode. Create the device once
+instead:
+
+```bash
+sudo cp nodes/carplay/udev/carplay-tap.service /etc/systemd/system/
+sudo systemctl enable --now carplay-tap.service
+```
+
+That also sets `addrgenmode eui64`, so the kernel derives exactly the `fe80::`
+the bridge advertises, and `accept_dad=0`. The MAC is still set at runtime (the
+phone dictates it through `iMACAddress` and will ignore us otherwise) via
+`SIOCSIFHWADDR` **on the tun fd**, which the tun driver allows for a device you
+own. No capability is needed anywhere.
+
 **Triage.**
 - No `cpusb0` → `/dev/net/tun` missing or no `CAP_NET_ADMIN`.
 - Interface up but no ping → the kernel `cdc_ncm` driver may have claimed the
   interface; it must be unbound so we can drive it from userspace.
 - Ping works but no inbound TCP → check that `CarPlayStartSession` was sent with
   the correct accessory fe80 address and port 7000.
+- **Every bulk OUT times out while reads work** → the interrupt endpoint is not
+  being drained; see above. Confirm with usbmon (below): the OUT URBs will show
+  as submitted and then `ENOENT`/unlinked, meaning the device never serviced
+  them at all, while OUT on the usbmux endpoint `0x04` completes normally.
 - `"bulk endpoints not found"` → endpoint discovery reads sysfs `ep_*` right
-  after `USBDEVFS_SETINTERFACE`, assuming sysfs repopulates synchronously. If
-  this proves racy it needs a retry loop — this is a known guess. Also note
-  altsetting 1 is hardcoded for the data interface (as in LIVI).
+  after `USBDEVFS_SETINTERFACE`. **Not racy in practice** — it resolved
+  correctly on every run here. Altsetting 1 is hardcoded for the data interface
+  (as in LIVI) and is correct for this phone.
+- Nothing at all on either endpoint → the phone only powers up its NCM data
+  path once a CarPlay session is actually running. Before `CarPlayStartSession`
+  both directions time out, which is expected, not a fault.
+
+**Debugging USB with usbmon.** When a transfer fails and the cause is not
+visible from the driver's own logs, look at the bus:
+
+```bash
+sudo modprobe usbmon
+sudo setcap cap_net_raw,cap_net_admin+eip $(which tcpdump)
+sudo chgrp plugdev /dev/usbmon* && sudo chmod g+r /dev/usbmon*   # not persistent
+tcpdump -i usbmon2 -w /tmp/usb.pcap -s 256      # bus 2; match your phone's bus
+```
+
+Decode with the summary script pattern: the URB status is what matters.
+`ENOENT`/`ECONNRESET` on completion means *we* cancelled it (our timeout fired
+and the device never responded); `EPIPE` means the device stalled; `OK` on a
+sibling endpoint proves the device is servicing the bus generally, which is what
+localised the fault above.
+
+**Two NCM pairs.** The CarPlay configuration exposes two, and `cdc_ncm` claims
+the first as soon as the configuration is applied. The bridge releases it
+(`detachKernelNcmDrivers`) and uses that first pair, which is correct: its host
+MAC shares an allocation with the phone's own address (`ca:1f:e8:0f:…` here)
+while the second pair's is unrelated. `CARPLAY_NCM_CTRL_IF` pins the pair if you
+need to re-test that.
 - `stop()` appears to hang for ~2s → by design; threads are joined rather than
   having their fds yanked. Longer than that means a usbfs bulk IN ignored its
   timeout, and there is no `USBDEVFS_DISCARDURB` escape hatch.
@@ -579,11 +634,11 @@ Not all stages below are implemented yet. Current state:
 | USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
-| NCM ↔ TAP bridge | written, differentially verified vs LIVI |
+| NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session** (pair-setup/verify, auth-setup, /info, SETUP, RECORD, HID, screen + audio streams) | **NOT YET WRITTEN** |
-| **Node orchestration**, stages 2–5 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
-| **Node orchestration** wiring iap2 → NCM → airplay | **NOT YET WRITTEN** |
+| **Node orchestration**, stages 2–6 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
+| **Node orchestration** wiring NCM → airplay | **NOT YET WRITTEN** |
 | zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
 
 Stages 2–4 run today via `--max-stage`, which stops the pipeline at a chosen
@@ -611,14 +666,10 @@ dashboard.
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
 
-1. **NCM enumeration** (not framing) — sysfs endpoint discovery after
-   `SETINTERFACE`, and the hardcoded altsetting 1. Note config 6 exposes **two**
-   NCM function pairs (If3+If4 and If5+If6); the kernel's `cdc_ncm` claims the
-   first pair as soon as the configuration is applied, so the bridge must both
-   detach it and select the right pair. Neither is covered by the differential
-   framing tests.
+1. **AirPlay session layer** — still unwritten, so stages 7–10 are untouched.
+   The phone is already sending `POST /pair-setup`, so this is the only thing
+   standing between here and a picture.
 2. **Audio pacing** — timing-dependent, cannot be desk-checked.
-3. **AirPlay session layer** — still unwritten, so stages 7–10 are untouched.
 
 **Retired by the 2026-07-21 hardware session:**
 - ~~usbmuxd socket bridge~~ — `idevice_id -l` and `ideviceinfo` both work through
@@ -631,13 +682,19 @@ Ranked by remaining uncertainty (highest first):
 - ~~iAP2 retransmission/EAK timers~~ — not a risk on this path: the phone
   advertises `max_retransmissions=0 max_ack=0`, so they never run.
 - ~~Outbound fragmentation off-by-ten~~ — `max_len` is 65535 as assumed.
+- ~~NCM enumeration / altsetting / pair selection~~ — all correct on hardware.
+  The real defect was the undrained interrupt endpoint, which no amount of
+  framing verification would have caught.
+- ~~NTB16 framing on the wire~~ — 3960 blocks accepted by the phone with no
+  errors, confirming the differential testing against LIVI.
 - ~~MFi authentication~~ — certificate (908 B) accepted and a 20-byte SHA-1
   challenge signed; the phone answers `AuthenticationSucceeded`. Protocol major
   is **2** on this CP2.0C part, so the SHA-1/20-byte branch is the live one.
 - ~~Zero-length iAP2 bools~~ — **did not occur.** The phone sends a proper
   1-byte boolean, so `wired_available` decodes as `true` and
-  `CarPlayStartSession` is not suppressed. `--iap2-zero-bool-true` remains for
-  a phone that behaves differently.
+  `CarPlayStartSession` is not suppressed. See the note under stage 5: the
+  behaviour is still worth knowing, because it fails silently if a different
+  phone does send one.
 
 Deliberately *lower* risk than they look, because they are verified:
 NTB16 framing (byte-identical to LIVI across 30 cases), the crypto primitives

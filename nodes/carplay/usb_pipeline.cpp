@@ -5,6 +5,7 @@
 
 #include "apple_usb/lockdown.h"
 #include "apple_usb/muxd.h"
+#include "apple_usb/ncm_bridge.h"
 #include "apple_usb/usb_device.h"
 #include "apple_usb/usbmuxd_server.h"
 
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -204,12 +206,50 @@ bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
         SPDLOG_INFO("[node] stopping after stage 3 as requested");
     }
 
+    // --- Stage 6: NCM <-> TAP link -------------------------------------------
+    //
+    // Brought up *before* the iAP2 session, not after: the phone asks for the
+    // accessory endpoint moments after authentication, and the address only
+    // exists once this bridge is running.
+    std::unique_ptr<apple_usb::NcmBridge> ncm;
+    if (ok && options.max_stage >= 6)
+    {
+        ncm = std::make_unique<apple_usb::NcmBridge>(*device);
+        if (!ncm->start())
+        {
+            SPDLOG_ERROR("[ncm] bridge did not start. Needs CAP_NET_ADMIN for the TAP device "
+                         "(setcap cap_net_admin+ep on this binary, or run as root).");
+            ncm.reset();
+            ok = false;
+        }
+        else
+        {
+            SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm->interfaceName(),
+                        ncm->linkLocalAddress());
+        }
+    }
+
     // --- Stage 5: iAP2 link layer, identification, MFi auth ------------------
     if (ok && carkit && options.max_stage >= 5)
     {
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
-        iap2_options.zero_length_bool_is_true = options.zero_length_bool_is_true;
+
+        if (ncm)
+        {
+            apple_usb::NcmBridge* bridge = ncm.get();
+            iap2_options.endpoint_provider =
+                [bridge]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                if (!bridge->running() || bridge->linkLocalAddress().empty())
+                {
+                    return std::nullopt;
+                }
+                Iap2SessionOptions::Endpoint endpoint;
+                endpoint.link_local_address = bridge->linkLocalAddress();
+                endpoint.device_identifier = bridge->hostMac();
+                return endpoint;
+            };
+        }
 
         if (!runIap2Session(*carkit, iap2_options, stop))
         {
@@ -226,6 +266,10 @@ bool runUsbPipeline(const UsbPipelineOptions& options, std::atomic<bool>& stop)
     }
 
     SPDLOG_INFO("[node] tearing down the USB pipeline");
+    if (ncm)
+    {
+        ncm->stop();
+    }
     if (carkit)
     {
         carkit->close();

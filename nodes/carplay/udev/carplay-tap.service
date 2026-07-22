@@ -1,0 +1,30 @@
+# Creates the persistent TAP device the CarPlay NCM bridge attaches to.
+#
+# The point of a persistent device is that the privilege lives on the *device*
+# rather than on the driver binary: the driver then needs no CAP_NET_ADMIN at
+# all, and nothing has to be re-granted after a rebuild.
+#
+# Edit User= below to the account that runs the driver, then:
+#   sudo cp nodes/carplay/udev/carplay-tap.service /etc/systemd/system/
+#   sudo systemctl enable --now carplay-tap.service
+[Unit]
+Description=Persistent TAP device for the wired CarPlay NCM bridge
+After=network-pre.target
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=CARPLAY_TAP=cpusb0
+Environment=CARPLAY_USER=ryan
+ExecStart=/bin/sh -c 'ip link show "$CARPLAY_TAP" >/dev/null 2>&1 || ip tuntap add dev "$CARPLAY_TAP" mode tap user "$CARPLAY_USER"'
+# EUI-64 so the kernel derives the same fe80:: the bridge advertises when the
+# phone-dictated MAC is applied at runtime.
+ExecStart=/bin/sh -c 'ip link set "$CARPLAY_TAP" addrgenmode eui64'
+ExecStart=/bin/sh -c 'ip link set "$CARPLAY_TAP" up'
+# One peer on this link, so duplicate address detection only delays the address.
+ExecStart=/bin/sh -c 'sysctl -qw "net.ipv6.conf.$CARPLAY_TAP.accept_dad=0"'
+ExecStop=/bin/sh -c 'ip link del "$CARPLAY_TAP" || true'
+
+[Install]
+WantedBy=multi-user.target

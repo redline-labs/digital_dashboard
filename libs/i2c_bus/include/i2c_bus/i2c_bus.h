@@ -9,7 +9,7 @@
 //   * macOS  -- the MCP2221A driven directly over USB HID (hidapi), because
 //               there is no kernel driver for it there.
 //
-// Backends are selected at compile time; see CMakeLists.txt.
+// The backend follows the host platform; there is nothing to configure.
 #ifndef I2C_BUS_I2C_BUS_H_
 #define I2C_BUS_I2C_BUS_H_
 

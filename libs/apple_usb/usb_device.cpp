@@ -316,6 +316,17 @@ std::vector<uint8_t> usbControl(int fd, uint8_t bmRequestType, uint8_t bRequest,
     return buffer;
 }
 
+bool usbClearHalt(int fd, uint8_t endpoint)
+{
+    unsigned int target = endpoint;
+    if (ioctl(fd, USBDEVFS_CLEAR_HALT, &target) < 0)
+    {
+        SPDLOG_DEBUG("USBDEVFS_CLEAR_HALT(0x{:02x}) failed: {}", endpoint, std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
 void usbBulkOut(int fd, uint8_t endpoint, const uint8_t* data, size_t len, unsigned timeout_ms)
 {
     // usbdevfs_bulktransfer keeps data non-const; copy into a scratch buffer.
@@ -358,6 +369,7 @@ bool switchToCarPlayConfiguration(const DeviceInfo&)
 
 std::vector<unsigned int> boundInterfaces(const DeviceInfo&) { return {}; }
 bool usbDisconnectKernelDriver(int, unsigned int) { return false; }
+bool usbClearHalt(int, uint8_t) { return false; }
 
 void usbClaimInterface(int, unsigned int) { throw std::system_error(ENOSYS, std::generic_category()); }
 std::vector<uint8_t> usbControl(int, uint8_t, uint8_t, uint16_t, uint16_t, uint16_t, const uint8_t*, unsigned)

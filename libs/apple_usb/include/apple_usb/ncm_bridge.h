@@ -50,6 +50,12 @@ class NcmBridge
     // start() succeeds.
     const std::string& interfaceName() const { return ifname_; }
 
+    // The MAC the TAP interface actually ended up with -- the phone dictates it
+    // through the CDC Ethernet functional descriptor. Goes into
+    // CarPlayStartSession as the accessory device identifier, and is the value
+    // linkLocalAddress() is derived from.
+    const std::string& hostMac() const { return host_mac_; }
+
     // The accessory-side IPv6 link-local address on that interface, e.g.
     // "fe80::5a:aabb:ccdd:eeff". This is what goes into CarPlayStartSession.
     const std::string& linkLocalAddress() const { return fe80_; }
@@ -58,6 +64,10 @@ class NcmBridge
 
   private:
     // --- discovery (sysfs + device descriptors) ---
+
+    // Releases any kernel driver holding this device's NCM interfaces. The
+    // CarPlay configuration exposes two NCM pairs and cdc_ncm claims the first.
+    void detachKernelNcmDrivers() const;
 
     // True when the kernel cdc_ncm driver already owns a netdev under this
     // device; in that case there is nothing for us to do (and claiming would
@@ -72,6 +82,11 @@ class NcmBridge
     // (iMACAddress string). Returns "" when unavailable.
     std::string parseHostMac(unsigned ctrl_if) const;
 
+    // Interrupt IN endpoint of the control interface. CDC devices deliver
+    // NETWORK_CONNECTION / CONNECTION_SPEED_CHANGE notifications there, and the
+    // kernel's cdc_ncm keeps a URB queued on it at all times.
+    bool findInterruptEndpoint(unsigned ctrl_if, uint8_t& ep_int) const;
+
     // Bulk endpoints of the data interface's *current* altsetting; call only
     // after USBDEVFS_SETINTERFACE has selected altsetting 1.
     bool findBulkEndpoints(unsigned data_if, uint8_t& ep_in, uint8_t& ep_out) const;
@@ -82,6 +97,7 @@ class NcmBridge
     void cleanup();
 
     // --- pumps ---
+    void statusLoop();
     void usbToTapLoop();
     void tapToUsbLoop();
 
@@ -95,6 +111,14 @@ class NcmBridge
     DeviceInfo device_;
     int fd_ = -1;      // usbfs fd for the phone
     int tap_fd_ = -1;  // /dev/net/tun fd owning the TAP device
+
+    std::string host_mac_;
+
+    // dwNtbInMaxSize from GET_NTB_PARAMETERS; echoed back in SET_NTB_INPUT_SIZE.
+    uint32_t in_max_ = 32764;
+
+    uint8_t ep_int_ = 0;
+    std::thread status_thread_;
 
     unsigned ctrl_iface_ = 0;
     unsigned data_iface_ = 0;

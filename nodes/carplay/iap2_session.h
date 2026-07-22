@@ -9,6 +9,8 @@
 #include "apple_usb/lockdown.h"
 
 #include <atomic>
+#include <functional>
+#include <optional>
 #include <string>
 
 namespace carplay
@@ -22,15 +24,23 @@ struct Iap2SessionOptions
     // while the MFi board is being repaired.
     bool allow_missing_mfi = false;
 
-    // docs/carplay_bringup.md flags this: LIVI decodes a zero-length iAP2
-    // boolean as absent, which makes CarPlayAvailability.wired_available falsy
-    // and silently skips CarPlayStartSession. Setting this treats a zero-length
-    // bool in that message as "true" (presence-as-value), which is the doc's
-    // one-line experiment.
-    bool zero_length_bool_is_true = false;
-
     // Seconds to wait for the link to negotiate before giving up.
     unsigned negotiate_timeout_ms = 10000;
+
+    // Invoked once the phone reports wired CarPlay available. Returns the
+    // accessory endpoint the phone should dial, or nullopt when the transport
+    // is not up -- in which case CarPlayStartSession is not sent.
+    //
+    // This is a callback rather than a plain field because the NCM link is
+    // brought up *after* the iAP2 session exists: the address does not exist
+    // yet when the session starts.
+    struct Endpoint
+    {
+        std::string link_local_address;  // accessory fe80::, from NcmBridge
+        std::string device_identifier;   // accessory MAC, colon separated
+        uint32_t port = 7000;
+    };
+    std::function<std::optional<Endpoint>()> endpoint_provider;
 };
 
 // Drives the iAP2 session until the link dies or `stop` is set. Returns true if

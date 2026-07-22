@@ -4,15 +4,19 @@
 
 #include <spdlog/spdlog.h>
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <net/if.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <linux/if_arp.h>
 #include <linux/if_tun.h>
+#include <linux/sockios.h>
 #include <linux/usbdevice_fs.h>
 
 #include <algorithm>
@@ -20,6 +24,7 @@
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -49,6 +54,15 @@ constexpr uint8_t kCdcInterfaceClass = 0x02;
 constexpr uint8_t kCdcNcmSubClass = 0x0d;
 constexpr uint8_t kCdcDataInterfaceClass = 0x0a;
 constexpr uint8_t kGetNtbParameters = 0x80;
+// CDC class requests the kernel's cdc_ncm driver issues during bring-up. We
+// previously sent only GET_NTB_PARAMETERS, which is the one request that reads
+// state rather than establishing any.
+constexpr uint8_t kSetEthernetPacketFilter = 0x43;
+constexpr uint8_t kSetNtbFormat = 0x84;
+constexpr uint8_t kSetNtbInputSize = 0x86;
+constexpr uint16_t kNtbFormat16 = 0x0000;
+// DIRECTED | BROADCAST | ALL_MULTICAST | PROMISCUOUS.
+constexpr uint16_t kPacketFilterAll = 0x000F;
 constexpr uint8_t kDescriptorTypeInterface = 0x04;
 constexpr uint8_t kDescriptorTypeCsInterface = 0x24;
 constexpr uint8_t kCdcEthernetFunctionalDescriptor = 0x0f;
@@ -128,6 +142,205 @@ std::atomic<unsigned> g_tap_seq{0};
 
 // Run a command, logging the exact argv and any output. Returns the exit
 // status, or -1 when the child could not be started / was killed.
+// <linux/ipv6.h> cannot be included alongside <netinet/in.h>, so mirror the one
+// structure we need from it.
+struct In6Ifreq
+{
+    struct in6_addr ifr6_addr;
+    uint32_t ifr6_prefixlen;
+    int ifr6_ifindex;
+};
+
+// Parse "aa:bb:cc:dd:ee:ff" into six bytes.
+bool parseMacBytes(const std::string& mac, uint8_t out[6])
+{
+    unsigned values[6] = {};
+    if (std::sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &values[0], &values[1], &values[2],
+                    &values[3], &values[4], &values[5]) != 6)
+    {
+        return false;
+    }
+    for (int i = 0; i < 6; ++i)
+    {
+        out[i] = static_cast<uint8_t>(values[i]);
+    }
+    return true;
+}
+
+// The three interface operations below replace shell-outs to `ip`. That is not
+// tidiness: file capabilities set with setcap are *not* inherited by child
+// processes, so an `ip` subprocess would run unprivileged and fail with
+// EPERM even though this process holds CAP_NET_ADMIN. Doing the work in-process
+// keeps a single setcap on the driver binary sufficient.
+bool setInterfaceMac(const std::string& ifname, const std::string& mac, int tun_fd)
+{
+    uint8_t bytes[6] = {};
+    if (!parseMacBytes(mac, bytes))
+    {
+        SPDLOG_ERROR("[ncm] cannot parse MAC '{}'", mac);
+        return false;
+    }
+
+    ifreq request{};
+    std::strncpy(request.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    request.ifr_hwaddr.sa_family = ARPHRD_ETHER;
+    std::memcpy(request.ifr_hwaddr.sa_data, bytes, sizeof(bytes));
+
+    // The tun driver services SIOCSIFHWADDR on its own fd and only requires
+    // that we own the device, so this succeeds without CAP_NET_ADMIN on a
+    // persistent TAP created for this user. Try it before the generic socket
+    // path, which does need the capability.
+    if (tun_fd >= 0 && ::ioctl(tun_fd, SIOCSIFHWADDR, &request) >= 0)
+    {
+        return true;
+    }
+
+    const int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        SPDLOG_ERROR("[ncm] socket() failed: {}", strerror(errno));
+        return false;
+    }
+    const bool ok = ::ioctl(sock, SIOCSIFHWADDR, &request) >= 0;
+    if (!ok)
+    {
+        SPDLOG_ERROR("[ncm] setting {} MAC to {} failed: {}. Either grant CAP_NET_ADMIN or "
+                     "create the TAP as a persistent device owned by this user.",
+                     ifname, mac, strerror(errno));
+    }
+    ::close(sock);
+    return ok;
+}
+
+bool setInterfaceUp(const std::string& ifname)
+{
+    const int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        return false;
+    }
+
+    ifreq request{};
+    std::strncpy(request.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    bool ok = ::ioctl(sock, SIOCGIFFLAGS, &request) >= 0;
+
+    // Setting the flags needs CAP_NET_ADMIN, but reading them does not. A
+    // persistent TAP that was brought up once at setup time is already in the
+    // desired state, so do not spend a privileged call to re-assert it.
+    if (ok && (request.ifr_flags & IFF_UP) != 0)
+    {
+        SPDLOG_DEBUG("[ncm] {} is already up", ifname);
+        ::close(sock);
+        return true;
+    }
+
+    if (ok)
+    {
+        request.ifr_flags |= (IFF_UP | IFF_RUNNING);
+        ok = ::ioctl(sock, SIOCSIFFLAGS, &request) >= 0;
+    }
+    if (!ok)
+    {
+        SPDLOG_ERROR("[ncm] bringing {} up failed: {}. Either grant CAP_NET_ADMIN or bring the "
+                     "persistent TAP up once at setup ('ip link set {} up').",
+                     ifname, strerror(errno), ifname);
+    }
+    ::close(sock);
+    return ok;
+}
+
+// /proc/net/if_inet6 lists every IPv6 address per interface as 32 hex chars.
+// Readable unprivileged, which is what lets us confirm the kernel already
+// assigned the EUI-64 link-local we were about to add.
+bool hasIpv6Address(const std::string& ifname, const std::string& address)
+{
+    in6_addr wanted{};
+    if (::inet_pton(AF_INET6, address.c_str(), &wanted) != 1)
+    {
+        return false;
+    }
+
+    std::ifstream in("/proc/net/if_inet6");
+    std::string hex, index, prefix, scope, flags, name;
+    while (in >> hex >> index >> prefix >> scope >> flags >> name)
+    {
+        if (name != ifname || hex.size() != 32)
+        {
+            continue;
+        }
+        in6_addr candidate{};
+        bool parsed = true;
+        for (int i = 0; i < 16 && parsed; ++i)
+        {
+            unsigned byte = 0;
+            const char* start = hex.data() + (i * 2);
+            parsed = std::from_chars(start, start + 2, byte, 16).ec == std::errc{};
+            candidate.s6_addr[i] = static_cast<uint8_t>(byte);
+        }
+        if (parsed && std::memcmp(&candidate, &wanted, sizeof(wanted)) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool addIpv6Address(const std::string& ifname, const std::string& address, uint32_t prefix_len)
+{
+    const int sock = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        SPDLOG_ERROR("[ncm] AF_INET6 socket() failed: {}", strerror(errno));
+        return false;
+    }
+
+    ifreq index_request{};
+    std::strncpy(index_request.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    if (::ioctl(sock, SIOCGIFINDEX, &index_request) < 0)
+    {
+        SPDLOG_ERROR("[ncm] SIOCGIFINDEX({}) failed: {}", ifname, strerror(errno));
+        ::close(sock);
+        return false;
+    }
+
+    In6Ifreq request{};
+    if (::inet_pton(AF_INET6, address.c_str(), &request.ifr6_addr) != 1)
+    {
+        SPDLOG_ERROR("[ncm] cannot parse IPv6 address '{}'", address);
+        ::close(sock);
+        return false;
+    }
+    request.ifr6_prefixlen = prefix_len;
+    request.ifr6_ifindex = index_request.ifr_ifindex;
+
+    // EEXIST means the kernel already autoconfigured this exact link-local,
+    // which is the desired end state.
+    bool ok = ::ioctl(sock, SIOCSIFADDR, &request) >= 0 || errno == EEXIST;
+    const int saved_errno = errno;
+    ::close(sock);
+
+    if (ok)
+    {
+        return true;
+    }
+
+    // Without CAP_NET_ADMIN we cannot add it -- but the kernel derives the same
+    // EUI-64 link-local from the MAC on its own, so on a persistent TAP the
+    // address we wanted is usually already there. Only a genuine absence is an
+    // error.
+    if (hasIpv6Address(ifname, address))
+    {
+        SPDLOG_DEBUG("[ncm] {} already carries {}, kernel-assigned", ifname, address);
+        return true;
+    }
+
+    SPDLOG_ERROR("[ncm] adding {}/{} to {} failed: {}. Either grant CAP_NET_ADMIN, or set "
+                 "'ip link set {} addrgenmode eui64' on the persistent TAP so the kernel "
+                 "derives this address itself.",
+                 address, prefix_len, ifname, strerror(saved_errno), ifname);
+    return false;
+}
+
 int runCommand(const std::vector<std::string>& argv, int timeout_ms = 5000)
 {
     std::string joined;
@@ -286,6 +499,83 @@ NcmBridge::~NcmBridge()
 
 // ---------------- discovery ----------------
 
+void NcmBridge::detachKernelNcmDrivers() const
+{
+    // In the CarPlay configuration the phone exposes *two* NCM function pairs,
+    // and the kernel's cdc_ncm binds the first one the instant the
+    // configuration is applied. Left alone that costs us twice: kernelNcmBound()
+    // refuses to run at all, and findNcmPair() skips the driver-owned interfaces
+    // and silently selects the *second* pair instead of the one LIVI uses.
+    // Release them so discovery sees the device the way it expects.
+    std::error_code ec;
+    const fs::path root = fs::canonical(device_.sysfs_path, ec);
+    if (ec)
+    {
+        return;
+    }
+    const std::string prefix =
+        root.filename().string() + ":" + readSysfsAttr(root, "bConfigurationValue") + ".";
+
+    std::vector<unsigned> to_release;
+    for (const auto& entry : fs::directory_iterator(root, ec))
+    {
+        const std::string name = entry.path().filename().string();
+        if (!name.starts_with(prefix))
+        {
+            continue;
+        }
+        const std::string klass = readSysfsAttr(entry.path(), "bInterfaceClass");
+        const bool is_ncm_control =
+            (klass == "02") && (readSysfsAttr(entry.path(), "bInterfaceSubClass") == "0d");
+        const bool is_cdc_data = (klass == "0a");
+        if (!is_ncm_control && !is_cdc_data)
+        {
+            continue;
+        }
+
+        std::error_code drv_ec;
+        if (!fs::is_symlink(entry.path() / "driver", drv_ec))
+        {
+            continue;
+        }
+        const fs::path driver = fs::canonical(entry.path() / "driver", drv_ec);
+        if (drv_ec)
+        {
+            continue;
+        }
+
+        unsigned iface = 0;
+        const std::string number = name.substr(name.rfind('.') + 1);
+        if (std::from_chars(number.data(), number.data() + number.size(), iface).ec == std::errc{})
+        {
+            SPDLOG_INFO("[ncm] releasing interface {} from kernel driver {}", iface,
+                        driver.filename().string());
+            to_release.push_back(iface);
+        }
+    }
+
+    if (to_release.empty())
+    {
+        return;
+    }
+
+    const auto fd = openDevice(device_);
+    if (!fd)
+    {
+        SPDLOG_WARN("[ncm] cannot open the device to release its NCM interfaces");
+        return;
+    }
+    for (const unsigned iface : to_release)
+    {
+        usbDisconnectKernelDriver(*fd, iface);
+    }
+    ::close(*fd);
+
+    // Unbinding tears the netdev down asynchronously; give sysfs a moment to
+    // catch up before kernelNcmBound() looks for it.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+}
+
 bool NcmBridge::kernelNcmBound() const
 {
     std::error_code ec;
@@ -320,6 +610,23 @@ bool NcmBridge::kernelNcmBound() const
 
 bool NcmBridge::findNcmPair(unsigned& ctrl_if, unsigned& data_if) const
 {
+    // Bring-up override. The CarPlay configuration exposes two NCM function
+    // pairs and which one carries the AV link is not self-evident from the
+    // descriptors, so allow pinning the control interface while that is being
+    // established. The data interface is assumed to be the next one, matching
+    // the descriptor layout.
+    if (const char* pinned = std::getenv("CARPLAY_NCM_CTRL_IF"); pinned != nullptr)
+    {
+        unsigned value = 0;
+        if (std::from_chars(pinned, pinned + std::strlen(pinned), value).ec == std::errc{})
+        {
+            ctrl_if = value;
+            data_if = value + 1;
+            SPDLOG_WARN("[ncm] CARPLAY_NCM_CTRL_IF pins the NCM pair to {}/{}", ctrl_if, data_if);
+            return true;
+        }
+    }
+
     std::error_code ec;
     const fs::path root = fs::canonical(device_.sysfs_path, ec);
     if (ec)
@@ -474,6 +781,39 @@ std::string NcmBridge::parseHostMac(unsigned ctrl_if) const
     return mac;
 }
 
+bool NcmBridge::findInterruptEndpoint(unsigned ctrl_if, uint8_t& ep_int) const
+{
+    std::error_code ec;
+    const fs::path root = fs::canonical(device_.sysfs_path, ec);
+    if (ec)
+    {
+        return false;
+    }
+    const std::string dev = root.filename().string();
+    const std::string cfg = readSysfsAttr(root, "bConfigurationValue");
+    const fs::path ipath = root / fmt::format("{}:{}.{}", dev, cfg, ctrl_if);
+
+    ep_int = 0;
+    for (const auto& entry : fs::directory_iterator(ipath, ec))
+    {
+        if (!entry.path().filename().string().starts_with("ep_"))
+        {
+            continue;
+        }
+        if (readSysfsAttr(entry.path(), "type") != "Interrupt")
+        {
+            continue;
+        }
+        const auto addr = static_cast<uint8_t>(readSysfsUint(entry.path(), "bEndpointAddress", 16));
+        if (addr & 0x80)
+        {
+            ep_int = addr;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool NcmBridge::findBulkEndpoints(unsigned data_if, uint8_t& ep_in, uint8_t& ep_out) const
 {
     std::error_code ec;
@@ -539,9 +879,15 @@ bool NcmBridge::createTap()
     ifreq ifr{};
     std::strncpy(ifr.ifr_name, ifname_.c_str(), IFNAMSIZ - 1);
     ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+    // Attaches to an existing persistent TAP of this name if one is owned by
+    // us, and only tries to create a new device otherwise -- creation is what
+    // needs CAP_NET_ADMIN, attaching does not.
     if (::ioctl(tap_fd_, TUNSETIFF, &ifr) < 0)
     {
-        SPDLOG_ERROR("[ncm] TUNSETIFF({}) failed: {}", ifname_, strerror(errno));
+        SPDLOG_ERROR("[ncm] TUNSETIFF({}) failed: {}. Create a persistent TAP owned by this "
+                     "user once -- 'ip tuntap add dev {} mode tap user $USER' -- or grant "
+                     "CAP_NET_ADMIN. See docs/carplay_bringup.md stage 6.",
+                     ifname_, strerror(errno), ifname_);
         return false;
     }
     // The kernel may hand back a different name if ours collided.
@@ -556,7 +902,7 @@ bool NcmBridge::configureInterface(const std::string& mac)
     {
         // The phone dictates the host MAC through iMACAddress; it will not
         // talk to us if we use the random one the kernel generated.
-        runCommand({"ip", "link", "set", ifname_, "address", mac});
+        setInterfaceMac(ifname_, mac, tap_fd_);
     }
     else
     {
@@ -584,12 +930,15 @@ bool NcmBridge::configureInterface(const std::string& mac)
         }
     }
 
-    runCommand({"ip", "link", "set", ifname_, "up"});
+    if (!setInterfaceUp(ifname_))
+    {
+        return false;
+    }
 
     // Derive the accessory link-local from whatever MAC the interface actually
     // ended up with, so a failed "ip link set address" cannot desync the two.
-    const std::string actual_mac =
-        readSysfsAttr(fs::path("/sys/class/net") / ifname_, "address");
+    host_mac_ = readSysfsAttr(fs::path("/sys/class/net") / ifname_, "address");
+    const std::string& actual_mac = host_mac_;
     fe80_ = deriveEui64LinkLocal(actual_mac);
     if (fe80_.empty())
     {
@@ -597,7 +946,10 @@ bool NcmBridge::configureInterface(const std::string& mac)
         return false;
     }
     SPDLOG_INFO("[ncm] {} mac={} -> link-local {}", ifname_, actual_mac, fe80_);
-    runCommand({"ip", "-6", "addr", "add", fe80_ + "/64", "dev", ifname_});
+    if (!addIpv6Address(ifname_, fe80_, 64))
+    {
+        return false;
+    }
     return true;
 }
 
@@ -613,9 +965,12 @@ bool NcmBridge::start()
         SPDLOG_ERROR("[ncm] device has no sysfs path");
         return false;
     }
+    detachKernelNcmDrivers();
+
     if (kernelNcmBound())
     {
-        SPDLOG_ERROR("[ncm] refusing to claim: kernel cdc_ncm is bound to {}", device_.serial);
+        SPDLOG_ERROR("[ncm] refusing to claim: kernel cdc_ncm is still bound to {} after "
+                     "trying to release it", device_.serial);
         return false;
     }
     if (!findNcmPair(ctrl_iface_, data_iface_))
@@ -652,6 +1007,7 @@ bool NcmBridge::start()
                                        static_cast<uint16_t>(ctrl_iface_), 28);
         if (params.size() >= 28)
         {
+            in_max_ = get_le32(params.data() + 4);
             out_max_ = std::min(get_le32(params.data() + 16), kNtbOutMaxCeiling);
             SPDLOG_INFO("[ncm] NTB params: formats=0x{:04x} inMax={} outMax={} (clamped {}) "
                         "ndpOutDivisor={} ndpOutRemainder={} ndpOutAlign={} maxDatagrams={}",
@@ -691,6 +1047,66 @@ bool NcmBridge::start()
         return false;
     }
 
+    // We take these endpoints over from the kernel's cdc_ncm driver, which may
+    // leave their data toggles advanced. A toggle we disagree with makes the
+    // device discard everything we send as a duplicate and NAK it, so bulk
+    // writes time out while reads on the same interface keep working. Clearing
+    // halt resets the toggle on both sides.
+    usbClearHalt(fd_, ep_in_);
+    usbClearHalt(fd_, ep_out_);
+
+    if (findInterruptEndpoint(ctrl_iface_, ep_int_))
+    {
+        SPDLOG_INFO("[ncm] control interface {} status endpoint 0x{:02x}", ctrl_iface_, ep_int_);
+    }
+    else
+    {
+        SPDLOG_WARN("[ncm] no interrupt endpoint on control interface {}", ctrl_iface_);
+    }
+
+    // Complete the CDC-NCM bring-up handshake. Skipping these leaves the device
+    // in a state where it will happily stream to us but never accepts anything
+    // on the bulk OUT endpoint, which surfaces as every write timing out.
+    // bmRequestType 0x21 = host-to-device, class, interface.
+    try
+    {
+        usbControl(fd_, 0x21, kSetNtbFormat, kNtbFormat16,
+                   static_cast<uint16_t>(ctrl_iface_), 0);
+        SPDLOG_DEBUG("[ncm] SET_NTB_FORMAT(NTB16) ok");
+    }
+    catch (const std::system_error& e)
+    {
+        SPDLOG_DEBUG("[ncm] SET_NTB_FORMAT failed ({}); device may be NTB16-only", e.what());
+    }
+
+    try
+    {
+        const uint32_t input_size = in_max_;
+        const uint8_t payload[4] = {
+            static_cast<uint8_t>(input_size & 0xFF),
+            static_cast<uint8_t>((input_size >> 8) & 0xFF),
+            static_cast<uint8_t>((input_size >> 16) & 0xFF),
+            static_cast<uint8_t>((input_size >> 24) & 0xFF)};
+        usbControl(fd_, 0x21, kSetNtbInputSize, 0, static_cast<uint16_t>(ctrl_iface_),
+                   sizeof(payload), payload);
+        SPDLOG_DEBUG("[ncm] SET_NTB_INPUT_SIZE({}) ok", input_size);
+    }
+    catch (const std::system_error& e)
+    {
+        SPDLOG_DEBUG("[ncm] SET_NTB_INPUT_SIZE failed ({})", e.what());
+    }
+
+    try
+    {
+        usbControl(fd_, 0x21, kSetEthernetPacketFilter, kPacketFilterAll,
+                   static_cast<uint16_t>(ctrl_iface_), 0);
+        SPDLOG_INFO("[ncm] SET_ETHERNET_PACKET_FILTER(0x{:04x}) ok", kPacketFilterAll);
+    }
+    catch (const std::system_error& e)
+    {
+        SPDLOG_WARN("[ncm] SET_ETHERNET_PACKET_FILTER failed ({})", e.what());
+    }
+
     if (!createTap() || !configureInterface(mac))
     {
         cleanup();
@@ -698,6 +1114,10 @@ bool NcmBridge::start()
     }
 
     run_.store(true);
+    if (ep_int_ != 0)
+    {
+        status_thread_ = std::thread([this] { statusLoop(); });
+    }
     usb_to_tap_ = std::thread([this] { usbToTapLoop(); });
     tap_to_usb_ = std::thread([this] { tapToUsbLoop(); });
 
@@ -711,6 +1131,10 @@ bool NcmBridge::start()
 void NcmBridge::stop()
 {
     const bool was_running = run_.exchange(false);
+    if (status_thread_.joinable())
+    {
+        status_thread_.join();
+    }
     if (usb_to_tap_.joinable())
     {
         usb_to_tap_.join();
@@ -930,8 +1354,69 @@ std::vector<uint8_t> NcmBridge::buildNtb(const uint8_t* frame, size_t len)
 
 // ---------------- pumps ----------------
 
+// Drains the control interface's interrupt endpoint. CDC devices announce link
+// state there (NETWORK_CONNECTION, CONNECTION_SPEED_CHANGE) and the kernel's
+// cdc_ncm always keeps a URB queued on it. We previously never read it at all.
+void NcmBridge::statusLoop()
+{
+    constexpr size_t kNotificationSize = 64;
+    constexpr unsigned kPollTimeoutMs = 1000;
+
+    while (run_.load())
+    {
+        try
+        {
+            const auto notification = usbBulkIn(fd_, ep_int_, kNotificationSize, kPollTimeoutMs);
+            if (notification.size() >= 8)
+            {
+                const uint8_t request = notification[1];
+                const uint16_t value = get_le16(notification.data() + 2);
+                switch (request)
+                {
+                    case 0x00:  // NETWORK_CONNECTION
+                        SPDLOG_INFO("[ncm] link {} (NETWORK_CONNECTION)",
+                                    value != 0 ? "UP" : "DOWN");
+                        break;
+                    case 0x2A:  // CONNECTION_SPEED_CHANGE
+                        SPDLOG_INFO("[ncm] CONNECTION_SPEED_CHANGE ({} bytes)",
+                                    notification.size());
+                        break;
+                    default:
+                        SPDLOG_DEBUG("[ncm] notification 0x{:02x} ({} bytes)", request,
+                                     notification.size());
+                        break;
+                }
+            }
+        }
+        catch (const std::system_error& e)
+        {
+            const int err = e.code().value();
+            if (err == ETIMEDOUT)
+            {
+                continue;  // no notification pending, normal
+            }
+            if (!run_.load() || err == ENODEV || err == ESHUTDOWN)
+            {
+                return;
+            }
+            SPDLOG_DEBUG("[ncm] status read error (errno {}): {}", err, e.what());
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}
+
 void NcmBridge::usbToTapLoop()
 {
+    // Bring-up switch: the two pumps issue synchronous USBDEVFS_BULK ioctls on
+    // the same usbfs fd, so this exists to test whether the write path is being
+    // starved by the read path. The iAP2 session runs over the carkit TLS
+    // channel rather than NCM, so it still comes up with this disabled.
+    if (std::getenv("CARPLAY_NCM_NO_READER") != nullptr)
+    {
+        SPDLOG_WARN("[ncm] CARPLAY_NCM_NO_READER set: not reading from USB");
+        return;
+    }
+
     while (run_.load())
     {
         std::vector<uint8_t> ntb;
@@ -1034,6 +1519,16 @@ void NcmBridge::tapToUsbLoop()
             {
                 SPDLOG_WARN("[ncm] tap->usb write ended (errno {}): {}", err, e.what());
                 return;
+            }
+            // The phone only powers up its NCM data path once the CarPlay
+            // session is actually running, so writes issued before that -- the
+            // kernel starts emitting router/neighbour solicitations the moment
+            // the TAP has carrier -- time out. A timed-out URB is unlinked,
+            // which can leave the endpoint's toggle out of step and wedge every
+            // later write, so resynchronise before dropping the frame.
+            if (err == ETIMEDOUT)
+            {
+                usbClearHalt(fd_, ep_out_);
             }
             SPDLOG_WARN("[ncm] tap->usb write error (errno {}): {}", err, e.what());
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
