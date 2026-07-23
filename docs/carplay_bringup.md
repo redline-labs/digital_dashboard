@@ -786,8 +786,35 @@ from the driver.
 ./build/nodes/inspect/inspect dump nodes/carplay/call         # place a call
 ```
 
-Then Siri/mic (two-way call audio), and finally the supplemental now-playing
-widget rendering the same topic the `inspect` dump showed.
+**Now-playing is wired and verified (2026-07-22).** Metadata comes over the
+**iAP2 carkit channel** (stage 5), *not* AirPlay: after MFi auth succeeds the
+session sends `StartNowPlayingUpdates`, then decodes each `NowPlayingUpdate`
+(0x5001) and publishes to `nodes/carplay/nowplaying`. Two things to know:
+
+- **Updates are partial.** A track change carries title/artist/album/duration;
+  a tick may carry only `elapsed`. `usb_pipeline.cpp` merges each update into a
+  persistent state before publishing, so absent fields are not cleared.
+- **They are re-published every 2 s.** zenoh has no retained messages, so a
+  dashboard that connects while a track is *paused* (no fresh updates) would
+  otherwise show nothing. The republish keeps late joiners fed.
+
+Verified on hardware: a paused Music track published
+`American Dream / Alabama Shakes / I Must Be Dreaming`, merged from separate
+partial updates, with duration and elapsed for the progress bar.
+
+**Album artwork is wired and verified (2026-07-22).** After a track change the
+phone pushes the cover image over the iAP2 **file-transfer session** (id 12),
+automatically — no per-track request. The receiver in `iap2_session.cpp` handles
+the datagram protocol (`SETUP`→ack `START`, accumulate `FIRST/DATA/LAST`,
+complete→ack `SUCCESS`) and hands the assembled JPEG to the artwork handler,
+which folds it into the now-playing state and bumps `album_art_seq`. The widget
+caches by that sequence and only re-decodes on change, so the 2 s metadata
+republish does not thrash it. Verified: a 99,563-byte JPEG arrived intact and
+matched the track (Alabama Shakes cover).
+
+**Not yet done:** route-guidance (`nav`) and call (`call`) topics, Siri/mic
+two-way audio, and the AAC-LC buffered-music stream (type 102). The now-playing
+widget renders the same topic the `inspect` dump shows.
 
 ## What exists today (read before starting)
 

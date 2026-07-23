@@ -9,6 +9,7 @@
 #include <spdlog/fmt/ranges.h>
 
 #include <chrono>
+#include <map>
 #include <memory>
 
 namespace carplay
@@ -217,6 +218,10 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     case iap2::MfiAuthenticator::Result::kSucceeded:
                         SPDLOG_INFO("[mfi] authentication SUCCEEDED");
                         authenticated = true;
+                        // Subscribe to now-playing metadata, exactly as LIVI
+                        // does once identification and auth are done.
+                        SPDLOG_INFO("[iap2] subscribing to now-playing updates");
+                        link.sendControlMessage(iap2::encodeStartNowPlayingUpdates());
                         break;
                     case iap2::MfiAuthenticator::Result::kFailed:
                         SPDLOG_ERROR("[mfi] authentication FAILED. Check the protocol major "
@@ -276,9 +281,93 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 break;
             }
 
+            case iap2::kMsgNowPlayingUpdate:
+            {
+                const auto now_playing = iap2::decodeNowPlayingUpdate(message->params);
+                if (!now_playing)
+                {
+                    SPDLOG_DEBUG("[iap2] NowPlayingUpdate did not decode");
+                    break;
+                }
+                SPDLOG_INFO("[iap2] now playing: '{}' / '{}' ({})",
+                            now_playing->title.value_or("?"), now_playing->artist.value_or("?"),
+                            now_playing->status.has_value() &&
+                                    *now_playing->status == iap2::PlaybackStatus::kPlaying
+                                ? "playing"
+                                : "paused");
+                if (options.now_playing_handler)
+                {
+                    options.now_playing_handler(*now_playing);
+                }
+                break;
+            }
+
             default:
                 SPDLOG_DEBUG("[iap2] unhandled {} (0x{:04x})",
                              iap2::messageIdName(message->id), message->id);
+                break;
+        }
+    });
+
+    // File-transfer receiver for album artwork. The phone pushes it on the
+    // file-transfer session after a track change: SETUP announces a transfer id
+    // (we ack with START), then data chunks arrive, and a final chunk completes
+    // it (we ack with SUCCESS). Per-ftid buffers persist across callbacks.
+    auto ft_buffers = std::make_shared<std::map<uint8_t, std::vector<uint8_t>>>();
+    link.setFileTransferHandler([&link, &options, ft_buffers](const std::vector<uint8_t>& dgram) {
+        if (dgram.size() < 2)
+        {
+            return;
+        }
+        constexpr uint8_t kSetup = 0x04;
+        constexpr uint8_t kStart = 0x01;
+        constexpr uint8_t kFirstData = 0x80;
+        constexpr uint8_t kFirstAndOnlyData = 0xC0;
+        constexpr uint8_t kData = 0x00;
+        constexpr uint8_t kLastData = 0x40;
+        constexpr uint8_t kCancel = 0x02;
+        constexpr uint8_t kSuccess = 0x05;
+
+        const uint8_t ftid = dgram[0];
+        const uint8_t ctrl = dgram[1];
+        const std::vector<uint8_t> data(dgram.begin() + 2, dgram.end());
+
+        const auto complete = [&](std::vector<uint8_t> image) {
+            ft_buffers->erase(ftid);
+            link.sendFileTransfer({ftid, kSuccess});
+            SPDLOG_INFO("[iap2] album artwork received: {} bytes", image.size());
+            if (options.artwork_handler)
+            {
+                options.artwork_handler(image);
+            }
+        };
+
+        switch (ctrl)
+        {
+            case kSetup:
+                (*ft_buffers)[ftid] = {};
+                link.sendFileTransfer({ftid, kStart});
+                break;
+            case kFirstData:
+                (*ft_buffers)[ftid] = data;
+                break;
+            case kData:
+                (*ft_buffers)[ftid].insert((*ft_buffers)[ftid].end(), data.begin(), data.end());
+                break;
+            case kFirstAndOnlyData:
+                complete(data);
+                break;
+            case kLastData:
+            {
+                auto& buf = (*ft_buffers)[ftid];
+                buf.insert(buf.end(), data.begin(), data.end());
+                complete(std::move(buf));
+                break;
+            }
+            case kCancel:
+                ft_buffers->erase(ftid);
+                break;
+            default:
                 break;
         }
     });

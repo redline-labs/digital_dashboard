@@ -7,6 +7,7 @@
 #define CARPLAY_IAP2_SESSION_H_
 
 #include "apple_usb/lockdown.h"
+#include "iap2/messages.h"
 #include "iap2/mfi_signer.h"
 
 #include <atomic>
@@ -46,6 +47,14 @@ struct Iap2SessionOptions
         uint32_t port = 7000;
     };
     std::function<std::optional<Endpoint>()> endpoint_provider;
+
+    // Called when the phone reports now-playing metadata (track, artist, album,
+    // playback status). Fires on the iAP2 poll thread.
+    std::function<void(const iap2::NowPlaying&)> now_playing_handler;
+
+    // Called with the album-artwork image (JPEG/PNG) once a file transfer for it
+    // completes. The phone pushes this automatically after a track change.
+    std::function<void(const std::vector<uint8_t>&)> artwork_handler;
 };
 
 // Drives the iAP2 session until the link dies or `stop` is set. Returns true if

@@ -420,11 +420,85 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             };
         }
 
+        // Accumulate now-playing metadata: the phone sends partial updates (a
+        // track change carries title/artist/album; a tick may carry only
+        // elapsed), so merge each into a persistent state before publishing.
+        auto now_playing = std::make_shared<NowPlaying>();
+        auto now_playing_mutex = std::make_shared<std::mutex>();
+        auto now_playing_valid = std::make_shared<std::atomic<bool>>(false);
+        iap2_options.now_playing_handler = [&bridge, now_playing, now_playing_mutex,
+                                            now_playing_valid](const iap2::NowPlaying& update) {
+            std::lock_guard<std::mutex> lock(*now_playing_mutex);
+            NowPlaying& np = *now_playing;
+            if (update.title)
+            {
+                np.title = *update.title;
+            }
+            if (update.artist)
+            {
+                np.artist = *update.artist;
+            }
+            if (update.album)
+            {
+                np.album = *update.album;
+            }
+            if (update.app_name)
+            {
+                np.app = *update.app_name;
+            }
+            if (update.duration_ms)
+            {
+                np.duration_sec = static_cast<float>(*update.duration_ms) / 1000.0f;
+            }
+            if (update.elapsed_ms)
+            {
+                np.elapsed_sec = static_cast<float>(*update.elapsed_ms) / 1000.0f;
+            }
+            if (update.status)
+            {
+                np.playing = (*update.status == iap2::PlaybackStatus::kPlaying);
+            }
+            now_playing_valid->store(true);
+            bridge.publishNowPlaying(np);
+        };
+
+        // Album artwork arrives asynchronously as a file transfer after a track
+        // change. Fold it into the accumulated state and bump the sequence so
+        // the widget knows to refresh the image.
+        iap2_options.artwork_handler = [&bridge, now_playing, now_playing_mutex,
+                                        now_playing_valid](const std::vector<uint8_t>& image) {
+            std::lock_guard<std::mutex> lock(*now_playing_mutex);
+            NowPlaying& np = *now_playing;
+            np.album_art = image;
+            ++np.album_art_seq;
+            now_playing_valid->store(true);
+            bridge.publishNowPlaying(np);
+        };
+
+        // zenoh has no retained messages, so re-publish the last-known metadata
+        // periodically -- otherwise a dashboard that connects while a track is
+        // paused (no fresh updates arriving) shows nothing.
+        std::thread now_playing_republish([&bridge, now_playing, now_playing_mutex,
+                                           now_playing_valid, &stop]() {
+            while (!stop.load())
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                if (now_playing_valid->load())
+                {
+                    std::lock_guard<std::mutex> lock(*now_playing_mutex);
+                    bridge.publishNowPlaying(*now_playing);
+                }
+            }
+        });
+
         if (!runIap2Session(*carkit, iap2_options, stop))
         {
             SPDLOG_ERROR("[iap2] session did not complete");
             ok = false;
         }
+
+        stop.store(true);  // release the republish thread if the session ended
+        now_playing_republish.join();
     }
 
     // Hold the session open so the sockets above can be poked at from another
