@@ -44,6 +44,10 @@ CarPlayWidget::~CarPlayWidget()
     _video_sub.reset();
     _audio_sub.reset();
     _session_sub.reset();
+    // Stop the sink before the ring it pulls from (member destruction order is
+    // the reverse of declaration, which would free the ring first).
+    _audio_sink.reset();
+    _audio_ring.reset();
     stopMicrophone();
     destroyDecoder();
 }
@@ -261,9 +265,12 @@ QImage CarPlayWidget::convertYuv420ToRgbImage(const AVFrame* frame)
             int R = Y + ((91881 * V) >> 16);
             int G = Y - ((22554 * U + 46802 * V) >> 16);
             int B = Y + ((116130 * U) >> 16);
-            dst[3*i + 0] = static_cast<uint8_t>(std::clamp(B, 0, 255));
+            // Format_RGB888 is byte order R, G, B. Writing B first swapped red
+            // and blue -- invisible on the --simulate white-on-grey test pattern,
+            // but a real CarPlay frame renders with red and blue exchanged.
+            dst[3*i + 0] = static_cast<uint8_t>(std::clamp(R, 0, 255));
             dst[3*i + 1] = static_cast<uint8_t>(std::clamp(G, 0, 255));
-            dst[3*i + 2] = static_cast<uint8_t>(std::clamp(R, 0, 255));
+            dst[3*i + 2] = static_cast<uint8_t>(std::clamp(B, 0, 255));
         }
     }
     return img;
@@ -276,73 +283,67 @@ void CarPlayWidget::onAudioMessage(CarPlayAudio::Reader reader)
     {
         return;
     }
-
-    // Hop to the GUI thread: QAudioSink and its QIODevice are not thread-safe
-    // and must be used from the thread that owns them.
-    QByteArray bytes(reinterpret_cast<const char*>(pcm.begin()), static_cast<int>(pcm.size()));
     const int rate = static_cast<int>(reader.getSampleRateHz());
     const int channels = reader.getChannels();
-    QMetaObject::invokeMethod(
-        this, [this, bytes = std::move(bytes), rate, channels] { playAudioChunk(bytes, rate, channels); },
-        Qt::QueuedConnection);
+    if (rate <= 0 || channels <= 0)
+    {
+        return;
+    }
+
+    // (Re)build the sink on the GUI thread when the format changes -- but only
+    // then. In steady state we push straight into the thread-safe ring from
+    // this (subscriber) thread, with no GUI-thread hop per packet.
+    if (rate != _sink_sample_rate.load() || channels != _sink_channels.load())
+    {
+        ensureAudioSink(rate, channels);
+    }
+    if (_audio_ring)
+    {
+        _audio_ring->push(reinterpret_cast<const char*>(pcm.begin()),
+                          static_cast<qint64>(pcm.size()));
+    }
 }
 
 void CarPlayWidget::ensureAudioSink(int sample_rate, int channels)
 {
-    if (_audio_sink != nullptr && sample_rate == _sink_sample_rate && channels == _sink_channels)
-    {
-        return;
-    }
+    // QAudioSink lives on the GUI thread; recreate it there. Block so the ring
+    // exists before we return to the caller that is about to push into it.
+    QMetaObject::invokeMethod(
+        this,
+        [this, sample_rate, channels] {
+            QAudioFormat format;
+            format.setSampleRate(sample_rate);
+            format.setChannelCount(channels);
+            format.setSampleFormat(QAudioFormat::Int16);
 
-    QAudioFormat format;
-    format.setSampleRate(sample_rate);
-    format.setChannelCount(channels);
-    format.setSampleFormat(QAudioFormat::Int16);
+            const QAudioDevice device = QMediaDevices::defaultAudioOutput();
+            if (!device.isFormatSupported(format))
+            {
+                SPDLOG_WARN("[carplay] audio format {} Hz / {} ch unsupported by '{}'; using its "
+                            "preferred format",
+                            sample_rate, channels, device.description().toStdString());
+                format = device.preferredFormat();
+            }
 
-    const QAudioDevice device = QMediaDevices::defaultAudioOutput();
-    if (!device.isFormatSupported(format))
-    {
-        SPDLOG_WARN("[carplay] audio format {} Hz / {} ch unsupported by '{}'; using its preferred format",
-                    sample_rate, channels, device.description().toStdString());
-        format = device.preferredFormat();
-    }
+            auto ring = std::make_unique<AudioRingBuffer>();
+            ring->configure(format.sampleRate(), format.channelCount());
+            ring->open(QIODevice::ReadOnly);
 
-    _audio_sink = std::make_unique<QAudioSink>(device, format);
-    _audio_device = _audio_sink->start();
-    _sink_sample_rate = sample_rate;
-    _sink_channels = channels;
+            auto sink = std::make_unique<QAudioSink>(device, format);
+            sink->start(ring.get());  // pull mode: the sink drains the ring
 
-    if (_audio_device == nullptr)
-    {
-        SPDLOG_ERROR("[carplay] failed to start audio sink ({} Hz / {} ch)", sample_rate, channels);
-        _audio_sink.reset();
-        _sink_sample_rate = 0;
-        _sink_channels = 0;
-        return;
-    }
-    SPDLOG_INFO("[carplay] audio sink started: {} Hz / {} ch on '{}'",
-                format.sampleRate(), format.channelCount(), device.description().toStdString());
-}
-
-void CarPlayWidget::playAudioChunk(const QByteArray& pcm, int sample_rate, int channels)
-{
-    if (sample_rate <= 0 || channels <= 0)
-    {
-        return;
-    }
-    ensureAudioSink(sample_rate, channels);
-    if (_audio_device == nullptr)
-    {
-        return;
-    }
-
-    const qint64 written = _audio_device->write(pcm.constData(), pcm.size());
-    if (written < pcm.size())
-    {
-        // The driver paces the stream; a short write means the sink buffer is
-        // full, which shows up as a dropout. Worth seeing during bring-up.
-        SPDLOG_DEBUG("[carplay] audio sink short write: {} of {} bytes", written, pcm.size());
-    }
+            // Stop the old sink before freeing the old ring, or its audio thread
+            // pulls from freed memory. ~QAudioSink joins the audio thread.
+            _audio_sink.reset();
+            _audio_ring = std::move(ring);
+            _audio_sink = std::move(sink);
+            _sink_sample_rate.store(sample_rate);
+            _sink_channels.store(channels);
+            SPDLOG_INFO("[carplay] audio sink started (pull mode): {} Hz / {} ch on '{}'",
+                        format.sampleRate(), format.channelCount(),
+                        device.description().toStdString());
+        },
+        Qt::BlockingQueuedConnection);
 }
 
 void CarPlayWidget::startMicrophone(int sample_rate, int channels)

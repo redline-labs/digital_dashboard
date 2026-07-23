@@ -16,7 +16,10 @@
 #include <QImage>
 #include <QtMultimedia/QAudioFormat>
 
+#include "carplay/audio_ring.h"
+
 #include <QtCore/QObject>
+#include <atomic>
 #include <deque>
 #include <vector>
 
@@ -57,9 +60,6 @@ class CarPlayWidget : public QWidget
     void mouseMoveEvent(QMouseEvent* e) override;
 
   private slots:
-    // Audio plumbing must touch Qt Multimedia objects on the GUI thread, so
-    // decoded PCM hops here from the subscriber thread via a queued call.
-    void playAudioChunk(const QByteArray& pcm, int sample_rate, int channels);
     void pumpMicrophone();
 
   private:
@@ -68,7 +68,8 @@ class CarPlayWidget : public QWidget
     void onAudioMessage(CarPlayAudio::Reader reader);
     void onSessionMessage(CarPlaySessionState::Reader reader);
 
-    // Recreates the sink when the phone changes format mid-session.
+    // Recreates the sink and ring buffer when the phone changes format. Safe to
+    // call from the subscriber thread; hops to the GUI thread internally.
     void ensureAudioSink(int sample_rate, int channels);
     void startMicrophone(int sample_rate, int channels);
     void stopMicrophone();
@@ -109,12 +110,14 @@ class CarPlayWidget : public QWidget
     std::unique_ptr<pub_sub::ZenohPublisher<CarPlayInput>> _input_pub;
     bool _touch_active = false;
 
-    // Audio playback (GUI thread only). Owned as members -- the sink must
-    // outlive the QIODevice it hands back.
+    // Audio playback. The sink runs in pull mode: it drains _audio_ring on its
+    // own audio thread, decoupled from the bursty network delivery. The zenoh
+    // subscriber thread pushes PCM into the ring directly (it is thread-safe),
+    // so audio no longer competes with video on the GUI event loop.
     std::unique_ptr<QAudioSink> _audio_sink;
-    QIODevice* _audio_device = nullptr;  // owned by _audio_sink
-    int _sink_sample_rate = 0;
-    int _sink_channels = 0;
+    std::unique_ptr<AudioRingBuffer> _audio_ring;
+    std::atomic<int> _sink_sample_rate{0};
+    std::atomic<int> _sink_channels{0};
 
     // Microphone capture for Siri/calls, published back to the driver.
     std::unique_ptr<QAudioSource> _mic_source;

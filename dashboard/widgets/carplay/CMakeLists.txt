@@ -8,7 +8,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia Gui)
 
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
+    audio_ring.cpp
     include/carplay/carplay_widget.h
+    include/carplay/audio_ring.h
 )
 
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC

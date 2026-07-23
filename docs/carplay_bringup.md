@@ -674,6 +674,14 @@ stage of the video path, so you can tell exactly where it stops:
 | `cannot convert decoded frame to RGB` | decoded, but not YUV420P — the converter only handles that format |
 | `first video frame decoded and rendered (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
 
+**Colours look wrong (red ↔ blue)?** `convertYuv420ToRgbImage` fills a
+`QImage::Format_RGB888` buffer, whose byte order is R, G, B. Writing B into the
+first byte swaps red and blue. Greens are unaffected (the middle byte is always
+G), and the `--simulate` test pattern is white-on-grey, so this survived
+undetected until a real CarPlay frame — a blue Maps dot rendering red is the
+giveaway. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard grabs the exact
+rendered frame to check pixel values without a screenshot tool.
+
 **Three bugs stood between "frames arriving" and "picture on screen"**, all
 found running the real dashboard against a live phone (2026-07-22):
 
@@ -714,9 +722,61 @@ are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
 **Expect:** music and navigation prompts play through the widget's `QAudioSink`;
 `inspect hz nodes/carplay/audio` shows a steady rate matching the sample rate.
 
-**Triage.** Choppy audio is almost always pacing, not decode: confirm the jitter
-ring is sized to the negotiated latency. Verify decode independently by dumping
-PCM to a file and playing it with `aplay`.
+**Verified on hardware (2026-07-22): LPCM audio works.** Playing music opened a
+type-100 `media` stream at 44.1 kHz stereo, ~134 packets/s decrypted with zero
+failures, published on zenoh and played through the sink:
+
+```
+[airplay] audio stream type 100 'media' -> 44100 Hz 2 ch, dataPort ...
+[audio]   first packet on type 100 'media' (44100 Hz, 2 ch)
+[carplay] audio sink started: 44100 Hz / 2 ch
+```
+
+**How audio differs from video:**
+- **Streams are on-demand.** The phone opens an audio stream only when there is
+  something to play. An idle CarPlay screen requests no audio stream at all —
+  play music or start navigation to trigger one. Do not expect audio at RECORD.
+- **Transport is UDP, not TCP.** Each audio SETUP asks for a `dataPort` *and* a
+  `controlPort` (both UDP); the response must echo `streamConnectionID` or the
+  phone tears the stream down.
+- **Packet layout** is `[12B RTP header][ciphertext][16B tag][8B nonce LE]`,
+  ChaCha20-Poly1305 with AAD = the RTP header's timestamp+SSRC (bytes 4..12) and
+  nonce = four zero bytes + the 8-byte tail. Same per-stream
+  `DataStream-Salt<id>` / `DataStream-Output-Encryption-Key` derivation as video.
+- **PCM is 16-bit big-endian on the wire** and must be byte-swapped to S16LE for
+  the sink.
+
+**Only LPCM is decoded.** `/info` advertises PCM formats for stream types 100 and
+101 (nav prompts, Siri, calls, alerts, and PCM music), so those work with no
+codec dependency. **Type 102 (buffered entertainment/music) is AAC-LC only** in
+CarPlay and is not decoded yet — a type-102 SETUP is answered so the session
+stays healthy, but produces no sound. Decoding it needs an AAC-LC decoder
+(libavcodec has one); see LIVI `rtpAudioDecoder.ts` for the RTP jitter-buffer
+pacing. The mic uplink (`DataStream-Input-Encryption-Key`, OPUS/PCM encode for
+Siri and calls) is also not implemented.
+
+**Playback architecture.** The widget plays through `QAudioSink` in **pull
+mode**: the network thread pushes decrypted PCM into a thread-safe ring
+(`dashboard/widgets/carplay/audio_ring.*`) and the sink's own audio thread pulls
+at the sample-clock rate, with a short priming cushion and silence-fill on
+shortfall. This decouples the bursty network delivery from steady playback and,
+unlike the earlier push-mode path, never silently drops samples on a short
+write. `AIRPLAY_DUMP_AUDIO=/path.pcm` on the driver writes the raw S16LE for
+`aplay -f S16_LE -r <rate> -c <ch>` — the definitive way to isolate playback
+from data.
+
+**⚠ Choppy audio is usually the host, not this code.** Verified 2026-07-22 on a
+VMware guest: the LPCM data was clean (0 decrypt failures, 0 source-side gaps,
+delivered at exactly 1.0× real time), yet playback stuttered — and so did a
+YouTube video and a raw `aplay` of the dumped PCM. The tell in the ring stats is
+**zero underruns but steadily growing overruns**: the audio device is draining
+*slower than real time*, so the ring fills and drops the oldest samples. That is
+a host problem — an emulated audio device (VMware HD Audio) under CPU contention
+(load ~3.2 on 4 vCPUs) cannot sustain real-time playback. No amount of buffering
+fixes a device that will not drain at 1×. Remedy at the VM/host level (more
+vCPUs, a lighter load, host audio backend, larger PipeWire quantum), not here.
+Genuinely choppy *data* would instead show `[audio] inter-packet gap` warnings
+from the driver.
 
 ## 10. Metadata, mic, and supplemental widgets
 

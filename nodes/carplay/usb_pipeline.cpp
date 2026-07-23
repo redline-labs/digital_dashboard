@@ -322,6 +322,35 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             frame.len = packet.data.size();
             bridge.publishVideo(frame);
         });
+
+        // Publish decoded PCM audio onto zenoh for the widget's QAudioSink.
+        receiver->setAudioHandler([&bridge](const airplay::AudioPacket& packet) {
+            AudioChunk chunk;
+            chunk.sample_rate_hz = packet.sample_rate;
+            chunk.channels = packet.channels;
+            // Map the CarPlay audioType category onto the dashboard's stream
+            // classes. Everything unrecognised is treated as a nav/alert prompt.
+            if (packet.audio_type == "media")
+            {
+                chunk.stream = AudioStream::Music;
+            }
+            else if (packet.audio_type == "telephony")
+            {
+                chunk.stream = AudioStream::Call;
+            }
+            else if (packet.audio_type == "speechRecognition")
+            {
+                chunk.stream = AudioStream::Siri;
+            }
+            else
+            {
+                chunk.stream = AudioStream::NavPrompt;
+            }
+            chunk.pcm = packet.data.data();
+            chunk.len = packet.data.size();
+            bridge.publishAudio(chunk);
+        });
+
         if (!receiver->start())
         {
             SPDLOG_ERROR("[airplay] receiver did not start");

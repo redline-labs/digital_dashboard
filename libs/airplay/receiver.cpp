@@ -90,6 +90,35 @@ void logTlv(const char* direction, const Bytes& body)
 
 constexpr const char* kTlvContentType = "application/octet-stream";
 
+// A CarPlay audioFormat is a single set bit selecting a PCM rate/channel combo.
+// Returns false when the chosen format is not one of the LPCM options (i.e. the
+// phone picked AAC-LC or OPUS, which we do not decode yet).
+struct PcmFormat
+{
+    uint32_t sample_rate;
+    uint8_t channels;
+};
+
+bool decodePcmFormat(int64_t format, PcmFormat& out)
+{
+    switch (format)
+    {
+        case 0x4: out = {8000, 1}; return true;
+        case 0x8: out = {8000, 2}; return true;
+        case 0x10: out = {16000, 1}; return true;
+        case 0x20: out = {16000, 2}; return true;
+        case 0x40: out = {24000, 1}; return true;
+        case 0x80: out = {24000, 2}; return true;
+        case 0x100: out = {32000, 1}; return true;
+        case 0x200: out = {32000, 2}; return true;
+        case 0x400: out = {44100, 1}; return true;
+        case 0x800: out = {44100, 2}; return true;
+        case 0x4000: out = {48000, 1}; return true;
+        case 0x8000: out = {48000, 2}; return true;
+        default: return false;
+    }
+}
+
 // Per-direction ChaCha20-Poly1305 state for an encrypted AirPlay channel (the
 // control channel after pair-verify, and the event channel). Framing is a
 // 2-byte little-endian length, that many ciphertext bytes, a 16-byte tag; the
@@ -1100,6 +1129,37 @@ int Receiver::openEphemeralListener(uint16_t& port)
     return fd;
 }
 
+int Receiver::openUdpSocket(uint16_t& port)
+{
+    const int fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        return -1;
+    }
+    int off = 0;
+    ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+
+    sockaddr_in6 addr{};
+    addr.sin6_family = AF_INET6;
+    addr.sin6_port = 0;
+    addr.sin6_addr = in6addr_any;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
+    {
+        ::close(fd);
+        return -1;
+    }
+
+    sockaddr_in6 bound{};
+    socklen_t len = sizeof(bound);
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &len) < 0)
+    {
+        ::close(fd);
+        return -1;
+    }
+    port = ntohs(bound.sin6_port);
+    return fd;
+}
+
 rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 {
     const auto body = plist::decode(request.body);
@@ -1168,6 +1228,9 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 
     // Phase 2: one entry per media stream the phone wants to open.
     constexpr int64_t kStreamMainScreen = 110;
+    constexpr int64_t kStreamMainAudio = 100;
+    constexpr int64_t kStreamAltAudio = 101;
+    constexpr int64_t kStreamMainHighAudio = 102;
 
     SPDLOG_INFO("[airplay] SETUP with {} stream(s)", streams->size());
     std::vector<plist::Value> out_streams;
@@ -1181,44 +1244,118 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
         const int64_t stream_connection_id =
             connection_id != nullptr ? connection_id->asInteger() : 0;
 
-        uint16_t data_port = 0;
-        const int fd = openEphemeralListener(data_port);
-        if (fd < 0)
-        {
-            SPDLOG_ERROR("[airplay] could not open a data listener for stream type {}",
-                         stream_type);
-            return rtsp::makeResponse(500, "Internal Server Error", "", {});
-        }
-
-        SPDLOG_INFO("[airplay] stream type {} -> dataPort {} (connectionID {})", stream_type,
-                    data_port, stream_connection_id);
+        // The phone sends streamConnectionID as an *unsigned* 64-bit value that
+        // lands in the HKDF salt as a decimal string; a signed rendering of a
+        // value above INT64_MAX yields the wrong key (verified on the video
+        // stream). Always format it unsigned.
+        const std::string connection_id_text =
+            std::to_string(static_cast<uint64_t>(stream_connection_id));
+        const Bytes output_key = crypto::hkdfSha512(state_->verify_shared,
+                                                    "DataStream-Salt" + connection_id_text,
+                                                    "DataStream-Output-Encryption-Key", 32);
 
         if (stream_type == kStreamMainScreen)
         {
-            // Frames are sealed with a key derived from the pair-verify shared
-            // secret and this stream's connection id.
-            // The phone sends streamConnectionID as an *unsigned* 64-bit value
-            // and it lands in the HKDF salt as a decimal string. Roughly half of
-            // all sessions produce one above INT64_MAX, which our plist decoder
-            // surfaces as a negative number -- rendering that signed yields a
-            // different salt, a different key, and every frame failing to
-            // decrypt. Verified on hardware: 4663436911794014275 worked while
-            // -3498692594036096197 (really 14948051479673455419) did not.
-            const auto connection_id_text =
-                std::to_string(static_cast<uint64_t>(stream_connection_id));
-            const Bytes key = crypto::hkdfSha512(state_->verify_shared,
-                                                 "DataStream-Salt" + connection_id_text,
-                                                 "DataStream-Output-Encryption-Key", 32);
-            session_threads_.emplace_back(
-                [this, fd, key] { screenStreamLoop(fd, key); });
+            uint16_t data_port = 0;
+            const int fd = openEphemeralListener(data_port);
+            if (fd < 0)
+            {
+                return rtsp::makeResponse(500, "Internal Server Error", "", {});
+            }
+            SPDLOG_INFO("[airplay] video stream -> dataPort {} (connectionID {})", data_port,
+                        stream_connection_id);
+            session_threads_.emplace_back([this, fd, output_key] {
+                screenStreamLoop(fd, output_key);
+            });
+            state_->stream_fds.push_back(fd);
+
+            plist::Value entry = plist::Value::dict();
+            entry.set("type", plist::Value::integer(stream_type));
+            entry.set("dataPort", plist::Value::integer(data_port));
+            out_streams.push_back(std::move(entry));
         }
+        else if (stream_type == kStreamMainAudio || stream_type == kStreamAltAudio ||
+                 stream_type == kStreamMainHighAudio)
+        {
+            const plist::Value* format = stream.find("audioFormat");
+            const plist::Value* audio_type_val = stream.find("audioType");
+            const std::string audio_type =
+                audio_type_val != nullptr ? audio_type_val->asString() : "";
 
-        plist::Value entry = plist::Value::dict();
-        entry.set("type", plist::Value::integer(stream_type));
-        entry.set("dataPort", plist::Value::integer(data_port));
-        out_streams.push_back(std::move(entry));
+            PcmFormat pcm{};
+            const bool is_pcm =
+                format != nullptr && decodePcmFormat(format->asInteger(), pcm);
 
-        state_->stream_fds.push_back(fd);
+            uint16_t data_port = 0;
+            uint16_t control_port = 0;
+            const int data_fd = openUdpSocket(data_port);
+            const int control_fd = openUdpSocket(control_port);
+            if (data_fd < 0 || control_fd < 0)
+            {
+                if (data_fd >= 0) ::close(data_fd);
+                if (control_fd >= 0) ::close(control_fd);
+                return rtsp::makeResponse(500, "Internal Server Error", "", {});
+            }
+            state_->stream_fds.push_back(data_fd);
+            state_->stream_fds.push_back(control_fd);
+
+            if (is_pcm)
+            {
+                SPDLOG_INFO("[airplay] audio stream type {} '{}' -> {} Hz {} ch, dataPort {} "
+                            "controlPort {}",
+                            stream_type, audio_type, pcm.sample_rate, pcm.channels, data_port,
+                            control_port);
+                session_threads_.emplace_back([this, data_fd, output_key, pcm, stream_type,
+                                               audio_type] {
+                    audioStreamLoop(data_fd, output_key, pcm.sample_rate, pcm.channels,
+                                    static_cast<int>(stream_type), audio_type);
+                });
+            }
+            else
+            {
+                // AAC-LC / OPUS: the ports are opened and answered so the phone
+                // keeps the session healthy, but the stream is not decoded yet.
+                SPDLOG_WARN("[airplay] audio stream type {} '{}' uses a non-PCM format "
+                            "(0x{:x}); not decoded yet",
+                            stream_type, audio_type,
+                            format != nullptr ? format->asInteger() : 0);
+            }
+
+            plist::Value entry = plist::Value::dict();
+            entry.set("type", plist::Value::integer(stream_type));
+            entry.set("dataPort", plist::Value::integer(data_port));
+            entry.set("controlPort", plist::Value::integer(control_port));
+            // Echo the connection id or the phone cannot correlate the response.
+            if (connection_id != nullptr)
+            {
+                entry.set("streamConnectionID", plist::Value::integer(stream_connection_id));
+            }
+            out_streams.push_back(std::move(entry));
+        }
+        else
+        {
+            // Unknown stream (e.g. the iAP data tunnel, type 130): open a TCP
+            // port and answer so the phone does not tear down, but do not
+            // interpret it yet.
+            uint16_t data_port = 0;
+            const int fd = openEphemeralListener(data_port);
+            if (fd < 0)
+            {
+                return rtsp::makeResponse(500, "Internal Server Error", "", {});
+            }
+            state_->stream_fds.push_back(fd);
+            SPDLOG_INFO("[airplay] stream type {} -> dataPort {} (not handled yet)", stream_type,
+                        data_port);
+
+            plist::Value entry = plist::Value::dict();
+            entry.set("type", plist::Value::integer(stream_type));
+            entry.set("dataPort", plist::Value::integer(data_port));
+            if (connection_id != nullptr)
+            {
+                entry.set("streamConnectionID", plist::Value::integer(stream_connection_id));
+            }
+            out_streams.push_back(std::move(entry));
+        }
     }
 
     plist::Value reply = plist::Value::dict();
@@ -1382,6 +1519,121 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
         SPDLOG_INFO("[video] screen stream closed after {} frames", frames);
         ::close(client);
     }
+}
+
+void Receiver::audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
+                               int stream_type, std::string audio_type)
+{
+    // Each UDP datagram is [12B RTP header][ciphertext][16B tag][8B nonce LE],
+    // sealed with ChaCha20-Poly1305. The AAD is the RTP header's timestamp+SSRC
+    // (bytes 4..12), and the nonce is 4 zero bytes followed by the 8-byte tail.
+    constexpr size_t kRtpHeader = 12;
+    constexpr size_t kTail = 24;  // 16-byte tag + 8-byte nonce
+
+    Bytes buffer(4096);
+    uint64_t packets = 0;
+
+    // Optional raw S16LE dump for isolating choppiness: `aplay -f S16_LE -r
+    // <rate> -c <ch> dump.pcm` plays it back straight, bypassing zenoh and the
+    // widget. Gaps here mean the problem is upstream (UDP/decrypt/phone).
+    std::FILE* dump = nullptr;
+    if (const char* path = std::getenv("AIRPLAY_DUMP_AUDIO"); path != nullptr)
+    {
+        dump = std::fopen(path, "wb");
+        SPDLOG_INFO("[audio] dumping S16LE to {} ({} Hz {} ch)", path, sample_rate, channels);
+    }
+    auto last_recv = std::chrono::steady_clock::now();
+
+    while (run_.load())
+    {
+        pollfd pfd{data_fd, POLLIN, 0};
+        const int ready = ::poll(&pfd, 1, 200);
+        if (ready < 0)
+        {
+            break;
+        }
+        if (ready == 0)
+        {
+            continue;
+        }
+
+        const ssize_t n = ::recv(data_fd, buffer.data(), buffer.size(), 0);
+        if (n < 0)
+        {
+            break;
+        }
+        if (static_cast<size_t>(n) < kRtpHeader + kTail)
+        {
+            continue;
+        }
+        const size_t len = static_cast<size_t>(n);
+
+        const Bytes aad(buffer.begin() + 4, buffer.begin() + kRtpHeader);
+        Bytes nonce(4, 0);
+        nonce.insert(nonce.end(), buffer.begin() + static_cast<long>(len - 8),
+                     buffer.begin() + static_cast<long>(len));
+        // chachaOpen wants ciphertext followed by tag; the wire has exactly that
+        // between the header and the trailing nonce.
+        const Bytes sealed(buffer.begin() + kRtpHeader,
+                           buffer.begin() + static_cast<long>(len - 8));
+
+        const auto pcm = crypto::chachaOpen(key, nonce, sealed, aad);
+        if (!pcm)
+        {
+            SPDLOG_WARN("[audio] type {} packet failed to decrypt", stream_type);
+            continue;
+        }
+
+        // The wire PCM is 16-bit big-endian; the sink wants little-endian.
+        Bytes samples = *pcm;
+        for (size_t k = 0; k + 1 < samples.size(); k += 2)
+        {
+            std::swap(samples[k], samples[k + 1]);
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto gap_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_recv).count();
+        last_recv = now;
+
+        if (++packets == 1)
+        {
+            SPDLOG_INFO("[audio] first packet on type {} '{}' ({} Hz, {} ch)", stream_type,
+                        audio_type, sample_rate, channels);
+        }
+        // A gap much larger than the packet's own duration means the phone (or
+        // our recv) stalled -- a genuine source-side dropout, distinct from any
+        // playback-side buffering issue.
+        else if (gap_ms > 40)
+        {
+            SPDLOG_WARN("[audio] type {} inter-packet gap {} ms ({} bytes, ~{} ms of audio)",
+                        stream_type, gap_ms, samples.size(),
+                        sample_rate ? (samples.size() * 1000 / (sample_rate * channels * 2)) : 0);
+        }
+
+        if (dump != nullptr)
+        {
+            std::fwrite(samples.data(), 1, samples.size(), dump);
+        }
+
+        if (audio_handler_)
+        {
+            AudioPacket packet;
+            packet.data = std::move(samples);
+            packet.sample_rate = sample_rate;
+            packet.channels = channels;
+            packet.stream_type = stream_type;
+            packet.audio_type = audio_type;
+            audio_handler_(packet);
+        }
+    }
+
+    if (dump != nullptr)
+    {
+        std::fclose(dump);
+    }
+    SPDLOG_INFO("[audio] stream type {} closed after {} packets", stream_type, packets);
+    ::close(data_fd);
 }
 
 void Receiver::eventChannelLoop(int listen_fd)

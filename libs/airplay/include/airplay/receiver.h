@@ -66,9 +66,14 @@ struct VideoPacket
 
 struct AudioPacket
 {
-    Bytes data;
+    Bytes data;  // interleaved S16LE PCM
     uint32_t sample_rate = 44100;
     uint8_t channels = 2;
+    // The CarPlay stream type (100 main, 101 alt, 102 entertainment) and the
+    // audioType category ("media", "telephony", "speechRecognition", ...) so the
+    // node can label the zenoh audio stream.
+    int stream_type = 100;
+    std::string audio_type;
 };
 
 class Receiver
@@ -126,6 +131,15 @@ class Receiver
     // Accepts the phone's video data connection and pumps frames until it
     // closes. `key` is the per-stream ChaCha20-Poly1305 key.
     void screenStreamLoop(int listen_fd, Bytes key);
+
+    // Receives one CarPlay audio stream on its UDP data port: RTP-framed,
+    // ChaCha20-Poly1305 sealed PCM. Decrypts and emits each packet.
+    void audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
+                         int stream_type, std::string audio_type);
+
+    // Binds a dual-stack UDP socket on an ephemeral port. Returns the fd and
+    // writes the chosen port.
+    int openUdpSocket(uint16_t& port);
 
     // Accepts and services the phone's encrypted event-channel connection, over
     // which HID reports (touch) are pushed to the phone.
