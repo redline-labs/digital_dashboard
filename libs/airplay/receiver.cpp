@@ -16,8 +16,10 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 namespace airplay
 {
@@ -87,6 +89,19 @@ void logTlv(const char* direction, const Bytes& body)
 }
 
 constexpr const char* kTlvContentType = "application/octet-stream";
+
+// Per-direction ChaCha20-Poly1305 state for an encrypted AirPlay channel (the
+// control channel after pair-verify, and the event channel). Framing is a
+// 2-byte little-endian length, that many ciphertext bytes, a 16-byte tag; the
+// length is the AAD and each direction counts nonces from zero.
+struct ChannelCrypto
+{
+    bool active = false;
+    Bytes inbound_key;
+    Bytes outbound_key;
+    uint64_t inbound_counter = 0;
+    uint64_t outbound_counter = 0;
+};
 
 // CarPlay has no screen to show a setup code on, so pair-setup runs in the
 // "transient" mode with a well-known password. 3939 is what Apple's own
@@ -237,6 +252,14 @@ struct Receiver::State
     uint16_t event_port = 0;
     std::vector<int> stream_fds;
 
+    // The accepted event-channel socket and its cipher, written to from any
+    // thread by sendTouch(). Guarded because the accept loop, the receive pump
+    // and the input path all touch it.
+    std::mutex event_mutex;
+    int event_client_fd = -1;
+    ChannelCrypto event_crypto;
+    int event_cseq = 0;
+
     // Session keys for the encrypted control channel that follows pair-verify.
     Bytes control_read;
     Bytes control_write;
@@ -382,15 +405,6 @@ void Receiver::acceptLoop()
 // the AAD, and each direction has its own counter-based nonce starting at zero.
 namespace
 {
-
-struct ChannelCrypto
-{
-    bool active = false;
-    Bytes inbound_key;
-    Bytes outbound_key;
-    uint64_t inbound_counter = 0;
-    uint64_t outbound_counter = 0;
-};
 
 // Pulls as many complete frames out of `cipher` as are available, appending the
 // plaintext to `plain`. Returns false if a frame failed to authenticate.
@@ -1091,41 +1105,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             // connection sitting in the backlog unaccepted looks like a dead
             // channel from its side.
             const int listen_fd = state_->event_fd;
-            session_threads_.emplace_back([this, listen_fd] {
-                while (run_.load())
-                {
-                    pollfd pfd{listen_fd, POLLIN, 0};
-                    if (::poll(&pfd, 1, 200) <= 0)
-                    {
-                        continue;
-                    }
-                    const int client = ::accept(listen_fd, nullptr, nullptr);
-                    if (client < 0)
-                    {
-                        continue;
-                    }
-                    SPDLOG_INFO("[airplay] event channel connected");
-                    // Drained but not interpreted yet; the phone only needs it
-                    // to exist for the session to stay up.
-                    Bytes scratch(4096);
-                    while (run_.load())
-                    {
-                        pollfd cpfd{client, POLLIN, 0};
-                        if (::poll(&cpfd, 1, 200) <= 0)
-                        {
-                            continue;
-                        }
-                        const ssize_t n = ::recv(client, scratch.data(), scratch.size(), 0);
-                        if (n <= 0)
-                        {
-                            break;
-                        }
-                        SPDLOG_DEBUG("[airplay] event channel: {} bytes", n);
-                    }
-                    ::close(client);
-                    SPDLOG_INFO("[airplay] event channel closed");
-                }
-            });
+            session_threads_.emplace_back([this, listen_fd] { eventChannelLoop(listen_fd); });
         }
         SPDLOG_INFO("[airplay] SETUP session: advertising eventPort {}", state_->event_port);
 
@@ -1249,6 +1229,15 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
         uint64_t counter = 0;
         uint64_t frames = 0;
 
+        // Optional raw Annex-B dump for bring-up: `ffmpeg -i dump.h264 out.png`
+        // turns it into a viewable image without a running dashboard.
+        std::FILE* dump = nullptr;
+        if (const char* path = std::getenv("AIRPLAY_DUMP_VIDEO"); path != nullptr)
+        {
+            dump = std::fopen(path, "wb");
+            SPDLOG_INFO("[video] dumping Annex-B to {}", path);
+        }
+
         while (run_.load())
         {
             pollfd pfd{client, POLLIN, 0};
@@ -1305,6 +1294,10 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                     SPDLOG_INFO("[video] codec config: {} ({} bytes Annex-B)",
                                 config->codec == nalu::Codec::H265 ? "H.265" : "H.264",
                                 config->annex_b.size());
+                    if (dump != nullptr)
+                    {
+                        std::fwrite(config->annex_b.data(), 1, config->annex_b.size(), dump);
+                    }
                     if (video_handler_)
                     {
                         VideoPacket packet;
@@ -1330,6 +1323,10 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                     }
 
                     const Bytes annex_b = nalu::avccFrameToAnnexB(payload);
+                    if (dump != nullptr)
+                    {
+                        std::fwrite(annex_b.data(), 1, annex_b.size(), dump);
+                    }
                     if (++frames == 1)
                     {
                         SPDLOG_INFO("[video] FIRST FRAME decoded: {} bytes Annex-B",
@@ -1350,8 +1347,144 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
             }
         }
 
+        if (dump != nullptr)
+        {
+            std::fclose(dump);
+        }
         SPDLOG_INFO("[video] screen stream closed after {} frames", frames);
         ::close(client);
+    }
+}
+
+void Receiver::eventChannelLoop(int listen_fd)
+{
+    while (run_.load())
+    {
+        pollfd pfd{listen_fd, POLLIN, 0};
+        if (::poll(&pfd, 1, 200) <= 0)
+        {
+            continue;
+        }
+        const int client = ::accept(listen_fd, nullptr, nullptr);
+        if (client < 0)
+        {
+            continue;
+        }
+        SPDLOG_INFO("[airplay] event channel connected");
+
+        // Events keys are derived from the pair-verify shared secret and, unlike
+        // the control channel, are NOT swapped: the accessory writes with
+        // Events-Write and reads with Events-Read.
+        {
+            std::lock_guard<std::mutex> lock(state_->event_mutex);
+            state_->event_client_fd = client;
+            state_->event_crypto = {};
+            state_->event_crypto.outbound_key = crypto::hkdfSha512(
+                state_->verify_shared, "Events-Salt", "Events-Write-Encryption-Key", 32);
+            state_->event_crypto.inbound_key = crypto::hkdfSha512(
+                state_->verify_shared, "Events-Salt", "Events-Read-Encryption-Key", 32);
+            state_->event_crypto.active = true;
+        }
+
+        Bytes cipher;
+        Bytes chunk(8192);
+        while (run_.load())
+        {
+            pollfd cpfd{client, POLLIN, 0};
+            if (::poll(&cpfd, 1, 200) <= 0)
+            {
+                continue;
+            }
+            const ssize_t n = ::recv(client, chunk.data(), chunk.size(), 0);
+            if (n <= 0)
+            {
+                break;
+            }
+            cipher.insert(cipher.end(), chunk.begin(), chunk.begin() + n);
+
+            Bytes plain;
+            {
+                std::lock_guard<std::mutex> lock(state_->event_mutex);
+                if (!decryptFrames(state_->event_crypto, cipher, plain))
+                {
+                    SPDLOG_WARN("[airplay] event channel frame failed to authenticate");
+                    break;
+                }
+            }
+            // Inbound event traffic (the phone's own commands) is not acted on
+            // yet; the channel exists so we can push HID reports to it.
+            if (!plain.empty())
+            {
+                SPDLOG_DEBUG("[airplay] event channel: {} plaintext bytes", plain.size());
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_->event_mutex);
+            state_->event_client_fd = -1;
+            state_->event_crypto.active = false;
+        }
+        ::close(client);
+        SPDLOG_INFO("[airplay] event channel closed");
+    }
+}
+
+void Receiver::sendTouch(float x, float y, bool down)
+{
+    // Two-contact multitouch report: six bytes per finger --
+    // [transducer index, down, x-lo, x-hi, y-lo, y-hi] -- matching the HID
+    // descriptor advertised in /info. We only ever drive contact 0.
+    constexpr int kContacts = 2;
+    constexpr int kBytesPerFinger = 6;
+
+    const auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    const uint16_t px = static_cast<uint16_t>(clamp01(x) * static_cast<float>(config_.width));
+    const uint16_t py = static_cast<uint16_t>(clamp01(y) * static_cast<float>(config_.height));
+
+    Bytes report(kBytesPerFinger * kContacts, 0);
+    for (int i = 0; i < kContacts; ++i)
+    {
+        report[i * kBytesPerFinger] = static_cast<uint8_t>(i);  // transducer index
+    }
+    report[1] = down ? 0x01 : 0x00;
+    report[2] = static_cast<uint8_t>(px & 0xFF);
+    report[3] = static_cast<uint8_t>((px >> 8) & 0xFF);
+    report[4] = static_cast<uint8_t>(py & 0xFF);
+    report[5] = static_cast<uint8_t>((py >> 8) & 0xFF);
+
+    plist::Value command = plist::Value::dict();
+    command.set("type", plist::Value::string("hidSendReport"));
+    command.set("uuid", plist::Value::string("2a2a2a2a"));
+    command.set("hidReport", plist::Value::data(report));
+    const Bytes body = plist::encode(command);
+
+    std::lock_guard<std::mutex> lock(state_->event_mutex);
+    if (state_->event_client_fd < 0 || !state_->event_crypto.active)
+    {
+        return;  // no event channel yet
+    }
+
+    const std::string head = "POST /command RTSP/1.0\r\n"
+                             "Content-Type: application/x-apple-binary-plist\r\n"
+                             "Content-Length: " +
+                             std::to_string(body.size()) +
+                             "\r\nCSeq: " + std::to_string(++state_->event_cseq) + "\r\n\r\n";
+
+    Bytes message(head.begin(), head.end());
+    message.insert(message.end(), body.begin(), body.end());
+
+    const Bytes wire = encryptFrames(state_->event_crypto, message);
+    size_t sent = 0;
+    while (sent < wire.size())
+    {
+        const ssize_t written = ::send(state_->event_client_fd, wire.data() + sent,
+                                       wire.size() - sent, MSG_NOSIGNAL);
+        if (written <= 0)
+        {
+            SPDLOG_DEBUG("[airplay] event channel send failed: {}", std::strerror(errno));
+            break;
+        }
+        sent += static_cast<size_t>(written);
     }
 }
 

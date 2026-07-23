@@ -14,12 +14,16 @@ observable, read the corresponding file there rather than permuting: the
 `/auth-setup` byte layout and the `/info` display keys were both settled that
 way in minutes after an hour of guessing.
 
-**Status: stages 1–6 are verified on hardware (2026-07-21)** — USB config
-switch, usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
-identification, MFi authentication, and the NCM ↔ TAP bridge all run against a
-real iPhone. The phone now opens TCP to the accessory on port 7000 and sends
-`POST /pair-setup RTSP/1.0`. **Only the AirPlay session layer (stages 7–10) is
-missing.**
+**Status: the full pipeline works end to end (2026-07-22).** A live H.264 frame
+off the iPhone — the CarPlay launcher — was decoded on the Linux host. Stages
+1–7 all run: USB config switch, usbmux, lockdown/carkit TLS, iAP2 + MFi auth,
+the NCM link, and the AirPlay session through to a decoded video stream. What
+remains is polish: audio streams, and confirming touch round-trips on screen.
+
+**Earlier status: stages 1–6 verified (2026-07-21)** — USB config switch,
+usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
+identification, MFi authentication, and the NCM ↔ TAP bridge. Stage 7 (the
+AirPlay session and video) landed the next day.
 
 Work the stages in sequence — each one depends on the previous. Every stage lists
 what to run, what you should observe, and how to triage the common failures.
@@ -569,6 +573,15 @@ sealed with the entire 128-byte header as AAD and a counter nonce that advances
 `HKDF-SHA512(pair-verify shared, "DataStream-Salt<streamConnectionID>",
 "DataStream-Output-Encryption-Key", 32)`.
 
+**The event channel** is encrypted from the first byte with keys derived from
+the pair-verify shared secret: `HKDF-SHA512(shared, "Events-Salt",
+"Events-Write-Encryption-Key"|"Events-Read-Encryption-Key")`. Unlike the control
+channel these are **not** swapped — the accessory writes with Events-Write and
+reads with Events-Read. HID input (touch) is pushed over it as a
+`POST /command` with an `hidSendReport` plist: `{type, uuid, hidReport}`, where
+`hidReport` is the multitouch report matching the descriptor in `/info` (six
+bytes per contact: `[index, down, x-lo, x-hi, y-lo, y-hi]`, pixel coordinates).
+
 **⚠ `streamConnectionID` is unsigned.** It goes into that salt as a decimal
 string, and roughly half of all sessions produce a value above `INT64_MAX`,
 which a signed plist decode renders negative — a different salt, a different
@@ -709,7 +722,9 @@ Not all stages below are implemented yet. Current state:
 | NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
-| **AirPlay screen/audio streams** (the phone does not yet request them) | **NOT YET WORKING** |
+| **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
+| **Event channel + touch HID** | written; on-screen touch not yet confirmed |
+| **AirPlay audio streams** | **NOT YET WRITTEN** |
 | **Node orchestration**, stages 2–6 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
 | **Node orchestration** wiring NCM → airplay | **NOT YET WRITTEN** |
 | zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
@@ -739,14 +754,16 @@ dashboard.
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
 
-1. **The phone sends the codec config and one frame, then stops.** The session
-   stays healthy — `/feedback` keepalives continue every 2 s and `/command`
-   `modesChanged` arrives — but no further video. The event channel is the
-   likely cause: LIVI encrypts it from the first byte with **Events keys**
-   (`Events-Salt` / `Events-Read`/`Write-Encryption-Key`) and pushes commands
-   over it after RECORD, whereas we accept the connection and only drain it.
-   See `cpStack.ts:_openEventChannel` and `_sendEventCommand`. Until the phone
-   is told the screen is taken, it has no reason to keep drawing.
+1. **Audio streams.** The video path is complete; audio (stream types 100–102,
+   PCM/OPUS/AAC-LC) is not implemented. `audioFormats` is already advertised in
+   `/info`, so the phone may request an audio stream SETUP — handle it in
+   `handleSetup` alongside type 110. See LIVI `audioStream.ts` / `rtpAudioDecoder.ts`.
+2. **Touch round-trip.** The encrypted event channel is up and `sendTouch()`
+   pushes `hidSendReport` multitouch reports over it, wired to the dashboard's
+   input topic. Confirm on screen that taps register.
+
+**The "one frame then stops" earlier symptom was `viewAreas`, now fixed** — see
+above. With it in place the phone streams continuously (100+ frames observed).
 2. **Audio pacing** — timing-dependent, cannot be desk-checked.
 
 **Retired by the 2026-07-21 hardware session:**

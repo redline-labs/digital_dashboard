@@ -282,8 +282,35 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
                                    &receiver_config](const airplay::VideoPacket& packet) {
             if (packet.is_config)
             {
+                // Publish the parameter sets as their own message (the widget
+                // caches them and prepends to the next access unit) and keep a
+                // copy so we can republish before every keyframe -- zenoh has no
+                // retained messages, so a widget that starts or restarts later
+                // must see config again to sync.
                 *parameter_sets = packet.data;
+
+                VideoFrame config;
+                config.codec = VideoCodec::H264;
+                config.is_config = true;
+                config.width_px = static_cast<uint16_t>(receiver_config.width);
+                config.height_px = static_cast<uint16_t>(receiver_config.height);
+                config.data = packet.data.data();
+                config.len = packet.data.size();
+                bridge.publishVideo(config);
                 return;
+            }
+
+            // Republish parameter sets immediately before each keyframe.
+            if (packet.keyframe && !parameter_sets->empty())
+            {
+                VideoFrame config;
+                config.codec = VideoCodec::H264;
+                config.is_config = true;
+                config.width_px = static_cast<uint16_t>(receiver_config.width);
+                config.height_px = static_cast<uint16_t>(receiver_config.height);
+                config.data = parameter_sets->data();
+                config.len = parameter_sets->size();
+                bridge.publishVideo(config);
             }
 
             VideoFrame frame;
@@ -291,17 +318,6 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             frame.is_keyframe = packet.keyframe;
             frame.width_px = static_cast<uint16_t>(receiver_config.width);
             frame.height_px = static_cast<uint16_t>(receiver_config.height);
-
-            if (packet.keyframe && !parameter_sets->empty())
-            {
-                std::vector<uint8_t> unit = *parameter_sets;
-                unit.insert(unit.end(), packet.data.begin(), packet.data.end());
-                frame.data = unit.data();
-                frame.len = unit.size();
-                bridge.publishVideo(frame);
-                return;
-            }
-
             frame.data = packet.data.data();
             frame.len = packet.data.size();
             bridge.publishVideo(frame);
@@ -311,6 +327,27 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             SPDLOG_ERROR("[airplay] receiver did not start");
             receiver.reset();
             ok = false;
+        }
+        else
+        {
+            // Route the dashboard's touch events to the phone over the event
+            // channel. The widget reports x/y in 0..10000 across its area; the
+            // receiver wants 0..1.
+            airplay::Receiver* rx = receiver.get();
+            bridge.setInputHandler([rx](const InputEvent& event) {
+                switch (event.kind)
+                {
+                    case InputEvent::Kind::TouchDown:
+                    case InputEvent::Kind::TouchMove:
+                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f, true);
+                        break;
+                    case InputEvent::Kind::TouchUp:
+                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f, false);
+                        break;
+                    default:
+                        break;
+                }
+            });
         }
     }
 

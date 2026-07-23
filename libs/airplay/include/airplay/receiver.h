@@ -35,9 +35,10 @@ struct ReceiverConfig
     std::string name = "Dashboard";
     std::string model = "MercedesDashboard1,1";
 
-    // Screen geometry advertised to the phone.
+    // Screen geometry advertised to the phone. Defaults match the carplay_demo
+    // dashboard widget so the phone renders at the widget's aspect ratio.
     uint32_t width = 800;
-    uint32_t height = 480;
+    uint32_t height = 600;
     uint32_t fps = 30;
 
     // Advertised as both deviceID and macAddress in GET /info.
@@ -85,6 +86,10 @@ class Receiver
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
 
+    // Injects a touch contact. x and y are normalised 0..1 over the screen.
+    // Safe to call from any thread; a no-op until the event channel is up.
+    void sendTouch(float x, float y, bool down);
+
     bool start();
     void stop();
     bool running() const { return run_.load(); }
@@ -110,6 +115,10 @@ class Receiver
     // Accepts the phone's video data connection and pumps frames until it
     // closes. `key` is the per-stream ChaCha20-Poly1305 key.
     void screenStreamLoop(int listen_fd, Bytes key);
+
+    // Accepts and services the phone's encrypted event-channel connection, over
+    // which HID reports (touch) are pushed to the phone.
+    void eventChannelLoop(int listen_fd);
 
     ReceiverConfig config_;
     VideoHandler video_handler_;
