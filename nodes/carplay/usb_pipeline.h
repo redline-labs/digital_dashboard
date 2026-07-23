@@ -30,6 +30,10 @@ struct UsbPipelineOptions
 
     // Stage 5 knobs; see Iap2SessionOptions.
     bool allow_missing_mfi = false;
+
+    // Set to true while an AirPlay session is recording, so the caller's idle
+    // session-state publisher stands down. Optional.
+    std::atomic<bool>* recording = nullptr;
 };
 
 // Runs the pipeline up to options.max_stage, logging each stage with the

@@ -330,6 +330,23 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         }
         else
         {
+            // Publish an accurate session state so the widget stops showing
+            // "Connect an iPhone" once video is live.
+            const auto config = receiver_config;
+            std::atomic<bool>* recording_flag = options.recording;
+            receiver->setStatusHandler([&bridge, config, recording_flag](bool recording) {
+                if (recording_flag != nullptr)
+                {
+                    recording_flag->store(recording);
+                }
+                SessionState state;
+                state.device_connected = recording;
+                state.phase = recording ? SessionPhase::Recording : SessionPhase::Idle;
+                state.main_width_px = static_cast<uint16_t>(config.width);
+                state.main_height_px = static_cast<uint16_t>(config.height);
+                bridge.publishSession(state);
+            });
+
             // Route the dashboard's touch events to the phone over the event
             // channel. The widget reports x/y in 0..10000 across its area; the
             // receiver wants 0..1.

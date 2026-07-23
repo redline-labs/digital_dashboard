@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "carplay/carplay_widget.h"
 
 #include <spdlog/spdlog.h>
@@ -206,6 +207,16 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
             _rendered_first_frame = true;
             SPDLOG_INFO("[carplay] first video frame decoded and rendered ({}x{})",
                         _frame->width, _frame->height);
+            // Bring-up aid: dump the first rendered frame so it can be inspected
+            // without a screenshot tool. Grabs the exact QImage the widget draws.
+            if (const char* path = std::getenv("CARPLAY_DUMP_RENDER"); path != nullptr)
+            {
+                std::lock_guard<std::mutex> lock(_frame_mutex);
+                if (_current_image.save(QString::fromUtf8(path)))
+                {
+                    SPDLOG_INFO("[carplay] wrote rendered frame to {}", path);
+                }
+            }
         }
     }
 
@@ -217,7 +228,15 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
 
 QImage CarPlayWidget::convertYuv420ToRgbImage(const AVFrame* frame)
 {
-    if (!frame || !frame->data[0] || frame->format != AV_PIX_FMT_YUV420P) return {};
+    // CarPlay decodes to YUVJ420P (full-range, pix_fmt 12); a synthetic or
+    // other source may give plain YUV420P (limited range, pix_fmt 0). Both have
+    // identical planar 4:2:0 layout, so the same loop handles them -- and the
+    // coefficients below are the full-range set, which is what CarPlay needs.
+    if (!frame || !frame->data[0] ||
+        (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_YUVJ420P))
+    {
+        return {};
+    }
     const int w = frame->width;
     const int h = frame->height;
     QImage img(w, h, QImage::Format_RGB888);

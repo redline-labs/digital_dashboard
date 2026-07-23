@@ -14,11 +14,11 @@ observable, read the corresponding file there rather than permuting: the
 `/auth-setup` byte layout and the `/info` display keys were both settled that
 way in minutes after an hour of guessing.
 
-**Status: the full pipeline works end to end (2026-07-22).** A live H.264 frame
-off the iPhone — the CarPlay launcher — was decoded on the Linux host. Stages
-1–7 all run: USB config switch, usbmux, lockdown/carkit TLS, iAP2 + MFi auth,
-the NCM link, and the AirPlay session through to a decoded video stream. What
-remains is polish: audio streams, and confirming touch round-trips on screen.
+**Status: the full pipeline works end to end (2026-07-22) — the CarPlay home
+screen renders live in the dashboard widget.** Stages 1–7 all run: USB config
+switch, usbmux, lockdown/carkit TLS, iAP2 + MFi auth, the NCM link, and the
+AirPlay session through to H.264 decoded and drawn on screen via zenoh. What
+remains: audio streams, and confirming touch round-trips.
 
 **Earlier status: stages 1–6 verified (2026-07-21)** — USB config switch,
 usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
@@ -674,6 +674,25 @@ stage of the video path, so you can tell exactly where it stops:
 | `cannot convert decoded frame to RGB` | decoded, but not YUV420P — the converter only handles that format |
 | `first video frame decoded and rendered (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
 
+**Three bugs stood between "frames arriving" and "picture on screen"**, all
+found running the real dashboard against a live phone (2026-07-22):
+
+1. **The phone sends exactly one keyframe.** A static CarPlay screen produces one
+   IDR at session start and then only P-frames (verified: 1 × NAL type 5, 100 ×
+   type 1 in a capture). A dashboard that subscribes late never sees it. Fix: the
+   driver asks the phone for a fresh keyframe periodically via a `forceKeyFrame`
+   command on the encrypted event channel (`Receiver::requestKeyframe`, every
+   1 s). The phone then re-sends parameter sets + an IDR, and any late subscriber
+   syncs within a second.
+2. **CarPlay decodes to `YUVJ420P` (pix_fmt 12), not `YUV420P` (0).** The widget's
+   converter rejected anything but format 0 and dropped every frame with
+   `cannot convert decoded frame to RGB`. The two formats share layout and the
+   converter's coefficients were already full-range, so the fix was simply to
+   accept format 12 as well.
+3. **The driver published `VideoConfig` once and cached it silently.** It must be
+   published as its own message *and* re-published before every keyframe, since
+   zenoh has no retained messages.
+
 **Design requirement this exposed:** zenoh has no retained/latched messages, so
 a one-shot `VideoConfig` leaves any subscriber that starts later — or restarts —
 permanently black. The driver **must republish the parameter sets before every
@@ -723,6 +742,8 @@ Not all stages below are implemented yet. Current state:
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
 | **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
+| **Late-joining renderer sync** | working — periodic `forceKeyFrame` over the event channel |
+| **Widget render (YUVJ420P)** | working — full CarPlay home screen renders |
 | **Event channel + touch HID** | written; on-screen touch not yet confirmed |
 | **AirPlay audio streams** | **NOT YET WRITTEN** |
 | **Node orchestration**, stages 2–6 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
@@ -753,6 +774,9 @@ dashboard.
 
 Everything from USB up to the carkit TLS channel has now run against a phone.
 Ranked by remaining uncertainty (highest first):
+
+**The end-to-end path is proven: the CarPlay home screen renders in the
+dashboard widget.** Driver → USB → AirPlay → zenoh → widget → screen. Remaining:
 
 1. **Audio streams.** The video path is complete; audio (stream types 100–102,
    PCM/OPUS/AAC-LC) is not implemented. `audioFormats` is already advertised in

@@ -31,6 +31,10 @@ namespace
 
 std::atomic<bool> g_stop{false};
 
+// Set by the AirPlay receiver once a session reaches RECORD, so the idle
+// session-state publisher below stops overwriting the live state.
+std::atomic<bool> g_recording{false};
+
 void handleSignal(int)
 {
     g_stop.store(true);
@@ -102,7 +106,12 @@ int main(int argc, char** argv)
         carplay::SessionState idle;
         while (!g_stop.load())
         {
-            bridge.publishSession(idle);
+            // Once the AirPlay session is live the receiver publishes the
+            // authoritative state (device connected, recording); don't clobber it.
+            if (!g_recording.load())
+            {
+                bridge.publishSession(idle);
+            }
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     });
@@ -112,6 +121,7 @@ int main(int argc, char** argv)
     usb_options.max_stage = args["max-stage"].as<int>();
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
+    usb_options.recording = &g_recording;
 
     const bool usb_ok = carplay::runUsbPipeline(usb_options, bridge, g_stop);
     if (!usb_ok)

@@ -82,13 +82,24 @@ class Receiver
 
     using VideoHandler = std::function<void(const VideoPacket&)>;
     using AudioHandler = std::function<void(const AudioPacket&)>;
+    // Called with true when the session reaches RECORD (video about to flow) and
+    // false when it tears down, so the node can publish an accurate session
+    // state to the dashboard.
+    using StatusHandler = std::function<void(bool recording)>;
 
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
+    void setStatusHandler(StatusHandler handler);
 
     // Injects a touch contact. x and y are normalised 0..1 over the screen.
     // Safe to call from any thread; a no-op until the event channel is up.
     void sendTouch(float x, float y, bool down);
+
+    // Asks the phone to emit a fresh IDR keyframe. The phone sends one keyframe
+    // at session start and then, for a static screen, only P-frames -- so a
+    // renderer that joins late (the dashboard does, over zenoh) cannot sync
+    // without this. Called periodically while a session is live.
+    void requestKeyframe();
 
     bool start();
     void stop();
@@ -120,13 +131,19 @@ class Receiver
     // which HID reports (touch) are pushed to the phone.
     void eventChannelLoop(int listen_fd);
 
+    // Encrypts and sends one plist command over the event channel. Returns
+    // false if the channel is not up.
+    bool sendEventCommand(const Bytes& plist_body);
+
     ReceiverConfig config_;
     VideoHandler video_handler_;
     AudioHandler audio_handler_;
+    StatusHandler status_handler_;
 
     int server_fd_ = -1;
     std::atomic<bool> run_{false};
     std::thread accept_thread_;
+    std::thread keyframe_thread_;
     std::vector<std::thread> session_threads_;
 
     struct State;

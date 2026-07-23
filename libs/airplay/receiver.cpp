@@ -288,6 +288,11 @@ void Receiver::setAudioHandler(AudioHandler handler)
     audio_handler_ = std::move(handler);
 }
 
+void Receiver::setStatusHandler(StatusHandler handler)
+{
+    status_handler_ = std::move(handler);
+}
+
 bool Receiver::start()
 {
     if (run_.load())
@@ -330,6 +335,21 @@ bool Receiver::start()
 
     run_.store(true);
     accept_thread_ = std::thread([this] { acceptLoop(); });
+
+    // Periodically ask the phone for a fresh keyframe. Without this, a static
+    // CarPlay screen produces exactly one keyframe (at session start) and then
+    // only P-frames, so a renderer that subscribes to the zenoh video topic
+    // late -- which the dashboard always does -- never gets a sync point.
+    keyframe_thread_ = std::thread([this] {
+        while (run_.load())
+        {
+            for (int i = 0; i < 10 && run_.load(); ++i)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            requestKeyframe();
+        }
+    });
     SPDLOG_INFO("[airplay] RTSP receiver listening on [::]:{}", config_.port);
     return true;
 }
@@ -350,6 +370,10 @@ void Receiver::stop()
     {
         accept_thread_.join();
     }
+    if (keyframe_thread_.joinable())
+    {
+        keyframe_thread_.join();
+    }
     for (auto& thread : session_threads_)
     {
         if (thread.joinable())
@@ -358,6 +382,10 @@ void Receiver::stop()
         }
     }
     session_threads_.clear();
+    if (status_handler_)
+    {
+        status_handler_(false);
+    }
     SPDLOG_INFO("[airplay] receiver stopped");
 }
 
@@ -1456,22 +1484,36 @@ void Receiver::sendTouch(float x, float y, bool down)
     command.set("type", plist::Value::string("hidSendReport"));
     command.set("uuid", plist::Value::string("2a2a2a2a"));
     command.set("hidReport", plist::Value::data(report));
-    const Bytes body = plist::encode(command);
+    sendEventCommand(plist::encode(command));
+}
 
+void Receiver::requestKeyframe()
+{
+    // forceKeyFrame names the display by the same uuid advertised in /info.
+    plist::Value params = plist::Value::dict();
+    params.set("uuid", plist::Value::string("b7e6c5a0-1111-4000-8000-000000000001"));
+    plist::Value command = plist::Value::dict();
+    command.set("type", plist::Value::string("forceKeyFrame"));
+    command.set("params", std::move(params));
+    sendEventCommand(plist::encode(command));
+}
+
+bool Receiver::sendEventCommand(const Bytes& plist_body)
+{
     std::lock_guard<std::mutex> lock(state_->event_mutex);
     if (state_->event_client_fd < 0 || !state_->event_crypto.active)
     {
-        return;  // no event channel yet
+        return false;  // no event channel yet
     }
 
     const std::string head = "POST /command RTSP/1.0\r\n"
                              "Content-Type: application/x-apple-binary-plist\r\n"
                              "Content-Length: " +
-                             std::to_string(body.size()) +
+                             std::to_string(plist_body.size()) +
                              "\r\nCSeq: " + std::to_string(++state_->event_cseq) + "\r\n\r\n";
 
     Bytes message(head.begin(), head.end());
-    message.insert(message.end(), body.begin(), body.end());
+    message.insert(message.end(), plist_body.begin(), plist_body.end());
 
     const Bytes wire = encryptFrames(state_->event_crypto, message);
     size_t sent = 0;
@@ -1482,16 +1524,21 @@ void Receiver::sendTouch(float x, float y, bool down)
         if (written <= 0)
         {
             SPDLOG_DEBUG("[airplay] event channel send failed: {}", std::strerror(errno));
-            break;
+            return false;
         }
         sent += static_cast<size_t>(written);
     }
+    return true;
 }
 
 rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
 {
     (void)request;
     SPDLOG_INFO("[airplay] RECORD -- session is live");
+    if (status_handler_)
+    {
+        status_handler_(true);
+    }
     rtsp::Message response = rtsp::makeResponse(200, "OK", "", {});
     response.setHeader("Audio-Latency", "0");
     return response;
