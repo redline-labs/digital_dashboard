@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "airplay/receiver.h"
 
+#include "airplay/aac_decoder.h"
 #include "airplay/plist.h"
 #include "airplay/nalu.h"
 #include "airplay/srp.h"
@@ -117,6 +118,27 @@ bool decodePcmFormat(int64_t format, PcmFormat& out)
         case 0x8000: out = {48000, 2}; return true;
         default: return false;
     }
+}
+
+// AAC-LC formats: 0x400000 is 44.1 kHz stereo, 0x800000 is 48 kHz stereo -- the
+// entertainment (type 102) stream. Detected as bit tests because the phone may
+// OR the format with other capability bits.
+constexpr int64_t kAacLc44kStereo = 0x400000;
+constexpr int64_t kAacLc48kStereo = 0x800000;
+
+bool decodeAacFormat(int64_t format, PcmFormat& out)
+{
+    if ((format & kAacLc48kStereo) != 0)
+    {
+        out = {48000, 2};
+        return true;
+    }
+    if ((format & kAacLc44kStereo) != 0)
+    {
+        out = {44100, 2};
+        return true;
+    }
+    return false;
 }
 
 // Per-direction ChaCha20-Poly1305 state for an encrypted AirPlay channel (the
@@ -295,6 +317,23 @@ struct Receiver::State
     bool verified = false;
 
     bool paired = false;
+
+    // Microphone uplink (us -> phone), set up when the phone's main-audio SETUP
+    // carries a dataPort of its own. Guarded because feedMic() runs on the zenoh
+    // subscriber thread while setup/teardown run on the RTSP session thread.
+    std::mutex mic_mutex;
+    bool mic_active = false;
+    int mic_fd = -1;
+    sockaddr_in6 mic_dest{};
+    Bytes mic_key;
+    uint32_t mic_sample_rate = 0;
+    uint8_t mic_channels = 0;
+    int mic_payload_type = 100;
+    size_t mic_samples_per_frame = 0;  // PCM framing granularity
+    Bytes mic_accum;                   // leftover PCM between feed() calls
+    uint16_t mic_seq = 0;
+    uint32_t mic_ts = 0;
+    uint64_t mic_nonce = 0;
 };
 
 Receiver::Receiver(ReceiverConfig config) :
@@ -320,6 +359,11 @@ void Receiver::setAudioHandler(AudioHandler handler)
 void Receiver::setStatusHandler(StatusHandler handler)
 {
     status_handler_ = std::move(handler);
+}
+
+void Receiver::setMicStatusHandler(MicStatusHandler handler)
+{
+    mic_status_handler_ = std::move(handler);
 }
 
 bool Receiver::start()
@@ -411,6 +455,7 @@ void Receiver::stop()
         }
     }
     session_threads_.clear();
+    stopMicUplink();
     if (status_handler_)
     {
         status_handler_(false);
@@ -1282,9 +1327,10 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             const std::string audio_type =
                 audio_type_val != nullptr ? audio_type_val->asString() : "";
 
+            const int64_t format_bits = format != nullptr ? format->asInteger() : 0;
             PcmFormat pcm{};
-            const bool is_pcm =
-                format != nullptr && decodePcmFormat(format->asInteger(), pcm);
+            const bool is_pcm = format != nullptr && decodePcmFormat(format_bits, pcm);
+            const bool is_aac = !is_pcm && decodeAacFormat(format_bits, pcm);
 
             uint16_t data_port = 0;
             uint16_t control_port = 0;
@@ -1299,26 +1345,39 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             state_->stream_fds.push_back(data_fd);
             state_->stream_fds.push_back(control_fd);
 
-            if (is_pcm)
+            if (is_pcm || is_aac)
             {
-                SPDLOG_INFO("[airplay] audio stream type {} '{}' -> {} Hz {} ch, dataPort {} "
+                SPDLOG_INFO("[airplay] audio stream type {} '{}' -> {} {} Hz {} ch, dataPort {} "
                             "controlPort {}",
-                            stream_type, audio_type, pcm.sample_rate, pcm.channels, data_port,
-                            control_port);
+                            stream_type, audio_type, is_aac ? "AAC-LC" : "PCM", pcm.sample_rate,
+                            pcm.channels, data_port, control_port);
                 session_threads_.emplace_back([this, data_fd, output_key, pcm, stream_type,
-                                               audio_type] {
+                                               audio_type, is_aac] {
                     audioStreamLoop(data_fd, output_key, pcm.sample_rate, pcm.channels,
-                                    static_cast<int>(stream_type), audio_type);
+                                    static_cast<int>(stream_type), audio_type, is_aac);
                 });
             }
             else
             {
-                // AAC-LC / OPUS: the ports are opened and answered so the phone
-                // keeps the session healthy, but the stream is not decoded yet.
-                SPDLOG_WARN("[airplay] audio stream type {} '{}' uses a non-PCM format "
-                            "(0x{:x}); not decoded yet",
-                            stream_type, audio_type,
-                            format != nullptr ? format->asInteger() : 0);
+                // OPUS (or an unknown format): ports are opened and answered so
+                // the phone keeps the session healthy, but the stream is not
+                // decoded. OPUS only appears on the wireless path; the wired one
+                // we drive picks PCM/AAC.
+                SPDLOG_WARN("[airplay] audio stream type {} '{}' uses an unsupported format "
+                            "(0x{:x}); not decoded",
+                            stream_type, audio_type, format_bits);
+            }
+
+            // Microphone uplink: a main-audio SETUP that carries the phone's own
+            // dataPort means the phone wants captured mic audio sent there
+            // (Siri, a call). Set it up and signal the node to start capturing.
+            const plist::Value* phone_port = stream.find("dataPort");
+            if (stream_type == kStreamMainAudio && is_pcm && phone_port != nullptr &&
+                phone_port->asInteger() > 0 && !state_->peer_address.empty())
+            {
+                startMicUplink(static_cast<uint16_t>(phone_port->asInteger()), output_key,
+                               pcm.sample_rate, pcm.channels, static_cast<int>(stream_type),
+                               stream);
             }
 
             plist::Value entry = plist::Value::dict();
@@ -1522,13 +1581,23 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
 }
 
 void Receiver::audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
-                               int stream_type, std::string audio_type)
+                               int stream_type, std::string audio_type, bool is_aac)
 {
     // Each UDP datagram is [12B RTP header][ciphertext][16B tag][8B nonce LE],
     // sealed with ChaCha20-Poly1305. The AAD is the RTP header's timestamp+SSRC
     // (bytes 4..12), and the nonce is 4 zero bytes followed by the 8-byte tail.
     constexpr size_t kRtpHeader = 12;
     constexpr size_t kTail = 24;  // 16-byte tag + 8-byte nonce
+
+    // For the entertainment stream the decrypted payload is a raw AAC-LC access
+    // unit rather than PCM; decode it here.
+    AacDecoder aac_decoder;
+    if (is_aac && !aac_decoder.open(sample_rate, channels))
+    {
+        SPDLOG_ERROR("[audio] could not open the AAC decoder for type {}; stream will be silent",
+                     stream_type);
+        is_aac = false;  // fall through to raw (will sound wrong, but visible)
+    }
 
     Bytes buffer(4096);
     uint64_t packets = 0;
@@ -1577,18 +1646,31 @@ void Receiver::audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uin
         const Bytes sealed(buffer.begin() + kRtpHeader,
                            buffer.begin() + static_cast<long>(len - 8));
 
-        const auto pcm = crypto::chachaOpen(key, nonce, sealed, aad);
-        if (!pcm)
+        const auto payload = crypto::chachaOpen(key, nonce, sealed, aad);
+        if (!payload)
         {
             SPDLOG_WARN("[audio] type {} packet failed to decrypt", stream_type);
             continue;
         }
 
-        // The wire PCM is 16-bit big-endian; the sink wants little-endian.
-        Bytes samples = *pcm;
-        for (size_t k = 0; k + 1 < samples.size(); k += 2)
+        Bytes samples;
+        if (is_aac)
         {
-            std::swap(samples[k], samples[k + 1]);
+            // The decrypted payload is a raw AAC-LC access unit -> decode to
+            // interleaved S16LE (already little-endian, so no swap).
+            if (!aac_decoder.decode(*payload, samples) || samples.empty())
+            {
+                continue;
+            }
+        }
+        else
+        {
+            // Wire PCM is 16-bit big-endian; the sink wants little-endian.
+            samples = *payload;
+            for (size_t k = 0; k + 1 < samples.size(); k += 2)
+            {
+                std::swap(samples[k], samples[k + 1]);
+            }
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -1748,6 +1830,145 @@ void Receiver::requestKeyframe()
     command.set("type", plist::Value::string("forceKeyFrame"));
     command.set("params", std::move(params));
     sendEventCommand(plist::encode(command));
+}
+
+void Receiver::startMicUplink(uint16_t phone_port, const Bytes& /*shared_key*/,
+                              uint32_t sample_rate, uint8_t channels, int stream_type,
+                              const plist::Value& stream)
+{
+    std::lock_guard<std::mutex> lock(state_->mic_mutex);
+    if (state_->mic_fd >= 0)
+    {
+        return;  // already up
+    }
+
+    state_->mic_fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    if (state_->mic_fd < 0)
+    {
+        SPDLOG_ERROR("[audio] mic uplink socket() failed: {}", std::strerror(errno));
+        return;
+    }
+
+    state_->mic_dest = {};
+    state_->mic_dest.sin6_family = AF_INET6;
+    state_->mic_dest.sin6_port = htons(phone_port);
+    state_->mic_dest.sin6_scope_id = state_->peer_scope;
+    if (::inet_pton(AF_INET6, state_->peer_address.c_str(), &state_->mic_dest.sin6_addr) != 1)
+    {
+        SPDLOG_ERROR("[audio] mic uplink: cannot parse peer '{}'", state_->peer_address);
+        ::close(state_->mic_fd);
+        state_->mic_fd = -1;
+        return;
+    }
+
+    // The input key mirrors the downlink (output) key: same DataStream salt
+    // (this stream's connection id), the Input rather than Output label.
+    const plist::Value* cid = stream.find("streamConnectionID");
+    const std::string cid_text =
+        std::to_string(static_cast<uint64_t>(cid != nullptr ? cid->asInteger() : 0));
+    state_->mic_key = crypto::hkdfSha512(state_->verify_shared, "DataStream-Salt" + cid_text,
+                                         "DataStream-Input-Encryption-Key", 32);
+
+    // Frame granularity: the phone's framesPerPacket if given, else 20 ms.
+    const plist::Value* fpp = stream.find("framesPerPacket");
+    const int64_t frames = fpp != nullptr ? fpp->asInteger() : 0;
+    state_->mic_samples_per_frame =
+        frames > 0 ? static_cast<size_t>(frames) : (sample_rate * 20 / 1000);
+
+    state_->mic_sample_rate = sample_rate;
+    state_->mic_channels = channels;
+    state_->mic_payload_type = stream_type;
+    state_->mic_accum.clear();
+    state_->mic_seq = 0;
+    state_->mic_ts = 0;
+    state_->mic_nonce = 0;
+    state_->mic_active = true;
+
+    SPDLOG_INFO("[audio] mic uplink up: [{}]:{} {} Hz {} ch, {} samples/frame",
+                state_->peer_address, phone_port, sample_rate, channels,
+                state_->mic_samples_per_frame);
+
+    if (mic_status_handler_)
+    {
+        mic_status_handler_(true, sample_rate, channels);
+    }
+}
+
+void Receiver::stopMicUplink()
+{
+    bool was_active = false;
+    {
+        std::lock_guard<std::mutex> lock(state_->mic_mutex);
+        if (state_->mic_fd >= 0)
+        {
+            ::close(state_->mic_fd);
+            state_->mic_fd = -1;
+        }
+        was_active = state_->mic_active;
+        state_->mic_active = false;
+        state_->mic_accum.clear();
+    }
+    if (was_active && mic_status_handler_)
+    {
+        mic_status_handler_(false, 0, 0);
+    }
+}
+
+void Receiver::feedMic(const Bytes& pcm)
+{
+    std::lock_guard<std::mutex> lock(state_->mic_mutex);
+    if (!state_->mic_active || state_->mic_fd < 0 || state_->mic_samples_per_frame == 0)
+    {
+        return;
+    }
+
+    state_->mic_accum.insert(state_->mic_accum.end(), pcm.begin(), pcm.end());
+    const size_t frame_bytes = state_->mic_samples_per_frame * state_->mic_channels * 2;
+    if (frame_bytes == 0)
+    {
+        return;
+    }
+
+    while (state_->mic_accum.size() >= frame_bytes)
+    {
+        // PCM travels big-endian on the wire; swap each sample from S16LE.
+        Bytes body(state_->mic_accum.begin(), state_->mic_accum.begin() + frame_bytes);
+        for (size_t k = 0; k + 1 < body.size(); k += 2)
+        {
+            std::swap(body[k], body[k + 1]);
+        }
+        state_->mic_accum.erase(state_->mic_accum.begin(),
+                                state_->mic_accum.begin() + static_cast<long>(frame_bytes));
+
+        // RTP header, mirror of the downlink layout.
+        uint8_t header[12] = {};
+        header[0] = 0x80;
+        header[1] = static_cast<uint8_t>(state_->mic_payload_type & 0x7F);
+        header[2] = static_cast<uint8_t>((state_->mic_seq >> 8) & 0xFF);
+        header[3] = static_cast<uint8_t>(state_->mic_seq & 0xFF);
+        header[4] = static_cast<uint8_t>((state_->mic_ts >> 24) & 0xFF);
+        header[5] = static_cast<uint8_t>((state_->mic_ts >> 16) & 0xFF);
+        header[6] = static_cast<uint8_t>((state_->mic_ts >> 8) & 0xFF);
+        header[7] = static_cast<uint8_t>(state_->mic_ts & 0xFF);
+        // SSRC is zero for CarPlay input streams.
+
+        const Bytes aad(header + 4, header + 12);
+        const Bytes nonce = crypto::nonce64(state_->mic_nonce);
+        const Bytes sealed = crypto::chachaSeal(state_->mic_key, nonce, body, aad);
+
+        // Wire layout: header, ciphertext+tag, then the 8-byte LE nonce.
+        Bytes packet(header, header + 12);
+        packet.insert(packet.end(), sealed.begin(), sealed.end());
+        const Bytes nonce8(nonce.end() - 8, nonce.end());
+        packet.insert(packet.end(), nonce8.begin(), nonce8.end());
+
+        ::sendto(state_->mic_fd, packet.data(), packet.size(), 0,
+                 reinterpret_cast<sockaddr*>(&state_->mic_dest), sizeof(state_->mic_dest));
+
+        state_->mic_seq = static_cast<uint16_t>(state_->mic_seq + 1);
+        state_->mic_ts += static_cast<uint32_t>(state_->mic_samples_per_frame);
+        ++state_->mic_nonce;
+    }
 }
 
 bool Receiver::sendEventCommand(const Bytes& plist_body)
@@ -1916,6 +2137,8 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
     constexpr int64_t kPcmVoice = 0x3FC;
     constexpr int64_t kPcm = kPcmVoice | 0xC00;
     constexpr int64_t kPcmMono = 0x154 | 0x400;
+    // AAC-LC 44.1 kHz stereo for the buffered entertainment stream (type 102).
+    constexpr int64_t kAacLcMedia = 0x400000;
 
     info.set("audioLatencies", plist::Value::array({audio_latency(100, nullptr),
                                                     audio_latency(100, "default"),
@@ -1926,6 +2149,10 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
                                                     audio_latency(101, nullptr),
                                                     audio_latency(101, "default"),
                                                     audio_latency(102, "default")}));
+    // The wired phone routes all music through type 100 as PCM and works
+    // cleanly; type 102 AAC-LC is advertised as a fallback for any phone that
+    // does send it (verified on hardware not to be used on this wired path --
+    // see docs/carplay_bringup.md stage 9).
     info.set("audioFormats",
              plist::Value::array({audio_format(100, "compatibility", kPcm, kPcmMono),
                                   audio_format(101, "compatibility", kPcm, 0),
@@ -1935,7 +2162,9 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
                                   audio_format(100, "telephony", kPcmMono, kPcmMono),
                                   audio_format(100, "speechRecognition", kPcmMono, kPcmMono),
                                   audio_format(101, "default", kPcm, 0),
-                                  audio_format(102, "media", kPcm, 0)}));
+                                  // Entertainment stream: AAC-LC, decoded by
+                                  // libavcodec (aac_decoder.cpp).
+                                  audio_format(102, "media", kAacLcMedia, 0)}));
 
     info.set("sourceVersion", plist::Value::string("366.0"));
     info.set("features", plist::Value::integer(kCarplayFeatures));

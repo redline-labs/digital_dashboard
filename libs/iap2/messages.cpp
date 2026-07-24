@@ -1384,6 +1384,23 @@ std::vector<uint8_t> encodeVehicleStatusUpdate(std::optional<uint16_t> range,
     return csm::encodeMessage(kMsgVehicleStatusUpdate, params);
 }
 
+// StartLocationInformation (0xFFFA) parameters -- each is a None-like presence
+// flag selecting one NMEA sentence family.
+constexpr uint16_t kStartLocGpsFixData = 1;
+constexpr uint16_t kStartLocRecommendedMinimum = 2;
+constexpr uint16_t kStartLocSatellitesInView = 3;
+constexpr uint16_t kStartLocVehicleSpeed = 4;
+
+LocationRequest decodeStartLocationInformation(const csm::ParamList& params)
+{
+    LocationRequest request;
+    request.gps_fix_data = csm::has(params, kStartLocGpsFixData);
+    request.recommended_minimum = csm::has(params, kStartLocRecommendedMinimum);
+    request.satellites_in_view = csm::has(params, kStartLocSatellitesInView);
+    request.vehicle_speed = csm::has(params, kStartLocVehicleSpeed);
+    return request;
+}
+
 std::vector<uint8_t> encodeLocationInformation(std::string_view nmea_sentence)
 {
     csm::ParamList params;

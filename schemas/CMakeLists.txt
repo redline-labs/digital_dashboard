@@ -24,6 +24,7 @@ set(SCHEMA_FILES
     carplay_nav.capnp
     carplay_nowplaying.capnp
     carplay_call.capnp
+    carplay_location.capnp
 )
 
 set(GENERATED_SOURCES)

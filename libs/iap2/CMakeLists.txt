@@ -8,6 +8,7 @@ add_library(iap2 STATIC
     link_layer.cpp
     mcp2221a_mfi_signer.cpp
     messages.cpp
+    location_nmea.cpp
 )
 
 target_include_directories(iap2 PUBLIC
@@ -27,6 +28,16 @@ add_executable(iap2_test_framing
 )
 
 target_link_libraries(iap2_test_framing PRIVATE
+    iap2
+    spdlog::spdlog
+)
+
+# NMEA generation for the GPS location uplink, runnable without hardware.
+add_executable(iap2_test_nmea
+    test_nmea.cpp
+)
+
+target_link_libraries(iap2_test_nmea PRIVATE
     iap2
     spdlog::spdlog
 )

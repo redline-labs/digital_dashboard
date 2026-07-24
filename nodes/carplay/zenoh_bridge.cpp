@@ -256,4 +256,29 @@ void ZenohBridge::setMicHandler(std::function<void(const AudioChunk&)> handler)
         });
 }
 
+void ZenohBridge::setLocationHandler(std::function<void(const LocationFix&)> handler)
+{
+    location_handler_ = std::move(handler);
+    location_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayLocation>>(
+        prefix_ + "/location",
+        [this](CarPlayLocation::Reader reader)
+        {
+            if (!location_handler_)
+            {
+                return;
+            }
+            LocationFix fix;
+            fix.latitude_deg = reader.getLatitudeDeg();
+            fix.longitude_deg = reader.getLongitudeDeg();
+            fix.altitude_m = reader.getAltitudeM();
+            fix.speed_knots = reader.getSpeedKnots();
+            fix.course_deg = reader.getCourseDeg();
+            fix.satellites = reader.getSatellites();
+            fix.hdop = reader.getHdop();
+            fix.utc_epoch_ms = reader.getUtcEpochMs();
+            fix.valid = reader.getValid();
+            location_handler_(fix);
+        });
+}
+
 }  // namespace carplay

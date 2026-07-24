@@ -16,6 +16,7 @@
 #include "carplay_nav.capnp.h"
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
+#include "carplay_location.capnp.h"
 
 #include <cstdint>
 #include <functional>
@@ -157,6 +158,20 @@ struct InputEvent
     int32_t value = 0;
 };
 
+// A GPS fix supplied to the phone (dashboard/GPS source -> driver -> phone).
+struct LocationFix
+{
+    double latitude_deg = 0.0;
+    double longitude_deg = 0.0;
+    double altitude_m = 0.0;
+    double speed_knots = 0.0;
+    double course_deg = 0.0;
+    uint32_t satellites = 0;
+    double hdop = 1.0;
+    uint64_t utc_epoch_ms = 0;
+    bool valid = true;
+};
+
 // Owns every zenoh endpoint for the driver. Publishers are not thread-safe,
 // so each is guarded -- the video, audio, and metadata paths run on different
 // threads by design.
@@ -176,6 +191,9 @@ class ZenohBridge
     // Dashboard -> driver. Callbacks fire on zenoh subscriber threads.
     void setInputHandler(std::function<void(const InputEvent&)> handler);
     void setMicHandler(std::function<void(const AudioChunk&)> handler);
+    // A GPS source publishes fixes on <prefix>/location; the latest is cached
+    // and read via latestLocation() from the iAP2 thread.
+    void setLocationHandler(std::function<void(const LocationFix&)> handler);
 
   private:
     std::string prefix_;
@@ -195,8 +213,10 @@ class ZenohBridge
 
     std::function<void(const InputEvent&)> input_handler_;
     std::function<void(const AudioChunk&)> mic_handler_;
+    std::function<void(const LocationFix&)> location_handler_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayInput>> input_sub_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayAudio>> mic_sub_;
+    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayLocation>> location_sub_;
 
     uint32_t video_seq_ = 0;
 };

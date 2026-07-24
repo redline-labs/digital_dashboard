@@ -8,6 +8,7 @@
 #define AIRPLAY_RECEIVER_H_
 
 #include "airplay/crypto.h"
+#include "airplay/plist.h"
 #include "airplay/rtsp.h"
 #include "airplay/timing.h"
 
@@ -100,6 +101,18 @@ class Receiver
     // Safe to call from any thread; a no-op until the event channel is up.
     void sendTouch(float x, float y, bool down);
 
+    // Called when the phone opens (active=true) or closes a microphone uplink,
+    // with the sample rate and channel count it expects. The node uses this to
+    // tell the dashboard widget to start/stop capturing.
+    using MicStatusHandler = std::function<void(bool active, uint32_t sample_rate,
+                                                uint8_t channels)>;
+    void setMicStatusHandler(MicStatusHandler handler);
+
+    // Feeds captured microphone PCM (S16LE interleaved, at the rate/channels the
+    // phone requested) up to the phone. A no-op when no uplink is active. Safe
+    // to call from any thread.
+    void feedMic(const Bytes& pcm);
+
     // Asks the phone to emit a fresh IDR keyframe. The phone sends one keyframe
     // at session start and then, for a static screen, only P-frames -- so a
     // renderer that joins late (the dashboard does, over zenoh) cannot sync
@@ -133,13 +146,19 @@ class Receiver
     void screenStreamLoop(int listen_fd, Bytes key);
 
     // Receives one CarPlay audio stream on its UDP data port: RTP-framed,
-    // ChaCha20-Poly1305 sealed PCM. Decrypts and emits each packet.
+    // ChaCha20-Poly1305 sealed. Each decrypted payload is either LPCM (big
+    // endian) or, when `is_aac`, a raw AAC-LC access unit decoded to PCM.
     void audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
-                         int stream_type, std::string audio_type);
+                         int stream_type, std::string audio_type, bool is_aac);
 
     // Binds a dual-stack UDP socket on an ephemeral port. Returns the fd and
     // writes the chosen port.
     int openUdpSocket(uint16_t& port);
+
+    // Brings a microphone uplink up (against the phone's dataPort) or down.
+    void startMicUplink(uint16_t phone_port, const Bytes& shared_key, uint32_t sample_rate,
+                        uint8_t channels, int stream_type, const plist::Value& stream);
+    void stopMicUplink();
 
     // Accepts and services the phone's encrypted event-channel connection, over
     // which HID reports (touch) are pushed to the phone.
@@ -153,6 +172,7 @@ class Receiver
     VideoHandler video_handler_;
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
+    MicStatusHandler mic_status_handler_;
 
     int server_fd_ = -1;
     std::atomic<bool> run_{false};

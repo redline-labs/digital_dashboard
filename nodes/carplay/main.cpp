@@ -21,6 +21,7 @@
 #include <cxxopts.hpp>
 
 #include <atomic>
+#include <sstream>
 #include <chrono>
 #include <csignal>
 #include <string>
@@ -61,6 +62,10 @@ int main(int argc, char** argv)
          cxxopts::value<int>()->default_value("7"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
+        ("location",
+         "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
+         "(otherwise a GPS source publishes on <prefix>/location)",
+         cxxopts::value<std::string>()->default_value(""))
         ("v,verbose", "Enable debug logging")
         ("h,help", "Print usage");
 
@@ -122,6 +127,42 @@ int main(int argc, char** argv)
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
     usb_options.recording = &g_recording;
+
+    // A static GPS fix for bench-testing the location uplink: "lat,lon[,alt,speed,course]".
+    if (const std::string spec = args["location"].as<std::string>(); !spec.empty())
+    {
+        carplay::LocationFix fix;
+        double values[5] = {0, 0, 0, 0, 0};
+        int parsed = 0;
+        std::stringstream stream(spec);
+        std::string field;
+        while (parsed < 5 && std::getline(stream, field, ','))
+        {
+            try
+            {
+                values[parsed++] = std::stod(field);
+            }
+            catch (const std::exception&)
+            {
+                break;
+            }
+        }
+        if (parsed >= 2)
+        {
+            fix.latitude_deg = values[0];
+            fix.longitude_deg = values[1];
+            fix.altitude_m = values[2];
+            fix.speed_knots = values[3];
+            fix.course_deg = values[4];
+            fix.valid = true;
+            usb_options.static_location = fix;
+            SPDLOG_INFO("[node] static test location {}, {}", fix.latitude_deg, fix.longitude_deg);
+        }
+        else
+        {
+            SPDLOG_ERROR("[node] --location needs at least \"lat,lon\"; ignoring '{}'", spec);
+        }
+    }
 
     const bool usb_ok = carplay::runUsbPipeline(usb_options, bridge, g_stop);
     if (!usb_ok)

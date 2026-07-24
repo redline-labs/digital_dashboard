@@ -146,6 +146,17 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     bool session_started = false;
     bool failed = false;
 
+    // Navigation and call state are stateful: route-guidance and maneuver
+    // updates arrive separately and merge into one NavGuidance, and per-call
+    // updates fold into a single CallTracker phase. Held across callbacks.
+    iap2::NavGuidance nav_state;
+    iap2::CallTracker call_tracker;
+
+    // The phone's standing location request (which NMEA families it wants).
+    // Set/cleared by Start/StopLocationInformation, serviced from the poll loop.
+    iap2::LocationRequest location_request;
+    auto last_location_send = std::chrono::steady_clock::now();
+
     link.setControlMessageHandler([&](const std::vector<uint8_t>& frame) {
         const auto message = iap2::csm::parseMessage(frame);
         if (!message)
@@ -218,10 +229,12 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     case iap2::MfiAuthenticator::Result::kSucceeded:
                         SPDLOG_INFO("[mfi] authentication SUCCEEDED");
                         authenticated = true;
-                        // Subscribe to now-playing metadata, exactly as LIVI
+                        // Subscribe to the metadata streams, exactly as LIVI
                         // does once identification and auth are done.
-                        SPDLOG_INFO("[iap2] subscribing to now-playing updates");
+                        SPDLOG_INFO("[iap2] subscribing to now-playing, navigation, call updates");
                         link.sendControlMessage(iap2::encodeStartNowPlayingUpdates());
+                        link.sendControlMessage(iap2::encodeStartRouteGuidanceUpdates());
+                        link.sendControlMessage(iap2::encodeStartCallStateUpdates());
                         break;
                     case iap2::MfiAuthenticator::Result::kFailed:
                         SPDLOG_ERROR("[mfi] authentication FAILED. Check the protocol major "
@@ -298,6 +311,87 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 if (options.now_playing_handler)
                 {
                     options.now_playing_handler(*now_playing);
+                }
+                break;
+            }
+
+            case iap2::kMsgRouteGuidanceUpdate:
+            {
+                const auto guidance = iap2::decodeRouteGuidanceUpdate(message->params);
+                if (!guidance)
+                {
+                    SPDLOG_DEBUG("[iap2] RouteGuidanceUpdate did not decode");
+                    break;
+                }
+                nav_state.apply(*guidance);
+                // state values seen on hardware: 0 = not routing, 1 = actively
+                // guiding (destination present), 3 = transient (calculating).
+                SPDLOG_DEBUG("[iap2] navigation: state={} road '{}' -> '{}'",
+                             guidance->state.has_value() ? std::to_string(*guidance->state)
+                                                         : "none",
+                             nav_state.road_name.value_or("?"),
+                             nav_state.destination_name.value_or("?"));
+                if (options.nav_handler)
+                {
+                    options.nav_handler(nav_state);
+                }
+                break;
+            }
+
+            case iap2::kMsgRouteGuidanceManeuverUpdate:
+            {
+                const auto maneuver = iap2::decodeRouteGuidanceManeuverUpdate(message->params);
+                if (!maneuver)
+                {
+                    SPDLOG_DEBUG("[iap2] RouteGuidanceManeuverUpdate did not decode");
+                    break;
+                }
+                nav_state.apply(*maneuver);
+                if (options.nav_handler)
+                {
+                    options.nav_handler(nav_state);
+                }
+                break;
+            }
+
+            case iap2::kMsgStartLocationInformation:
+            {
+                location_request = iap2::decodeStartLocationInformation(message->params);
+                SPDLOG_INFO("[iap2] location requested: GGA={} RMC={} GSV={} VTG={}",
+                            location_request.gps_fix_data, location_request.recommended_minimum,
+                            location_request.satellites_in_view, location_request.vehicle_speed);
+                if (!options.location_provider)
+                {
+                    SPDLOG_WARN("[iap2] phone asked for GPS location but no location source is "
+                                "wired up; ignoring");
+                }
+                // Force an immediate send on the next poll.
+                last_location_send = std::chrono::steady_clock::now() - std::chrono::seconds(2);
+                break;
+            }
+
+            case iap2::kMsgStopLocationInformation:
+                SPDLOG_INFO("[iap2] location updates stopped");
+                location_request = {};
+                break;
+
+            case iap2::kMsgCallStateUpdate:
+            {
+                const auto call = iap2::decodeCallStateUpdate(message->params);
+                if (!call)
+                {
+                    SPDLOG_DEBUG("[iap2] CallStateUpdate did not decode");
+                    break;
+                }
+                if (call_tracker.apply(*call))
+                {
+                    SPDLOG_INFO("[iap2] call: {} ('{}' / '{}')",
+                                iap2::CallTracker::phaseName(call_tracker.phase()),
+                                call_tracker.name(), call_tracker.number());
+                }
+                if (options.call_handler)
+                {
+                    options.call_handler(call_tracker);
                 }
                 break;
             }
@@ -406,6 +500,31 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
         {
             SPDLOG_ERROR("[iap2] carkit channel died underneath the link layer");
             break;
+        }
+
+        // While the phone wants location, feed it ~1 Hz. Each requested NMEA
+        // family goes in its own LocationInformation message.
+        if (location_request.any() && options.location_provider)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_location_send >= std::chrono::seconds(1))
+            {
+                last_location_send = now;
+                if (const auto fix = options.location_provider(); fix)
+                {
+                    if (location_request.gps_fix_data)
+                    {
+                        link.sendControlMessage(
+                            iap2::encodeLocationInformation(iap2::nmeaGga(*fix)));
+                    }
+                    if (location_request.recommended_minimum)
+                    {
+                        link.sendControlMessage(
+                            iap2::encodeLocationInformation(iap2::nmeaRmc(*fix)));
+                    }
+                    // GSV / VTG not generated yet; the phone works with GGA+RMC.
+                }
+            }
         }
     }
 

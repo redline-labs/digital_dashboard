@@ -57,7 +57,9 @@ cmake --build build -j
 ./build/libs/airplay/airplay_test_crypto      # HKDF/ChaCha20/X25519/Ed25519/SRP KATs
 ./build/libs/airplay/airplay_test_plist       # binary plist round-trip
 ./build/libs/airplay/airplay_test_nalu        # avcC -> Annex-B rewrite
+./build/libs/airplay/airplay_test_aac         # AAC-LC encode/decode round-trip (entertainment audio)
 ./build/libs/iap2/iap2_test_framing           # 0xFF5A link-layer framing round-trip
+./build/libs/iap2/iap2_test_nmea              # GPS location NMEA (GGA/RMC) generation + checksum
 ```
 
 A failure here is a logic bug, not a hardware problem — fix before proceeding.
@@ -812,9 +814,123 @@ caches by that sequence and only re-decodes on change, so the 2 s metadata
 republish does not thrash it. Verified: a 99,563-byte JPEG arrived intact and
 matched the track (Alabama Shakes cover).
 
-**Not yet done:** route-guidance (`nav`) and call (`call`) topics, Siri/mic
-two-way audio, and the AAC-LC buffered-music stream (type 102). The now-playing
-widget renders the same topic the `inspect` dump shows.
+**Microphone uplink is implemented; control path verified on hardware
+(2026-07-22).** When the phone wants mic audio (Siri, a call) its main-audio
+(type 100) SETUP carries a `dataPort` of *its own* — that is the signal to send
+captured audio there. The receiver then:
+
+1. derives the **input** key (same `DataStream-Salt<id>`, `-Input-Encryption-Key`
+   rather than `-Output-`),
+2. fires `MicStatusHandler` → session `mic_active` → the widget starts its
+   `QAudioSource` and publishes captured PCM on `nodes/carplay/mic`,
+3. `feedMic()` frames that PCM (framesPerPacket, else 20 ms) and RTP+encrypts
+   each frame to the phone — an exact mirror of the working downlink (BE PCM,
+   AAD = RTP timestamp+SSRC, `nonce64` counter, `[hdr][ct+tag][nonce8]`).
+
+Verified on hardware up to the audio: triggering Siri opened the uplink
+(`[audio] mic uplink up: [fe80::…]:62672 44100 Hz 1 ch, 882 samples/frame`), the
+widget started capture, and the framing/keying matched the downlink. **End-to-end
+voice was not confirmed on the VM** — its microphone is near-silent (peak ~194)
+on the same emulated audio stack that stutters playback, and the capture happens
+in the *dashboard*, which runs on the Mac. Like audio playback (which the VM
+mangled but the Mac plays cleanly), confirm Siri/calls on real host audio.
+
+**Navigation and call metadata are wired and verified on hardware (2026-07-23).**
+Both follow the now-playing pattern: after auth the session subscribes
+(`StartRouteGuidanceUpdates`, `StartCallStateUpdates`) and routes decoded updates
+to `nodes/carplay/nav` and `nodes/carplay/call`, merged and re-published every 2 s.
+
+Verified with a live route and a real call:
+
+```
+[iap2] navigation: state=1 road '...' -> 'Wagyu Factory'
+[node] nav publish: active=true dest='Wagyu Factory' toManeuver=19m remain=30337m eta_in=1860s
+[iap2] call: active ('(714) 338-2330' / '7143382330')
+[iap2] call: ended ('' / '')
+```
+
+Two field-mapping details that hardware settled:
+
+- **`nav.active` derives from the route-guidance `state`.** Observed values:
+  `0` = not routing, `1` = actively guiding (destination present), `3` =
+  transient (calculating). `active = state != 0` is correct — during navigation
+  the phone holds `state=1`.
+- **`nav` distances are named the opposite of intuition in the iAP2 struct.**
+  `distance_remaining_m` is total-to-destination, `distance_to_maneuver_m` is to
+  the next turn (`usb_pipeline.cpp` maps them correctly).
+- **`current_road_name` is only sent when the phone knows the current road** —
+  i.e. when it can place the car on a road from GPS/movement. On a stationary
+  bench phone it is often empty; it populated as "Canyon Rd" when the
+  route start resolved. Not a bug: the field decodes correctly, the phone just
+  omits it.
+
+To re-check, run the driver (`--max-stage 5`+), start turn-by-turn in Maps and
+place/receive a call, then `inspect dump -k nodes/carplay/nav` /
+`.../call`, and watch the `[iap2] navigation:` / `[iap2] call:` log lines.
+
+**AAC-LC entertainment audio (type 102) is implemented; not yet hardware-tested
+(2026-07-23).** The buffered music stream is AAC-LC, not PCM. `/info` now
+advertises AAC-LC (0x400000) for type 102, and `libs/airplay/aac_decoder.cpp`
+decodes each raw access unit to S16 PCM with libavcodec (no GStreamer/external
+process — libavcodec is already linked for video). The decrypted RTP payload is
+a *raw* AAC-LC access unit (no ADTS), so the decoder is configured with a
+2-byte AudioSpecificConfig built from the negotiated rate/channels.
+
+The decode path is **unit-tested without hardware** by `airplay_test_aac`, which
+encodes a 440 Hz tone to AAC-LC and round-trips it through the decoder at 44.1k
+and 48k — proving the ASC/extradata and the float→S16 conversion.
+
+**⚠ Hardware finding (2026-07-23): this wired iPhone never uses the AAC stream.**
+It routes all music through **type 100 as PCM**, even when `/info` advertises
+AAC-LC for type 102. This was probed by temporarily withdrawing the PCM `media`
+option from type 100, leaving only type-102 AAC: the phone did *not* switch to
+AAC — it declined to route audio to CarPlay at all and fell back to playing
+through its own speaker. So AAC-LC (type 102) is a **wireless-path codec** in
+practice; the wired path we drive uses PCM and it works cleanly. The decoder
+stays as a verified-correct fallback for any phone that does send type 102, but
+it could not be exercised end-to-end here (withdrawing PCM just breaks wired
+audio, so type 102 stays advertised only as an addition, never a replacement).
+
+**GPS location uplink is implemented; not yet hardware-tested (2026-07-23).**
+CarPlay lets the head unit feed the phone the car's own GPS so the phone can
+dead-reckon where its signal is weak (tunnels, garages). The phone requests it
+with `StartLocationInformation` (0xFFFA), naming which NMEA families it wants
+(GGA/RMC/GSV/VTG as presence flags); the session answers with
+`LocationInformation` messages carrying NMEA sentences at ~1 Hz until
+`StopLocationInformation`.
+
+- **Sentence generation** lives in `libs/iap2/location_nmea.cpp` (GGA + RMC,
+  which cover what the phone needs; GSV/VTG are not generated). Unit-tested by
+  `iap2_test_nmea` — coordinate `ddmm.mmmm` encoding, hemispheres, all fields,
+  and the XOR checksum, against a known fix.
+- **The fix source is a zenoh topic**, `nodes/carplay/location`
+  (`CarPlayLocation` schema): any GPS source publishes fixes, the driver caches
+  the latest and uplinks it. This mirrors how mic/input come from the dashboard
+  side.
+
+*To test on hardware without a GPS device*, feed a static fix and start
+navigation (which is what makes the phone ask for location):
+
+```bash
+./build/nodes/carplay/carplay --location "37.3349,-122.00902,5,12.3,87.6" --verbose
+# lat,lon[,altitude_m,speed_knots,course_deg]
+```
+
+Start turn-by-turn in Maps, then watch the driver log for
+`[iap2] location requested: GGA=... RMC=...` followed by the ~1 Hz uplink. A
+real GPS source instead publishes `CarPlayLocation` on `nodes/carplay/location`.
+
+**Nav/maps rendering — what the phone actually provides.** Over iAP2 the phone
+sends turn-by-turn *metadata* (road name, next-maneuver type, turn angle,
+distance-to-turn, distance/time remaining, ETA) — already decoded and published
+on `nodes/carplay/nav`. It does **not** send map imagery over iAP2; the live map
+is inside the CarPlay video stream we already render. So a richer nav experience
+is a *dashboard widget* concern (a cluster-style turn-by-turn card rendering the
+`nav` topic), not more protocol. There is no such widget yet.
+
+**Still not done:** the OPUS codec (wireless-only; the wired path we drive uses
+PCM/AAC), a dedicated turn-by-turn nav widget, and GSV/VTG NMEA sentences (the
+phone works with GGA+RMC).
 
 ## What exists today (read before starting)
 
@@ -831,9 +947,14 @@ Not all stages below are implemented yet. Current state:
 | **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
 | **Late-joining renderer sync** | working — periodic `forceKeyFrame` over the event channel |
 | **Widget render (YUVJ420P)** | working — full CarPlay home screen renders |
-| **Event channel + touch HID** | written; on-screen touch not yet confirmed |
-| **AirPlay audio streams** | **NOT YET WRITTEN** |
-| **Node orchestration**, stages 2–6 | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
+| **Event channel + touch HID** | **verified on hardware** (single-touch + drag) |
+| **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
+| **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |
+| **Microphone uplink** | written; control path verified on hardware; end-to-end voice pending real host audio |
+| **Now-playing metadata + album art** | **verified on hardware** |
+| **Navigation + call metadata** | **verified on hardware 2026-07-23** |
+| **GPS location uplink** (car → phone, NMEA) | written; NMEA unit-tested (`iap2_test_nmea`); not yet hardware-tested |
+| **Node orchestration**, stages 2–7 + metadata | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
 | **Node orchestration** wiring NCM → airplay | **NOT YET WRITTEN** |
 | zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
 

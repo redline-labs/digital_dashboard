@@ -12,6 +12,7 @@
 #include "zenoh_bridge.h"
 
 #include <atomic>
+#include <optional>
 #include <string>
 
 namespace carplay
@@ -34,6 +35,10 @@ struct UsbPipelineOptions
     // Set to true while an AirPlay session is recording, so the caller's idle
     // session-state publisher stands down. Optional.
     std::atomic<bool>* recording = nullptr;
+
+    // A fixed GPS fix for bench-testing the location uplink. When set it takes
+    // precedence over any fix published on <prefix>/location.
+    std::optional<LocationFix> static_location;
 };
 
 // Runs the pipeline up to options.max_stage, logging each stage with the

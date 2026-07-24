@@ -9,6 +9,12 @@ if (NOT TARGET OpenSSL::Crypto)
     return()
 endif()
 
+# libavcodec decodes the phone's AAC-LC entertainment audio stream (type 102)
+# to PCM. It is already a dependency of the video path here; the AAC decoder is
+# built into the same library.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(AIRPLAY_LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
+
 # CarPlay AirPlay/RTSP session stack (transport-agnostic TCP server side).
 add_library(airplay STATIC
     tlv8.cpp
@@ -19,6 +25,7 @@ add_library(airplay STATIC
     rtsp.cpp
     receiver.cpp
     timing.cpp
+    aac_decoder.cpp
 )
 
 target_include_directories(airplay PUBLIC
@@ -31,6 +38,7 @@ target_link_libraries(airplay
 
     PRIVATE
         spdlog::spdlog
+        PkgConfig::AIRPLAY_LIBAV
 )
 
 # Round-trip and known-answer tests, runnable without hardware.
@@ -41,3 +49,11 @@ foreach(test tlv8 crypto plist nalu)
         spdlog::spdlog
     )
 endforeach()
+
+# The AAC round-trip needs the codec library directly (encoder side).
+add_executable(airplay_test_aac test_aac.cpp)
+target_link_libraries(airplay_test_aac PRIVATE
+    airplay
+    spdlog::spdlog
+    PkgConfig::AIRPLAY_LIBAV
+)

@@ -7,6 +7,7 @@
 #define CARPLAY_IAP2_SESSION_H_
 
 #include "apple_usb/lockdown.h"
+#include "iap2/location_nmea.h"
 #include "iap2/messages.h"
 #include "iap2/mfi_signer.h"
 
@@ -55,6 +56,20 @@ struct Iap2SessionOptions
     // Called with the album-artwork image (JPEG/PNG) once a file transfer for it
     // completes. The phone pushes this automatically after a track change.
     std::function<void(const std::vector<uint8_t>&)> artwork_handler;
+
+    // Called with the merged navigation state after each route-guidance or
+    // maneuver update while a route is active.
+    std::function<void(const iap2::NavGuidance&)> nav_handler;
+
+    // Called when the phone's call state changes (ringing, active, ended).
+    std::function<void(const iap2::CallTracker&)> call_handler;
+
+    // Supplies the current GPS fix, if the vehicle has one. The phone asks for
+    // location (StartLocationInformation) so it can dead-reckon where its own
+    // signal is weak; while it is asking, the session polls this and uplinks
+    // NMEA. Returning a fix with valid=false emits a "no fix" sentence; a null
+    // provider means we simply never answer the request.
+    std::function<std::optional<iap2::LocationFix>()> location_provider;
 };
 
 // Drives the iAP2 session until the link dies or `stop` is set. Returns true if

@@ -563,6 +563,23 @@ std::vector<uint8_t> encodeStopCommunicationsUpdates();
 std::vector<uint8_t> encodeVehicleStatusUpdate(std::optional<uint16_t> range,
                                                std::optional<int16_t> outside_temperature,
                                                std::optional<bool> range_warning);
+// Which NMEA sentence families the phone asked for in StartLocationInformation
+// (0xFFFA). Each is a presence flag in the request.
+struct LocationRequest
+{
+    bool gps_fix_data = false;        // -> $GPGGA
+    bool recommended_minimum = false; // -> $GPRMC
+    bool satellites_in_view = false;  // -> $GPGSV (not generated yet)
+    bool vehicle_speed = false;       // -> $GPVTG (not generated yet)
+
+    bool any() const
+    {
+        return gps_fix_data || recommended_minimum || satellites_in_view || vehicle_speed;
+    }
+};
+
+LocationRequest decodeStartLocationInformation(const csm::ParamList& params);
+
 std::vector<uint8_t> encodeLocationInformation(std::string_view nmea_sentence);
 std::vector<uint8_t> encodeAccessoryWiFiConfigurationInformation(std::string_view ssid,
                                                                  std::string_view passphrase,

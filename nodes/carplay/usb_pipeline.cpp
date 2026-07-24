@@ -359,27 +359,74 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         }
         else
         {
-            // Publish an accurate session state so the widget stops showing
-            // "Connect an iPhone" once video is live.
+            // Session state combines the recording status and the mic status,
+            // both of which change independently; keep the current values in a
+            // shared struct so either handler can publish the whole picture.
             const auto config = receiver_config;
             std::atomic<bool>* recording_flag = options.recording;
-            receiver->setStatusHandler([&bridge, config, recording_flag](bool recording) {
+            struct SessionShare
+            {
+                std::mutex mutex;
+                bool recording = false;
+                bool mic_active = false;
+                uint32_t mic_rate = 0;
+                uint8_t mic_channels = 0;
+            };
+            auto share = std::make_shared<SessionShare>();
+            const auto publish_session = [&bridge, config, share]() {
+                std::lock_guard<std::mutex> lock(share->mutex);
+                SessionState state;
+                state.device_connected = share->recording;
+                state.phase = share->recording ? SessionPhase::Recording : SessionPhase::Idle;
+                state.main_width_px = static_cast<uint16_t>(config.width);
+                state.main_height_px = static_cast<uint16_t>(config.height);
+                state.mic_active = share->mic_active;
+                state.mic_sample_rate_hz = share->mic_rate;
+                state.mic_channels = share->mic_channels;
+                bridge.publishSession(state);
+            };
+
+            receiver->setStatusHandler([recording_flag, share, publish_session](bool recording) {
                 if (recording_flag != nullptr)
                 {
                     recording_flag->store(recording);
                 }
-                SessionState state;
-                state.device_connected = recording;
-                state.phase = recording ? SessionPhase::Recording : SessionPhase::Idle;
-                state.main_width_px = static_cast<uint16_t>(config.width);
-                state.main_height_px = static_cast<uint16_t>(config.height);
-                bridge.publishSession(state);
+                {
+                    std::lock_guard<std::mutex> lock(share->mutex);
+                    share->recording = recording;
+                }
+                publish_session();
+            });
+
+            // Mic uplink: when the phone opens a mic stream, tell the widget to
+            // start capturing (via session mic_active); the captured PCM comes
+            // back on the mic topic and is fed to the receiver's uplink below.
+            receiver->setMicStatusHandler(
+                [share, publish_session](bool active, uint32_t rate, uint8_t channels) {
+                    {
+                        std::lock_guard<std::mutex> lock(share->mutex);
+                        share->mic_active = active;
+                        share->mic_rate = rate;
+                        share->mic_channels = channels;
+                    }
+                    SPDLOG_INFO("[node] microphone {} ({} Hz, {} ch)",
+                                active ? "requested" : "released", rate, channels);
+                    publish_session();
+                });
+
+            airplay::Receiver* rx = receiver.get();
+
+            // Captured mic PCM from the dashboard -> the phone.
+            bridge.setMicHandler([rx](const AudioChunk& chunk) {
+                if (chunk.pcm != nullptr && chunk.len > 0)
+                {
+                    rx->feedMic(std::vector<uint8_t>(chunk.pcm, chunk.pcm + chunk.len));
+                }
             });
 
             // Route the dashboard's touch events to the phone over the event
             // channel. The widget reports x/y in 0..10000 across its area; the
             // receiver wants 0..1.
-            airplay::Receiver* rx = receiver.get();
             bridge.setInputHandler([rx](const InputEvent& event) {
                 switch (event.kind)
                 {
@@ -475,11 +522,137 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             bridge.publishNowPlaying(np);
         };
 
+        // Navigation: guidance and maneuver updates are already merged into one
+        // iap2::NavGuidance by the session; map it onto the bridge's struct.
+        auto nav_state = std::make_shared<NavGuidance>();
+        auto nav_mutex = std::make_shared<std::mutex>();
+        auto nav_valid = std::make_shared<std::atomic<bool>>(false);
+        iap2_options.nav_handler = [&bridge, nav_state, nav_mutex,
+                                    nav_valid](const iap2::NavGuidance& g) {
+            std::lock_guard<std::mutex> lock(*nav_mutex);
+            NavGuidance& nav = *nav_state;
+            // A non-zero route-guidance state means guidance is active.
+            nav.active = g.status.value_or(0) != 0;
+            if (g.road_name)
+            {
+                nav.road_name = *g.road_name;
+            }
+            if (g.after_road_name)
+            {
+                nav.after_road_name = *g.after_road_name;
+            }
+            if (g.destination_name)
+            {
+                nav.destination_name = *g.destination_name;
+            }
+            if (g.maneuver_type)
+            {
+                nav.maneuver_type = *g.maneuver_type;
+            }
+            if (g.turn_angle)
+            {
+                nav.maneuver_angle_deg = *g.turn_angle;
+            }
+            if (g.junction_type)
+            {
+                nav.junction_type = *g.junction_type;
+            }
+            // iap2::NavGuidance names these confusingly:
+            //   distance_to_destination = total distance remaining
+            //   remain_distance         = distance to the next maneuver
+            if (g.distance_to_destination)
+            {
+                nav.distance_remaining_m = static_cast<float>(*g.distance_to_destination);
+            }
+            if (g.remain_distance)
+            {
+                nav.distance_to_maneuver_m = static_cast<float>(*g.remain_distance);
+            }
+            if (g.time_to_destination)
+            {
+                nav.time_remaining_sec = static_cast<float>(*g.time_to_destination);
+            }
+            if (g.eta_epoch)
+            {
+                nav.eta_epoch_sec = *g.eta_epoch;
+            }
+            nav_valid->store(true);
+            SPDLOG_DEBUG("[node] nav publish: active={} road='{}' dest='{}' toManeuver={}m "
+                         "remain={}m eta_in={}s",
+                         nav.active, nav.road_name, nav.destination_name,
+                         nav.distance_to_maneuver_m, nav.distance_remaining_m,
+                         nav.time_remaining_sec);
+            bridge.publishNav(nav);
+        };
+
+        // Call state: the session's CallTracker already folds per-call updates
+        // into a single phase; map that phase onto the bridge's enum.
+        auto call_valid = std::make_shared<std::atomic<bool>>(false);
+        auto last_call = std::make_shared<CallState>();
+        auto call_mutex = std::make_shared<std::mutex>();
+        iap2_options.call_handler = [&bridge, call_valid, last_call,
+                                     call_mutex](const iap2::CallTracker& tracker) {
+            std::lock_guard<std::mutex> lock(*call_mutex);
+            CallState& call = *last_call;
+            switch (tracker.phase())
+            {
+                case iap2::CallTracker::Phase::kActive: call.phase = CallPhase::Active; break;
+                case iap2::CallTracker::Phase::kRinging: call.phase = CallPhase::Incoming; break;
+                case iap2::CallTracker::Phase::kEnded: call.phase = CallPhase::Idle; break;
+            }
+            call.remote_name = tracker.name();
+            call.remote_number = tracker.number();
+            call_valid->store(true);
+            bridge.publishCall(call);
+        };
+
+        // GPS location the phone can dead-reckon from. A GPS source publishes
+        // fixes on nodes/carplay/location; cache the latest and hand it to the
+        // session, which uplinks NMEA while the phone is asking for location. A
+        // --location fix, when given, wins over anything published.
+        auto latest_fix = std::make_shared<LocationFix>();
+        auto fix_mutex = std::make_shared<std::mutex>();
+        auto fix_valid = std::make_shared<std::atomic<bool>>(false);
+        if (options.static_location)
+        {
+            std::lock_guard<std::mutex> lock(*fix_mutex);
+            *latest_fix = *options.static_location;
+            fix_valid->store(true);
+        }
+        else
+        {
+            bridge.setLocationHandler([latest_fix, fix_mutex, fix_valid](const LocationFix& fix) {
+                std::lock_guard<std::mutex> lock(*fix_mutex);
+                *latest_fix = fix;
+                fix_valid->store(true);
+            });
+        }
+        iap2_options.location_provider =
+            [latest_fix, fix_mutex, fix_valid]() -> std::optional<iap2::LocationFix> {
+            if (!fix_valid->load())
+            {
+                return std::nullopt;  // no GPS source has published yet
+            }
+            std::lock_guard<std::mutex> lock(*fix_mutex);
+            iap2::LocationFix out;
+            out.latitude_deg = latest_fix->latitude_deg;
+            out.longitude_deg = latest_fix->longitude_deg;
+            out.altitude_m = latest_fix->altitude_m;
+            out.speed_knots = latest_fix->speed_knots;
+            out.course_deg = latest_fix->course_deg;
+            out.satellites = latest_fix->satellites;
+            out.hdop = latest_fix->hdop;
+            out.utc_epoch_ms = latest_fix->utc_epoch_ms;
+            out.valid = latest_fix->valid;
+            return out;
+        };
+
         // zenoh has no retained messages, so re-publish the last-known metadata
-        // periodically -- otherwise a dashboard that connects while a track is
-        // paused (no fresh updates arriving) shows nothing.
-        std::thread now_playing_republish([&bridge, now_playing, now_playing_mutex,
-                                           now_playing_valid, &stop]() {
+        // periodically -- otherwise a dashboard that connects between updates
+        // (a paused track, a steady navigation screen) shows nothing.
+        std::thread metadata_republish([&bridge, now_playing, now_playing_mutex, now_playing_valid,
+                                        nav_state, nav_mutex, nav_valid, last_call, call_mutex,
+                                        call_valid, &stop]() {
             while (!stop.load())
             {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -487,6 +660,16 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
                 {
                     std::lock_guard<std::mutex> lock(*now_playing_mutex);
                     bridge.publishNowPlaying(*now_playing);
+                }
+                if (nav_valid->load())
+                {
+                    std::lock_guard<std::mutex> lock(*nav_mutex);
+                    bridge.publishNav(*nav_state);
+                }
+                if (call_valid->load())
+                {
+                    std::lock_guard<std::mutex> lock(*call_mutex);
+                    bridge.publishCall(*last_call);
                 }
             }
         });
@@ -498,7 +681,7 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         }
 
         stop.store(true);  // release the republish thread if the session ended
-        now_playing_republish.join();
+        metadata_republish.join();
     }
 
     // Hold the session open so the sockets above can be poked at from another
@@ -509,6 +692,11 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     }
 
     SPDLOG_INFO("[node] tearing down the USB pipeline");
+    // Detach the bridge callbacks that capture the receiver before it is
+    // destroyed, so a late zenoh mic/input delivery cannot call into a corpse.
+    bridge.setMicHandler(nullptr);
+    bridge.setInputHandler(nullptr);
+    bridge.setLocationHandler(nullptr);
     if (receiver)
     {
         receiver->stop();
