@@ -473,8 +473,10 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         auto now_playing = std::make_shared<NowPlaying>();
         auto now_playing_mutex = std::make_shared<std::mutex>();
         auto now_playing_valid = std::make_shared<std::atomic<bool>>(false);
+        auto now_playing_last_log = std::make_shared<std::string>();
         iap2_options.now_playing_handler = [&bridge, now_playing, now_playing_mutex,
-                                            now_playing_valid](const iap2::NowPlaying& update) {
+                                            now_playing_valid,
+                                            now_playing_last_log](const iap2::NowPlaying& update) {
             std::lock_guard<std::mutex> lock(*now_playing_mutex);
             NowPlaying& np = *now_playing;
             if (update.title)
@@ -506,6 +508,17 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
                 np.playing = (*update.status == iap2::PlaybackStatus::kPlaying);
             }
             now_playing_valid->store(true);
+
+            // Announce the track at INFO only when what a user would see
+            // actually changes; the phone re-sends the same state ~2/s.
+            const std::string signature =
+                np.title + '\x1f' + np.artist + '\x1f' + (np.playing ? "1" : "0");
+            if (signature != *now_playing_last_log)
+            {
+                *now_playing_last_log = signature;
+                SPDLOG_INFO("[node] now playing: '{}' / '{}' ({})", np.title, np.artist,
+                            np.playing ? "playing" : "paused");
+            }
             bridge.publishNowPlaying(np);
         };
 

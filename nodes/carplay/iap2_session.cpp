@@ -302,12 +302,16 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     SPDLOG_DEBUG("[iap2] NowPlayingUpdate did not decode");
                     break;
                 }
-                SPDLOG_INFO("[iap2] now playing: '{}' / '{}' ({})",
-                            now_playing->title.value_or("?"), now_playing->artist.value_or("?"),
-                            now_playing->status.has_value() &&
-                                    *now_playing->status == iap2::PlaybackStatus::kPlaying
-                                ? "playing"
-                                : "paused");
+                // The phone sends these ~2/s even when nothing changed, and each
+                // is partial (title absent on an elapsed-only tick), so this
+                // stays at DEBUG. The pipeline logs the merged state at INFO only
+                // when it actually changes.
+                SPDLOG_DEBUG("[iap2] now playing update: '{}' / '{}' ({})",
+                             now_playing->title.value_or("?"), now_playing->artist.value_or("?"),
+                             now_playing->status.has_value() &&
+                                     *now_playing->status == iap2::PlaybackStatus::kPlaying
+                                 ? "playing"
+                                 : "paused");
                 if (options.now_playing_handler)
                 {
                     options.now_playing_handler(*now_playing);

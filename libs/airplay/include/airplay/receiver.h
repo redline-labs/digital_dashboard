@@ -178,6 +178,10 @@ class Receiver
     std::atomic<bool> run_{false};
     std::thread accept_thread_;
     std::thread keyframe_thread_;
+    // steady_clock ticks (ns) of the last keyframe/config the phone sent. The
+    // keyframe thread only nudges the phone when this goes stale, so an animated
+    // screen (already emitting keyframes) is not asked for redundant ones.
+    std::atomic<int64_t> last_keyframe_ns_{0};
     std::vector<std::thread> session_threads_;
 
     struct State;

@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -414,13 +415,24 @@ bool Receiver::start()
     // only P-frames, so a renderer that subscribes to the zenoh video topic
     // late -- which the dashboard always does -- never gets a sync point.
     keyframe_thread_ = std::thread([this] {
+        // Only nudge the phone when no keyframe/config has arrived recently. A
+        // static screen (one keyframe, then only P-frames) needs the nudge for a
+        // late-joining renderer to sync; an animated screen emits its own
+        // keyframes and must not be asked for redundant ones (which doubles the
+        // keyframe bandwidth for nothing).
+        constexpr auto kStaleAfter = std::chrono::milliseconds(1500);
         while (run_.load())
         {
-            for (int i = 0; i < 10 && run_.load(); ++i)
+            for (int i = 0; i < 5 && run_.load(); ++i)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            requestKeyframe();
+            const auto last = std::chrono::steady_clock::time_point(
+                std::chrono::steady_clock::duration(last_keyframe_ns_.load()));
+            if (std::chrono::steady_clock::now() - last >= kStaleAfter)
+            {
+                requestKeyframe();
+            }
         }
     });
     SPDLOG_INFO("[airplay] RTSP receiver listening on [::]:{}", config_.port);
@@ -687,7 +699,16 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
     }
     if (!request.body.empty())
     {
-        if (request.contentType().find("plist") != std::string::npos)
+        // Sniff the body rather than trust Content-Type: the phone labels the
+        // TLV8 pair-setup/verify bodies as "application/x-apple-binary-plist"
+        // too, so a header check would send TLV8 down the plist decoder and log
+        // a spurious error. Real plists begin with the "bplist00" magic.
+        static constexpr std::string_view kPlistMagic = "bplist00";
+        const bool looks_like_plist =
+            request.body.size() >= kPlistMagic.size() &&
+            std::equal(kPlistMagic.begin(), kPlistMagic.end(), request.body.begin());
+
+        if (looks_like_plist)
         {
             if (const auto parsed = plist::decode(request.body); parsed)
             {
@@ -1452,6 +1473,7 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
         Bytes chunk(65536);
         uint64_t counter = 0;
         uint64_t frames = 0;
+        Bytes last_config;  // dedupe the (unchanging) codec-config log
 
         // Optional raw Annex-B dump for bring-up: `ffmpeg -i dump.h264 out.png`
         // turns it into a viewable image without a running dashboard.
@@ -1505,9 +1527,19 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                 buffer.erase(buffer.begin(),
                              buffer.begin() + static_cast<long>(kHeaderLength + body_size));
 
+                const auto mark_sync_point = [this] {
+                    last_keyframe_ns_.store(
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+                };
+
                 const uint8_t opcode = header[4];
                 if (opcode == kOpVideoConfig)
                 {
+                    // A config is a sync point; record it so the keyframe thread
+                    // does not nudge the phone while the stream already produces
+                    // its own. (P-frames must NOT count, or a static screen that
+                    // only sends P-frames would never trigger a nudge.)
+                    mark_sync_point();
                     const auto config = nalu::configToAnnexB(body);
                     if (!config)
                     {
@@ -1515,9 +1547,20 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                                     body.size());
                         continue;
                     }
-                    SPDLOG_INFO("[video] codec config: {} ({} bytes Annex-B)",
-                                config->codec == nalu::Codec::H265 ? "H.265" : "H.264",
-                                config->annex_b.size());
+                    // The config repeats before every keyframe (~1/s) and never
+                    // changes, so only announce it at INFO when it is new.
+                    if (config->annex_b != last_config)
+                    {
+                        last_config = config->annex_b;
+                        SPDLOG_INFO("[video] codec config: {} ({} bytes Annex-B)",
+                                    config->codec == nalu::Codec::H265 ? "H.265" : "H.264",
+                                    config->annex_b.size());
+                    }
+                    else
+                    {
+                        SPDLOG_DEBUG("[video] codec config (unchanged, {} bytes)",
+                                     config->annex_b.size());
+                    }
                     if (dump != nullptr)
                     {
                         std::fwrite(config->annex_b.data(), 1, config->annex_b.size(), dump);
@@ -1556,15 +1599,16 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                         SPDLOG_INFO("[video] FIRST FRAME decoded: {} bytes Annex-B",
                                     annex_b.size());
                     }
-                    else if (frames % 100 == 0)
-                    {
-                        SPDLOG_INFO("[video] {} frames received", frames);
-                    }
+
                     if (video_handler_)
                     {
                         VideoPacket packet;
                         packet.data = annex_b;
                         packet.keyframe = nalu::annexBContainsKeyframe(annex_b, nalu::Codec::H264);
+                        if (packet.keyframe)
+                        {
+                            mark_sync_point();  // an in-band keyframe is a sync point too
+                        }
                         video_handler_(packet);
                     }
                 }
