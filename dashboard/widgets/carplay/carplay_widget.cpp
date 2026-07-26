@@ -1,34 +1,72 @@
-#include <cstdlib>
 #include "carplay/carplay_widget.h"
 
 #include <spdlog/spdlog.h>
 #include <QPainter>
-#include <QTimer>
+#include <QtMultimedia/QAbstractVideoBuffer>
 #include <QtMultimedia/QAudioDevice>
 #include <QtMultimedia/QAudioSink>
 #include <QtMultimedia/QAudioSource>
 #include <QtMultimedia/QMediaDevices>
+#include <QtMultimedia/QVideoFrame>
+#include <QtMultimedia/QVideoFrameFormat>
+#include <QtMultimedia/QVideoSink>
+#include <QtMultimediaWidgets/QVideoWidget>
 
 #include <algorithm>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavutil/pixdesc.h>
-#include <libswscale/swscale.h>
 }
 
 #include <cstring>
 
 namespace
 {
-// QImage::Format_RGB32 packs 0xffRRGGBB into a uint32, so the byte order in
-// memory follows the host endianness. Matching it exactly is the whole point:
-// it makes drawImage a straight blit instead of a per-pixel conversion.
-#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
-constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_BGRA;
-#else
-constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_ARGB;
-#endif
+// At most this many decoded frames may be in flight toward the GUI thread.
+// Two covers one being presented plus one queued; beyond that the GUI thread
+// is behind and the newest frame is worth more than a backlog of stale ones.
+constexpr int kMaxSinkFramesInFlight = 2;
+
+// Lets a QVideoFrame reference libavcodec's decoded planes directly instead of
+// copying them into a Qt-owned buffer. The wrapped AVFrame is a ref (not a
+// deep copy) of the decoder's frame, so it keeps that buffer alive for exactly
+// as long as Qt holds the QVideoFrame.
+class AVFrameVideoBuffer : public QAbstractVideoBuffer
+{
+  public:
+    AVFrameVideoBuffer(AVFrame* owned_ref, QVideoFrameFormat format) :
+        _frame(owned_ref),
+        _format(std::move(format))
+    {
+    }
+
+    ~AVFrameVideoBuffer() override { av_frame_free(&_frame); }
+
+    AVFrameVideoBuffer(const AVFrameVideoBuffer&) = delete;
+    AVFrameVideoBuffer& operator=(const AVFrameVideoBuffer&) = delete;
+
+    MapData map(QVideoFrame::MapMode /*mode*/) override
+    {
+        // Planar 4:2:0: the chroma planes are half height, rounded up.
+        const int chroma_height = (_frame->height + 1) / 2;
+        MapData data;
+        data.planeCount = 3;
+        for (int plane = 0; plane < 3; ++plane)
+        {
+            data.data[plane] = _frame->data[plane];
+            data.bytesPerLine[plane] = _frame->linesize[plane];
+            data.dataSize[plane] =
+                _frame->linesize[plane] * ((plane == 0) ? _frame->height : chroma_height);
+        }
+        return data;
+    }
+
+    QVideoFrameFormat format() const override { return _format; }
+
+  private:
+    AVFrame* _frame;
+    QVideoFrameFormat _format;
+};
 }  // namespace
 
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
@@ -36,6 +74,23 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _cfg(std::move(cfg))
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
+
+    // Decoded YUV planes go straight to Qt Multimedia, which converts them to
+    // RGB in a shader on the GPU (Metal on macOS, Vulkan/OpenGL on Linux).
+    //
+    // NOTE: this child surface composites ON TOP of any sibling widget that
+    // overlaps it, even one explicitly raise()d above it -- measured, and not
+    // detectable via WA_NativeWindow, which reports false. Anything that needs
+    // to draw over the CarPlay video has to be a child of _video_widget, not a
+    // sibling of this widget. See docs/carplay_bringup.md stage 8.
+    _video_widget = new QVideoWidget(this);
+    _video_widget->setGeometry(rect());
+    // Touch is this widget's job. Without this the video child is the hit-test
+    // target, and a press only reaches us by propagation -- which also leaves
+    // the mouse grab on the child, breaking drags.
+    _video_widget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    // Stays hidden until the first frame so the status text shows through.
+    _video_widget->hide();
 
     _input_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayInput>>(_cfg.input_key);
 
@@ -111,15 +166,6 @@ void CarPlayWidget::destroyDecoder()
     }
     if (_frame != nullptr) av_frame_free(&_frame);
     if (_codec_context != nullptr) avcodec_free_context(&_codec_context);
-    if (_sws != nullptr)
-    {
-        sws_freeContext(_sws);
-        _sws = nullptr;
-        _sws_width = 0;
-        _sws_height = 0;
-        _sws_src_format = -1;
-        _sws_full_range = false;
-    }
     _synced = false;
 }
 
@@ -216,141 +262,89 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
         return;
     }
 
-    bool frame_updated = false;
     while (avcodec_receive_frame(_codec_context, _frame) == 0)
     {
-        if (!renderFrameToBackBuffer(_frame))
+        if (!presentFrameToVideoSink(_frame))
         {
-            // Anything swscale cannot handle lands here and would render black.
+            // Anything the sink cannot accept lands here and would render black.
             if (++_convert_errors % 60 == 1)
             {
-                SPDLOG_WARN("[carplay] cannot convert decoded frame to RGB ({}x{}, pix_fmt {}); "
+                SPDLOG_WARN("[carplay] cannot present decoded frame ({}x{}, pix_fmt {}); "
                             "{} frame(s) dropped",
                             _frame->width, _frame->height, _frame->format, _convert_errors);
             }
             continue;
         }
-        frame_updated = true;
 
         if (!_rendered_first_frame)
         {
             _rendered_first_frame = true;
-            SPDLOG_INFO("[carplay] first video frame decoded and rendered ({}x{})",
+            SPDLOG_INFO("[carplay] first video frame decoded and presented ({}x{})",
                         _frame->width, _frame->height);
-            // Bring-up aid: dump the first rendered frame so it can be inspected
-            // without a screenshot tool. Grabs the exact QImage the widget draws.
-            if (const char* path = std::getenv("CARPLAY_DUMP_RENDER"); path != nullptr)
-            {
-                std::lock_guard<std::mutex> lock(_frame_mutex);
-                if (_front_frame >= 0 && _frames[_front_frame].save(QString::fromUtf8(path)))
-                {
-                    SPDLOG_INFO("[carplay] wrote rendered frame to {}", path);
-                }
-            }
         }
-    }
-
-    if (frame_updated)
-    {
-        QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
     }
 }
 
-bool CarPlayWidget::renderFrameToBackBuffer(const AVFrame* frame)
+bool CarPlayWidget::presentFrameToVideoSink(const AVFrame* frame)
 {
-    // CarPlay decodes to YUVJ420P (full-range, pix_fmt 12); a synthetic or
-    // other source may give plain YUV420P (limited range, pix_fmt 0). swscale
-    // handles both -- and, unlike the hand-rolled loop this replaces, applies
-    // the range each one actually declares rather than assuming full range.
     if (frame == nullptr || frame->data[0] == nullptr || frame->width <= 0 || frame->height <= 0)
     {
         return false;
     }
-    const int w = frame->width;
-    const int h = frame->height;
 
-    // Format_RGB32 is Qt's native raster format, so paintEvent blits it instead
-    // of converting per pixel. Reused across frames: the allocation only
-    // happens on the first frame and on a resolution change.
-    QImage& dst = _frames[_back_frame];
-    if (dst.width() != w || dst.height() != h || dst.format() != QImage::Format_RGB32)
-    {
-        dst = QImage(w, h, QImage::Format_RGB32);
-        if (dst.isNull())
-        {
-            return false;
-        }
-    }
-
-    // ffmpeg tags full-range 4:2:0 two different ways depending on decoder and
-    // version: the deprecated YUVJ420P, or plain YUV420P with color_range set
-    // to JPEG. Normalise to the latter -- swscale logs a deprecation warning
-    // for the YUVJ formats, and it is the range flag that actually selects the
-    // coefficients. Output is bit-identical to passing YUVJ420P through.
-    AVPixelFormat src_fmt = static_cast<AVPixelFormat>(frame->format);
-    bool full_range = (frame->color_range == AVCOL_RANGE_JPEG);
-    if (src_fmt == AV_PIX_FMT_YUVJ420P)
-    {
-        src_fmt = AV_PIX_FMT_YUV420P;
-        full_range = true;
-    }
-    else if (src_fmt == AV_PIX_FMT_YUVJ422P)
-    {
-        src_fmt = AV_PIX_FMT_YUV422P;
-        full_range = true;
-    }
-    else if (src_fmt == AV_PIX_FMT_YUVJ444P)
-    {
-        src_fmt = AV_PIX_FMT_YUV444P;
-        full_range = true;
-    }
-
-    // Rebuilt only when the geometry, format or range actually changes; steady
-    // state reuses the context. Source and destination share a size, so this
-    // takes swscale's optimised unscaled YUV->RGB32 converter.
-    if (_sws == nullptr || w != _sws_width || h != _sws_height || src_fmt != _sws_src_format ||
-        full_range != _sws_full_range)
-    {
-        _sws = sws_getCachedContext(_sws,
-                                    w, h, src_fmt,
-                                    w, h, kRgb32PixelFormat,
-                                    SWS_POINT, nullptr, nullptr, nullptr);
-        if (_sws == nullptr)
-        {
-            return false;
-        }
-
-        int* inv_table = nullptr;
-        int* table = nullptr;
-        int src_range = 0, dst_range = 0, brightness = 0, contrast = 0, saturation = 0;
-        if (sws_getColorspaceDetails(_sws, &inv_table, &src_range, &table, &dst_range,
-                                     &brightness, &contrast, &saturation) >= 0)
-        {
-            sws_setColorspaceDetails(_sws, inv_table, full_range ? 1 : 0, table, dst_range,
-                                     brightness, contrast, saturation);
-        }
-
-        _sws_width = w;
-        _sws_height = h;
-        _sws_src_format = src_fmt;
-        _sws_full_range = full_range;
-        SPDLOG_INFO("[carplay] video scaler ready: {}x{} {} -> RGB32 ({} range)",
-                    w, h, av_get_pix_fmt_name(src_fmt), full_range ? "full" : "limited");
-    }
-
-    uint8_t* dst_planes[4] = {dst.bits(), nullptr, nullptr, nullptr};
-    const int dst_strides[4] = {static_cast<int>(dst.bytesPerLine()), 0, 0, 0};
-    if (sws_scale(_sws, frame->data, frame->linesize, 0, h, dst_planes, dst_strides) <= 0)
+    // Only planar 4:2:0 is mapped here -- it is what the software H.264/H.265
+    // decoders produce. Anything else falls back to the caller's error path.
+    const bool is_420p =
+        (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_YUVJ420P);
+    if (!is_420p)
     {
         return false;
     }
 
-    // Publish. Only the index moves under the lock -- no pixels are copied, and
-    // paintEvent cannot be mid-blit on this buffer because it holds the lock
-    // while it draws.
-    std::lock_guard<std::mutex> lock(_frame_mutex);
-    _front_frame = _back_frame;
-    _back_frame ^= 1;
+    // Drop rather than queue without bound: each in-flight frame pins a buffer
+    // from the decoder's pool.
+    if (_sink_frames_in_flight.load(std::memory_order_acquire) >= kMaxSinkFramesInFlight)
+    {
+        return true;  // not an error -- deliberately shedding a late frame
+    }
+
+    QVideoFrameFormat format(QSize(frame->width, frame->height),
+                             QVideoFrameFormat::Format_YUV420P);
+    format.setColorSpace(QVideoFrameFormat::ColorSpace_BT601);
+    format.setColorRange((frame->format == AV_PIX_FMT_YUVJ420P ||
+                          frame->color_range == AVCOL_RANGE_JPEG)
+                             ? QVideoFrameFormat::ColorRange_Full
+                             : QVideoFrameFormat::ColorRange_Video);
+
+    // A ref, not a copy: shares the decoder's buffer and holds it alive.
+    AVFrame* frame_ref = av_frame_clone(frame);
+    if (frame_ref == nullptr)
+    {
+        return false;
+    }
+
+    QVideoFrame video_frame(std::make_unique<AVFrameVideoBuffer>(frame_ref, std::move(format)));
+
+    // QVideoSink is not thread-safe, so presentation hops to the GUI thread.
+    // QVideoFrame is implicitly shared, so this hands over the reference
+    // without copying pixels.
+    _sink_frames_in_flight.fetch_add(1, std::memory_order_release);
+    QMetaObject::invokeMethod(
+        this,
+        [this, video_frame]() mutable {
+            if (_video_widget != nullptr)
+            {
+                if (!_video_widget->isVisible())
+                {
+                    _video_widget->show();
+                }
+                _video_widget->videoSink()->setVideoFrame(video_frame);
+            }
+            // Release only after the frame has been handed to the sink.
+            video_frame = QVideoFrame();
+            _sink_frames_in_flight.fetch_sub(1, std::memory_order_release);
+        },
+        Qt::QueuedConnection);
     return true;
 }
 
@@ -533,36 +527,35 @@ void CarPlayWidget::onSessionMessage(CarPlaySessionState::Reader reader)
 
 void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    QPainter p(this);
-
-    // Held across the blit, not just the read: the buffer belongs to the
-    // decoder's ping-pong pair, and this lock is what keeps it from being
-    // swapped and overwritten while QPainter is reading it.
-    std::unique_lock<std::mutex> lock(_frame_mutex);
-
-    if (_front_frame >= 0)
+    // Video pixels never reach the CPU -- _video_widget owns the frame surface
+    // and covers this widget entirely once frames are flowing. All that is left
+    // here is the placeholder shown before the first frame arrives.
+    if (_video_widget != nullptr && _video_widget->isVisible())
     {
-        const QImage& img = _frames[_front_frame];
-        if (img.size() == size())
-        {
-            // Same size and same format as the backing store: a straight blit.
-            p.drawImage(0, 0, img);
-        }
-        else
-        {
-            p.drawImage(rect(), img);
-        }
         return;
     }
 
-    const std::string status = _status_text;
-    lock.unlock();
+    std::string status;
+    {
+        std::lock_guard<std::mutex> lock(_frame_mutex);
+        status = _status_text;
+    }
 
+    QPainter p(this);
     p.fillRect(rect(), Qt::black);
     if (!status.empty())
     {
         p.setPen(QColor(0x88, 0x88, 0x88));
         p.drawText(rect(), Qt::AlignCenter, QString::fromStdString(status));
+    }
+}
+
+void CarPlayWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (_video_widget != nullptr)
+    {
+        _video_widget->setGeometry(rect());
     }
 }
 

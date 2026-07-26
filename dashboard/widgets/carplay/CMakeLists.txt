@@ -4,7 +4,8 @@ cmake_minimum_required(VERSION 3.10)
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
 # Multimedia is used for PCM playback/mic capture of the driver's audio stream.
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia Gui)
+# MultimediaWidgets provides the QVideoWidget the decoded video renders into.
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia MultimediaWidgets Gui)
 
 add_library(${CARPLAY_WIDGET_LIB} STATIC
     carplay_widget.cpp
@@ -20,15 +21,15 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
 )
 
 # libavcodec for software H.264/H.265 decode of the zenoh video stream, plus
-# libavutil for the AVFrame/AVPacket allocators the decode loop calls directly
-# and libswscale for the SIMD YUV420->BGRA conversion feeding QImage.
+# libavutil for the AVFrame/AVPacket allocators the decode loop calls directly.
+# No libswscale: decoded YUV planes go to Qt Multimedia untouched and are
+# converted to RGB on the GPU.
 # The prefix is target-specific: PkgConfig::<prefix> is a global name, and
 # nodes/carplay declares its own ffmpeg dependency.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CARPLAY_WIDGET_LIBAV REQUIRED IMPORTED_TARGET
     libavcodec
     libavutil
-    libswscale
 )
 
 target_link_libraries(${CARPLAY_WIDGET_LIB}
@@ -38,6 +39,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::Widgets
         Qt6::Gui
         Qt6::Multimedia
+        Qt6::MultimediaWidgets
         reflection
         schemas
         zenoh_pub_sub

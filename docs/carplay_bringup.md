@@ -673,16 +673,22 @@ stage of the video path, so you can tell exactly where it stops:
 | `dropped N frame(s) waiting for a keyframe/config` | arriving but no sync point yet — **the driver must publish config or a keyframe periodically, not once** |
 | `video synced on parameter sets/keyframe` | sync achieved |
 | `decoder rejected N packet(s)` | bitstream problem — bad Annex-B rewrite, or parameter sets fed as a standalone access unit |
-| `cannot convert decoded frame to RGB` | decoded, but not YUV420P — the converter only handles that format |
-| `first video frame decoded and rendered (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
+| `cannot present decoded frame` | decoded, but not planar 4:2:0 — the video sink is only wired for `YUV420P`/`YUVJ420P` |
+| `first video frame decoded and presented (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
 
-**Colours look wrong (red ↔ blue)?** `convertYuv420ToRgbImage` fills a
-`QImage::Format_RGB888` buffer, whose byte order is R, G, B. Writing B into the
-first byte swaps red and blue. Greens are unaffected (the middle byte is always
-G), and the `--simulate` test pattern is white-on-grey, so this survived
-undetected until a real CarPlay frame — a blue Maps dot rendering red is the
-giveaway. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard grabs the exact
-rendered frame to check pixel values without a screenshot tool.
+**Colours look wrong?** Channel order is no longer hand-rolled — the GPU shader
+handles it — so a red/blue swap is not a failure mode any more. What *is* still
+worth checking is colour **range**: `presentFrameToVideoSink()` tags the frame
+`ColorRange_Full` for `YUVJ420P` or `color_range == AVCOL_RANGE_JPEG`, and
+`ColorRange_Video` otherwise. Real CarPlay is full-range; the `--simulate`
+x264 stream is limited-range. Getting this backwards shows up as washed-out or
+over-contrasty video, not wrong hues.
+
+Historical note: the original CPU converter wrote into a `Format_RGB888` buffer
+and swapped red and blue for a while. Greens were unaffected (the middle byte is
+always G), so it survived until a real CarPlay frame — a blue Maps dot rendering
+red was the giveaway. Both that converter and its `CARPLAY_DUMP_RENDER` escape
+hatch are gone.
 
 **Three bugs stood between "frames arriving" and "picture on screen"**, all
 found running the real dashboard against a live phone (2026-07-22):
@@ -718,6 +724,43 @@ are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
   before switching to shared memory.
 - Touch does nothing → verify `nodes/carplay/input` carries events (`inspect dump`),
   then check the 0..10000 → 0..1 rescale and HID report.
+
+### How video reaches the screen
+
+Decoded frames never touch the CPU as pixels. `presentFrameToVideoSink()` wraps
+the `AVFrame` in a `QAbstractVideoBuffer` subclass — a reference, not a copy —
+and hands it to the `QVideoWidget`'s sink, which converts YUV to RGB in a shader
+on the GPU (Metal on macOS, Vulkan/OpenGL on Linux). There is no `libswscale`
+dependency and no CPU colour conversion.
+
+Measured on an M-series Mac with `--simulate` at 800x600/30 fps, whole-dashboard
+CPU: **9.4% of one core**, against 11.2% for the CPU-conversion implementation
+this replaced. Colour output was verified equivalent between the two by
+averaging screen captures over a 12-frame burst (mean RGB within 1.3/255, luma
+spread ratio 0.996).
+
+**Constraint — nothing can be layered over the video.** The video surface
+composites on top of any overlapping *sibling* widget, even one explicitly
+`raise()`d above it. Measured directly: a red `QLabel` raised over the video
+produced **zero** visible pixels. Note `WA_NativeWindow` reports `false` on this
+widget, so you cannot detect the situation by testing that attribute. Anything
+that must draw over CarPlay video has to be **parented to the `QVideoWidget`**,
+not placed beside it in `carplay_demo.yaml`.
+
+Other things to know:
+
+- Touch depends on `WA_TransparentForMouseEvents` on the video child. Without
+  it the child becomes the hit-test target and the press only reaches the widget
+  by event propagation — which works for a tap but leaves the mouse grab on the
+  child, breaking drags. Do not conclude the attribute is unnecessary just
+  because a click still registers.
+- There is no `CARPLAY_DUMP_RENDER` any more. The pixels are converted on the
+  GPU and never exist as a CPU-side image, so there is nothing to save. Use a
+  screenshot instead.
+- Frames queued toward the GUI thread are capped at 2 in flight; each one pins a
+  buffer from the decoder's pool, so an unbounded queue would starve the decoder.
+- All of the above is verified on macOS/Metal only. The Linux target uses a
+  different RHI backend and needs re-checking.
 
 ## 9. Audio downlink
 
