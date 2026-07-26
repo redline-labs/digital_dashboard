@@ -28,10 +28,11 @@
 #include <string>
 #include <string_view>
 
-// Forward declarations for libavcodec.
+// Forward declarations for libavcodec/libswscale.
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
+struct SwsContext;
 
 class QAudioSink;
 class QAudioSource;
@@ -77,7 +78,9 @@ class CarPlayWidget : public QWidget
     bool ensureDecoder(CarPlayVideo::Codec codec);
     void destroyDecoder();
     void decodeAccessUnit(const uint8_t* data, size_t len);
-    QImage convertYuv420ToRgbImage(const AVFrame* frame);
+    // Converts the decoded frame straight into the back buffer and publishes it
+    // as the new front buffer. Returns false if the frame was unusable.
+    bool renderFrameToBackBuffer(const AVFrame* frame);
 
     void publishInput(CarPlayInput::Kind kind, const QPointF& pos);
 
@@ -98,10 +101,27 @@ class CarPlayWidget : public QWidget
     uint32_t _last_seq = 0;
     // Parameter sets awaiting the next access unit to be prepended to.
     std::vector<uint8_t> _pending_config;
+    // Reusable Annex-B assembly buffer handed to _pkt, so neither the packet
+    // nor the config+frame concatenation allocates per frame. Always carries
+    // AV_INPUT_BUFFER_PADDING_SIZE zeroed trailing bytes for the decoder.
+    std::vector<uint8_t> _au_buf;
+    // YUV420 -> BGRA scaler, plus the inputs it was built for so it is rebuilt
+    // only when the frame geometry, pixel format or colour range changes.
+    SwsContext* _sws = nullptr;
+    int _sws_width = 0;
+    int _sws_height = 0;
+    int _sws_src_format = -1;  // AVPixelFormat
+    bool _sws_full_range = false;
 
-    // Latest decoded frame, shared between subscriber and GUI threads.
+    // Decoded frames, shared between subscriber and GUI threads. Ping-pong
+    // buffers: the subscriber thread converts into _frames[_back] with no
+    // allocation, then takes the lock only to publish the index. paintEvent
+    // holds the lock for the duration of its blit, which is what stops the
+    // decoder from swapping a buffer out from under a live draw.
     std::mutex _frame_mutex;
-    QImage _current_image;
+    QImage _frames[2];
+    int _front_frame = -1;  // index of the paintable frame, -1 until the first
+    int _back_frame = 0;
 
     // Session state for the placeholder overlay, guarded by _frame_mutex.
     std::string _status_text = "Waiting for CarPlay driver";

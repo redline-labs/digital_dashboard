@@ -13,7 +13,23 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
+#include <libswscale/swscale.h>
 }
+
+#include <cstring>
+
+namespace
+{
+// QImage::Format_RGB32 packs 0xffRRGGBB into a uint32, so the byte order in
+// memory follows the host endianness. Matching it exactly is the whole point:
+// it makes drawImage a straight blit instead of a per-pixel conversion.
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_BGRA;
+#else
+constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_ARGB;
+#endif
+}  // namespace
 
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     QWidget(parent),
@@ -86,9 +102,24 @@ bool CarPlayWidget::ensureDecoder(CarPlayVideo::Codec codec)
 
 void CarPlayWidget::destroyDecoder()
 {
-    if (_pkt != nullptr) av_packet_free(&_pkt);
+    if (_pkt != nullptr)
+    {
+        // _pkt only ever borrows _au_buf, so clear the borrow before freeing.
+        _pkt->data = nullptr;
+        _pkt->size = 0;
+        av_packet_free(&_pkt);
+    }
     if (_frame != nullptr) av_frame_free(&_frame);
     if (_codec_context != nullptr) avcodec_free_context(&_codec_context);
+    if (_sws != nullptr)
+    {
+        sws_freeContext(_sws);
+        _sws = nullptr;
+        _sws_width = 0;
+        _sws_height = 0;
+        _sws_src_format = -1;
+        _sws_full_range = false;
+    }
     _synced = false;
 }
 
@@ -144,18 +175,17 @@ void CarPlayWidget::onVideoMessage(CarPlayVideo::Reader reader)
         return;
     }
 
-    if (!_pending_config.empty())
-    {
-        std::vector<uint8_t> combined;
-        combined.reserve(_pending_config.size() + data.size());
-        combined.insert(combined.end(), _pending_config.begin(), _pending_config.end());
-        combined.insert(combined.end(), data.begin(), data.end());
-        _pending_config.clear();
-        decodeAccessUnit(combined.data(), combined.size());
-        return;
-    }
+    // Assemble [pending parameter sets][access unit] into the reusable buffer.
+    // libavcodec reads up to AV_INPUT_BUFFER_PADDING_SIZE bytes past the end of
+    // a packet it does not own, so the tail must exist and be zeroed.
+    const size_t len = _pending_config.size() + data.size();
+    _au_buf.resize(len + AV_INPUT_BUFFER_PADDING_SIZE);
+    std::memcpy(_au_buf.data(), _pending_config.data(), _pending_config.size());
+    std::memcpy(_au_buf.data() + _pending_config.size(), data.begin(), data.size());
+    std::memset(_au_buf.data() + len, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    _pending_config.clear();
 
-    decodeAccessUnit(data.begin(), data.size());
+    decodeAccessUnit(_au_buf.data(), len);
 }
 
 void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
@@ -166,14 +196,15 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
     }
 
     // The driver publishes whole Annex-B access units, so no parser is needed.
-    if (av_new_packet(_pkt, static_cast<int>(len)) < 0)
-    {
-        return;
-    }
-    std::copy_n(data, len, _pkt->data);
+    // The packet borrows the caller's padded buffer rather than allocating and
+    // copying: send_packet does not take ownership, and libavcodec makes its own
+    // reference if it needs the bytes beyond this call.
+    _pkt->data = const_cast<uint8_t*>(data);
+    _pkt->size = static_cast<int>(len);
 
     int ret = avcodec_send_packet(_codec_context, _pkt);
-    av_packet_unref(_pkt);
+    _pkt->data = nullptr;
+    _pkt->size = 0;
     if (ret < 0)
     {
         // Rate-limited: a persistent reject here means a black screen despite
@@ -188,10 +219,9 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
     bool frame_updated = false;
     while (avcodec_receive_frame(_codec_context, _frame) == 0)
     {
-        QImage img = convertYuv420ToRgbImage(_frame);
-        if (img.isNull())
+        if (!renderFrameToBackBuffer(_frame))
         {
-            // Anything other than YUV420P lands here and would render black.
+            // Anything swscale cannot handle lands here and would render black.
             if (++_convert_errors % 60 == 1)
             {
                 SPDLOG_WARN("[carplay] cannot convert decoded frame to RGB ({}x{}, pix_fmt {}); "
@@ -200,12 +230,8 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
             }
             continue;
         }
+        frame_updated = true;
 
-        {
-            std::lock_guard<std::mutex> lock(_frame_mutex);
-            _current_image = std::move(img);
-            frame_updated = true;
-        }
         if (!_rendered_first_frame)
         {
             _rendered_first_frame = true;
@@ -216,7 +242,7 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
             if (const char* path = std::getenv("CARPLAY_DUMP_RENDER"); path != nullptr)
             {
                 std::lock_guard<std::mutex> lock(_frame_mutex);
-                if (_current_image.save(QString::fromUtf8(path)))
+                if (_front_frame >= 0 && _frames[_front_frame].save(QString::fromUtf8(path)))
                 {
                     SPDLOG_INFO("[carplay] wrote rendered frame to {}", path);
                 }
@@ -230,50 +256,102 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
     }
 }
 
-QImage CarPlayWidget::convertYuv420ToRgbImage(const AVFrame* frame)
+bool CarPlayWidget::renderFrameToBackBuffer(const AVFrame* frame)
 {
     // CarPlay decodes to YUVJ420P (full-range, pix_fmt 12); a synthetic or
-    // other source may give plain YUV420P (limited range, pix_fmt 0). Both have
-    // identical planar 4:2:0 layout, so the same loop handles them -- and the
-    // coefficients below are the full-range set, which is what CarPlay needs.
-    if (!frame || !frame->data[0] ||
-        (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_YUVJ420P))
+    // other source may give plain YUV420P (limited range, pix_fmt 0). swscale
+    // handles both -- and, unlike the hand-rolled loop this replaces, applies
+    // the range each one actually declares rather than assuming full range.
+    if (frame == nullptr || frame->data[0] == nullptr || frame->width <= 0 || frame->height <= 0)
     {
-        return {};
+        return false;
     }
     const int w = frame->width;
     const int h = frame->height;
-    QImage img(w, h, QImage::Format_RGB888);
-    if (img.isNull()) return {};
 
-    const uint8_t* yPlane = frame->data[0];
-    const uint8_t* uPlane = frame->data[1];
-    const uint8_t* vPlane = frame->data[2];
-    const int yStride = frame->linesize[0];
-    const int uStride = frame->linesize[1];
-    const int vStride = frame->linesize[2];
-
-    for (int j = 0; j < h; ++j) {
-        uint8_t* dst = img.scanLine(j);
-        const uint8_t* yRow = yPlane + j * yStride;
-        const uint8_t* uRow = uPlane + (j / 2) * uStride;
-        const uint8_t* vRow = vPlane + (j / 2) * vStride;
-        for (int i = 0; i < w; ++i) {
-            int Y = yRow[i];
-            int U = uRow[i / 2] - 128;
-            int V = vRow[i / 2] - 128;
-            int R = Y + ((91881 * V) >> 16);
-            int G = Y - ((22554 * U + 46802 * V) >> 16);
-            int B = Y + ((116130 * U) >> 16);
-            // Format_RGB888 is byte order R, G, B. Writing B first swapped red
-            // and blue -- invisible on the --simulate white-on-grey test pattern,
-            // but a real CarPlay frame renders with red and blue exchanged.
-            dst[3*i + 0] = static_cast<uint8_t>(std::clamp(R, 0, 255));
-            dst[3*i + 1] = static_cast<uint8_t>(std::clamp(G, 0, 255));
-            dst[3*i + 2] = static_cast<uint8_t>(std::clamp(B, 0, 255));
+    // Format_RGB32 is Qt's native raster format, so paintEvent blits it instead
+    // of converting per pixel. Reused across frames: the allocation only
+    // happens on the first frame and on a resolution change.
+    QImage& dst = _frames[_back_frame];
+    if (dst.width() != w || dst.height() != h || dst.format() != QImage::Format_RGB32)
+    {
+        dst = QImage(w, h, QImage::Format_RGB32);
+        if (dst.isNull())
+        {
+            return false;
         }
     }
-    return img;
+
+    // ffmpeg tags full-range 4:2:0 two different ways depending on decoder and
+    // version: the deprecated YUVJ420P, or plain YUV420P with color_range set
+    // to JPEG. Normalise to the latter -- swscale logs a deprecation warning
+    // for the YUVJ formats, and it is the range flag that actually selects the
+    // coefficients. Output is bit-identical to passing YUVJ420P through.
+    AVPixelFormat src_fmt = static_cast<AVPixelFormat>(frame->format);
+    bool full_range = (frame->color_range == AVCOL_RANGE_JPEG);
+    if (src_fmt == AV_PIX_FMT_YUVJ420P)
+    {
+        src_fmt = AV_PIX_FMT_YUV420P;
+        full_range = true;
+    }
+    else if (src_fmt == AV_PIX_FMT_YUVJ422P)
+    {
+        src_fmt = AV_PIX_FMT_YUV422P;
+        full_range = true;
+    }
+    else if (src_fmt == AV_PIX_FMT_YUVJ444P)
+    {
+        src_fmt = AV_PIX_FMT_YUV444P;
+        full_range = true;
+    }
+
+    // Rebuilt only when the geometry, format or range actually changes; steady
+    // state reuses the context. Source and destination share a size, so this
+    // takes swscale's optimised unscaled YUV->RGB32 converter.
+    if (_sws == nullptr || w != _sws_width || h != _sws_height || src_fmt != _sws_src_format ||
+        full_range != _sws_full_range)
+    {
+        _sws = sws_getCachedContext(_sws,
+                                    w, h, src_fmt,
+                                    w, h, kRgb32PixelFormat,
+                                    SWS_POINT, nullptr, nullptr, nullptr);
+        if (_sws == nullptr)
+        {
+            return false;
+        }
+
+        int* inv_table = nullptr;
+        int* table = nullptr;
+        int src_range = 0, dst_range = 0, brightness = 0, contrast = 0, saturation = 0;
+        if (sws_getColorspaceDetails(_sws, &inv_table, &src_range, &table, &dst_range,
+                                     &brightness, &contrast, &saturation) >= 0)
+        {
+            sws_setColorspaceDetails(_sws, inv_table, full_range ? 1 : 0, table, dst_range,
+                                     brightness, contrast, saturation);
+        }
+
+        _sws_width = w;
+        _sws_height = h;
+        _sws_src_format = src_fmt;
+        _sws_full_range = full_range;
+        SPDLOG_INFO("[carplay] video scaler ready: {}x{} {} -> RGB32 ({} range)",
+                    w, h, av_get_pix_fmt_name(src_fmt), full_range ? "full" : "limited");
+    }
+
+    uint8_t* dst_planes[4] = {dst.bits(), nullptr, nullptr, nullptr};
+    const int dst_strides[4] = {static_cast<int>(dst.bytesPerLine()), 0, 0, 0};
+    if (sws_scale(_sws, frame->data, frame->linesize, 0, h, dst_planes, dst_strides) <= 0)
+    {
+        return false;
+    }
+
+    // Publish. Only the index moves under the lock -- no pixels are copied, and
+    // paintEvent cannot be mid-blit on this buffer because it holds the lock
+    // while it draws.
+    std::lock_guard<std::mutex> lock(_frame_mutex);
+    _front_frame = _back_frame;
+    _back_frame ^= 1;
+    return true;
 }
 
 void CarPlayWidget::onAudioMessage(CarPlayAudio::Reader reader)
@@ -457,19 +535,28 @@ void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter p(this);
 
-    QImage img;
-    std::string status;
-    {
-        std::lock_guard<std::mutex> lock(_frame_mutex);
-        img = _current_image;
-        status = _status_text;
-    }
+    // Held across the blit, not just the read: the buffer belongs to the
+    // decoder's ping-pong pair, and this lock is what keeps it from being
+    // swapped and overwritten while QPainter is reading it.
+    std::unique_lock<std::mutex> lock(_frame_mutex);
 
-    if (!img.isNull())
+    if (_front_frame >= 0)
     {
-        p.drawImage(rect(), img);
+        const QImage& img = _frames[_front_frame];
+        if (img.size() == size())
+        {
+            // Same size and same format as the backing store: a straight blit.
+            p.drawImage(0, 0, img);
+        }
+        else
+        {
+            p.drawImage(rect(), img);
+        }
         return;
     }
+
+    const std::string status = _status_text;
+    lock.unlock();
 
     p.fillRect(rect(), Qt::black);
     if (!status.empty())

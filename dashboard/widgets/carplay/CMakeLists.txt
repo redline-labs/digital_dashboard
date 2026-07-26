@@ -20,13 +20,15 @@ target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
 )
 
 # libavcodec for software H.264/H.265 decode of the zenoh video stream, plus
-# libavutil for the AVFrame/AVPacket allocators the decode loop calls directly.
+# libavutil for the AVFrame/AVPacket allocators the decode loop calls directly
+# and libswscale for the SIMD YUV420->BGRA conversion feeding QImage.
 # The prefix is target-specific: PkgConfig::<prefix> is a global name, and
 # nodes/carplay declares its own ffmpeg dependency.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CARPLAY_WIDGET_LIBAV REQUIRED IMPORTED_TARGET
     libavcodec
     libavutil
+    libswscale
 )
 
 target_link_libraries(${CARPLAY_WIDGET_LIB}

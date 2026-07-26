@@ -1,5 +1,5 @@
 name: "carplay"
-width: 1000
+width: 1200
 height: 600
 background_color: "#555555"
 widgets:
@@ -23,7 +23,7 @@ widgets:
   - type: now_playing
     x: 810
     y: 20
-    width: 180
+    width: 380
     height: 120
     config:
       zenoh_key: "nodes/carplay/nowplaying"
