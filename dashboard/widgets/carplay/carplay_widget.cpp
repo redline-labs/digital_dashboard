@@ -140,6 +140,22 @@ bool CarPlayWidget::ensureDecoder(CarPlayVideo::Codec codec)
     }
 
     _codec_context = avcodec_alloc_context3(decoder);
+    // Threading is deliberately left alone, which means thread_count = 1.
+    // Measured on a real 800x600 capture (928 pictures, 4-core host): the phone
+    // sends exactly 1.00 slices per picture, so FF_THREAD_SLICE has nothing to
+    // parallelise and buys nothing -- 1.078 vs 1.075 ms/frame, i.e. slightly
+    // worse once thread sync is paid for.
+    //
+    // Setting thread_count = 0 *is* faster (0.47 ms/frame) but it selects frame
+    // threading, which withholds thread_count - 1 pictures before emitting the
+    // first: 4 frames, ~133 ms at 30 fps, on a screen the user is touching. The
+    // stream carries no B-frames and the decoder reports delay = 0 today, so
+    // right now we add no decode latency at all -- worth keeping.
+    //
+    // Decode already costs ~3.2% of one core, so there is no headroom to win
+    // and real latency to lose. Revisit only if the panel resolution grows a
+    // lot; re-measure by capturing a stream with AIRPLAY_DUMP_VIDEO (see
+    // libs/airplay/receiver.cpp) rather than reasoning from defaults.
     if (_codec_context == nullptr || avcodec_open2(_codec_context, decoder, nullptr) < 0)
     {
         SPDLOG_ERROR("Failed to open video decoder");
