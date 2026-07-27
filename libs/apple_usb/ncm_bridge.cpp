@@ -137,8 +137,13 @@ void put_le32(std::vector<uint8_t>& v, uint32_t x)
     v.push_back(static_cast<uint8_t>(x >> 24));
 }
 
-// TAP devices are named cpusb0, cpusb1, ... across all bridges in a process.
-std::atomic<unsigned> g_tap_seq{0};
+// TAP devices are named cpusb0, cpusb1, ... -- the lowest name not already in
+// use by another live bridge. Deliberately not a counter that only goes up:
+// stop() destroys the device, so a phone that is unplugged and plugged back in
+// must be able to take cpusb0 again. Users without CAP_NET_ADMIN pre-create a
+// persistent cpusb0 to attach to (see docs/carplay_bringup.md stage 6), and a
+// counter would walk past it on the second session.
+constexpr unsigned kMaxTapIndex = 8;
 
 // Run a command, logging the exact argv and any output. Returns the exit
 // status, or -1 when the child could not be started / was killed.
@@ -867,8 +872,6 @@ bool NcmBridge::findBulkEndpoints(unsigned data_if, uint8_t& ep_in, uint8_t& ep_
 
 bool NcmBridge::createTap()
 {
-    ifname_ = fmt::format("cpusb{}", g_tap_seq.fetch_add(1));
-
     tap_fd_ = ::open("/dev/net/tun", O_RDWR);
     if (tap_fd_ < 0)
     {
@@ -876,18 +879,35 @@ bool NcmBridge::createTap()
         return false;
     }
 
-    ifreq ifr{};
-    std::strncpy(ifr.ifr_name, ifname_.c_str(), IFNAMSIZ - 1);
-    ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
     // Attaches to an existing persistent TAP of this name if one is owned by
     // us, and only tries to create a new device otherwise -- creation is what
-    // needs CAP_NET_ADMIN, attaching does not.
-    if (::ioctl(tap_fd_, TUNSETIFF, &ifr) < 0)
+    // needs CAP_NET_ADMIN, attaching does not. A name another live bridge is
+    // already attached to comes back EBUSY, so walk up until one takes.
+    ifreq ifr{};
+    int err = 0;
+    for (unsigned index = 0; index < kMaxTapIndex; ++index)
+    {
+        ifname_ = fmt::format("cpusb{}", index);
+        ifr = ifreq{};
+        std::strncpy(ifr.ifr_name, ifname_.c_str(), IFNAMSIZ - 1);
+        ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+        if (::ioctl(tap_fd_, TUNSETIFF, &ifr) == 0)
+        {
+            err = 0;
+            break;
+        }
+        err = errno;
+        if (err != EBUSY)
+        {
+            break;  // not a name clash; another name will not help
+        }
+    }
+    if (err != 0)
     {
         SPDLOG_ERROR("[ncm] TUNSETIFF({}) failed: {}. Create a persistent TAP owned by this "
-                     "user once -- 'ip tuntap add dev {} mode tap user $USER' -- or grant "
+                     "user once -- 'ip tuntap add dev cpusb0 mode tap user $USER' -- or grant "
                      "CAP_NET_ADMIN. See docs/carplay_bringup.md stage 6.",
-                     ifname_, strerror(errno), ifname_);
+                     ifname_, strerror(err));
         return false;
     }
     // The kernel may hand back a different name if ours collided.

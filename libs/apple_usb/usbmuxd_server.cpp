@@ -105,6 +105,21 @@ std::string dictString(plist_t dict, const char* key)
     return out;
 }
 
+// The dashed spelling of an undashed 24-character serial, and vice versa.
+// Empty when the input is neither form.
+std::string alternateUdidForm(const std::string& udid)
+{
+    if (udid.size() == 24 && udid.find('-') == std::string::npos)
+    {
+        return udid.substr(0, 8) + "-" + udid.substr(8);
+    }
+    if (udid.size() == 25 && udid[8] == '-')
+    {
+        return udid.substr(0, 8) + udid.substr(9);
+    }
+    return {};
+}
+
 std::string genUuid()
 {
     std::random_device rd;
@@ -369,13 +384,41 @@ std::string UsbmuxdServer::readBuid()
             }
         }
     }
-    return genUuid();
+
+    // A pair record is only valid for the SystemBUID it was created under, so a
+    // BUID minted fresh on every run would invalidate the record we just saved
+    // and re-prompt for trust on the phone at every start. Persist it.
+    const std::string buid = genUuid();
+    plist_t root = plist_new_dict();
+    plist_dict_set_item(root, "SystemBUID", plist_new_string(buid.c_str()));
+    char* xml = nullptr;
+    uint32_t xml_len = 0;
+    plist_to_xml(root, &xml, &xml_len);
+    plist_free(root);
+
+    fs::create_directories(state_dir_, ec);
+    std::ofstream out(p, std::ios::binary);
+    out.write(xml, static_cast<std::streamsize>(xml_len));
+    plist_mem_free(xml);
+    if (!out.good())
+    {
+        SPDLOG_WARN("[usbmuxd] could not persist the system BUID to {}; the phone will ask to "
+                    "trust this computer again on the next run", p.string());
+    }
+    return buid;
 }
 
 std::vector<uint8_t> UsbmuxdServer::readPairRecord(const std::string& udid)
 {
-    for (const auto& name : {udid, udid})
+    // libusbmuxd normalises a 24-character serial into the dashed 25-character
+    // form, so the ID a client asks for need not be the one a past run saved
+    // under. Accept either spelling.
+    for (const auto& name : {udid, alternateUdidForm(udid)})
     {
+        if (name.empty())
+        {
+            continue;
+        }
         const fs::path p = fs::path(state_dir_) / (name + ".plist");
         std::error_code ec;
         if (fs::exists(p, ec))

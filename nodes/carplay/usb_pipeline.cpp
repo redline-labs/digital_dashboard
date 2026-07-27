@@ -14,6 +14,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -31,6 +32,13 @@ namespace
 
 constexpr auto kRediscoverPoll = std::chrono::milliseconds(200);
 constexpr auto kRediscoverTimeout = std::chrono::seconds(15);
+
+// How often to look for a phone appearing, and how long to pause after a
+// session ends before trying again -- long enough that a phone that fails
+// repeatedly does not spin the log, short enough to feel immediate on a replug.
+constexpr auto kDevicePoll = std::chrono::milliseconds(500);
+constexpr auto kReattachDelay = std::chrono::seconds(2);
+constexpr auto kMaxReattachDelay = std::chrono::seconds(30);
 
 std::string shortUdid(const std::string& udid)
 {
@@ -57,39 +65,65 @@ std::optional<apple_usb::DeviceInfo> rediscover(const std::string& serial)
     return std::nullopt;
 }
 
+// Pair records live here, so this has to outlive a reboot: XDG_RUNTIME_DIR is
+// tmpfs and gets wiped, which silently re-prompts for trust on the phone at
+// every boot. The mux socket is created here too, which is fine -- it is
+// unlinked on the way in and out.
 std::string defaultStateDir()
 {
-    if (const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR"); runtime_dir != nullptr)
+    if (const char* data_home = std::getenv("XDG_DATA_HOME"); data_home != nullptr)
     {
-        return (fs::path(runtime_dir) / "carplay").string();
+        return (fs::path(data_home) / "carplay").string();
+    }
+    if (const char* home = std::getenv("HOME"); home != nullptr)
+    {
+        return (fs::path(home) / ".local" / "share" / "carplay").string();
     }
     return (fs::temp_directory_path() / "carplay").string();
 }
 
 // --- Stage 2: device detection and the CarPlay configuration switch ---------
-std::optional<apple_usb::DeviceInfo> stageDetectAndSwitch()
+//
+// Blocks until an Apple device shows up, or `stop` is set. Polling sysfs rather
+// than subscribing to udev keeps this working unprivileged and inside a
+// container, and half a second of latency on a plug event is imperceptible.
+std::optional<apple_usb::DeviceInfo> waitForDevice(std::atomic<bool>& stop)
 {
-    const auto devices = apple_usb::listAppleDevices();
-    if (devices.empty())
+    bool announced = false;
+    while (!stop.load())
     {
-        SPDLOG_ERROR("[usb] no Apple device found. Is the phone plugged in, unlocked and "
-                     "trusted? On a VM, confirm it is attached to the guest.");
-        return std::nullopt;
-    }
+        const auto devices = apple_usb::listAppleDevices();
+        if (!devices.empty())
+        {
+            for (const auto& device : devices)
+            {
+                SPDLOG_INFO("[usb] found {:04x}:{:04x} udid={} at {} (config {})",
+                            device.vid, device.pid, device.serial, device.usbfs_path,
+                            device.active_configuration);
+            }
+            if (devices.size() > 1)
+            {
+                SPDLOG_WARN("[usb] {} Apple devices present; using {}", devices.size(),
+                            devices.front().serial);
+            }
+            return devices.front();
+        }
 
-    for (const auto& device : devices)
-    {
-        SPDLOG_INFO("[usb] found {:04x}:{:04x} udid={} at {} (config {})",
-                    device.vid, device.pid, device.serial, device.usbfs_path,
-                    device.active_configuration);
+        if (!announced)
+        {
+            announced = true;
+            SPDLOG_INFO("[usb] waiting for a phone. Plug one in, unlocked; on a VM, confirm "
+                        "it is attached to the guest.");
+        }
+        std::this_thread::sleep_for(kDevicePoll);
     }
+    return std::nullopt;
+}
 
-    apple_usb::DeviceInfo device = devices.front();
-    if (devices.size() > 1)
-    {
-        SPDLOG_WARN("[usb] {} Apple devices present; using {}", devices.size(), device.serial);
-    }
-
+// Puts an already-detected phone into the CarPlay configuration, re-reading it
+// afterwards because the switch re-enumerates it.
+std::optional<apple_usb::DeviceInfo> switchToCarPlay(apple_usb::DeviceInfo device)
+{
     if (device.active_configuration == apple_usb::kCarPlayConfiguration)
     {
         SPDLOG_INFO("[usb] already in configuration {}", apple_usb::kCarPlayConfiguration);
@@ -130,48 +164,65 @@ std::optional<apple_usb::DeviceInfo> stageDetectAndSwitch()
     return refreshed;
 }
 
-}  // namespace
-
-bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
-                    std::atomic<bool>& stop)
+// Everything the stages below need that outlives an individual phone: the MFi
+// coprocessor sits on I2C and is unaffected by a phone coming and going, so it
+// is set up once and lent to each session.
+struct SessionContext
 {
-    const std::string state_dir =
-        options.state_dir.empty() ? defaultStateDir() : options.state_dir;
+    const UsbPipelineOptions& options;
+    std::string state_dir;
+    iap2::MfiSigner* mfi_signer = nullptr;
+    std::shared_ptr<std::mutex> mfi_mutex;
+};
 
+// Runs one attachment of one phone, from claiming the mux through to the iAP2
+// session ending. Returns when the phone goes away or `stop` is set; the return
+// value says whether the bring-up itself succeeded.
+bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContext& ctx,
+                        ZenohBridge& bridge, std::atomic<bool>& stop)
+{
+    const UsbPipelineOptions& options = ctx.options;
+    const std::string& state_dir = ctx.state_dir;
     std::error_code ec;
-    fs::create_directories(state_dir, ec);
-    if (ec)
-    {
-        SPDLOG_ERROR("[node] cannot create state dir {}: {}", state_dir, ec.message());
-        return false;
-    }
-    SPDLOG_INFO("[node] state dir {}", state_dir);
-
-    // --- Stage 2 ---
-    const auto device = stageDetectAndSwitch();
-    if (!device)
-    {
-        return false;
-    }
-    if (options.max_stage < 3)
-    {
-        SPDLOG_INFO("[node] stopping after stage 2 as requested");
-        return true;
-    }
 
     // --- Stage 3: usbmux over the vendor-specific interface, then the socket --
-    apple_usb::MuxHost mux(*device);
+    apple_usb::MuxHost mux(device);
     if (!mux.open())
     {
         SPDLOG_ERROR("[muxd] could not open the mux for udid={}. Another driver may hold "
                      "the interface -- check `lsusb -t` and that the system usbmuxd is "
-                     "stopped.", shortUdid(device->serial));
+                     "stopped.", shortUdid(device.serial));
         return false;
     }
-    SPDLOG_INFO("[muxd] mux open for udid={}", shortUdid(device->serial));
+    SPDLOG_INFO("[muxd] mux open for udid={}", shortUdid(device.serial));
+
+    // Session-scoped stop: set when the node is shutting down *or* the phone
+    // has gone. Everything below waits on this rather than the node-wide flag,
+    // so an unplug unwinds one session without ending the process.
+    std::atomic<bool> session_stop{false};
+    std::thread device_watch([&session_stop, &stop, &mux] {
+        while (!session_stop.load())
+        {
+            if (stop.load() || !mux.alive())
+            {
+                session_stop.store(true);
+                break;
+            }
+            std::this_thread::sleep_for(kDevicePoll);
+        }
+    });
+    // Any exit from here on has to release the watchdog before returning.
+    const auto finish = [&session_stop, &device_watch](bool result) {
+        session_stop.store(true);
+        if (device_watch.joinable())
+        {
+            device_watch.join();
+        }
+        return result;
+    };
 
     const std::string socket_path =
-        (fs::path(state_dir) / ("usbmuxd-" + shortUdid(device->serial) + ".sock")).string();
+        (fs::path(state_dir) / ("usbmuxd-" + shortUdid(device.serial) + ".sock")).string();
     fs::remove(socket_path, ec);
 
     apple_usb::UsbmuxdServer usbmuxd(mux, socket_path, state_dir);
@@ -179,9 +230,9 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     {
         SPDLOG_ERROR("[usbmuxd] could not serve on {}", socket_path);
         mux.close();
-        return false;
+        return finish(false);
     }
-    SPDLOG_INFO("[usbmuxd] serving {} on {}", shortUdid(device->serial), socket_path);
+    SPDLOG_INFO("[usbmuxd] serving {} on {}", shortUdid(device.serial), socket_path);
     SPDLOG_INFO("[usbmuxd] sanity-check it independently with:");
     SPDLOG_INFO("[usbmuxd]   USBMUXD_SOCKET_ADDRESS=UNIX:{} idevice_id -l", socket_path);
 
@@ -191,19 +242,24 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     // --- Stage 4: lockdown pairing + the carkit TLS channel -------------------
     if (options.max_stage >= 4)
     {
-        carkit = apple_usb::openCarkitChannel(device->serial, socket_path, state_dir);
+        // The trust prompt has no deadline; abort only if the node is stopping
+        // or the phone was pulled out while we waited.
+        carkit = apple_usb::openCarkitChannel(device.serial, socket_path, state_dir,
+                                              [&session_stop] { return session_stop.load(); });
         if (!carkit)
         {
-            SPDLOG_ERROR("[carkit] could not open the carkit channel for udid={}. If the "
-                         "phone is asking to trust this computer, tap Trust and retry; "
-                         "delete {} to force a fresh pairing.",
-                         shortUdid(device->serial), state_dir);
+            if (!session_stop.load())
+            {
+                SPDLOG_ERROR("[carkit] could not open the carkit channel for udid={}. "
+                             "Delete {} to force a fresh pairing.",
+                             shortUdid(device.serial), state_dir);
+            }
             ok = false;
         }
         else
         {
             SPDLOG_INFO("[carkit] carkit TLS channel up (iAP2) udid={}",
-                        shortUdid(device->serial));
+                        shortUdid(device.serial));
         }
     }
     else
@@ -219,7 +275,7 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     std::unique_ptr<apple_usb::NcmBridge> ncm;
     if (ok && options.max_stage >= 6)
     {
-        ncm = std::make_unique<apple_usb::NcmBridge>(*device);
+        ncm = std::make_unique<apple_usb::NcmBridge>(device);
         if (!ncm->start())
         {
             SPDLOG_ERROR("[ncm] bridge did not start. Needs CAP_NET_ADMIN for the TAP device "
@@ -241,22 +297,17 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     // anything not listening by then just gets connection-refused.
     // One coprocessor, two consumers: iAP2 authentication and AirPlay
     // /auth-setup. It sits on a single I2C bus, and the two run on different
-    // threads, so access is serialised.
-    auto mfi_signer = std::make_unique<iap2::Mcp2221aMfiSigner>();
-    auto mfi_mutex = std::make_shared<std::mutex>();
-    if (!mfi_signer->init())
-    {
-        SPDLOG_WARN("[mfi] coprocessor unavailable");
-        mfi_signer.reset();
-    }
+    // threads, so access is serialised. It is owned by the caller and shared by
+    // every session, since it has nothing to do with the phone.
+    auto mfi_mutex = ctx.mfi_mutex;
 
     std::unique_ptr<airplay::Receiver> receiver;
     if (ok && options.max_stage >= 7)
     {
         airplay::ReceiverConfig receiver_config;
-        if (mfi_signer)
+        if (ctx.mfi_signer != nullptr)
         {
-            iap2::MfiSigner* signer = mfi_signer.get();
+            iap2::MfiSigner* signer = ctx.mfi_signer;
             receiver_config.mfi_certificate = [signer, mfi_mutex]() -> std::vector<uint8_t> {
                 std::lock_guard<std::mutex> lock(*mfi_mutex);
                 return signer->certificate().value_or(std::vector<uint8_t>{});
@@ -449,7 +500,7 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     {
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
-        iap2_options.signer = mfi_signer.get();
+        iap2_options.signer = ctx.mfi_signer;
 
         if (ncm)
         {
@@ -665,8 +716,8 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         // (a paused track, a steady navigation screen) shows nothing.
         std::thread metadata_republish([&bridge, now_playing, now_playing_mutex, now_playing_valid,
                                         nav_state, nav_mutex, nav_valid, last_call, call_mutex,
-                                        call_valid, &stop]() {
-            while (!stop.load())
+                                        call_valid, &session_stop]() {
+            while (!session_stop.load())
             {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 if (now_playing_valid->load())
@@ -687,19 +738,20 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
             }
         });
 
-        if (!runIap2Session(*carkit, iap2_options, stop))
+        if (!runIap2Session(*carkit, iap2_options, session_stop))
         {
             SPDLOG_ERROR("[iap2] session did not complete");
             ok = false;
         }
 
-        stop.store(true);  // release the republish thread if the session ended
+        session_stop.store(true);  // release the republish thread if the session ended
         metadata_republish.join();
     }
 
     // Hold the session open so the sockets above can be poked at from another
-    // terminal; the stages beyond this one are not implemented yet.
-    while (!stop.load())
+    // terminal. A failed bring-up falls straight through instead: the caller
+    // wants to back off and retry, not sit on a half-open session.
+    while (ok && !session_stop.load())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -725,7 +777,102 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
     usbmuxd.stop();
     mux.close();
     fs::remove(socket_path, ec);
-    return ok;
+    return finish(ok);
+}
+
+}  // namespace
+
+bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
+                    std::atomic<bool>& stop)
+{
+    const std::string state_dir =
+        options.state_dir.empty() ? defaultStateDir() : options.state_dir;
+
+    std::error_code ec;
+    fs::create_directories(state_dir, ec);
+    if (ec)
+    {
+        SPDLOG_ERROR("[node] cannot create state dir {}: {}", state_dir, ec.message());
+        return false;
+    }
+    SPDLOG_INFO("[node] state dir {}", state_dir);
+
+    // The coprocessor is on I2C, not USB, so it is initialised once and outlives
+    // every phone that comes and goes below.
+    auto mfi_signer = std::make_unique<iap2::Mcp2221aMfiSigner>();
+    if (!mfi_signer->init())
+    {
+        SPDLOG_WARN("[mfi] coprocessor unavailable");
+        mfi_signer.reset();
+    }
+
+    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>()};
+
+    // Supervisor loop: one pass per phone attachment. A phone can be unplugged
+    // and plugged back in as many times as the user likes -- each replug starts
+    // a fresh mux, socket, and iAP2 session, because none of that state
+    // survives the re-enumeration.
+    bool ever_ok = false;
+    auto retry_delay = kReattachDelay;
+    while (!stop.load())
+    {
+        const auto found = waitForDevice(stop);
+        if (!found)
+        {
+            break;  // stop was set while waiting
+        }
+
+        if (options.max_stage < 3)
+        {
+            SPDLOG_INFO("[node] stopping after stage 2 as requested");
+            return switchToCarPlay(*found).has_value();
+        }
+
+        bool attached = false;
+        if (const auto device = switchToCarPlay(*found))
+        {
+            attached = runAttachedSession(*device, ctx, bridge, stop);
+            ever_ok |= attached;
+        }
+        if (stop.load())
+        {
+            break;
+        }
+
+        // Tell the dashboard the phone is gone, rather than leaving the last
+        // frame and track up. The recording flag has to be cleared too or the
+        // idle publisher in main() keeps deferring to a session that has ended.
+        if (options.recording != nullptr)
+        {
+            options.recording->store(false);
+        }
+        bridge.publishSession(SessionState{});
+
+        // Back off when the same phone keeps failing -- a phone whose owner
+        // tapped "Don't Trust" would otherwise re-run the whole bring-up every
+        // two seconds forever. A clean attach, or the phone being unplugged,
+        // resets the delay so a genuine replug is picked up immediately.
+        if (attached || apple_usb::listAppleDevices().empty())
+        {
+            retry_delay = kReattachDelay;
+        }
+        else
+        {
+            retry_delay = std::min(retry_delay * 2, kMaxReattachDelay);
+            SPDLOG_WARN("[node] bring-up failed with the phone still attached; retrying in {}s",
+                        retry_delay.count());
+        }
+
+        SPDLOG_INFO("[node] session ended; waiting for a phone to be plugged in");
+        for (auto waited = std::chrono::seconds(0); waited < retry_delay && !stop.load();
+             waited += std::chrono::seconds(1))
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
+
+    SPDLOG_INFO("[node] USB pipeline stopped");
+    return ever_ok;
 }
 
 }  // namespace carplay

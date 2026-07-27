@@ -4,6 +4,7 @@
 #define APPLE_USB_LOCKDOWN_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,11 +38,18 @@ class CarkitChannel
 // usbmuxd-compatible socket (our UsbmuxdServer). Runs lockdown pairing +
 // client-cert TLS via libimobiledevice. Returns nullptr on failure.
 //
+// A first pair blocks on the "Trust This Computer?" prompt, which nobody can
+// put a deadline on, so this waits indefinitely for it. `abort` is polled about
+// once a second while waiting -- return true from it to give up (the node is
+// shutting down, or the phone was unplugged). It may be empty, in which case
+// the wait really is unbounded.
+//
 // Compiled only when libimobiledevice is available (see CMakeLists);
 // otherwise this returns nullptr with a log message.
 std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
                                                   const std::string& usbmux_socket_path,
-                                                  const std::string& pair_record_dir);
+                                                  const std::string& pair_record_dir,
+                                                  std::function<bool()> abort = {});
 
 }  // namespace apple_usb
 

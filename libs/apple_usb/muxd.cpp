@@ -169,6 +169,17 @@ bool MuxTcpConn::waitConnected()
     return !closed_.load();
 }
 
+void MuxTcpConn::fail()
+{
+    closed_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        connected_ = true;   // release a waitConnected() that will now never succeed
+        rq_.emplace_back();  // EOF for recv()
+    }
+    cv_.notify_all();
+}
+
 void MuxTcpConn::close()
 {
     if (!closed_.exchange(true))
@@ -258,6 +269,7 @@ bool MuxHost::open()
     }
 
     run_.store(true);
+    reader_stopped_.store(false);
     reader_ = std::thread([this] { readerLoop(); });
     return true;
 }
@@ -365,10 +377,31 @@ void MuxHost::readerLoop()
             rxbuf_.erase(rxbuf_.begin(), rxbuf_.begin() + length);
         }
     }
+
+    // The transport is gone. Release every stream still blocked on it -- the
+    // usbmuxd relay threads sit in MuxTcpConn::recv(), and without this they
+    // wait forever and the teardown that follows deadlocks joining them.
+    reader_stopped_.store(true);
+    std::map<uint16_t, std::shared_ptr<MuxTcpConn>> orphans;
+    {
+        std::lock_guard<std::mutex> lock(conns_mutex_);
+        orphans.swap(conns_);
+    }
+    for (auto& [sport, conn] : orphans)
+    {
+        conn->fail();
+    }
 }
 
 std::shared_ptr<MuxTcpConn> MuxHost::connect(uint16_t dport)
 {
+    // Nothing can come back once the reader is gone, and waitConnected() would
+    // burn its full five seconds finding that out.
+    if (!alive())
+    {
+        return nullptr;
+    }
+
     uint16_t sport;
     std::shared_ptr<MuxTcpConn> conn;
     {

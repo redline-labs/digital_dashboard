@@ -37,6 +37,11 @@ class MuxTcpConn
     bool closed() const { return closed_.load(); }
     uint16_t sport() const { return sport_; }
 
+    // Abandon the stream without touching USB, and release anyone blocked in
+    // recv()/waitConnected(). Used when the transport underneath has gone away
+    // (an unplug), where sending a FIN would only throw.
+    void fail();
+
     // Called by the host reader thread when a segment for this stream arrives.
     void onPacket(uint8_t flags, uint32_t seq, uint32_t ack, uint16_t win,
                   const uint8_t* payload, size_t payload_len);
@@ -78,6 +83,11 @@ class MuxHost
 
     const std::string& serial() const { return device_.serial; }
 
+    // False once the reader thread has stopped. The usual cause is the phone
+    // being unplugged, which surfaces as an I/O error on the bulk-in endpoint;
+    // callers poll this to notice a disconnect and tear the session down.
+    bool alive() const { return run_.load() && !reader_stopped_.load(); }
+
   private:
     friend class MuxTcpConn;
 
@@ -98,6 +108,7 @@ class MuxHost
 
     std::vector<uint8_t> rxbuf_;
     std::atomic<bool> run_{false};
+    std::atomic<bool> reader_stopped_{false};
     std::thread reader_;
 };
 
