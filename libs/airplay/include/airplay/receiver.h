@@ -8,6 +8,7 @@
 #define AIRPLAY_RECEIVER_H_
 
 #include "airplay/crypto.h"
+#include "airplay/nalu.h"
 #include "airplay/plist.h"
 #include "airplay/rtsp.h"
 #include "airplay/timing.h"
@@ -63,6 +64,12 @@ struct VideoPacket
     // True for the codec parameter sets rather than a frame. zenoh has no
     // retained messages, so the node republishes these before every keyframe.
     bool is_config = false;
+    // The codec the phone announced in the parameter sets, carried on every
+    // packet so the node can label the stream without tracking the config
+    // itself. The phone chooses this, and picks H.264 in practice; H.265 is
+    // wired through because the framing and keyframe rules differ and guessing
+    // wrong is silent (see nalu::isKeyframeNalu).
+    nalu::Codec codec = nalu::Codec::H264;
 };
 
 struct AudioPacket

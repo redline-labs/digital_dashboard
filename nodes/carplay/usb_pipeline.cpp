@@ -45,6 +45,11 @@ std::string shortUdid(const std::string& udid)
     return udid.size() > 8 ? udid.substr(0, 8) : udid;
 }
 
+VideoCodec toBridgeCodec(airplay::nalu::Codec codec)
+{
+    return codec == airplay::nalu::Codec::H265 ? VideoCodec::H265 : VideoCodec::H264;
+}
+
 // The configuration switch re-enumerates the phone, which invalidates the
 // usbfs path captured before it. Everything downstream opens that path, so the
 // DeviceInfo has to be re-read afterwards rather than reused.
@@ -341,7 +346,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                 *parameter_sets = packet.data;
 
                 VideoFrame config;
-                config.codec = VideoCodec::H264;
+                config.codec = toBridgeCodec(packet.codec);
                 config.is_config = true;
                 config.width_px = static_cast<uint16_t>(receiver_config.width);
                 config.height_px = static_cast<uint16_t>(receiver_config.height);
@@ -355,7 +360,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
             if (packet.keyframe && !parameter_sets->empty())
             {
                 VideoFrame config;
-                config.codec = VideoCodec::H264;
+                config.codec = toBridgeCodec(packet.codec);
                 config.is_config = true;
                 config.width_px = static_cast<uint16_t>(receiver_config.width);
                 config.height_px = static_cast<uint16_t>(receiver_config.height);
@@ -365,7 +370,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
             }
 
             VideoFrame frame;
-            frame.codec = VideoCodec::H264;
+            frame.codec = toBridgeCodec(packet.codec);
             frame.is_keyframe = packet.keyframe;
             frame.width_px = static_cast<uint16_t>(receiver_config.width);
             frame.height_px = static_cast<uint16_t>(receiver_config.height);

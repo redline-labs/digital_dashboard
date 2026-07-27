@@ -349,6 +349,40 @@ void testKeyframeDetection()
     expect(!avccContainsKeyframe(idr_access_unit, Codec::H264, 7), "bad length prefix size is rejected");
 }
 
+// The receiver latches the codec reported by the parameter sets and parses
+// every later frame with it (screenStreamLoop). That linkage is the whole point
+// of Config::codec, and getting it wrong is silent -- an H.265 stream checked
+// against H.264 rules simply never reports a keyframe, which stalls the
+// parameter-set republish and leaves a late subscriber unable to sync. Pin both
+// directions here so a hardcoded codec cannot creep back in.
+void testConfigCodecDrivesKeyframeDetection()
+{
+    const Bytes hevc_irap = airplay::nalu::avccFrameToAnnexB(
+        fromHex("00000004" "40010c01" "00000006" "2601aabbccdd"));
+    const Bytes h264_idr = airplay::nalu::avccFrameToAnnexB(fromHex("00000005" "65aabbccdd"));
+
+    const auto hevc_config = airplay::nalu::configToAnnexB(makeHvcCRecord());
+    expect(hevc_config.has_value(), "hvcC config parses");
+    const auto h264_config = airplay::nalu::configToAnnexB(makeAvcCRecord());
+    expect(h264_config.has_value(), "avcC config parses");
+    if (!hevc_config || !h264_config)
+    {
+        return;
+    }
+
+    // Using the codec the config announced gets both streams right.
+    expect(annexBContainsKeyframe(hevc_irap, hevc_config->codec),
+           "H.265 keyframe found using the codec its own config announced");
+    expect(annexBContainsKeyframe(h264_idr, h264_config->codec),
+           "H.264 keyframe found using the codec its own config announced");
+
+    // ... and crossing them over does not, which is exactly the regression.
+    expect(!annexBContainsKeyframe(hevc_irap, h264_config->codec),
+           "H.265 keyframe is missed if the stream is parsed as H.264");
+    expect(!annexBContainsKeyframe(h264_idr, hevc_config->codec),
+           "H.264 keyframe is missed if the stream is parsed as H.265");
+}
+
 // Config atoms and frames come straight off the wire, so mutate valid ones and
 // confirm nothing crashes or reads out of bounds. Deterministic seed.
 void testMutationFuzz()
@@ -398,6 +432,7 @@ int main()
     testAvccFrameRewrite();
     testConfigToAnnexB();
     testKeyframeDetection();
+    testConfigCodecDrivesKeyframeDetection();
     testMutationFuzz();
 
     if (failures == 0)

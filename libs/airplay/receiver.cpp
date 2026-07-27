@@ -1474,6 +1474,11 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
         uint64_t counter = 0;
         uint64_t frames = 0;
         Bytes last_config;  // dedupe the (unchanging) codec-config log
+        // Frames carry no codec of their own -- only the parameter sets say
+        // what this stream is. Latch it here so every frame after them is
+        // parsed by the right rules, and reset per connection because a
+        // reconnecting phone may negotiate differently.
+        nalu::Codec stream_codec = nalu::Codec::H264;
 
         // Optional raw Annex-B dump for bring-up: `ffmpeg -i dump.h264 out.png`
         // turns it into a viewable image without a running dashboard.
@@ -1547,6 +1552,13 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                                     body.size());
                         continue;
                     }
+                    if (config->codec != stream_codec && !last_config.empty())
+                    {
+                        SPDLOG_INFO("[video] codec switched to {}",
+                                    config->codec == nalu::Codec::H265 ? "H.265" : "H.264");
+                    }
+                    stream_codec = config->codec;
+
                     // The config repeats before every keyframe (~1/s) and never
                     // changes, so only announce it at INFO when it is new.
                     if (config->annex_b != last_config)
@@ -1570,6 +1582,7 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                         VideoPacket packet;
                         packet.data = config->annex_b;
                         packet.is_config = true;
+                        packet.codec = stream_codec;
                         video_handler_(packet);
                     }
                 }
@@ -1604,7 +1617,8 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                     {
                         VideoPacket packet;
                         packet.data = annex_b;
-                        packet.keyframe = nalu::annexBContainsKeyframe(annex_b, nalu::Codec::H264);
+                        packet.codec = stream_codec;
+                        packet.keyframe = nalu::annexBContainsKeyframe(annex_b, stream_codec);
                         if (packet.keyframe)
                         {
                             mark_sync_point();  // an in-band keyframe is a sync point too
