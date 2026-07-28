@@ -12,7 +12,7 @@ add_subdirectory(canopen)
 # Wired CarPlay stack (ported from LIVI, GPL-3.0-or-later).
 add_subdirectory(iap2)
 add_subdirectory(airplay)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Raw usbfs/sysfs/TUN transport to the phone; Linux only.
-    add_subdirectory(apple_usb)
-endif()
+# Built everywhere. The usbfs/sysfs/TUN transport inside it is Linux-only and
+# gets stubbed elsewhere, but the mux/usbmuxd/lockdown protocol layer is
+# portable -- which is what makes it testable without a Linux box or a phone.
+add_subdirectory(apple_usb)

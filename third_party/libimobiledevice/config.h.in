@@ -1,0 +1,50 @@
+/* Stands in for the config.h that autoconf would generate.
+ *
+ * The libimobiledevice family is autotools-built upstream. Rather than shelling
+ * out to configure (which drags in the whole autotools chain and defeats
+ * FetchContent), each vendored library gets one of these, filled in from CMake
+ * feature probes. Only the macros the sources we compile actually reference are
+ * present -- see third_party/libimobiledevice.cmake for which those are and how
+ * they were enumerated. */
+#ifndef LIMD_VENDORED_CONFIG_H_
+#define LIMD_VENDORED_CONFIG_H_
+
+#define PACKAGE "@LIMD_PKG_NAME@"
+#define PACKAGE_NAME "@LIMD_PKG_NAME@"
+#define PACKAGE_VERSION "@LIMD_PKG_VERSION@"
+#define PACKAGE_STRING "@LIMD_PKG_NAME@ @LIMD_PKG_VERSION@"
+
+#cmakedefine HAVE_GETTIMEOFDAY 1
+#cmakedefine HAVE_LOCALTIME_R 1
+#cmakedefine HAVE_GMTIME_R 1
+#cmakedefine HAVE_SYS_TYPES_H 1
+#cmakedefine HAVE_MEMMEM 1
+#cmakedefine HAVE_STRNDUP 1
+#cmakedefine HAVE_STRPTIME 1
+#cmakedefine HAVE_TM_TM_GMTOFF 1
+#cmakedefine HAVE_TM_TM_ZONE 1
+#cmakedefine HAVE_GETIFADDRS 1
+#cmakedefine HAVE_POLL 1
+#cmakedefine HAVE_PSELECT 1
+#cmakedefine HAVE_PTHREAD_CANCEL 1
+#cmakedefine HAVE_STPCPY 1
+#cmakedefine HAVE_STPNCPY 1
+
+/* Without these, include/asprintf.h defines static fallbacks that clash with
+ * the system declarations on any platform that actually has them. */
+#cmakedefine HAVE_ASPRINTF 1
+#cmakedefine HAVE_VASPRINTF 1
+#cmakedefine HAVE_INOTIFY 1
+#cmakedefine HAVE_PROGRAM_INVOCATION_SHORT_NAME 1
+#cmakedefine HAVE_PROGRAM_INVOCATION_SHORT_NAME_ERRNO_H 1
+
+/* Thread cancellation is what libusbmuxd's listener teardown uses; it is only
+ * meaningful where pthread_cancel exists. */
+#cmakedefine HAVE_THREAD_CLEANUP 1
+
+/* Crypto backend. OpenSSL only: it is already a dependency of this project
+ * (libs/airplay), and picking one backend keeps userpref.c's three-way #if
+ * ladder from needing gnutls/mbedtls probes we would never use. */
+#define HAVE_OPENSSL 1
+
+#endif /* LIMD_VENDORED_CONFIG_H_ */

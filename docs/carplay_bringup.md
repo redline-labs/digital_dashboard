@@ -97,18 +97,52 @@ shared-memory fallback is not needed.
 ## 1. Host prerequisites (Linux)
 
 ```bash
-sudo apt install libimobiledevice-dev libplist-dev libusbmuxd-dev \
-                 libavcodec-dev libssl-dev iproute2
+sudo apt install libavcodec-dev libssl-dev iproute2
 ```
 
-Then reconfigure and confirm the lockdown path is actually compiled in — if this
-warns, every later stage will fail at stage 4:
+**libimobiledevice is *not* a system package here.** It, libplist, libusbmuxd
+and libimobiledevice-glue are fetched and built from pinned sources by
+`third_party/libimobiledevice.cmake`. Do not install the `-dev` packages
+expecting them to be used — they will not be, and having them installed does not
+change the build.
 
-```bash
-cmake -S . -B build && cmake --build build -j 2>&1 | grep -i apple_usb
-# WANT: "apple_usb: libimobiledevice found; wired CarPlay lockdown enabled"
-# BAD:  "libimobiledevice/libplist not found; wired CarPlay lockdown disabled"
-```
+That is deliberate. We depend on version-specific behaviour (libusbmuxd's
+24 → 25 character dashed UDID normalisation, and 1.4.0's lack of an environment
+override for its on-disk pair-record fallback — both noted in
+`libs/apple_usb/lockdown.cpp`), and the distro version is whatever the build
+host happens to ship. Debian stable is still on 1.3.0.
+
+Note the four tags are pinned **as a set**, not independently: libimobiledevice
+1.3.0 does not compile against libplist 2.6.0, because 1.3.0 carries its own
+`enum plist_format_t` in `common/utils.h` that libplist later absorbed into
+`plist.h`, and the enumerators collide. If you bump one, re-check the others —
+and re-derive the source lists, which come from each project's `Makefile.am` at
+its tag and are not stable across versions.
+
+We compile a subset of upstream's translation units rather than using its
+autotools build, which also sidesteps `libtatsu`: `configure.ac` requires it,
+but no library source references it — only `tools/ideviceimagemounter.c`.
+
+### Building on macOS
+
+`apple_usb` is no longer Linux-gated. The library splits along a hardware line:
+
+- **Portable** — `muxd.cpp` (the usbmux state machine), `usbmuxd_server.cpp`
+  (the socket server), `lockdown.cpp` (the libimobiledevice client). Plain C++
+  and POSIX sockets, and where the logic worth unit testing lives.
+- **Linux only** — `usb_device.cpp` (raw usbfs ioctls) and `ncm_bridge.cpp`
+  (TUN/TAP). On other hosts these are replaced by `usb_device_stub.cpp`.
+
+So `cmake --build build --target apple_usb` works on macOS and gives you the
+protocol layer to write tests against. `listAppleDevices()` returns empty and
+the transfer wrappers throw `std::system_error(ENOSYS)` — deliberately loud,
+because a test that reaches one has stopped testing protocol and started testing
+hardware I/O. The build prints `apple_usb: non-Linux host -- protocol layer
+built, USB/NCM transport stubbed`, and `APPLE_USB_NO_TRANSPORT` is defined so
+nothing mistakes a green build for a working transport.
+
+Obviously none of this talks to a phone. Anything from stage 2 onward still
+needs Linux and hardware.
 
 **Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
 adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers

@@ -2,23 +2,32 @@ cmake_minimum_required(VERSION 3.10)
 
 project(apple_usb)
 
-# Linux-only: this library talks to iPhones through raw usbfs ioctls
-# (/dev/bus/usb), sysfs, and TUN/TAP. The parent CMakeLists gates it.
+# This library splits along a hardware line, and the split is what lets most of
+# it build (and be tested) on a developer's macOS box:
+#
+#   * The protocol and service layer -- the usbmux state machine, the usbmuxd
+#     socket server, the lockdown client -- is plain C++ and POSIX sockets.
+#     Portable, and where the logic worth unit testing lives.
+#   * The transport -- raw usbfs ioctls against /dev/bus/usb, and the TUN/TAP
+#     NCM bridge -- is Linux-only by construction.
+#
+# usb_device.h is deliberately a clean interface (no linux/ headers, USBDEVFS
+# named only in comments), so the portable half compiles against it anywhere.
+# On non-Linux the implementation is a stub that fails every call, which is
+# enough to link tests that drive the protocol without touching a phone.
 set(APPLE_USB_SOURCES
-    usb_device.cpp
     muxd.cpp
-    ncm_bridge.cpp
+    usbmuxd_server.cpp
+    lockdown.cpp
 )
 
-# The usbmux socket bridge + lockdown client depend on libplist and
-# libimobiledevice (LGPL-2.1+, GPL-3 compatible), consumed as system packages
-# via pkg-config. When they are absent the library still builds (USB detect +
-# raw mux), but the lockdown path is compiled out and openCarkitChannel()
-# returns nullptr -- mirroring how apple_mfi_ic degrades without OpenSSL.
-find_package(PkgConfig)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBPLIST IMPORTED_TARGET libplist-2.0)
-    pkg_check_modules(LIBIMOBILEDEVICE IMPORTED_TARGET libimobiledevice-1.0)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND APPLE_USB_SOURCES
+        usb_device.cpp
+        ncm_bridge.cpp
+    )
+else()
+    list(APPEND APPLE_USB_SOURCES usb_device_stub.cpp)
 endif()
 
 add_library(apple_usb STATIC ${APPLE_USB_SOURCES})
@@ -31,21 +40,21 @@ target_link_libraries(apple_usb PRIVATE
     spdlog::spdlog
 )
 
-if(LIBPLIST_FOUND AND LIBIMOBILEDEVICE_FOUND)
-    target_sources(apple_usb PRIVATE
-        usbmuxd_server.cpp
-        lockdown.cpp
-    )
-    target_link_libraries(apple_usb PUBLIC
-        PkgConfig::LIBPLIST
-        PkgConfig::LIBIMOBILEDEVICE
-    )
-    target_compile_definitions(apple_usb
-        PRIVATE APPLE_USB_HAVE_LIBIMOBILEDEVICE=1
-        PUBLIC  APPLE_USB_HAVE_LOCKDOWN=1
-    )
-    message(STATUS "apple_usb: libimobiledevice found; wired CarPlay lockdown enabled")
-else()
-    target_sources(apple_usb PRIVATE lockdown.cpp)  # provides the stub fallback
-    message(WARNING "apple_usb: libimobiledevice/libplist not found; wired CarPlay lockdown disabled")
+# libimobiledevice and libplist come from third_party/libimobiledevice.cmake,
+# built from pinned sources rather than whatever the host distro ships -- we
+# depend on version-specific behaviour (see the UDID normalisation note in
+# lockdown.cpp). The old pkg-config path and its compiled-out fallback are gone;
+# the dependency is always present now, so lockdown is always built.
+target_link_libraries(apple_usb PUBLIC limd)
+target_compile_definitions(apple_usb
+    PRIVATE APPLE_USB_HAVE_LIBIMOBILEDEVICE=1
+    PUBLIC  APPLE_USB_HAVE_LOCKDOWN=1
+)
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Flag it once at configure time so nobody mistakes a green build here for
+    # a working transport.
+    target_compile_definitions(apple_usb PUBLIC APPLE_USB_NO_TRANSPORT=1)
+    message(STATUS
+        "apple_usb: non-Linux host -- protocol layer built, USB/NCM transport stubbed")
 endif()

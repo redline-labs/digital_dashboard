@@ -4,6 +4,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <unistd.h>  // ::close -- reached transitively on glibc, not elsewhere
+
 #include <cerrno>
 #include <chrono>
 #include <cstring>
