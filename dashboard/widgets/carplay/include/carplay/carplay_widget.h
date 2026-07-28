@@ -13,12 +13,14 @@
 
 #include <QtWidgets/QWidget>
 #include <QtGui/QMouseEvent>
+#include <QImage>
 #include <QtMultimedia/QAudioFormat>
 
 #include "carplay/audio_ring.h"
 
 #include <QtCore/QObject>
 #include <atomic>
+#include <deque>
 #include <vector>
 
 #include <memory>
@@ -26,15 +28,15 @@
 #include <string>
 #include <string_view>
 
-// Forward declarations for libavcodec.
+// Forward declarations for libavcodec/libswscale.
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
+struct SwsContext;
 
 class QAudioSink;
 class QAudioSource;
 class QIODevice;
-class QVideoWidget;
 
 // Thin client of the carplay driver node: renders the H.264/H.265 video
 // stream published on zenoh and forwards touch input back to the driver.
@@ -77,12 +79,14 @@ class CarPlayWidget : public QWidget
     bool ensureDecoder(CarPlayVideo::Codec codec);
     void destroyDecoder();
     void decodeAccessUnit(const uint8_t* data, size_t len);
-    // Hands the decoded YUV planes to Qt Multimedia without copying or
-    // converting them; the RHI backend does YUV->RGB on the GPU. Returns false
-    // if the frame was unusable.
-    bool presentFrameToVideoSink(const AVFrame* frame);
+    // Converts and scales the decoded frame straight into the back buffer, then
+    // publishes it as the new front buffer. Returns false if the frame was
+    // unusable.
+    bool renderFrameToBackBuffer(const AVFrame* frame);
 
     void publishInput(CarPlayInput::Kind kind, const QPointF& pos);
+    // Publishes the current widget size to _target_size for the decode thread.
+    void publishTargetSize();
 
     CarplayConfig_t _cfg;
 
@@ -105,19 +109,33 @@ class CarPlayWidget : public QWidget
     // nor the config+frame concatenation allocates per frame. Always carries
     // AV_INPUT_BUFFER_PADDING_SIZE zeroed trailing bytes for the decoder.
     std::vector<uint8_t> _au_buf;
+    // YUV420 -> BGRA scaler, plus the inputs it was built for so it is rebuilt
+    // only when the frame geometry, pixel format or colour range changes.
+    // It also does the scale to widget size, so the conversion and the resize
+    // are a single pass and paintEvent never has to transform anything.
+    SwsContext* _sws = nullptr;
+    int _sws_width = 0;
+    int _sws_height = 0;
+    int _sws_dst_width = 0;
+    int _sws_dst_height = 0;
+    int _sws_src_format = -1;  // AVPixelFormat
+    bool _sws_full_range = false;
 
-    // Guards _status_text between the subscriber and GUI threads. Decoded
-    // pixels are not shared this way -- they go straight to _video_widget.
+    // Widget size published by the GUI thread for the decode thread to scale
+    // to, packed as (width << 32 | height) so the pair is read atomically --
+    // two separate atomics could tear and yield a mismatched size. Zero until
+    // the first resize, which means "use the frame's own size".
+    std::atomic<uint64_t> _target_size{0};
+
+    // Decoded frames, shared between subscriber and GUI threads. Ping-pong
+    // buffers: the subscriber thread converts into _frames[_back] with no
+    // allocation, then takes the lock only to publish the index. paintEvent
+    // holds the lock for the duration of its blit, which is what stops the
+    // decoder from swapping a buffer out from under a live draw.
     std::mutex _frame_mutex;
-
-    // Owns the frame surface and the GPU-side YUV->RGB conversion. Composites
-    // ON TOP of any overlapping sibling widget, so anything that must draw over
-    // the video has to be parented to this, not to CarPlayWidget.
-    QVideoWidget* _video_widget = nullptr;  // child widget, owned by Qt
-    // Bounds how many decoded frames can be queued toward the GUI thread. Each
-    // one pins an AVFrame from the decoder's pool, so an unbounded queue would
-    // starve the decoder if the GUI thread ever falls behind.
-    std::atomic<int> _sink_frames_in_flight{0};
+    QImage _frames[2];
+    int _front_frame = -1;  // index of the paintable frame, -1 until the first
+    int _back_frame = 0;
 
     // Session state for the placeholder overlay, guarded by _frame_mutex.
     std::string _status_text = "Waiting for CarPlay driver";

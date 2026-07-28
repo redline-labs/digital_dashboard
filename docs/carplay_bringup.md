@@ -673,22 +673,56 @@ stage of the video path, so you can tell exactly where it stops:
 | `dropped N frame(s) waiting for a keyframe/config` | arriving but no sync point yet — **the driver must publish config or a keyframe periodically, not once** |
 | `video synced on parameter sets/keyframe` | sync achieved |
 | `decoder rejected N packet(s)` | bitstream problem — bad Annex-B rewrite, or parameter sets fed as a standalone access unit |
-| `cannot present decoded frame` | decoded, but not planar 4:2:0 — the video sink is only wired for `YUV420P`/`YUVJ420P` |
-| `first video frame decoded and presented (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
+| `cannot convert decoded frame to RGB` | decoded, but swscale could not build a converter for that pixel format / geometry |
+| `first video frame decoded and rendered (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
 
-**Colours look wrong?** Channel order is no longer hand-rolled — the GPU shader
-handles it — so a red/blue swap is not a failure mode any more. What *is* still
-worth checking is colour **range**: `presentFrameToVideoSink()` tags the frame
-`ColorRange_Full` for `YUVJ420P` or `color_range == AVCOL_RANGE_JPEG`, and
-`ColorRange_Video` otherwise. Real CarPlay is full-range; the `--simulate`
-x264 stream is limited-range. Getting this backwards shows up as washed-out or
-over-contrasty video, not wrong hues.
+**Colours look wrong?** Channel order is swscale's problem now, not ours, so a
+red/blue swap is no longer a failure mode. What *is* worth checking is colour
+**range**: `renderFrameToBackBuffer()` normalises the deprecated `YUVJ*` formats
+to their plain equivalents and drives the range via `sws_setColorspaceDetails`,
+full range for `YUVJ420P` or `color_range == AVCOL_RANGE_JPEG` and limited
+otherwise. Real CarPlay is full-range; the `--simulate` x264 stream is
+limited-range. Getting this backwards shows up as washed-out or over-contrasty
+video, not wrong hues. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard grabs
+the exact `QImage` the widget blits, to check pixel values without a screenshot
+tool.
 
-Historical note: the original CPU converter wrote into a `Format_RGB888` buffer
-and swapped red and blue for a while. Greens were unaffected (the middle byte is
-always G), so it survived until a real CarPlay frame — a blue Maps dot rendering
-red was the giveaway. Both that converter and its `CARPLAY_DUMP_RENDER` escape
-hatch are gone.
+Historical note: the original hand-rolled converter wrote into a
+`Format_RGB888` buffer and swapped red and blue for a while. Greens were
+unaffected (the middle byte is always G) and the test pattern was white-on-grey,
+so it survived until a real CarPlay frame — a blue Maps dot rendering red was
+the giveaway. swscale replaced that loop.
+
+### How video reaches the screen
+
+The decode thread converts each `AVFrame` with libswscale straight into one of
+two reused `QImage`s (`Format_RGB32`, Qt's native raster format), then takes
+`_frame_mutex` only long enough to flip a front/back index — no pixels are
+copied to publish a frame. `paintEvent` holds that same lock across its
+`drawImage`, which is what stops the decoder from overwriting a buffer mid-draw.
+
+**swscale converts *and* scales in one pass, to the widget's size, not the
+stream's.** The widget publishes its geometry into an atomic on resize and the
+decode thread scales to it. This is deliberate: swscale has to walk every pixel
+for the colour conversion regardless, so folding the resize in is close to free,
+whereas leaving it to `drawImage(rect(), img)` costs a *second* full transform
+pass — on the GUI thread, on **every repaint**, not once per decoded frame. With
+overlays composited above the video that repaint independently of the frame
+rate, that difference compounds. The steady-state paint is now always a straight
+blit. Verified with `--sim-width 640 --sim-height 480` against the 800x600
+widget: the log reads `video scaler ready: 640x480 yuv420p -> 800x600 RGB32` and
+the dumped frame is 800x600.
+
+`SWS_POINT` is used when the sizes match (swscale's optimised unscaled
+converter) and `SWS_BILINEAR` when a real resize is needed. The scaler context
+is rebuilt only when source geometry, target geometry, pixel format or colour
+range actually changes.
+
+Because rendering goes through `QPainter` into the normal widget backing store,
+**ordinary Qt Z-ordering applies** — sibling widgets can be `raise()`d over the
+video and will be visible. (A `QVideoWidget` was tried here and reverted for
+exactly this reason: its surface composited on top of any overlapping sibling,
+even a raised one, so nothing could be layered above the video.)
 
 **Three bugs stood between "frames arriving" and "picture on screen"**, all
 found running the real dashboard against a live phone (2026-07-22):
@@ -724,43 +758,6 @@ are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
   before switching to shared memory.
 - Touch does nothing → verify `nodes/carplay/input` carries events (`inspect dump`),
   then check the 0..10000 → 0..1 rescale and HID report.
-
-### How video reaches the screen
-
-Decoded frames never touch the CPU as pixels. `presentFrameToVideoSink()` wraps
-the `AVFrame` in a `QAbstractVideoBuffer` subclass — a reference, not a copy —
-and hands it to the `QVideoWidget`'s sink, which converts YUV to RGB in a shader
-on the GPU (Metal on macOS, Vulkan/OpenGL on Linux). There is no `libswscale`
-dependency and no CPU colour conversion.
-
-Measured on an M-series Mac with `--simulate` at 800x600/30 fps, whole-dashboard
-CPU: **9.4% of one core**, against 11.2% for the CPU-conversion implementation
-this replaced. Colour output was verified equivalent between the two by
-averaging screen captures over a 12-frame burst (mean RGB within 1.3/255, luma
-spread ratio 0.996).
-
-**Constraint — nothing can be layered over the video.** The video surface
-composites on top of any overlapping *sibling* widget, even one explicitly
-`raise()`d above it. Measured directly: a red `QLabel` raised over the video
-produced **zero** visible pixels. Note `WA_NativeWindow` reports `false` on this
-widget, so you cannot detect the situation by testing that attribute. Anything
-that must draw over CarPlay video has to be **parented to the `QVideoWidget`**,
-not placed beside it in `carplay_demo.yaml`.
-
-Other things to know:
-
-- Touch depends on `WA_TransparentForMouseEvents` on the video child. Without
-  it the child becomes the hit-test target and the press only reaches the widget
-  by event propagation — which works for a tap but leaves the mouse grab on the
-  child, breaking drags. Do not conclude the attribute is unnecessary just
-  because a click still registers.
-- There is no `CARPLAY_DUMP_RENDER` any more. The pixels are converted on the
-  GPU and never exist as a CPU-side image, so there is nothing to save. Use a
-  screenshot instead.
-- Frames queued toward the GUI thread are capped at 2 in flight; each one pins a
-  buffer from the decoder's pool, so an unbounded queue would starve the decoder.
-- All of the above is verified on macOS/Metal only. The Linux target uses a
-  different RHI backend and needs re-checking.
 
 ## 9. Audio downlink
 
