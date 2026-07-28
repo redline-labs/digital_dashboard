@@ -11,8 +11,9 @@ target_include_directories(canopen PUBLIC
     include
 )
 
-# Lexy is header-only library available from third_party
-target_include_directories(canopen PRIVATE
+# Lexy is header-only library available from third_party.  SYSTEM so its own
+# warnings do not pollute our build.
+target_include_directories(canopen SYSTEM PRIVATE
     ${lexy_SOURCE_DIR}/include
 )
 

@@ -9,6 +9,19 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(lexy)
 
+# Treat lexy's headers as system includes so its own -Wshadow / -Wold-style-cast
+# noise does not surface in our builds.
+foreach(lexy_target IN ITEMS _lexy_base lexy_core lexy_file lexy_unicode lexy_ext lexy)
+    if(TARGET ${lexy_target})
+        get_target_property(lexy_target_includes ${lexy_target} INTERFACE_INCLUDE_DIRECTORIES)
+        if(lexy_target_includes)
+            set_target_properties(${lexy_target} PROPERTIES
+                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${lexy_target_includes}"
+            )
+        endif()
+    endif()
+endforeach()
+
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/lexy)
 file(COPY ${lexy_SOURCE_DIR}/LICENSE ${lexy_SOURCE_DIR}/LICENSE
      DESTINATION ${CMAKE_BINARY_DIR}/licenses/lexy)

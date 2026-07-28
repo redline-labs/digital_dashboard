@@ -252,7 +252,10 @@ void describePlist(const plist::Value& value, const std::string& indent, const s
         case plist::Value::Type::Real:
             SPDLOG_DEBUG("[airplay] {}{}", prefix, value.asReal());
             break;
-        default:
+        case plist::Value::Type::Date:
+            SPDLOG_DEBUG("[airplay] {}<date {}>", prefix, value.asDate());
+            break;
+        case plist::Value::Type::Null:
             SPDLOG_DEBUG("[airplay] {}<null>", prefix);
             break;
     }

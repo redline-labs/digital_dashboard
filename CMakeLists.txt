@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
 
+# Let CMake de-duplicate static libraries on the link line.  By default it keeps
+# a target's direct dependencies in their original order and appends the
+# transitive ones, so an archive named both directly and indirectly (spdlog,
+# schemas) is passed twice and Apple's linker warns "ignoring duplicate
+# libraries".  We have no order-sensitive link entries (no intermixed link flags,
+# no two libraries providing the same symbol), so free reordering is safe.
+# Requires CMake 3.31+; older versions ignore the variable and just keep the
+# duplicates.
+set(CMAKE_LINK_LIBRARIES_STRATEGY REORDER_FREELY)
+
 set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "")

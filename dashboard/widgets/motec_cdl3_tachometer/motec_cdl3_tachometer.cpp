@@ -273,10 +273,10 @@ void MotecCdl3Tachometer::paintStaticOverlay(QPainter& p) {
         float t = degrees_to_radians(a_deg);
 
         // Point on baseline ellipse (where triangle bases sit), mirrored vertically
-        QPointF p(kEllipseA * std::cos(t), -kEllipseB * std::sin(t));
+        QPointF base_point(kEllipseA * std::cos(t), -kEllipseB * std::sin(t));
 
         // Outward normal (based on gradient of implicit ellipse x^2/a^2 + y^2/b^2 = 1)
-        QPointF n(p.x() / (kEllipseA * kEllipseA), p.y() / (kEllipseB * kEllipseB));
+        QPointF n(base_point.x() / (kEllipseA * kEllipseA), base_point.y() / (kEllipseB * kEllipseB));
         // Normalize for outward
         float nlen = std::hypot(n.x(), n.y());
         if (nlen > 0.0f) { n.setX(n.x() / nlen); n.setY(n.y() / nlen); }
@@ -290,9 +290,9 @@ void MotecCdl3Tachometer::paintStaticOverlay(QPainter& p) {
         constexpr float tri_length = 2.0f;
         constexpr float tri_half_w = 1.0f;
 
-        QPointF tip = p + n * tri_length; // outward tip
-        QPointF base1 = p + td * (-tri_half_w);
-        QPointF base2 = p + td * ( tri_half_w);
+        QPointF tip = base_point + n * tri_length; // outward tip
+        QPointF base1 = base_point + td * (-tri_half_w);
+        QPointF base2 = base_point + td * ( tri_half_w);
 
         QPolygonF tri;
         tri << tip << base1 << base2;
@@ -300,7 +300,7 @@ void MotecCdl3Tachometer::paintStaticOverlay(QPainter& p) {
 
         // Single digit label slightly inside the tip
         QString text = QString::number(static_cast<int>(i));
-        QPointF label_center = p - n * (tri_length + 5.0f); // place labels inside the arc
+        QPointF label_center = base_point - n * (tri_length + 5.0f); // place labels inside the arc
         QRectF r(0,0,14,10);
         r.moveCenter(label_center);
         painter->drawText(r, Qt::AlignCenter, text);
