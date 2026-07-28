@@ -759,6 +759,107 @@ are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
 - Touch does nothing → verify `nodes/carplay/input` carries events (`inspect dump`),
   then check the 0..10000 → 0..1 rescale and HID report.
 
+### How touch reaches the phone, and why it is rate limited
+
+Each touch report costs far more than it looks. `Receiver::sendTouch()` builds a
+plist, `plist::encode()`s it, wraps it in an RTSP POST, runs it through
+`encryptFrames()`, and writes it to the event channel socket. That channel is
+**shared with `requestKeyframe()`** — the thing that recovers a black screen for
+a late-joining renderer. Unthrottled touch on a 500–1000 Hz mouse can therefore
+delay the keyframe request, which is a much worse failure than a slightly
+coarser drag.
+
+Two independent limits, at different altitudes:
+
+1. **The widget paces itself to 60 Hz** (`kTouchPublishHz`). Leading edge, so a
+   drag starts responding immediately, with coalescing and a trailing flush for
+   everything inside the interval.
+2. **The node enforces a 125 Hz ceiling** in `eventSendLoop()`. This is a
+   guardrail, not a second throttle — it sits well above the widget's rate so it
+   never engages in normal operation, and exists only to bound a publisher that
+   ignores its own limit.
+
+**60, not 30.** The phone derives scroll momentum from the last few samples of a
+gesture; at 30 Hz a quick flick only lands two or three, so fling velocity comes
+out noisy. The symptom is taps and slow drags feeling fine while flicks feel
+inconsistent — easy to misread as a phone-side problem. We also advertise
+high-fidelity touch in `/info`, so 30 would undersell what we claim.
+
+The two limits share only the spacing decision, as `helpers::RateGate`
+(`libs/helpers/include/helpers/rate_gate.h`) — a header-only "may I send at
+`now`, and if not how long until I may". They are otherwise different animals
+and are deliberately not unified: `airplay::EventQueue` is a bounded
+multi-producer queue drained by a writer thread that limits *every* report
+including down and up, while `TouchThrottle`
+(`dashboard/widgets/carplay/include/carplay/touch_throttle.h`) is single
+threaded, holds at most one deferred position, and never delays a down or an up.
+Folding the widget onto `EventQueue` would also mean the dashboard linking the
+AirPlay stack to get a rate limiter.
+
+Three invariants that a naive throttle breaks, all covered by
+`carplay_test_touch_throttle` (exact, time injected) and again by
+`carplay_test_touch_rate` (through a real widget, real wall clock):
+
+- **Down and up are never rate limited.** They are state transitions, not
+  samples.
+- **A drag that stops moving still reports where it came to rest.** Without the
+  trailing flush the last move is swallowed and no further events arrive, so the
+  phone's idea of the finger stays an interval behind indefinitely. This is the
+  one that bites.
+- **Motion never coalesces across a down or an up.** Collapsing a down into a
+  following move relocates the press and turns a drag into a tap somewhere else.
+  This is why `sendTouch()` takes a `TouchPhase` rather than the old bare `down`
+  bool — the receiver could not otherwise tell a down from a move, since both
+  set the same bit on the wire.
+
+**Nothing blocks on the socket.** A single writer thread (`eventSendLoop()`)
+owns the event channel; `sendTouch()` and `requestKeyframe()` enqueue and
+return, so the zenoh subscriber thread and the keyframe thread can no longer
+stall on a congested `send()` or on each other. Keyframe requests are held as an
+idempotent flag rather than queued, and jump ahead of pending touch — they carry
+no ordering relationship to a gesture, so there is nothing to gain by making
+them wait behind a drag.
+
+The queue is what bounds a misbehaving publisher: consecutive moves coalesce
+onto the tail, so flooding costs a memory write rather than an unbounded queue,
+and what the phone eventually sees is where the finger actually is. Only
+down/up can accumulate; past 64 queued reports they are dropped with a
+rate-limited warning (`event channel backed up`), which only happens if the link
+itself has stalled. The queue is also cleared when the event channel closes, so
+a gesture orphaned by a disconnect cannot inject a phantom contact into the next
+session.
+
+All of those rules live in `airplay::EventQueue` (`libs/airplay/event_queue.h`),
+which deliberately holds no mutex, no clock and no socket — `Receiver` supplies
+all three. `take(now)` is a pure decision given the queue state and an injected
+time, so `airplay_test_event_queue` covers ordering, coalescing, keyframe
+priority, the rate limit and the drop path with no threads and no hardware.
+`eventSendLoop()` is left with only threading and I/O.
+
+One thing that extraction turned up: the "last touch sent" timestamp used to be
+left at its default, which is the clock epoch — making *never sent*
+indistinguishable from *sent at time zero*, so the first report of a session was
+rate limited against it. Real `steady_clock` values are far enough past the
+epoch that this never showed up in practice. It now lives in `RateGate` as an
+explicit flag, fixed once for both users, and both test suites assert at the
+epoch precisely because that is the value that breaks.
+
+### Testing the touch path without hardware
+
+Three levels, none of which need a phone, the driver node, or the dashboard:
+
+| Test | Scope | Cost |
+|---|---|---|
+| `carplay_test_touch_throttle` | widget throttle policy, time injected — interval boundaries to the nanosecond, deferral state machine, gesture transitions | instant |
+| `airplay_test_event_queue` | node queue policy, time injected — ordering, coalescing, keyframe priority, drop path | instant |
+| `carplay_test_touch_rate` | a real `CarPlayWidget` and a real zenoh subscriber driven with synthetic mouse events, headless | ~2.3 s of wall clock |
+
+The first two are where behaviour is pinned; the third is what proves the policy
+is actually wired to the timer and the publisher, which a pure unit test cannot
+see. Keep it, but do not add cases to it that the unit tests could hold
+exactly — its rate assertion has to use loose bounds because it measures real
+elapsed time on a possibly-loaded machine.
+
 ## 9. Audio downlink
 
 **Expect:** music and navigation prompts play through the widget's `QAudioSink`;

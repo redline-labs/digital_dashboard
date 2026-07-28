@@ -487,11 +487,16 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                 switch (event.kind)
                 {
                     case InputEvent::Kind::TouchDown:
+                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
+                                      airplay::Receiver::TouchPhase::Down);
+                        break;
                     case InputEvent::Kind::TouchMove:
-                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f, true);
+                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
+                                      airplay::Receiver::TouchPhase::Move);
                         break;
                     case InputEvent::Kind::TouchUp:
-                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f, false);
+                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
+                                      airplay::Receiver::TouchPhase::Up);
                         break;
                     default:
                         break;

@@ -104,9 +104,23 @@ class Receiver
     void setAudioHandler(AudioHandler handler);
     void setStatusHandler(StatusHandler handler);
 
+    // Which part of a gesture a touch report is. Down and Up both map to the
+    // same single "contact down" bit on the wire, so this does not change the
+    // HID report -- it exists because Move is the only phase that may be
+    // coalesced when reports queue up. Collapsing a Down into a following Move
+    // would move the press to where the finger ended up and turn a drag into a
+    // tap somewhere else.
+    enum class TouchPhase
+    {
+        Down,
+        Move,
+        Up,
+    };
+
     // Injects a touch contact. x and y are normalised 0..1 over the screen.
-    // Safe to call from any thread; a no-op until the event channel is up.
-    void sendTouch(float x, float y, bool down);
+    // Safe to call from any thread and never blocks: the report is queued for
+    // the event-channel writer. Dropped if the channel is not up.
+    void sendTouch(float x, float y, TouchPhase phase);
 
     // Called when the phone opens (active=true) or closes a microphone uplink,
     // with the sample rate and channel count it expects. The node uses this to
@@ -171,9 +185,20 @@ class Receiver
     // which HID reports (touch) are pushed to the phone.
     void eventChannelLoop(int listen_fd);
 
-    // Encrypts and sends one plist command over the event channel. Returns
-    // false if the channel is not up.
-    bool sendEventCommand(const Bytes& plist_body);
+    // Encrypts and writes one plist command to the event channel socket.
+    // Returns false if the channel is not up. Blocking, and called only from
+    // eventSendLoop() -- everything else queues instead, so that no caller ends
+    // up waiting on a socket write.
+    bool writeEventCommand(const Bytes& plist_body);
+
+    // Sole writer of the event channel. Drains queued touch reports and
+    // keyframe requests; see State::send_queue for the ordering and coalescing
+    // rules it enforces.
+    void eventSendLoop();
+
+    // Builds the plist body for a touch report / keyframe request.
+    Bytes buildTouchCommand(float x, float y, bool down) const;
+    Bytes buildKeyframeCommand() const;
 
     ReceiverConfig config_;
     VideoHandler video_handler_;
@@ -185,6 +210,7 @@ class Receiver
     std::atomic<bool> run_{false};
     std::thread accept_thread_;
     std::thread keyframe_thread_;
+    std::thread event_send_thread_;
     // steady_clock ticks (ns) of the last keyframe/config the phone sent. The
     // keyframe thread only nudges the phone when this goes stale, so an animated
     // screen (already emitting keyframes) is not asked for redundant ones.

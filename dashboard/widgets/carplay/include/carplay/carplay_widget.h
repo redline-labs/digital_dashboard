@@ -17,9 +17,11 @@
 #include <QtMultimedia/QAudioFormat>
 
 #include "carplay/audio_ring.h"
+#include "carplay/touch_throttle.h"
 
 #include <QtCore/QObject>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <vector>
 
@@ -37,6 +39,7 @@ struct SwsContext;
 class QAudioSink;
 class QAudioSource;
 class QIODevice;
+class QTimer;
 
 // Thin client of the carplay driver node: renders the H.264/H.265 video
 // stream published on zenoh and forwards touch input back to the driver.
@@ -84,7 +87,13 @@ class CarPlayWidget : public QWidget
     // unusable.
     bool renderFrameToBackBuffer(const AVFrame* frame);
 
+    // Publishes immediately, with no rate limiting. Everything that reaches the
+    // phone goes through here, so it is also what stamps _last_touch_sent.
     void publishInput(CarPlayInput::Kind kind, const QPointF& pos);
+    // Rate-limited entry point for drag motion. Down and up are state
+    // transitions and always publish immediately; only motion is limited.
+    void publishTouchMove(const QPointF& pos);
+    static TouchThrottle::Point toThrottlePoint(const QPointF& p) { return {p.x(), p.y()}; }
     // Publishes the current widget size to _target_size for the decode thread.
     void publishTargetSize();
 
@@ -143,6 +152,18 @@ class CarPlayWidget : public QWidget
     // GUI-thread only.
     std::unique_ptr<pub_sub::ZenohPublisher<CarPlayInput>> _input_pub;
     bool _touch_active = false;
+
+    // Touch rate limiting. Every mouse event and the flush timer run on the GUI
+    // thread, so none of this needs synchronising.
+    //
+    // _touch_throttle holds the policy and the deferred position; this widget
+    // only supplies the clock, the timer and the publishing. The timer is what
+    // makes the trailing flush happen -- the part that is easy to leave out and
+    // wrong to, since a drag that stops moving but keeps the button down
+    // produces no further events, and without a flush the last position is
+    // thrown away and the phone's idea of the finger stays an interval behind.
+    QTimer* _touch_flush_timer = nullptr;  // single-shot, owned by Qt
+    TouchThrottle _touch_throttle;
 
     // Audio playback. The sink runs in pull mode: it drains _audio_ring on its
     // own audio thread, decoupled from the bursty network delivery. The zenoh

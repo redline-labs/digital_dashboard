@@ -30,11 +30,24 @@ constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_BGRA;
 #else
 constexpr AVPixelFormat kRgb32PixelFormat = AV_PIX_FMT_ARGB;
 #endif
+
+// Ceiling on touch reports sent to the phone during a drag.
+//
+// 60, not 30: the phone derives scroll momentum from the last few samples of a
+// gesture, and at 30 Hz a quick flick only lands two or three of them, which
+// makes the fling velocity it computes noisy. The tell is taps and slow drags
+// feeling fine while flicks come out inconsistent. We also advertise
+// high-fidelity touch in the AirPlay /info payload, so 30 would undersell what
+// we claim. Against a 500-1000 Hz gaming mouse this is still a 8-16x cut, and
+// it costs twice what 30 would.
+constexpr int kTouchPublishHz = 60;
+constexpr auto kTouchMinInterval = std::chrono::microseconds(1'000'000 / kTouchPublishHz);
 }  // namespace
 
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     QWidget(parent),
-    _cfg(std::move(cfg))
+    _cfg(std::move(cfg)),
+    _touch_throttle(kTouchMinInterval)
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
 
@@ -43,6 +56,19 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     // fires resizeEvent and republishes -- but frames can only arrive once the
     // subscribers below exist, by which point this has been corrected.
     publishTargetSize();
+
+    // Precise rather than coarse: this paces touch, and Qt's default 5% slop
+    // is enough to make the interval visibly uneven at 16 ms.
+    _touch_flush_timer = new QTimer(this);
+    _touch_flush_timer->setSingleShot(true);
+    _touch_flush_timer->setTimerType(Qt::PreciseTimer);
+    connect(_touch_flush_timer, &QTimer::timeout, this, [this] {
+        const auto pending = _touch_throttle.takePending(std::chrono::steady_clock::now());
+        if (pending.has_value())
+        {
+            publishInput(CarPlayInput::Kind::TOUCH_MOVE, QPointF(pending->x, pending->y));
+        }
+    });
 
     _input_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayInput>>(_cfg.input_key);
 
@@ -649,9 +675,35 @@ void CarPlayWidget::publishInput(CarPlayInput::Kind kind, const QPointF& pos)
     _input_pub->put();
 }
 
+void CarPlayWidget::publishTouchMove(const QPointF& pos)
+{
+    const auto decision =
+        _touch_throttle.onMove(toThrottlePoint(pos), std::chrono::steady_clock::now());
+    if (decision.action == TouchThrottle::Action::Publish)
+    {
+        _touch_flush_timer->stop();
+        publishInput(CarPlayInput::Kind::TOUCH_MOVE, pos);
+        return;
+    }
+
+    // Deferred. The throttle is already holding the position; all that is left
+    // is making sure something will come back for it. Arming once is enough --
+    // later moves in the same interval only overwrite what it will send.
+    if (!_touch_flush_timer->isActive())
+    {
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(decision.wait);
+        _touch_flush_timer->start(std::max<int>(1, static_cast<int>(remaining.count())));
+    }
+}
+
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
 {
     _touch_active = true;
+    // Drops any motion pending from the previous gesture, which must never land
+    // after this down.
+    _touch_flush_timer->stop();
+    _touch_throttle.onDown(std::chrono::steady_clock::now());
     publishInput(CarPlayInput::Kind::TOUCH_DOWN, e->position());
 }
 
@@ -659,12 +711,22 @@ void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 {
     if (_touch_active)
     {
-        publishInput(CarPlayInput::Kind::TOUCH_MOVE, e->position());
+        publishTouchMove(e->position());
     }
 }
 
 void CarPlayWidget::mouseReleaseEvent(QMouseEvent* e)
 {
     _touch_active = false;
+    _touch_flush_timer->stop();
+
+    // The throttle decides whether the tail of the gesture still owes a move
+    // before the release; see TouchThrottle::onUp for why.
+    const auto flush =
+        _touch_throttle.onUp(toThrottlePoint(e->position()), std::chrono::steady_clock::now());
+    if (flush.has_value())
+    {
+        publishInput(CarPlayInput::Kind::TOUCH_MOVE, QPointF(flush->x, flush->y));
+    }
     publishInput(CarPlayInput::Kind::TOUCH_UP, e->position());
 }

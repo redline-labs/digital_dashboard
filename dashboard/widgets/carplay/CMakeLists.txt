@@ -38,6 +38,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::Widgets
         Qt6::Gui
         Qt6::Multimedia
+        helpers
         reflection
         schemas
         zenoh_pub_sub
@@ -47,3 +48,21 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
 )
 
 set_target_properties(${CARPLAY_WIDGET_LIB} PROPERTIES AUTOMOC ON)
+
+# Throttling policy on its own, with time injected: exact interval boundaries
+# and deferral state machine. No Qt, no zenoh, no threads, milliseconds to run.
+add_executable(carplay_test_touch_throttle test_touch_throttle.cpp)
+target_link_libraries(carplay_test_touch_throttle PRIVATE
+    helpers
+    spdlog::spdlog
+)
+target_include_directories(carplay_test_touch_throttle PRIVATE include)
+
+# The same behaviour through a real widget and a real zenoh subscriber, which is
+# what proves the policy is actually wired to the timer and the publisher. Runs
+# headless; no phone or driver node needed, but it does spend real wall clock.
+add_executable(carplay_test_touch_rate test_touch_rate.cpp)
+target_link_libraries(carplay_test_touch_rate PRIVATE
+    ${CARPLAY_WIDGET_LIB}
+    spdlog::spdlog
+)

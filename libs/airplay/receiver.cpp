@@ -2,6 +2,7 @@
 #include "airplay/receiver.h"
 
 #include "airplay/aac_decoder.h"
+#include "airplay/event_queue.h"
 #include "airplay/plist.h"
 #include "airplay/nalu.h"
 #include "airplay/srp.h"
@@ -18,9 +19,11 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
 
 namespace airplay
@@ -307,13 +310,24 @@ struct Receiver::State
     uint16_t event_port = 0;
     std::vector<int> stream_fds;
 
-    // The accepted event-channel socket and its cipher, written to from any
-    // thread by sendTouch(). Guarded because the accept loop, the receive pump
-    // and the input path all touch it.
+    // The accepted event-channel socket and its cipher. Guarded because the
+    // accept loop, the receive pump and the event writer all touch it. Only
+    // eventSendLoop() ever writes to the socket.
     std::mutex event_mutex;
     int event_client_fd = -1;
     ChannelCrypto event_crypto;
     int event_cseq = 0;
+
+    // Outbound work for eventSendLoop(), which is the only thread that touches
+    // the socket. Producers never block on the network: sendTouch() runs on the
+    // zenoh subscriber thread and requestKeyframe() on the keyframe thread, and
+    // neither should be able to stall the other -- or itself -- behind a
+    // congested send(). The ordering, coalescing and drop rules all live in
+    // EventQueue, which is not thread safe; send_mutex is what makes it so.
+    std::mutex send_mutex;
+    std::condition_variable send_cv;
+    EventQueue send_queue;
+    bool send_stop = false;
 
     // Session keys for the encrypted control channel that follows pair-verify.
     Bytes control_read;
@@ -413,6 +427,14 @@ bool Receiver::start()
     run_.store(true);
     accept_thread_ = std::thread([this] { acceptLoop(); });
 
+    // Sole writer of the event channel, so that neither the touch path nor the
+    // keyframe path ever blocks on a socket write or on the other.
+    {
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        state_->send_stop = false;
+    }
+    event_send_thread_ = std::thread([this] { eventSendLoop(); });
+
     // Periodically ask the phone for a fresh keyframe. Without this, a static
     // CarPlay screen produces exactly one keyframe (at session start) and then
     // only P-frames, so a renderer that subscribes to the zenoh video topic
@@ -461,6 +483,15 @@ void Receiver::stop()
     if (keyframe_thread_.joinable())
     {
         keyframe_thread_.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        state_->send_stop = true;
+    }
+    state_->send_cv.notify_all();
+    if (event_send_thread_.joinable())
+    {
+        event_send_thread_.join();
     }
     for (auto& thread : session_threads_)
     {
@@ -1847,12 +1878,19 @@ void Receiver::eventChannelLoop(int listen_fd)
             state_->event_client_fd = -1;
             state_->event_crypto.active = false;
         }
+        // Anything still queued belongs to the session that just ended -- most
+        // likely a touch whose matching release never got sent. Replaying it
+        // into the next session would inject a phantom contact.
+        {
+            std::lock_guard<std::mutex> lock(state_->send_mutex);
+            state_->send_queue.clear();
+        }
         ::close(client);
         SPDLOG_INFO("[airplay] event channel closed");
     }
 }
 
-void Receiver::sendTouch(float x, float y, bool down)
+Bytes Receiver::buildTouchCommand(float x, float y, bool down) const
 {
     // Two-contact multitouch report: six bytes per finger --
     // [transducer index, down, x-lo, x-hi, y-lo, y-hi] -- matching the HID
@@ -1879,10 +1917,10 @@ void Receiver::sendTouch(float x, float y, bool down)
     command.set("type", plist::Value::string("hidSendReport"));
     command.set("uuid", plist::Value::string("2a2a2a2a"));
     command.set("hidReport", plist::Value::data(report));
-    sendEventCommand(plist::encode(command));
+    return plist::encode(command);
 }
 
-void Receiver::requestKeyframe()
+Bytes Receiver::buildKeyframeCommand() const
 {
     // forceKeyFrame names the display by the same uuid advertised in /info.
     plist::Value params = plist::Value::dict();
@@ -1890,7 +1928,87 @@ void Receiver::requestKeyframe()
     plist::Value command = plist::Value::dict();
     command.set("type", plist::Value::string("forceKeyFrame"));
     command.set("params", std::move(params));
-    sendEventCommand(plist::encode(command));
+    return plist::encode(command);
+}
+
+void Receiver::sendTouch(float x, float y, TouchPhase phase)
+{
+    EventQueue::TouchReport report;
+    report.x = x;
+    report.y = y;
+    report.down = (phase != TouchPhase::Up);
+    report.coalescable = (phase == TouchPhase::Move);
+
+    bool dropped = false;
+    uint64_t drop_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        dropped = !state_->send_queue.pushTouch(report);
+        drop_count = state_->send_queue.dropped();
+    }
+    if (dropped)
+    {
+        // Means the link itself has stalled, so it is loud -- but rate limited,
+        // since whatever caused it will not have caused it just once.
+        if (drop_count % 100 == 1)
+        {
+            SPDLOG_WARN("[airplay] event channel backed up; dropped {} touch report(s)",
+                        drop_count);
+        }
+        return;
+    }
+    state_->send_cv.notify_one();
+}
+
+void Receiver::requestKeyframe()
+{
+    {
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        state_->send_queue.requestKeyframe();
+    }
+    state_->send_cv.notify_one();
+}
+
+void Receiver::eventSendLoop()
+{
+    // Threading and I/O only -- what to send, in what order, and what to drop
+    // is EventQueue's business, and is tested directly in test_event_queue.cpp.
+    while (true)
+    {
+        std::unique_lock<std::mutex> lock(state_->send_mutex);
+        state_->send_cv.wait(lock,
+                             [this] { return state_->send_stop || state_->send_queue.hasWork(); });
+        if (state_->send_stop)
+        {
+            return;
+        }
+
+        const auto next = state_->send_queue.take(std::chrono::steady_clock::now());
+        if (next.action == EventQueue::Action::WaitTouch)
+        {
+            // Nothing was consumed. Waiting here rather than sending is what
+            // lets a move arriving meanwhile coalesce, and lets a keyframe
+            // request landing during the wait overtake the queued touch.
+            state_->send_cv.wait_for(lock, next.wait);
+            continue;
+        }
+        lock.unlock();
+
+        switch (next.action)
+        {
+            case EventQueue::Action::SendKeyframe:
+                writeEventCommand(buildKeyframeCommand());
+                break;
+            case EventQueue::Action::SendTouch:
+                writeEventCommand(
+                    buildTouchCommand(next.touch.x, next.touch.y, next.touch.down));
+                break;
+            case EventQueue::Action::Idle:
+                break;  // spurious wake, just go round again
+            case EventQueue::Action::WaitTouch:
+                break;  // handled above, before the lock was released
+        }
+    }
 }
 
 void Receiver::startMicUplink(uint16_t phone_port, const Bytes& /*shared_key*/,
@@ -2032,7 +2150,7 @@ void Receiver::feedMic(const Bytes& pcm)
     }
 }
 
-bool Receiver::sendEventCommand(const Bytes& plist_body)
+bool Receiver::writeEventCommand(const Bytes& plist_body)
 {
     std::lock_guard<std::mutex> lock(state_->event_mutex);
     if (state_->event_client_fd < 0 || !state_->event_crypto.active)
