@@ -498,7 +498,14 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                         rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
                                       airplay::Receiver::TouchPhase::Up);
                         break;
-                    default:
+                    // Listed rather than folded into a default so that adding a
+                    // new input kind is a compile error here, not a silent drop.
+                    // These four have no touch equivalent -- they need their own
+                    // HID reports on the event channel, which is not written yet.
+                    case InputEvent::Kind::Knob:
+                    case InputEvent::Kind::MediaKey:
+                    case InputEvent::Kind::Siri:
+                    case InputEvent::Kind::Telephony:
                         break;
                 }
             });
@@ -514,16 +521,16 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 
         if (ncm)
         {
-            apple_usb::NcmBridge* bridge = ncm.get();
+            apple_usb::NcmBridge* ncm_bridge = ncm.get();
             iap2_options.endpoint_provider =
-                [bridge]() -> std::optional<Iap2SessionOptions::Endpoint> {
-                if (!bridge->running() || bridge->linkLocalAddress().empty())
+                [ncm_bridge]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                if (!ncm_bridge->running() || ncm_bridge->linkLocalAddress().empty())
                 {
                     return std::nullopt;
                 }
                 Iap2SessionOptions::Endpoint endpoint;
-                endpoint.link_local_address = bridge->linkLocalAddress();
-                endpoint.device_identifier = bridge->hostMac();
+                endpoint.link_local_address = ncm_bridge->linkLocalAddress();
+                endpoint.device_identifier = ncm_bridge->hostMac();
                 return endpoint;
             };
         }

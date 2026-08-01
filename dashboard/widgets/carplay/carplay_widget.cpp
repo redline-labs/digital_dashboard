@@ -215,31 +215,34 @@ void CarPlayWidget::onVideoMessage(CarPlayVideo::Reader reader)
         return;
     }
 
-    auto data = reader.getData();
+    // Not named `data`: QWidget has a member by that name and -Wshadow flags it.
+    auto payload = reader.getData();
 
     // Parameter sets on their own are not a decodable access unit -- feeding
     // them straight to libavcodec yields AVERROR_INVALIDDATA. Cache them and
     // prepend to the next access unit instead (Annex-B concatenates freely).
     if (reader.getIsConfig())
     {
-        _pending_config.assign(data.begin(), data.end());
+        _pending_config.assign(payload.begin(), payload.end());
         return;
     }
 
     // Assemble [pending parameter sets][access unit] into the reusable buffer.
     // libavcodec reads up to AV_INPUT_BUFFER_PADDING_SIZE bytes past the end of
     // a packet it does not own, so the tail must exist and be zeroed.
-    const size_t len = _pending_config.size() + data.size();
+    const size_t len = _pending_config.size() + payload.size();
     _au_buf.resize(len + AV_INPUT_BUFFER_PADDING_SIZE);
     std::memcpy(_au_buf.data(), _pending_config.data(), _pending_config.size());
-    std::memcpy(_au_buf.data() + _pending_config.size(), data.begin(), data.size());
+    std::memcpy(_au_buf.data() + _pending_config.size(), payload.begin(), payload.size());
     std::memset(_au_buf.data() + len, 0, AV_INPUT_BUFFER_PADDING_SIZE);
     _pending_config.clear();
 
     decodeAccessUnit(_au_buf.data(), len);
 }
 
-void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
+// The parameter is not called `data`: QWidget has a `data` member, and shadowing
+// it trips -Wshadow.
+void CarPlayWidget::decodeAccessUnit(const uint8_t* annexb, size_t len)
 {
     if (len == 0)
     {
@@ -250,7 +253,7 @@ void CarPlayWidget::decodeAccessUnit(const uint8_t* data, size_t len)
     // The packet borrows the caller's padded buffer rather than allocating and
     // copying: send_packet does not take ownership, and libavcodec makes its own
     // reference if it needs the bytes beyond this call.
-    _pkt->data = const_cast<uint8_t*>(data);
+    _pkt->data = const_cast<uint8_t*>(annexb);
     _pkt->size = static_cast<int>(len);
 
     int ret = avcodec_send_packet(_codec_context, _pkt);

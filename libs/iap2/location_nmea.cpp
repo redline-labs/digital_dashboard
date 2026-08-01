@@ -21,6 +21,23 @@ std::tm fixUtc(const LocationFix& fix)
     return out;
 }
 
+// NMEA time and date fields are fixed two-digit columns. Going through this
+// rather than "%02d" makes the width a property of the code instead of a
+// property of the values: std::tm carries no range invariant the compiler can
+// see, so "%02d" into a two-character slot reads as a possible truncation.
+std::string twoDigits(int value)
+{
+    const unsigned v = static_cast<unsigned>(value) % 100u;
+    return {static_cast<char>('0' + v / 10u), static_cast<char>('0' + v % 10u)};
+}
+
+// hhmmss.00 -- the sub-second field is always zero; the fix carries millisecond
+// resolution but nothing downstream consumes it.
+std::string nmeaTimeField(const std::tm& utc)
+{
+    return twoDigits(utc.tm_hour) + twoDigits(utc.tm_min) + twoDigits(utc.tm_sec) + ".00";
+}
+
 // NMEA latitude/longitude are ddmm.mmmm (degrees, then decimal minutes) plus a
 // hemisphere letter. `is_lat` selects the field width (2 vs 3 degree digits).
 std::string degreesMinutes(double value, bool is_lat, char positive, char negative)
@@ -60,12 +77,9 @@ std::string appendNmeaChecksum(const std::string& body)
 std::string nmeaGga(const LocationFix& fix)
 {
     const std::tm utc = fixUtc(fix);
-    char time_field[16];
-    std::snprintf(time_field, sizeof(time_field), "%02d%02d%02d.00", utc.tm_hour, utc.tm_min,
-                  utc.tm_sec);
 
     std::string body = "$GPGGA,";
-    body += time_field;
+    body += nmeaTimeField(utc);
     body += ",";
     body += degreesMinutes(fix.latitude_deg, true, 'N', 'S');
     body += ",";
@@ -84,15 +98,13 @@ std::string nmeaGga(const LocationFix& fix)
 std::string nmeaRmc(const LocationFix& fix)
 {
     const std::tm utc = fixUtc(fix);
-    char time_field[16];
-    std::snprintf(time_field, sizeof(time_field), "%02d%02d%02d.00", utc.tm_hour, utc.tm_min,
-                  utc.tm_sec);
-    char date_field[8];
-    std::snprintf(date_field, sizeof(date_field), "%02d%02d%02d", utc.tm_mday, utc.tm_mon + 1,
-                  (utc.tm_year + 1900) % 100);
+    // ddmmyy -- twoDigits() reduces mod 100, which is what turns the full year
+    // into the two-digit form the sentence wants.
+    const std::string date_field =
+        twoDigits(utc.tm_mday) + twoDigits(utc.tm_mon + 1) + twoDigits(utc.tm_year + 1900);
 
     std::string body = "$GPRMC,";
-    body += time_field;
+    body += nmeaTimeField(utc);
     body += fix.valid ? ",A," : ",V,";  // A = valid, V = warning/no fix
     body += degreesMinutes(fix.latitude_deg, true, 'N', 'S');
     body += ",";

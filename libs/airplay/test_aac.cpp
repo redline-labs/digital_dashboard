@@ -111,7 +111,7 @@ int main()
 {
     spdlog::set_level(spdlog::level::info);
 
-    for (const auto [rate, channels] : {std::pair{44100, 2}, std::pair{48000, 2}})
+    for (const auto& [rate, channels] : {std::pair{44100, 2}, std::pair{48000, 2}})
     {
         const auto units = encodeSine(rate, channels, 20);
         if (units.empty())

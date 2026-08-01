@@ -79,8 +79,8 @@ struct FieldMetadata {
 // Field metadata
 template <typename Struct, typename FieldType>
 struct FieldInfo {
-    constexpr FieldInfo(std::string_view name, FieldType Struct::* ptr)
-        : name(name), member_ptr(ptr) {}
+    constexpr FieldInfo(std::string_view field_name, FieldType Struct::* ptr)
+        : name(field_name), member_ptr(ptr) {}
 
     std::string_view name;
     FieldType Struct::* member_ptr;

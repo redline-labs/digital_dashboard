@@ -73,7 +73,8 @@ static void generate_message_header(const dbc_parser::Message& message, const st
     fmt::print(out, "/* Generated C++ header - do not edit as any changes will be overwritten. */\n");
     fmt::print(out, "#include <array>\n");
     fmt::print(out, "#include <cstdint>\n");
-    fmt::print(out, "#include <cstdbool>\n");
+    // No <cstdbool>: bool is a keyword in C++, and the header is deprecated
+    // since C++17 -- including it warns under the standard we build with.
     fmt::print(out, "#include <string_view>\n");
     fmt::print(out, "#include <limits>\n");
     fmt::print(out, "#include <cmath>\n");

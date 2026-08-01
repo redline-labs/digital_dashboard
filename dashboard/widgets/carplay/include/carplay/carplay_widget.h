@@ -81,7 +81,7 @@ class CarPlayWidget : public QWidget
 
     bool ensureDecoder(CarPlayVideo::Codec codec);
     void destroyDecoder();
-    void decodeAccessUnit(const uint8_t* data, size_t len);
+    void decodeAccessUnit(const uint8_t* annexb, size_t len);
     // Converts and scales the decoded frame straight into the back buffer, then
     // publishes it as the new front buffer. Returns false if the frame was
     // unusable.

@@ -149,12 +149,17 @@ target_include_directories(vendored_plist
 target_compile_definitions(vendored_plist PRIVATE HAVE_CONFIG_H _GNU_SOURCE)
 
 # --- libimobiledevice-glue ---------------------------------------------------
-# Only the three units libimobiledevice's own sources include.
+# Only the units our two consumers actually include: utils/socket/thread for
+# libimobiledevice, plus collection for libusbmuxd's device_monitor (its
+# listener and device lists). The rest of upstream's source list -- opack, tlv,
+# the sha implementations, nskeyedarchive, termcolors -- backs services we do
+# not build.
 _limd_write_config(limd_glue libimobiledevice-glue ${LIMD_GLUE_TAG} _glue_config_dir)
 add_library(vendored_limd_glue_lib STATIC
     ${vendored_limd_glue_SOURCE_DIR}/src/utils.c
     ${vendored_limd_glue_SOURCE_DIR}/src/socket.c
     ${vendored_limd_glue_SOURCE_DIR}/src/thread.c
+    ${vendored_limd_glue_SOURCE_DIR}/src/collection.c
 )
 target_include_directories(vendored_limd_glue_lib
     PUBLIC ${vendored_limd_glue_SOURCE_DIR}/include
