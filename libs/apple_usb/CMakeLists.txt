@@ -18,6 +18,7 @@ project(apple_usb)
 set(APPLE_USB_SOURCES
     muxd.cpp
     usbmuxd_server.cpp
+    usbmux_client.cpp
     lockdown.cpp
 )
 
@@ -62,3 +63,20 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(STATUS
         "apple_usb: non-Linux host -- protocol layer built, USB/NCM transport stubbed")
 endif()
+
+# Protocol-level tests. These drive the portable half against mocks, so they run
+# on any host -- no phone, no usbfs.
+add_executable(apple_usb_test_usbmux_client test_usbmux_client.cpp)
+target_link_libraries(apple_usb_test_usbmux_client PRIVATE
+    apple_usb
+    spdlog::spdlog
+)
+
+# Hardware counterpart to the test above: points our client at a real running
+# UsbmuxdServer. Replaces the `idevice_id -l` check in the bring-up doc, which
+# proved the server using someone else's client.
+add_executable(apple_usb_muxctl muxctl.cpp)
+target_link_libraries(apple_usb_muxctl PRIVATE
+    apple_usb
+    spdlog::spdlog
+)
