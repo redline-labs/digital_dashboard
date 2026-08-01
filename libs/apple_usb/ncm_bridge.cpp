@@ -17,7 +17,6 @@
 #include <linux/if_arp.h>
 #include <linux/if_tun.h>
 #include <linux/sockios.h>
-#include <linux/usbdevice_fs.h>
 
 #include <algorithm>
 #include <cctype>
@@ -29,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -49,10 +49,9 @@ constexpr size_t kNth16Length = 12;   // wHeaderLength we emit
 constexpr size_t kNdp16Length = 16;   // NDP16 header + 1 entry + terminator
 constexpr size_t kTxDatagramOffset = kNth16Length + kNdp16Length;  // 28
 
-// CDC class requests / descriptor sub-types.
-constexpr uint8_t kCdcInterfaceClass = 0x02;
-constexpr uint8_t kCdcNcmSubClass = 0x0d;
-constexpr uint8_t kCdcDataInterfaceClass = 0x0a;
+// CDC class requests. The interface class codes, the descriptor sub-types and
+// the data altsetting live in ncm_discovery.h now, alongside the descriptor
+// parsing that is the only thing which needed them.
 constexpr uint8_t kGetNtbParameters = 0x80;
 // CDC class requests the kernel's cdc_ncm driver issues during bring-up. We
 // previously sent only GET_NTB_PARAMETERS, which is the one request that reads
@@ -63,13 +62,6 @@ constexpr uint8_t kSetNtbInputSize = 0x86;
 constexpr uint16_t kNtbFormat16 = 0x0000;
 // DIRECTED | BROADCAST | ALL_MULTICAST | PROMISCUOUS.
 constexpr uint16_t kPacketFilterAll = 0x000F;
-constexpr uint8_t kDescriptorTypeInterface = 0x04;
-constexpr uint8_t kDescriptorTypeCsInterface = 0x24;
-constexpr uint8_t kCdcEthernetFunctionalDescriptor = 0x0f;
-
-// The NCM data interface carries its bulk endpoints on altsetting 1;
-// altsetting 0 is the mandatory "no data" setting.
-constexpr unsigned kNcmDataAltSetting = 1;
 
 // Transfer sizing (matches ncm_bridge.py).
 constexpr size_t kUsbReadSize = 32768;
@@ -89,25 +81,6 @@ std::string readSysfsAttr(const fs::path& dir, const char* attr)
     while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
     {
         value.pop_back();
-    }
-    return value;
-}
-
-// Parse a sysfs attribute holding a number in the given base. Returns
-// `fallback` when the attribute is missing or unparseable.
-uint32_t readSysfsUint(const fs::path& dir, const char* attr, int base, uint32_t fallback = 0)
-{
-    const std::string text = readSysfsAttr(dir, attr);
-    if (text.empty())
-    {
-        return fallback;
-    }
-    uint32_t value = 0;
-    const auto* first = text.data();
-    const auto* last = text.data() + text.size();
-    if (std::from_chars(first, last, value, base).ec != std::errc{})
-    {
-        return fallback;
     }
     return value;
 }
@@ -504,368 +477,168 @@ NcmBridge::~NcmBridge()
 
 // ---------------- discovery ----------------
 
-void NcmBridge::detachKernelNcmDrivers() const
+void NcmBridge::detachKernelNcmDrivers()
 {
     // In the CarPlay configuration the phone exposes *two* NCM function pairs,
     // and the kernel's cdc_ncm binds the first one the instant the
-    // configuration is applied. Left alone that costs us twice: kernelNcmBound()
-    // refuses to run at all, and findNcmPair() skips the driver-owned interfaces
-    // and silently selects the *second* pair instead of the one LIVI uses.
-    // Release them so discovery sees the device the way it expects.
-    std::error_code ec;
-    const fs::path root = fs::canonical(device_.sysfs_path, ec);
-    if (ec)
+    // configuration is applied. Left alone that costs us twice: claiming would
+    // fight the driver, and selectNcmFunction() would have to skip the
+    // driver-owned interfaces and silently pick the *second* pair instead of
+    // the one LIVI uses.
+    const auto config = readActiveConfig(device_);
+    if (!config)
     {
-        return;
-    }
-    const std::string prefix =
-        root.filename().string() + ":" + readSysfsAttr(root, "bConfigurationValue") + ".";
-
-    std::vector<unsigned> to_release;
-    for (const auto& entry : fs::directory_iterator(root, ec))
-    {
-        const std::string name = entry.path().filename().string();
-        if (!name.starts_with(prefix))
-        {
-            continue;
-        }
-        const std::string klass = readSysfsAttr(entry.path(), "bInterfaceClass");
-        const bool is_ncm_control =
-            (klass == "02") && (readSysfsAttr(entry.path(), "bInterfaceSubClass") == "0d");
-        const bool is_cdc_data = (klass == "0a");
-        if (!is_ncm_control && !is_cdc_data)
-        {
-            continue;
-        }
-
-        std::error_code drv_ec;
-        if (!fs::is_symlink(entry.path() / "driver", drv_ec))
-        {
-            continue;
-        }
-        const fs::path driver = fs::canonical(entry.path() / "driver", drv_ec);
-        if (drv_ec)
-        {
-            continue;
-        }
-
-        unsigned iface = 0;
-        const std::string number = name.substr(name.rfind('.') + 1);
-        if (std::from_chars(number.data(), number.data() + number.size(), iface).ec == std::errc{})
-        {
-            SPDLOG_INFO("[ncm] releasing interface {} from kernel driver {}", iface,
-                        driver.filename().string());
-            to_release.push_back(iface);
-        }
-    }
-
-    if (to_release.empty())
-    {
+        SPDLOG_WARN("[ncm] cannot read the configuration descriptor at port {}",
+                    device_.port.toString());
         return;
     }
 
-    const auto fd = openDevice(device_);
-    if (!fd)
+    unsigned released = 0;
+    for (const auto& fn : findNcmFunctions(*config))
     {
-        SPDLOG_WARN("[ncm] cannot open the device to release its NCM interfaces");
-        return;
+        for (const uint8_t iface : {fn.ctrl_iface, fn.data_iface})
+        {
+            if (!kernelDriverActive(handle_, iface))
+            {
+                continue;
+            }
+            if (detachKernelDriver(handle_, iface))
+            {
+                SPDLOG_INFO("[ncm] released interface {} from its kernel driver", iface);
+                ++released;
+            }
+            else
+            {
+                SPDLOG_WARN("[ncm] could not release interface {} from its kernel driver", iface);
+            }
+        }
     }
-    for (const unsigned iface : to_release)
-    {
-        usbDisconnectKernelDriver(*fd, iface);
-    }
-    ::close(*fd);
 
-    // Unbinding tears the netdev down asynchronously; give sysfs a moment to
-    // catch up before kernelNcmBound() looks for it.
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (released > 0)
+    {
+        // Unbinding tears the netdev down asynchronously; give the kernel a
+        // moment to catch up before we try to claim.
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
 }
 
-bool NcmBridge::kernelNcmBound() const
+bool NcmBridge::selectNcmFunction()
 {
-    std::error_code ec;
-    const fs::path root = fs::canonical(device_.sysfs_path, ec);
-    if (ec)
+    const auto config = readActiveConfig(device_);
+    if (!config)
     {
+        SPDLOG_ERROR("[ncm] cannot read the configuration descriptor at port {}",
+                     device_.port.toString());
         return false;
     }
-    for (const auto& entry : fs::directory_iterator("/sys/class/net", ec))
-    {
-        const fs::path base = entry.path() / "device";
-        std::error_code link_ec;
-        const fs::path driver = fs::canonical(base / "driver", link_ec);
-        if (link_ec || driver.filename() != "cdc_ncm")
-        {
-            continue;
-        }
-        const fs::path dev = fs::canonical(base, link_ec);
-        if (link_ec)
-        {
-            continue;
-        }
-        if (dev.string().starts_with(root.string() + "/"))
-        {
-            SPDLOG_INFO("[ncm] kernel cdc_ncm already owns {} under {}",
-                        entry.path().filename().string(), root.string());
-            return true;
-        }
-    }
-    return false;
-}
 
-bool NcmBridge::findNcmPair(unsigned& ctrl_if, unsigned& data_if) const
-{
+    std::optional<NcmFunction> chosen;
+
     // Bring-up override. The CarPlay configuration exposes two NCM function
     // pairs and which one carries the AV link is not self-evident from the
     // descriptors, so allow pinning the control interface while that is being
-    // established. The data interface is assumed to be the next one, matching
-    // the descriptor layout.
+    // established.
     if (const char* pinned = std::getenv("CARPLAY_NCM_CTRL_IF"); pinned != nullptr)
     {
         unsigned value = 0;
         if (std::from_chars(pinned, pinned + std::strlen(pinned), value).ec == std::errc{})
         {
-            ctrl_if = value;
-            data_if = value + 1;
-            SPDLOG_WARN("[ncm] CARPLAY_NCM_CTRL_IF pins the NCM pair to {}/{}", ctrl_if, data_if);
-            return true;
+            chosen = findNcmFunctionByCtrl(*config, static_cast<uint8_t>(value));
+            if (!chosen)
+            {
+                SPDLOG_ERROR("[ncm] CARPLAY_NCM_CTRL_IF={} names no NCM function in "
+                             "configuration {}", value, config->value);
+                return false;
+            }
+            SPDLOG_WARN("[ncm] CARPLAY_NCM_CTRL_IF pins the NCM pair to {}/{}",
+                        chosen->ctrl_iface, chosen->data_iface);
         }
     }
 
-    std::error_code ec;
-    const fs::path root = fs::canonical(device_.sysfs_path, ec);
-    if (ec)
+    if (!chosen)
     {
-        SPDLOG_ERROR("[ncm] cannot resolve {}: {}", device_.sysfs_path, ec.message());
+        const auto functions = findNcmFunctions(*config);
+        if (functions.empty())
+        {
+            SPDLOG_ERROR("[ncm] no NCM function pair in configuration {}", config->value);
+            return false;
+        }
+        if (functions.size() > 1)
+        {
+            SPDLOG_INFO("[ncm] {} NCM function pairs present; taking the first (control "
+                        "interface {}). Override with CARPLAY_NCM_CTRL_IF.",
+                        functions.size(), functions.front().ctrl_iface);
+        }
+        chosen = functions.front();
+    }
+
+    // A driver still holding either interface means detachKernelNcmDrivers()
+    // did not manage it. Claiming would fail with EBUSY a moment later; say so
+    // now, with the reason.
+    for (const uint8_t iface : {chosen->ctrl_iface, chosen->data_iface})
+    {
+        if (kernelDriverActive(handle_, iface))
+        {
+            SPDLOG_ERROR("[ncm] refusing to claim: a kernel driver still holds interface {} "
+                         "of the selected NCM pair", iface);
+            return false;
+        }
+    }
+
+    if (!chosen->hasBulkPair())
+    {
+        SPDLOG_ERROR("[ncm] NCM function {}/{} exposes no bulk pair on data altsetting {} "
+                     "(in=0x{:02x} out=0x{:02x})", chosen->ctrl_iface, chosen->data_iface,
+                     kNcmDataAltSetting, chosen->ep_in, chosen->ep_out);
         return false;
     }
-    const std::string dev = root.filename().string();
-    const std::string cfg = readSysfsAttr(root, "bConfigurationValue");
-    const std::string prefix = dev + ":" + cfg + ".";
 
-    // Sort so the *first* eligible pair wins deterministically, matching the
-    // Python's sorted(os.listdir(...)).
-    std::vector<fs::path> entries;
-    for (const auto& entry : fs::directory_iterator(root, ec))
-    {
-        if (entry.path().filename().string().starts_with(prefix))
-        {
-            entries.push_back(entry.path());
-        }
-    }
-    std::sort(entries.begin(), entries.end());
+    ctrl_iface_ = chosen->ctrl_iface;
+    data_iface_ = chosen->data_iface;
+    ep_in_ = chosen->ep_in;
+    ep_out_ = chosen->ep_out;
+    ep_int_ = chosen->ep_int;
+    mac_string_index_ = chosen->mac_string_index;
 
-    for (const auto& ipath : entries)
+    SPDLOG_INFO("[ncm] NCM pair in configuration {}: control iface {} (status ep 0x{:02x}), "
+                "data iface {} (bulk in 0x{:02x} / out 0x{:02x}), iMACAddress string {}",
+                config->value, ctrl_iface_, ep_int_, data_iface_, ep_in_, ep_out_,
+                mac_string_index_);
+    if (ep_int_ == 0)
     {
-        if (readSysfsAttr(ipath, "bInterfaceClass") != "02")
-        {
-            continue;
-        }
-        if (readSysfsAttr(ipath, "bInterfaceSubClass") != "0d")
-        {
-            continue;
-        }
-        std::error_code drv_ec;
-        if (fs::is_symlink(ipath / "driver", drv_ec))
-        {
-            SPDLOG_DEBUG("[ncm] {} already has a driver bound; skipping",
-                         ipath.filename().string());
-            continue;
-        }
-        // sysfs reports bInterfaceNumber in hex.
-        const unsigned ctrl = readSysfsUint(ipath, "bInterfaceNumber", 16);
-        const fs::path data_path = root / fmt::format("{}:{}.{}", dev, cfg, ctrl + 1);
-        const std::string data_class = readSysfsAttr(data_path, "bInterfaceClass");
-        if (data_class != "0a")
-        {
-            SPDLOG_DEBUG("[ncm] control iface {} has no CDC-data successor (class='{}')", ctrl,
-                         data_class);
-            continue;
-        }
-        ctrl_if = ctrl;
-        data_if = ctrl + 1;
-        SPDLOG_INFO("[ncm] NCM pair on {}: control iface {} (class 0x{:02x}/sub 0x{:02x}), data "
-                    "iface {} (class 0x{:02x})",
-                    device_.serial, ctrl_if, kCdcInterfaceClass, kCdcNcmSubClass, data_if,
-                    kCdcDataInterfaceClass);
-        return true;
+        SPDLOG_WARN("[ncm] no interrupt endpoint on control interface {}", ctrl_iface_);
     }
-    SPDLOG_ERROR("[ncm] no unbound NCM pair on {} (config {})", device_.serial, cfg);
-    return false;
+    return true;
 }
 
-std::string NcmBridge::parseHostMac(unsigned ctrl_if) const
+std::string NcmBridge::readHostMac(uint8_t mac_string_index) const
 {
-    const fs::path descriptors = fs::path(device_.sysfs_path) / "descriptors";
-    std::ifstream in(descriptors, std::ios::binary);
-    if (!in)
+    if (mac_string_index == 0)
     {
-        SPDLOG_WARN("[ncm] cannot read {}", descriptors.string());
-        return {};
-    }
-    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                                   std::istreambuf_iterator<char>());
-
-    // Walk the configuration descriptor blob, tracking which interface the
-    // class-specific descriptors belong to, and pick up the Ethernet
-    // Networking functional descriptor's iMACAddress string index.
-    size_t idx = 0;
-    int cur_if = -1;
-    uint8_t mac_str_idx = 0;
-    while (idx + 2 <= raw.size())
-    {
-        const uint8_t blen = raw[idx];
-        const uint8_t btype = raw[idx + 1];
-        if (blen < 2)
-        {
-            SPDLOG_WARN("[ncm] descriptor blob: zero-length descriptor at offset {}", idx);
-            break;
-        }
-        if (btype == kDescriptorTypeInterface && blen >= 3)
-        {
-            cur_if = raw[idx + 2];
-        }
-        else if (btype == kDescriptorTypeCsInterface && blen >= 4 &&
-                 cur_if == static_cast<int>(ctrl_if) &&
-                 raw[idx + 2] == kCdcEthernetFunctionalDescriptor)
-        {
-            mac_str_idx = raw[idx + 3];
-            break;
-        }
-        idx += blen;
-    }
-    if (mac_str_idx == 0)
-    {
-        SPDLOG_WARN("[ncm] no CDC Ethernet functional descriptor for iface {}", ctrl_if);
+        SPDLOG_WARN("[ncm] no CDC Ethernet functional descriptor for iface {}", ctrl_iface_);
         return {};
     }
 
-    std::vector<uint8_t> d;
+    std::vector<uint8_t> descriptor;
     try
     {
-        // GET_DESCRIPTOR(STRING, mac_str_idx), langid 0x0409.
-        d = usbControl(fd_, 0x80, 6, static_cast<uint16_t>((3u << 8) | mac_str_idx), 0x0409, 64);
+        // GET_DESCRIPTOR(STRING, mac_string_index), langid 0x0409.
+        descriptor = usbControl(handle_, 0x80, 6,
+                                static_cast<uint16_t>((3u << 8) | mac_string_index), 0x0409, 64);
     }
     catch (const std::system_error& e)
     {
-        SPDLOG_WARN("[ncm] GET_DESCRIPTOR(string {}) failed: {}", mac_str_idx, e.what());
+        SPDLOG_WARN("[ncm] GET_DESCRIPTOR(string {}) failed: {}", mac_string_index, e.what());
         return {};
     }
-    if (d.size() < 2 || d[1] != 3)
+
+    const std::string mac = macFromStringDescriptor(descriptor);
+    if (mac.empty())
     {
-        SPDLOG_WARN("[ncm] string descriptor {} malformed (len={}, type={})", mac_str_idx, d.size(),
-                    d.empty() ? 0 : d[1]);
-        return {};
-    }
-    // UTF-16LE, 12 hex characters. Take the low byte of each code unit.
-    const size_t end = std::min<size_t>(d[0], d.size());
-    std::string hex;
-    for (size_t i = 2; i + 1 < end; i += 2)
-    {
-        if (d[i + 1] != 0)
-        {
-            continue;
-        }
-        hex.push_back(static_cast<char>(d[i]));
-    }
-    if (hex.size() != 12)
-    {
-        SPDLOG_WARN("[ncm] iMACAddress string is {} chars, expected 12 ('{}')", hex.size(), hex);
-        return {};
-    }
-    std::string mac;
-    for (size_t i = 0; i < 12; i += 2)
-    {
-        if (!mac.empty())
-        {
-            mac.push_back(':');
-        }
-        mac.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(hex[i]))));
-        mac.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(hex[i + 1]))));
+        SPDLOG_WARN("[ncm] iMACAddress string {} is not a 12-character hex MAC ({} bytes)",
+                    mac_string_index, descriptor.size());
     }
     return mac;
-}
-
-bool NcmBridge::findInterruptEndpoint(unsigned ctrl_if, uint8_t& ep_int) const
-{
-    std::error_code ec;
-    const fs::path root = fs::canonical(device_.sysfs_path, ec);
-    if (ec)
-    {
-        return false;
-    }
-    const std::string dev = root.filename().string();
-    const std::string cfg = readSysfsAttr(root, "bConfigurationValue");
-    const fs::path ipath = root / fmt::format("{}:{}.{}", dev, cfg, ctrl_if);
-
-    ep_int = 0;
-    for (const auto& entry : fs::directory_iterator(ipath, ec))
-    {
-        if (!entry.path().filename().string().starts_with("ep_"))
-        {
-            continue;
-        }
-        if (readSysfsAttr(entry.path(), "type") != "Interrupt")
-        {
-            continue;
-        }
-        const auto addr = static_cast<uint8_t>(readSysfsUint(entry.path(), "bEndpointAddress", 16));
-        if (addr & 0x80)
-        {
-            ep_int = addr;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool NcmBridge::findBulkEndpoints(unsigned data_if, uint8_t& ep_in, uint8_t& ep_out) const
-{
-    std::error_code ec;
-    const fs::path root = fs::canonical(device_.sysfs_path, ec);
-    if (ec)
-    {
-        return false;
-    }
-    const std::string dev = root.filename().string();
-    const std::string cfg = readSysfsAttr(root, "bConfigurationValue");
-    const fs::path ipath = root / fmt::format("{}:{}.{}", dev, cfg, data_if);
-
-    ep_in = 0;
-    ep_out = 0;
-    for (const auto& entry : fs::directory_iterator(ipath, ec))
-    {
-        if (!entry.path().filename().string().starts_with("ep_"))
-        {
-            continue;
-        }
-        if (readSysfsAttr(entry.path(), "type") != "Bulk")
-        {
-            continue;
-        }
-        const auto addr = static_cast<uint8_t>(readSysfsUint(entry.path(), "bEndpointAddress", 16));
-        if (addr & 0x80)
-        {
-            ep_in = addr;
-        }
-        else
-        {
-            ep_out = addr;
-        }
-    }
-    if (ec)
-    {
-        SPDLOG_ERROR("[ncm] cannot list endpoints under {}: {}", ipath.string(), ec.message());
-        return false;
-    }
-    if (ep_in == 0 || ep_out == 0)
-    {
-        SPDLOG_ERROR("[ncm] bulk endpoints not found under {} (in=0x{:02x} out=0x{:02x}); is "
-                     "altsetting {} active?",
-                     ipath.string(), ep_in, ep_out, kNcmDataAltSetting);
-        return false;
-    }
-    return true;
 }
 
 // ---------------- setup ----------------
@@ -980,36 +753,33 @@ bool NcmBridge::start()
         SPDLOG_WARN("[ncm] start() called while already running on {}", ifname_);
         return true;
     }
-    if (device_.sysfs_path.empty())
+    if (device_.port.empty())
     {
-        SPDLOG_ERROR("[ncm] device has no sysfs path");
+        SPDLOG_ERROR("[ncm] device has no port path");
         return false;
     }
+
+    handle_ = openDevice(device_);
+    if (!handle_)
+    {
+        return false;
+    }
+
+    // Order matters: release the kernel's claim first, then read the
+    // descriptors and pick a function, then claim.
     detachKernelNcmDrivers();
 
-    if (kernelNcmBound())
+    if (!selectNcmFunction())
     {
-        SPDLOG_ERROR("[ncm] refusing to claim: kernel cdc_ncm is still bound to {} after "
-                     "trying to release it", device_.serial);
+        cleanup();
         return false;
     }
-    if (!findNcmPair(ctrl_iface_, data_iface_))
-    {
-        return false;
-    }
-
-    const auto fd = openDevice(device_);
-    if (!fd)
-    {
-        return false;
-    }
-    fd_ = *fd;
 
     try
     {
-        usbClaimInterface(fd_, ctrl_iface_);
+        usbClaimInterface(handle_, ctrl_iface_);
         ctrl_claimed_ = true;
-        usbClaimInterface(fd_, data_iface_);
+        usbClaimInterface(handle_, data_iface_);
         data_claimed_ = true;
     }
     catch (const std::system_error& e)
@@ -1023,7 +793,7 @@ bool NcmBridge::start()
     // bytes describing the framing the device expects.
     try
     {
-        const auto params = usbControl(fd_, 0xA1, kGetNtbParameters, 0,
+        const auto params = usbControl(handle_, 0xA1, kGetNtbParameters, 0,
                                        static_cast<uint16_t>(ctrl_iface_), 28);
         if (params.size() >= 28)
         {
@@ -1047,22 +817,19 @@ bool NcmBridge::start()
         SPDLOG_WARN("[ncm] GET_NTB_PARAMETERS failed ({}); using outMax={}", e.what(), out_max_);
     }
 
-    const std::string mac = parseHostMac(ctrl_iface_);
+    const std::string mac = readHostMac(mac_string_index_);
 
-    // Activate the data altsetting; the bulk endpoints only exist there.
-    usbdevfs_setinterface setif{};
-    setif.interface = data_iface_;
-    setif.altsetting = kNcmDataAltSetting;
-    if (::ioctl(fd_, USBDEVFS_SETINTERFACE, &setif) < 0)
+    // Activate the data altsetting. The bulk endpoints only *exist* there --
+    // but unlike the sysfs version this replaces, their addresses were already
+    // read from the descriptor, so selecting the altsetting is all this does.
+    try
     {
-        SPDLOG_ERROR("[ncm] USBDEVFS_SETINTERFACE(iface {}, alt {}) failed: {}", data_iface_,
-                     kNcmDataAltSetting, strerror(errno));
-        cleanup();
-        return false;
+        usbSetAltSetting(handle_, data_iface_, kNcmDataAltSetting);
     }
-
-    if (!findBulkEndpoints(data_iface_, ep_in_, ep_out_))
+    catch (const std::system_error& e)
     {
+        SPDLOG_ERROR("[ncm] selecting altsetting {} on interface {} failed: {}",
+                     kNcmDataAltSetting, data_iface_, e.what());
         cleanup();
         return false;
     }
@@ -1072,17 +839,8 @@ bool NcmBridge::start()
     // device discard everything we send as a duplicate and NAK it, so bulk
     // writes time out while reads on the same interface keep working. Clearing
     // halt resets the toggle on both sides.
-    usbClearHalt(fd_, ep_in_);
-    usbClearHalt(fd_, ep_out_);
-
-    if (findInterruptEndpoint(ctrl_iface_, ep_int_))
-    {
-        SPDLOG_INFO("[ncm] control interface {} status endpoint 0x{:02x}", ctrl_iface_, ep_int_);
-    }
-    else
-    {
-        SPDLOG_WARN("[ncm] no interrupt endpoint on control interface {}", ctrl_iface_);
-    }
+    usbClearHalt(handle_, ep_in_);
+    usbClearHalt(handle_, ep_out_);
 
     // Complete the CDC-NCM bring-up handshake. Skipping these leaves the device
     // in a state where it will happily stream to us but never accepts anything
@@ -1090,7 +848,7 @@ bool NcmBridge::start()
     // bmRequestType 0x21 = host-to-device, class, interface.
     try
     {
-        usbControl(fd_, 0x21, kSetNtbFormat, kNtbFormat16,
+        usbControl(handle_, 0x21, kSetNtbFormat, kNtbFormat16,
                    static_cast<uint16_t>(ctrl_iface_), 0);
         SPDLOG_DEBUG("[ncm] SET_NTB_FORMAT(NTB16) ok");
     }
@@ -1107,7 +865,7 @@ bool NcmBridge::start()
             static_cast<uint8_t>((input_size >> 8) & 0xFF),
             static_cast<uint8_t>((input_size >> 16) & 0xFF),
             static_cast<uint8_t>((input_size >> 24) & 0xFF)};
-        usbControl(fd_, 0x21, kSetNtbInputSize, 0, static_cast<uint16_t>(ctrl_iface_),
+        usbControl(handle_, 0x21, kSetNtbInputSize, 0, static_cast<uint16_t>(ctrl_iface_),
                    sizeof(payload), payload);
         SPDLOG_DEBUG("[ncm] SET_NTB_INPUT_SIZE({}) ok", input_size);
     }
@@ -1118,7 +876,7 @@ bool NcmBridge::start()
 
     try
     {
-        usbControl(fd_, 0x21, kSetEthernetPacketFilter, kPacketFilterAll,
+        usbControl(handle_, 0x21, kSetEthernetPacketFilter, kPacketFilterAll,
                    static_cast<uint16_t>(ctrl_iface_), 0);
         SPDLOG_INFO("[ncm] SET_ETHERNET_PACKET_FILTER(0x{:04x}) ok", kPacketFilterAll);
     }
@@ -1181,28 +939,19 @@ void NcmBridge::cleanup()
         tap_fd_ = -1;
         SPDLOG_INFO("[ncm] TAP device {} destroyed", ifname_);
     }
-    if (fd_ >= 0)
+    if (handle_)
     {
-        const auto release = [this](unsigned iface)
-        {
-            if (::ioctl(fd_, USBDEVFS_RELEASEINTERFACE, &iface) < 0)
-            {
-                SPDLOG_DEBUG("[ncm] USBDEVFS_RELEASEINTERFACE({}) failed: {}", iface,
-                             strerror(errno));
-            }
-        };
         if (data_claimed_)
         {
-            release(data_iface_);
+            usbReleaseInterface(handle_, data_iface_);
             data_claimed_ = false;
         }
         if (ctrl_claimed_)
         {
-            release(ctrl_iface_);
+            usbReleaseInterface(handle_, ctrl_iface_);
             ctrl_claimed_ = false;
         }
-        ::close(fd_);
-        fd_ = -1;
+        handle_.reset();
     }
     ifname_.clear();
     fe80_.clear();
@@ -1386,7 +1135,7 @@ void NcmBridge::statusLoop()
     {
         try
         {
-            const auto notification = usbBulkIn(fd_, ep_int_, kNotificationSize, kPollTimeoutMs);
+            const auto notification = usbBulkIn(handle_, ep_int_, kNotificationSize, kPollTimeoutMs);
             if (notification.size() >= 8)
             {
                 const uint8_t request = notification[1];
@@ -1427,10 +1176,13 @@ void NcmBridge::statusLoop()
 
 void NcmBridge::usbToTapLoop()
 {
-    // Bring-up switch: the two pumps issue synchronous USBDEVFS_BULK ioctls on
-    // the same usbfs fd, so this exists to test whether the write path is being
-    // starved by the read path. The iAP2 session runs over the carkit TLS
-    // channel rather than NCM, so it still comes up with this disabled.
+    // Bring-up switch: the two pumps issue synchronous libusb bulk transfers on
+    // the same handle, so this exists to test whether the write path is being
+    // starved by the read path. That question got sharper with libusb -- its
+    // synchronous API serialises on an internal event lock, so one pump can end
+    // up servicing the other's completions. The iAP2 session runs over the
+    // carkit TLS channel rather than NCM, so it still comes up with this
+    // disabled. See docs/carplay_bringup.md stage 6.
     if (std::getenv("CARPLAY_NCM_NO_READER") != nullptr)
     {
         SPDLOG_WARN("[ncm] CARPLAY_NCM_NO_READER set: not reading from USB");
@@ -1442,7 +1194,7 @@ void NcmBridge::usbToTapLoop()
         std::vector<uint8_t> ntb;
         try
         {
-            ntb = usbBulkIn(fd_, ep_in_, kUsbReadSize, kUsbReadTimeoutMs);
+            ntb = usbBulkIn(handle_, ep_in_, kUsbReadSize, kUsbReadTimeoutMs);
         }
         catch (const std::system_error& e)
         {
@@ -1526,7 +1278,7 @@ void NcmBridge::tapToUsbLoop()
         {
             std::lock_guard<std::mutex> lock(write_mutex_);
             const std::vector<uint8_t> ntb = buildNtb(frame.data(), static_cast<size_t>(len));
-            usbBulkOut(fd_, ep_out_, ntb.data(), ntb.size(), kUsbWriteTimeoutMs);
+            usbBulkOut(handle_, ep_out_, ntb.data(), ntb.size(), kUsbWriteTimeoutMs);
         }
         catch (const std::system_error& e)
         {
@@ -1548,7 +1300,7 @@ void NcmBridge::tapToUsbLoop()
             // later write, so resynchronise before dropping the frame.
             if (err == ETIMEDOUT)
             {
-                usbClearHalt(fd_, ep_out_);
+                usbClearHalt(handle_, ep_out_);
             }
             SPDLOG_WARN("[ncm] tap->usb write error (errno {}): {}", err, e.what());
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

@@ -206,6 +206,133 @@ disappears and never returns within the code's 5 s window, suspect passthrough
 before suspecting the driver — re-attach it to the guest and confirm with
 `lsusb` that the VID is still visible from inside.
 
+## 1b. Re-verifying the libusb transport port (do this first)
+
+**Status: written 2026-08-01, never run against a phone.** Stages 2, 3 and 6 were
+verified on hardware on 2026-07-21 against the *old* usbfs/sysfs transport. That
+transport has since been replaced by libusb, so those three stages need
+re-verifying before their "verified" markers can be trusted again. Nothing above
+the transport changed.
+
+**What changed.** Enumeration, descriptor parsing, configuration selection,
+driver detach and every transfer now go through libusb (already vendored for
+hidapi, `third_party/libusb.cmake`). Three consequences worth knowing before you
+start reading logs:
+
+1. **Devices are tracked by physical port, not by serial.** `DeviceInfo` carries
+   a `PortPath` (`bus-port.port`, e.g. `1-4.2`) which is stable across the
+   re-enumeration the vendor request triggers, whereas the device address is
+   not. The port path prints the same way the kernel names the sysfs directory,
+   so `/sys/bus/usb/devices/1-4.2` is still the thing to `cat`.
+2. **Enumeration no longer reports a UDID.** Reading it costs a device open, so
+   it happens once, in `populateSerial()`, *before* the config switch. A phone
+   whose UDID cannot be read is now rejected at detection rather than later.
+3. **Interfaces and endpoints come from the configuration descriptor.** The mux
+   interface is found by its `255/254/2` class triple and the NCM pair by
+   walking CDC descriptors, instead of being hardcoded (`muxd.cpp`) or read out
+   of sysfs (`ncm_bridge.cpp`). The 2026-07-21 session recorded that the real
+   phone matches both — this port is what makes the code rely on that rather
+   than on constants that happened to agree.
+
+### Order to verify in
+
+Each step isolates one assumption, so a failure names its own cause. Do not skip
+ahead: step 1 is read-only and will tell you whether steps 2–4 are even worth
+attempting.
+
+**Step 1 — descriptors, without touching anything.** `apple_usb_usbprobe` claims
+nothing and changes nothing; it only enumerates and dumps.
+
+```bash
+./build/libs/apple_usb/apple_usb_usbprobe            # read-only
+./build/libs/apple_usb/apple_usb_usbprobe --serial   # + opens each device for its UDID
+```
+
+Check, in this order:
+
+| Check | Expected | If wrong |
+|---|---|---|
+| Device listed at all | `05ac:…` with a port path | udev rules (stage 1) |
+| `port=` matches sysfs | same string as the `/sys/bus/usb/devices` dir | port-path formatting bug |
+| `nconfigs` | 5 before the vendor request, 6 after | stage 2 triage |
+| `--serial` prints a UDID | 24/25 chars | `populateSerial` will reject the phone |
+| An interface annotated `<- usbmux` | present in config 6 | `muxd` falls back; see below |
+| Two `<- CDC-NCM control` interfaces | present in config 6 | NCM discovery will find fewer |
+| Bulk endpoints on data **alt 1** | `ep 0x…  bulk` under `alt 1` | `hasBulkPair()` fails |
+| `cdc_subtype=0x0f (Ethernet Networking, iMACAddress=N)` | `N` non-zero | host MAC unreadable |
+
+**Then reconcile against the unit tests.** `test_ncm_discovery.cpp` encodes the
+descriptor shape this port *assumes* (`carPlayLikeConfig()`). If the probe output
+disagrees with it — different interface numbers, endpoints on a different
+altsetting, a third NCM pair — correct that fixture first and let the tests fail,
+then fix the code. Those tests are the only reason any of this was verifiable
+without a phone; keeping them honest is what keeps that true.
+
+**Step 2 — the config switch (stage 2).** This is the step most likely to
+regress, because `libusb_set_configuration` replaces a hand-written
+`USBDEVFS_SETCONFIGURATION` ioctl. On Linux libusb issues that same ioctl, so
+the property the old code was careful about — that selecting a configuration
+does **not** re-enumerate, unlike writing sysfs — is preserved. Confirm it:
+
+```bash
+./build/nodes/carplay/carplay --max-stage 2 --verbose 2>&1 | grep '\[usb\]'
+```
+
+Watch for the port path staying *constant* across the vendor request while the
+config goes 4 → 6. A changing port path means the phone was re-plugged or a hub
+re-enumerated, and the rediscovery keyed on it will time out.
+
+**Step 3 — the mux (stage 3).** The line to look for is new:
+
+```
+[muxd] mux on interface 1 (class ff/fe/02), bulk in 0x85 / out 0x04
+```
+
+Those must match the hardcoded values the old code used and the 2026-07-21
+session confirmed (If1, `0x85`/`0x04`). **If instead you see** `no ff/fe/02
+interface in configuration 6; falling back to interface 1`, the descriptor
+lookup is wrong for this phone — the fallback keeps the stack working, but note
+it and fix the lookup rather than leaving the fallback as the live path.
+
+**Step 4 — NCM (stage 6).** Two new lines replace the old sysfs walk:
+
+```
+[ncm] NCM pair in configuration 6: control iface 2 (status ep 0x86), data iface 3 (bulk in 0x87 / out 0x05), iMACAddress string 7
+```
+
+Compare every field against step 1's probe output. Then confirm the two
+behaviours the old code got right, because both are easy to lose in a rewrite:
+
+- **The first pair is selected, not the second.** The phone exposes two; the
+  kernel's `cdc_ncm` binds the first, and the release now happens through
+  `libusb_detach_kernel_driver` before the descriptors are read. If the log
+  shows a control interface higher than the first NCM one, the detach silently
+  failed. `CARPLAY_NCM_CTRL_IF=<n>` pins it while you investigate.
+- **The interrupt endpoint is still drained.** See the warning in stage 6 — this
+  is unchanged code, but it is the failure mode that looks like everything is
+  fine, so re-confirm the write counts rather than assuming.
+
+**Step 5 — NCM throughput under load.** The one change with a genuine
+performance question. The two pumps now issue *synchronous libusb* transfers on
+one handle; libusb's sync API serialises internally on an event lock, so one
+pump can end up servicing the other's completions. The old usbfs ioctls were
+independent. Watch for bulk OUT timeouts appearing *only* under video load, and
+compare NTB in/out counts against the 2026-07-21 baseline (**3960 out / 10026 in,
+zero errors**). `CARPLAY_NCM_NO_READER=1` disables the read pump to test the
+write path in isolation.
+
+If this does show starvation, the fix is to move the NCM pumps to libusb's async
+API (`libusb_submit_transfer` plus a dedicated event thread) — the mux and
+lockdown paths are low-rate and can stay synchronous.
+
+### What this port did *not* change
+
+Nothing above the transport: usbmux framing, plists, lockdown, TLS, pairing,
+iAP2, AirPlay, NTB16 framing, the TAP device and all IPv6 setup. If a failure
+appears in those layers after this port, suspect the transport underneath rather
+than the layer reporting it — with one exception: a phone rejected at detection
+for an unreadable UDID never reaches them at all.
+
 ## 2. USB detection and the config-6 switch
 
 Plug in an unlocked, trusted iPhone.
@@ -229,21 +356,28 @@ cat /sys/bus/usb/devices/<dev>/bConfigurationValue  # want 6
 |---|---|
 | `0xC0/0x52` reveals extra configurations | ✓ 5 → **6** configurations |
 | `kCarPlayConfiguration = 6` | ✓ config 6 = `PTP + Apple Mobile Device + Apple USB Ethernet + NCM` |
-| `kMuxInterface = 1`, `kEpOut 0x04` / `kEpIn 0x85` | ✓ If1, vendor-specific 255/254/2 |
+| mux at If1, `kEpOut 0x04` / `kEpIn 0x85` | ✓ If1, vendor-specific 255/254/2 |
 | `kNcmDataAltSetting = 1` | ✓ bulk endpoints live on alt 1 |
+
+Two of those rows are no longer constants: since the libusb port the mux
+interface is *found* by its `255/254/2` triple and its endpoints read from the
+descriptor, rather than assumed to be If1/`0x04`/`0x85`. The hardware row above
+is what says that lookup will land on the same place. See stage 1b.
 
 Note the vendor request is *sticky but not idempotent-looking*: before it the
 phone advertises 5 configurations (config 5 is `…+ NCM`, which looks tempting
 but is **not** the CarPlay config), after it 6. Do not "fix" the constant to 5.
 
 **Applying the configuration needs the kernel drivers out of the way.** The
-switch is done with `USBDEVFS_SETCONFIGURATION` on the usbfs node, which a udev
-rule can grant to a normal user, rather than the root-only sysfs attribute. The
-kernel returns **`EBUSY` while any interface is claimed**, so every bound driver
-is released first with `USBDEVFS_DISCONNECT` (`ipheth` and an earlier usbfs
-client both hold interfaces in config 4). Unlike the vendor request this does
-**not** re-enumerate the device — config 6 is active in ~100 ms and, on a VM, the
-passthrough binding survives.
+switch is done with `libusb_set_configuration`, which on Linux issues
+`USBDEVFS_SETCONFIGURATION` on the usbfs node — a udev rule can grant that to a
+normal user, unlike the root-only sysfs attribute. The kernel returns **`EBUSY`
+while any interface is claimed**, so every bound driver is released first with
+`libusb_detach_kernel_driver` (also `USBDEVFS_DISCONNECT` underneath); `ipheth`
+and an earlier usbfs client both hold interfaces in config 4. Unlike the vendor
+request this does **not** re-enumerate the device — config 6 is active in ~100 ms
+and, on a VM, the passthrough binding survives. A root-only sysfs write remains
+as a last-resort fallback.
 
 **Triage.**
 - Stuck at 4 configurations → the `0xC0/0x52` vendor request failed; check for
@@ -594,6 +728,11 @@ own. No capability is needed anywhere.
 
 **Triage.**
 - No `cpusb0` → `/dev/net/tun` missing or no `CAP_NET_ADMIN`.
+- `no NCM function pair in configuration 6` → descriptor discovery found nothing;
+  run `apple_usb_usbprobe` and compare against stage 1b's table.
+- `refusing to claim: a kernel driver still holds interface N` → the
+  `libusb_detach_kernel_driver` pass did not take. Confirm with
+  `lsusb -t` that `cdc_ncm` is gone.
 - Interface up but no ping → the kernel `cdc_ncm` driver may have claimed the
   interface; it must be unbound so we can drive it from userspace.
 - Ping works but no inbound TCP → check that `CarPlayStartSession` was sent with
@@ -1197,13 +1336,14 @@ Not all stages below are implemented yet. Current state:
 
 | Layer | State |
 |---|---|
-| USB detect, config-6 switch, usbmux, usbmuxd socket | **verified on hardware 2026-07-21** (stages 2–3) |
+| **USB transport (libusb)** | **rewritten 2026-08-01, NOT re-verified on hardware** — see stage 1b. Descriptor discovery unit-tested (`apple_usb_test_ncm_discovery`); stages 2, 3 and 6 need re-running |
+| USB detect, config-6 switch, usbmux, usbmuxd socket | verified on hardware 2026-07-21 (stages 2–3), **against the pre-libusb transport** |
 | Property lists (binary + XML), ours | **replaces libplist** in the usbmuxd server; differential-tested against libplist, verified on hardware |
 | usbmux client, ours | **replaces libusbmuxd**'s role; mock-tested and verified on hardware via `apple_usb_muxctl` |
 | lockdown client + TLS + pair record + pairing, ours | **the only implementation** — libimobiledevice removed 2026-07-31. Pairs from scratch; 25 consecutive clean runs |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
-| NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |
+| NCM ↔ TAP bridge | verified on hardware 2026-07-21 (stage 6); **discovery half rewritten on libusb 2026-08-01**, TAP/IP half untouched |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
 | **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
@@ -1242,7 +1382,13 @@ dashboard.
 
 ## Known-unverified list
 
-Everything from USB up to the carkit TLS channel has now run against a phone.
+Everything from USB up to the carkit TLS channel has run against a phone, but
+**the USB transport underneath was replaced on 2026-08-01 and has not**. That is
+now the top unverified item — see stage 1b for the ordered re-verification, and
+note that its three highest risks are: the mux interface lookup landing somewhere
+other than If1, the NCM detach-then-select ordering picking the second pair, and
+NCM throughput under libusb's synchronous API.
+
 Ranked by remaining uncertainty (highest first):
 
 **The end-to-end path is proven: the CarPlay home screen renders in the

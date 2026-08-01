@@ -3,6 +3,7 @@
 #ifndef APPLE_USB_NCM_BRIDGE_H_
 #define APPLE_USB_NCM_BRIDGE_H_
 
+#include "apple_usb/ncm_discovery.h"
 #include "apple_usb/usb_device.h"
 
 #include <atomic>
@@ -16,17 +17,21 @@ namespace apple_usb
 {
 
 // Userspace CDC-NCM host for the NCM interface pair an iPhone exposes in the
-// CarPlay configuration (bConfigurationValue 6). The kernel cdc_ncm driver
-// refuses to bind these, so we claim them through usbfs, select the data
-// altsetting, and bridge NTB16 transfer blocks to a TAP device (cpusbN). The
-// result is a point-to-point ethernet segment to the phone; an IPv6
-// link-local address (fe80::/64, EUI-64 from the host MAC the phone dictates)
-// is assigned to it and handed to the phone in CarPlayStartSession, which then
-// opens TCP to [fe80::...]:7000.
+// CarPlay configuration (bConfigurationValue 6). We take the pair away from the
+// kernel's cdc_ncm driver, select the data altsetting, and bridge NTB16
+// transfer blocks to a TAP device (cpusbN). The result is a point-to-point
+// ethernet segment to the phone; an IPv6 link-local address (fe80::/64, EUI-64
+// from the host MAC the phone dictates) is assigned to it and handed to the
+// phone in CarPlayStartSession, which then opens TCP to [fe80::...]:7000.
 //
-// Linux-only, like the rest of this library. Nothing here throws across the
-// public API: failures are logged (every message is prefixed "[ncm]") and
-// reported as false.
+// This class is Linux-only, but no longer because of USB: the USB side is
+// libusb and builds anywhere, and the descriptor parsing it depends on lives in
+// ncm_discovery.h, which is compiled and unit tested on every platform. What
+// pins this file to Linux is the network plumbing -- /dev/net/tun, SIOCSIFHWADDR
+// and /proc/sys/net/ipv6 have no macOS equivalent (utun is not TAP).
+//
+// Nothing here throws across the public API: failures are logged (every message
+// is prefixed "[ncm]") and reported as false.
 class NcmBridge
 {
   public:
@@ -63,33 +68,27 @@ class NcmBridge
     const std::string& serial() const { return device_.serial; }
 
   private:
-    // --- discovery (sysfs + device descriptors) ---
+    // --- discovery ---
+    //
+    // The descriptor parsing this used to do by hand now lives in
+    // ncm_discovery.h, which is portable and unit tested. What remains here is
+    // the part that needs an open device: driver arbitration and the one
+    // control transfer that reads the MAC string.
 
     // Releases any kernel driver holding this device's NCM interfaces. The
-    // CarPlay configuration exposes two NCM pairs and cdc_ncm claims the first.
-    void detachKernelNcmDrivers() const;
+    // CarPlay configuration exposes two NCM pairs and cdc_ncm claims the first;
+    // left alone, discovery would skip the driver-owned pair and silently
+    // select the *second* one instead of the one LIVI uses.
+    void detachKernelNcmDrivers();
 
-    // True when the kernel cdc_ncm driver already owns a netdev under this
-    // device; in that case there is nothing for us to do (and claiming would
-    // fight the driver).
-    bool kernelNcmBound() const;
+    // Picks the NCM function to drive and fills ctrl_iface_/data_iface_ and the
+    // endpoint fields from its descriptor.
+    bool selectNcmFunction();
 
-    // First unbound communications(0x02)/NCM(0x0d) control interface of the
-    // active configuration whose successor is a CDC-data(0x0a) interface.
-    bool findNcmPair(unsigned& ctrl_if, unsigned& data_if) const;
-
-    // MAC the host must use, from the CDC Ethernet functional descriptor
-    // (iMACAddress string). Returns "" when unavailable.
-    std::string parseHostMac(unsigned ctrl_if) const;
-
-    // Interrupt IN endpoint of the control interface. CDC devices deliver
-    // NETWORK_CONNECTION / CONNECTION_SPEED_CHANGE notifications there, and the
-    // kernel's cdc_ncm keeps a URB queued on it at all times.
-    bool findInterruptEndpoint(unsigned ctrl_if, uint8_t& ep_int) const;
-
-    // Bulk endpoints of the data interface's *current* altsetting; call only
-    // after USBDEVFS_SETINTERFACE has selected altsetting 1.
-    bool findBulkEndpoints(unsigned data_if, uint8_t& ep_in, uint8_t& ep_out) const;
+    // Reads the iMACAddress string descriptor named by the selected function.
+    // Returns "" when unavailable. Needs an open handle but no claimed
+    // interface -- it is a control transfer on endpoint 0.
+    std::string readHostMac(uint8_t mac_string_index) const;
 
     // --- setup ---
     bool createTap();
@@ -109,8 +108,8 @@ class NcmBridge
     std::vector<uint8_t> buildNtb(const uint8_t* frame, size_t len);
 
     DeviceInfo device_;
-    int fd_ = -1;      // usbfs fd for the phone
-    int tap_fd_ = -1;  // /dev/net/tun fd owning the TAP device
+    DeviceHandle handle_;  // open USB handle for the phone
+    int tap_fd_ = -1;      // /dev/net/tun fd owning the TAP device
 
     std::string host_mac_;
 
@@ -120,8 +119,9 @@ class NcmBridge
     uint8_t ep_int_ = 0;
     std::thread status_thread_;
 
-    unsigned ctrl_iface_ = 0;
-    unsigned data_iface_ = 0;
+    uint8_t ctrl_iface_ = 0;
+    uint8_t data_iface_ = 0;
+    uint8_t mac_string_index_ = 0;
     bool ctrl_claimed_ = false;
     bool data_claimed_ = false;
 

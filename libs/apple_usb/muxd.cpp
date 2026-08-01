@@ -4,8 +4,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <unistd.h>  // ::close -- reached transitively on glibc, not elsewhere
-
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -29,10 +27,20 @@ constexpr uint8_t kThSyn = 0x02;
 constexpr uint8_t kThRst = 0x04;
 constexpr uint8_t kThAck = 0x10;
 
-// Interface 1 is the multiplexer; endpoints per muxd.py.
-constexpr uint8_t kEpOut = 0x04;
-constexpr uint8_t kEpIn = 0x85;
-constexpr unsigned kMuxInterface = 1;
+// Apple's usbmux interface is vendor-specific 255/254/2 -- the same triple
+// upstream usbmuxd matches on. Interface number and endpoint addresses come
+// from the descriptor rather than being assumed.
+constexpr uint8_t kMuxInterfaceClass = 0xFF;
+constexpr uint8_t kMuxInterfaceSubClass = 0xFE;
+constexpr uint8_t kMuxInterfaceProtocol = 0x02;
+
+// What muxd.py hardcoded, kept only as a last-resort fallback for a phone
+// whose CarPlay configuration does not label the mux interface the way the
+// normal configuration does. Taking this path is logged as a warning because
+// it means the descriptor-driven lookup above needs revisiting.
+constexpr uint8_t kFallbackMuxInterface = 1;
+constexpr uint8_t kFallbackEpOut = 0x04;
+constexpr uint8_t kFallbackEpIn = 0x85;
 
 constexpr uint32_t kTxWindow = 131072;
 constexpr size_t kMaxPayload = 16384;
@@ -211,35 +219,121 @@ MuxHost::~MuxHost()
     close();
 }
 
+bool MuxHost::locateMuxInterface()
+{
+    const auto config = readActiveConfig(device_);
+    if (!config)
+    {
+        SPDLOG_ERROR("[muxd] cannot read the configuration descriptor at port {}",
+                     device_.port.toString());
+        return false;
+    }
+
+    // Prefer the interface that identifies itself as the mux. Fall back to the
+    // interface number muxd.py assumed, but still take its endpoints from the
+    // descriptor -- guessing an interface is survivable, guessing an endpoint
+    // address is not.
+    const InterfaceInfo* match = nullptr;
+    for (const auto& iface : config->interfaces)
+    {
+        if (iface.iface_class == kMuxInterfaceClass &&
+            iface.subclass == kMuxInterfaceSubClass &&
+            iface.protocol == kMuxInterfaceProtocol)
+        {
+            match = &iface;
+            break;
+        }
+    }
+    if (match == nullptr)
+    {
+        for (const auto& iface : config->interfaces)
+        {
+            if (iface.number == kFallbackMuxInterface && iface.alt_setting == 0)
+            {
+                match = &iface;
+                break;
+            }
+        }
+        if (match != nullptr)
+        {
+            SPDLOG_WARN("[muxd] no {:02x}/{:02x}/{:02x} interface in configuration {}; falling "
+                        "back to interface {} (class {:02x}/{:02x}/{:02x})",
+                        kMuxInterfaceClass, kMuxInterfaceSubClass, kMuxInterfaceProtocol,
+                        config->value, match->number, match->iface_class, match->subclass,
+                        match->protocol);
+        }
+    }
+
+    if (match == nullptr)
+    {
+        SPDLOG_ERROR("[muxd] no usable mux interface in configuration {}", config->value);
+        return false;
+    }
+
+    iface_ = match->number;
+    ep_in_ = 0;
+    ep_out_ = 0;
+    for (const auto& ep : match->endpoints)
+    {
+        if (ep.type() != TransferType::Bulk)
+        {
+            continue;
+        }
+        (ep.isIn() ? ep_in_ : ep_out_) = ep.address;
+    }
+
+    if (ep_in_ == 0 || ep_out_ == 0)
+    {
+        SPDLOG_WARN("[muxd] interface {} exposes no bulk pair (in=0x{:02x} out=0x{:02x}); "
+                    "falling back to the hardcoded endpoints", iface_, ep_in_, ep_out_);
+        ep_in_ = kFallbackEpIn;
+        ep_out_ = kFallbackEpOut;
+    }
+
+    SPDLOG_INFO("[muxd] mux on interface {} (class {:02x}/{:02x}/{:02x}), bulk in 0x{:02x} / "
+                "out 0x{:02x}", iface_, match->iface_class, match->subclass, match->protocol,
+                ep_in_, ep_out_);
+    return true;
+}
+
 bool MuxHost::open()
 {
-    const auto fd = openDevice(device_);
-    if (!fd)
+    handle_ = openDevice(device_);
+    if (!handle_)
     {
         return false;
     }
-    fd_ = *fd;
+
+    if (!locateMuxInterface())
+    {
+        handle_.reset();
+        return false;
+    }
+
+    // ipheth or an earlier client may still hold it.
+    if (kernelDriverActive(handle_, iface_))
+    {
+        detachKernelDriver(handle_, iface_);
+    }
 
     // The kernel may still be settling after the config switch; retry the claim.
-    bool claimed = false;
-    for (int i = 0; i < 12; ++i)
+    for (int i = 0; i < 12 && !claimed_; ++i)
     {
         try
         {
-            usbClaimInterface(fd_, kMuxInterface);
-            claimed = true;
-            break;
+            usbClaimInterface(handle_, iface_);
+            claimed_ = true;
         }
         catch (const std::system_error&)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
     }
-    if (!claimed)
+    if (!claimed_)
     {
-        SPDLOG_ERROR("[muxd] could not claim mux interface on {}", device_.serial);
-        ::close(fd_);
-        fd_ = -1;
+        SPDLOG_ERROR("[muxd] could not claim mux interface {} at port {}", iface_,
+                     device_.port.toString());
+        handle_.reset();
         return false;
     }
 
@@ -254,10 +348,10 @@ bool MuxHost::open()
         put_be32(version, 0);
         {
             std::lock_guard<std::mutex> lock(write_mutex_);
-            usbBulkOut(fd_, kEpOut, version.data(), version.size());
+            usbBulkOut(handle_, ep_out_, version.data(), version.size());
         }
         // Drain the version reply.
-        usbBulkIn(fd_, kEpIn, 65536, 2000);
+        usbBulkIn(handle_, ep_in_, 65536, 2000);
 
         const uint8_t setup = 0x07;
         muxSend(kProtoSetup, &setup, 1);
@@ -265,8 +359,9 @@ bool MuxHost::open()
     catch (const std::system_error& e)
     {
         SPDLOG_ERROR("[muxd] handshake failed: {}", e.what());
-        ::close(fd_);
-        fd_ = -1;
+        usbReleaseInterface(handle_, iface_);
+        claimed_ = false;
+        handle_.reset();
         return false;
     }
 
@@ -284,17 +379,18 @@ void MuxHost::close()
         reader_.join();
     }
     std::lock_guard<std::mutex> lock(write_mutex_);
-    if (fd_ >= 0)
+    if (claimed_)
     {
-        ::close(fd_);
-        fd_ = -1;
+        usbReleaseInterface(handle_, iface_);
+        claimed_ = false;
     }
+    handle_.reset();
 }
 
 void MuxHost::muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len)
 {
     std::lock_guard<std::mutex> lock(write_mutex_);
-    if (fd_ < 0)
+    if (!handle_)
     {
         return;
     }
@@ -310,7 +406,7 @@ void MuxHost::muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len
     {
         pkt.insert(pkt.end(), payload, payload + payload_len);
     }
-    usbBulkOut(fd_, kEpOut, pkt.data(), pkt.size());
+    usbBulkOut(handle_, ep_out_, pkt.data(), pkt.size());
 }
 
 void MuxHost::readerLoop()
@@ -320,7 +416,7 @@ void MuxHost::readerLoop()
         std::vector<uint8_t> data;
         try
         {
-            data = usbBulkIn(fd_, kEpIn, 65536, 1000);
+            data = usbBulkIn(handle_, ep_in_, 65536, 1000);
         }
         catch (const std::system_error& e)
         {

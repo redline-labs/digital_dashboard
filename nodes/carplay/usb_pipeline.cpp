@@ -50,24 +50,55 @@ VideoCodec toBridgeCodec(airplay::nalu::Codec codec)
     return codec == airplay::nalu::Codec::H265 ? VideoCodec::H265 : VideoCodec::H264;
 }
 
-// The configuration switch re-enumerates the phone, which invalidates the
-// usbfs path captured before it. Everything downstream opens that path, so the
-// DeviceInfo has to be re-read afterwards rather than reused.
-std::optional<apple_usb::DeviceInfo> rediscover(const std::string& serial)
+// The configuration switch re-enumerates the phone, which changes its device
+// address. Everything downstream resolves the device afresh, so the DeviceInfo
+// has to be re-read afterwards rather than reused.
+//
+// Tracked by physical port rather than by serial number. The phone does not
+// move between sockets while it re-enumerates, so the port path is stable
+// across exactly the event that invalidates everything else -- and unlike the
+// serial, reading it needs no device open, so the detection poll below stays
+// free.
+std::optional<apple_usb::DeviceInfo> rediscover(const apple_usb::PortPath& port)
 {
     const auto deadline = std::chrono::steady_clock::now() + kRediscoverTimeout;
     while (std::chrono::steady_clock::now() < deadline)
     {
-        for (const auto& device : apple_usb::listAppleDevices())
+        if (auto device = apple_usb::findDeviceAt(port); device)
         {
-            if (device.serial == serial)
-            {
-                return device;
-            }
+            return device;
         }
         std::this_thread::sleep_for(kRediscoverPoll);
     }
     return std::nullopt;
+}
+
+// Enumeration leaves DeviceInfo::serial empty because filling it in costs a
+// device open. Do it once, here.
+//
+// Deliberately called *before* the CarPlay configuration switch, while the
+// phone is still in the configuration it boots into: the UDID is what names
+// the pair record and the usbmuxd socket, and having it in hand before the
+// re-enumeration means a phone that fails to come back can still be named in
+// the error. The serial is then carried across the switch by the caller --
+// it is the same physical device on the same port.
+bool populateSerial(apple_usb::DeviceInfo& device)
+{
+    apple_usb::DeviceHandle handle = apple_usb::openDevice(device);
+    if (!handle)
+    {
+        SPDLOG_ERROR("[usb] cannot open the device at port {} to read its UDID. On Linux this "
+                     "is a permissions problem -- install nodes/carplay/udev/99-carplay.rules "
+                     "or run as root.", device.port.toString());
+        return false;
+    }
+    device.serial = apple_usb::readSerial(handle);
+    if (device.serial.empty())
+    {
+        SPDLOG_ERROR("[usb] the device at port {} reports no UDID", device.port.toString());
+        return false;
+    }
+    return true;
 }
 
 // Pair records live here, so this has to outlive a reboot: XDG_RUNTIME_DIR is
@@ -97,20 +128,32 @@ std::optional<apple_usb::DeviceInfo> waitForDevice(std::atomic<bool>& stop)
     bool announced = false;
     while (!stop.load())
     {
-        const auto devices = apple_usb::listAppleDevices();
+        auto devices = apple_usb::listAppleDevices();
         if (!devices.empty())
         {
             for (const auto& device : devices)
             {
-                SPDLOG_INFO("[usb] found {:04x}:{:04x} udid={} at {} (config {})",
-                            device.vid, device.pid, device.serial, device.usbfs_path,
-                            device.active_configuration);
+                SPDLOG_INFO("[usb] found {:04x}:{:04x} at port {} (config {} of {})", device.vid,
+                            device.pid, device.port.toString(), device.active_configuration,
+                            device.num_configurations);
             }
             if (devices.size() > 1)
             {
-                SPDLOG_WARN("[usb] {} Apple devices present; using {}", devices.size(),
-                            devices.front().serial);
+                SPDLOG_WARN("[usb] {} Apple devices present; using the one at port {}",
+                            devices.size(), devices.front().port.toString());
             }
+
+            // The UDID is not part of enumeration any more; read it now, once.
+            // A device we cannot open is not usable, so keep waiting rather
+            // than failing the whole bring-up on a transient permission or
+            // settling problem.
+            if (!populateSerial(devices.front()))
+            {
+                std::this_thread::sleep_for(kDevicePoll);
+                continue;
+            }
+            SPDLOG_INFO("[usb] udid={} at port {}", shortUdid(devices.front().serial),
+                        devices.front().port.toString());
             return devices.front();
         }
 
@@ -145,14 +188,19 @@ std::optional<apple_usb::DeviceInfo> switchToCarPlay(apple_usb::DeviceInfo devic
         return std::nullopt;
     }
 
-    const auto refreshed = rediscover(device.serial);
+    auto refreshed = rediscover(device.port);
     if (!refreshed)
     {
-        SPDLOG_ERROR("[usb] udid={} did not come back after the configuration switch. On a "
-                     "VM this usually means the hypervisor handed the re-enumerating device "
-                     "back to the host.", shortUdid(device.serial));
+        SPDLOG_ERROR("[usb] udid={} did not come back at port {} after the configuration "
+                     "switch. On a VM this usually means the hypervisor handed the "
+                     "re-enumerating device back to the host.", shortUdid(device.serial),
+                     device.port.toString());
         return std::nullopt;
     }
+
+    // Same socket, same phone: carry the UDID across rather than paying for
+    // another open to re-read a string descriptor that cannot have changed.
+    refreshed->serial = device.serial;
 
     if (refreshed->active_configuration != apple_usb::kCarPlayConfiguration)
     {
@@ -163,9 +211,8 @@ std::optional<apple_usb::DeviceInfo> switchToCarPlay(apple_usb::DeviceInfo devic
         return std::nullopt;
     }
 
-    SPDLOG_INFO("[usb] udid={} now in configuration {} at {}",
-                shortUdid(refreshed->serial), refreshed->active_configuration,
-                refreshed->usbfs_path);
+    SPDLOG_INFO("[usb] udid={} now in configuration {} at port {}", shortUdid(refreshed->serial),
+                refreshed->active_configuration, refreshed->port.toString());
     return refreshed;
 }
 

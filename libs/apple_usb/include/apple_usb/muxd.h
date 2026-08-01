@@ -66,7 +66,7 @@ class MuxTcpConn
     std::atomic<bool> closed_{false};
 };
 
-// Owns the usbfs fd for a phone in the CarPlay configuration and runs the
+// Owns the USB handle for a phone in the CarPlay configuration and runs the
 // userspace usbmux multiplexer (magic 0xFEEDFACE) over bulk endpoints.
 class MuxHost
 {
@@ -74,7 +74,8 @@ class MuxHost
     explicit MuxHost(DeviceInfo device);
     ~MuxHost();
 
-    // Claim interface 1 and start the reader thread. Returns success.
+    // Locate the usbmux interface from the configuration descriptor, claim it,
+    // and start the reader thread. Returns success.
     bool open();
     void close();
 
@@ -95,8 +96,17 @@ class MuxHost
     void muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len);
     void readerLoop();
 
+    // Fills iface_/ep_in_/ep_out_ from the active configuration descriptor.
+    bool locateMuxInterface();
+
     DeviceInfo device_;
-    int fd_ = -1;
+    DeviceHandle handle_;
+
+    // Discovered in open() rather than hardcoded; see locateMuxInterface().
+    uint8_t iface_ = 0;
+    uint8_t ep_in_ = 0;
+    uint8_t ep_out_ = 0;
+    bool claimed_ = false;
 
     std::mutex write_mutex_;
     uint16_t mux_tx_ = 0;

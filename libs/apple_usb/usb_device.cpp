@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Adapted from LIVI src/main/services/projection/driver/cp/iap2/muxd.py
+//
+// Backed by libusb rather than raw usbfs ioctls. That is not just tidiness:
+// libusb parses configuration descriptors for us, which removed three separate
+// hand-rolled sysfs walks (interface classes, endpoint addresses, and the CDC
+// functional descriptors), and it works on every platform we build for, so the
+// USB half of this library is no longer Linux-only.
 #include "apple_usb/usb_device.h"
 
+#include <libusb.h>
 #include <spdlog/spdlog.h>
 
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
 #include <cerrno>
-#include <charconv>
 #include <chrono>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
+#include <mutex>
 #include <system_error>
 #include <thread>
 
 #ifdef __linux__
-#include <linux/usbdevice_fs.h>
+#include <filesystem>
+#include <fstream>
 #endif
-
-namespace fs = std::filesystem;
 
 namespace apple_usb
 {
@@ -29,135 +28,397 @@ namespace apple_usb
 namespace
 {
 
-std::string readSysfsAttr(const fs::path& device_dir, const char* attr)
+// One context for the process. Deliberately never libusb_exit()'d: reader
+// threads in MuxHost and NcmBridge outlive main()'s static destructors in a
+// crash-stop shutdown, and tearing the context down underneath them is a
+// use-after-free for the sake of an allocation the OS is about to reclaim.
+libusb_context* context()
 {
-    std::ifstream in(device_dir / attr);
-    std::string value;
-    std::getline(in, value);
-    return value;
+    static libusb_context* ctx = [] {
+        libusb_context* c = nullptr;
+        const int rc = libusb_init(&c);
+        if (rc != LIBUSB_SUCCESS)
+        {
+            SPDLOG_ERROR("[usb] libusb_init failed: {}", libusb_strerror(rc));
+            return static_cast<libusb_context*>(nullptr);
+        }
+        return c;
+    }();
+    return ctx;
 }
 
-uint32_t readSysfsUint(const fs::path& device_dir, const char* attr, int base)
+// Map libusb's error codes onto the errno values the old usbfs wrappers threw,
+// so existing callers keep working -- muxd's reader loop in particular tells a
+// poll that found nothing (ETIMEDOUT) from a phone that went away (ENODEV).
+int toErrno(int rc)
 {
-    const std::string text = readSysfsAttr(device_dir, attr);
-    uint32_t value = 0;
-    std::from_chars(text.data(), text.data() + text.size(), value, base);
-    return value;
+    switch (rc)
+    {
+        case LIBUSB_ERROR_TIMEOUT:
+            return ETIMEDOUT;
+        case LIBUSB_ERROR_NO_DEVICE:
+            return ENODEV;
+        case LIBUSB_ERROR_NOT_FOUND:
+            return ENOENT;
+        case LIBUSB_ERROR_ACCESS:
+            return EACCES;
+        case LIBUSB_ERROR_BUSY:
+            return EBUSY;
+        case LIBUSB_ERROR_PIPE:
+            return EPIPE;
+        case LIBUSB_ERROR_OVERFLOW:
+            return EOVERFLOW;
+        case LIBUSB_ERROR_INTERRUPTED:
+            return EINTR;
+        case LIBUSB_ERROR_NO_MEM:
+            return ENOMEM;
+        case LIBUSB_ERROR_NOT_SUPPORTED:
+            return ENOSYS;
+        case LIBUSB_ERROR_INVALID_PARAM:
+            return EINVAL;
+        default:
+            return EIO;
+    }
+}
+
+[[noreturn]] void throwUsb(const char* what, int rc)
+{
+    throw std::system_error(toErrno(rc), std::generic_category(),
+                            std::string(what) + ": " + libusb_strerror(rc));
+}
+
+std::optional<PortPath> portPathOf(libusb_device* dev)
+{
+    PortPath path;
+    path.bus = libusb_get_bus_number(dev);
+    uint8_t ports[kMaxPortPathDepth] = {};
+    const int n = libusb_get_port_numbers(dev, ports, static_cast<int>(sizeof(ports)));
+    if (n <= 0)
+    {
+        // Root hubs have no port path. Nothing we care about is one.
+        return std::nullopt;
+    }
+    path.ports.assign(ports, ports + n);
+    return path;
+}
+
+// Walks the device list looking for one at `port`. The returned device carries
+// a reference the caller must libusb_unref_device().
+//
+// Everything resolves a device this way rather than holding a libusb_device*
+// across calls, because the CarPlay switch re-enumerates the phone and would
+// leave any cached pointer stale. Re-listing costs a syscall or two and makes
+// the stale case structurally impossible.
+libusb_device* acquireDeviceAt(const PortPath& port)
+{
+    libusb_context* ctx = context();
+    if (ctx == nullptr)
+    {
+        return nullptr;
+    }
+
+    libusb_device** list = nullptr;
+    const ssize_t count = libusb_get_device_list(ctx, &list);
+    if (count < 0)
+    {
+        SPDLOG_ERROR("[usb] libusb_get_device_list failed: {}",
+                     libusb_strerror(static_cast<int>(count)));
+        return nullptr;
+    }
+
+    libusb_device* found = nullptr;
+    for (ssize_t i = 0; i < count; ++i)
+    {
+        if (const auto p = portPathOf(list[i]); p && *p == port)
+        {
+            found = libusb_ref_device(list[i]);
+            break;
+        }
+    }
+    libusb_free_device_list(list, 1);
+    return found;
+}
+
+std::optional<DeviceInfo> describe(libusb_device* dev)
+{
+    libusb_device_descriptor desc{};
+    if (libusb_get_device_descriptor(dev, &desc) != LIBUSB_SUCCESS)
+    {
+        return std::nullopt;
+    }
+
+    const auto port = portPathOf(dev);
+    if (!port)
+    {
+        return std::nullopt;
+    }
+
+    DeviceInfo info;
+    info.port = *port;
+    info.vid = desc.idVendor;
+    info.pid = desc.idProduct;
+    info.address = libusb_get_device_address(dev);
+    info.num_configurations = desc.bNumConfigurations;
+
+    // Available without opening the device: on Linux libusb reads it from
+    // sysfs, on macOS from IOKit. An unconfigured device has none, which is
+    // not an error -- it just leaves active_configuration at 0.
+    libusb_config_descriptor* cfg = nullptr;
+    if (libusb_get_active_config_descriptor(dev, &cfg) == LIBUSB_SUCCESS && cfg != nullptr)
+    {
+        info.active_configuration = cfg->bConfigurationValue;
+        libusb_free_config_descriptor(cfg);
+    }
+    return info;
+}
+
+ConfigInfo toConfigInfo(const libusb_config_descriptor& cfg)
+{
+    ConfigInfo out;
+    out.value = cfg.bConfigurationValue;
+    for (uint8_t i = 0; i < cfg.bNumInterfaces; ++i)
+    {
+        const libusb_interface& iface = cfg.interface[i];
+        for (int a = 0; a < iface.num_altsetting; ++a)
+        {
+            const libusb_interface_descriptor& alt = iface.altsetting[a];
+            InterfaceInfo info;
+            info.number = alt.bInterfaceNumber;
+            info.alt_setting = alt.bAlternateSetting;
+            info.iface_class = alt.bInterfaceClass;
+            info.subclass = alt.bInterfaceSubClass;
+            info.protocol = alt.bInterfaceProtocol;
+            if (alt.extra != nullptr && alt.extra_length > 0)
+            {
+                info.extra.assign(alt.extra, alt.extra + alt.extra_length);
+            }
+            for (uint8_t e = 0; e < alt.bNumEndpoints; ++e)
+            {
+                const libusb_endpoint_descriptor& ep = alt.endpoint[e];
+                info.endpoints.push_back(EndpointInfo{ep.bEndpointAddress, ep.bmAttributes,
+                                                      ep.wMaxPacketSize});
+            }
+            out.interfaces.push_back(std::move(info));
+        }
+    }
+    return out;
 }
 
 }  // namespace
+
+// ---------------- PortPath ----------------
+
+std::string PortPath::toString() const
+{
+    std::string out = std::to_string(static_cast<unsigned>(bus));
+    for (size_t i = 0; i < ports.size(); ++i)
+    {
+        out += (i == 0) ? '-' : '.';
+        out += std::to_string(static_cast<unsigned>(ports[i]));
+    }
+    return out;
+}
+
+// ---------------- DeviceHandle ----------------
+
+DeviceHandle::~DeviceHandle()
+{
+    reset();
+}
+
+DeviceHandle::DeviceHandle(DeviceHandle&& other) noexcept : handle_(other.handle_)
+{
+    other.handle_ = nullptr;
+}
+
+DeviceHandle& DeviceHandle::operator=(DeviceHandle&& other) noexcept
+{
+    if (this != &other)
+    {
+        reset();
+        handle_ = other.handle_;
+        other.handle_ = nullptr;
+    }
+    return *this;
+}
+
+void DeviceHandle::reset()
+{
+    if (handle_ != nullptr)
+    {
+        libusb_close(handle_);
+        handle_ = nullptr;
+    }
+}
+
+// ---------------- enumeration ----------------
 
 std::vector<DeviceInfo> listAppleDevices()
 {
     std::vector<DeviceInfo> devices;
 
-    const fs::path root{"/sys/bus/usb/devices"};
-    std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(root, ec))
+    libusb_context* ctx = context();
+    if (ctx == nullptr)
     {
-        const fs::path& dir = entry.path();
-        // Skip interfaces (1-1:1.0) and root hubs (usb1).
-        const std::string name = dir.filename().string();
-        if (name.find(':') != std::string::npos || name.starts_with("usb"))
-        {
-            continue;
-        }
-
-        const auto vid = static_cast<uint16_t>(readSysfsUint(dir, "idVendor", 16));
-        if (vid != kAppleVendorId)
-        {
-            continue;
-        }
-
-        DeviceInfo info;
-        info.sysfs_path = dir.string();
-        info.vid = vid;
-        info.pid = static_cast<uint16_t>(readSysfsUint(dir, "idProduct", 16));
-        info.serial = readSysfsAttr(dir, "serial");
-        info.active_configuration = static_cast<uint8_t>(readSysfsUint(dir, "bConfigurationValue", 10));
-
-        const uint32_t busnum = readSysfsUint(dir, "busnum", 10);
-        const uint32_t devnum = readSysfsUint(dir, "devnum", 10);
-        info.usbfs_path = fmt::format("/dev/bus/usb/{:03d}/{:03d}", busnum, devnum);
-
-        devices.push_back(std::move(info));
+        return devices;
     }
 
+    libusb_device** list = nullptr;
+    const ssize_t count = libusb_get_device_list(ctx, &list);
+    if (count < 0)
+    {
+        SPDLOG_ERROR("[usb] libusb_get_device_list failed: {}",
+                     libusb_strerror(static_cast<int>(count)));
+        return devices;
+    }
+
+    for (ssize_t i = 0; i < count; ++i)
+    {
+        libusb_device_descriptor desc{};
+        if (libusb_get_device_descriptor(list[i], &desc) != LIBUSB_SUCCESS)
+        {
+            continue;
+        }
+        if (desc.idVendor != kAppleVendorId)
+        {
+            continue;
+        }
+        if (auto info = describe(list[i]); info)
+        {
+            devices.push_back(std::move(*info));
+        }
+    }
+    libusb_free_device_list(list, 1);
     return devices;
 }
 
-std::optional<int> openDevice(const DeviceInfo& device)
+std::optional<DeviceInfo> findDeviceAt(const PortPath& port)
 {
-    const int fd = ::open(device.usbfs_path.c_str(), O_RDWR);
-    if (fd < 0)
+    libusb_device* dev = acquireDeviceAt(port);
+    if (dev == nullptr)
     {
-        SPDLOG_ERROR("Failed to open {}: {}", device.usbfs_path, strerror(errno));
         return std::nullopt;
     }
-    return fd;
+    auto info = describe(dev);
+    libusb_unref_device(dev);
+    return info;
 }
 
-#ifdef __linux__
-
-namespace
+DeviceHandle openDevice(const PortPath& port)
 {
-
-[[noreturn]] void throwErrno(const char* what)
-{
-    throw std::system_error(errno, std::generic_category(), what);
-}
-
-std::optional<DeviceInfo> findBySerial(const std::string& serial)
-{
-    for (auto& dev : listAppleDevices())
+    libusb_device* dev = acquireDeviceAt(port);
+    if (dev == nullptr)
     {
-        if (dev.serial == serial)
-        {
-            return dev;
-        }
+        SPDLOG_ERROR("[usb] no device at port {}", port.toString());
+        return DeviceHandle{};
     }
-    return std::nullopt;
+
+    libusb_device_handle* handle = nullptr;
+    const int rc = libusb_open(dev, &handle);
+    libusb_unref_device(dev);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        SPDLOG_ERROR("[usb] libusb_open({}) failed: {}", port.toString(), libusb_strerror(rc));
+        return DeviceHandle{};
+    }
+    return DeviceHandle{handle};
 }
 
-uint8_t configFromSysfs(const std::string& sysfs_path)
+DeviceHandle openDevice(const DeviceInfo& device)
 {
-    return static_cast<uint8_t>(readSysfsUint(fs::path(sysfs_path), "bConfigurationValue", 10));
+    return openDevice(device.port);
 }
 
-}  // namespace
+std::string readSerial(const DeviceHandle& handle)
+{
+    if (!handle)
+    {
+        return {};
+    }
+    libusb_device* dev = libusb_get_device(handle.native());
+    libusb_device_descriptor desc{};
+    if (libusb_get_device_descriptor(dev, &desc) != LIBUSB_SUCCESS || desc.iSerialNumber == 0)
+    {
+        return {};
+    }
+
+    unsigned char buffer[128] = {};
+    const int n = libusb_get_string_descriptor_ascii(handle.native(), desc.iSerialNumber, buffer,
+                                                     static_cast<int>(sizeof(buffer)));
+    if (n <= 0)
+    {
+        SPDLOG_WARN("[usb] cannot read iSerialNumber: {}", libusb_strerror(n));
+        return {};
+    }
+    return std::string(reinterpret_cast<const char*>(buffer), static_cast<size_t>(n));
+}
+
+std::optional<ConfigInfo> readActiveConfig(const PortPath& port)
+{
+    libusb_device* dev = acquireDeviceAt(port);
+    if (dev == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    libusb_config_descriptor* cfg = nullptr;
+    const int rc = libusb_get_active_config_descriptor(dev, &cfg);
+    libusb_unref_device(dev);
+    if (rc != LIBUSB_SUCCESS || cfg == nullptr)
+    {
+        SPDLOG_DEBUG("[usb] no active config descriptor at port {}: {}", port.toString(),
+                     libusb_strerror(rc));
+        return std::nullopt;
+    }
+
+    ConfigInfo out = toConfigInfo(*cfg);
+    libusb_free_config_descriptor(cfg);
+    return out;
+}
+
+std::optional<ConfigInfo> readActiveConfig(const DeviceInfo& device)
+{
+    return readActiveConfig(device.port);
+}
+
+// ---------------- configuration ----------------
 
 bool switchToCarPlayConfiguration(const DeviceInfo& device)
 {
+    const PortPath port = device.port;
+
     // The Apple vendor request unlocks the CarPlay configurations; without it
     // the device only advertises configs 1-4. It is a one-shot control
-    // transfer that we issue over a short-lived usbfs fd.
-    if (static_cast<uint8_t>(readSysfsUint(fs::path(device.sysfs_path), "bNumConfigurations", 10)) < 6)
+    // transfer, after which the device re-enumerates.
+    if (device.num_configurations < kCarPlayConfiguration)
     {
-        const auto fd = openDevice(device);
-        if (!fd)
         {
-            return false;
+            DeviceHandle handle = openDevice(port);
+            if (!handle)
+            {
+                return false;
+            }
+            try
+            {
+                // wIndex 0x0004 mirrors LIVI's request; wLength 1 (device-to-host).
+                usbControl(handle, 0xC0, 0x52, 0x0000, 0x0004, 1);
+            }
+            catch (const std::system_error& e)
+            {
+                SPDLOG_ERROR("[usb] Apple vendor request 0x52 failed: {}", e.what());
+                return false;
+            }
         }
-        try
-        {
-            // wIndex 0x0004 mirrors LIVI's request; wLength 1 (device-to-host).
-            usbControl(*fd, 0xC0, 0x52, 0x0000, 0x0004, 1);
-        }
-        catch (const std::system_error& e)
-        {
-            SPDLOG_ERROR("Apple vendor request 0x52 failed: {}", e.what());
-            ::close(*fd);
-            return false;
-        }
-        ::close(*fd);
 
-        // The device re-enumerates; wait for the CarPlay configs to appear.
+        // Wait for it to come back at the same physical port with the CarPlay
+        // configurations exposed. The address will have changed; the port has
+        // not, which is exactly why the port path is what we track.
         bool exposed = false;
         for (int i = 0; i < 25; ++i)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            if (const auto d = findBySerial(device.serial);
-                d && readSysfsUint(fs::path(d->sysfs_path), "bNumConfigurations", 10) >= 6)
+            if (const auto d = findDeviceAt(port);
+                d && d->num_configurations >= kCarPlayConfiguration)
             {
                 exposed = true;
                 break;
@@ -165,132 +426,161 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         }
         if (!exposed)
         {
-            SPDLOG_ERROR("iPhone {} did not expose CarPlay configurations", device.serial);
+            SPDLOG_ERROR("[usb] device at port {} did not expose CarPlay configurations",
+                         port.toString());
             return false;
         }
     }
 
-    const auto d = findBySerial(device.serial);
-    if (!d)
+    const auto current = findDeviceAt(port);
+    if (!current)
     {
+        SPDLOG_ERROR("[usb] device vanished from port {}", port.toString());
         return false;
     }
-    if (configFromSysfs(d->sysfs_path) == kCarPlayConfiguration)
+    if (current->active_configuration == kCarPlayConfiguration)
     {
         return true;
     }
 
-    // Prefer usbfs SET_CONFIGURATION: it needs only the usbfs node (which a
-    // udev rule can hand to a normal user) whereas the sysfs attribute is
-    // root-only, and unlike the vendor request above it does not re-enumerate
-    // the device -- so open fds and, on a VM, the hypervisor's passthrough
-    // binding both survive.
-    //
-    // The kernel returns EBUSY while any interface is claimed, so every bound
-    // driver (ipheth, cdc_ncm, an earlier usbfs client) has to be released
-    // first. Nothing else in this library detaches drivers, which is why this
-    // is done explicitly here.
-    if (const auto fd = openDevice(*d); fd)
+    DeviceHandle handle = openDevice(port);
+    if (handle)
     {
-        for (const auto iface : boundInterfaces(*d))
+        // The kernel returns EBUSY while any interface is claimed, so every
+        // bound driver (ipheth, cdc_ncm, an earlier client) has to be released
+        // first. Nothing else in this library detaches drivers, which is why
+        // this is done explicitly here.
+        if (const auto cfg = readActiveConfig(port); cfg)
         {
-            if (usbDisconnectKernelDriver(*fd, iface))
-            {
-                SPDLOG_DEBUG("released interface {} from its kernel driver", iface);
-            }
+            detachKernelDrivers(handle, *cfg);
         }
 
-        unsigned int configuration = kCarPlayConfiguration;
-        const bool ok = ::ioctl(*fd, USBDEVFS_SETCONFIGURATION, &configuration) >= 0;
-        const int saved_errno = errno;
-        ::close(*fd);
-
-        if (ok)
+        // libusb_set_configuration issues USBDEVFS_SETCONFIGURATION on Linux,
+        // which -- unlike writing sysfs bConfigurationValue -- does not
+        // re-enumerate the device, so open fds and, on a VM, the hypervisor's
+        // passthrough binding both survive.
+        const int rc = libusb_set_configuration(handle.native(), kCarPlayConfiguration);
+        if (rc == LIBUSB_SUCCESS)
         {
             return true;
         }
-        SPDLOG_DEBUG("USBDEVFS_SETCONFIGURATION({}) failed: {}; falling back to sysfs",
-                     kCarPlayConfiguration, std::strerror(saved_errno));
+        SPDLOG_DEBUG("[usb] libusb_set_configuration({}) failed: {}", kCarPlayConfiguration,
+                     libusb_strerror(rc));
+        handle.reset();
     }
 
+#ifdef __linux__
     // Fallback for hosts where the usbfs node is unavailable but we are root.
-    std::ofstream out(fs::path(d->sysfs_path) / "bConfigurationValue");
+    // The kernel names the sysfs directory exactly as PortPath prints itself.
+    const std::filesystem::path sysfs =
+        std::filesystem::path("/sys/bus/usb/devices") / port.toString();
+    std::ofstream out(sysfs / "bConfigurationValue");
     out << static_cast<int>(kCarPlayConfiguration);
     out.close();
     if (!out)
     {
-        SPDLOG_ERROR("Failed to set configuration {} for {}: the usbfs ioctl failed and "
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}: libusb failed and "
                      "{}/bConfigurationValue is not writable (it is root-only). Either run "
                      "as root or install nodes/carplay/udev/99-carplay.rules.",
-                     kCarPlayConfiguration, d->serial, d->sysfs_path);
+                     kCarPlayConfiguration, port.toString(), sysfs.string());
         return false;
     }
     return true;
+#else
+    SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}", kCarPlayConfiguration,
+                 port.toString());
+    return false;
+#endif
 }
 
-std::vector<unsigned int> boundInterfaces(const DeviceInfo& device)
+// ---------------- driver arbitration ----------------
+
+bool kernelDriverActive(const DeviceHandle& handle, uint8_t iface)
 {
-    std::vector<unsigned int> interfaces;
-    const fs::path sysfs(device.sysfs_path);
-
-    std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(sysfs.parent_path(), ec))
+    if (!handle)
     {
-        // Interface directories are named "<device>:<config>.<interface>".
-        const std::string name = entry.path().filename().string();
-        if (name.rfind(sysfs.filename().string() + ":", 0) != 0)
-        {
-            continue;
-        }
-        const auto dot = name.rfind('.');
-        if (dot == std::string::npos)
-        {
-            continue;
-        }
-
-        if (!fs::exists(entry.path() / "driver", ec))
-        {
-            continue;
-        }
-
-        unsigned int iface = 0;
-        const std::string number = name.substr(dot + 1);
-        if (std::from_chars(number.data(), number.data() + number.size(), iface).ec ==
-            std::errc{})
-        {
-            interfaces.push_back(iface);
-        }
-    }
-    return interfaces;
-}
-
-bool usbDisconnectKernelDriver(int fd, unsigned int iface)
-{
-    usbdevfs_ioctl command{};
-    command.ifno = static_cast<int>(iface);
-    command.ioctl_code = USBDEVFS_DISCONNECT;
-    command.data = nullptr;
-
-    if (::ioctl(fd, USBDEVFS_IOCTL, &command) < 0)
-    {
-        SPDLOG_DEBUG("USBDEVFS_DISCONNECT on interface {} failed: {}", iface,
-                     std::strerror(errno));
         return false;
     }
-    return true;
+    return libusb_kernel_driver_active(handle.native(), iface) == 1;
 }
 
-void usbClaimInterface(int fd, unsigned int iface)
+bool detachKernelDriver(const DeviceHandle& handle, uint8_t iface)
 {
-    if (ioctl(fd, USBDEVFS_CLAIMINTERFACE, &iface) < 0)
+    if (!handle)
     {
-        throwErrno("USBDEVFS_CLAIMINTERFACE");
+        return false;
+    }
+    const int rc = libusb_detach_kernel_driver(handle.native(), iface);
+    if (rc == LIBUSB_SUCCESS)
+    {
+        return true;
+    }
+    // NOT_FOUND just means nothing was bound, which is the desired end state.
+    if (rc != LIBUSB_ERROR_NOT_FOUND)
+    {
+        SPDLOG_DEBUG("[usb] detach kernel driver from interface {} failed: {}", iface,
+                     libusb_strerror(rc));
+    }
+    return false;
+}
+
+unsigned detachKernelDrivers(const DeviceHandle& handle, const ConfigInfo& config)
+{
+    unsigned detached = 0;
+    uint8_t last = 0xFF;
+    for (const auto& iface : config.interfaces)
+    {
+        // interfaces holds every alt setting; only act once per interface.
+        if (iface.number == last)
+        {
+            continue;
+        }
+        last = iface.number;
+        if (!kernelDriverActive(handle, iface.number))
+        {
+            continue;
+        }
+        if (detachKernelDriver(handle, iface.number))
+        {
+            SPDLOG_DEBUG("[usb] released interface {} from its kernel driver", iface.number);
+            ++detached;
+        }
+    }
+    return detached;
+}
+
+// ---------------- transfers ----------------
+
+void usbClaimInterface(const DeviceHandle& handle, uint8_t iface)
+{
+    const int rc = libusb_claim_interface(handle.native(), iface);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        throwUsb("libusb_claim_interface", rc);
     }
 }
 
-std::vector<uint8_t> usbControl(int fd, uint8_t bmRequestType, uint8_t bRequest,
-                                uint16_t wValue, uint16_t wIndex, uint16_t wLength,
-                                const uint8_t* out_data, unsigned timeout_ms)
+void usbReleaseInterface(const DeviceHandle& handle, uint8_t iface)
+{
+    const int rc = libusb_release_interface(handle.native(), iface);
+    if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_NO_DEVICE)
+    {
+        SPDLOG_DEBUG("[usb] libusb_release_interface({}) failed: {}", iface, libusb_strerror(rc));
+    }
+}
+
+void usbSetAltSetting(const DeviceHandle& handle, uint8_t iface, uint8_t alt_setting)
+{
+    const int rc = libusb_set_interface_alt_setting(handle.native(), iface, alt_setting);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        throwUsb("libusb_set_interface_alt_setting", rc);
+    }
+}
+
+std::vector<uint8_t> usbControl(const DeviceHandle& handle, uint8_t bmRequestType,
+                                uint8_t bRequest, uint16_t wValue, uint16_t wIndex,
+                                uint16_t wLength, const uint8_t* out_data, unsigned timeout_ms)
 {
     std::vector<uint8_t> buffer(std::max<uint16_t>(wLength, 1));
     if (out_data != nullptr && wLength > 0)
@@ -298,87 +588,63 @@ std::vector<uint8_t> usbControl(int fd, uint8_t bmRequestType, uint8_t bRequest,
         std::copy_n(out_data, wLength, buffer.begin());
     }
 
-    usbdevfs_ctrltransfer req{};
-    req.bRequestType = bmRequestType;
-    req.bRequest = bRequest;
-    req.wValue = wValue;
-    req.wIndex = wIndex;
-    req.wLength = wLength;
-    req.timeout = timeout_ms;
-    req.data = buffer.data();
-
-    const int n = ioctl(fd, USBDEVFS_CONTROL, &req);
+    const int n = libusb_control_transfer(handle.native(), bmRequestType, bRequest, wValue, wIndex,
+                                          buffer.data(), wLength, timeout_ms);
     if (n < 0)
     {
-        throwErrno("USBDEVFS_CONTROL");
+        throwUsb("libusb_control_transfer", n);
     }
     buffer.resize(std::min<size_t>(static_cast<size_t>(n), wLength));
     return buffer;
 }
 
-bool usbClearHalt(int fd, uint8_t endpoint)
+void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, const uint8_t* data, size_t len,
+                unsigned timeout_ms)
 {
-    unsigned int target = endpoint;
-    if (ioctl(fd, USBDEVFS_CLEAR_HALT, &target) < 0)
+    // libusb keeps the buffer non-const; copy into a scratch buffer.
+    std::vector<uint8_t> scratch(data, data + len);
+    int transferred = 0;
+    const int rc = libusb_bulk_transfer(handle.native(), endpoint, scratch.data(),
+                                        static_cast<int>(scratch.size()), &transferred, timeout_ms);
+    if (rc != LIBUSB_SUCCESS)
     {
-        SPDLOG_DEBUG("USBDEVFS_CLEAR_HALT(0x{:02x}) failed: {}", endpoint, std::strerror(errno));
+        throwUsb("libusb_bulk_transfer(out)", rc);
+    }
+    if (static_cast<size_t>(transferred) != len)
+    {
+        throw std::system_error(EIO, std::generic_category(),
+                                "libusb_bulk_transfer(out): short write");
+    }
+}
+
+std::vector<uint8_t> usbBulkIn(const DeviceHandle& handle, uint8_t endpoint, size_t max_len,
+                               unsigned timeout_ms)
+{
+    std::vector<uint8_t> buffer(max_len);
+    int transferred = 0;
+    const int rc = libusb_bulk_transfer(handle.native(), endpoint, buffer.data(),
+                                        static_cast<int>(buffer.size()), &transferred, timeout_ms);
+    // A timeout that still moved data is not a failure: libusb reports both,
+    // and the bytes are real. Only an empty timeout is the "nothing to read"
+    // case that muxd's reader loop spins on.
+    if (rc != LIBUSB_SUCCESS && !(rc == LIBUSB_ERROR_TIMEOUT && transferred > 0))
+    {
+        throwUsb("libusb_bulk_transfer(in)", rc);
+    }
+    buffer.resize(static_cast<size_t>(transferred));
+    return buffer;
+}
+
+bool usbClearHalt(const DeviceHandle& handle, uint8_t endpoint)
+{
+    const int rc = libusb_clear_halt(handle.native(), endpoint);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        SPDLOG_DEBUG("[usb] libusb_clear_halt(0x{:02x}) failed: {}", endpoint,
+                     libusb_strerror(rc));
         return false;
     }
     return true;
 }
-
-void usbBulkOut(int fd, uint8_t endpoint, const uint8_t* data, size_t len, unsigned timeout_ms)
-{
-    // usbdevfs_bulktransfer keeps data non-const; copy into a scratch buffer.
-    std::vector<uint8_t> scratch(data, data + len);
-    usbdevfs_bulktransfer req{};
-    req.ep = endpoint;
-    req.len = static_cast<unsigned>(len);
-    req.timeout = timeout_ms;
-    req.data = scratch.data();
-    if (ioctl(fd, USBDEVFS_BULK, &req) < 0)
-    {
-        throwErrno("USBDEVFS_BULK(out)");
-    }
-}
-
-std::vector<uint8_t> usbBulkIn(int fd, uint8_t endpoint, size_t max_len, unsigned timeout_ms)
-{
-    std::vector<uint8_t> buffer(max_len);
-    usbdevfs_bulktransfer req{};
-    req.ep = endpoint;
-    req.len = static_cast<unsigned>(max_len);
-    req.timeout = timeout_ms;
-    req.data = buffer.data();
-    const int n = ioctl(fd, USBDEVFS_BULK, &req);
-    if (n < 0)
-    {
-        throwErrno("USBDEVFS_BULK(in)");
-    }
-    buffer.resize(static_cast<size_t>(n));
-    return buffer;
-}
-
-#else  // not __linux__
-
-bool switchToCarPlayConfiguration(const DeviceInfo&)
-{
-    SPDLOG_ERROR("CarPlay USB configuration switch is only supported on Linux");
-    return false;
-}
-
-std::vector<unsigned int> boundInterfaces(const DeviceInfo&) { return {}; }
-bool usbDisconnectKernelDriver(int, unsigned int) { return false; }
-bool usbClearHalt(int, uint8_t) { return false; }
-
-void usbClaimInterface(int, unsigned int) { throw std::system_error(ENOSYS, std::generic_category()); }
-std::vector<uint8_t> usbControl(int, uint8_t, uint8_t, uint16_t, uint16_t, uint16_t, const uint8_t*, unsigned)
-{
-    throw std::system_error(ENOSYS, std::generic_category());
-}
-void usbBulkOut(int, uint8_t, const uint8_t*, size_t, unsigned) { throw std::system_error(ENOSYS, std::generic_category()); }
-std::vector<uint8_t> usbBulkIn(int, uint8_t, size_t, unsigned) { throw std::system_error(ENOSYS, std::generic_category()); }
-
-#endif  // __linux__
 
 }  // namespace apple_usb
