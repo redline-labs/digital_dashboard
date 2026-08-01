@@ -19,6 +19,10 @@ set(APPLE_USB_SOURCES
     muxd.cpp
     usbmuxd_server.cpp
     usbmux_client.cpp
+    pair_record.cpp
+    tls_stream.cpp
+    lockdown_client.cpp
+    carkit_channel.cpp
     lockdown.cpp
 )
 
@@ -41,9 +45,16 @@ target_link_libraries(apple_usb PRIVATE
     spdlog::spdlog
 )
 
-# Our own property lists. The usbmuxd socket server is off libplist entirely;
-# what remains of the vendored stack below still uses its own copy internally.
+# Our own property lists. The usbmuxd socket server, the usbmux client and the
+# lockdown client are off libplist entirely; what remains of the vendored stack
+# below still uses its own copy internally.
 target_link_libraries(apple_usb PUBLIC plist)
+
+# The native lockdown backend runs its own TLS: two client-certificate sessions
+# (the lockdown session, and the carkit service connection) out of the pair
+# record's root key pair.
+find_package(OpenSSL REQUIRED)
+target_link_libraries(apple_usb PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 # libimobiledevice and libplist come from third_party/libimobiledevice.cmake,
 # built from pinned sources rather than whatever the host distro ships -- we

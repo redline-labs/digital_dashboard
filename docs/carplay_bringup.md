@@ -336,6 +336,60 @@ that looks like a mux bug but is a string-format bug.
   Confirm it is genuinely in config 6 (stage 2) — carkit only exists there.
 - TLS enable fails → version skew in libimobiledevice; try a newer release.
 
+### Replacing libimobiledevice: the native backend
+
+Stage 4 has two implementations, chosen with `--lockdown-backend`:
+
+```bash
+./build/nodes/carplay/carplay --max-stage 4 --verbose   # libimobiledevice (default)
+./build/nodes/carplay/carplay --max-stage 4 --lockdown-backend native --verbose
+```
+
+`native` is ours end to end: `UsbmuxClient` for the transport, `LockdownClient`
+for the handshake, `TlsStream` for both TLS sessions (the lockdown session and
+the carkit service connection), `PairRecord` for the stored identity. It reaches
+`[carkit] carkit TLS channel up (iAP2)` and the iAP2 session on top of it
+negotiates, identifies and authenticates against the MFi coprocessor exactly as
+the libimobiledevice path does.
+
+It is **not the default yet**, for two reasons:
+
+1. **It cannot pair.** It can use a pair record but not create one, so a device
+   that has never been trusted needs one run on `--lockdown-backend
+   libimobiledevice` first. Pairing means RSA key generation and X.509
+   certificate issuance (libimobiledevice's `common/userpref.c`), which is the
+   last real piece still to write.
+2. **Its first session is sometimes reset.** Roughly half of process starts, the
+   phone RSTs the carkit connection about 0.9 s after the channel comes up,
+   right after `AuthenticationSucceeded`. The pipeline retries and the second
+   session is stable for as long as it is left running, so it recovers -- but it
+   is a real difference: measured **0/8** runs affected on `libimobiledevice`
+   against **6/13** on `native`.
+
+What the second one is *not*, all ruled out by measurement rather than reasoning:
+
+- **Not the escrow bag.** `native` originally sent one with `StartService`;
+  libimobiledevice's `lockdownd_start_service` passes `send_escrow_bag=0`.
+  Matching it is correct and was kept, but it did not change the rate.
+- **Not the lockdown session being dropped early.** A service only lives as long
+  as the session that started it, and `NativeCarkitChannel` now holds the
+  `LockdownClient` for exactly that reason. This *was* a real bug -- without it
+  the channel died every single time -- but fixing it left the intermittent case.
+- **Not `StopSession` on teardown.** Present and absent both measured within
+  noise of each other; libimobiledevice sends it, so ours does too.
+- **Not the lockdown stream's lifetime.** Both backends hold `sport=1
+  dport=62078` open for the whole session; verified in the logs.
+
+One real bug *was* found and fixed while chasing it, and it is worth knowing
+independently of this symptom: `TlsStream::recvSome` polled the socket before
+calling `SSL_read`. That looks equivalent to the reverse order and is not.
+OpenSSL buffers whole records, so once a large message (a 60 KB album artwork
+frame, say) is split across reads, the remaining plaintext is already decrypted
+and held while the socket has nothing left to report -- and polling first waits
+out the entire timeout before returning data it was already holding. `SSL_read`
+first, poll only on `WANT_READ`, on a non-blocking socket. That took the failure
+rate from 3/4 to 1/4 on its own.
+
 ## 5. iAP2 link layer, identification, MFi auth
 
 ```bash
@@ -1114,6 +1168,9 @@ Not all stages below are implemented yet. Current state:
 | Layer | State |
 |---|---|
 | USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
+| Property lists (binary + XML), ours | **replaces libplist** in the usbmuxd server; differential-tested against libplist, verified on hardware |
+| usbmux client, ours | **replaces libusbmuxd**'s role; mock-tested and verified on hardware via `apple_usb_muxctl` |
+| lockdown client + TLS + pair record, ours | reaches the carkit channel on hardware, but **not default** — cannot pair, and its first session is sometimes reset (see stage 4) |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |

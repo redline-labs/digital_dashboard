@@ -11,6 +11,8 @@
 
 #include "zenoh_bridge.h"
 
+#include "apple_usb/lockdown.h"
+
 #include <atomic>
 #include <optional>
 #include <string>
@@ -28,6 +30,10 @@ struct UsbPipelineOptions
     // Where pair records and the accessory identity live. Empty selects a
     // default under the user's runtime directory.
     std::string state_dir;
+
+    // Which lockdown implementation runs stage 4. The vendored libimobiledevice
+    // for now -- see LockdownBackend for what still keeps ours off the default.
+    apple_usb::LockdownBackend lockdown_backend = apple_usb::LockdownBackend::Libimobiledevice;
 
     // Stage 5 knobs; see Iap2SessionOptions.
     bool allow_missing_mfi = false;

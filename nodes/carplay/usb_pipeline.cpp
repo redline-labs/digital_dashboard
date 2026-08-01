@@ -250,7 +250,8 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         // The trust prompt has no deadline; abort only if the node is stopping
         // or the phone was pulled out while we waited.
         carkit = apple_usb::openCarkitChannel(device.serial, socket_path, state_dir,
-                                              [&session_stop] { return session_stop.load(); });
+                                              [&session_stop] { return session_stop.load(); },
+                                              options.lockdown_backend);
         if (!carkit)
         {
             if (!session_stop.load())

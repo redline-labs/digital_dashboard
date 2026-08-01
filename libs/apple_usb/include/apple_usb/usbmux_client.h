@@ -2,6 +2,8 @@
 #ifndef APPLE_USB_USBMUX_CLIENT_H_
 #define APPLE_USB_USBMUX_CLIENT_H_
 
+#include "apple_usb/byte_stream.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -33,27 +35,21 @@ struct MuxDevice
 // A byte stream to a port on the device. After Connect succeeds the control
 // socket stops carrying plists and becomes this pipe, so the fd is the
 // connection -- there is no way to issue another request on it.
-class MuxConnection
+class MuxConnection : public ByteStream
 {
   public:
     explicit MuxConnection(int fd);
-    ~MuxConnection();
+    ~MuxConnection() override;
 
     MuxConnection(const MuxConnection&) = delete;
     MuxConnection& operator=(const MuxConnection&) = delete;
 
-    // Writes the whole buffer. False on error or a closed peer.
-    bool sendAll(const uint8_t* data, size_t len);
-
-    // Reads up to max_len bytes, waiting at most timeout_ms. Returns the count,
-    // 0 on timeout, and -1 on error or EOF -- a caller polling for data has to
-    // tell "nothing yet" from "never again".
-    ssize_t recvSome(uint8_t* out, size_t max_len, unsigned timeout_ms);
+    bool sendAll(const uint8_t* data, size_t len) override;
+    ssize_t recvSome(uint8_t* out, size_t max_len, unsigned timeout_ms) override;
+    void close() override;
 
     // The underlying socket, for handing to a TLS layer. Still owned here.
     int fd() const { return fd_; }
-
-    void close();
 
   private:
     int fd_ = -1;

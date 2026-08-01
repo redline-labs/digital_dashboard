@@ -269,10 +269,9 @@ lockdownd_client_t handshakeWithRetry(idevice_t device, const std::string& udid,
 
 }  // namespace
 
-std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
-                                                 const std::string& usbmux_socket_path,
-                                                 const std::string& pair_record_dir,
-                                                 std::function<bool()> abort)
+std::unique_ptr<CarkitChannel> openCarkitChannelViaLibimobiledevice(
+    const std::string& udid, const std::string& usbmux_socket_path,
+    const std::string& pair_record_dir, const std::function<bool()>& abort)
 {
     // Point libusbmuxd at our config-6 mux socket instead of the system usbmuxd.
     // The pair records follow automatically: libimobiledevice asks whichever
@@ -345,10 +344,11 @@ std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
 namespace apple_usb
 {
 
-std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string&, const std::string&,
-                                                 const std::string&, std::function<bool()>)
+std::unique_ptr<CarkitChannel> openCarkitChannelViaLibimobiledevice(
+    const std::string&, const std::string&, const std::string&, const std::function<bool()>&)
 {
-    SPDLOG_ERROR("[carkit] libimobiledevice not available at build time; wired CarPlay lockdown is disabled");
+    SPDLOG_ERROR("[carkit] libimobiledevice not available at build time; only the native "
+                 "lockdown backend can be used, and it cannot pair a new device");
     return nullptr;
 }
 

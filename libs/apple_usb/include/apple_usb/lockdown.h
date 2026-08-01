@@ -34,9 +34,22 @@ class CarkitChannel
     virtual bool alive() const = 0;
 };
 
+// Which lockdown implementation to use. Both reach the same phone through the
+// same socket; the switch exists so the two can be compared against real
+// hardware while the replacement is finished.
+enum class LockdownBackend
+{
+    // Ours: apple_usb's UsbmuxClient + LockdownClient + TlsStream. Cannot pair a
+    // device it has no record for yet -- see openCarkitChannel below.
+    Native,
+    // The vendored libimobiledevice. Still the only path that can pair.
+    Libimobiledevice,
+};
+
 // Establish the carkit iAP2 channel for a phone reachable through the given
-// usbmuxd-compatible socket (our UsbmuxdServer). Runs lockdown pairing +
-// client-cert TLS via libimobiledevice. Returns nullptr on failure.
+// usbmuxd-compatible socket (our UsbmuxdServer). Runs the lockdown handshake and
+// client-cert TLS, then starts com.apple.carkit.service. Returns nullptr on
+// failure.
 //
 // A first pair blocks on the "Trust This Computer?" prompt, which nobody can
 // put a deadline on, so this waits indefinitely for it. `abort` is polled about
@@ -44,12 +57,18 @@ class CarkitChannel
 // shutting down, or the phone was unplugged). It may be empty, in which case
 // the wait really is unbounded.
 //
-// Compiled only when libimobiledevice is available (see CMakeLists);
-// otherwise this returns nullptr with a log message.
-std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
-                                                  const std::string& usbmux_socket_path,
-                                                  const std::string& pair_record_dir,
-                                                  std::function<bool()> abort = {});
+// Two limits keep Native off the default path for now:
+//
+//   * It needs a pair record to already exist. It can use one but cannot create
+//     one, so a device that has never been paired needs Libimobiledevice once.
+//   * The first session of a process is reset by the phone about a second in,
+//     roughly half the time. The pipeline retries and the second session is
+//     stable, so it recovers -- but Libimobiledevice does not do it at all
+//     (0/8 runs vs 6/13). See docs/carplay_bringup.md stage 4.
+std::unique_ptr<CarkitChannel> openCarkitChannel(
+    const std::string& udid, const std::string& usbmux_socket_path,
+    const std::string& pair_record_dir, std::function<bool()> abort = {},
+    LockdownBackend backend = LockdownBackend::Libimobiledevice);
 
 }  // namespace apple_usb
 

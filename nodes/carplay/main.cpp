@@ -62,6 +62,11 @@ int main(int argc, char** argv)
          cxxopts::value<int>()->default_value("7"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
+        ("lockdown-backend",
+         "Which lockdown implementation runs stage 4: \"libimobiledevice\" "
+         "(default) or \"native\" (ours, still being brought up -- it cannot "
+         "pair a new device, and its first session is sometimes reset)",
+         cxxopts::value<std::string>()->default_value("libimobiledevice"))
         ("location",
          "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
          "(otherwise a GPS source publishes on <prefix>/location)",
@@ -126,6 +131,22 @@ int main(int argc, char** argv)
     usb_options.max_stage = args["max-stage"].as<int>();
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
+
+    const std::string backend = args["lockdown-backend"].as<std::string>();
+    if (backend == "libimobiledevice")
+    {
+        usb_options.lockdown_backend = apple_usb::LockdownBackend::Libimobiledevice;
+    }
+    else if (backend == "native")
+    {
+        usb_options.lockdown_backend = apple_usb::LockdownBackend::Native;
+    }
+    else
+    {
+        SPDLOG_ERROR("[node] unknown --lockdown-backend '{}' (expected native or "
+                     "libimobiledevice)", backend);
+        return 2;
+    }
     usb_options.recording = &g_recording;
 
     // A static GPS fix for bench-testing the location uplink: "lat,lon[,alt,speed,course]".
