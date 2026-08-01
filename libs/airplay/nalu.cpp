@@ -15,6 +15,11 @@ namespace
 
 constexpr uint8_t kStartCode[4] = {0x00, 0x00, 0x00, 0x01};
 
+// The shortest avcC that can carry a parameter set; hvcC needs more still. Any
+// payload below this cannot be identified as either, so it is not worth
+// guessing at.
+constexpr size_t kMinConfigBytes = 9;
+
 constexpr uint8_t kH264NaluIdr = 5;
 constexpr uint8_t kH265NaluIrapLow = 16;   // BLA_W_LP
 constexpr uint8_t kH265NaluIrapHigh = 23;  // RSV_IRAP_VCL23
@@ -92,7 +97,10 @@ Bytes hvcCToAnnexB(const Bytes& atom, size_t start)
     size_t p = start + 22;
     if (p >= atom.size())
     {
-        SPDLOG_ERROR("[airplay] nalu: hvcC atom too short ({} bytes)", atom.size() - std::min(start, atom.size()));
+        // DEBUG, not ERROR: configToAnnexB() calls this speculatively on a
+        // payload it has failed to identify, so reaching here is routine. The
+        // caller raises the one error that means something.
+        SPDLOG_DEBUG("[airplay] nalu: hvcC atom too short ({} bytes)", atom.size() - std::min(start, atom.size()));
         return out;
     }
 
@@ -188,6 +196,19 @@ Bytes avccFrameToAnnexB(const Bytes& frame, size_t length_size)
 
 std::optional<Config> configToAnnexB(const Bytes& payload)
 {
+    // Smaller than the shortest record either codec can express (avcC needs 9
+    // bytes, hvcC 23), so there is nothing here to identify and guessing at it
+    // only produces misleading errors. The phone does send a zero-length config
+    // message on the screen stream -- see receiver.cpp -- and that is a normal
+    // event, not a failure, so this must not be logged as one.
+    if (payload.size() < kMinConfigBytes)
+    {
+        SPDLOG_DEBUG("[airplay] nalu: ignoring a {}-byte video config (too short to be avcC "
+                     "or hvcC)",
+                     payload.size());
+        return std::nullopt;
+    }
+
     // The config record starts right after the avcC/hvcC fourcc, wherever it
     // sits: bare box, or nested inside an avc1/hvc1 sample entry.
     for (size_t i = 4; i + 4 <= payload.size(); ++i)
@@ -195,12 +216,26 @@ std::optional<Config> configToAnnexB(const Bytes& payload)
         if (matchesFourCc(payload, i, "hvcC"))
         {
             Config config{Codec::H265, hvcCToAnnexB(payload, i + 4)};
-            return config.annex_b.empty() ? std::nullopt : std::optional<Config>(std::move(config));
+            if (config.annex_b.empty())
+            {
+                SPDLOG_ERROR("[airplay] nalu: hvcC declared at offset {} but no parameter sets "
+                             "could be read from {} bytes",
+                             i, payload.size());
+                return std::nullopt;
+            }
+            return config;
         }
         if (matchesFourCc(payload, i, "avcC"))
         {
             Config config{Codec::H264, avcCToAnnexB(payload, i + 4)};
-            return config.annex_b.empty() ? std::nullopt : std::optional<Config>(std::move(config));
+            if (config.annex_b.empty())
+            {
+                SPDLOG_ERROR("[airplay] nalu: avcC declared at offset {} but no parameter sets "
+                             "could be read from {} bytes",
+                             i, payload.size());
+                return std::nullopt;
+            }
+            return config;
         }
     }
 
@@ -211,6 +246,8 @@ std::optional<Config> configToAnnexB(const Bytes& payload)
         return config.annex_b.empty() ? std::nullopt : std::optional<Config>(std::move(config));
     }
 
+    // Last resort: assume a bare hvcC. This is a guess, so the helper's own
+    // complaint about it is DEBUG; the single error below is the real one.
     Config config{Codec::H265, hvcCToAnnexB(payload, 0)};
     if (config.annex_b.empty())
     {

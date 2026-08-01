@@ -52,15 +52,27 @@ Run the driver with `--verbose` for `SPDLOG_DEBUG` output. Filter noise with e.g
 the regression net for the pure-logic layers:
 
 ```bash
-cmake --build build -j
+cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust build is the hog
 ./build/libs/airplay/airplay_test_tlv8        # TLV8 encode/decode + fragmentation
 ./build/libs/airplay/airplay_test_crypto      # HKDF/ChaCha20/X25519/Ed25519/SRP KATs
-./build/libs/airplay/airplay_test_plist       # binary plist round-trip
 ./build/libs/airplay/airplay_test_nalu        # avcC -> Annex-B rewrite
 ./build/libs/airplay/airplay_test_aac         # AAC-LC encode/decode round-trip (entertainment audio)
+./build/libs/airplay/airplay_test_event_queue # event channel queueing
+./build/libs/plist/plist_test_binary          # binary plist round-trip
+./build/libs/plist/plist_test_xml             # XML plist round-trip
+./build/libs/plist/plist_test_libplist_vectors # differential vectors captured from libplist
 ./build/libs/iap2/iap2_test_framing           # 0xFF5A link-layer framing round-trip
 ./build/libs/iap2/iap2_test_nmea              # GPS location NMEA (GGA/RMC) generation + checksum
+./build/libs/apple_usb/apple_usb_test_ncm_discovery # NCM descriptor discovery (real-hardware fixture)
+./build/libs/apple_usb/apple_usb_test_pair_record   # pair record mint/parse, X509_verify
+./build/libs/apple_usb/apple_usb_test_usbmux_client # usbmux client framing
 ```
+
+There is no `airplay_test_plist` — the plist tests live in `libs/plist` under the
+`plist_test_*` names above. If you have one in a `build/` directory, it is a
+stale binary from before the move and will keep passing after its target is
+gone; that is a good reason to reconfigure from scratch rather than trust an old
+build tree. `ctest` is not wired up, so run them directly as above.
 
 A failure here is a logic bug, not a hardware problem — fix before proceeding.
 
@@ -122,19 +134,21 @@ still works against it. Nothing in the build needs them.
   (the socket server), `usbmux_client.cpp`, `lockdown_client.cpp`,
   `tls_stream.cpp`, `pair_record.cpp` and `carkit_channel.cpp`. Plain C++,
   POSIX sockets and OpenSSL, and where the logic worth unit testing lives.
-- **Linux only** — `usb_device.cpp` (raw usbfs ioctls) and `ncm_bridge.cpp`
-  (TUN/TAP). On other hosts these are replaced by `usb_device_stub.cpp`.
+- **Also portable since the libusb port** — `usb_device.cpp` and
+  `ncm_discovery.cpp`. libusb runs on macOS, so enumeration, descriptor parsing
+  and transfers are real there rather than stubbed. `usb_device_stub.cpp` is
+  gone, and so is `APPLE_USB_NO_TRANSPORT`.
+- **Linux only** — `ncm_bridge.cpp`, because TUN/TAP is. On other hosts it is
+  omitted and `APPLE_USB_NO_NCM` is defined; the build prints `apple_usb:
+  non-Linux host -- USB transport built, NCM/TAP bridge omitted`.
 
-So `cmake --build build --target apple_usb` works on macOS and gives you the
-protocol layer to write tests against. `listAppleDevices()` returns empty and
-the transfer wrappers throw `std::system_error(ENOSYS)` — deliberately loud,
-because a test that reaches one has stopped testing protocol and started testing
-hardware I/O. The build prints `apple_usb: non-Linux host -- protocol layer
-built, USB/NCM transport stubbed`, and `APPLE_USB_NO_TRANSPORT` is defined so
-nothing mistakes a green build for a working transport.
+So `cmake --build build --target apple_usb` works on macOS, and `apple_usb_usbprobe`
+genuinely enumerates a phone there — which makes step 1 of stage 1b a check you
+can run off the Linux box. What you cannot do on macOS is stage 6 onward, since
+that needs the TAP bridge.
 
-Obviously none of this talks to a phone. Anything from stage 2 onward still
-needs Linux and hardware.
+Anything from stage 2 onward still needs the phone; stage 6 onward also needs
+Linux.
 
 **Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
 adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
@@ -158,12 +172,17 @@ The devnum changes on every re-enumeration (and the config switch in stage 2
 forces one), so that path moves; the rule is keyed on the Apple VID, so it
 follows. You must be in `plugdev` (`id -nG | grep plugdev`).
 
-This covers stages 2–5. **It is not sufficient for stage 6**: `NcmBridge::
-configureInterface()` shells out to `ip link set`, and file capabilities set with
-`setcap` on the driver binary are *not* inherited by child processes, so
-`cap_net_admin+ep` on `carplay` leaves the `ip` calls failing with `Operation not
-permitted`. Until those shell-outs are replaced with in-process netlink, stage 6
-needs root.
+This covers stages 2–5, and stage 6 as well provided the persistent TAP is set
+up as described there — **verified unprivileged end to end on 2026-08-01**.
+
+Older revisions of this document said stage 6 needed root. It does not, and the
+reason it looked that way is worth knowing: the failure it produces is an
+`Operation not permitted` on adding the link-local, which invites `sudo` when
+the actual cause is the TAP's MAC being pinned too late. See the
+`CARPLAY_TAP_MAC` discussion in stage 6. Address configuration is done in-process
+(`SIOCSIFADDR`/`SIOCSIFHWADDR`), not by shelling out; the only remaining
+shell-out is a best-effort `nmcli` call to stop NetworkManager touching the
+link, and it is fine for that to fail.
 
 **The MFi coprocessor is reached over I²C.** On Linux the in-kernel
 `hid_mcp2221` driver binds the MCP2221A and registers it as a standard I²C
@@ -199,6 +218,45 @@ Some distros ship only the service unit and no socket unit; drop
 service comes back on its own, socket activation restarted it — `sudo systemctl
 mask usbmuxd.socket usbmuxd.service` (reverse with `unmask`).
 
+**`systemctl stop` alone is not enough, and the reason is not obvious.** The
+package ships `/usr/lib/udev/rules.d/39-usbmuxd.rules`, which contains:
+
+```
+ACTION=="add", ... ATTR{bConfigurationValue}="0", OWNER="usbmux",
+                   ENV{SYSTEMD_WANTS}="usbmuxd.service"
+```
+
+The stage 2 config switch *deliberately re-enumerates the phone*, which fires
+`add`, which restarts usbmuxd mid-test — it then claims interface 1 and the
+next `libusb_set_configuration` fails with `EBUSY`. Observed exactly this on
+2026-08-01: stopped at 13:18:59, restarted by udev at 13:21:50, six seconds
+after the vendor request. The same rule also sets `bConfigurationValue=0`,
+unconfiguring the phone on plug.
+
+So **mask it or remove it**; stopping it will not survive a single stage 2 run.
+Removing the package is safe and does not cascade — `libimobiledevice-utils`
+stays, and device-node access comes from our own `99-carplay.rules`
+(`GROUP="plugdev"`, `TAG+="uaccess"`), not from the rule's `OWNER="usbmux"`.
+Beware `apt autoremove` afterwards: it will offer to take `libssl-dev` with it,
+which is a stage 1 prerequisite.
+
+**`gvfsd-gphoto2` is the other one, and it is easy to misread as usbmuxd.**
+Configuration 6 keeps a PTP/imaging interface at interface 0, so GNOME
+auto-mounts the phone as a camera and holds a usbfs claim on it. Any claimed
+interface makes `libusb_set_configuration` return `EBUSY`, so this blocks
+stage 2 exactly the way usbmuxd does — but `systemctl` shows nothing wrong and
+`lsusb -t` reports the interface as `usbfs`, not as a named driver.
+
+Find it by owner rather than by guessing:
+
+```bash
+ls -l /proc/*/fd 2>/dev/null | grep /dev/bus/usb    # or: sudo fuser -v /dev/bus/usb/BBB/DDD
+kill <the gvfsd-gphoto2 pid>
+```
+
+`libusb_detach_kernel_driver` cannot help here: a live usbfs claim by another
+*process* is not a kernel driver, and no ioctl takes it away.
+
 **Running in a VM.** USB passthrough works, but the stage 2 config switch
 deliberately re-enumerates the phone, and hypervisors commonly hand a
 re-enumerating device back to the *host* instead of the guest. If the phone
@@ -208,11 +266,16 @@ before suspecting the driver — re-attach it to the guest and confirm with
 
 ## 1b. Re-verifying the libusb transport port (do this first)
 
-**Status: written 2026-08-01, never run against a phone.** Stages 2, 3 and 6 were
-verified on hardware on 2026-07-21 against the *old* usbfs/sysfs transport. That
-transport has since been replaced by libusb, so those three stages need
-re-verifying before their "verified" markers can be trusted again. Nothing above
-the transport changed.
+**Status: re-verified on hardware 2026-08-01** against iPhone `00008140…`, the
+same phone as the 2026-07-21 session. All five steps below pass, plus a full
+`--max-stage 7` session to decoded video. The libusb port introduced no
+regression: every failure hit during the re-verification was environmental (see
+the conflicting-daemons notes in stage 1) except one genuine bug, in the TAP
+link-local derivation, which was in unchanged code and is written up in stage 6.
+
+Stages 2, 3 and 6 had been verified on 2026-07-21 against the *old* usbfs/sysfs
+transport; those markers are now good again. Nothing above the transport
+changed.
 
 **What changed.** Enumeration, descriptor parsing, configuration selection,
 driver detach and every transfer now go through libusb (already vendored for
@@ -294,10 +357,12 @@ interface in configuration 6; falling back to interface 1`, the descriptor
 lookup is wrong for this phone — the fallback keeps the stack working, but note
 it and fix the lookup rather than leaving the fallback as the live path.
 
-**Step 4 — NCM (stage 6).** Two new lines replace the old sysfs walk:
+**Step 4 — NCM (stage 6).** Two new lines replace the old sysfs walk. These are
+the real ones, from hardware on 2026-08-01:
 
 ```
-[ncm] NCM pair in configuration 6: control iface 2 (status ep 0x86), data iface 3 (bulk in 0x87 / out 0x05), iMACAddress string 7
+[ncm] 2 NCM function pairs present; taking the first (control interface 3). Override with CARPLAY_NCM_CTRL_IF.
+[ncm] NCM pair in configuration 6: control iface 3 (status ep 0x87), data iface 4 (bulk in 0x88 / out 0x06), iMACAddress string 18
 ```
 
 Compare every field against step 1's probe output. Then confirm the two
@@ -321,8 +386,16 @@ compare NTB in/out counts against the 2026-07-21 baseline (**3960 out / 10026 in
 zero errors**). `CARPLAY_NCM_NO_READER=1` disables the read pump to test the
 write path in isolation.
 
-If this does show starvation, the fix is to move the NCM pumps to libusb's async
-API (`libusb_submit_transfer` plus a dedicated event thread) — the mux and
+**Measured 2026-08-01: no starvation.** A ~100 s `--max-stage 7` session with
+video streaming throughout gave **3443 NTBs out / 3467 in, zero errors and zero
+bulk timeouts**, with 2294 video frames decoded over the same span. So libusb's
+sync API serialising both pumps on one event lock is not a problem at CarPlay's
+uplink rate, and the async migration below is not needed. (The in-count is lower
+than the 07-21 baseline's 10026 only because that was a longer session; the
+ratio of errors to transfers is what matters here, and it is zero.)
+
+If this ever does show starvation, the fix is to move the NCM pumps to libusb's
+async API (`libusb_submit_transfer` plus a dedicated event thread) — the mux and
 lockdown paths are low-rate and can stay synchronous.
 
 ### What this port did *not* change
@@ -726,6 +799,56 @@ phone dictates it through `iMACAddress` and will ignore us otherwise) via
 `SIOCSIFHWADDR` **on the tun fd**, which the tun driver allows for a device you
 own. No capability is needed anywhere.
 
+**The advertised `fe80::` does not have to encode our MAC, and relying on that
+is what keeps stage 6 unprivileged.** This cost an hour on 2026-08-01 by looking
+like a permissions problem, so the mechanism is worth stating exactly.
+
+The kernel derives a link-local **when the interface is brought up**, from
+whatever MAC is set at that instant, and it will not revise that address later:
+
+- IPv6 addresses survive carrier loss — only `NETDEV_DOWN` (admin down) flushes
+  them.
+- addrconf does **not** regenerate on `NETDEV_CHANGEADDR`.
+- It will not add a second link-local when one already exists.
+
+On a persistent TAP nothing has carrier until the bridge attaches, so generation
+is triggered by our own `TUNSETIFF` — and the bridge sets the phone-dictated MAC
+microseconds afterwards. **That is a race**, and it goes both ways in practice:
+both outcomes were observed on 2026-08-01 on the same machine. Whichever address
+lands then sticks for the life of the device. So this is intermittent across
+boots, not a deterministic failure — do not conclude from one good run that it
+is fixed.
+
+The bridge therefore **advertises whichever link-local the interface actually
+has** rather than insisting on the EUI-64 of the MAC. That address is reachable
+by definition, so nothing has to be added and the one step that wanted
+`CAP_NET_ADMIN` disappears.
+
+**Verified on hardware that the mismatch is harmless** (2026-08-01). With
+`cpusb0` deliberately left holding `fe80::dc70:7eff:fe94:a6ee` while its MAC was
+`ca:1f:e8:0f:24:b1` — forced by attaching, waiting out addrconf, then setting
+the MAC — the phone dialled the advertised address and the session ran to 2061
+decoded frames. The EUI-64 match in LIVI is incidental: it creates the TAP with
+the phone's MAC, so the kernel derives from it anyway. NDP resolves the address
+to whatever MAC we present, which is the part that actually matters.
+
+```
+[ncm]  advertising kernel link-local fe80::dc70:7eff:fe94:a6ee (EUI-64 of this MAC would be fe80::c81f:e8ff:fe0f:24b1)
+[iap2] sending CarPlayStartSession -> [fe80::dc70:7eff:fe94:a6ee]:7000 id=ca:1f:e8:0f:24:b1
+```
+
+`CARPLAY_TAP_MAC` in `carplay-tap.service` is consequently **optional**. Setting
+it to the phone's host MAC before first bring-up makes the derived address
+predictable and removes the race's visible effect, but nothing depends on it,
+and leaving it empty is correct for a head unit that may see more than one phone.
+
+**Recorded because it was tried and does not work:** `TUNSETCARRIER` on our own
+tun fd, to bounce carrier and make addrconf redo the derivation. It is the
+obvious unprivileged lever and it fails for the first reason above — the stale
+address is still present when carrier returns, so generation is skipped.
+Verified directly: with the bridge attached, `ip -6 addr` still showed the old
+address after the bounce. Do not re-attempt it.
+
 **Triage.**
 - No `cpusb0` → `/dev/net/tun` missing or no `CAP_NET_ADMIN`.
 - `no NCM function pair in configuration 6` → descriptor discovery found nothing;
@@ -741,10 +864,11 @@ own. No capability is needed anywhere.
   being drained; see above. Confirm with usbmon (below): the OUT URBs will show
   as submitted and then `ENOENT`/unlinked, meaning the device never serviced
   them at all, while OUT on the usbmux endpoint `0x04` completes normally.
-- `"bulk endpoints not found"` → endpoint discovery reads sysfs `ep_*` right
-  after `USBDEVFS_SETINTERFACE`. **Not racy in practice** — it resolved
-  correctly on every run here. Altsetting 1 is hardcoded for the data interface
-  (as in LIVI) and is correct for this phone.
+- `"bulk endpoints not found"` → endpoint discovery now reads the configuration
+  descriptor through libusb, so it no longer depends on having selected the
+  altsetting first and the old sysfs `ep_*` race is gone entirely. Altsetting 1
+  is still where the data interface's bulk pair lives (as in LIVI), confirmed
+  on hardware 2026-08-01 for both NCM pairs.
 - Nothing at all on either endpoint → the phone only powers up its NCM data
   path once a CarPlay session is actually running. Before `CarPlayStartSession`
   both directions time out, which is expected, not a fault.
@@ -828,7 +952,24 @@ claiming it at all.
 is the header's leading little-endian `uint32`. `header[4]` is the opcode: 1 is
 the codec config (an avcC atom, in the clear), 0 is a frame, ChaCha20-Poly1305
 sealed with the entire 128-byte header as AAD and a counter nonce that advances
-**only on frames**. The key is
+**only on frames**.
+
+**The first message on the stream is an empty config, and that is normal.**
+The phone opens with a well-formed opcode-1 header carrying a zero-length body:
+
+```
+header 00 00 00 00 op=01 | 00 56 01 c5      <- length 0, opcode 1
+```
+
+The real 33-byte avcC follows ~60 ms later. This is not a framing desync and not
+a preamble being misread — the length field really is zero, and the stream stays
+aligned either way, which is why it is easy to misdiagnose. `configToAnnexB()`
+rejects anything below 9 bytes up front (nothing shorter can be avcC or hvcC)
+and logs it at debug. Before that guard existed it fell through to a speculative
+bare-`hvcC` parse, which logged `nalu: hvcC atom too short (0 bytes)` at **error**
+in a session that only ever advertises H.264 — an H.265 complaint about a codec
+nobody sent, once per connection. If you see that line again, the guard has been
+removed. The key is
 `HKDF-SHA512(pair-verify shared, "DataStream-Salt<streamConnectionID>",
 "DataStream-Output-Encryption-Key", 32)`.
 

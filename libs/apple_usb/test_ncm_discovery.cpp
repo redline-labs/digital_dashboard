@@ -69,38 +69,66 @@ EndpointInfo endpoint(uint8_t address, uint8_t attributes)
     return EndpointInfo{address, attributes, 512};
 }
 
-// A CDC Ethernet Networking functional descriptor (subtype 0x0f) preceded by a
-// header functional descriptor, so the walk has to actually skip something.
-std::vector<uint8_t> ethernetFunctionalDescriptors(uint8_t mac_string_index)
+// The CDC functional descriptors an iPhone actually puts on an NCM control
+// interface, in the order it puts them: union first, then header, then Ethernet
+// Networking (subtype 0x0f), then the NCM functional descriptor. The walk has
+// to skip three descriptors to reach the one it wants, and the ethernet one is
+// not first -- both true on hardware, and the reason this is not simplified.
+std::vector<uint8_t> ethernetFunctionalDescriptors(uint8_t mac_string_index, uint8_t master,
+                                                   uint8_t slave)
 {
     return {
-        0x05, 0x24, 0x00, 0x10, 0x01,                          // header, subtype 0x00
-        0x0D, 0x24, 0x0F, mac_string_index, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ethernet, subtype 0x0f
+        0x05, 0x24, 0x06, master, slave,  // union, subtype 0x06
+        0x05, 0x24, 0x00, 0x10, 0x01,     // header, subtype 0x00
+        // ethernet, subtype 0x0f: iMACAddress, statistics, wMaxSegmentSize
+        // 0x3e8e, filters. Byte-for-byte what the phone reports.
+        0x0D, 0x24, 0x0F, mac_string_index, 0x00, 0x00, 0x00, 0x00, 0x8e, 0x3e, 0x00, 0x00, 0x00,
+        0x06, 0x24, 0x1a, 0x00, 0x01, 0x3b,  // NCM functional, subtype 0x1a
     };
 }
 
-// Two NCM function pairs, the way an iPhone in configuration 6 is expected to
-// present: a vendor-specific mux interface first, then ctrl/data at 2/3 and
-// again at 4/5. Bulk endpoints appear only on data altsetting 1.
+// Configuration 6 as an iPhone actually presents it, transcribed from
+// apple_usb_usbprobe against iPhone 00008140... on 2026-08-01. Verified against
+// hardware, so treat a disagreement here as the hardware having changed.
+//
+// Three things this pins that a tidier invented fixture would get wrong:
+//   - The NCM pairs are at 3/4 and 5/6, not 2/3 and 4/5: interfaces 0 (PTP) and
+//     2 (vendor-specific, with bulk endpoints on two altsettings) sit in between
+//     and must be skipped.
+//   - The *second* control interface has no interrupt endpoint at all. Only the
+//     first is fully populated, which is a reason beyond ordering to take it.
+//   - Data interfaces carry bulk endpoints only on altsetting 1; altsetting 0 is
+//     the mandatory no-data setting.
 ConfigInfo carPlayLikeConfig()
 {
     ConfigInfo config;
     config.value = 6;
     config.interfaces = {
+        // PTP/imaging. Has bulk endpoints and an interrupt, so a discovery pass
+        // that keyed on endpoints rather than class would trip over it.
+        iface(0, 0, 0x06, 0x01,
+              {endpoint(0x02, kBulk), endpoint(0x81, kBulk), endpoint(0x83, kInterrupt)}),
+
         // usbmux (what MuxHost looks for), deliberately not an NCM function.
         iface(1, 0, 0xFF, 0xFE, {endpoint(0x85, kBulk), endpoint(0x04, kBulk)}),
 
-        // First NCM function.
-        iface(2, 0, 0x02, 0x0d, {endpoint(0x86, kInterrupt)},
-              ethernetFunctionalDescriptors(7)),
-        iface(3, 0, 0x0a, 0x00),  // no-data altsetting: no endpoints
-        iface(3, 1, 0x0a, 0x00, {endpoint(0x87, kBulk), endpoint(0x05, kBulk)}),
+        // Apple vendor-specific (iAP). Two altsettings that both carry bulk
+        // endpoints, sitting directly before the first NCM control interface.
+        iface(2, 0, 0xFF, 0xFD),
+        iface(2, 1, 0xFF, 0xFD, {endpoint(0x86, kBulk), endpoint(0x05, kBulk)}),
+        iface(2, 2, 0xFF, 0xFD, {endpoint(0x86, kBulk), endpoint(0x05, kBulk)}),
 
-        // Second NCM function.
-        iface(4, 0, 0x02, 0x0d, {endpoint(0x88, kInterrupt)},
-              ethernetFunctionalDescriptors(8)),
-        iface(5, 0, 0x0a, 0x00),
-        iface(5, 1, 0x0a, 0x00, {endpoint(0x89, kBulk), endpoint(0x06, kBulk)}),
+        // First NCM function -- the one the bridge must select.
+        iface(3, 0, 0x02, 0x0d, {endpoint(0x87, kInterrupt)},
+              ethernetFunctionalDescriptors(18, 3, 4)),
+        iface(4, 0, 0x0a, 0x00),  // no-data altsetting: no endpoints
+        iface(4, 1, 0x0a, 0x00, {endpoint(0x88, kBulk), endpoint(0x06, kBulk)}),
+
+        // Second NCM function. Note: no interrupt endpoint on the control
+        // interface, unlike the first.
+        iface(5, 0, 0x02, 0x0d, {}, ethernetFunctionalDescriptors(16, 5, 6)),
+        iface(6, 0, 0x0a, 0x00),
+        iface(6, 1, 0x0a, 0x00, {endpoint(0x89, kBulk), endpoint(0x07, kBulk)}),
     };
     return config;
 }
@@ -116,10 +144,10 @@ void testFindsBothFunctionsInOrder()
 
     // Order matters: the bridge takes the first, matching the Python's
     // sorted(os.listdir(...)) behaviour that the sysfs version relied on.
-    expectEq(functions[0].ctrl_iface, uint8_t{2}, "first function control interface");
-    expectEq(functions[0].data_iface, uint8_t{3}, "first function data interface");
-    expectEq(functions[1].ctrl_iface, uint8_t{4}, "second function control interface");
-    expectEq(functions[1].data_iface, uint8_t{5}, "second function data interface");
+    expectEq(functions[0].ctrl_iface, uint8_t{3}, "first function control interface");
+    expectEq(functions[0].data_iface, uint8_t{4}, "first function data interface");
+    expectEq(functions[1].ctrl_iface, uint8_t{5}, "second function control interface");
+    expectEq(functions[1].data_iface, uint8_t{6}, "second function data interface");
 }
 
 void testResolvesEndpointsFromDataAltSetting()
@@ -134,13 +162,18 @@ void testResolvesEndpointsFromDataAltSetting()
     // The whole point of the descriptor rewrite: these come from altsetting 1
     // without having selected it first. The sysfs version could not see them
     // until after USBDEVFS_SETINTERFACE, which forced an ordering dependency.
-    expectEq(functions[0].ep_in, uint8_t{0x87}, "bulk IN from data altsetting 1");
-    expectEq(functions[0].ep_out, uint8_t{0x05}, "bulk OUT from data altsetting 1");
-    expectEq(functions[0].ep_int, uint8_t{0x86}, "interrupt endpoint from control interface");
+    expectEq(functions[0].ep_in, uint8_t{0x88}, "bulk IN from data altsetting 1");
+    expectEq(functions[0].ep_out, uint8_t{0x06}, "bulk OUT from data altsetting 1");
+    expectEq(functions[0].ep_int, uint8_t{0x87}, "interrupt endpoint from control interface");
     expect(functions[0].hasBulkPair(), "first function has a complete bulk pair");
 
     expectEq(functions[1].ep_in, uint8_t{0x89}, "second function bulk IN");
-    expectEq(functions[1].ep_out, uint8_t{0x06}, "second function bulk OUT");
+    expectEq(functions[1].ep_out, uint8_t{0x07}, "second function bulk OUT");
+
+    // The phone gives only the first control interface an interrupt endpoint.
+    // Draining that endpoint is what keeps bulk OUT alive (stage 6), so the
+    // pair that has one is the only pair that can work.
+    expectEq(functions[1].ep_int, uint8_t{0}, "second control interface has no interrupt endpoint");
 }
 
 void testExtractsMacStringIndex()
@@ -151,8 +184,8 @@ void testExtractsMacStringIndex()
         expect(false, "need both functions for the iMACAddress check");
         return;
     }
-    expectEq(functions[0].mac_string_index, uint8_t{7}, "first function iMACAddress index");
-    expectEq(functions[1].mac_string_index, uint8_t{8}, "second function iMACAddress index");
+    expectEq(functions[0].mac_string_index, uint8_t{18}, "first function iMACAddress index");
+    expectEq(functions[1].mac_string_index, uint8_t{16}, "second function iMACAddress index");
 }
 
 void testMacStringIndexEdgeCases()
@@ -206,11 +239,11 @@ void testMissingDataAltSettingLeavesBulkUnset()
 void testFindByCtrlInterface()
 {
     const ConfigInfo config = carPlayLikeConfig();
-    const auto pinned = apple_usb::findNcmFunctionByCtrl(config, 4);
-    expect(pinned.has_value(), "CARPLAY_NCM_CTRL_IF=4 resolves");
+    const auto pinned = apple_usb::findNcmFunctionByCtrl(config, 5);
+    expect(pinned.has_value(), "CARPLAY_NCM_CTRL_IF=5 resolves");
     if (pinned)
     {
-        expectEq(pinned->data_iface, uint8_t{5}, "pinned function data interface");
+        expectEq(pinned->data_iface, uint8_t{6}, "pinned function data interface");
         expectEq(pinned->ep_in, uint8_t{0x89}, "pinned function bulk IN");
     }
     expect(!apple_usb::findNcmFunctionByCtrl(config, 9).has_value(),

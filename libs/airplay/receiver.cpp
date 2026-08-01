@@ -1582,8 +1582,24 @@ void Receiver::screenStreamLoop(int listen_fd, Bytes key)
                     const auto config = nalu::configToAnnexB(body);
                     if (!config)
                     {
-                        SPDLOG_WARN("[video] could not parse the codec config ({} bytes)",
-                                    body.size());
+                        // The phone opens the screen stream with an empty
+                        // opcode-1 message; that is not a failure, and warning
+                        // about it on every connection trains you to ignore
+                        // this line when it does mean something. Log the header
+                        // at debug so the message can still be identified.
+                        if (body.empty())
+                        {
+                            SPDLOG_DEBUG("[video] empty codec config at stream start, header "
+                                         "{:02x} {:02x} {:02x} {:02x} op={:02x} | {:02x} {:02x} "
+                                         "{:02x} {:02x}",
+                                         header[0], header[1], header[2], header[3], header[4],
+                                         header[5], header[6], header[7], header[8]);
+                        }
+                        else
+                        {
+                            SPDLOG_WARN("[video] could not parse the codec config ({} bytes)",
+                                        body.size());
+                        }
                         continue;
                     }
                     if (config->codec != stream_codec && !last_config.empty())

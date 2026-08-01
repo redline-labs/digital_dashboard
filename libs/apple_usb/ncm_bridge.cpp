@@ -263,6 +263,57 @@ bool hasIpv6Address(const std::string& ifname, const std::string& address)
     return false;
 }
 
+// The link-local the interface actually has, for diagnostics: naming the wrong
+// address is what makes the "which MAC was this derived from?" question
+// answerable at a glance.
+std::string firstLinkLocal(const std::string& ifname)
+{
+    std::ifstream in("/proc/net/if_inet6");
+    std::string hex, index, prefix, scope, flags, name;
+    while (in >> hex >> index >> prefix >> scope >> flags >> name)
+    {
+        if (name != ifname || hex.size() != 32 || hex.compare(0, 4, "fe80") != 0)
+        {
+            continue;
+        }
+        in6_addr addr{};
+        bool parsed = true;
+        for (int i = 0; i < 16 && parsed; ++i)
+        {
+            unsigned byte = 0;
+            const char* start = hex.data() + (i * 2);
+            parsed = std::from_chars(start, start + 2, byte, 16).ec == std::errc{};
+            addr.s6_addr[i] = static_cast<uint8_t>(byte);
+        }
+        char text[INET6_ADDRSTRLEN] = {};
+        if (parsed && ::inet_ntop(AF_INET6, &addr, text, sizeof(text)) != nullptr)
+        {
+            return text;
+        }
+    }
+    return {};
+}
+
+// The kernel adds an address asynchronously once the interface has carrier, so
+// a check made immediately after the triggering event races it.
+bool waitForIpv6Address(const std::string& ifname, const std::string& address,
+                        std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (;;)
+    {
+        if (hasIpv6Address(ifname, address))
+        {
+            return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        ::poll(nullptr, 0, 10);
+    }
+}
+
 bool addIpv6Address(const std::string& ifname, const std::string& address, uint32_t prefix_len)
 {
     const int sock = ::socket(AF_INET6, SOCK_DGRAM, 0);
@@ -302,20 +353,32 @@ bool addIpv6Address(const std::string& ifname, const std::string& address, uint3
         return true;
     }
 
-    // Without CAP_NET_ADMIN we cannot add it -- but the kernel derives the same
-    // EUI-64 link-local from the MAC on its own, so on a persistent TAP the
-    // address we wanted is usually already there. Only a genuine absence is an
-    // error.
-    if (hasIpv6Address(ifname, address))
+    // Without CAP_NET_ADMIN we cannot add it -- but with addrgenmode eui64 the
+    // kernel derives this exact address itself when the interface is brought
+    // up, so on a correctly set up persistent TAP it is already there. Allow a
+    // moment for it in case we raced address generation.
+    if (waitForIpv6Address(ifname, address, std::chrono::milliseconds(500)))
     {
         SPDLOG_DEBUG("[ncm] {} already carries {}, kernel-assigned", ifname, address);
         return true;
     }
 
-    SPDLOG_ERROR("[ncm] adding {}/{} to {} failed: {}. Either grant CAP_NET_ADMIN, or set "
-                 "'ip link set {} addrgenmode eui64' on the persistent TAP so the kernel "
-                 "derives this address itself.",
-                 address, prefix_len, ifname, strerror(saved_errno), ifname);
+    // Do not suggest 'addrgenmode eui64' here: it is almost always already set,
+    // and saying so sends the reader in a circle -- that was the previous
+    // wording and it cost an hour. The address is derived from the MAC at
+    // bring-up, so what actually breaks it is the MAC being set afterwards,
+    // which leaves a link-local derived from the TAP's original random MAC.
+    // The kernel will not replace it: addresses survive carrier loss, and
+    // addrconf neither regenerates on a MAC change nor adds a second
+    // link-local.
+    const std::string have = firstLinkLocal(ifname);
+    SPDLOG_ERROR("[ncm] adding {}/{} to {} failed: {}, and the kernel has not derived it "
+                 "either -- {} carries {} instead, which is derived from a different MAC. "
+                 "Pin the phone's MAC on the persistent TAP before it is brought up "
+                 "(CARPLAY_TAP_MAC in carplay-tap.service, then restart it), or run as "
+                 "root. See docs/carplay_bringup.md stage 6.",
+                 address, prefix_len, ifname, strerror(saved_errno), ifname,
+                 have.empty() ? std::string("no link-local") : have);
     return false;
 }
 
@@ -694,7 +757,10 @@ bool NcmBridge::configureInterface(const std::string& mac)
     if (!mac.empty())
     {
         // The phone dictates the host MAC through iMACAddress; it will not
-        // talk to us if we use the random one the kernel generated.
+        // talk to us if we use the random one the kernel generated. Setting it
+        // late is fine for the MAC itself -- it is only the link-local the
+        // kernel already derived that cannot be revised, and we no longer
+        // depend on that address matching this MAC.
         setInterfaceMac(ifname_, mac, tap_fd_);
     }
     else
@@ -719,7 +785,20 @@ bool NcmBridge::configureInterface(const std::string& mac)
         }
         else
         {
-            SPDLOG_WARN("[ncm] cannot write {} (DAD stays enabled)", dad_path);
+            // Root-owned, so this fails on the unprivileged path -- but
+            // carplay-tap.service already sets it on the persistent TAP. Only
+            // warn when it is genuinely still enabled, otherwise this fires on
+            // every run and trains the reader to ignore [ncm] warnings.
+            std::ifstream in(dad_path);
+            std::string current;
+            if (in && (in >> current) && current == "0")
+            {
+                SPDLOG_DEBUG("[ncm] {} already 0, left alone", dad_path);
+            }
+            else
+            {
+                SPDLOG_WARN("[ncm] cannot write {} (DAD stays enabled)", dad_path);
+            }
         }
     }
 
@@ -728,17 +807,70 @@ bool NcmBridge::configureInterface(const std::string& mac)
         return false;
     }
 
-    // Derive the accessory link-local from whatever MAC the interface actually
-    // ended up with, so a failed "ip link set address" cannot desync the two.
+    // A MAC change here means the link-local the kernel derived when this
+    // interface was brought up is now stale, and nothing we can do without
+    // CAP_NET_ADMIN will dislodge it: addresses survive carrier loss (only
+    // NETDEV_DOWN flushes them), addrconf does not regenerate on
+    // NETDEV_CHANGEADDR, and it will not add a second link-local when one
+    // already exists. Bouncing carrier via TUNSETCARRIER was tried and does
+    // nothing for exactly that reason -- do not re-attempt it.
+    //
+    // The supported unprivileged answer is to pin this MAC on the persistent
+    // TAP *before* it is first brought up, which carplay-tap.service does; the
+    // kernel then derives the right address at boot and this call is a no-op.
     host_mac_ = readSysfsAttr(fs::path("/sys/class/net") / ifname_, "address");
     const std::string& actual_mac = host_mac_;
-    fe80_ = deriveEui64LinkLocal(actual_mac);
+
+    // What we advertise only has to be an address the phone can reach us on.
+    // It goes into CarPlayStartSession and the phone dials it at :7000; NDP
+    // then resolves it to whatever MAC we are presenting. So prefer whatever
+    // link-local the kernel has already put on the interface -- that address is
+    // reachable by definition, and taking it means we never need to add one,
+    // which is the only step here that wanted CAP_NET_ADMIN.
+    //
+    // The EUI-64 derivation below is the fallback for an interface that has no
+    // link-local at all. It matches what LIVI ends up with, but there the match
+    // is incidental: LIVI creates the TAP with the phone's MAC, so the kernel
+    // derives from it anyway.
+    const std::string derived = deriveEui64LinkLocal(actual_mac);
+    std::string existing;
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        do
+        {
+            existing = firstLinkLocal(ifname_);
+        } while (existing.empty() && std::chrono::steady_clock::now() < deadline &&
+                 ::poll(nullptr, 0, 10) >= 0);
+    }
+
+    if (!existing.empty())
+    {
+        fe80_ = existing;
+        if (!derived.empty() && existing != derived)
+        {
+            // Normal on a persistent TAP whose MAC was pinned after bring-up.
+            // Worth one line because it is the difference between this and the
+            // address a reader would predict from the MAC.
+            SPDLOG_INFO("[ncm] {} mac={} -> advertising kernel link-local {} (EUI-64 of this "
+                        "MAC would be {}; the kernel derived from the MAC the interface had "
+                        "when it was brought up)",
+                        ifname_, actual_mac, fe80_, derived);
+        }
+        else
+        {
+            SPDLOG_INFO("[ncm] {} mac={} -> link-local {}", ifname_, actual_mac, fe80_);
+        }
+        return true;
+    }
+
+    fe80_ = derived;
     if (fe80_.empty())
     {
         SPDLOG_ERROR("[ncm] cannot derive fe80 from {} MAC '{}'", ifname_, actual_mac);
         return false;
     }
-    SPDLOG_INFO("[ncm] {} mac={} -> link-local {}", ifname_, actual_mac, fe80_);
+    SPDLOG_INFO("[ncm] {} mac={} -> link-local {} (deriving; interface had none)", ifname_,
+                actual_mac, fe80_);
     if (!addIpv6Address(ifname_, fe80_, 64))
     {
         return false;
