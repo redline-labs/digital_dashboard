@@ -100,36 +100,28 @@ shared-memory fallback is not needed.
 sudo apt install libavcodec-dev libssl-dev iproute2
 ```
 
-**libimobiledevice is *not* a system package here.** It, libplist, libusbmuxd
-and libimobiledevice-glue are fetched and built from pinned sources by
-`third_party/libimobiledevice.cmake`. Do not install the `-dev` packages
-expecting them to be used — they will not be, and having them installed does not
-change the build.
+**There is no libimobiledevice dependency.** The whole Apple-side stack is in
+this tree: property lists (`libs/plist`), the usbmux client and server, the
+lockdown handshake, client-certificate TLS, and pairing (`libs/apple_usb`). Do
+not install `libimobiledevice-dev` or `libplist-dev` expecting them to be used.
 
-That is deliberate. We depend on version-specific behaviour (libusbmuxd's
-24 → 25 character dashed UDID normalisation, and 1.4.0's lack of an environment
-override for its on-disk pair-record fallback — both noted in
-`libs/apple_usb/lockdown.cpp`), and the distro version is whatever the build
-host happens to ship. Debian stable is still on 1.3.0.
+It was a vendored dependency until 2026-07-31 and was removed once our
+implementation had replaced every part of it. What that dependency was for, and
+what replaced it, is in stage 4 below.
 
-Note the four tags are pinned **as a set**, not independently: libimobiledevice
-1.3.0 does not compile against libplist 2.6.0, because 1.3.0 carries its own
-`enum plist_format_t` in `common/utils.h` that libplist later absorbed into
-`plist.h`, and the enumerators collide. If you bump one, re-check the others —
-and re-derive the source lists, which come from each project's `Makefile.am` at
-its tag and are not stable across versions.
-
-We compile a subset of upstream's translation units rather than using its
-autotools build, which also sidesteps `libtatsu`: `configure.ac` requires it,
-but no library source references it — only `tools/ideviceimagemounter.c`.
+The stock `libimobiledevice` command-line tools remain useful for debugging
+because `UsbmuxdServer` speaks the standard usbmux protocol — if you happen to
+have them installed, `USBMUXD_SOCKET_ADDRESS=UNIX:<our-socket> ideviceinfo`
+still works against it. Nothing in the build needs them.
 
 ### Building on macOS
 
 `apple_usb` is no longer Linux-gated. The library splits along a hardware line:
 
 - **Portable** — `muxd.cpp` (the usbmux state machine), `usbmuxd_server.cpp`
-  (the socket server), `lockdown.cpp` (the libimobiledevice client). Plain C++
-  and POSIX sockets, and where the logic worth unit testing lives.
+  (the socket server), `usbmux_client.cpp`, `lockdown_client.cpp`,
+  `tls_stream.cpp`, `pair_record.cpp` and `carkit_channel.cpp`. Plain C++,
+  POSIX sockets and OpenSSL, and where the logic worth unit testing lives.
 - **Linux only** — `usb_device.cpp` (raw usbfs ioctls) and `ncm_bridge.cpp`
   (TUN/TAP). On other hosts these are replaced by `usb_device_stub.cpp`.
 
@@ -285,7 +277,7 @@ sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep -E '\[muxd\]|\[usbmuxd\
 
 ## 4. Lockdown pairing + carkit TLS channel
 
-This is the stage that depends on libimobiledevice talking to *our* socket.
+This is the stage that runs the lockdown handshake over *our* mux socket.
 
 ```bash
 sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep '\[carkit\]'
@@ -334,32 +326,33 @@ that looks like a mux bug but is a string-format bug.
   fresh pair.
 - `could not start com.apple.carkit.service` → the phone did not expose the service.
   Confirm it is genuinely in config 6 (stage 2) — carkit only exists there.
-- TLS enable fails → version skew in libimobiledevice; try a newer release.
+- TLS enable fails → check `[tls]` at `--verbose`; the handshake logs the
+  negotiated version and cipher, and the client certificate comes from the pair
+  record's root key pair.
 
-### Replacing libimobiledevice: the native backend
+### How stage 4 replaced libimobiledevice
 
-Stage 4 runs on our own code by default. `--lockdown-backend` selects:
+Stage 4 is `UsbmuxClient` for the transport, `LockdownClient` for the handshake,
+`TlsStream` for both TLS sessions (the lockdown session and the carkit service
+connection), and `PairRecord` for the identity — including minting one, so a
+device that has never been trusted pairs on our code.
 
-```bash
-./build/nodes/carplay/carplay --max-stage 4 --verbose   # native (ours, default)
-./build/nodes/carplay/carplay --max-stage 4 --lockdown-backend libimobiledevice --verbose
-```
-
-`native` is the whole path: `UsbmuxClient` for the transport, `LockdownClient`
-for the handshake, `TlsStream` for both TLS sessions (the lockdown session and
-the carkit service connection), `PairRecord` for the identity -- including
-minting one, so a device that has never been trusted pairs on our code.
+This section is history rather than instructions: libimobiledevice is gone. It is
+kept because the two bugs below were found by diffing against its source, and
+because both are the kind that will be reintroduced by anyone who assumes the
+obvious implementation is correct.
 
 Verified on hardware 2026-07-31:
 
-- **Pairing from nothing.** With the state dir emptied, `native` reads the
+- **Pairing from nothing.** With the state dir emptied, stage 4 reads the
   device public key, mints a root/host/device certificate set, sends `Pair`, and
   stores the record the device's answer completes. The result is byte-compatible
   with libimobiledevice's: same fields, same sizes (root 948, host 964, device
   1005, keys 1704, escrow bag 32), same extensions, same `sha256WithRSAEncryption`.
-- **Interop both directions.** libimobiledevice runs a full session to
-  `AuthenticationSucceeded` on a record `native` generated, without re-pairing.
-  `native` does the same on a record libimobiledevice wrote.
+- **Interop both directions**, while libimobiledevice was still present to
+  check against: it ran a full session to `AuthenticationSucceeded` on a record
+  we generated, without re-pairing, and we did the same on a record it wrote.
+  Records written by either remain readable.
 - **Stability.** 25 consecutive `--max-stage 5` runs with no channel loss, plus
   a 150-second single session. Before the fix below it was 6 failures in 13.
 
@@ -370,13 +363,15 @@ a chain by name. That is expected, identical for libimobiledevice's own records,
 and not a defect; `X509_verify` against the root's key is the real check, and
 `apple_usb_test_pair_record` does exactly that.
 
-`libimobiledevice` stays available as a fallback and, more usefully, as the
-reference to diff against when something regresses. That is how both of the
-robustness bugs below were found.
+Both of the robustness bugs below were found by diffing against
+libimobiledevice's source while it was still vendored. If stage 4 regresses and
+the cause is not obvious, that source is still the best reference — the relevant
+functions are `idevice_connection_receive_timeout`, `lockdownd_start_session`
+and `pair_record_generate_keys_and_certs`.
 
 #### The read-ordering bug, and why the reference's semantics matter
 
-Two fixes took `native` from intermittently broken to solid. Both came out of
+Two fixes took stage 4 from intermittently broken to solid. Both came out of
 reading libimobiledevice's source rather than from the symptom.
 
 1. **`recv` must gather, not return the first chunk.** This was the whole
@@ -421,9 +416,9 @@ Two more differences from the reference, both found the same way and both real:
   is *not* cleared by tapping Trust.
 - `the phone rejected our pair record` → the record is stale (phone reset, trust
   revoked). `native` re-pairs automatically; no need to delete the state dir.
-- Anything else at stage 4 → run the same command with
-  `--lockdown-backend libimobiledevice`. If that works and `native` does not, the
-  difference is ours and the reference source is the place to look.
+- Anything else at stage 4 → run with `--verbose` and read the `[carkit]`,
+  `[lockdown]` and `[tls]` lines in order; each stage of the handshake logs where
+  it got to. `apple_usb_muxctl` isolates the transport underneath it.
 
 ## 5. iAP2 link layer, identification, MFi auth
 
@@ -1202,10 +1197,10 @@ Not all stages below are implemented yet. Current state:
 
 | Layer | State |
 |---|---|
-| USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
+| USB detect, config-6 switch, usbmux, usbmuxd socket | **verified on hardware 2026-07-21** (stages 2–3) |
 | Property lists (binary + XML), ours | **replaces libplist** in the usbmuxd server; differential-tested against libplist, verified on hardware |
 | usbmux client, ours | **replaces libusbmuxd**'s role; mock-tested and verified on hardware via `apple_usb_muxctl` |
-| lockdown client + TLS + pair record + pairing, ours | **default** — replaces libimobiledevice for stage 4. Pairs from scratch, interops with libimobiledevice's records both ways, 25 consecutive clean runs |
+| lockdown client + TLS + pair record + pairing, ours | **the only implementation** — libimobiledevice removed 2026-07-31. Pairs from scratch; 25 consecutive clean runs |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |

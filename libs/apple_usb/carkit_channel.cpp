@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The carkit channel on our own stack: UsbmuxClient for the transport,
-// LockdownClient for the handshake, TlsStream for both TLS sessions. This is the
-// replacement for what lockdown.cpp does through libimobiledevice, and the
-// dispatcher at the bottom is what chooses between them.
+// The carkit channel: UsbmuxClient for the transport, LockdownClient for the
+// handshake, TlsStream for both TLS sessions, PairRecord for the identity.
 #include "apple_usb/lockdown.h"
 
 #include "apple_usb/lockdown_client.h"
@@ -20,11 +18,6 @@
 
 namespace apple_usb
 {
-
-// Defined in lockdown.cpp.
-std::unique_ptr<CarkitChannel> openCarkitChannelViaLibimobiledevice(
-    const std::string& udid, const std::string& usbmux_socket_path,
-    const std::string& pair_record_dir, const std::function<bool()>& abort);
 
 namespace
 {
@@ -426,10 +419,17 @@ std::unique_ptr<LockdownClient> openSession(UsbmuxClient& mux, const MuxDevice& 
     }
 }
 
-std::unique_ptr<CarkitChannel> openNative(const std::string& udid,
-                                          const std::string& usbmux_socket_path,
-                                          const std::function<bool()>& abort)
+}  // namespace
+
+std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
+                                                 const std::string& usbmux_socket_path,
+                                                 const std::string& pair_record_dir,
+                                                 std::function<bool()> abort)
 {
+    // The pair records live behind the mux, not on disk here; our own
+    // UsbmuxdServer owns that store and answers Read/SavePairRecord out of it.
+    (void)pair_record_dir;
+
     UsbmuxClient mux(usbmux_socket_path);
 
     const auto device = mux.findDevice(udid);
@@ -527,23 +527,6 @@ std::unique_ptr<CarkitChannel> openNative(const std::string& udid,
 
     SPDLOG_INFO("[carkit] carkit TLS channel up (iAP2) udid={}", udid.substr(0, 8));
     return std::make_unique<NativeCarkitChannel>(std::move(stream), std::move(lockdown));
-}
-
-}  // namespace
-
-std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
-                                                 const std::string& usbmux_socket_path,
-                                                 const std::string& pair_record_dir,
-                                                 std::function<bool()> abort,
-                                                 LockdownBackend backend)
-{
-    if (backend == LockdownBackend::Libimobiledevice)
-    {
-        SPDLOG_INFO("[carkit] using the libimobiledevice lockdown backend");
-        return openCarkitChannelViaLibimobiledevice(udid, usbmux_socket_path, pair_record_dir,
-                                                    abort);
-    }
-    return openNative(udid, usbmux_socket_path, abort);
 }
 
 }  // namespace apple_usb

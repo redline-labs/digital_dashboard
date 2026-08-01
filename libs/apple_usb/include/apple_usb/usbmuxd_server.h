@@ -17,9 +17,12 @@ namespace apple_usb
 
 // Exposes a MuxHost through a unix-domain socket that speaks the standard
 // usbmuxd plist protocol (ListDevices / Connect / ReadBUID / Read+SavePairRecord).
-// libimobiledevice is pointed at this socket via USBMUXD_SOCKET_ADDRESS so it
-// can run lockdown + TLS on top of our config-6 mux, exactly as LIVI points
-// pymobiledevice3 at its own socket.
+// UsbmuxClient connects to it and runs lockdown + TLS on top of our config-6
+// mux, the same delegation LIVI makes to pymobiledevice3 over its own socket.
+//
+// The protocol is the standard one rather than something of our own so that the
+// stock tools still work against this socket for debugging:
+//   USBMUXD_SOCKET_ADDRESS=UNIX:<path> ideviceinfo
 //
 // Pair records and the system BUID are stored as .plist files under state_dir
 // (mirrors /var/lib/lockdown), so a phone re-pairs only once.

@@ -23,7 +23,6 @@ set(APPLE_USB_SOURCES
     tls_stream.cpp
     lockdown_client.cpp
     carkit_channel.cpp
-    lockdown.cpp
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -45,9 +44,8 @@ target_link_libraries(apple_usb PRIVATE
     spdlog::spdlog
 )
 
-# Our own property lists. The usbmuxd socket server, the usbmux client and the
-# lockdown client are off libplist entirely; what remains of the vendored stack
-# below still uses its own copy internally.
+# Our own property lists, used by the usbmuxd socket server, the usbmux client,
+# the lockdown client and the pair record store.
 target_link_libraries(apple_usb PUBLIC plist)
 
 # The native lockdown backend runs its own TLS: two client-certificate sessions
@@ -55,17 +53,6 @@ target_link_libraries(apple_usb PUBLIC plist)
 # record's root key pair.
 find_package(OpenSSL REQUIRED)
 target_link_libraries(apple_usb PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-
-# libimobiledevice and libplist come from third_party/libimobiledevice.cmake,
-# built from pinned sources rather than whatever the host distro ships -- we
-# depend on version-specific behaviour (see the UDID normalisation note in
-# lockdown.cpp). The old pkg-config path and its compiled-out fallback are gone;
-# the dependency is always present now, so lockdown is always built.
-target_link_libraries(apple_usb PUBLIC limd)
-target_compile_definitions(apple_usb
-    PRIVATE APPLE_USB_HAVE_LIBIMOBILEDEVICE=1
-    PUBLIC  APPLE_USB_HAVE_LOCKDOWN=1
-)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Flag it once at configure time so nobody mistakes a green build here for

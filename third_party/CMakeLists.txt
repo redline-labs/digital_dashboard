@@ -18,11 +18,5 @@ include(capnproto.cmake)
 include(exprtk.cmake)
 include(lexy.cmake)
 
-# libimobiledevice and its three siblings, built from a subset of upstream
-# sources via our own CMakeLists. This is the only way we consume them -- there
-# is no system-package path, so the version the build host happens to ship
-# cannot change behaviour we depend on.
-include(libimobiledevice.cmake)
-
 # LGPL Compliance: Create source code availability notice
 file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)

@@ -33,8 +33,9 @@ int b64Value(char c)
     return (p != nullptr && c != '\0') ? static_cast<int>(p - kB64Alphabet) : -1;
 }
 
-// Wrapped at `columns` characters per line with `indent` before each, matching
-// libplist's layout so encoder output can be compared byte for byte.
+// Wrapped at `columns` characters per line with `indent` before each. Note that
+// libplist wraps at 68 rather than 60, so <data> is the one element where our
+// output is not byte-identical to its -- semantically the same either way.
 std::string b64Encode(const Bytes& in, const std::string& indent, size_t columns)
 {
     std::string raw;

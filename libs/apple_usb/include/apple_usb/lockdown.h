@@ -34,37 +34,28 @@ class CarkitChannel
     virtual bool alive() const = 0;
 };
 
-// Which lockdown implementation to use. Both reach the same phone through the
-// same socket; the switch exists so the two can be compared against real
-// hardware while the replacement is finished.
-enum class LockdownBackend
-{
-    // Ours: apple_usb's UsbmuxClient + LockdownClient + TlsStream + PairRecord.
-    // The default, and the whole path -- pairing included.
-    Native,
-    // The vendored libimobiledevice. Kept as a fallback while it is still a
-    // dependency, and as the reference to diff against when something regresses.
-    Libimobiledevice,
-};
-
 // Establish the carkit iAP2 channel for a phone reachable through the given
 // usbmuxd-compatible socket (our UsbmuxdServer). Runs the lockdown handshake and
-// client-cert TLS, then starts com.apple.carkit.service. Returns nullptr on
-// failure.
+// client-certificate TLS, then starts com.apple.carkit.service. Returns nullptr
+// on failure.
 //
-// A first pair blocks on the "Trust This Computer?" prompt, which nobody can
-// put a deadline on, so this waits indefinitely for it. `abort` is polled about
-// once a second while waiting -- return true from it to give up (the node is
-// shutting down, or the phone was unplugged). It may be empty, in which case
-// the wait really is unbounded.
+// Built on apple_usb's own stack -- UsbmuxClient for the transport,
+// LockdownClient for the handshake, TlsStream for both TLS sessions, PairRecord
+// for the identity. See carkit_channel.cpp.
 //
-// Native pairs a device that has no record, re-pairs one whose record the device
-// has since rejected, and reuses an existing record otherwise -- including one
-// libimobiledevice wrote, and vice versa.
-std::unique_ptr<CarkitChannel> openCarkitChannel(
-    const std::string& udid, const std::string& usbmux_socket_path,
-    const std::string& pair_record_dir, std::function<bool()> abort = {},
-    LockdownBackend backend = LockdownBackend::Native);
+// Pairs a device that has no record, re-pairs one whose record the device has
+// since rejected, and reuses an existing record otherwise -- including records
+// written by libimobiledevice, which this replaced.
+//
+// A first pair blocks on the "Trust This Computer?" prompt, which nobody can put
+// a deadline on, so this waits indefinitely for it. `abort` is polled about once
+// a second while waiting -- return true from it to give up (the node is shutting
+// down, or the phone was unplugged). It may be empty, in which case the wait
+// really is unbounded.
+std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
+                                                 const std::string& usbmux_socket_path,
+                                                 const std::string& pair_record_dir,
+                                                 std::function<bool()> abort = {});
 
 }  // namespace apple_usb
 

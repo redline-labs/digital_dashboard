@@ -10,10 +10,13 @@
 namespace plist
 {
 
-// Serializes to an Apple XML property list, DOCTYPE and all. The output is the
-// shape libplist emits -- tab-indented, `<data>` wrapped at 60 columns -- because
-// the peers that read it are libplist-based and matching them keeps differential
-// testing meaningful.
+// Serializes to an Apple XML property list, DOCTYPE and all. Tab-indented, in
+// libplist's layout, which the peers reading it are written against -- for
+// scalar and container elements that match is byte for byte.
+//
+// `<data>` is the exception: libplist wraps base64 at 68 columns and this wraps
+// at 60. Both parse either way, so the difference is cosmetic; it is called out
+// because the test suite asserts the match for everything else.
 std::string encodeXml(const Value& root);
 
 // Parses an Apple XML property list. Returns nullopt when the document is

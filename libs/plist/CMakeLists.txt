@@ -24,23 +24,12 @@ target_link_libraries(plist PRIVATE
 )
 
 # Round-trip and known-answer tests, runnable without hardware.
-foreach(test binary xml)
+# libplist_vectors carries documents captured from libplist while it was still a
+# dependency; see the file header for why they are frozen rather than generated.
+foreach(test binary xml libplist_vectors)
     add_executable(plist_test_${test} test_${test}.cpp)
     target_link_libraries(plist_test_${test} PRIVATE
         plist
         spdlog::spdlog
     )
 endforeach()
-
-# Differential test against libplist, the implementation on the other end of
-# every usbmux and lockdown socket we talk to. Built only while that dependency
-# is still vendored -- it is the evidence for each step that removes a piece of
-# it, and it goes away with the last one.
-if(TARGET vendored_plist)
-    add_executable(plist_test_libplist_conformance test_libplist_conformance.cpp)
-    target_link_libraries(plist_test_libplist_conformance PRIVATE
-        plist
-        vendored_plist
-        spdlog::spdlog
-    )
-endif()

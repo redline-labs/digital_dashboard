@@ -106,8 +106,10 @@ on any platform:
 ```
 
 Hardware bring-up is documented step-by-step in [docs/carplay_bringup.md](docs/carplay_bringup.md).
-Native CarPlay requires an Apple MFi authentication coprocessor (see `libs/apple_mfi_ic`)
-and the `libimobiledevice`/`libplist` development packages.
+Native CarPlay requires an Apple MFi authentication coprocessor (see `libs/apple_mfi_ic`).
+No `libimobiledevice`/`libplist` packages are needed — the property list codec,
+usbmux client and server, lockdown handshake, TLS and pairing are all in-tree
+(`libs/plist`, `libs/apple_usb`).
 
 
 ## Third-Party Libraries
