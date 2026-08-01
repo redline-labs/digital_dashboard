@@ -45,6 +45,22 @@ struct PairRecord
 
     // Serializes back to a binary plist, the format the records on disk use.
     std::vector<uint8_t> encode() const;
+
+    // Mints a fresh identity for a device that has never been paired.
+    //
+    // Three certificates come out of it, all 10-year, all serial 0, all signed
+    // with SHA-256 by a root key that exists only for this pairing:
+    //
+    //   root    self-signed, CA:TRUE. The TLS client identity afterwards.
+    //   host    CA:FALSE, signed by root.
+    //   device  CA:FALSE, wraps the device's own public key, signed by root.
+    //
+    // `device_public_key_pem` is what GetValue("DevicePublicKey") returned. The
+    // result still has no escrow bag -- the device supplies that in its answer
+    // to the Pair request.
+    static std::optional<PairRecord> generate(const std::vector<uint8_t>& device_public_key_pem,
+                                              const std::string& system_buid,
+                                              const std::string& host_id);
 };
 
 }  // namespace apple_usb

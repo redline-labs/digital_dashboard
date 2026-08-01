@@ -338,57 +338,92 @@ that looks like a mux bug but is a string-format bug.
 
 ### Replacing libimobiledevice: the native backend
 
-Stage 4 has two implementations, chosen with `--lockdown-backend`:
+Stage 4 runs on our own code by default. `--lockdown-backend` selects:
 
 ```bash
-./build/nodes/carplay/carplay --max-stage 4 --verbose   # libimobiledevice (default)
-./build/nodes/carplay/carplay --max-stage 4 --lockdown-backend native --verbose
+./build/nodes/carplay/carplay --max-stage 4 --verbose   # native (ours, default)
+./build/nodes/carplay/carplay --max-stage 4 --lockdown-backend libimobiledevice --verbose
 ```
 
-`native` is ours end to end: `UsbmuxClient` for the transport, `LockdownClient`
+`native` is the whole path: `UsbmuxClient` for the transport, `LockdownClient`
 for the handshake, `TlsStream` for both TLS sessions (the lockdown session and
-the carkit service connection), `PairRecord` for the stored identity. It reaches
-`[carkit] carkit TLS channel up (iAP2)` and the iAP2 session on top of it
-negotiates, identifies and authenticates against the MFi coprocessor exactly as
-the libimobiledevice path does.
+the carkit service connection), `PairRecord` for the identity -- including
+minting one, so a device that has never been trusted pairs on our code.
 
-It is **not the default yet**, for two reasons:
+Verified on hardware 2026-07-31:
 
-1. **It cannot pair.** It can use a pair record but not create one, so a device
-   that has never been trusted needs one run on `--lockdown-backend
-   libimobiledevice` first. Pairing means RSA key generation and X.509
-   certificate issuance (libimobiledevice's `common/userpref.c`), which is the
-   last real piece still to write.
-2. **Its first session is sometimes reset.** Roughly half of process starts, the
-   phone RSTs the carkit connection about 0.9 s after the channel comes up,
-   right after `AuthenticationSucceeded`. The pipeline retries and the second
-   session is stable for as long as it is left running, so it recovers -- but it
-   is a real difference: measured **0/8** runs affected on `libimobiledevice`
-   against **6/13** on `native`.
+- **Pairing from nothing.** With the state dir emptied, `native` reads the
+  device public key, mints a root/host/device certificate set, sends `Pair`, and
+  stores the record the device's answer completes. The result is byte-compatible
+  with libimobiledevice's: same fields, same sizes (root 948, host 964, device
+  1005, keys 1704, escrow bag 32), same extensions, same `sha256WithRSAEncryption`.
+- **Interop both directions.** libimobiledevice runs a full session to
+  `AuthenticationSucceeded` on a record `native` generated, without re-pairing.
+  `native` does the same on a record libimobiledevice wrote.
+- **Stability.** 25 consecutive `--max-stage 5` runs with no channel loss, plus
+  a 150-second single session. Before the fix below it was 6 failures in 13.
 
-What the second one is *not*, all ruled out by measurement rather than reasoning:
+The certificates carry **empty subject and issuer names**, which is Apple's
+design and what libimobiledevice does too. `openssl verify` therefore reports
+"self-signed certificate" for the host and device certificates -- it cannot build
+a chain by name. That is expected, identical for libimobiledevice's own records,
+and not a defect; `X509_verify` against the root's key is the real check, and
+`apple_usb_test_pair_record` does exactly that.
 
-- **Not the escrow bag.** `native` originally sent one with `StartService`;
-  libimobiledevice's `lockdownd_start_service` passes `send_escrow_bag=0`.
-  Matching it is correct and was kept, but it did not change the rate.
-- **Not the lockdown session being dropped early.** A service only lives as long
-  as the session that started it, and `NativeCarkitChannel` now holds the
-  `LockdownClient` for exactly that reason. This *was* a real bug -- without it
-  the channel died every single time -- but fixing it left the intermittent case.
-- **Not `StopSession` on teardown.** Present and absent both measured within
-  noise of each other; libimobiledevice sends it, so ours does too.
-- **Not the lockdown stream's lifetime.** Both backends hold `sport=1
-  dport=62078` open for the whole session; verified in the logs.
+`libimobiledevice` stays available as a fallback and, more usefully, as the
+reference to diff against when something regresses. That is how both of the
+robustness bugs below were found.
 
-One real bug *was* found and fixed while chasing it, and it is worth knowing
-independently of this symptom: `TlsStream::recvSome` polled the socket before
-calling `SSL_read`. That looks equivalent to the reverse order and is not.
-OpenSSL buffers whole records, so once a large message (a 60 KB album artwork
-frame, say) is split across reads, the remaining plaintext is already decrypted
-and held while the socket has nothing left to report -- and polling first waits
-out the entire timeout before returning data it was already holding. `SSL_read`
-first, poll only on `WANT_READ`, on a non-blocking socket. That took the failure
-rate from 3/4 to 1/4 on its own.
+#### The read-ordering bug, and why the reference's semantics matter
+
+Two fixes took `native` from intermittently broken to solid. Both came out of
+reading libimobiledevice's source rather than from the symptom.
+
+1. **`recv` must gather, not return the first chunk.** This was the whole
+   intermittency: 6 failures in 13 runs before, 0 in 25 after. The phone would
+   reset the carkit connection about 0.9 s after the channel came up, on the
+   first session of a process.
+
+   `idevice_connection_receive_timeout` loops `SSL_read` until the caller's
+   buffer is *full*, returning a partial buffer only once a read times out, and
+   the iAP2 link layer was written against those semantics. Returning the first
+   available chunk instead hands back as little as a dozen bytes per call with a
+   full link-layer poll cycle between calls, so a burst -- the post-authentication
+   flurry, or a 60 KB album artwork frame -- leaves the socket backed up. Our own
+   `UsbmuxdServer` relay then blocks writing into that socket, which stalls the
+   thread pumping the USB mux, which stalls every other stream on it.
+
+   Recorded because it was tested and **rejected**: this is not about ACK volume.
+   Runs that died sent 8 ACKs between channel-up and the reset; healthy runs send
+   11 over the same span. Fewer, not more.
+
+2. **`SSL_read` before `poll`, never after.** OpenSSL buffers whole records, so
+   once a large message is split across reads the remaining plaintext is already
+   decrypted and held while the socket has nothing to report. Polling first waits
+   out the entire timeout before returning data it was already holding. The fix
+   is `SSL_read` first and `poll` only on `WANT_READ`, which needs a non-blocking
+   socket. This alone took the failure rate from 3/4 to 1/4.
+
+Two more differences from the reference, both found the same way and both real:
+
+- **A service dies with the session that started it.** Dropping the
+  `LockdownClient` once `StartService` returned killed the carkit channel about a
+  second later, every time. `NativeCarkitChannel` owns it for exactly that
+  reason, and `LockdownClient`'s destructor sends `StopSession` the way
+  `lockdownd_client_free` does.
+- **No escrow bag on `StartService`.** libimobiledevice's
+  `lockdownd_start_service` passes `send_escrow_bag=0`; ours originally sent one.
+  It did not turn out to affect stability, but matching the reference is correct.
+
+**Triage.**
+- `the phone is locked` → lockdown returned `PasswordProtected`. Unlock the phone
+  and keep it awake. This is reported before the trust prompt can appear, and it
+  is *not* cleared by tapping Trust.
+- `the phone rejected our pair record` → the record is stale (phone reset, trust
+  revoked). `native` re-pairs automatically; no need to delete the state dir.
+- Anything else at stage 4 → run the same command with
+  `--lockdown-backend libimobiledevice`. If that works and `native` does not, the
+  difference is ours and the reference source is the place to look.
 
 ## 5. iAP2 link layer, identification, MFi auth
 
@@ -1170,7 +1205,7 @@ Not all stages below are implemented yet. Current state:
 | USB detect, config-6 switch, usbmux, usbmuxd socket, lockdown (libimobiledevice) | **verified on hardware 2026-07-21** (stages 2–4) |
 | Property lists (binary + XML), ours | **replaces libplist** in the usbmuxd server; differential-tested against libplist, verified on hardware |
 | usbmux client, ours | **replaces libusbmuxd**'s role; mock-tested and verified on hardware via `apple_usb_muxctl` |
-| lockdown client + TLS + pair record, ours | reaches the carkit channel on hardware, but **not default** — cannot pair, and its first session is sometimes reset (see stage 4) |
+| lockdown client + TLS + pair record + pairing, ours | **default** — replaces libimobiledevice for stage 4. Pairs from scratch, interops with libimobiledevice's records both ways, 25 consecutive clean runs |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | **verified on hardware 2026-07-21** (stage 6) |

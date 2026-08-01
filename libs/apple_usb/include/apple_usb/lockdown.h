@@ -39,10 +39,11 @@ class CarkitChannel
 // hardware while the replacement is finished.
 enum class LockdownBackend
 {
-    // Ours: apple_usb's UsbmuxClient + LockdownClient + TlsStream. Cannot pair a
-    // device it has no record for yet -- see openCarkitChannel below.
+    // Ours: apple_usb's UsbmuxClient + LockdownClient + TlsStream + PairRecord.
+    // The default, and the whole path -- pairing included.
     Native,
-    // The vendored libimobiledevice. Still the only path that can pair.
+    // The vendored libimobiledevice. Kept as a fallback while it is still a
+    // dependency, and as the reference to diff against when something regresses.
     Libimobiledevice,
 };
 
@@ -57,18 +58,13 @@ enum class LockdownBackend
 // shutting down, or the phone was unplugged). It may be empty, in which case
 // the wait really is unbounded.
 //
-// Two limits keep Native off the default path for now:
-//
-//   * It needs a pair record to already exist. It can use one but cannot create
-//     one, so a device that has never been paired needs Libimobiledevice once.
-//   * The first session of a process is reset by the phone about a second in,
-//     roughly half the time. The pipeline retries and the second session is
-//     stable, so it recovers -- but Libimobiledevice does not do it at all
-//     (0/8 runs vs 6/13). See docs/carplay_bringup.md stage 4.
+// Native pairs a device that has no record, re-pairs one whose record the device
+// has since rejected, and reuses an existing record otherwise -- including one
+// libimobiledevice wrote, and vice versa.
 std::unique_ptr<CarkitChannel> openCarkitChannel(
     const std::string& udid, const std::string& usbmux_socket_path,
     const std::string& pair_record_dir, std::function<bool()> abort = {},
-    LockdownBackend backend = LockdownBackend::Libimobiledevice);
+    LockdownBackend backend = LockdownBackend::Native);
 
 }  // namespace apple_usb
 

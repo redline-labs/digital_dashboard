@@ -269,6 +269,85 @@ std::optional<plist::Value> LockdownClient::getValue(const std::string& domain,
     return *value;
 }
 
+std::optional<PairRecord> LockdownClient::pair(const std::string& system_buid,
+                                               const std::string& host_id,
+                                               LockdownError* error_out)
+{
+    const auto fail = [&](LockdownError error) -> std::optional<PairRecord> {
+        if (error_out != nullptr)
+        {
+            *error_out = error;
+        }
+        return std::nullopt;
+    };
+
+    const auto public_key = getValue("", "DevicePublicKey");
+    if (!public_key || !public_key->isData())
+    {
+        SPDLOG_DEBUG("[lockdown] the device would not give up its public key");
+        return fail(LockdownError::Transport);
+    }
+
+    // Read the WiFi address before pairing rather than after. libimobiledevice
+    // notes that asking afterwards makes iOS 7 drop the connection, and the
+    // value is only wanted for the stored record either way.
+    std::string wifi_mac;
+    if (const auto wifi = getValue("", "WiFiAddress"); wifi && wifi->isString())
+    {
+        wifi_mac = wifi->asString();
+    }
+
+    auto record = PairRecord::generate(public_key->asData(), system_buid, host_id);
+    if (!record)
+    {
+        return fail(LockdownError::Other);
+    }
+    record->wifi_mac_address = wifi_mac;
+
+    plist::Value request = requestDict("Pair");
+    // The certificates and identifiers only. The private keys are ours and never
+    // go on the wire.
+    plist::Value sent = plist::Value::dict();
+    sent.set("DeviceCertificate", plist::Value::data(record->device_certificate));
+    sent.set("HostCertificate", plist::Value::data(record->host_certificate));
+    sent.set("RootCertificate", plist::Value::data(record->root_certificate));
+    sent.set("SystemBUID", plist::Value::string(record->system_buid));
+    sent.set("HostID", plist::Value::string(record->host_id));
+    request.set("PairRecord", std::move(sent));
+    // Without this the device collapses several distinct refusals into a single
+    // generic one, and "the user has not answered yet" stops being separable
+    // from "the user said no".
+    plist::Value options = plist::Value::dict();
+    options.set("ExtendedPairingErrors", plist::Value::boolean(true));
+    request.set("PairingOptions", std::move(options));
+
+    const auto reply = transact(request);
+    if (!reply)
+    {
+        return fail(LockdownError::Transport);
+    }
+
+    const LockdownError result = checkResult(*reply, "Pair");
+    if (result != LockdownError::None)
+    {
+        return fail(result);
+    }
+
+    // The device returns the escrow bag on a successful pair, and it belongs in
+    // the stored record -- it is what later lets a service reach data protected
+    // while the phone is locked.
+    if (const plist::Value* bag = reply->find("EscrowBag"); bag != nullptr && bag->isData())
+    {
+        record->escrow_bag = bag->asData();
+    }
+
+    if (error_out != nullptr)
+    {
+        *error_out = LockdownError::None;
+    }
+    return record;
+}
+
 LockdownError LockdownClient::startSession(const PairRecord& record)
 {
     if (record.host_id.empty())

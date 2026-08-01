@@ -14,6 +14,8 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <optional>
+#include <random>
 #include <thread>
 
 namespace apple_usb
@@ -83,6 +85,30 @@ class NativeCarkitChannel : public CarkitChannel
         return true;
     }
 
+    // Gathers until the buffer is full or the timeout expires, rather than
+    // returning the first chunk that arrives.
+    //
+    // This is not a detail, and it is the single change that made the native
+    // backend stable: 0 failures in 13 runs with it, 6 in 13 without. The
+    // symptom it fixes is the phone resetting the carkit connection about a
+    // second after the channel comes up, on the first session of a process.
+    //
+    // These are libimobiledevice's semantics -- idevice_connection_receive_timeout
+    // loops SSL_read until `len` bytes are in hand and returns a partial buffer
+    // only once a read times out -- and the iAP2 link layer above was written
+    // against them.
+    //
+    // The likely mechanism is drain rate rather than anything protocol-level.
+    // Returning the first chunk hands back as little as a dozen bytes per call,
+    // and the link layer runs a whole poll cycle between calls, so a burst (the
+    // post-authentication flurry, or a 60 KB album artwork frame) leaves the
+    // socket backed up. Our own UsbmuxdServer relay blocks writing into that
+    // socket, which stalls the thread pumping the USB mux, which stalls every
+    // other stream on it. Draining up to 8 KB per call keeps that from building.
+    //
+    // Recorded because it was tested and rejected: this is *not* about ACK
+    // volume. Runs that died sent 8 ACKs between channel-up and the reset;
+    // healthy runs send 11 over the same span. Fewer, not more.
     std::vector<uint8_t> recv(size_t max_len, unsigned timeout_ms) override
     {
         if (stream_ == nullptr || !alive_)
@@ -90,15 +116,42 @@ class NativeCarkitChannel : public CarkitChannel
             return {};
         }
         std::vector<uint8_t> buf(max_len);
-        const ssize_t n = stream_->recvSome(buf.data(), max_len, timeout_ms);
-        if (n < 0)
+        size_t received = 0;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+        while (received < max_len)
         {
-            // Distinguished from a timeout only through alive(); the empty
-            // return value looks identical to the caller.
-            alive_ = false;
-            return {};
+            const auto now = std::chrono::steady_clock::now();
+            const auto remaining =
+                now >= deadline
+                    ? 0
+                    : std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+
+            const ssize_t n =
+                stream_->recvSome(buf.data() + received, max_len - received,
+                                  static_cast<unsigned>(remaining));
+            if (n < 0)
+            {
+                // Distinguished from a timeout only through alive(); the empty
+                // return value looks identical to the caller. Whatever was
+                // gathered before the failure is still delivered.
+                alive_ = false;
+                break;
+            }
+            if (n == 0)
+            {
+                break;  // timed out; return what we have, which may be nothing
+            }
+            received += static_cast<size_t>(n);
+
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
         }
-        buf.resize(static_cast<size_t>(n));
+
+        buf.resize(received);
         return buf;
     }
 
@@ -123,9 +176,9 @@ class NativeCarkitChannel : public CarkitChannel
 };
 
 // Whether waiting and trying the handshake again can plausibly succeed. The
-// pending/locked cases are the normal first-pair path; the pair-record ones are
-// retryable only in the sense that re-pairing would fix them, which this backend
-// cannot do -- they are reported and given up on.
+// pending/locked cases are the normal first-pair path. The pair-record ones are
+// not retryable in this loop -- waiting does not fix a record the device has
+// rejected -- so they are reported up and answered by re-pairing.
 bool waitingOnUser(LockdownError error)
 {
     return error == LockdownError::PairingDialogResponsePending ||
@@ -137,12 +190,140 @@ bool retryable(LockdownError error)
     return waitingOnUser(error) || error == LockdownError::Transport;
 }
 
+// The device says it does not know this identity. The record is stale -- the
+// phone was reset, or trust was revoked -- and only a fresh pairing clears it.
+bool recordRejected(LockdownError error)
+{
+    return error == LockdownError::InvalidHostId || error == LockdownError::InvalidPairRecord ||
+           error == LockdownError::MissingPairRecord;
+}
+
+// A version-4 UUID, the form lockdown expects for a HostID.
+std::string generateHostId()
+{
+    std::random_device rd;
+    std::uniform_int_distribution<int> nibble(0, 15);
+    static const char* digits = "0123456789ABCDEF";
+
+    std::string out;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i == 8 || i == 12 || i == 16 || i == 20)
+        {
+            out += '-';
+        }
+        if (i == 12)
+        {
+            out += '4';  // version
+            continue;
+        }
+        if (i == 16)
+        {
+            out += digits[8 + (nibble(rd) % 4)];  // variant: 8, 9, A or B
+            continue;
+        }
+        out += digits[nibble(rd)];
+    }
+    return out;
+}
+
+// Pairs a device that has no record, waiting out the trust prompt for as long as
+// the node runs. Returns the stored record, or nullopt when the user declined or
+// the node is shutting down.
+std::optional<PairRecord> pairDevice(UsbmuxClient& mux, const MuxDevice& device,
+                                     const std::function<bool()>& abort)
+{
+    const std::string system_buid = mux.readBuid().value_or("");
+    if (system_buid.empty())
+    {
+        SPDLOG_ERROR("[carkit] no system BUID; cannot pair");
+        return std::nullopt;
+    }
+    // One HostID for the whole attempt, not one per retry: the device remembers
+    // the identity from the request that raised the prompt, so a fresh one on
+    // each poll would orphan the trust the user just granted.
+    const std::string host_id = generateHostId();
+
+    auto next_reminder = std::chrono::steady_clock::time_point::min();
+    bool asked = false;
+
+    for (;;)
+    {
+        if (abort && abort())
+        {
+            SPDLOG_INFO("[carkit] stopped waiting to pair");
+            return std::nullopt;
+        }
+
+        auto conn = mux.connect(device.device_id, kLockdownPort);
+        if (conn != nullptr)
+        {
+            const int fd = conn->fd();
+            LockdownClient client(std::move(conn), fd, kHostLabel);
+            if (client.queryType())
+            {
+                LockdownError err = LockdownError::Other;
+                auto record = client.pair(system_buid, host_id, &err);
+                if (record)
+                {
+                    SPDLOG_INFO("[carkit] paired with udid={}", device.serial.substr(0, 8));
+                    if (!mux.savePairRecord(device.serial, record->encode()))
+                    {
+                        SPDLOG_WARN("[carkit] the new pair record could not be stored; the phone "
+                                    "will ask to trust this computer again next time");
+                    }
+                    return record;
+                }
+
+                if (err == LockdownError::UserDeniedPairing)
+                {
+                    SPDLOG_ERROR("[carkit] the trust prompt was declined on the phone. Unplug "
+                                 "it, forget this computer under Settings > General > Transfer "
+                                 "or Reset, and retry.");
+                    return std::nullopt;
+                }
+                if (err != LockdownError::PairingDialogResponsePending &&
+                    err != LockdownError::PasswordProtected && err != LockdownError::Transport)
+                {
+                    SPDLOG_ERROR("[carkit] pairing failed: {} ({})", toString(err),
+                                 client.lastErrorName());
+                    return std::nullopt;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_reminder)
+                {
+                    next_reminder = now + kUserReminderInterval;
+                    asked = true;
+                    if (err == LockdownError::PasswordProtected)
+                    {
+                        SPDLOG_WARN("[carkit] the phone is locked; unlock it so it can show the "
+                                    "trust prompt; still waiting to pair");
+                    }
+                    else
+                    {
+                        SPDLOG_WARN("[carkit] the phone is asking to trust this computer -- tap "
+                                    "Trust on it; still waiting to pair");
+                    }
+                }
+            }
+        }
+        (void)asked;
+        std::this_thread::sleep_for(kHandshakeRetryDelay);
+    }
+}
+
 // Opens a lockdown connection and runs StartSession, waiting out the trust
 // prompt. Returns a client with an active session, or nullptr.
 std::unique_ptr<LockdownClient> openSession(UsbmuxClient& mux, const MuxDevice& device,
                                             const PairRecord& record,
-                                            const std::function<bool()>& abort)
+                                            const std::function<bool()>& abort,
+                                            LockdownError* terminal_error)
 {
+    if (terminal_error != nullptr)
+    {
+        *terminal_error = LockdownError::None;
+    }
     auto transient_deadline = std::chrono::steady_clock::now() + kTransientTimeout;
     auto next_reminder = std::chrono::steady_clock::time_point::min();
     bool waited_on_user = false;
@@ -187,6 +368,10 @@ std::unique_ptr<LockdownClient> openSession(UsbmuxClient& mux, const MuxDevice& 
 
                 if (!retryable(err))
                 {
+                    if (terminal_error != nullptr)
+                    {
+                        *terminal_error = err;
+                    }
                     SPDLOG_ERROR("[carkit] lockdown handshake failed: {} ({})", toString(err),
                                  client->lastErrorName());
                     if (err == LockdownError::UserDeniedPairing)
@@ -194,13 +379,6 @@ std::unique_ptr<LockdownClient> openSession(UsbmuxClient& mux, const MuxDevice& 
                         SPDLOG_ERROR("[carkit] the trust prompt was declined on the phone. "
                                      "Unplug it, forget this computer under Settings > General "
                                      "> Transfer or Reset, and retry.");
-                    }
-                    if (err == LockdownError::InvalidHostId ||
-                        err == LockdownError::InvalidPairRecord ||
-                        err == LockdownError::MissingPairRecord)
-                    {
-                        SPDLOG_ERROR("[carkit] this backend cannot re-pair. Delete the state dir "
-                                     "and run once with --lockdown-backend libimobiledevice.");
                     }
                     return nullptr;
                 }
@@ -263,23 +441,41 @@ std::unique_ptr<CarkitChannel> openNative(const std::string& udid,
 
     // The pair record comes from the mux rather than from disk: our own
     // UsbmuxdServer owns that store, and going through it keeps one reader.
-    const auto blob = mux.readPairRecord(device->serial);
-    if (!blob)
+    std::optional<PairRecord> record;
+    if (const auto blob = mux.readPairRecord(device->serial); blob)
     {
-        SPDLOG_ERROR("[carkit] no pair record for udid={}. This backend can use a pair record "
-                     "but cannot create one -- run once with --lockdown-backend "
-                     "libimobiledevice to pair, then this backend will work.",
-                     udid.substr(0, 8));
-        return nullptr;
+        record = PairRecord::parse(*blob);
+        if (!record)
+        {
+            SPDLOG_WARN("[carkit] the stored pair record for udid={} did not parse; pairing again",
+                        udid.substr(0, 8));
+        }
     }
-    const auto record = PairRecord::parse(*blob);
     if (!record)
     {
-        SPDLOG_ERROR("[carkit] the pair record for udid={} did not parse", udid.substr(0, 8));
-        return nullptr;
+        SPDLOG_INFO("[carkit] no usable pair record for udid={}; pairing", udid.substr(0, 8));
+        record = pairDevice(mux, *device, abort);
+        if (!record)
+        {
+            return nullptr;
+        }
     }
 
-    auto lockdown = openSession(mux, *device, *record, abort);
+    LockdownError session_error = LockdownError::None;
+    auto lockdown = openSession(mux, *device, *record, abort, &session_error);
+    if (lockdown == nullptr && recordRejected(session_error))
+    {
+        // The stored record is no longer one the device recognises. Pair again
+        // rather than making someone delete the state directory by hand.
+        SPDLOG_WARN("[carkit] the phone rejected our pair record ({}); pairing again",
+                    toString(session_error));
+        record = pairDevice(mux, *device, abort);
+        if (!record)
+        {
+            return nullptr;
+        }
+        lockdown = openSession(mux, *device, *record, abort, &session_error);
+    }
     if (lockdown == nullptr)
     {
         return nullptr;

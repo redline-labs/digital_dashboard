@@ -71,6 +71,17 @@ class LockdownClient
     // Reads a device property. Empty domain means the global one.
     std::optional<plist::Value> getValue(const std::string& domain, const std::string& key);
 
+    // Pairs with a device that has no record yet: reads its public key, mints an
+    // identity around it, and asks the device to accept it. `error_out` carries
+    // why it failed, which the caller needs -- PairingDialogResponsePending and
+    // PasswordProtected both mean "ask again shortly", everything else does not.
+    //
+    // Must be called before startSession(); pairing is what produces the HostID
+    // a session is opened with. The returned record already carries the escrow
+    // bag from the device's answer and is ready to store.
+    std::optional<PairRecord> pair(const std::string& system_buid, const std::string& host_id,
+                                   LockdownError* error_out = nullptr);
+
     // Starts a session against `record`, enabling TLS on the stream if the
     // device asks for it (it always does). LockdownError::None means the client
     // is ready for startService().

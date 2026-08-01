@@ -83,6 +83,15 @@ target_link_libraries(apple_usb_test_usbmux_client PRIVATE
     spdlog::spdlog
 )
 
+# Pairing crypto: certificate shape, chain, and the on-disk round trip. Needs
+# OpenSSL directly to inspect what the generator produced.
+add_executable(apple_usb_test_pair_record test_pair_record.cpp)
+target_link_libraries(apple_usb_test_pair_record PRIVATE
+    apple_usb
+    OpenSSL::Crypto
+    spdlog::spdlog
+)
+
 # Hardware counterpart to the test above: points our client at a real running
 # UsbmuxdServer. Replaces the `idevice_id -l` check in the bring-up doc, which
 # proved the server using someone else's client.

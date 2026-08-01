@@ -6,6 +6,16 @@
 
 #include <spdlog/spdlog.h>
 
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+#include <ctime>
+#include <memory>
+
 namespace apple_usb
 {
 
@@ -125,6 +135,213 @@ std::vector<uint8_t> PairRecord::encode() const
         dict.set(kWifiMac, plist::Value::string(wifi_mac_address));
     }
     return plist::encodeBinary(dict);
+}
+
+// --- generation --------------------------------------------------------------
+
+namespace
+{
+
+// OpenSSL objects have their own free functions and there are a lot of them
+// here; these keep the generation path free of goto-style cleanup.
+template <typename T, void (*Free)(T*)>
+struct Deleter
+{
+    void operator()(T* p) const { Free(p); }
+};
+using PkeyPtr = std::unique_ptr<EVP_PKEY, Deleter<EVP_PKEY, EVP_PKEY_free>>;
+using X509Ptr = std::unique_ptr<X509, Deleter<X509, X509_free>>;
+using BioPtr = std::unique_ptr<BIO, Deleter<BIO, BIO_free_all>>;
+using Asn1IntPtr = std::unique_ptr<ASN1_INTEGER, Deleter<ASN1_INTEGER, ASN1_INTEGER_free>>;
+using Asn1TimePtr = std::unique_ptr<ASN1_TIME, Deleter<ASN1_TIME, ASN1_TIME_free>>;
+using ExtPtr = std::unique_ptr<X509_EXTENSION, Deleter<X509_EXTENSION, X509_EXTENSION_free>>;
+
+// Ten years. Long enough that a paired car never has to re-prompt for trust
+// because a certificate quietly expired.
+constexpr long kValiditySeconds = 60L * 60L * 24L * 365L * 10L;
+
+bool addExtension(X509* cert, int nid, const char* value)
+{
+    X509V3_CTX ctx;
+    X509V3_set_ctx_nodb(&ctx);
+    X509V3_set_ctx(&ctx, nullptr, cert, nullptr, nullptr, 0);
+
+    ExtPtr ext(X509V3_EXT_conf_nid(nullptr, &ctx, nid, value));
+    if (ext == nullptr)
+    {
+        return false;
+    }
+    return X509_add_ext(cert, ext.get(), -1) == 1;
+}
+
+// The parts every one of the three certificates shares: serial 0, v3, and a
+// ten-year window opening now.
+bool initCertificate(X509* cert)
+{
+    Asn1IntPtr serial(ASN1_INTEGER_new());
+    if (serial == nullptr || ASN1_INTEGER_set(serial.get(), 0) != 1 ||
+        X509_set_serialNumber(cert, serial.get()) != 1)
+    {
+        return false;
+    }
+
+    // 2 means v3 -- the version field is zero-based, and v3 is what carries
+    // extensions.
+    if (X509_set_version(cert, 2) != 1)
+    {
+        return false;
+    }
+
+    const std::time_t now = std::time(nullptr);
+    Asn1TimePtr when(ASN1_TIME_new());
+    if (when == nullptr)
+    {
+        return false;
+    }
+    if (ASN1_TIME_set(when.get(), now) == nullptr || X509_set1_notBefore(cert, when.get()) != 1)
+    {
+        return false;
+    }
+    if (ASN1_TIME_set(when.get(), now + kValiditySeconds) == nullptr ||
+        X509_set1_notAfter(cert, when.get()) != 1)
+    {
+        return false;
+    }
+    return true;
+}
+
+std::vector<uint8_t> bioBytes(BIO* bio)
+{
+    char* data = nullptr;
+    const long len = BIO_get_mem_data(bio, &data);
+    if (len <= 0 || data == nullptr)
+    {
+        return {};
+    }
+    return {data, data + len};
+}
+
+std::vector<uint8_t> certificateToPem(X509* cert)
+{
+    BioPtr bio(BIO_new(BIO_s_mem()));
+    if (bio == nullptr || PEM_write_bio_X509(bio.get(), cert) <= 0)
+    {
+        return {};
+    }
+    return bioBytes(bio.get());
+}
+
+std::vector<uint8_t> privateKeyToPem(EVP_PKEY* key)
+{
+    BioPtr bio(BIO_new(BIO_s_mem()));
+    if (bio == nullptr ||
+        PEM_write_bio_PrivateKey(bio.get(), key, nullptr, nullptr, 0, nullptr, nullptr) <= 0)
+    {
+        return {};
+    }
+    return bioBytes(bio.get());
+}
+
+// The device hands its public key over as PEM SubjectPublicKeyInfo ("BEGIN
+// PUBLIC KEY").
+//
+// Only that spelling. libimobiledevice also accepts a bare PKCS#1 body ("BEGIN
+// RSA PUBLIC KEY") but only on OpenSSL 1.x -- its OpenSSL 3 path is
+// PEM_read_bio_PUBKEY alone, because the PKCS#1 reader is deprecated there. We
+// build against OpenSSL 3, so matching that is both warning-free and the same
+// coverage the reference gives on this platform.
+PkeyPtr readDevicePublicKey(const std::vector<uint8_t>& pem)
+{
+    BioPtr bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
+    if (bio == nullptr)
+    {
+        return nullptr;
+    }
+    return PkeyPtr(PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr));
+}
+
+}  // namespace
+
+std::optional<PairRecord> PairRecord::generate(const std::vector<uint8_t>& device_public_key_pem,
+                                               const std::string& system_buid,
+                                               const std::string& host_id)
+{
+    if (device_public_key_pem.empty() || host_id.empty())
+    {
+        return std::nullopt;
+    }
+
+    PkeyPtr root_key(EVP_RSA_gen(2048));
+    PkeyPtr host_key(EVP_RSA_gen(2048));
+    if (root_key == nullptr || host_key == nullptr)
+    {
+        SPDLOG_ERROR("[pair] RSA key generation failed");
+        return std::nullopt;
+    }
+
+    // Root: self-signed, and the only CA in the picture. Everything else chains
+    // to it, and it is what the TLS sessions present afterwards.
+    X509Ptr root_cert(X509_new());
+    if (root_cert == nullptr || !initCertificate(root_cert.get()) ||
+        !addExtension(root_cert.get(), NID_basic_constraints, "critical,CA:TRUE") ||
+        X509_set_pubkey(root_cert.get(), root_key.get()) != 1 ||
+        X509_sign(root_cert.get(), root_key.get(), EVP_sha256()) == 0)
+    {
+        SPDLOG_ERROR("[pair] could not build the root certificate");
+        return std::nullopt;
+    }
+
+    X509Ptr host_cert(X509_new());
+    if (host_cert == nullptr || !initCertificate(host_cert.get()) ||
+        !addExtension(host_cert.get(), NID_basic_constraints, "critical,CA:FALSE") ||
+        !addExtension(host_cert.get(), NID_key_usage,
+                      "critical,digitalSignature,keyEncipherment") ||
+        X509_set_pubkey(host_cert.get(), host_key.get()) != 1 ||
+        X509_sign(host_cert.get(), root_key.get(), EVP_sha256()) == 0)
+    {
+        SPDLOG_ERROR("[pair] could not build the host certificate");
+        return std::nullopt;
+    }
+
+    // Device: the phone's own public key, wrapped in a certificate our root
+    // vouches for. This is what tells the device we accept it later.
+    PkeyPtr device_key = readDevicePublicKey(device_public_key_pem);
+    if (device_key == nullptr)
+    {
+        SPDLOG_ERROR("[pair] could not read the device public key");
+        return std::nullopt;
+    }
+
+    X509Ptr device_cert(X509_new());
+    if (device_cert == nullptr || !initCertificate(device_cert.get()) ||
+        !addExtension(device_cert.get(), NID_basic_constraints, "critical,CA:FALSE") ||
+        X509_set_pubkey(device_cert.get(), device_key.get()) != 1 ||
+        !addExtension(device_cert.get(), NID_subject_key_identifier, "hash") ||
+        !addExtension(device_cert.get(), NID_key_usage,
+                      "critical,digitalSignature,keyEncipherment") ||
+        X509_sign(device_cert.get(), root_key.get(), EVP_sha256()) == 0)
+    {
+        SPDLOG_ERROR("[pair] could not build the device certificate");
+        return std::nullopt;
+    }
+
+    PairRecord record;
+    record.root_certificate = certificateToPem(root_cert.get());
+    record.root_private_key = privateKeyToPem(root_key.get());
+    record.host_certificate = certificateToPem(host_cert.get());
+    record.host_private_key = privateKeyToPem(host_key.get());
+    record.device_certificate = certificateToPem(device_cert.get());
+    record.system_buid = system_buid;
+    record.host_id = host_id;
+
+    if (record.root_certificate.empty() || record.root_private_key.empty() ||
+        record.host_certificate.empty() || record.host_private_key.empty() ||
+        record.device_certificate.empty())
+    {
+        SPDLOG_ERROR("[pair] PEM encoding failed");
+        return std::nullopt;
+    }
+    return record;
 }
 
 }  // namespace apple_usb

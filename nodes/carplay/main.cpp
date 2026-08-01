@@ -63,10 +63,9 @@ int main(int argc, char** argv)
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
         ("lockdown-backend",
-         "Which lockdown implementation runs stage 4: \"libimobiledevice\" "
-         "(default) or \"native\" (ours, still being brought up -- it cannot "
-         "pair a new device, and its first session is sometimes reset)",
-         cxxopts::value<std::string>()->default_value("libimobiledevice"))
+         "Which lockdown implementation runs stage 4: \"native\" (ours, the "
+         "default) or \"libimobiledevice\" (the vendored fallback)",
+         cxxopts::value<std::string>()->default_value("native"))
         ("location",
          "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
          "(otherwise a GPS source publishes on <prefix>/location)",

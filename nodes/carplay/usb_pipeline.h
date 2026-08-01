@@ -31,9 +31,9 @@ struct UsbPipelineOptions
     // default under the user's runtime directory.
     std::string state_dir;
 
-    // Which lockdown implementation runs stage 4. The vendored libimobiledevice
-    // for now -- see LockdownBackend for what still keeps ours off the default.
-    apple_usb::LockdownBackend lockdown_backend = apple_usb::LockdownBackend::Libimobiledevice;
+    // Which lockdown implementation runs stage 4. Ours by default; the vendored
+    // libimobiledevice is kept as a fallback and as a reference to diff against.
+    apple_usb::LockdownBackend lockdown_backend = apple_usb::LockdownBackend::Native;
 
     // Stage 5 knobs; see Iap2SessionOptions.
     bool allow_missing_mfi = false;
