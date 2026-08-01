@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Binary property list round-trip tests, plus decode/encode known answers taken
 // from Apple's own plutil(1) so the wire format is pinned to the real thing.
-#include "airplay/plist.h"
+#include "plist/binary.h"
 
 #include <spdlog/spdlog.h>
 
@@ -12,8 +12,8 @@
 namespace
 {
 
-using airplay::plist::Bytes;
-using airplay::plist::Value;
+using plist::Bytes;
+using plist::Value;
 
 int failures = 0;
 
@@ -75,14 +75,14 @@ struct QuietLogs
 
 bool roundTrips(const Value& value, const char* what)
 {
-    const Bytes encoded = airplay::plist::encode(value);
+    const Bytes encoded = plist::encodeBinary(value);
     if (encoded.empty())
     {
         SPDLOG_ERROR("FAIL: {} (encode returned nothing)", what);
         ++failures;
         return false;
     }
-    const auto decoded = airplay::plist::decode(encoded);
+    const auto decoded = plist::decodeBinary(encoded);
     if (!decoded)
     {
         SPDLOG_ERROR("FAIL: {} (decode failed over {} bytes)", what, encoded.size());
@@ -126,11 +126,11 @@ void testScalars()
     roundTrips(Value::date(742000000.5), "date round trip");
 
     // Round-tripped scalars must keep their type, not just their bits.
-    const auto decoded = airplay::plist::decode(airplay::plist::encode(Value::date(1.0)));
+    const auto decoded = plist::decodeBinary(plist::encodeBinary(Value::date(1.0)));
     expect(decoded && decoded->isDate() && decoded->asDate() == 1.0, "date keeps its type");
-    const auto integer = airplay::plist::decode(airplay::plist::encode(Value::integer(7)));
+    const auto integer = plist::decodeBinary(plist::encodeBinary(Value::integer(7)));
     expect(integer && integer->isInteger() && integer->asInteger() == 7, "integer keeps its type");
-    const auto real = airplay::plist::decode(airplay::plist::encode(Value::real(7.0)));
+    const auto real = plist::decodeBinary(plist::encodeBinary(Value::real(7.0)));
     expect(real && real->isReal() && real->asReal() == 7.0, "real keeps its type");
 }
 
@@ -199,7 +199,7 @@ void testContainers()
     expect(roundTrips(wide, "400-element array round trip (2-byte refs)"), "wide array");
 
     // Accessors.
-    const auto decoded = airplay::plist::decode(airplay::plist::encode(root));
+    const auto decoded = plist::decodeBinary(plist::encodeBinary(root));
     expect(decoded.has_value(), "decoded root");
     if (decoded)
     {
@@ -247,7 +247,7 @@ void testAppleReference()
         "c900cf00e400eb00ee00f000f3012c0135013600000000000002010000000000"
         "00001e00000000000000000000000000000137");
 
-    const auto decoded = airplay::plist::decode(reference);
+    const auto decoded = plist::decodeBinary(reference);
     expect(decoded.has_value(), "Apple reference plist decodes");
     if (!decoded)
     {
@@ -303,7 +303,7 @@ void testEncoderKnownAnswers()
     // Byte-exact comparisons against plutil output. Only shapes where Apple's
     // encoder makes the same choices we do (no key sorting, no deduplication)
     // can be compared this way.
-    expect(toHex(airplay::plist::encode(Value::string("hello"))) ==
+    expect(toHex(plist::encodeBinary(Value::string("hello"))) ==
                "62706c6973743030"  // bplist00
                "5568656c6c6f"      // "hello"
                "08"                // offset table
@@ -313,7 +313,7 @@ void testEncoderKnownAnswers()
     Value pair = Value::array();
     pair.push(Value::integer(1));
     pair.push(Value::integer(258));
-    expect(toHex(airplay::plist::encode(pair)) ==
+    expect(toHex(plist::encodeBinary(pair)) ==
                "62706c6973743030"
                "a20102"  // array of 2, refs 1 and 2
                "1001"    // 1
@@ -324,7 +324,7 @@ void testEncoderKnownAnswers()
 
     Value dict = Value::dict();
     dict.set("alpha", Value::string("beta"));
-    expect(toHex(airplay::plist::encode(dict)) ==
+    expect(toHex(plist::encodeBinary(dict)) ==
                "62706c6973743030"
                "d10102"        // dict of 1, key ref 1, value ref 2
                "55616c706861"  // "alpha"
@@ -338,40 +338,40 @@ void testMalformed()
 {
     const QuietLogs quiet;
 
-    expect(!airplay::plist::decode({}).has_value(), "empty buffer is rejected");
-    expect(!airplay::plist::decode(fromHex("00")).has_value(), "runt buffer is rejected");
-    expect(!airplay::plist::decode(Bytes(64, 0x00)).has_value(), "bad magic is rejected");
+    expect(!plist::decodeBinary({}).has_value(), "empty buffer is rejected");
+    expect(!plist::decodeBinary(fromHex("00")).has_value(), "runt buffer is rejected");
+    expect(!plist::decodeBinary(Bytes(64, 0x00)).has_value(), "bad magic is rejected");
 
-    const Bytes good = airplay::plist::encode(Value::string("hello"));
-    expect(airplay::plist::decode(good).has_value(), "sanity: the good buffer decodes");
+    const Bytes good = plist::encodeBinary(Value::string("hello"));
+    expect(plist::decodeBinary(good).has_value(), "sanity: the good buffer decodes");
 
     Bytes truncated(good.begin(), good.end() - 1);
-    expect(!airplay::plist::decode(truncated).has_value(), "truncated trailer is rejected");
+    expect(!plist::decodeBinary(truncated).has_value(), "truncated trailer is rejected");
 
     // Object count that cannot fit in the buffer.
     Bytes bad_count = good;
     bad_count[bad_count.size() - 32 + 15] = 0xff;
-    expect(!airplay::plist::decode(bad_count).has_value(), "impossible object count is rejected");
+    expect(!plist::decodeBinary(bad_count).has_value(), "impossible object count is rejected");
 
     // Top object index beyond the table.
     Bytes bad_top = good;
     bad_top[bad_top.size() - 32 + 23] = 0x7f;
-    expect(!airplay::plist::decode(bad_top).has_value(), "out-of-range top object is rejected");
+    expect(!plist::decodeBinary(bad_top).has_value(), "out-of-range top object is rejected");
 
     // Offset table pointing outside the buffer.
     Bytes bad_table = good;
     bad_table[bad_table.size() - 32 + 31] = 0xff;
-    expect(!airplay::plist::decode(bad_table).has_value(), "offset table past the end is rejected");
+    expect(!plist::decodeBinary(bad_table).has_value(), "offset table past the end is rejected");
 
     // A string whose length runs past the end of the file.
-    Bytes overlong = airplay::plist::encode(Value::string("hello"));
+    Bytes overlong = plist::encodeBinary(Value::string("hello"));
     overlong[8] = 0x5f;  // extended-count ASCII string, but no count follows
-    expect(!airplay::plist::decode(overlong).has_value(), "overlong string is rejected");
+    expect(!plist::decodeBinary(overlong).has_value(), "overlong string is rejected");
 
     // Unsupported object type (0xe).
     Bytes bad_type = good;
     bad_type[8] = 0xe0;
-    expect(!airplay::plist::decode(bad_type).has_value(), "unsupported object type is rejected");
+    expect(!plist::decodeBinary(bad_type).has_value(), "unsupported object type is rejected");
 
     // A dict whose key is not a string.
     Bytes bad_key = fromHex(
@@ -380,7 +380,7 @@ void testMalformed()
         "5462657461"              // object 2: "beta"
         "080b0d"                  // offset table
         "0000000000000101000000000000000300000000000000000000000000000012");
-    expect(!airplay::plist::decode(bad_key).has_value(), "non-string dict key is rejected");
+    expect(!plist::decodeBinary(bad_key).has_value(), "non-string dict key is rejected");
 }
 
 // The decoder eats whatever the phone sends, so mutate a valid document and
@@ -401,7 +401,7 @@ void testMutationFuzz()
     nested.push(Value::date(1.0));
     root.set("nested", nested);
 
-    const Bytes original = airplay::plist::encode(root);
+    const Bytes original = plist::encodeBinary(root);
     uint32_t state = 0x1234abcd;
     const auto next = [&state]
     {
@@ -425,7 +425,7 @@ void testMutationFuzz()
             mutated.resize(1 + (next() % mutated.size()));
         }
         // Only the absence of a crash matters; either outcome is legal.
-        survived += airplay::plist::decode(mutated).has_value() ? 1 : 0;
+        survived += plist::decodeBinary(mutated).has_value() ? 1 : 0;
     }
     expect(survived <= 20000, "mutation fuzz survived without crashing");
 }

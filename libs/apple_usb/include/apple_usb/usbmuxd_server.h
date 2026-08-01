@@ -4,17 +4,13 @@
 #define APPLE_USB_USBMUXD_SERVER_H_
 
 #include "apple_usb/muxd.h"
+#include "plist/value.h"
 
 #include <atomic>
 #include <cstdint>
 #include <string>
 #include <thread>
 #include <vector>
-
-// libplist's plist_t is an opaque `void*`; repeating the typedef verbatim keeps
-// this header free of the libplist dependency and is a legal redeclaration when
-// <plist/plist.h> is also in scope.
-typedef void* plist_t;
 
 namespace apple_usb
 {
@@ -47,7 +43,7 @@ class UsbmuxdServer
     std::string readBuid();
     std::vector<uint8_t> readPairRecord(const std::string& udid);
     void savePairRecord(const std::string& udid, const uint8_t* data, size_t len);
-    plist_t deviceEntry();
+    plist::Value deviceEntry();
 
     MuxHost& host_;
     std::string socket_path_;

@@ -2,8 +2,9 @@
 // Adapted from LIVI src/main/services/projection/driver/cp/iap2/muxd.py (UsbmuxdServer)
 #include "apple_usb/usbmuxd_server.h"
 
+#include "plist/xml.h"
+
 #include <spdlog/spdlog.h>
-#include <plist/plist.h>
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -15,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <random>
 
 namespace fs = std::filesystem;
@@ -29,6 +31,11 @@ namespace
 // message=8(plist), tag.
 constexpr uint32_t kPlistVersion = 1;
 constexpr uint32_t kPlistMessage = 8;
+
+// A sane ceiling on a control message. The largest thing a client legitimately
+// sends is a SavePairRecord carrying a few kilobytes of PEM; the length field is
+// attacker-controlled, so it is bounded before it becomes an allocation.
+constexpr uint32_t kMaxRequestBytes = 1u << 20;
 
 bool recvExact(int fd, void* buf, size_t n)
 {
@@ -46,63 +53,72 @@ bool recvExact(int fd, void* buf, size_t n)
     return true;
 }
 
-// Reads one plist request; returns tag and the parsed dict (caller frees).
-bool recvPacket(int fd, uint32_t& tag, plist_t& out)
+// A single client request: the header's tag, echoed back on the reply, and the
+// parsed body.
+struct Request
+{
+    uint32_t tag = 0;
+    plist::Value body;
+};
+
+// Reads one plist request. Returns nullopt on EOF, a malformed header, or a body
+// that is not a plist -- all of which mean the same thing here (drop the client).
+std::optional<Request> recvPacket(int fd)
 {
     uint8_t hdr[16];
     if (!recvExact(fd, hdr, sizeof(hdr)))
     {
-        return false;
+        return std::nullopt;
     }
-    uint32_t length;
+    uint32_t length = 0;
+    Request request;
     std::memcpy(&length, hdr + 0, 4);
-    std::memcpy(&tag, hdr + 12, 4);
-    if (length < 16)
+    std::memcpy(&request.tag, hdr + 12, 4);
+    if (length < 16 || length > kMaxRequestBytes)
     {
-        return false;
+        return std::nullopt;
     }
     std::vector<uint8_t> body(length - 16);
     if (!body.empty() && !recvExact(fd, body.data(), body.size()))
     {
-        return false;
+        return std::nullopt;
     }
-    out = nullptr;
-    plist_from_xml(reinterpret_cast<const char*>(body.data()), static_cast<uint32_t>(body.size()), &out);
-    return out != nullptr;
+    auto parsed = plist::decodeXml(
+        std::string_view(reinterpret_cast<const char*>(body.data()), body.size()));
+    if (!parsed)
+    {
+        return std::nullopt;
+    }
+    request.body = std::move(*parsed);
+    return request;
 }
 
-void sendReply(int fd, uint32_t tag, plist_t dict)
+void sendReply(int fd, uint32_t tag, const plist::Value& dict)
 {
-    char* xml = nullptr;
-    uint32_t xml_len = 0;
-    plist_to_xml(dict, &xml, &xml_len);
+    const std::string xml = plist::encodeXml(dict);
 
-    std::array<uint32_t, 4> hdr = {16 + xml_len, kPlistVersion, kPlistMessage, tag};
+    const std::array<uint32_t, 4> hdr = {static_cast<uint32_t>(16 + xml.size()), kPlistVersion,
+                                         kPlistMessage, tag};
     ::send(fd, hdr.data(), sizeof(hdr), MSG_NOSIGNAL);
-    ::send(fd, xml, xml_len, MSG_NOSIGNAL);
-    plist_mem_free(xml);
+    ::send(fd, xml.data(), xml.size(), MSG_NOSIGNAL);
 }
 
-plist_t resultDict(int number)
+plist::Value resultDict(int number)
 {
-    plist_t d = plist_new_dict();
-    plist_dict_set_item(d, "MessageType", plist_new_string("Result"));
-    plist_dict_set_item(d, "Number", plist_new_uint(static_cast<uint64_t>(number)));
+    plist::Value d = plist::Value::dict();
+    d.set("MessageType", plist::Value::string("Result"));
+    d.set("Number", plist::Value::integer(number));
     return d;
 }
 
-std::string dictString(plist_t dict, const char* key)
+std::string dictString(const plist::Value& dict, const char* key)
 {
-    plist_t node = plist_dict_get_item(dict, key);
-    if (node == nullptr || plist_get_node_type(node) != PLIST_STRING)
+    const plist::Value* node = dict.find(key);
+    if (node == nullptr || !node->isString())
     {
         return {};
     }
-    char* val = nullptr;
-    plist_get_string_val(node, &val);
-    std::string out = val ? val : "";
-    plist_mem_free(val);
-    return out;
+    return node->asString();
 }
 
 // The dashed spelling of an undashed 24-character serial, and vice versa.
@@ -223,35 +239,32 @@ void UsbmuxdServer::clientLoop(int client_fd)
 {
     for (;;)
     {
-        uint32_t tag = 0;
-        plist_t req = nullptr;
-        if (!recvPacket(client_fd, tag, req))
+        const auto request = recvPacket(client_fd);
+        if (!request)
         {
             break;
         }
+        const plist::Value& req = request->body;
+        const uint32_t tag = request->tag;
 
         const std::string mt = dictString(req, "MessageType");
         if (mt == "ReadBUID")
         {
-            plist_t d = plist_new_dict();
-            plist_dict_set_item(d, "BUID", plist_new_string(readBuid().c_str()));
+            plist::Value d = plist::Value::dict();
+            d.set("BUID", plist::Value::string(readBuid()));
             sendReply(client_fd, tag, d);
-            plist_free(d);
         }
         else if (mt == "ListDevices")
         {
-            plist_t list = plist_new_array();
-            plist_array_append_item(list, deviceEntry());
-            plist_t d = plist_new_dict();
-            plist_dict_set_item(d, "DeviceList", list);
+            plist::Value list = plist::Value::array();
+            list.push(deviceEntry());
+            plist::Value d = plist::Value::dict();
+            d.set("DeviceList", std::move(list));
             sendReply(client_fd, tag, d);
-            plist_free(d);
         }
         else if (mt == "Listen")
         {
-            plist_t d = resultDict(0);
-            sendReply(client_fd, tag, d);
-            plist_free(d);
+            sendReply(client_fd, tag, resultDict(0));
         }
         else if (mt == "ReadPairRecord")
         {
@@ -260,70 +273,51 @@ void UsbmuxdServer::clientLoop(int client_fd)
             const auto rec = readPairRecord(id);
             if (rec.empty())
             {
-                plist_t d = resultDict(2);  // ENOENT
-                sendReply(client_fd, tag, d);
-                plist_free(d);
+                sendReply(client_fd, tag, resultDict(2));  // ENOENT
             }
             else
             {
-                plist_t d = plist_new_dict();
-                plist_dict_set_item(d, "PairRecordData",
-                                    plist_new_data(reinterpret_cast<const char*>(rec.data()), rec.size()));
+                plist::Value d = plist::Value::dict();
+                d.set("PairRecordData", plist::Value::data(rec));
                 sendReply(client_fd, tag, d);
-                plist_free(d);
             }
         }
         else if (mt == "SavePairRecord")
         {
             std::string id = dictString(req, "PairRecordID");
             if (id.empty()) id = host_.serial();
-            plist_t data_node = plist_dict_get_item(req, "PairRecordData");
-            if (data_node != nullptr && plist_get_node_type(data_node) == PLIST_DATA)
+            if (const plist::Value* data_node = req.find("PairRecordData");
+                data_node != nullptr && data_node->isData())
             {
-                char* buf = nullptr;
-                uint64_t buf_len = 0;
-                plist_get_data_val(data_node, &buf, &buf_len);
-                savePairRecord(id, reinterpret_cast<const uint8_t*>(buf), buf_len);
-                plist_mem_free(buf);
+                const auto& buf = data_node->asData();
+                savePairRecord(id, buf.data(), buf.size());
             }
-            plist_t d = resultDict(0);
-            sendReply(client_fd, tag, d);
-            plist_free(d);
+            sendReply(client_fd, tag, resultDict(0));
         }
         else if (mt == "Connect")
         {
             uint16_t port = 0;
-            if (plist_t pn = plist_dict_get_item(req, "PortNumber"); pn != nullptr)
+            if (const plist::Value* pn = req.find("PortNumber"); pn != nullptr)
             {
-                uint64_t v = 0;
-                plist_get_uint_val(pn, &v);
-                port = ntohs(static_cast<uint16_t>(v));  // usbmux carries the port in network order
+                // usbmux carries the port in network order.
+                port = ntohs(static_cast<uint16_t>(pn->asInteger()));
             }
-            plist_free(req);
 
             auto conn = host_.connect(port);
             if (!conn)
             {
-                plist_t d = resultDict(3);  // connection refused
-                sendReply(client_fd, tag, d);
-                plist_free(d);
+                sendReply(client_fd, tag, resultDict(3));  // connection refused
                 break;
             }
-            plist_t d = resultDict(0);
-            sendReply(client_fd, tag, d);
-            plist_free(d);
+            sendReply(client_fd, tag, resultDict(0));
             relay(client_fd, conn);  // takes over the socket until EOF
             ::close(client_fd);
             return;
         }
         else
         {
-            plist_t d = resultDict(0);
-            sendReply(client_fd, tag, d);
-            plist_free(d);
+            sendReply(client_fd, tag, resultDict(0));
         }
-
-        plist_free(req);
     }
     ::close(client_fd);
 }
@@ -372,12 +366,9 @@ std::string UsbmuxdServer::readBuid()
     {
         std::ifstream in(p, std::ios::binary);
         std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        plist_t root = nullptr;
-        plist_from_xml(content.c_str(), static_cast<uint32_t>(content.size()), &root);
-        if (root != nullptr)
+        if (const auto root = plist::decodeXml(content); root)
         {
-            const std::string buid = dictString(root, "SystemBUID");
-            plist_free(root);
+            const std::string buid = dictString(*root, "SystemBUID");
             if (!buid.empty())
             {
                 return buid;
@@ -389,17 +380,13 @@ std::string UsbmuxdServer::readBuid()
     // BUID minted fresh on every run would invalidate the record we just saved
     // and re-prompt for trust on the phone at every start. Persist it.
     const std::string buid = genUuid();
-    plist_t root = plist_new_dict();
-    plist_dict_set_item(root, "SystemBUID", plist_new_string(buid.c_str()));
-    char* xml = nullptr;
-    uint32_t xml_len = 0;
-    plist_to_xml(root, &xml, &xml_len);
-    plist_free(root);
+    plist::Value root = plist::Value::dict();
+    root.set("SystemBUID", plist::Value::string(buid));
+    const std::string xml = plist::encodeXml(root);
 
     fs::create_directories(state_dir_, ec);
     std::ofstream out(p, std::ios::binary);
-    out.write(xml, static_cast<std::streamsize>(xml_len));
-    plist_mem_free(xml);
+    out.write(xml.data(), static_cast<std::streamsize>(xml.size()));
     if (!out.good())
     {
         SPDLOG_WARN("[usbmuxd] could not persist the system BUID to {}; the phone will ask to "
@@ -438,19 +425,19 @@ void UsbmuxdServer::savePairRecord(const std::string& udid, const uint8_t* data,
     out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(len));
 }
 
-plist_t UsbmuxdServer::deviceEntry()
+plist::Value UsbmuxdServer::deviceEntry()
 {
-    plist_t props = plist_new_dict();
-    plist_dict_set_item(props, "ConnectionType", plist_new_string("USB"));
-    plist_dict_set_item(props, "SerialNumber", plist_new_string(host_.serial().c_str()));
-    plist_dict_set_item(props, "DeviceID", plist_new_uint(1));
-    plist_dict_set_item(props, "LocationID", plist_new_uint(0));
-    plist_dict_set_item(props, "ProductID", plist_new_uint(0x12a8));
+    plist::Value props = plist::Value::dict();
+    props.set("ConnectionType", plist::Value::string("USB"));
+    props.set("SerialNumber", plist::Value::string(host_.serial()));
+    props.set("DeviceID", plist::Value::integer(1));
+    props.set("LocationID", plist::Value::integer(0));
+    props.set("ProductID", plist::Value::integer(0x12a8));
 
-    plist_t entry = plist_new_dict();
-    plist_dict_set_item(entry, "DeviceID", plist_new_uint(1));
-    plist_dict_set_item(entry, "MessageType", plist_new_string("Attached"));
-    plist_dict_set_item(entry, "Properties", props);
+    plist::Value entry = plist::Value::dict();
+    entry.set("DeviceID", plist::Value::integer(1));
+    entry.set("MessageType", plist::Value::string("Attached"));
+    entry.set("Properties", std::move(props));
     return entry;
 }
 

@@ -40,6 +40,10 @@ target_link_libraries(apple_usb PRIVATE
     spdlog::spdlog
 )
 
+# Our own property lists. The usbmuxd socket server is off libplist entirely;
+# what remains of the vendored stack below still uses its own copy internally.
+target_link_libraries(apple_usb PUBLIC plist)
+
 # libimobiledevice and libplist come from third_party/libimobiledevice.cmake,
 # built from pinned sources rather than whatever the host distro ships -- we
 # depend on version-specific behaviour (see the UDID normalisation note in

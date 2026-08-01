@@ -10,6 +10,9 @@ add_subdirectory(pcan_trc_parser)
 add_subdirectory(canopen)
 
 # Wired CarPlay stack (ported from LIVI, GPL-3.0-or-later).
+# plist comes first: both airplay (binary plists on the RTSP channel) and
+# apple_usb (XML plists on the usbmux and lockdown sockets) build on it.
+add_subdirectory(plist)
 add_subdirectory(iap2)
 add_subdirectory(airplay)
 # Built everywhere. The usbfs/sysfs/TUN transport inside it is Linux-only and

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Adapted from LIVI src/main/services/projection/driver/cp/stack/bplist.ts
-#ifndef AIRPLAY_PLIST_H_
-#define AIRPLAY_PLIST_H_
+#ifndef PLIST_VALUE_H_
+#define PLIST_VALUE_H_
 
 #include <cstdint>
 #include <optional>
@@ -9,14 +9,15 @@
 #include <string_view>
 #include <vector>
 
-namespace airplay::plist
+namespace plist
 {
 
 using Bytes = std::vector<uint8_t>;
 
-// The subset of Apple's binary property list ("bplist00") that CarPlay's
-// RTSP-style control channel uses: dicts, arrays, ASCII/UTF-16 strings, raw
-// data, integers, reals, booleans and dates.
+// The subset of Apple's property list model that this project needs: dicts,
+// arrays, ASCII/UTF-16 strings, raw data, integers, reals, booleans and dates.
+// Two wire formats share it -- binary ("bplist00") on CarPlay's RTSP-style
+// control channel, XML on the usbmux and lockdown sockets.
 //
 // Value is a tagged union rather than a std::variant so that the recursive
 // container members only ever need std::vector of an incomplete type, which is
@@ -97,14 +98,6 @@ private:
     std::vector<Value> children_;    // array elements or dict values
 };
 
-// Serializes to a complete bplist00 document. Returns an empty vector on
-// failure (only possible for pathologically large inputs).
-Bytes encode(const Value& root);
+}  // namespace plist
 
-// Parses a bplist00 document. Returns nullopt on a malformed or truncated
-// buffer, or on an object type outside the supported subset.
-std::optional<Value> decode(const Bytes& buffer);
-
-}  // namespace airplay::plist
-
-#endif  // AIRPLAY_PLIST_H_
+#endif  // PLIST_VALUE_H_

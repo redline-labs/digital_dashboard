@@ -3,7 +3,7 @@
 
 #include "airplay/aac_decoder.h"
 #include "airplay/event_queue.h"
-#include "airplay/plist.h"
+#include "plist/binary.h"
 #include "airplay/nalu.h"
 #include "airplay/srp.h"
 #include "airplay/tlv8.h"
@@ -744,7 +744,7 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
 
         if (looks_like_plist)
         {
-            if (const auto parsed = plist::decode(request.body); parsed)
+            if (const auto parsed = plist::decodeBinary(request.body); parsed)
             {
                 describePlist(*parsed, "  ", {});
             }
@@ -1262,7 +1262,7 @@ int Receiver::openUdpSocket(uint16_t& port)
 
 rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 {
-    const auto body = plist::decode(request.body);
+    const auto body = plist::decodeBinary(request.body);
     if (!body || !body->isDict())
     {
         SPDLOG_ERROR("[airplay] SETUP body is not a plist dict");
@@ -1323,7 +1323,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
                   plist::Value::array({plist::Value::string("iAPChannel"),
                                        plist::Value::string("viewAreas")}));
         return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
-                                  plist::encode(reply));
+                                  plist::encodeBinary(reply));
     }
 
     // Phase 2: one entry per media stream the phone wants to open.
@@ -1475,7 +1475,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
     plist::Value reply = plist::Value::dict();
     reply.set("streams", plist::Value::array(std::move(out_streams)));
     return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
-                              plist::encode(reply));
+                              plist::encodeBinary(reply));
 }
 
 // The phone's screen stream: a 128-byte header followed by a body whose length
@@ -1917,7 +1917,7 @@ Bytes Receiver::buildTouchCommand(float x, float y, bool down) const
     command.set("type", plist::Value::string("hidSendReport"));
     command.set("uuid", plist::Value::string("2a2a2a2a"));
     command.set("hidReport", plist::Value::data(report));
-    return plist::encode(command);
+    return plist::encodeBinary(command);
 }
 
 Bytes Receiver::buildKeyframeCommand() const
@@ -1928,7 +1928,7 @@ Bytes Receiver::buildKeyframeCommand() const
     plist::Value command = plist::Value::dict();
     command.set("type", plist::Value::string("forceKeyFrame"));
     command.set("params", std::move(params));
-    return plist::encode(command);
+    return plist::encodeBinary(command);
 }
 
 void Receiver::sendTouch(float x, float y, TouchPhase phase)
@@ -2374,7 +2374,7 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
               plist::Value::data(multitouchDescriptor(config_.width, config_.height)));
     info.set("hidDevices", plist::Value::array({std::move(touch)}));
 
-    return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist", plist::encode(info));
+    return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist", plist::encodeBinary(info));
 }
 
 }  // namespace airplay

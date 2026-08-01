@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Adapted from LIVI src/main/services/projection/driver/cp/stack/bplist.ts
-#include "airplay/plist.h"
+#include "plist/binary.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cstring>
 
-namespace airplay::plist
+namespace plist
 {
 
 namespace
@@ -553,7 +553,7 @@ bool addNode(const Value& value, std::vector<Node>& nodes, size_t depth, size_t&
 
 }  // namespace
 
-Bytes encode(const Value& root)
+Bytes encodeBinary(const Value& root)
 {
     std::vector<Node> nodes;
     size_t top_index = 0;
@@ -899,7 +899,7 @@ private:
 
 }  // namespace
 
-std::optional<Value> decode(const Bytes& buffer)
+std::optional<Value> decodeBinary(const Bytes& buffer)
 {
     Decoder decoder(buffer);
     if (!decoder.init())
@@ -909,4 +909,11 @@ std::optional<Value> decode(const Bytes& buffer)
     return decoder.readTop();
 }
 
-}  // namespace airplay::plist
+bool looksBinary(const Bytes& buffer)
+{
+    static constexpr char kMagic[] = "bplist00";
+    constexpr size_t kMagicLen = sizeof(kMagic) - 1;
+    return buffer.size() >= kMagicLen && std::memcmp(buffer.data(), kMagic, kMagicLen) == 0;
+}
+
+}  // namespace plist

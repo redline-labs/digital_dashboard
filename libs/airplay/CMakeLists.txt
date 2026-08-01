@@ -20,7 +20,6 @@ add_library(airplay STATIC
     tlv8.cpp
     crypto.cpp
     srp.cpp
-    plist.cpp
     nalu.cpp
     rtsp.cpp
     event_queue.cpp
@@ -37,6 +36,7 @@ target_link_libraries(airplay
     PUBLIC
         OpenSSL::Crypto
         helpers
+        plist
 
     PRIVATE
         spdlog::spdlog
@@ -44,7 +44,7 @@ target_link_libraries(airplay
 )
 
 # Round-trip and known-answer tests, runnable without hardware.
-foreach(test tlv8 crypto plist nalu event_queue)
+foreach(test tlv8 crypto nalu event_queue)
     add_executable(airplay_test_${test} test_${test}.cpp)
     target_link_libraries(airplay_test_${test} PRIVATE
         airplay

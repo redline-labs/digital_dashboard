@@ -9,7 +9,7 @@
 
 #include "airplay/crypto.h"
 #include "airplay/nalu.h"
-#include "airplay/plist.h"
+#include "plist/value.h"
 #include "airplay/rtsp.h"
 #include "airplay/timing.h"
 
