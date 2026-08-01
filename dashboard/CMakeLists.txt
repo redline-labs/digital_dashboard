@@ -1,3 +1,12 @@
+# Every Qt component any widget links, found once here rather than per widget.
+# find_package creates the Qt6:: imported targets in the calling directory scope
+# only, so a component found down in widgets/ does not exist up here, where the
+# executables are finalized: Qt's dependency walk then warns that the target "is
+# mentioned as a dependency ... but not declared". Finding them before
+# add_subdirectory() also lets the widgets inherit the targets, so their own
+# find_package calls become no-ops instead of re-running Qt's dependency probes.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Multimedia)
+
 add_subdirectory(widgets)
 
 # Enable Qt's automatic MOC, UIC, and RCC processing
@@ -5,7 +14,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 qt_standard_project_setup()
 
 

@@ -78,7 +78,9 @@ add_compile_options(
     $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>
     $<$<COMPILE_LANGUAGE:CXX>:-Wsuggest-override>
 
-    #-Werror
+    # Our code only: this block lands after add_subdirectory(third_party), so
+    # the vendored deps (libusb, capnproto) keep warning without failing us.
+    -Werror
     #-Wcast-align
     #-Wconversion
     #-Wsign-conversion

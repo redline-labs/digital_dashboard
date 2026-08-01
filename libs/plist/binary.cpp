@@ -911,9 +911,8 @@ std::optional<Value> decodeBinary(const Bytes& buffer)
 
 bool looksBinary(const Bytes& buffer)
 {
-    static constexpr char kMagic[] = "bplist00";
-    constexpr size_t kMagicLen = sizeof(kMagic) - 1;
-    return buffer.size() >= kMagicLen && std::memcmp(buffer.data(), kMagic, kMagicLen) == 0;
+    return buffer.size() >= sizeof(kMagic) &&
+           std::equal(std::begin(kMagic), std::end(kMagic), buffer.begin());
 }
 
 }  // namespace plist
