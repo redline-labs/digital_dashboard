@@ -26,6 +26,33 @@ namespace airplay
 
 using Bytes = std::vector<uint8_t>;
 
+// The wire form of one microphone packet, split out from the socket so it can
+// be checked without one. Two details here are inaudible when wrong in the
+// sense that nothing errors -- the audio simply arrives as clicks or noise --
+// which is why they are worth pinning down:
+//
+//   - PCM arrives from the capture side as S16LE and must leave big-endian.
+//   - The body is exactly one frame. Padding a short one, rather than holding
+//     the remainder back for the next packet, injects a discontinuity every
+//     time the capture size does not divide evenly.
+namespace mic
+{
+
+// In-place S16LE -> S16BE. A trailing odd byte is left alone; it belongs to a
+// sample whose second half has not arrived.
+void swapSampleEndianness(Bytes& pcm);
+
+// One packet: a 12-byte RTP header, the sealed body, then the 8-byte
+// little-endian nonce. `body` must already be big-endian and exactly one
+// frame's worth.
+Bytes buildPacket(const Bytes& body, uint8_t payload_type, uint16_t sequence, uint32_t timestamp,
+                  uint64_t nonce_counter, const Bytes& key);
+
+// Bytes in one frame at this format, or 0 if the format is unusable.
+size_t frameBytes(size_t samples_per_frame, uint8_t channels);
+
+}  // namespace mic
+
 class MicUplink
 {
   public:

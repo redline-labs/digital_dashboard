@@ -18,6 +18,52 @@
 namespace airplay
 {
 
+namespace mic
+{
+
+void swapSampleEndianness(Bytes& pcm)
+{
+    for (size_t i = 0; i + 1 < pcm.size(); i += 2)
+    {
+        std::swap(pcm[i], pcm[i + 1]);
+    }
+}
+
+size_t frameBytes(size_t samples_per_frame, uint8_t channels)
+{
+    return samples_per_frame * channels * 2;
+}
+
+Bytes buildPacket(const Bytes& body, uint8_t payload_type, uint16_t sequence, uint32_t timestamp,
+                  uint64_t nonce_counter, const Bytes& key)
+{
+    // RTP header, mirror of the downlink layout. SSRC stays zero for CarPlay
+    // input streams.
+    uint8_t header[12] = {};
+    header[0] = 0x80;
+    header[1] = static_cast<uint8_t>(payload_type & 0x7F);
+    header[2] = static_cast<uint8_t>((sequence >> 8) & 0xFF);
+    header[3] = static_cast<uint8_t>(sequence & 0xFF);
+    header[4] = static_cast<uint8_t>((timestamp >> 24) & 0xFF);
+    header[5] = static_cast<uint8_t>((timestamp >> 16) & 0xFF);
+    header[6] = static_cast<uint8_t>((timestamp >> 8) & 0xFF);
+    header[7] = static_cast<uint8_t>(timestamp & 0xFF);
+
+    // The authenticated data is the timestamp and SSRC, not the whole header:
+    // the sequence number is not covered.
+    const Bytes aad(header + 4, header + 12);
+    const Bytes nonce = crypto::nonce64(nonce_counter);
+    const Bytes sealed = crypto::chachaSeal(key, nonce, body, aad);
+
+    Bytes packet(header, header + 12);
+    packet.insert(packet.end(), sealed.begin(), sealed.end());
+    const Bytes nonce8(nonce.end() - 8, nonce.end());
+    packet.insert(packet.end(), nonce8.begin(), nonce8.end());
+    return packet;
+}
+
+}  // namespace mic
+
 MicUplink::~MicUplink()
 {
     stop();
@@ -116,7 +162,7 @@ void MicUplink::feed(const Bytes& pcm)
     }
 
     accum_.insert(accum_.end(), pcm.begin(), pcm.end());
-    const size_t frame_bytes = samples_per_frame_ * channels_ * 2;
+    const size_t frame_bytes = mic::frameBytes(samples_per_frame_, channels_);
     if (frame_bytes == 0)
     {
         return;
@@ -124,36 +170,12 @@ void MicUplink::feed(const Bytes& pcm)
 
     while (accum_.size() >= frame_bytes)
     {
-        // PCM travels big-endian on the wire; swap each sample from S16LE.
-        Bytes body(accum_.begin(), accum_.begin() + frame_bytes);
-        for (size_t k = 0; k + 1 < body.size(); k += 2)
-        {
-            std::swap(body[k], body[k + 1]);
-        }
-        accum_.erase(accum_.begin(),
-                                accum_.begin() + static_cast<long>(frame_bytes));
+        Bytes body(accum_.begin(), accum_.begin() + static_cast<long>(frame_bytes));
+        mic::swapSampleEndianness(body);
+        accum_.erase(accum_.begin(), accum_.begin() + static_cast<long>(frame_bytes));
 
-        // RTP header, mirror of the downlink layout.
-        uint8_t header[12] = {};
-        header[0] = 0x80;
-        header[1] = static_cast<uint8_t>(payload_type_ & 0x7F);
-        header[2] = static_cast<uint8_t>((seq_ >> 8) & 0xFF);
-        header[3] = static_cast<uint8_t>(seq_ & 0xFF);
-        header[4] = static_cast<uint8_t>((ts_ >> 24) & 0xFF);
-        header[5] = static_cast<uint8_t>((ts_ >> 16) & 0xFF);
-        header[6] = static_cast<uint8_t>((ts_ >> 8) & 0xFF);
-        header[7] = static_cast<uint8_t>(ts_ & 0xFF);
-        // SSRC is zero for CarPlay input streams.
-
-        const Bytes aad(header + 4, header + 12);
-        const Bytes nonce = crypto::nonce64(nonce_);
-        const Bytes sealed = crypto::chachaSeal(key_, nonce, body, aad);
-
-        // Wire layout: header, ciphertext+tag, then the 8-byte LE nonce.
-        Bytes packet(header, header + 12);
-        packet.insert(packet.end(), sealed.begin(), sealed.end());
-        const Bytes nonce8(nonce.end() - 8, nonce.end());
-        packet.insert(packet.end(), nonce8.begin(), nonce8.end());
+        const Bytes packet =
+            mic::buildPacket(body, static_cast<uint8_t>(payload_type_), seq_, ts_, nonce_, key_);
 
         ::sendto(fd_, packet.data(), packet.size(), 0,
                  reinterpret_cast<sockaddr*>(&dest_), sizeof(dest_));
