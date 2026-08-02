@@ -298,10 +298,13 @@ std::optional<apple_usb::DeviceInfo> switchToCarPlay(apple_usb::DeviceInfo devic
 // is set up once and lent to each session.
 struct SessionContext
 {
-    const UsbPipelineOptions& options;
+    const NodeConfig& options;
     std::string state_dir;
     iap2::MfiSigner* mfi_signer = nullptr;
     std::shared_ptr<std::mutex> mfi_mutex;
+    // Set true while an AirPlay session is live, so the caller's idle
+    // session-state publisher stands down. Optional.
+    std::atomic<bool>* recording = nullptr;
 };
 
 // What provides the usbmuxd socket that the lockdown and carkit layers connect
@@ -719,111 +722,21 @@ void AvLink::stop()
 // Runs one attachment of one phone, from claiming the mux through to the iAP2
 // session ending. Returns when the phone goes away or `stop` is set; the return
 // value says whether the bring-up itself succeeded.
-bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContext& ctx,
-                        ZenohBridge& bridge, std::atomic<bool>& stop)
+// --- Stage 7: the AirPlay RTSP receiver ------------------------------------
+//
+// Started before the iAP2 session, for the same reason the NCM bridge is: the
+// phone dials port 7000 within milliseconds of CarPlayStartSession, and
+// anything not listening by then just gets connection-refused.
+//
+// Returns the running receiver, or nullptr if it could not be started. The
+// bridge callbacks installed here capture it, so the caller must detach them
+// before letting it go.
+std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ctx,
+                                                        const AvLink& ncm, ZenohBridge& bridge)
 {
-    const UsbPipelineOptions& options = ctx.options;
-    const std::string& state_dir = ctx.state_dir;
-    std::error_code ec;
-
-    // --- Stage 3: usbmux over the vendor-specific interface, then the socket --
-    SessionMux mux;
-    if (!mux.open(device, state_dir))
-    {
-        return false;
-    }
-
-    // Session-scoped stop: set when the node is shutting down *or* the phone
-    // has gone. Everything below waits on this rather than the node-wide flag,
-    // so an unplug unwinds one session without ending the process.
-    std::atomic<bool> session_stop{false};
-    std::thread device_watch([&session_stop, &stop, &mux] {
-        while (!session_stop.load())
-        {
-            if (stop.load() || !mux.alive())
-            {
-                session_stop.store(true);
-                break;
-            }
-            std::this_thread::sleep_for(kDevicePoll);
-        }
-    });
-    // Any exit from here on has to release the watchdog before returning.
-    const auto finish = [&session_stop, &device_watch](bool result) {
-        session_stop.store(true);
-        if (device_watch.joinable())
-        {
-            device_watch.join();
-        }
-        return result;
-    };
-
-    const std::string& socket_path = mux.socketPath();
-
-    bool ok = true;
-    std::unique_ptr<apple_usb::CarkitChannel> carkit;
-
-    // --- Stage 4: lockdown pairing + the carkit TLS channel -------------------
-    if (options.max_stage >= 4)
-    {
-        // The trust prompt has no deadline; abort only if the node is stopping
-        // or the phone was pulled out while we waited.
-        carkit = apple_usb::openCarkitChannel(device.serial, socket_path, state_dir,
-                                              [&session_stop] { return session_stop.load(); });
-        if (!carkit)
-        {
-            if (!session_stop.load())
-            {
-                SPDLOG_ERROR("[carkit] could not open the carkit channel for udid={}. "
-                             "Delete {} to force a fresh pairing.",
-                             shortUdid(device.serial), state_dir);
-            }
-            ok = false;
-        }
-        else
-        {
-            SPDLOG_INFO("[carkit] carkit TLS channel up (iAP2) udid={}",
-                        shortUdid(device.serial));
-        }
-    }
-    else
-    {
-        SPDLOG_INFO("[node] stopping after stage 3 as requested");
-    }
-
-    // --- Stage 6: the NCM link ------------------------------------------------
-    //
-    // Brought up *before* the iAP2 session, not after: the phone asks for the
-    // accessory endpoint moments after authentication, and the address only
-    // exists once this link is up.
-    AvLink ncm;
-    if (ok && options.max_stage >= 6)
-    {
-        if (!ncm.start(device))
-        {
-            ok = false;
-        }
-        else
-        {
-            SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm.interfaceName(),
-                        ncm.linkLocalAddress());
-        }
-    }
-
-    // --- Stage 7: the AirPlay RTSP receiver ----------------------------------
-    //
-    // Started before the iAP2 session for the same reason the NCM bridge is:
-    // the phone dials port 7000 within milliseconds of CarPlayStartSession, and
-    // anything not listening by then just gets connection-refused.
-    // One coprocessor, two consumers: iAP2 authentication and AirPlay
-    // /auth-setup. It sits on a single I2C bus, and the two run on different
-    // threads, so access is serialised. It is owned by the caller and shared by
-    // every session, since it has nothing to do with the phone.
+    const NodeConfig& options = ctx.options;
     auto mfi_mutex = ctx.mfi_mutex;
-
     std::unique_ptr<airplay::Receiver> receiver;
-    if (ok && options.max_stage >= 7)
-    {
         airplay::ReceiverConfig receiver_config;
 
 #if CARPLAY_USE_SYSTEM_NCM
@@ -952,7 +865,6 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         {
             SPDLOG_ERROR("[airplay] receiver did not start");
             receiver.reset();
-            ok = false;
         }
         else
         {
@@ -960,7 +872,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
             // both of which change independently; keep the current values in a
             // shared struct so either handler can publish the whole picture.
             const auto config = receiver_config;
-            std::atomic<bool>* recording_flag = options.recording;
+            std::atomic<bool>* recording_flag = ctx.recording;
             struct SessionShare
             {
                 std::mutex mutex;
@@ -1079,11 +991,23 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                 }
             });
         }
-    }
+    return receiver;
+}
 
-    // --- Stage 5: iAP2 link layer, identification, MFi auth ------------------
-    if (ok && carkit && options.max_stage >= 5)
-    {
+// --- Stage 5: iAP2 link layer, identification, MFi auth --------------------
+//
+// Runs last even though it is stage 5: the phone dials the AirPlay port within
+// milliseconds of the CarPlayStartSession this sends, so stages 6 and 7 have to
+// be listening before it starts. Blocks until the session ends.
+//
+// Also owns the metadata path -- now-playing, navigation, calls, and the GPS
+// uplink -- because all of it rides the iAP2 carkit channel rather than
+// AirPlay. Returns false if the session did not complete.
+bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, const AvLink& ncm,
+                  ZenohBridge& bridge, std::atomic<bool>& session_stop)
+{
+    const NodeConfig& options = ctx.options;
+    bool ok = true;
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
         iap2_options.signer = ctx.mfi_signer;
@@ -1324,7 +1248,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
             }
         });
 
-        if (!runIap2Session(*carkit, iap2_options, session_stop))
+        if (!runIap2Session(carkit, iap2_options, session_stop))
         {
             SPDLOG_ERROR("[iap2] session did not complete");
             ok = false;
@@ -1332,6 +1256,126 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 
         session_stop.store(true);  // release the republish thread if the session ended
         metadata_republish.join();
+    return ok;
+}
+
+bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContext& ctx,
+                        ZenohBridge& bridge, std::atomic<bool>& stop)
+{
+    const NodeConfig& options = ctx.options;
+    const std::string& state_dir = ctx.state_dir;
+    std::error_code ec;
+
+    // --- Stage 3: usbmux over the vendor-specific interface, then the socket --
+    SessionMux mux;
+    if (!mux.open(device, state_dir))
+    {
+        return false;
+    }
+
+    // Session-scoped stop: set when the node is shutting down *or* the phone
+    // has gone. Everything below waits on this rather than the node-wide flag,
+    // so an unplug unwinds one session without ending the process.
+    std::atomic<bool> session_stop{false};
+    std::thread device_watch([&session_stop, &stop, &mux] {
+        while (!session_stop.load())
+        {
+            if (stop.load() || !mux.alive())
+            {
+                session_stop.store(true);
+                break;
+            }
+            std::this_thread::sleep_for(kDevicePoll);
+        }
+    });
+    // Any exit from here on has to release the watchdog before returning.
+    const auto finish = [&session_stop, &device_watch](bool result) {
+        session_stop.store(true);
+        if (device_watch.joinable())
+        {
+            device_watch.join();
+        }
+        return result;
+    };
+
+    const std::string& socket_path = mux.socketPath();
+
+    bool ok = true;
+    std::unique_ptr<apple_usb::CarkitChannel> carkit;
+
+    // --- Stage 4: lockdown pairing + the carkit TLS channel -------------------
+    if (options.max_stage >= 4)
+    {
+        // The trust prompt has no deadline; abort only if the node is stopping
+        // or the phone was pulled out while we waited.
+        carkit = apple_usb::openCarkitChannel(device.serial, socket_path, state_dir,
+                                              [&session_stop] { return session_stop.load(); });
+        if (!carkit)
+        {
+            if (!session_stop.load())
+            {
+                SPDLOG_ERROR("[carkit] could not open the carkit channel for udid={}. "
+                             "Delete {} to force a fresh pairing.",
+                             shortUdid(device.serial), state_dir);
+            }
+            ok = false;
+        }
+        else
+        {
+            SPDLOG_INFO("[carkit] carkit TLS channel up (iAP2) udid={}",
+                        shortUdid(device.serial));
+        }
+    }
+    else
+    {
+        SPDLOG_INFO("[node] stopping after stage 3 as requested");
+    }
+
+    // --- Stage 6: the NCM link ------------------------------------------------
+    //
+    // Brought up *before* the iAP2 session, not after: the phone asks for the
+    // accessory endpoint moments after authentication, and the address only
+    // exists once this link is up.
+    AvLink ncm;
+    if (ok && options.max_stage >= 6)
+    {
+        if (!ncm.start(device))
+        {
+            ok = false;
+        }
+        else
+        {
+            SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm.interfaceName(),
+                        ncm.linkLocalAddress());
+        }
+    }
+
+    // --- Stage 7: the AirPlay RTSP receiver ----------------------------------
+    //
+    // Started before the iAP2 session for the same reason the NCM bridge is:
+    // the phone dials port 7000 within milliseconds of CarPlayStartSession, and
+    // anything not listening by then just gets connection-refused.
+    // One coprocessor, two consumers: iAP2 authentication and AirPlay
+    // /auth-setup. It sits on a single I2C bus, and the two run on different
+    // threads, so access is serialised. It is owned by the caller and shared by
+    // every session, since it has nothing to do with the phone.
+    auto mfi_mutex = ctx.mfi_mutex;
+
+    // Stage 7. Started before stage 5 below: see startAirPlayReceiver.
+    std::unique_ptr<airplay::Receiver> receiver;
+    if (ok && options.max_stage >= 7)
+    {
+        receiver = startAirPlayReceiver(ctx, ncm, bridge);
+        if (!receiver)
+        {
+            ok = false;
+        }
+    }
+
+    // Stage 5. Last, though it is numbered first of the two: see runIap2Stage.
+    if (ok && carkit && options.max_stage >= 5)
+    {
+        ok = runIap2Stage(ctx, *carkit, ncm, bridge, session_stop);
     }
 
     // Hold the session open so the sockets above can be poked at from another
@@ -1365,8 +1409,8 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 
 }  // namespace
 
-bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
-                    std::atomic<bool>& stop)
+bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<bool>& stop,
+                    std::atomic<bool>* recording)
 {
     // Said up front, not when a phone finally turns up: without this the
     // operator plugs in, waits through the detection poll, and only then learns
@@ -1401,7 +1445,8 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         mfi_signer.reset();
     }
 
-    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>()};
+    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>(),
+                       recording};
 
     // Supervisor loop: one pass per phone attachment. A phone can be unplugged
     // and plugged back in as many times as the user likes -- each replug starts
@@ -1437,9 +1482,9 @@ bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
         // Tell the dashboard the phone is gone, rather than leaving the last
         // frame and track up. The recording flag has to be cleared too or the
         // idle publisher in main() keeps deferring to a session that has ended.
-        if (options.recording != nullptr)
+        if (ctx.recording != nullptr)
         {
-            options.recording->store(false);
+            ctx.recording->store(false);
         }
         bridge.publishSession(SessionState{});
 

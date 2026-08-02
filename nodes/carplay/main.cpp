@@ -156,15 +156,9 @@ int main(int argc, char** argv)
         }
     });
 
-    carplay::UsbPipelineOptions usb_options;
-    usb_options.max_stage = args["max-stage"].as<int>();
-    usb_options.state_dir = args["state-dir"].as<std::string>();
-    usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
-    usb_options.oem_button = config.oem_button;
-    usb_options.night_mode = config.night_mode;
-    usb_options.primary_input = config.primary_input;
-
-    usb_options.recording = &g_recording;
+    config.max_stage = args["max-stage"].as<int>();
+    config.state_dir = args["state-dir"].as<std::string>();
+    config.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
 
     // A static GPS fix for bench-testing the location uplink: "lat,lon[,alt,speed,course]".
     if (const std::string spec = args["location"].as<std::string>(); !spec.empty())
@@ -193,7 +187,7 @@ int main(int argc, char** argv)
             fix.speed_knots = values[3];
             fix.course_deg = values[4];
             fix.valid = true;
-            usb_options.static_location = fix;
+            config.static_location = fix;
             SPDLOG_INFO("[node] static test location {}, {}", fix.latitude_deg, fix.longitude_deg);
         }
         else
@@ -202,7 +196,7 @@ int main(int argc, char** argv)
         }
     }
 
-    const bool usb_ok = carplay::runUsbPipeline(usb_options, bridge, g_stop);
+    const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, &g_recording);
     if (!usb_ok)
     {
         SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/carplay_bringup.md");
