@@ -19,7 +19,13 @@ static void set_payload(pub_sub::ZenohPublisher<CanFrame>& pub,
 {
     pub.fields().setId(id);
     pub.fields().setLen(8u);
-    auto data = pub.fields().getData();
+    // initData every frame, not getData: ZenohPublisher::put() reconstructs the
+    // message arena and re-inits the root, so any list allocated for a previous
+    // frame is gone by now and getData() would hand back a zero-length list.
+    // capnp's bounds check on set() is KJ_IREQUIRE, which is compiled out in a
+    // release build, so writing into that list is a straight out-of-bounds
+    // store rather than an assertion failure.
+    auto data = pub.fields().initData(8u);
     for (size_t i = 0; i < 8u; ++i)
     {
         data.set(i, bytes[i]);
@@ -47,12 +53,6 @@ int main(int argc, char** argv)
     SPDLOG_INFO("Publishing simulated Megasquirt CAN frames to '{}'", key);
 
     pub_sub::ZenohPublisher<CanFrame> pub(key);
-    // Initialize fixed-size payload buffer once and reuse it
-    pub.fields().setLen(8u);
-    if (!pub.fields().hasData() || pub.fields().getData().size() != 8u)
-    {
-        (void)pub.fields().initData(8u);
-    }
 
     using namespace dbc_megasquirt_dash_data;
 
