@@ -2,6 +2,8 @@
 // Adapted from LIVI src/main/services/projection/driver/cp/iap2/link_layer.py
 #include "iap2/link_layer.h"
 
+#include "iap2/byte_order.h"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -24,17 +26,6 @@ constexpr unsigned kNegotiateResendMs = 500;
 // Never let the control session buffer grow without bound if the peer sends
 // garbage that never resynchronises to a CSM start marker.
 constexpr size_t kMaxControlBuffer = 1 << 20;
-
-void put_be16(std::vector<uint8_t>& out, uint16_t value)
-{
-    out.push_back(static_cast<uint8_t>(value >> 8));
-    out.push_back(static_cast<uint8_t>(value));
-}
-
-uint16_t get_be16(const uint8_t* p)
-{
-    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | p[1]);
-}
 
 const char* stateName(LinkLayer::State state)
 {

@@ -7,6 +7,7 @@ project(iap2)
 add_library(iap2 STATIC
     link_layer.cpp
     mcp2221a_mfi_signer.cpp
+    csm.cpp
     messages.cpp
     location_nmea.cpp
 )
@@ -43,3 +44,11 @@ target_link_libraries(iap2_test_nmea PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET iap2_test_nmea LABELS iap2 unit)
+
+# The control-session-message parameter codec, at its edges.
+add_executable(iap2_test_csm test_csm.cpp)
+target_link_libraries(iap2_test_csm PRIVATE
+    iap2
+    spdlog::spdlog
+)
+add_project_test(TARGET iap2_test_csm LABELS iap2 unit)
