@@ -77,6 +77,20 @@ target_link_libraries(zenoh_pub_sub PUBLIC
 )
 
 
+# The publish-side encoding string against the subscribe-side registry lookup.
+# Needs no zenoh session -- zenoh::Encoding is a standalone value type -- so it
+# drives the real encoder rather than a re-implementation of it. That is the
+# point: a test that built the string itself would have agreed with the bug.
+add_executable(pub_sub_test_capnp_encoding
+    test_capnp_encoding.cpp
+)
+
+target_link_libraries(pub_sub_test_capnp_encoding PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+
+
 # Add test executable
 #add_executable(test_expression_parser
 #    test_expression_parser.cpp

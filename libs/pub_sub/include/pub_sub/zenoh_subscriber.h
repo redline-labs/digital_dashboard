@@ -128,6 +128,18 @@ class ZenohExpressionSubscriber
     std::unique_ptr<zenoh::Subscriber<void>> zenoh_subscriber_;
     std::function<void(const std::vector<uint8_t>&)> evaluation_handler_;
 
+    // schema_type_ comes from config -- it is what this consumer *expects* on
+    // this key, not what is actually being published there. The publisher
+    // stamps the truth on every sample, so check the two agree. Latched so a
+    // mismatch is reported once rather than at the sample rate.
+    bool schema_checked_ = false;
+
+    // Compares the sample's encoding against schema_type_ and complains once if
+    // they disagree. Does not drop the sample: capnp will decode it as the
+    // configured schema regardless, and a visibly wrong gauge with a log line
+    // explaining why beats a blank one.
+    void checkSampleSchema(const zenoh::Sample& sample);
+
     /**
      * Extract variables from the expression using exprtk
      */

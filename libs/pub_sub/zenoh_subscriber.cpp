@@ -4,6 +4,7 @@
 #include "helpers/unit_conversion.h"
 #include "pub_sub/session_manager.h"
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/capnp_encoding.h"
 #include "reflection/reflection.h"
 
 #include <stdexcept>
@@ -105,6 +106,7 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
 
                     try
                     {
+                        checkSampleSchema(sample);
                         std::vector<uint8_t> bytes = sample.get_payload().as_vector();
                         evaluation_handler_(bytes);
                     }
@@ -122,6 +124,44 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
     {
         SPDLOG_ERROR("Failed to subscribe to key '{}': {}", zenoh_key_, e.what());
     }
+}
+
+void ZenohExpressionSubscriber::checkSampleSchema(const zenoh::Sample& sample)
+{
+    if (schema_checked_)
+    {
+        return;
+    }
+    schema_checked_ = true;
+
+    const std::string encoding = sample.get_encoding().as_string();
+    const std::string_view published = schemaNameFromEncoding(encoding);
+    const std::string_view configured =
+        reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type_);
+
+    if (published == configured)
+    {
+        return;
+    }
+
+    // An empty schema half means the publisher set a MIME type but no schema
+    // (or is not one of ours at all). Not necessarily wrong, so say less.
+    if (published.empty() || published == encoding)
+    {
+        SPDLOG_DEBUG("Key '{}' carries encoding '{}', which names no schema; "
+                     "decoding as the configured '{}'",
+                     zenoh_key_, encoding, configured);
+        return;
+    }
+
+    // capnp will decode the payload against whatever schema it is handed --
+    // field offsets simply land on different bytes -- so a wrong schema_type in
+    // config produces a plausible but meaningless number rather than an error.
+    // This is the only place that mismatch is detectable.
+    SPDLOG_ERROR("Key '{}' is published as '{}' but is configured as '{}'. The value will be "
+                 "decoded against the configured schema and will be wrong; fix schema_type in "
+                 "the dashboard config.",
+                 zenoh_key_, published, configured);
 }
 
 void ZenohExpressionSubscriber::extractVariables()
