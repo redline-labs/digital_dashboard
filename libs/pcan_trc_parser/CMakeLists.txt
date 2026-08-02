@@ -27,5 +27,6 @@ target_link_libraries(test_pcan_trc_parser
         spdlog::spdlog
         helpers
 )
+add_project_test(TARGET test_pcan_trc_parser LABELS pcan_trc_parser unit)
 
 

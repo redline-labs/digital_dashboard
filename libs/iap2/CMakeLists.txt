@@ -31,6 +31,7 @@ target_link_libraries(iap2_test_framing PRIVATE
     iap2
     spdlog::spdlog
 )
+add_project_test(TARGET iap2_test_framing LABELS iap2 unit)
 
 # NMEA generation for the GPS location uplink, runnable without hardware.
 add_executable(iap2_test_nmea
@@ -41,3 +42,4 @@ target_link_libraries(iap2_test_nmea PRIVATE
     iap2
     spdlog::spdlog
 )
+add_project_test(TARGET iap2_test_nmea LABELS iap2 unit)

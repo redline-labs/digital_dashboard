@@ -59,6 +59,7 @@ foreach(test tlv8 crypto nalu event_queue oem_button hid channel_crypto info_pli
         airplay
         spdlog::spdlog
     )
+    add_project_test(TARGET airplay_test_${test} LABELS airplay unit)
 endforeach()
 
 # The AAC round-trip needs the codec library directly (encoder side).
@@ -68,3 +69,4 @@ target_link_libraries(airplay_test_aac PRIVATE
     spdlog::spdlog
     PkgConfig::AIRPLAY_LIBAV
 )
+add_project_test(TARGET airplay_test_aac LABELS airplay unit)

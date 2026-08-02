@@ -69,6 +69,20 @@ add_compile_options(
 
 add_subdirectory(third_party)
 
+# Tests. Deliberately enabled *after* third_party: the vendored projects declare
+# their own CTest suites, and without testing enabled in their directory scope
+# those declarations are dropped. Otherwise `ctest` reports a dozen zenoh-cpp
+# tests we never built and cannot run, and a red run stops meaning anything.
+#
+#     cmake --build build -j4 && ctest --test-dir build --output-on-failure
+#     ctest --test-dir build -L unit          # fast, deterministic subset
+#     ctest --test-dir build -LE slow         # everything except the slow ones
+#     ctest --test-dir build -L airplay -V    # one component, verbose
+#
+enable_testing()
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
+include(ProjectTest)
+
 
 # Additional compiler options for all our code.
 add_compile_options(

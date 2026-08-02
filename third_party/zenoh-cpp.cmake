@@ -9,8 +9,14 @@ FetchContent_Declare(
 # Configure zenoh-cpp options
 set(ZENOHCXX_ZENOHC ON CACHE BOOL "" FORCE)
 set(ZENOHCXX_ZENOHPICO OFF CACHE BOOL "" FORCE)
+# Both spellings: zenoh-cpp renamed these from BUILD_ to ENABLE_ and the old
+# names are silently ignored, so setting only those left its test suite
+# registered with CTest -- a dozen tests we never build, reported as failures on
+# every `ctest` run.
 set(ZENOHCXX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ZENOHCXX_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(ZENOHCXX_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_INSTALL OFF CACHE BOOL "" FORCE)
 
 set(Z_FEATURE_UNSTABLE_API ON CACHE BOOL "" FORCE)

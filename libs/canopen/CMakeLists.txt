@@ -76,3 +76,4 @@ target_link_libraries(eds_parse_test
         spdlog::spdlog
         lexy_core
 )
+add_project_test(TARGET eds_parse_test LABELS canopen unit)

@@ -78,6 +78,7 @@ target_link_libraries(apple_usb_test_usbmux_client PRIVATE
     apple_usb
     spdlog::spdlog
 )
+add_project_test(TARGET apple_usb_test_usbmux_client LABELS apple_usb unit)
 
 # Descriptor-driven NCM discovery, against synthetic configuration descriptors.
 # Runs anywhere: this is the coverage that stands in for a phone.
@@ -86,6 +87,7 @@ target_link_libraries(apple_usb_test_ncm_discovery PRIVATE
     apple_usb
     spdlog::spdlog
 )
+add_project_test(TARGET apple_usb_test_ncm_discovery LABELS apple_usb unit)
 
 # NTB16 framing, against synthetic transfer blocks. This is the AV data path --
 # every video frame and audio packet the phone sends is parsed here -- and it
@@ -96,6 +98,7 @@ target_link_libraries(apple_usb_test_ncm_frame PRIVATE
     apple_usb
     spdlog::spdlog
 )
+add_project_test(TARGET apple_usb_test_ncm_frame LABELS apple_usb unit)
 
 # Pairing crypto: certificate shape, chain, and the on-disk round trip. Needs
 # OpenSSL directly to inspect what the generator produced.
@@ -105,6 +108,7 @@ target_link_libraries(apple_usb_test_pair_record PRIVATE
     OpenSSL::Crypto
     spdlog::spdlog
 )
+add_project_test(TARGET apple_usb_test_pair_record LABELS apple_usb unit)
 
 # Hardware counterpart to the test above: points our client at a real running
 # UsbmuxdServer. Replaces the `idevice_id -l` check in the bring-up doc, which

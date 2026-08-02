@@ -59,32 +59,49 @@ the regression net for the pure-logic layers:
 
 ```bash
 cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust build is the hog
-./build/libs/airplay/airplay_test_tlv8        # TLV8 encode/decode + fragmentation
-./build/libs/airplay/airplay_test_crypto      # HKDF/ChaCha20/X25519/Ed25519/SRP KATs
-./build/libs/airplay/airplay_test_nalu        # avcC -> Annex-B rewrite
-./build/libs/airplay/airplay_test_aac         # AAC-LC encode/decode round-trip (entertainment audio)
-./build/libs/airplay/airplay_test_event_queue # event channel queueing
-./build/libs/airplay/airplay_test_oem_button  # manufacturer button: /info keys + press decode
-./build/libs/airplay/airplay_test_hid         # HID descriptors vs. the reports sent on them
-./build/libs/airplay/airplay_test_channel_crypto  # encrypted-channel framing + nonce lockstep
-./build/libs/airplay/airplay_test_info_plist      # the GET /info capability declaration
-./build/libs/airplay/airplay_test_pairing_session # pair-setup/verify/auth-setup, driven as the phone
-./build/libs/plist/plist_test_binary          # binary plist round-trip
-./build/libs/plist/plist_test_xml             # XML plist round-trip
-./build/libs/plist/plist_test_libplist_vectors # differential vectors captured from libplist
-./build/libs/iap2/iap2_test_framing           # 0xFF5A link-layer framing round-trip
-./build/libs/iap2/iap2_test_nmea              # GPS location NMEA (GGA/RMC) generation + checksum
-./build/libs/apple_usb/apple_usb_test_ncm_discovery # NCM descriptor discovery (real-hardware fixture)
-./build/libs/apple_usb/apple_usb_test_ncm_frame     # NTB16 framing + EUI-64 link-local derivation
-./build/libs/apple_usb/apple_usb_test_pair_record   # pair record mint/parse, X509_verify
-./build/libs/apple_usb/apple_usb_test_usbmux_client # usbmux client framing
+ctest --test-dir build --output-on-failure
 ```
 
+That runs every test in the repository, not just this stack's, in about seven
+seconds. To narrow it:
+
+```bash
+ctest --test-dir build -L unit      # the 23 deterministic ones, well under a second
+ctest --test-dir build -L airplay   # just the AirPlay layer
+ctest --test-dir build -LE slow     # skip anything that measures real elapsed time
+ctest --test-dir build -j8          # they are independent; this is safe
+ctest --test-dir build -R pairing   # by name
+```
+
+Every test carries its component as a label plus at least one of `unit` (pure
+logic -- no sockets, clock, hardware or display), `net` (opens a zenoh session),
+`gui` (constructs Qt widgets, forced offscreen) and `slow`. The registration
+helper is `cmake/ProjectTest.cmake`; a new test is one `add_project_test()` line
+next to its `add_executable`.
+
+What the AirPlay layer covers:
+
+| Test | Covers |
+|---|---|
+| `airplay_test_tlv8` | TLV8 encode/decode + fragmentation |
+| `airplay_test_crypto` | HKDF/ChaCha20/X25519/Ed25519/SRP known-answer vectors |
+| `airplay_test_channel_crypto` | encrypted-channel framing, and the nonce lockstep both ends depend on |
+| `airplay_test_pairing_session` | pair-setup/verify/auth-setup, driven from the phone's side |
+| `airplay_test_info_plist` | the GET /info capability declaration |
+| `airplay_test_hid` | HID descriptors against the reports sent on them |
+| `airplay_test_oem_button` | manufacturer button: /info keys + press decode |
+| `airplay_test_event_queue` | event-channel ordering, coalescing, priority, drops |
+| `airplay_test_nalu` | avcC -> Annex-B rewrite |
+| `airplay_test_aac` | AAC-LC encode/decode round-trip (entertainment audio) |
+
+and the layers underneath: `plist_test_{binary,xml,libplist_vectors}`,
+`iap2_test_{framing,nmea}`,
+`apple_usb_test_{ncm_discovery,ncm_frame,pair_record,usbmux_client}`.
+
 There is no `airplay_test_plist` — the plist tests live in `libs/plist` under the
-`plist_test_*` names above. If you have one in a `build/` directory, it is a
-stale binary from before the move and will keep passing after its target is
-gone; that is a good reason to reconfigure from scratch rather than trust an old
-build tree. `ctest` is not wired up, so run them directly as above.
+`plist_test_*` names. If you have one in a `build/` directory, it is a stale
+binary from before the move and will keep passing after its target is gone; that
+is a good reason to reconfigure from scratch rather than trust an old build tree.
 
 A failure here is a logic bug, not a hardware problem — fix before proceeding.
 

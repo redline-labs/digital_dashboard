@@ -56,6 +56,7 @@ target_link_libraries(carplay_test_touch_throttle PRIVATE
     helpers
     spdlog::spdlog
 )
+add_project_test(TARGET carplay_test_touch_throttle LABELS dashboard unit)
 target_include_directories(carplay_test_touch_throttle PRIVATE include)
 
 # The same behaviour through a real widget and a real zenoh subscriber, which is
@@ -66,3 +67,6 @@ target_link_libraries(carplay_test_touch_rate PRIVATE
     ${CARPLAY_WIDGET_LIB}
     spdlog::spdlog
 )
+# Drives a real widget and a real zenoh subscriber, and measures elapsed
+# wall clock -- so it is gui, net and slow all at once.
+add_project_test(TARGET carplay_test_touch_rate LABELS dashboard gui net slow)

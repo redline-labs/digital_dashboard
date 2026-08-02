@@ -32,4 +32,5 @@ foreach(test binary xml libplist_vectors)
         plist
         spdlog::spdlog
     )
+    add_project_test(TARGET plist_test_${test} LABELS plist unit)
 endforeach()

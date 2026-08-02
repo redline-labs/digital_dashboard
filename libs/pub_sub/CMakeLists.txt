@@ -89,6 +89,7 @@ target_link_libraries(pub_sub_test_capnp_encoding PRIVATE
     zenoh_pub_sub
     spdlog::spdlog
 )
+add_project_test(TARGET pub_sub_test_capnp_encoding LABELS pub_sub unit)
 
 # SessionManager lifecycle. Unlike the encoding test this one does open real
 # zenoh sessions -- releasing one and opening another is the whole point -- so
@@ -101,6 +102,7 @@ target_link_libraries(pub_sub_test_session_manager PRIVATE
     zenoh_pub_sub
     spdlog::spdlog
 )
+add_project_test(TARGET pub_sub_test_session_manager LABELS pub_sub net)
 
 
 # Add test executable
