@@ -99,6 +99,41 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     SPDLOG_INFO("[node] zenoh bridge publishing under '{}/'", prefix_);
 }
 
+void ZenohBridge::setVideoSubscriberHandler(VideoSubscriberHandler handler)
+{
+    std::lock_guard<std::mutex> lock(video_subscriber_mutex_);
+    video_subscriber_handler_ = std::move(handler);
+
+    if (video_subscriber_listener_declared_)
+    {
+        return;
+    }
+    // Declared once and never taken down -- zenoh has no undeclare for a
+    // background matching listener, and `this` outlives every session anyway.
+    video_subscriber_listener_declared_ = true;
+    video_pub_.onSubscriberPresenceChanged([this](bool present) {
+        VideoSubscriberHandler current;
+        {
+            std::lock_guard<std::mutex> inner(video_subscriber_mutex_);
+            video_subscribers_present_ = present;
+            current = video_subscriber_handler_;
+        }
+        SPDLOG_INFO("[node] video topic {} subscriber(s)", present ? "has" : "has no");
+        // Called outside the lock: the handler runs on a zenoh thread and has
+        // no business being serialised against setVideoSubscriberHandler.
+        if (current)
+        {
+            current(present);
+        }
+    });
+}
+
+bool ZenohBridge::videoSubscribersPresent() const
+{
+    std::lock_guard<std::mutex> lock(video_subscriber_mutex_);
+    return video_subscribers_present_;
+}
+
 void ZenohBridge::publishVideo(const VideoFrame& frame)
 {
     if (frame.data == nullptr || frame.len == 0)

@@ -112,6 +112,17 @@ class Receiver
     // to call from any thread.
     void feedMic(const Bytes& pcm);
 
+    // Tells the receiver whether anything is rendering the video stream.
+    //
+    // Keyframe requests are suppressed entirely while nothing is, and one is
+    // sent immediately when something starts: zenoh has no retained messages,
+    // so a renderer joining mid-stream has nothing to decode until the next
+    // keyframe, and on a static screen the phone emits none of its own.
+    //
+    // Defaults to true, so a caller that never wires this up behaves exactly as
+    // before -- the periodic path alone.
+    void setRenderersPresent(bool present);
+
     // Asks the phone to emit a fresh IDR keyframe. The phone sends one keyframe
     // at session start and then, for a static screen, only P-frames -- so a
     // renderer that joins late (the dashboard does, over zenoh) cannot sync
@@ -182,6 +193,9 @@ class Receiver
     // RTSP session thread sets it and stop() reads it from the caller's.
     std::atomic<bool> session_live_{false};
     std::atomic<bool> night_mode_{false};
+    // Whether anything is rendering. Nothing asks the phone for keyframes while
+    // this is false; see setRenderersPresent.
+    std::atomic<bool> renderers_present_{true};
     // Whether Siri is listening or speaking, from the phone's modesChanged.
     // Only the event-channel thread touches it, so it needs no synchronisation;
     // it exists so the transition is logged once rather than on every update.

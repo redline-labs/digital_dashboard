@@ -1,6 +1,7 @@
 #ifndef ZENOH_PUBLISHER_H_
 #define ZENOH_PUBLISHER_H_
 
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -68,6 +69,35 @@ public:
     std::string_view keyexpr() const
     {
         return mPublisher->get_keyexpr().as_string_view();
+    }
+
+    // Reports whether anything is subscribed to this key, and calls `handler`
+    // whenever that changes. Useful for work only worth doing when someone is
+    // listening -- zenoh has no retained messages, so a publisher that has to
+    // prime a late joiner otherwise has to do it on a timer, forever, whether
+    // or not anyone ever connects.
+    //
+    // NOTE the granularity: zenoh reports a *boolean*, so the handler fires on
+    // the first subscriber arriving and the last one leaving, and NOT for a
+    // second subscriber joining while a first is still there. It answers "is
+    // anyone listening", not "how many" and not "who just arrived". Anything
+    // that has to serve a late joiner arriving alongside an existing one still
+    // needs its own periodic path.
+    //
+    // The handler runs on a zenoh thread, so it must not block. The listener
+    // lives as long as the publisher.
+    void onSubscriberPresenceChanged(std::function<void(bool present)> handler)
+    {
+        mPublisher->declare_background_matching_listener(
+            [handler = std::move(handler)](const zenoh::MatchingStatus& status) {
+                handler(status.matching);
+            },
+            []() {});
+    }
+
+    bool hasSubscribers() const
+    {
+        return mPublisher->get_matching_status().matching;
     }
 
     // Publish current message state via zenoh without specifying encoding for now.

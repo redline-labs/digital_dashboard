@@ -387,17 +387,29 @@ bool Receiver::start()
     // only P-frames, so a renderer that subscribes to the zenoh video topic
     // late -- which the dashboard always does -- never gets a sync point.
     keyframe_thread_ = std::thread([this] {
-        // Only nudge the phone when no keyframe/config has arrived recently. A
-        // static screen (one keyframe, then only P-frames) needs the nudge for a
-        // late-joining renderer to sync; an animated screen emits its own
-        // keyframes and must not be asked for redundant ones (which doubles the
-        // keyframe bandwidth for nothing).
+        // The backstop. setRenderersPresent() handles a renderer arriving on
+        // its own; this covers what that cannot see -- a second renderer
+        // joining alongside a first (zenoh reports only whether *anything* is
+        // subscribed, not how many), a keyframe lost in flight, and a phone
+        // that ignored a request.
+        //
+        // Only nudges when no keyframe/config has arrived recently. A static
+        // screen (one keyframe, then only P-frames) needs the nudge; an
+        // animated screen emits its own keyframes and must not be asked for
+        // redundant ones (which doubles the keyframe bandwidth for nothing).
         constexpr auto kStaleAfter = std::chrono::milliseconds(1500);
         while (run_.load())
         {
             for (int i = 0; i < 5 && run_.load(); ++i)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (!renderers_present_.load())
+            {
+                // Nobody is decoding, so a keyframe would be encoded by the
+                // phone, sent over USB and dropped. On a static screen this is
+                // otherwise a request every couple of seconds, forever.
+                continue;
             }
             const auto last = std::chrono::steady_clock::time_point(
                 std::chrono::steady_clock::duration(last_keyframe_ns_.load()));
@@ -1154,6 +1166,24 @@ void Receiver::requestSiri()
 
 void Receiver::requestKeyframe()
 {
+    state_->events.requestKeyframe();
+}
+
+void Receiver::setRenderersPresent(bool present)
+{
+    if (renderers_present_.exchange(present) == present)
+    {
+        return;
+    }
+    if (!present)
+    {
+        SPDLOG_INFO("[airplay] nothing is rendering; stopping keyframe requests");
+        return;
+    }
+    // Do not wait for the staleness poll: a renderer that just connected has
+    // nothing to decode until a keyframe arrives, and on a static screen the
+    // next one of the phone's own accord may never come.
+    SPDLOG_INFO("[airplay] a renderer connected; requesting a keyframe now");
     state_->events.requestKeyframe();
 }
 

@@ -927,6 +927,18 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
                     publish_session();
                 });
 
+            // Keyframes are only worth asking the phone for while something is
+            // decoding them. This is edge-triggered on nothing-subscribed <->
+            // something-subscribed, which covers the case that matters (the
+            // dashboard starting after the driver); the receiver's own periodic
+            // path still covers a second renderer joining alongside a first.
+            airplay::Receiver* keyframe_rx = receiver.get();
+            bridge.setVideoSubscriberHandler(
+                [keyframe_rx](bool present) { keyframe_rx->setRenderersPresent(present); });
+            // The listener only reports *changes*, and the dashboard may well
+            // already be up, so seed from the current state rather than a guess.
+            receiver->setRenderersPresent(bridge.videoSubscribersPresent());
+
             // The manufacturer button. Nothing is hooked up to it yet: this is
             // where a "show the vehicle's own UI" action belongs, which for this
             // dashboard means telling the widget stack to leave the CarPlay page.
@@ -1392,6 +1404,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     bridge.setMicHandler(nullptr);
     bridge.setInputHandler(nullptr);
     bridge.setLocationHandler(nullptr);
+    bridge.setVideoSubscriberHandler(nullptr);
     if (receiver)
     {
         receiver->stop();

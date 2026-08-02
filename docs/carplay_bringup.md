@@ -2113,6 +2113,58 @@ dashboard widget.** Driver → USB → AirPlay → zenoh → widget → screen. 
    pushes `hidSendReport` multitouch reports over it, wired to the dashboard's
    input topic. Confirm on screen that taps register.
 
+### Keyframes are gated on somebody actually rendering (2026-08-02)
+
+zenoh has no retained messages, so a renderer that joins mid-stream has nothing
+to decode until the next keyframe -- and on a static CarPlay screen (a menu, a
+stationary map) the phone emits none of its own. The driver therefore asks for
+one, and used to ask on a timer alone: roughly every 1.5-2 s, forever, whether
+or not anything was subscribed.
+
+It is now driven by whether anything is listening, using zenoh's publisher
+matching status on `nodes/carplay/video`:
+
+| State | Behaviour |
+|---|---|
+| nothing subscribed | no keyframe requests at all |
+| first subscriber arrives | one requested immediately |
+| something subscribed | the 1.5 s staleness poll, as before |
+
+**The poll is still needed, and this is the reason.** zenoh reports a *boolean* --
+"is anything subscribed" -- so the notification fires on the first subscriber
+arriving and the last one leaving, and **not** when a second joins alongside a
+first. Running `inspect dump -k nodes/carplay/video` while the dashboard is
+already up produces no event, so that renderer syncs via the poll. Verified
+against zenoh 1.9.0, cross-process:
+
+```
+initial matching=false
+subscriber A connects   -> event, matching=true
+subscriber B connects   -> nothing
+A drops (B remains)     -> nothing
+B drops (last one)      -> event, matching=false
+```
+
+To watch it on a bench, run the driver and attach and detach a subscriber:
+
+```bash
+./build/nodes/carplay/carplay --verbose        # terminal 1
+./build/nodes/inspect/inspect dump -k nodes/carplay/video   # terminal 2, then Ctrl-C
+```
+
+Terminal 1 logs `[node] video topic has subscriber(s)` and then
+`[airplay] a renderer connected; requesting a keyframe now`, and the matching
+pair when the subscriber goes away. If the first line appears and the second
+does not, the receiver is not wired to the bridge; if neither appears, the
+matching listener is not being declared (it is declared lazily, on the first
+`setVideoSubscriberHandler` call).
+
+**Lifetime note.** The bridge outlives any one session, and a background
+matching listener cannot be undeclared, so the listener is declared once and
+dispatches through whatever handler is installed. `runAttachedSession` detaches
+it at teardown alongside the mic, input and location handlers -- the same
+reason: they capture session-scoped state that is about to be destroyed.
+
 **The "one frame then stops" earlier symptom was `viewAreas`, now fixed** — see
 above. With it in place the phone streams continuously (100+ frames observed).
 2. **Audio pacing** — timing-dependent, cannot be desk-checked.

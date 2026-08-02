@@ -196,6 +196,27 @@ class ZenohBridge
 
     // Driver -> dashboard.
     void publishVideo(const VideoFrame& frame);
+
+    // Called when the video topic goes from having no subscribers to having
+    // some, and back. The driver uses it to stop asking the phone for keyframes
+    // when nothing is rendering, and to prime a renderer the moment one shows
+    // up -- zenoh has no retained messages, so a subscriber that joins mid-
+    // stream has nothing to decode until the next keyframe.
+    //
+    // Fires on the first subscriber and the last, NOT on a second joining
+    // alongside a first; see ZenohPublisher::onSubscriberPresenceChanged. The
+    // periodic keyframe path still covers that case.
+    //
+    // Runs on a zenoh thread, so the handler must not block.
+    // Detachable like the inbound handlers below, and for the same reason: the
+    // bridge outlives any one session, so a handler capturing session-scoped
+    // state has to be able to let go. Pass nullptr at teardown.
+    using VideoSubscriberHandler = std::function<void(bool present)>;
+    void setVideoSubscriberHandler(VideoSubscriberHandler handler);
+
+    // The current state, for priming a handler that was installed after the
+    // fact -- the listener only reports *changes*.
+    bool videoSubscribersPresent() const;
     void publishAudio(const AudioChunk& chunk);
     void publishSession(const SessionState& state);
     void publishNav(const NavGuidance& nav);
@@ -214,6 +235,15 @@ class ZenohBridge
 
     std::mutex video_mutex_;
     pub_sub::ZenohPublisher<CarPlayVideo> video_pub_;
+
+    // Guards the handler and the last reported state. The zenoh matching
+    // listener cannot be undeclared once made, so it is declared once and
+    // dispatches through whatever handler is installed at the time -- which is
+    // what makes detaching possible at all.
+    mutable std::mutex video_subscriber_mutex_;
+    VideoSubscriberHandler video_subscriber_handler_;
+    bool video_subscribers_present_ = false;
+    bool video_subscriber_listener_declared_ = false;
 
     std::mutex audio_mutex_;
     pub_sub::ZenohPublisher<CarPlayAudio> audio_pub_;
