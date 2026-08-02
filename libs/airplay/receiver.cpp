@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "airplay/receiver.h"
 
+#include "airplay/channel_crypto.h"
+
 #include "airplay/aac_decoder.h"
 #include "airplay/event_queue.h"
 #include "plist/binary.h"
@@ -145,19 +147,6 @@ bool decodeAacFormat(int64_t format, PcmFormat& out)
     }
     return false;
 }
-
-// Per-direction ChaCha20-Poly1305 state for an encrypted AirPlay channel (the
-// control channel after pair-verify, and the event channel). Framing is a
-// 2-byte little-endian length, that many ciphertext bytes, a 16-byte tag; the
-// length is the AAD and each direction counts nonces from zero.
-struct ChannelCrypto
-{
-    bool active = false;
-    Bytes inbound_key;
-    Bytes outbound_key;
-    uint64_t inbound_counter = 0;
-    uint64_t outbound_counter = 0;
-};
 
 // The main display's identity. The phone matches this string between the
 // display entry in /info, the HID devices attached to it, and the keyframe
@@ -590,68 +579,6 @@ void Receiver::acceptLoop()
     }
 }
 
-// Per-connection encryption state for the control channel that pair-verify
-// establishes. HAP frames each message as a 2-byte little-endian length, that
-// many bytes of ciphertext, then a 16-byte Poly1305 tag. The length doubles as
-// the AAD, and each direction has its own counter-based nonce starting at zero.
-namespace
-{
-
-// Pulls as many complete frames out of `cipher` as are available, appending the
-// plaintext to `plain`. Returns false if a frame failed to authenticate.
-bool decryptFrames(ChannelCrypto& channel, Bytes& cipher, Bytes& plain)
-{
-    while (cipher.size() >= 2)
-    {
-        const size_t length = static_cast<size_t>(cipher[0]) |
-                              (static_cast<size_t>(cipher[1]) << 8);
-        const size_t frame = 2 + length + 16;
-        if (cipher.size() < frame)
-        {
-            break;  // more of this frame still arriving
-        }
-
-        const Bytes aad(cipher.begin(), cipher.begin() + 2);
-        const Bytes sealed(cipher.begin() + 2, cipher.begin() + static_cast<long>(frame));
-        const auto opened = crypto::chachaOpen(
-            channel.inbound_key, crypto::nonce64(channel.inbound_counter), sealed, aad);
-        if (!opened)
-        {
-            return false;
-        }
-        ++channel.inbound_counter;
-        plain.insert(plain.end(), opened->begin(), opened->end());
-        cipher.erase(cipher.begin(), cipher.begin() + static_cast<long>(frame));
-    }
-    return true;
-}
-
-Bytes encryptFrames(ChannelCrypto& channel, const Bytes& plain)
-{
-    // AirPlay caps a frame's plaintext at 1024 bytes.
-    constexpr size_t kMaxFrame = 1024;
-    Bytes out;
-    size_t offset = 0;
-    while (offset < plain.size())
-    {
-        const size_t take = std::min(kMaxFrame, plain.size() - offset);
-        const Bytes aad{static_cast<uint8_t>(take & 0xFF),
-                        static_cast<uint8_t>((take >> 8) & 0xFF)};
-        const Bytes chunk(plain.begin() + static_cast<long>(offset),
-                          plain.begin() + static_cast<long>(offset + take));
-        const Bytes sealed = crypto::chachaSeal(
-            channel.outbound_key, crypto::nonce64(channel.outbound_counter), chunk, aad);
-        ++channel.outbound_counter;
-
-        out.insert(out.end(), aad.begin(), aad.end());
-        out.insert(out.end(), sealed.begin(), sealed.end());
-        offset += take;
-    }
-    return out;
-}
-
-}  // namespace
-
 void Receiver::sessionLoop(int client_fd, std::string peer)
 {
     Bytes buffer;      // raw bytes off the socket
@@ -679,9 +606,9 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
         }
         buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + n);
 
-        if (channel.active)
+        if (channel.active())
         {
-            if (!decryptFrames(channel, buffer, plaintext))
+            if (!channel.open(buffer, plaintext))
             {
                 SPDLOG_ERROR("[airplay] control channel frame failed to authenticate; "
                              "closing. Suspect the key direction or the nonce counter.");
@@ -728,11 +655,11 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
             // pair-verify M4 is the last plaintext message; everything after it
             // on this connection is encrypted, in both directions.
             const bool activates_encryption =
-                !channel.active && request.uri == "/pair-verify" && state_->verified;
+                !channel.active() && request.uri == "/pair-verify" && state_->verified;
 
-            if (channel.active)
+            if (channel.active())
             {
-                wire = encryptFrames(channel, wire);
+                wire = channel.seal(wire);
             }
 
             size_t sent = 0;
@@ -753,9 +680,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
             {
                 // Naming follows HAP: the *controller* reads with
                 // "Control-Read-Encryption-Key", so that is our outbound key.
-                channel.outbound_key = state_->control_read;
-                channel.inbound_key = state_->control_write;
-                channel.active = true;
+                channel.activate(state_->control_write, state_->control_read);
                 SPDLOG_INFO("[airplay] control channel is now encrypted");
             }
         }
@@ -1931,12 +1856,13 @@ void Receiver::eventChannelLoop(int listen_fd)
         {
             std::lock_guard<std::mutex> lock(state_->event_mutex);
             state_->event_client_fd = client;
-            state_->event_crypto = {};
-            state_->event_crypto.outbound_key = crypto::hkdfSha512(
-                state_->verify_shared, "Events-Salt", "Events-Write-Encryption-Key", 32);
-            state_->event_crypto.inbound_key = crypto::hkdfSha512(
-                state_->verify_shared, "Events-Salt", "Events-Read-Encryption-Key", 32);
-            state_->event_crypto.active = true;
+            // Not swapped, unlike the control channel: the accessory writes
+            // with Events-Write and reads with Events-Read.
+            state_->event_crypto.activate(
+                crypto::hkdfSha512(state_->verify_shared, "Events-Salt",
+                                   "Events-Read-Encryption-Key", 32),
+                crypto::hkdfSha512(state_->verify_shared, "Events-Salt",
+                                   "Events-Write-Encryption-Key", 32));
         }
 
         Bytes cipher;
@@ -1960,7 +1886,7 @@ void Receiver::eventChannelLoop(int listen_fd)
 
             {
                 std::lock_guard<std::mutex> lock(state_->event_mutex);
-                if (!decryptFrames(state_->event_crypto, cipher, plain))
+                if (!state_->event_crypto.open(cipher, plain))
                 {
                     SPDLOG_WARN("[airplay] event channel frame failed to authenticate");
                     break;
@@ -2009,7 +1935,7 @@ void Receiver::eventChannelLoop(int listen_fd)
         {
             std::lock_guard<std::mutex> lock(state_->event_mutex);
             state_->event_client_fd = -1;
-            state_->event_crypto.active = false;
+            state_->event_crypto.deactivate();
         }
         // Anything still queued belongs to the session that just ended -- most
         // likely a touch whose matching release never got sent. Replaying it
@@ -2517,12 +2443,12 @@ bool Receiver::writeEventRaw(const Bytes& message)
 
 bool Receiver::writeEventLocked(const Bytes& message)
 {
-    if (state_->event_client_fd < 0 || !state_->event_crypto.active)
+    if (state_->event_client_fd < 0 || !state_->event_crypto.active())
     {
         return false;  // no event channel yet
     }
 
-    const Bytes wire = encryptFrames(state_->event_crypto, message);
+    const Bytes wire = state_->event_crypto.seal(message);
     size_t sent = 0;
     while (sent < wire.size())
     {

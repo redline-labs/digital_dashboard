@@ -19,6 +19,7 @@ pkg_check_modules(AIRPLAY_LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
 add_library(airplay STATIC
     tlv8.cpp
     crypto.cpp
+    channel_crypto.cpp
     srp.cpp
     nalu.cpp
     rtsp.cpp
@@ -46,7 +47,7 @@ target_link_libraries(airplay
 )
 
 # Round-trip and known-answer tests, runnable without hardware.
-foreach(test tlv8 crypto nalu event_queue oem_button hid)
+foreach(test tlv8 crypto nalu event_queue oem_button hid channel_crypto)
     add_executable(airplay_test_${test} test_${test}.cpp)
     target_link_libraries(airplay_test_${test} PRIVATE
         airplay
