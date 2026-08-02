@@ -90,6 +90,18 @@ target_link_libraries(pub_sub_test_capnp_encoding PRIVATE
     spdlog::spdlog
 )
 
+# SessionManager lifecycle. Unlike the encoding test this one does open real
+# zenoh sessions -- releasing one and opening another is the whole point -- so
+# it skips itself (exit 0, with a warning) on a host where none can be opened.
+add_executable(pub_sub_test_session_manager
+    test_session_manager.cpp
+)
+
+target_link_libraries(pub_sub_test_session_manager PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+
 
 # Add test executable
 #add_executable(test_expression_parser
