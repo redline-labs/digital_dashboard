@@ -19,6 +19,31 @@
 namespace airplay
 {
 
+// NTP's 64-bit fixed-point timestamps, and the offset computed from a
+// request/response exchange. Split out from the socket because the arithmetic
+// is the part that can be wrong: clock sync is mandatory, and without it the
+// phone tears the session down a few seconds after RECORD -- which reads as an
+// unstable link rather than a clock problem.
+namespace ntp
+{
+
+// Seconds in the upper 32 bits, fraction in the lower, big-endian.
+void write(uint8_t* buffer, uint64_t value);
+uint64_t read(const uint8_t* buffer);
+
+// offset = ((T2 - T1) + (T3 - T4)) / 2, in seconds.
+//
+//   T1  we transmitted the request      T2  the phone received it
+//   T3  the phone transmitted the reply T4  we received it
+//
+// The differences are taken as unsigned and then reinterpreted as signed, which
+// is what makes this work at all: the phone's clock runs on its own base, so T2
+// and T3 can be arbitrarily far from ours in either direction, and the first
+// exchange of a session usually is.
+double offsetSeconds(uint64_t t1, uint64_t t2, uint64_t t3, uint64_t t4);
+
+}  // namespace ntp
+
 class TimingSync
 {
   public:

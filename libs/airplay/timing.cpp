@@ -24,7 +24,7 @@ constexpr uint8_t kPayloadResponse = 211;
 constexpr size_t kPacketSize = 32;
 constexpr auto kRequestInterval = std::chrono::milliseconds(1000);
 
-void writeNtp(uint8_t* buffer, uint64_t value)
+void writeNtpImpl(uint8_t* buffer, uint64_t value)
 {
     for (int i = 0; i < 8; ++i)
     {
@@ -32,7 +32,7 @@ void writeNtp(uint8_t* buffer, uint64_t value)
     }
 }
 
-uint64_t readNtp(const uint8_t* buffer)
+uint64_t readNtpImpl(const uint8_t* buffer)
 {
     uint64_t value = 0;
     for (int i = 0; i < 8; ++i)
@@ -43,6 +43,30 @@ uint64_t readNtp(const uint8_t* buffer)
 }
 
 }  // namespace
+
+namespace ntp
+{
+
+void write(uint8_t* buffer, uint64_t value)
+{
+    writeNtpImpl(buffer, value);
+}
+
+uint64_t read(const uint8_t* buffer)
+{
+    return readNtpImpl(buffer);
+}
+
+double offsetSeconds(uint64_t t1, uint64_t t2, uint64_t t3, uint64_t t4)
+{
+    constexpr double kTwo32 = 4294967296.0;
+    return 0.5 *
+           (static_cast<double>(static_cast<int64_t>(t2 - t1)) +
+            static_cast<double>(static_cast<int64_t>(t3 - t4))) /
+           kTwo32;
+}
+
+}  // namespace ntp
 
 TimingSync::~TimingSync()
 {
@@ -143,7 +167,7 @@ void TimingSync::sendRequest()
     // ntpOriginate so we can pair the response with this request.
     const uint64_t t1 = syncedNtp();
     pending_t1_ = t1;
-    writeNtp(packet + 24, t1);
+    writeNtpImpl(packet + 24, t1);
 
     if (::sendto(fd_, packet, sizeof(packet), 0, reinterpret_cast<sockaddr*>(&peer_),
                  sizeof(peer_)) < 0)
@@ -168,8 +192,8 @@ void TimingSync::handlePacket(const uint8_t* data, size_t length, const sockaddr
         response[1] = kPayloadResponse;
         response[3] = 0x07;
         std::memcpy(response + 8, data + 24, 8);
-        writeNtp(response + 16, syncedNtp());
-        writeNtp(response + 24, syncedNtp());
+        writeNtpImpl(response + 16, syncedNtp());
+        writeNtpImpl(response + 24, syncedNtp());
         ::sendto(fd_, response, sizeof(response), 0,
                  reinterpret_cast<const sockaddr*>(&from), sizeof(from));
         return;
@@ -182,9 +206,9 @@ void TimingSync::handlePacket(const uint8_t* data, size_t length, const sockaddr
 
     // offset = ((T2 - T1) + (T3 - T4)) / 2
     const uint64_t t4 = syncedNtp();
-    const uint64_t t1 = readNtp(data + 8);
-    const uint64_t t2 = readNtp(data + 16);
-    const uint64_t t3 = readNtp(data + 24);
+    const uint64_t t1 = readNtpImpl(data + 8);
+    const uint64_t t2 = readNtpImpl(data + 16);
+    const uint64_t t3 = readNtpImpl(data + 24);
 
     if (pending_t1_ == 0 || t1 != pending_t1_)
     {
@@ -192,11 +216,7 @@ void TimingSync::handlePacket(const uint8_t* data, size_t length, const sockaddr
     }
     pending_t1_ = 0;
 
-    constexpr double kTwo32 = 4294967296.0;
-    const double offset =
-        0.5 * ((static_cast<double>(static_cast<int64_t>(t2 - t1)) +
-                static_cast<double>(static_cast<int64_t>(t3 - t4)))) /
-        kTwo32;
+    const double offset = ntp::offsetSeconds(t1, t2, t3, t4);
 
     // The phone's clock runs on its own base, so the first sample is arbitrarily
     // large and simply steps our clock; after that we slew gently.
