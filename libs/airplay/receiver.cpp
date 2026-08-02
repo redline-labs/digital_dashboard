@@ -270,6 +270,22 @@ struct Receiver::State
     uint16_t event_port = 0;
     std::vector<int> stream_fds;
 
+    // Where a low-power phone sends its keepalive datagrams. Never read: the
+    // socket exists so the datagrams have somewhere to land.
+    int keep_alive_fd = -1;
+    uint16_t keep_alive_port = 0;
+
+    // The audio streams the phone currently has open, which is what POST
+    // /feedback has to report back. Touched by the RTSP session thread only,
+    // but /feedback and SETUP may arrive on different connections.
+    struct AudioStreamInfo
+    {
+        int64_t type = 0;
+        uint32_t sample_rate = 0;
+    };
+    std::mutex audio_mutex;
+    std::vector<AudioStreamInfo> audio_streams;
+
     // The accepted event-channel socket and its cipher. Guarded because the
     // accept loop, the receive pump and the event writer all touch it. Only
     // eventSendLoop() ever writes to the socket.
@@ -504,7 +520,26 @@ void Receiver::stop()
         }
     }
     session_threads_.clear();
-    stopMicUplink();
+
+    // The listeners handleSetup opened. Closed only here, after the threads
+    // polling them have been joined -- and reset, so a restarted receiver opens
+    // fresh ones rather than advertising ports nothing is listening on.
+    if (state_->event_fd >= 0)
+    {
+        ::close(state_->event_fd);
+        state_->event_fd = -1;
+        state_->event_port = 0;
+    }
+    if (state_->keep_alive_fd >= 0)
+    {
+        ::close(state_->keep_alive_fd);
+        state_->keep_alive_fd = -1;
+        state_->keep_alive_port = 0;
+    }
+
+    endSession("receiver stopped");
+    // Unconditional, unlike endSession's: a caller that never saw RECORD still
+    // wants to know the receiver is down.
     if (status_handler_)
     {
         status_handler_(false);
@@ -546,6 +581,11 @@ void Receiver::acceptLoop()
         state_->peer_scope = peer.sin6_scope_id;
         session_threads_.emplace_back([this, client, peer_text = std::string(text)] {
             sessionLoop(client, peer_text);
+            // However sessionLoop got here -- TEARDOWN, the phone unplugged, a
+            // frame that failed to authenticate -- the control connection is
+            // gone, and with it the session. Reporting it from one place means
+            // no exit path can forget to.
+            endSession("control connection closed");
         });
     }
 }
@@ -787,6 +827,10 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
     {
         return handleRecord(request);
     }
+    if (request.method == "TEARDOWN")
+    {
+        return handleTeardown(request);
+    }
     if (request.method == "OPTIONS")
     {
         rtsp::Message response = rtsp::makeResponse(200, "OK", "", {});
@@ -795,15 +839,19 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
                            "GET_PARAMETER, SET_PARAMETER, POST, GET");
         return response;
     }
-    if (request.uri == "/feedback" || request.uri == "/command")
+    if (request.uri == "/feedback")
     {
-        // Keepalive and phone-initiated UI events. Answering 501 here makes the
-        // phone treat the session as broken.
-        SPDLOG_DEBUG("[airplay] {} {} acknowledged", request.method, request.uri);
-        return rtsp::makeResponse(200, "OK", "", {});
+        return handleFeedback(request);
+    }
+    if (request.uri == "/command")
+    {
+        // A phone-initiated command arriving on the control channel rather than
+        // the event one. Answering 501 makes the phone treat the session as
+        // broken, so it is routed and acknowledged exactly the same way.
+        return handleEventCommand(request);
     }
     if (request.method == "GET_PARAMETER" || request.method == "SET_PARAMETER" ||
-        request.method == "FLUSH" || request.method == "TEARDOWN")
+        request.method == "FLUSH")
     {
         SPDLOG_INFO("[airplay] {} acknowledged", request.method);
         return rtsp::makeResponse(200, "OK", "", {});
@@ -1317,9 +1365,29 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             }
         }
 
+        // We advertise keepAliveLowPower in /info, so a phone that takes us up
+        // on it needs somewhere to send them. Nothing reads the datagrams --
+        // their arrival is the whole message -- but without a bound port the
+        // phone is keeping a session alive against a closed socket.
+        uint16_t keep_alive_port = 0;
+        if (const plist::Value* low_power = body->find("keepAliveLowPower");
+            low_power != nullptr && low_power->asBool())
+        {
+            if (state_->keep_alive_fd < 0)
+            {
+                state_->keep_alive_fd = openUdpSocket(state_->keep_alive_port);
+            }
+            keep_alive_port = state_->keep_alive_port;
+        }
+
         plist::Value reply = plist::Value::dict();
         reply.set("timingPort", plist::Value::integer(timing_port));
         reply.set("eventPort", plist::Value::integer(state_->event_port));
+        if (keep_alive_port != 0)
+        {
+            SPDLOG_INFO("[airplay] SETUP session: advertising keepAlivePort {}", keep_alive_port);
+            reply.set("keepAlivePort", plist::Value::integer(keep_alive_port));
+        }
         // Without enabledFeatures the phone has nothing to turn on and tears
         // the session down straight after RECORD.
         reply.set("enabledFeatures",
@@ -1436,6 +1504,18 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
                 startMicUplink(static_cast<uint16_t>(phone_port->asInteger()), output_key,
                                pcm.sample_rate, pcm.channels, static_cast<int>(stream_type),
                                stream);
+            }
+
+            {
+                // Remembered for POST /feedback, which has to name every open
+                // audio stream: a phone that asks and is told nothing treats
+                // the stream as dead and tears it down.
+                std::lock_guard<std::mutex> lock(state_->audio_mutex);
+                std::erase_if(state_->audio_streams,
+                              [&](const State::AudioStreamInfo& info) {
+                                  return info.type == stream_type;
+                              });
+                state_->audio_streams.push_back({stream_type, pcm.sample_rate});
             }
 
             plist::Value entry = plist::Value::dict();
@@ -1981,6 +2061,82 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
                         params->find("url")->asString());
         }
     }
+    else if (type == "modesChanged")
+    {
+        // The phone reporting who now owns the screen, the audio, and each app
+        // state. The one worth tracking is speech: appStateID 1's speechMode
+        // says whether Siri is listening (1) or speaking (2).
+        if (params != nullptr && params->isDict())
+        {
+            if (const plist::Value* states = params->find("appStates");
+                states != nullptr && states->isArray())
+            {
+                for (size_t i = 0; i < states->size(); ++i)
+                {
+                    const plist::Value& app_state = states->valueAt(i);
+                    const plist::Value* id = app_state.find("appStateID");
+                    const plist::Value* speech = app_state.find("speechMode");
+                    if (id == nullptr || id->asInteger() != 1 || speech == nullptr)
+                    {
+                        continue;
+                    }
+                    const int64_t mode = speech->asInteger();
+                    const bool active = (mode == 1 || mode == 2);
+                    if (active != speech_active_)
+                    {
+                        speech_active_ = active;
+                        SPDLOG_INFO("[airplay] Siri speech {}", active ? "active" : "done");
+                    }
+                }
+            }
+        }
+        SPDLOG_DEBUG("[airplay] modesChanged:");
+        describePlist(*body, "  ", {});
+    }
+    else if (type == "duckAudio" || type == "unduckAudio")
+    {
+        // The phone asking the head unit to attenuate *its own* audio sources
+        // under a navigation prompt or a call. Logged rather than acted on:
+        // this head unit has no source of its own to duck yet -- the phone
+        // mixes its music and prompts together before sending them to us.
+        double volume_db = 0.0;
+        int64_t duration_ms = 0;
+        if (params != nullptr && params->isDict())
+        {
+            if (const plist::Value* value = params->find("volume"); value != nullptr)
+            {
+                volume_db = value->asReal();
+            }
+            if (const plist::Value* value = params->find("durationMs"); value != nullptr)
+            {
+                duration_ms = value->asInteger();
+            }
+        }
+        const double level = (type == "duckAudio") ? std::pow(10.0, volume_db / 20.0) : 1.0;
+        SPDLOG_INFO("[airplay] {} to level {:.3f} over {} ms (no head-unit audio to duck)",
+                    type, level, duration_ms);
+    }
+    else if (type == "suggestUI")
+    {
+        // URLs the phone offers the head unit's own UI. Nothing here shows
+        // them; the dashboard decides what it displays.
+        size_t urls = 0;
+        if (params != nullptr && params->isDict())
+        {
+            if (const plist::Value* list = params->find("urls");
+                list != nullptr && list->isArray())
+            {
+                urls = list->size();
+            }
+        }
+        SPDLOG_INFO("[airplay] suggestUI with {} url(s) (not shown)", urls);
+    }
+    else if (type == "disableBluetooth")
+    {
+        // On a wired session iAP2 already runs over USB, so there is no
+        // Bluetooth link of ours for the phone to be asking us to drop.
+        SPDLOG_INFO("[airplay] disableBluetooth (no Bluetooth link on the wired path)");
+    }
     else if (!type.empty())
     {
         // Not silently dropped: an unrecognised command is how a protocol
@@ -2094,6 +2250,30 @@ void Receiver::sendTelephonyKey(hid::TelephonyKey key)
 {
     queueReport(hid::kTelephonyUid, hid::telephonyReport(key));
     queueReport(hid::kTelephonyUid, hid::telephonyReport(hid::TelephonyKey::None));
+}
+
+void Receiver::setNightMode(bool night)
+{
+    night_mode_.store(night);
+    if (!session_live_.load())
+    {
+        // Pushed at RECORD instead. Sending now would be ignored at best.
+        SPDLOG_DEBUG("[airplay] night mode {} (no session yet; will be sent at RECORD)",
+                     night ? "on" : "off");
+        return;
+    }
+    SPDLOG_INFO("[airplay] night mode {}", night ? "on" : "off");
+    queueCommand(buildNightModeCommand());
+}
+
+Bytes Receiver::buildNightModeCommand() const
+{
+    plist::Value params = plist::Value::dict();
+    params.set("nightMode", plist::Value::boolean(night_mode_.load()));
+    plist::Value command = plist::Value::dict();
+    command.set("type", plist::Value::string("setNightMode"));
+    command.set("params", std::move(params));
+    return plist::encodeBinary(command);
 }
 
 void Receiver::requestSiri()
@@ -2362,6 +2542,13 @@ rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
 {
     (void)request;
     SPDLOG_INFO("[airplay] RECORD -- session is live");
+    session_live_.store(true);
+    // The phone only accepts event commands once the session has started, so
+    // this is the first chance to tell it which theme to draw. Sent every
+    // session, including when nothing has changed: the phone does not remember
+    // ours across sessions, and day is what it assumes.
+    SPDLOG_INFO("[airplay] pushing night mode {}", night_mode_.load() ? "on" : "off");
+    queueCommand(buildNightModeCommand());
     if (status_handler_)
     {
         status_handler_(true);
@@ -2369,6 +2556,117 @@ rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
     rtsp::Message response = rtsp::makeResponse(200, "OK", "", {});
     response.setHeader("Audio-Latency", "0");
     return response;
+}
+
+void Receiver::endSession(const char* reason)
+{
+    // Exchange, not a plain store: several paths can reach here for the same
+    // session (a TEARDOWN, then the connection closing behind it), and the
+    // dashboard should be told the session ended once, not twice.
+    if (!session_live_.exchange(false))
+    {
+        return;
+    }
+    SPDLOG_INFO("[airplay] session ended ({})", reason);
+
+    stopMicUplink();
+    {
+        std::lock_guard<std::mutex> lock(state_->audio_mutex);
+        state_->audio_streams.clear();
+    }
+    {
+        // Whatever is queued belongs to the session that just ended.
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        state_->send_queue.clear();
+    }
+    if (status_handler_)
+    {
+        status_handler_(false);
+    }
+}
+
+rtsp::Message Receiver::handleFeedback(const rtsp::Message& request)
+{
+    (void)request;
+    // The phone polls this as the media clock for its audio streams. An empty
+    // answer reads as "that stream is gone", and the phone tears the stream
+    // down and re-opens it every few seconds.
+    //
+    // What a full answer adds is a playback anchor -- a timestamp and the
+    // sample the sink is currently playing -- which paces the phone's sending
+    // to real time. We have no such anchor: the PCM is handed to the dashboard
+    // over zenoh and played there, so this side does not know where playback
+    // has reached. Naming the streams without inventing a position is the
+    // honest half, and is what keeps them alive.
+    std::vector<plist::Value> streams;
+    {
+        std::lock_guard<std::mutex> lock(state_->audio_mutex);
+        streams.reserve(state_->audio_streams.size());
+        for (const State::AudioStreamInfo& info : state_->audio_streams)
+        {
+            plist::Value entry = plist::Value::dict();
+            entry.set("type", plist::Value::integer(info.type));
+            entry.set("sampleRate", plist::Value::integer(info.sample_rate));
+            streams.push_back(std::move(entry));
+        }
+    }
+
+    if (streams.empty())
+    {
+        return rtsp::makeResponse(200, "OK", "", {});
+    }
+
+    plist::Value body = plist::Value::dict();
+    body.set("streams", plist::Value::array(std::move(streams)));
+    return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
+                              plist::encodeBinary(body));
+}
+
+rtsp::Message Receiver::handleTeardown(const rtsp::Message& request)
+{
+    // A TEARDOWN naming streams closes just those; one with no stream list (or
+    // no body at all) ends the whole session. Treating the first as the second
+    // is what makes a phone that merely stops its music look like a phone that
+    // went away.
+    const auto body = plist::decodeBinary(request.body);
+    const plist::Value* streams =
+        (body && body->isDict()) ? body->find("streams") : nullptr;
+
+    if (streams == nullptr || !streams->isArray() || streams->size() == 0)
+    {
+        endSession("TEARDOWN");
+        return rtsp::makeResponse(200, "OK", "", {});
+    }
+
+    for (size_t i = 0; i < streams->size(); ++i)
+    {
+        const plist::Value* type = streams->valueAt(i).find("type");
+        const int64_t stream_type = type != nullptr ? type->asInteger() : -1;
+        SPDLOG_INFO("[airplay] TEARDOWN stream type {}", stream_type);
+
+        {
+            // Drop it from what /feedback reports, or we go on claiming a
+            // stream the phone has just closed.
+            std::lock_guard<std::mutex> lock(state_->audio_mutex);
+            std::erase_if(state_->audio_streams, [&](const State::AudioStreamInfo& info) {
+                return info.type == stream_type;
+            });
+        }
+
+        // The stream loops themselves end when the phone closes the socket, so
+        // there is nothing else to stop here -- except the mic uplink, which is
+        // ours and would otherwise keep sending into a stream that is gone.
+        constexpr int64_t kStreamMainAudio = 100;
+        if (stream_type == kStreamMainAudio)
+        {
+            stopMicUplink();
+            if (mic_status_handler_)
+            {
+                mic_status_handler_(false, 0, 0);
+            }
+        }
+    }
+    return rtsp::makeResponse(200, "OK", "", {});
 }
 
 rtsp::Message Receiver::handleInfo(const rtsp::Message& request)

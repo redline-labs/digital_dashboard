@@ -148,6 +148,13 @@ class Receiver
     void sendMediaKey(hid::MediaKey key);
     void sendTelephonyKey(hid::TelephonyKey key);
 
+    // Switches CarPlay's own UI between its day and night themes. Safe to call
+    // before a session exists: the setting is remembered and pushed at RECORD,
+    // which is also the earliest the phone will accept it -- a command sent
+    // before RECORD is ignored, and stalls the bring-up on older iOS.
+    void setNightMode(bool night);
+    bool nightMode() const { return night_mode_.load(); }
+
     // Asks the phone to start Siri, as a dedicated Siri button rather than
     // push-to-talk: a down/up click, so the phone opens a conversational
     // session that listens until the user stops talking. A press-and-hold would
@@ -189,6 +196,13 @@ class Receiver
     rtsp::Message handleInfo(const rtsp::Message& request);
     rtsp::Message handleSetup(const rtsp::Message& request);
     rtsp::Message handleRecord(const rtsp::Message& request);
+    rtsp::Message handleTeardown(const rtsp::Message& request);
+    rtsp::Message handleFeedback(const rtsp::Message& request);
+
+    // Reports the session as over, once, however it ended. Idempotent, because
+    // a polite TEARDOWN and the control connection closing behind it are both
+    // the same session ending.
+    void endSession(const char* reason);
 
     // Opens a listening TCP socket on an ephemeral port. Returns the fd and
     // writes the chosen port, which is what gets advertised to the phone.
@@ -244,6 +258,7 @@ class Receiver
     // Builds the plist body for a touch report / keyframe request.
     Bytes buildTouchCommand(float x, float y, bool down) const;
     Bytes buildKeyframeCommand() const;
+    Bytes buildNightModeCommand() const;
 
     // Queues one already-encoded event-channel command body for the sender
     // thread. Everything that is not touch or a keyframe goes through here.
@@ -261,6 +276,14 @@ class Receiver
 
     int server_fd_ = -1;
     std::atomic<bool> run_{false};
+    // True between RECORD and whatever ends the session. Atomic because the
+    // RTSP session thread sets it and stop() reads it from the caller's.
+    std::atomic<bool> session_live_{false};
+    std::atomic<bool> night_mode_{false};
+    // Whether Siri is listening or speaking, from the phone's modesChanged.
+    // Only the event-channel thread touches it, so it needs no synchronisation;
+    // it exists so the transition is logged once rather than on every update.
+    bool speech_active_ = false;
     std::thread accept_thread_;
     std::thread keyframe_thread_;
     std::thread event_send_thread_;

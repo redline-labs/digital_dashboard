@@ -7,6 +7,11 @@
 # Everything here has a built-in default, so the node runs without this file;
 # what the file buys you is the artwork, which cannot be hard-coded.
 
+# Draw CarPlay's own UI in its night theme. Pushed to the phone at RECORD, and
+# re-sent on every session -- the phone does not remember ours, and assumes day.
+# There is no light sensor wired up yet, so this is a static setting.
+night_mode: false
+
 # The "manufacturer button": the tile CarPlay draws on its own home screen so
 # the user can hand the screen back to the vehicle's UI. It is advertised to the
 # phone once, in GET /info, which means changes here only take effect on the

@@ -1814,6 +1814,64 @@ is a *dashboard widget* concern (a cluster-style turn-by-turn card rendering the
 PCM/AAC), a dedicated turn-by-turn nav widget, and GSV/VTG NMEA sentences (the
 phone works with GGA+RMC).
 
+## 10b. Session lifecycle, night mode, and the phone's own commands
+
+Three things the session layer owed the phone, added 2026-08-02. None is
+hardware-verified.
+
+**TEARDOWN is now read, not just acknowledged.** A TEARDOWN naming streams
+closes those streams; one with no stream list ends the session. Both were
+previously answered with a bare 200 and nothing else, so the dashboard was told
+the session had ended only when the *node* shut down — a phone that unplugged
+left the widget showing a live session forever.
+
+`endSession()` is the single place that reports it, and is idempotent: a polite
+TEARDOWN and the control connection closing behind it are the same session
+ending, and the dashboard should hear about it once. It also drops the queued
+event-channel work, stops the mic uplink, and clears the audio-stream registry.
+
+**`POST /feedback` now answers with the open audio streams** (`{type,
+sampleRate}` each) instead of an empty 200. An empty answer reads to the phone
+as "that stream is gone", and it tears the stream down and re-opens it every few
+seconds. What a full answer would add is a playback anchor — a timestamp and the
+sample the sink is currently playing — which paces the phone to real time. We
+have none: the PCM goes to the dashboard over zenoh and is played there, so this
+side does not know where playback has reached. Inventing one would be worse than
+omitting it. If a buffered stream (type 102) is ever exercised end to end and
+drifts, this is the first thing to revisit.
+
+**Night mode** switches CarPlay's own UI between its day and night themes:
+
+```bash
+./build/nodes/carplay/carplay --night-mode=true --verbose
+```
+
+or `night_mode:` in the config. It is pushed at RECORD — the phone ignores event
+commands sent before the session starts, and older iOS stalls the bring-up ~5 s
+on one — and re-sent every session, because the phone does not remember ours and
+assumes day. It is also reflected in `CarPlaySessionState.nightMode`, a field
+that has existed since the schema was written and was until now always false.
+
+There is no light sensor wired to it. Hooking it to the vehicle's headlight
+state is a `Receiver::setNightMode()` call from whatever publishes that.
+
+**The phone's own commands** are now routed rather than logged as unhandled:
+
+| Command | What we do |
+|---|---|
+| `requestUI` | manufacturer button, or an app naming a url — see stage 11 |
+| `modesChanged` | tracks `speechMode` on appStateID 1, so Siri listening/speaking is logged on the transition |
+| `duckAudio` / `unduckAudio` | logged with the computed linear level. **Not acted on**: this is the phone asking the head unit to attenuate *its own* sources, and there are none — the phone mixes its music and prompts before sending them to us |
+| `suggestUI` | logged with the url count; the dashboard decides what it shows |
+| `disableBluetooth` | logged. Not applicable on the wired path: iAP2 already runs over USB, so there is no Bluetooth link of ours to drop |
+| anything else | acknowledged, and logged **with its full body**, which is how the next one gets identified |
+
+**A keepalive port is now advertised.** `/info` has always claimed
+`keepAliveLowPower`, and the SETUP response never gave the phone anywhere to
+send them. A UDP socket is now bound and its port returned when the phone's
+SETUP asks for it. Nothing reads the datagrams — their arrival is the whole
+message.
+
 ## 11. The manufacturer button
 
 CarPlay draws one tile on its own home screen for the vehicle manufacturer. The
@@ -1895,7 +1953,11 @@ Not all stages below are implemented yet. Current state:
 | **Widget render (YUVJ420P)** | working — full CarPlay home screen renders |
 | **Event channel + touch HID** | **verified on hardware** (single-touch + drag) |
 | **Knob / media key / telephony HID + Siri** | written 2026-08-02, unit-tested (`airplay_test_hid`), **not hardware-verified**. Advertised in `/info` and wired to the `input` topic; nothing publishes them yet |
-| **Event channel inbound commands** | written 2026-08-01 — the phone's own commands are now parsed and acknowledged (they were previously read and discarded); only `requestUI` is routed, the rest are logged with their body |
+| **Event channel inbound commands** | written 2026-08-01 — the phone's own commands are now parsed and acknowledged (they were previously read and discarded). `requestUI`, `modesChanged`, `duckAudio`/`unduckAudio`, `suggestUI` and `disableBluetooth` routed 2026-08-02; see stage 10b |
+| **Session lifecycle (TEARDOWN)** | written 2026-08-02 — TEARDOWN was acknowledged and otherwise ignored, so the dashboard never learned a session had ended. Not hardware-verified |
+| **`POST /feedback` media clock** | written 2026-08-02 — names the open audio streams instead of answering empty. No playback anchor; see stage 10b |
+| **Night mode** | written 2026-08-02, wired to `--night-mode` / config and to `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
+| **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
 | **Manufacturer button** (`/info` advertisement + press decode) | written 2026-08-01, unit-tested (`airplay_test_oem_button`), **not hardware-verified**; the press is logged and goes nowhere — see stage 11 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
 | **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |

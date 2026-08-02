@@ -41,8 +41,10 @@ struct UsbPipelineOptions
     // precedence over any fix published on <prefix>/location.
     std::optional<LocationFix> static_location;
 
-    // Stage 7 presentation: the manufacturer button advertised in GET /info.
+    // Stage 7 presentation: the manufacturer button advertised in GET /info,
+    // and which theme CarPlay draws its own UI in.
     airplay::OemButtonConfig oem_button;
+    bool night_mode = false;
 };
 
 // Runs the pipeline up to options.max_stage, logging each stage with the

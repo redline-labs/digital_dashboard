@@ -866,6 +866,8 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
             };
         }
         receiver = std::make_unique<airplay::Receiver>(receiver_config);
+        // Set before start(): the receiver pushes it to the phone at RECORD.
+        receiver->setNightMode(options.night_mode);
 
         // Hand decoded access units straight to the dashboard. The parameter
         // sets are cached and re-sent ahead of every keyframe because zenoh has
@@ -967,11 +969,15 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                 uint8_t mic_channels = 0;
             };
             auto share = std::make_shared<SessionShare>();
-            const auto publish_session = [&bridge, config, share]() {
+            const bool night_mode = options.night_mode;
+            const auto publish_session = [&bridge, config, share, night_mode]() {
                 std::lock_guard<std::mutex> lock(share->mutex);
                 SessionState state;
                 state.device_connected = share->recording;
                 state.phase = share->recording ? SessionPhase::Recording : SessionPhase::Idle;
+                // What the phone was told, so a widget can match its own chrome
+                // to the theme CarPlay is drawing inside the video.
+                state.night_mode = night_mode;
                 state.main_width_px = static_cast<uint16_t>(config.width);
                 state.main_height_px = static_cast<uint16_t>(config.height);
                 state.mic_active = share->mic_active;

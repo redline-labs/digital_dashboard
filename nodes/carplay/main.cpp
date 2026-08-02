@@ -56,6 +56,8 @@ int main(int argc, char** argv)
          cxxopts::value<bool>()->default_value("true"))
         ("oem-label", "Caption under the manufacturer button (overrides --config)",
          cxxopts::value<std::string>()->default_value(""))
+        ("night-mode", "Draw CarPlay's own UI in its night theme",
+         cxxopts::value<bool>()->default_value("false"))
         ("state-dir", "Directory for accessory identity and pair records",
          cxxopts::value<std::string>()->default_value(""))
         ("simulate", "Publish a synthetic session (no phone required) for dashboard testing")
@@ -101,7 +103,16 @@ int main(int argc, char** argv)
         }
         SPDLOG_INFO("[node] loaded config from {}", path);
     }
-    config.oem_button.enabled = args["oem-button"].as<bool>();
+    // count() is the number of times the flag was actually given, so these only
+    // override when asked for -- a config saying `enabled: false` stands.
+    if (args.count("oem-button") > 0)
+    {
+        config.oem_button.enabled = args["oem-button"].as<bool>();
+    }
+    if (args.count("night-mode") > 0)
+    {
+        config.night_mode = args["night-mode"].as<bool>();
+    }
     if (const std::string label = args["oem-label"].as<std::string>(); !label.empty())
     {
         config.oem_button.label = label;
@@ -150,6 +161,7 @@ int main(int argc, char** argv)
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
     usb_options.oem_button = config.oem_button;
+    usb_options.night_mode = config.night_mode;
 
     usb_options.recording = &g_recording;
 

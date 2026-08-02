@@ -17,6 +17,11 @@ namespace carplay
 
 struct NodeConfig
 {
+    // Draw CarPlay's own UI in its night theme. There is no light sensor here
+    // yet, so this is whatever the vehicle is configured with; see
+    // docs/carplay_bringup.md stage 11 for hooking it to the headlights.
+    bool night_mode = false;
+
     // The node's defaults deliberately differ from the library's: a head unit
     // wants the button, whereas airplay::Receiver defaults to advertising
     // nothing so that a caller has to ask for it. No icon is defaulted --

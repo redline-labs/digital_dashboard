@@ -108,6 +108,10 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
 
     try
     {
+        if (const YAML::Node night = root["night_mode"])
+        {
+            parsed.night_mode = night.as<bool>();
+        }
         if (const YAML::Node button = root["oem_button"]; button && button.IsMap())
         {
             if (const YAML::Node enabled = button["enabled"])
