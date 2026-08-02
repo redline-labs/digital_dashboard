@@ -5,6 +5,7 @@
 #include "airplay/info_plist.h"
 #include "airplay/event_channel.h"
 #include "airplay/media_stream.h"
+#include "airplay/mic_uplink.h"
 #include "airplay/net.h"
 #include "airplay/pairing_session.h"
 
@@ -239,22 +240,8 @@ struct Receiver::State
     std::mutex audio_mutex;
     std::vector<AudioStreamInfo> audio_streams;
 
-    // Microphone uplink (us -> phone), set up when the phone's main-audio SETUP
-    // carries a dataPort of its own. Guarded because feedMic() runs on the zenoh
-    // subscriber thread while setup/teardown run on the RTSP session thread.
-    std::mutex mic_mutex;
-    bool mic_active = false;
-    int mic_fd = -1;
-    sockaddr_in6 mic_dest{};
-    Bytes mic_key;
-    uint32_t mic_sample_rate = 0;
-    uint8_t mic_channels = 0;
-    int mic_payload_type = 100;
-    size_t mic_samples_per_frame = 0;  // PCM framing granularity
-    Bytes mic_accum;                   // leftover PCM between feed() calls
-    uint16_t mic_seq = 0;
-    uint32_t mic_ts = 0;
-    uint64_t mic_nonce = 0;
+    // Captured audio going back to the phone (Siri, a call).
+    MicUplink mic;
 };
 
 Receiver::Receiver(ReceiverConfig config) : config_(std::move(config))
@@ -300,7 +287,12 @@ void Receiver::setStatusHandler(StatusHandler handler)
 
 void Receiver::setMicStatusHandler(MicStatusHandler handler)
 {
-    mic_status_handler_ = std::move(handler);
+    state_->mic.setStatusHandler(std::move(handler));
+}
+
+void Receiver::feedMic(const Bytes& pcm)
+{
+    state_->mic.feed(pcm);
 }
 
 void Receiver::setOemButtonHandler(OemButtonHandler handler)
@@ -726,6 +718,9 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
 
 rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 {
+    // SETUP arrives twice, for two unrelated things. The first names no streams
+    // and sets up the session itself -- timing, the event channel, keepalive.
+    // The second opens the media streams. They share only a method name.
     const auto body = plist::decodeBinary(request.body);
     if (!body || !body->isDict())
     {
@@ -734,90 +729,97 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
     }
 
     const plist::Value* streams = body->find("streams");
-
     if (streams == nullptr)
     {
-        // Phase 1: the session itself. The phone tells us where its timing
-        // channel is and expects our event channel port in return.
-        if (const plist::Value* name = body->find("name"); name != nullptr)
-        {
-            SPDLOG_INFO("[airplay] SETUP session for '{}' ({})", name->asString(),
-                        body->find("model") != nullptr ? body->find("model")->asString() : "?");
-        }
+        return handleSessionSetup(*body);
+    }
+    return handleStreamSetup(*streams);
+}
 
-        if (state_->event_port == 0)
-        {
-            // Keyed from the pair-verify secret, which by now exists: the phone
-            // does not reach SETUP without completing pair-verify first.
-            state_->events.useSharedSecret(state_->pairing.verifySharedSecret());
-            if (!state_->events.start(state_->event_port))
-            {
-                return rtsp::makeResponse(500, "Internal Server Error", "", {});
-            }
-        }
-        SPDLOG_INFO("[airplay] SETUP session: advertising eventPort {}", state_->event_port);
-
-        // Bring up our timing port and start driving the sync against theirs.
-        uint16_t timing_port = 0;
-        if (state_->timing.listen(timing_port))
-        {
-            const plist::Value* peer_timing = body->find("timingPort");
-            const int64_t peer_port = peer_timing != nullptr ? peer_timing->asInteger() : 0;
-            if (peer_port > 0 && !state_->peer_address.empty())
-            {
-                state_->timing.start(state_->peer_address, static_cast<uint16_t>(peer_port),
-                                     state_->peer_scope);
-            }
-            else
-            {
-                SPDLOG_WARN("[airplay] no peer timingPort in SETUP; clock sync not started");
-            }
-        }
-
-        // We advertise keepAliveLowPower in /info, so a phone that takes us up
-        // on it needs somewhere to send them. Nothing reads the datagrams --
-        // their arrival is the whole message -- but without a bound port the
-        // phone is keeping a session alive against a closed socket.
-        uint16_t keep_alive_port = 0;
-        if (const plist::Value* low_power = body->find("keepAliveLowPower");
-            low_power != nullptr && low_power->asBool())
-        {
-            if (state_->keep_alive_fd < 0)
-            {
-                state_->keep_alive_fd = net::openUdpSocket(state_->keep_alive_port);
-            }
-            keep_alive_port = state_->keep_alive_port;
-        }
-
-        plist::Value reply = plist::Value::dict();
-        reply.set("timingPort", plist::Value::integer(timing_port));
-        reply.set("eventPort", plist::Value::integer(state_->event_port));
-        if (keep_alive_port != 0)
-        {
-            SPDLOG_INFO("[airplay] SETUP session: advertising keepAlivePort {}", keep_alive_port);
-            reply.set("keepAlivePort", plist::Value::integer(keep_alive_port));
-        }
-        // Without enabledFeatures the phone has nothing to turn on and tears
-        // the session down straight after RECORD.
-        reply.set("enabledFeatures",
-                  plist::Value::array({plist::Value::string("iAPChannel"),
-                                       plist::Value::string("viewAreas")}));
-        return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
-                                  plist::encodeBinary(reply));
+rtsp::Message Receiver::handleSessionSetup(const plist::Value& body)
+{
+    // The phone tells us where its timing channel is and expects our event
+    // channel port in return.
+    if (const plist::Value* name = body.find("name"); name != nullptr)
+    {
+        SPDLOG_INFO("[airplay] SETUP session for '{}' ({})", name->asString(),
+                    body.find("model") != nullptr ? body.find("model")->asString() : "?");
     }
 
-    // Phase 2: one entry per media stream the phone wants to open.
+    if (state_->event_port == 0)
+    {
+        // Keyed from the pair-verify secret, which by now exists: the phone
+        // does not reach SETUP without completing pair-verify first.
+        state_->events.useSharedSecret(state_->pairing.verifySharedSecret());
+        if (!state_->events.start(state_->event_port))
+        {
+            return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        }
+    }
+    SPDLOG_INFO("[airplay] SETUP session: advertising eventPort {}", state_->event_port);
+
+    // Bring up our timing port and start driving the sync against theirs.
+    uint16_t timing_port = 0;
+    if (state_->timing.listen(timing_port))
+    {
+        const plist::Value* peer_timing = body.find("timingPort");
+        const int64_t peer_port = peer_timing != nullptr ? peer_timing->asInteger() : 0;
+        if (peer_port > 0 && !state_->peer_address.empty())
+        {
+            state_->timing.start(state_->peer_address, static_cast<uint16_t>(peer_port),
+                                 state_->peer_scope);
+        }
+        else
+        {
+            SPDLOG_WARN("[airplay] no peer timingPort in SETUP; clock sync not started");
+        }
+    }
+
+    // We advertise keepAliveLowPower in /info, so a phone that takes us up
+    // on it needs somewhere to send them. Nothing reads the datagrams --
+    // their arrival is the whole message -- but without a bound port the
+    // phone is keeping a session alive against a closed socket.
+    uint16_t keep_alive_port = 0;
+    if (const plist::Value* low_power = body.find("keepAliveLowPower");
+        low_power != nullptr && low_power->asBool())
+    {
+        if (state_->keep_alive_fd < 0)
+        {
+            state_->keep_alive_fd = net::openUdpSocket(state_->keep_alive_port);
+        }
+        keep_alive_port = state_->keep_alive_port;
+    }
+
+    plist::Value reply = plist::Value::dict();
+    reply.set("timingPort", plist::Value::integer(timing_port));
+    reply.set("eventPort", plist::Value::integer(state_->event_port));
+    if (keep_alive_port != 0)
+    {
+        SPDLOG_INFO("[airplay] SETUP session: advertising keepAlivePort {}", keep_alive_port);
+        reply.set("keepAlivePort", plist::Value::integer(keep_alive_port));
+    }
+    // Without enabledFeatures the phone has nothing to turn on and tears
+    // the session down straight after RECORD.
+    reply.set("enabledFeatures",
+              plist::Value::array({plist::Value::string("iAPChannel"),
+                                   plist::Value::string("viewAreas")}));
+    return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
+                              plist::encodeBinary(reply));
+}
+
+rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
+{
     constexpr int64_t kStreamMainScreen = 110;
     constexpr int64_t kStreamMainAudio = 100;
     constexpr int64_t kStreamAltAudio = 101;
     constexpr int64_t kStreamMainHighAudio = 102;
 
-    SPDLOG_INFO("[airplay] SETUP with {} stream(s)", streams->size());
+    SPDLOG_INFO("[airplay] SETUP with {} stream(s)", streams.size());
     std::vector<plist::Value> out_streams;
 
-    for (size_t i = 0; i < streams->size(); ++i)
+    for (size_t i = 0; i < streams.size(); ++i)
     {
-        const plist::Value& stream = streams->valueAt(i);
+        const plist::Value& stream = streams.valueAt(i);
         const plist::Value* type = stream.find("type");
         const int64_t stream_type = type != nullptr ? type->asInteger() : -1;
         const plist::Value* connection_id = stream.find("streamConnectionID");
@@ -912,9 +914,15 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             if (stream_type == kStreamMainAudio && is_pcm && phone_port != nullptr &&
                 phone_port->asInteger() > 0 && !state_->peer_address.empty())
             {
-                startMicUplink(static_cast<uint16_t>(phone_port->asInteger()), output_key,
-                               pcm.sample_rate, pcm.channels, static_cast<int>(stream_type),
-                               stream);
+                const plist::Value* frames = stream.find("framesPerPacket");
+                state_->mic.start({state_->peer_address, state_->peer_scope},
+                                  static_cast<uint16_t>(phone_port->asInteger()),
+                                  state_->pairing.verifySharedSecret(), pcm.sample_rate,
+                                  pcm.channels, static_cast<int>(stream_type),
+                                  static_cast<uint64_t>(stream_connection_id),
+                                  frames != nullptr && frames->asInteger() > 0
+                                      ? static_cast<size_t>(frames->asInteger())
+                                      : 0);
             }
 
             {
@@ -1117,87 +1125,7 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
 
 
 
-void Receiver::startMicUplink(uint16_t phone_port, const Bytes& /*shared_key*/,
-                              uint32_t sample_rate, uint8_t channels, int stream_type,
-                              const plist::Value& stream)
-{
-    std::lock_guard<std::mutex> lock(state_->mic_mutex);
-    if (state_->mic_fd >= 0)
-    {
-        return;  // already up
-    }
 
-    state_->mic_fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
-    if (state_->mic_fd < 0)
-    {
-        SPDLOG_ERROR("[audio] mic uplink socket() failed: {}", std::strerror(errno));
-        return;
-    }
-
-    state_->mic_dest = {};
-    state_->mic_dest.sin6_family = AF_INET6;
-    state_->mic_dest.sin6_port = htons(phone_port);
-    state_->mic_dest.sin6_scope_id = state_->peer_scope;
-    if (::inet_pton(AF_INET6, state_->peer_address.c_str(), &state_->mic_dest.sin6_addr) != 1)
-    {
-        SPDLOG_ERROR("[audio] mic uplink: cannot parse peer '{}'", state_->peer_address);
-        ::close(state_->mic_fd);
-        state_->mic_fd = -1;
-        return;
-    }
-
-    // The input key mirrors the downlink (output) key: same DataStream salt
-    // (this stream's connection id), the Input rather than Output label.
-    const plist::Value* cid = stream.find("streamConnectionID");
-    const std::string cid_text =
-        std::to_string(static_cast<uint64_t>(cid != nullptr ? cid->asInteger() : 0));
-    state_->mic_key = crypto::hkdfSha512(state_->pairing.verifySharedSecret(), "DataStream-Salt" + cid_text,
-                                         "DataStream-Input-Encryption-Key", 32);
-
-    // Frame granularity: the phone's framesPerPacket if given, else 20 ms.
-    const plist::Value* fpp = stream.find("framesPerPacket");
-    const int64_t frames = fpp != nullptr ? fpp->asInteger() : 0;
-    state_->mic_samples_per_frame =
-        frames > 0 ? static_cast<size_t>(frames) : (sample_rate * 20 / 1000);
-
-    state_->mic_sample_rate = sample_rate;
-    state_->mic_channels = channels;
-    state_->mic_payload_type = stream_type;
-    state_->mic_accum.clear();
-    state_->mic_seq = 0;
-    state_->mic_ts = 0;
-    state_->mic_nonce = 0;
-    state_->mic_active = true;
-
-    SPDLOG_INFO("[audio] mic uplink up: [{}]:{} {} Hz {} ch, {} samples/frame",
-                state_->peer_address, phone_port, sample_rate, channels,
-                state_->mic_samples_per_frame);
-
-    if (mic_status_handler_)
-    {
-        mic_status_handler_(true, sample_rate, channels);
-    }
-}
-
-void Receiver::stopMicUplink()
-{
-    bool was_active = false;
-    {
-        std::lock_guard<std::mutex> lock(state_->mic_mutex);
-        if (state_->mic_fd >= 0)
-        {
-            ::close(state_->mic_fd);
-            state_->mic_fd = -1;
-        }
-        was_active = state_->mic_active;
-        state_->mic_active = false;
-        state_->mic_accum.clear();
-    }
-    if (was_active && mic_status_handler_)
-    {
-        mic_status_handler_(false, 0, 0);
-    }
-}
 
 void Receiver::sendTouch(float x, float y, TouchPhase phase)
 {
@@ -1244,62 +1172,6 @@ void Receiver::setNightMode(bool night)
     state_->events.pushNightMode();
 }
 
-void Receiver::feedMic(const Bytes& pcm)
-{
-    std::lock_guard<std::mutex> lock(state_->mic_mutex);
-    if (!state_->mic_active || state_->mic_fd < 0 || state_->mic_samples_per_frame == 0)
-    {
-        return;
-    }
-
-    state_->mic_accum.insert(state_->mic_accum.end(), pcm.begin(), pcm.end());
-    const size_t frame_bytes = state_->mic_samples_per_frame * state_->mic_channels * 2;
-    if (frame_bytes == 0)
-    {
-        return;
-    }
-
-    while (state_->mic_accum.size() >= frame_bytes)
-    {
-        // PCM travels big-endian on the wire; swap each sample from S16LE.
-        Bytes body(state_->mic_accum.begin(), state_->mic_accum.begin() + frame_bytes);
-        for (size_t k = 0; k + 1 < body.size(); k += 2)
-        {
-            std::swap(body[k], body[k + 1]);
-        }
-        state_->mic_accum.erase(state_->mic_accum.begin(),
-                                state_->mic_accum.begin() + static_cast<long>(frame_bytes));
-
-        // RTP header, mirror of the downlink layout.
-        uint8_t header[12] = {};
-        header[0] = 0x80;
-        header[1] = static_cast<uint8_t>(state_->mic_payload_type & 0x7F);
-        header[2] = static_cast<uint8_t>((state_->mic_seq >> 8) & 0xFF);
-        header[3] = static_cast<uint8_t>(state_->mic_seq & 0xFF);
-        header[4] = static_cast<uint8_t>((state_->mic_ts >> 24) & 0xFF);
-        header[5] = static_cast<uint8_t>((state_->mic_ts >> 16) & 0xFF);
-        header[6] = static_cast<uint8_t>((state_->mic_ts >> 8) & 0xFF);
-        header[7] = static_cast<uint8_t>(state_->mic_ts & 0xFF);
-        // SSRC is zero for CarPlay input streams.
-
-        const Bytes aad(header + 4, header + 12);
-        const Bytes nonce = crypto::nonce64(state_->mic_nonce);
-        const Bytes sealed = crypto::chachaSeal(state_->mic_key, nonce, body, aad);
-
-        // Wire layout: header, ciphertext+tag, then the 8-byte LE nonce.
-        Bytes packet(header, header + 12);
-        packet.insert(packet.end(), sealed.begin(), sealed.end());
-        const Bytes nonce8(nonce.end() - 8, nonce.end());
-        packet.insert(packet.end(), nonce8.begin(), nonce8.end());
-
-        ::sendto(state_->mic_fd, packet.data(), packet.size(), 0,
-                 reinterpret_cast<sockaddr*>(&state_->mic_dest), sizeof(state_->mic_dest));
-
-        state_->mic_seq = static_cast<uint16_t>(state_->mic_seq + 1);
-        state_->mic_ts += static_cast<uint32_t>(state_->mic_samples_per_frame);
-        ++state_->mic_nonce;
-    }
-}
 
 
 
@@ -1335,7 +1207,7 @@ void Receiver::endSession(const char* reason)
     }
     SPDLOG_INFO("[airplay] session ended ({})", reason);
 
-    stopMicUplink();
+    state_->mic.stop();
     {
         std::lock_guard<std::mutex> lock(state_->audio_mutex);
         state_->audio_streams.clear();
@@ -1422,11 +1294,7 @@ rtsp::Message Receiver::handleTeardown(const rtsp::Message& request)
         constexpr int64_t kStreamMainAudio = 100;
         if (stream_type == kStreamMainAudio)
         {
-            stopMicUplink();
-            if (mic_status_handler_)
-            {
-                mic_status_handler_(false, 0, 0);
-            }
+            state_->mic.stop();
         }
     }
     return rtsp::makeResponse(200, "OK", "", {});

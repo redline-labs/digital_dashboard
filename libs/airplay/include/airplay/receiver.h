@@ -131,6 +131,10 @@ class Receiver
 
     rtsp::Message handleInfo(const rtsp::Message& request);
     rtsp::Message handleSetup(const rtsp::Message& request);
+    // SETUP's two unrelated phases: the session itself (timing, event channel,
+    // keepalive) and the media streams. They share only a method name.
+    rtsp::Message handleSessionSetup(const plist::Value& body);
+    rtsp::Message handleStreamSetup(const plist::Value& streams);
     rtsp::Message handleRecord(const rtsp::Message& request);
     rtsp::Message handleTeardown(const rtsp::Message& request);
     rtsp::Message handleFeedback(const rtsp::Message& request);
@@ -139,11 +143,6 @@ class Receiver
     // a polite TEARDOWN and the control connection closing behind it are both
     // the same session ending.
     void endSession(const char* reason);
-
-    // Brings a microphone uplink up (against the phone's dataPort) or down.
-    void startMicUplink(uint16_t phone_port, const Bytes& shared_key, uint32_t sample_rate,
-                        uint8_t channels, int stream_type, const plist::Value& stream);
-    void stopMicUplink();
 
     // Routes one command the phone posted on the event channel. Returns the
     // response to send back; the phone expects every request acknowledged.
@@ -175,7 +174,6 @@ class Receiver
     VideoHandler video_handler_;
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
-    MicStatusHandler mic_status_handler_;
     OemButtonHandler oem_button_handler_;
 
     int server_fd_ = -1;
