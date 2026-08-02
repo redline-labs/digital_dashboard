@@ -153,6 +153,48 @@ int main()
         expect(request.body == body, "and survives byte for byte, NUL included");
     }
 
+    // A response is not a request. This is the distinction that cost a whole
+    // hardware session: the event channel is bidirectional, so the phone sends
+    // its own commands AND replies to ours down it. A status line has the same
+    // three space-separated tokens as a request line, so parseRequest accepts
+    // it happily -- and routing a reply as a request, then answering it, made
+    // the phone answer back, at ~1000 messages/second for the whole session.
+    {
+        const Bytes wire = bytes("RTSP/1.0 200 OK\r\nCSeq: 4\r\nContent-Length: 0\r\n\r\n");
+        Message message;
+        const auto consumed = parseRequest(wire, message);
+        expect(consumed.has_value() && *consumed == wire.size(),
+               "a response parses -- the framing is identical");
+        expect(message.isResponse(), "and is identifiable as a response");
+        expect(message.method == "RTSP/1.0",
+               "the version lands in `method`, which is what makes it detectable");
+
+        // HTTP too, since a stray client may speak it.
+        Message http;
+        expect(parseRequest(bytes("HTTP/1.1 404 Not Found\r\n\r\n"), http).has_value() &&
+                   http.isResponse(),
+               "an HTTP response is also a response");
+
+        // And the cases that must NOT be mistaken for one.
+        for (const char* line : {"GET /info RTSP/1.0", "POST /command RTSP/1.0",
+                                 "RECORD rtsp://host/x RTSP/1.0", "SETUP rtsp://host RTSP/1.0",
+                                 "GET_PARAMETER /x RTSP/1.0", "TEARDOWN rtsp://host RTSP/1.0"})
+        {
+            Message request;
+            const auto ok = parseRequest(bytes(std::string(line) + "\r\n\r\n"), request);
+            expect(ok.has_value() && !request.isResponse(),
+                   std::string("'") + line + "' is a request, not a response");
+        }
+
+        // A response carrying a body is still a response -- the guard must not
+        // depend on the body being empty.
+        Message with_body;
+        expect(parseRequest(bytes("RTSP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nabc"),
+                            with_body).has_value() &&
+                   with_body.isResponse(),
+               "a response with a body is still a response");
+    }
+
     // Malformed request lines are fatal, not "wait for more": the connection
     // cannot recover, and returning 0 would spin forever on the same bytes.
     {

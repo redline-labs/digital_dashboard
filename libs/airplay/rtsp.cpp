@@ -65,6 +65,13 @@ std::string Message::contentType() const
     return value != nullptr ? *value : std::string{};
 }
 
+bool Message::isResponse() const
+{
+    // Both spellings: RTSP is the one CarPlay uses, HTTP the one a stray client
+    // might. LIVI guards on the same pair.
+    return method.starts_with("RTSP/") || method.starts_with("HTTP/");
+}
+
 std::optional<size_t> parseRequest(const Bytes& buffer, Message& out)
 {
     // Headers end at the first blank line.

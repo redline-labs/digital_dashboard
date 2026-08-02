@@ -178,6 +178,15 @@ void EventChannel::acceptLoop()
                 }
                 plain.erase(plain.begin(), plain.begin() + static_cast<long>(*consumed));
 
+                if (request.isResponse())
+                {
+                    // The phone acknowledging something we sent. Consumed and
+                    // dropped: answering it makes it answer us back, forever.
+                    SPDLOG_DEBUG("[airplay] event channel: reply to our command ({} {})",
+                                 request.method, request.uri);
+                    continue;
+                }
+
                 rtsp::Message response = command_handler_ ? command_handler_(request)
                                              : rtsp::makeResponse(200, "OK", "", {});
                 // The phone retries a command it never sees acknowledged, so an

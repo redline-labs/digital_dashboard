@@ -41,6 +41,20 @@ struct Message
 
     // Content-Type of the body, or empty.
     std::string contentType() const;
+
+    // True when this is a *response* rather than a request.
+    //
+    // parseRequest() cannot tell the difference from the shape alone -- a
+    // status line ("RTSP/1.0 200 OK") has the same three space-separated
+    // tokens as a request line ("GET /info RTSP/1.0"), so it parses happily
+    // with method="RTSP/1.0", uri="200", version="OK".
+    //
+    // This matters on the event channel, which is the one bidirectional
+    // channel: the phone sends its own commands *and* replies to ours. Routing
+    // a reply as though it were a request and answering it starts a ping-pong
+    // that neither side ever ends -- measured at ~1000 messages/second for a
+    // whole session, until the guard below was added.
+    bool isResponse() const;
 };
 
 // Parses one complete request from the front of `buffer`.

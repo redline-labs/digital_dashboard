@@ -57,6 +57,15 @@ uint64_t read(const uint8_t* buffer)
     return readNtpImpl(buffer);
 }
 
+int64_t toNanos(uint64_t ntp)
+{
+    // Seconds in the high 32 bits (up to ~4.29e9, so ~4.29e18 ns -- inside
+    // int64) and a 2^-32 second fraction in the low.
+    const int64_t seconds = static_cast<int64_t>(ntp >> 32);
+    const int64_t fraction = static_cast<int64_t>(ntp & 0xFFFFFFFFull);
+    return seconds * 1000000000LL + ((fraction * 1000000000LL) >> 32);
+}
+
 double offsetSeconds(uint64_t t1, uint64_t t2, uint64_t t3, uint64_t t4)
 {
     constexpr double kTwo32 = 4294967296.0;
@@ -73,11 +82,23 @@ TimingSync::~TimingSync()
     stop();
 }
 
-uint64_t TimingSync::syncedNtp() const
+int64_t TimingSync::rawNowNs()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
-    const auto nanos =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() + clock_offset_ns_;
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+}
+
+uint64_t TimingSync::syncedNtp() const
+{
+    int64_t nanos = rawNowNs() + clock_offset_ns_;
+    if (nanos < 0)
+    {
+        // Only reachable if the offset is nonsense; casting a negative to
+        // uint64 below would wrap to ~1.8e19 ns and the seconds would then
+        // shift straight out of the top of the timestamp. Report the epoch
+        // rather than a number the phone will act on.
+        nanos = 0;
+    }
     const uint64_t seconds = static_cast<uint64_t>(nanos) / 1000000000ULL;
     const uint64_t fraction =
         ((static_cast<uint64_t>(nanos) % 1000000000ULL) << 32) / 1000000000ULL;
@@ -218,19 +239,31 @@ void TimingSync::handlePacket(const uint8_t* data, size_t length, const sockaddr
 
     const double offset = ntp::offsetSeconds(t1, t2, t3, t4);
 
-    // The phone's clock runs on its own base, so the first sample is arbitrarily
-    // large and simply steps our clock; after that we slew gently.
     constexpr double kStepThresholdSeconds = 0.128;
     constexpr double kSlewGain = 1.0 / 8.0;
-    const double applied = synced_ ? offset * kSlewGain : offset;
-    clock_offset_ns_ += static_cast<int64_t>(applied * 1e9);
 
     if (!synced_)
     {
+        // Adopt the phone's transmit time outright rather than stepping by
+        // `offset`. The two clocks are ~126 years apart at this point -- ours
+        // counts from boot, the phone's from the NTP epoch -- which is past the
+        // +/-68 year window a signed NTP difference can represent, so `offset`
+        // has wrapped and carries the wrong sign entirely. Measured on
+        // hardware: a true gap of +3.99e9 s computed as -3.05e8 s, after which
+        // the 1/8 slew took over ninety seconds to crawl back.
+        //
+        // Adopting costs the half round trip we do not subtract here; the slew
+        // below removes it within a few samples.
+        clock_offset_ns_ = ntp::toNanos(t3) - rawNowNs();
         synced_ = true;
-        SPDLOG_INFO("[timing] clock stepped onto the phone's domain (offset {:.3f} s)", offset);
+        SPDLOG_INFO("[timing] clock adopted from the phone (offset {:.3f} s)",
+                    static_cast<double>(clock_offset_ns_) / 1e9);
+        return;
     }
-    else if (std::abs(offset) > kStepThresholdSeconds)
+
+    clock_offset_ns_ += static_cast<int64_t>(offset * kSlewGain * 1e9);
+
+    if (std::abs(offset) > kStepThresholdSeconds)
     {
         SPDLOG_DEBUG("[timing] large phase error {:.3f} s", offset);
     }

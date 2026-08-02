@@ -42,6 +42,16 @@ uint64_t read(const uint8_t* buffer);
 // exchange of a session usually is.
 double offsetSeconds(uint64_t t1, uint64_t t2, uint64_t t3, uint64_t t4);
 
+// An NTP timestamp as nanoseconds since the NTP epoch.
+//
+// Needed because offsetSeconds() cannot express the gap at the *start* of a
+// session. Our clock counts from boot and the phone's timestamps are in a real
+// NTP domain, roughly 4e9 seconds away -- past the +/-2^31 second window a
+// signed NTP difference can represent, so the subtraction wraps and the offset
+// comes out with the wrong sign. The first sample therefore adopts the phone's
+// clock outright instead of stepping by a difference.
+int64_t toNanos(uint64_t ntp);
+
 }  // namespace ntp
 
 class TimingSync
@@ -64,6 +74,9 @@ class TimingSync
 
     // Now, in the phone's clock domain, as a 64-bit NTP value.
     uint64_t syncedNtp() const;
+
+    // steady_clock nanoseconds, before the offset is applied.
+    static int64_t rawNowNs();
 
     bool synced() const { return synced_; }
 

@@ -115,20 +115,50 @@ int main()
                    "and a base decades behind yields a negative offset");
     }
 
-    // The limit of that trick, which is worth knowing rather than discovering:
-    // the signed reinterpretation is over a 64-bit fixed-point value, so it
-    // holds while the two clocks are within +/-2^31 seconds -- about 68 years,
-    // the same bound NTP itself has. Past it the difference wraps and comes out
-    // with the wrong sign.
+    // The limit of that trick -- and it IS reached, on every session.
     //
-    // This is not reachable in practice (the phone would have to be ~95 years
-    // from us) and is asserted only so a future change to the arithmetic that
-    // silently narrows the range shows up here.
+    // An earlier version of this test called the case "not reachable in
+    // practice". Hardware said otherwise. Our clock counts from boot and the
+    // phone's timestamps are in the NTP domain (seconds since 1900), which puts
+    // them ~126 years apart at the first exchange. That is past the +/-2^31
+    // second window a signed 64-bit fixed-point difference can represent, so
+    // offsetSeconds() wraps and returns the wrong sign: a measured true gap of
+    // +3.99e9 s came out as -3.05e8 s, and the 1/8 slew then took over ninety
+    // seconds to crawl back to a usable clock.
+    //
+    // The fix is not in this function -- a difference genuinely cannot express
+    // that gap -- it is that the first sample adopts the phone's clock via
+    // toNanos() instead. This case is pinned so the limit stays documented.
     {
-        const uint64_t ours = stamp(100, 0.0);
-        const uint64_t beyond = stamp(3000000000ull, 0.0);  // ~95 years apart
-        const double offset = offsetSeconds(ours, beyond, beyond, ours);
-        expect(offset < 0.0, "past 68 years apart the difference wraps and the sign inverts");
+        const uint64_t ours = stamp(60000, 0.0);          // seconds since boot
+        const uint64_t phone = stamp(3990000000ull, 0.0); // seconds since 1900
+        const double offset = offsetSeconds(ours, phone, phone, ours);
+        expect(offset < 0.0,
+               "a real boot-clock vs NTP-clock gap wraps to the WRONG SIGN -- which is why "
+               "the first sample adopts rather than steps");
+    }
+
+    // toNanos is what the adoption uses, and it has to stay exact across the
+    // whole NTP range: an accessory that adopts a wrong clock is worse off than
+    // one that never synced.
+    {
+        expect(toNanos(stamp(0, 0.0)) == 0, "the epoch is zero nanoseconds");
+        expect(toNanos(stamp(1, 0.0)) == 1000000000LL, "one second");
+        expect(toNanos(stamp(0, 0.5)) == 500000000LL, "half a second of fraction");
+
+        // The real magnitude, which must not overflow int64 (4.29e9 s is
+        // 4.29e18 ns against a 9.22e18 ceiling).
+        const int64_t big = toNanos(stamp(4290000000ull, 0.0));
+        expect(big == 4290000000LL * 1000000000LL, "the top of the NTP second range is exact");
+        expect(big > 0, "and does not overflow to negative");
+
+        // Round trip against offsetSeconds for a small, in-window difference:
+        // the two must agree about what a second is.
+        const uint64_t a = stamp(1000, 0.0);
+        const uint64_t b = stamp(1002, 0.0);
+        expectNear(static_cast<double>(toNanos(b) - toNanos(a)) / 1e9,
+                   offsetSeconds(a, b, b, a), 1e-6,
+                   "toNanos and offsetSeconds agree on an in-window difference");
     }
 
     // Across the 2^32-second rollover. The unsigned difference wraps to the
