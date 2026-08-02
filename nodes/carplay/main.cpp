@@ -12,10 +12,7 @@
 
 #include "zenoh_bridge.h"
 #include "simulate.h"
-
-#ifdef CARPLAY_HAVE_APPLE_USB
 #include "usb_pipeline.h"
-#endif
 
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
@@ -121,7 +118,6 @@ int main(int argc, char** argv)
         }
     });
 
-#ifdef CARPLAY_HAVE_APPLE_USB
     carplay::UsbPipelineOptions usb_options;
     usb_options.max_stage = args["max-stage"].as<int>();
     usb_options.state_dir = args["state-dir"].as<std::string>();
@@ -174,14 +170,6 @@ int main(int argc, char** argv)
     // Stages 5+ (iAP2/MFi, NCM, AirPlay) are not wired up yet; the pipeline
     // holds the session open until interrupted.
     g_stop.store(true);
-#else
-    SPDLOG_WARN("[node] built without apple_usb (Linux only) -- "
-                "use --simulate to exercise the dashboard side.");
-    while (!g_stop.load())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-#endif
 
     session_thread.join();
 

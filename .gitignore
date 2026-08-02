@@ -28,3 +28,4 @@ Temporary Items
 build/
 assets/
 logs/
+.cache/

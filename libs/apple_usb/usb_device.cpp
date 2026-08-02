@@ -17,11 +17,6 @@
 #include <system_error>
 #include <thread>
 
-#ifdef __linux__
-#include <filesystem>
-#include <fstream>
-#endif
-
 namespace apple_usb
 {
 
@@ -469,28 +464,16 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         handle.reset();
     }
 
-#ifdef __linux__
-    // Fallback for hosts where the usbfs node is unavailable but we are root.
-    // The kernel names the sysfs directory exactly as PortPath prints itself.
-    const std::filesystem::path sysfs =
-        std::filesystem::path("/sys/bus/usb/devices") / port.toString();
-    std::ofstream out(sysfs / "bConfigurationValue");
-    out << static_cast<int>(kCarPlayConfiguration);
-    out.close();
-    if (!out)
-    {
-        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}: libusb failed and "
-                     "{}/bConfigurationValue is not writable (it is root-only). Either run "
-                     "as root or install nodes/carplay/udev/99-carplay.rules.",
-                     kCarPlayConfiguration, port.toString(), sysfs.string());
-        return false;
-    }
-    return true;
-#else
-    SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}", kCarPlayConfiguration,
-                 port.toString());
+    // No fallback on purpose. A root-only write to sysfs bConfigurationValue
+    // used to sit here, inherited from the usbfs implementation; it was removed
+    // once libusb was verified against hardware. It bought almost nothing --
+    // root can open the usbfs node too, so "sysfs writable but libusb cannot
+    // open the device" is a nearly empty set -- and it re-enumerated the device
+    // to get there, which is the one thing this function is careful *not* to do.
+    SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}. Either run as root or "
+                 "install nodes/carplay/udev/99-carplay.rules to get usbfs access.",
+                 kCarPlayConfiguration, port.toString());
     return false;
-#endif
 }
 
 // ---------------- driver arbitration ----------------

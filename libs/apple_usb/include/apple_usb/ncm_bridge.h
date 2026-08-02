@@ -3,7 +3,6 @@
 #ifndef APPLE_USB_NCM_BRIDGE_H_
 #define APPLE_USB_NCM_BRIDGE_H_
 
-#include "apple_usb/ncm_discovery.h"
 #include "apple_usb/usb_device.h"
 
 #include <atomic>
@@ -11,7 +10,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace apple_usb
 {
@@ -100,12 +98,8 @@ class NcmBridge
     void usbToTapLoop();
     void tapToUsbLoop();
 
-    // NTB16 -> ethernet datagrams. Malformed blocks yield what could be
-    // recovered and a warning naming the offending offset.
-    std::vector<std::vector<uint8_t>> parseNtb(const std::vector<uint8_t>& ntb) const;
-
-    // One ethernet frame -> a single-datagram NTB16 block.
-    std::vector<uint8_t> buildNtb(const uint8_t* frame, size_t len);
+    // The NTB16 framing these used to declare is now free functions in
+    // ncm_frame.h -- portable, and unit tested by apple_usb_test_ncm_frame.
 
     DeviceInfo device_;
     DeviceHandle handle_;  // open USB handle for the phone

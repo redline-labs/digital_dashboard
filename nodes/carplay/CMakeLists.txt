@@ -2,13 +2,17 @@ cmake_minimum_required(VERSION 3.10)
 
 project(carplay)
 
+# The whole node builds on every platform. apple_usb carries the platform split
+# internally (a null NcmBridge off Linux), so nothing here is conditional: the
+# bring-up pipeline is compiled and linked on a developer's macOS box too, which
+# is the only way a refactor there gets caught before it reaches hardware.
 add_executable(carplay
     main.cpp
     zenoh_bridge.cpp
     simulate.cpp
+    usb_pipeline.cpp
+    iap2_session.cpp
 )
-
-# The USB bring-up pipeline is Linux-only; it is added below alongside apple_usb.
 
 # libavcodec is used by --simulate to generate a synthetic H.264 stream (and
 # later for AAC/Opus decode of the phone's audio).
@@ -27,13 +31,6 @@ target_link_libraries(carplay PRIVATE
     zenoh_pub_sub
     iap2
     airplay
+    apple_usb
     PkgConfig::CARPLAY_NODE_LIBAV
 )
-
-# The USB transport (usbfs/TUN) only exists on Linux; everything above it
-# stays portable so the node skeleton builds on macOS for development.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(carplay PRIVATE usb_pipeline.cpp iap2_session.cpp)
-    target_link_libraries(carplay PRIVATE apple_usb)
-    target_compile_definitions(carplay PRIVATE CARPLAY_HAVE_APPLE_USB=1)
-endif()

@@ -9,9 +9,8 @@ project(apple_usb)
 #     socket server, the lockdown client -- is plain C++ and POSIX sockets.
 #   * The USB transport is libusb, which is portable. Enumeration, descriptor
 #     parsing, configuration selection and every transfer build everywhere.
-#   * Only the NCM bridge is Linux-only, and not because of USB: it needs
-#     /dev/net/tun, AF_INET6 ioctls and /proc/sys/net/ipv6. macOS has utun,
-#     not TAP, so there is nothing to port it to.
+#   * Only the NCM bridge's TAP/IP plumbing is Linux-only, and not because of
+#     USB: it needs /dev/net/tun, AF_INET6 ioctls and /proc/sys/net/ipv6.
 #
 # So the Linux-only boundary is the *network* plumbing, not USB. usb_device.h
 # stays a clean interface (libusb_device_handle is forward declared, <libusb.h>
@@ -19,6 +18,7 @@ project(apple_usb)
 set(APPLE_USB_SOURCES
     usb_device.cpp
     ncm_discovery.cpp
+    ncm_frame.cpp
     muxd.cpp
     usbmuxd_server.cpp
     usbmux_client.cpp
@@ -28,11 +28,16 @@ set(APPLE_USB_SOURCES
     carkit_channel.cpp
 )
 
-# Only the TAP/IP half of the NCM bridge is Linux-bound. Its discovery half
-# lives in ncm_discovery.cpp above, so the descriptor parsing it depends on is
-# compiled and unit tested everywhere.
+# The bridge is the one platform-split file here, and it is a *substitution*,
+# not an omission: the null backend defines the same four out-of-line NcmBridge
+# methods, so NcmBridge is a complete type that links on every platform and no
+# caller needs an #ifdef around it. Everything the bridge does that is not TAP
+# -- descriptor discovery (ncm_discovery.cpp) and NTB16 framing (ncm_frame.cpp)
+# -- is in the portable list above, compiled and unit tested everywhere.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND APPLE_USB_SOURCES ncm_bridge.cpp)
+else()
+    list(APPEND APPLE_USB_SOURCES ncm_bridge_null.cpp)
 endif()
 
 add_library(apple_usb STATIC ${APPLE_USB_SOURCES})
@@ -57,11 +62,13 @@ find_package(OpenSSL REQUIRED)
 target_link_libraries(apple_usb PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Flag it once at configure time. USB works here; the AV link does not,
-    # because NcmBridge needs a TAP device.
+    # Defined so a consumer can *choose* to skip stage 6 rather than watch it
+    # fail. It no longer gates compilation of anything: NcmBridge links here,
+    # start() just refuses. Nothing in the tree tests it today, and that is the
+    # point -- the code above the bridge is identical on both platforms.
     target_compile_definitions(apple_usb PUBLIC APPLE_USB_NO_NCM=1)
     message(STATUS
-        "apple_usb: non-Linux host -- USB transport built, NCM/TAP bridge omitted")
+        "apple_usb: non-Linux host -- USB transport built, NCM bridge is the null backend")
 endif()
 
 # Protocol-level tests. These drive the portable half against mocks, so they run
@@ -76,6 +83,16 @@ target_link_libraries(apple_usb_test_usbmux_client PRIVATE
 # Runs anywhere: this is the coverage that stands in for a phone.
 add_executable(apple_usb_test_ncm_discovery test_ncm_discovery.cpp)
 target_link_libraries(apple_usb_test_ncm_discovery PRIVATE
+    apple_usb
+    spdlog::spdlog
+)
+
+# NTB16 framing, against synthetic transfer blocks. This is the AV data path --
+# every video frame and audio packet the phone sends is parsed here -- and it
+# had no coverage at all while it lived as private members of the Linux-only
+# NcmBridge. Runs anywhere.
+add_executable(apple_usb_test_ncm_frame test_ncm_frame.cpp)
+target_link_libraries(apple_usb_test_ncm_frame PRIVATE
     apple_usb
     spdlog::spdlog
 )

@@ -64,6 +64,7 @@ cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust bui
 ./build/libs/iap2/iap2_test_framing           # 0xFF5A link-layer framing round-trip
 ./build/libs/iap2/iap2_test_nmea              # GPS location NMEA (GGA/RMC) generation + checksum
 ./build/libs/apple_usb/apple_usb_test_ncm_discovery # NCM descriptor discovery (real-hardware fixture)
+./build/libs/apple_usb/apple_usb_test_ncm_frame     # NTB16 framing + EUI-64 link-local derivation
 ./build/libs/apple_usb/apple_usb_test_pair_record   # pair record mint/parse, X509_verify
 ./build/libs/apple_usb/apple_usb_test_usbmux_client # usbmux client framing
 ```
@@ -138,17 +139,37 @@ still works against it. Nothing in the build needs them.
   `ncm_discovery.cpp`. libusb runs on macOS, so enumeration, descriptor parsing
   and transfers are real there rather than stubbed. `usb_device_stub.cpp` is
   gone, and so is `APPLE_USB_NO_TRANSPORT`.
-- **Linux only** — `ncm_bridge.cpp`, because TUN/TAP is. On other hosts it is
-  omitted and `APPLE_USB_NO_NCM` is defined; the build prints `apple_usb:
-  non-Linux host -- USB transport built, NCM/TAP bridge omitted`.
+- **Portable since the framing extraction (2026-08-01)** — `ncm_frame.cpp`: the
+  NTB16 parse/build and the EUI-64 link-local derivation, lifted out of
+  `ncm_bridge.cpp`. This is the AV data path, and it now has a unit suite
+  (`apple_usb_test_ncm_frame`) that runs everywhere.
+- **Linux only** — `ncm_bridge.cpp`, because TUN/TAP is. Off Linux it is
+  *substituted*, not omitted: `ncm_bridge_null.cpp` supplies the same four
+  out-of-line `NcmBridge` methods, `start()` refuses with an explanation, and
+  the build prints `apple_usb: non-Linux host -- USB transport built, NCM
+  bridge is the null backend`. `APPLE_USB_NO_NCM` is still defined for anyone
+  who would rather skip stage 6 than watch it fail, but nothing gates
+  compilation on it.
 
-So `cmake --build build --target apple_usb` works on macOS, and `apple_usb_usbprobe`
-genuinely enumerates a phone there — which makes step 1 of stage 1b a check you
-can run off the Linux box. What you cannot do on macOS is stage 6 onward, since
-that needs the TAP bridge.
+The practical consequence: **the entire `carplay` node builds and links on
+macOS**, `usb_pipeline.cpp` and `iap2_session.cpp` included. There is no
+`CARPLAY_HAVE_APPLE_USB` any more. Before this, those two files (~1,500 lines)
+were dropped from the macOS build purely because they sat in the same CMake
+`if(Linux)` block as the bridge — they had always compiled fine — so a refactor
+could break the bring-up path and nobody would find out until the next Linux
+build.
+
+`apple_usb_usbprobe` also genuinely enumerates a phone on macOS, which makes
+step 1 of stage 1b a check you can run off the Linux box.
 
 Anything from stage 2 onward still needs the phone; stage 6 onward also needs
-Linux.
+Linux. On macOS, `--max-stage 5` stops cleanly before the bridge.
+
+**Why there is no macOS NCM backend.** macOS has no TAP device. It *could* get
+an ethernet segment from a `feth` pair plus BPF frame injection, so this is not
+impossible — it is just several hundred lines of privileged platform code
+serving a host that will not normally have a phone attached. If it is ever
+written it replaces `ncm_bridge_null.cpp` rather than growing out of it.
 
 **Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
 adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
@@ -449,14 +470,19 @@ while any interface is claimed**, so every bound driver is released first with
 `libusb_detach_kernel_driver` (also `USBDEVFS_DISCONNECT` underneath); `ipheth`
 and an earlier usbfs client both hold interfaces in config 4. Unlike the vendor
 request this does **not** re-enumerate the device — config 6 is active in ~100 ms
-and, on a VM, the passthrough binding survives. A root-only sysfs write remains
-as a last-resort fallback.
+and, on a VM, the passthrough binding survives. There is **no fallback**: the
+root-only sysfs `bConfigurationValue` write inherited from the usbfs
+implementation was removed on 2026-08-01, once libusb had been verified against
+hardware. It covered a nearly empty case (root can open the usbfs node anyway)
+and reached the configuration by re-enumerating — the one thing this step is
+careful to avoid.
 
 **Triage.**
 - Stuck at 4 configurations → the `0xC0/0x52` vendor request failed; check for
   `EPERM` (run as root) or that the phone is unlocked and trusted.
-- `Failed to set configuration … not writable` → neither path worked: the usbfs
-  ioctl failed *and* sysfs is root-only. Install the udev rules from stage 1.
+- `Failed to set configuration …` → libusb could not open the device, or the
+  device rejected the request. Install the udev rules from stage 1, or run as
+  root.
 - Config reverts to 4 → something re-enumerated it, usually the system usbmuxd
   (stage 1) or `usb_storage`/`ipheth` grabbing the device.
 - Device vanishes after the switch → expected briefly; the code waits up to 5s for
@@ -912,6 +938,23 @@ block construction is byte-identical to LIVI's `_build_ntb` across 30 cases
 and 16-bit wrap); NTB parsing matches `_parse_ntb` on 10 malformed/chained
 blocks; EUI-64 derivation matches on 9 MACs. So framing bugs are unlikely —
 suspect enumeration, altsetting, or privileges first.
+
+That differential run was a one-off. Since 2026-08-01 the framing lives in
+`ncm_frame.cpp` and `apple_usb_test_ncm_frame` pins it permanently and in-tree
+(60 assertions, runs on any host). It covers what the differential run did not:
+malformed input. Backwards NDP chains, out-of-range datagram pointers,
+truncated blocks and short NDPs are all exercised, because the differential
+cases were all things Python had produced and therefore well-formed.
+
+**One latent bug found by that suite** (2026-08-01, fixed): `deriveEui64LinkLocal`
+accepted a malformed MAC. `std::from_chars` reports success on a *partial*
+parse, so `"0g:…"` came back as `0` with the pointer left on the `g`, and the
+end pointer was never checked. In practice the MAC comes from
+`/sys/class/net/<if>/address` and is always well-formed, so this could not fire
+on the current call path — but the failure mode if it ever did is the bad kind:
+a plausible-looking wrong link-local goes into `CarPlayStartSession`, the phone
+dials an address we are not listening on, and the session dies with no error
+anywhere. The fix requires `from_chars` to have consumed both hex digits.
 
 **Known perf limitation:** TX sends one ethernet frame per NTB block (no
 aggregation), i.e. one bulk transfer per frame. If uplink throughput is a
@@ -1485,6 +1528,7 @@ Not all stages below are implemented yet. Current state:
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | verified on hardware 2026-07-21 (stage 6); **discovery half rewritten on libusb 2026-08-01**, TAP/IP half untouched |
+| NTB16 framing (`ncm_frame.cpp`) | extracted from the bridge 2026-08-01 and unit-tested for the first time (`apple_usb_test_ncm_frame`, 60 assertions). Framing logic itself unchanged and hardware-proven; the extraction did surface one latent bug in the EUI-64 derivation (stage 6) |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
 | **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
