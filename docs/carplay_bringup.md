@@ -91,12 +91,22 @@ What the AirPlay layer covers:
 | `airplay_test_hid` | HID descriptors against the reports sent on them |
 | `airplay_test_oem_button` | manufacturer button: /info keys + press decode |
 | `airplay_test_event_queue` | event-channel ordering, coalescing, priority, drops |
+| `airplay_test_rtsp` | message framing -- the parser every byte from the phone passes through |
+| `airplay_test_timing` | the NTP clock offset, whose absence tears the session down after RECORD |
+| `airplay_test_mic_uplink` | the microphone packet's wire format and framing |
 | `airplay_test_nalu` | avcC -> Annex-B rewrite |
 | `airplay_test_aac` | AAC-LC encode/decode round-trip (entertainment audio) |
 
 and the layers underneath: `plist_test_{binary,xml,libplist_vectors}`,
-`iap2_test_{framing,nmea}`,
-`apple_usb_test_{ncm_discovery,ncm_frame,pair_record,usbmux_client}`.
+`iap2_test_{framing,csm,nmea}`,
+`apple_usb_test_{ncm_discovery,ncm_frame,pair_record,usbmux_client}`, plus
+`carplay_test_node_config` for the config file and its PNG reader.
+
+`iap2_test_csm` is worth knowing about for one thing in particular: it pins the
+zero-length boolean named under stage 5 as a hardware suspect. We read one as
+*absent*, following LIVI, where the spec allows presence to mean true. If a
+phone ever sends one, `CarPlayAvailability` reads falsy and the session silently
+never starts.
 
 There is no `airplay_test_plist` — the plist tests live in `libs/plist` under the
 `plist_test_*` names. If you have one in a `build/` directory, it is a stale
@@ -2020,9 +2030,11 @@ receiver gained a test, and everything still inside it has none.**
 | `hid.cpp` | the four input devices: descriptors, /info entries, reports | `airplay_test_hid` |
 | `oem_button.cpp` | the manufacturer button, both directions | `airplay_test_oem_button` |
 | `media_stream.cpp` | the screen and audio receive loops | — |
-| `mic_uplink.cpp` | captured audio going back to the phone | — |
+| `mic_uplink.cpp` | captured audio going back to the phone | `airplay_test_mic_uplink` |
 | `net.cpp` | the two socket shapes (dual-stack, ephemeral port) | — |
 | `timing.cpp`, `nalu.cpp`, `crypto.cpp`, `srp.cpp`, `tlv8.cpp`, `aac_decoder.cpp` | as before | yes |
+| `rtsp.cpp` | RTSP message framing | `airplay_test_rtsp` |
+| `timing.cpp` | NTP clock sync; the arithmetic is split from the socket | `airplay_test_timing` |
 | `receiver.cpp` | the RTSP server and session lifecycle that wires the above | — |
 
 Two things are worth knowing before changing any of it:
