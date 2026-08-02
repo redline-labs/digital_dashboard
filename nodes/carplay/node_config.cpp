@@ -112,6 +112,23 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
         {
             parsed.night_mode = night.as<bool>();
         }
+        if (const YAML::Node primary = root["primary_input"])
+        {
+            const std::string value = primary.as<std::string>();
+            if (value == "touch")
+            {
+                parsed.primary_input = airplay::PrimaryInput::Touch;
+            }
+            else if (value == "knob")
+            {
+                parsed.primary_input = airplay::PrimaryInput::Knob;
+            }
+            else
+            {
+                SPDLOG_ERROR("[node] primary_input must be 'touch' or 'knob', not '{}'", value);
+                return false;
+            }
+        }
         if (const YAML::Node button = root["oem_button"]; button && button.IsMap())
         {
             if (const YAML::Node enabled = button["enabled"])

@@ -22,6 +22,10 @@ struct NodeConfig
     // docs/carplay_bringup.md stage 11 for hooking it to the headlights.
     bool night_mode = false;
 
+    // Which input CarPlay lays its own UI out for. Both the touchscreen and the
+    // rotary controller are always advertised; this only says which is primary.
+    airplay::PrimaryInput primary_input = airplay::PrimaryInput::Touch;
+
     // The node's defaults deliberately differ from the library's: a head unit
     // wants the button, whereas airplay::Receiver defaults to advertising
     // nothing so that a caller has to ask for it. No icon is defaulted --

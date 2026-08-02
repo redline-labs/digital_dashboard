@@ -2671,9 +2671,20 @@ rtsp::Message Receiver::handleTeardown(const rtsp::Message& request)
 
 rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
 {
-    (void)request;
     SPDLOG_INFO("[airplay] GET /info: advertising {}x{} @ {} fps", config_.width, config_.height,
                 config_.fps);
+
+    // The phone sends its own dictionary with the request -- what it is, what
+    // it supports. Nothing reads it yet, but it is the only place the phone
+    // describes itself, so it is worth having in a bring-up log.
+    if (!request.body.empty())
+    {
+        if (const auto ask = plist::decodeBinary(request.body); ask)
+        {
+            SPDLOG_DEBUG("[airplay] /info request from the phone:");
+            describePlist(*ask, "  ", {});
+        }
+    }
 
     // Field names and values follow LIVI's getInfo.ts. Note the display entry
     // uses widthPixels/heightPixels and carries the *stream type* it belongs
@@ -2683,7 +2694,6 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
     constexpr int64_t kStreamTypeMainScreen = 110;
     constexpr int64_t kDisplayFeatureKnobs = 0x02;
     constexpr int64_t kDisplayFeatureHighFidelityTouch = 0x08;
-    constexpr int64_t kPrimaryInputTouch = 1;
     constexpr int64_t kCarplayFeatures = 0x615653aee2LL;
     constexpr int64_t kCarplayAudioFeatures = 0x10004540a00LL;
 
@@ -2701,7 +2711,8 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
     display.set("heightPhysical", plist::Value::integer(height_physical));
     display.set("features",
                 plist::Value::integer(kDisplayFeatureHighFidelityTouch | kDisplayFeatureKnobs));
-    display.set("primaryInputDevice", plist::Value::integer(kPrimaryInputTouch));
+    display.set("primaryInputDevice",
+                plist::Value::integer(static_cast<int64_t>(config_.primary_input)));
 
     // The drawable region, and inside it the region safe from occlusion. LIVI
     // always sends these, and we advertise "viewAreas" in enabledFeatures --

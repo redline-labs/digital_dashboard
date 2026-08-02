@@ -12,6 +12,12 @@
 # There is no light sensor wired up yet, so this is a static setting.
 night_mode: false
 
+# Which input CarPlay lays its own UI out for: "touch" or "knob". A knob-primary
+# UI gets focus rings and list navigation instead of a touch-first layout. The
+# touchscreen, rotary controller, media keys and telephony keypad are all
+# advertised either way; this only says which one to design for.
+primary_input: touch
+
 # The "manufacturer button": the tile CarPlay draws on its own home screen so
 # the user can hand the screen back to the vehicle's UI. It is advertised to the
 # phone once, in GET /info, which means changes here only take effect on the

@@ -1929,6 +1929,51 @@ suspect, not the top-level ones — try a single 120 px entry, and try
 prints every unrouted event command with its full body, which is where a
 differently-named press would show up.
 
+## 12. What LIVI has that we do not, and why
+
+The stack was compared against LIVI's `src/main/services/projection/driver/cp/`
+on 2026-08-02, feature by feature. Everything meaningful that was missing has
+been closed (stages 10b, 11, and the non-touch HID devices under stage 8). What
+follows is what LIVI has and we deliberately do not, so the next person to read
+its source does not re-derive the same conclusions.
+
+**Not applicable to this stack:**
+
+- **The iAP2-over-AirPlay tunnel** (`iapTunnel.ts`, stream type 130, and the
+  `iAPSendMessage` relay). This exists because the phone moves iAP2 off
+  Bluetooth after `disableBluetooth`, and LIVI's dongle path has no wired iAP2
+  channel to fall back on. Ours does: iAP2 runs over USB on the carkit channel
+  the whole time. We open and answer a type-130 SETUP so the phone does not tear
+  the session down, and interpret nothing on it.
+- **The Bluetooth stack** (`BluezDeviceClient`, `BtPairedRegistry`,
+  `disableBluetooth` acting on a real link). No Bluetooth here.
+- **The dongle protocol** (`messages/sendable.ts`, `DongleState`, the Carlinkit
+  transport). We speak to the phone directly. Worth knowing that the dongle's
+  `SendIconConfig` is where the manufacturer-button key names came from
+  originally — the dongle passes them into its own AirPlay server.
+- **Android Auto** (`driver/aa/`). Out of scope.
+
+**Applicable, deliberately not done:**
+
+- **The instrument-cluster display** (alt screen, stream type 111, `showUI` /
+  `stopUI` / `ALT_UUID`, `cluster-video-config`). A second CarPlay surface for a
+  digital gauge cluster. This dashboard drives one screen. Adding it is a second
+  `displayEntry` in `/info` plus a second screen stream — no new protocol layer,
+  so it is a day's work whenever a second panel exists.
+- **HEVC** (`hevcInfo`, `hevc` in `enabledFeatures`). `libs/airplay/nalu.cpp`
+  already handles H.265, including the different keyframe rules, and the video
+  path carries the codec per packet. What is missing is only the advertisement.
+  Not turned on because the wired phone picks H.264 and it works: enabling it
+  would move a proven path onto an unexercised one for no gain.
+- **A 48 kHz entertainment rate.** LIVI picks 44.1 or 48 kHz for the type-102
+  stream; we advertise 44.1 only. Type 102 has never been exercised on the wired
+  path at all (stage 9), so a second untested variant of it is not worth having.
+- **`disableAudioOutput`.** LIVI can mask the audio feature bits to advertise a
+  head unit with no audio. A CarPlay head unit that carries no audio is not a
+  configuration this vehicle wants.
+- **A playback anchor in `POST /feedback`.** See stage 10b — we cannot produce
+  one honestly, because playback happens on the far side of zenoh.
+
 ## What exists today (read before starting)
 
 Not all stages below are implemented yet. Current state:
@@ -1958,6 +2003,7 @@ Not all stages below are implemented yet. Current state:
 | **`POST /feedback` media clock** | written 2026-08-02 — names the open audio streams instead of answering empty. No playback anchor; see stage 10b |
 | **Night mode** | written 2026-08-02, wired to `--night-mode` / config and to `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
 | **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
+| **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
 | **Manufacturer button** (`/info` advertisement + press decode) | written 2026-08-01, unit-tested (`airplay_test_oem_button`), **not hardware-verified**; the press is logged and goes nowhere — see stage 11 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
 | **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |

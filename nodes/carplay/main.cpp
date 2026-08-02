@@ -162,6 +162,7 @@ int main(int argc, char** argv)
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
     usb_options.oem_button = config.oem_button;
     usb_options.night_mode = config.night_mode;
+    usb_options.primary_input = config.primary_input;
 
     usb_options.recording = &g_recording;
 

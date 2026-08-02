@@ -840,6 +840,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 #endif
 
         receiver_config.oem_button = options.oem_button;
+        receiver_config.primary_input = options.primary_input;
         if (receiver_config.oem_button.enabled && receiver_config.oem_button.icons.empty())
         {
             // The tile still appears, drawn with CarPlay's own placeholder --

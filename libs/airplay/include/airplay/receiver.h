@@ -28,6 +28,16 @@ namespace airplay
 
 using Bytes = std::vector<uint8_t>;
 
+// Which input device CarPlay should assume is the main one. It changes what
+// CarPlay draws: Touch gets the touch-first UI, Knob gets a UI that can be
+// walked with a rotary controller (focus rings, list navigation). Both HID
+// devices are advertised either way -- this only says which to lay out for.
+enum class PrimaryInput
+{
+    Touch = 1,
+    Knob = 3,
+};
+
 struct ReceiverConfig
 {
     // Address to bind. Empty binds to every interface, which is what the
@@ -58,6 +68,8 @@ struct ReceiverConfig
 
     // The manufacturer button on CarPlay's home screen. Disabled by default.
     OemButtonConfig oem_button;
+
+    PrimaryInput primary_input = PrimaryInput::Touch;
 };
 
 // Decoded media handed to the node for publishing on zenoh.

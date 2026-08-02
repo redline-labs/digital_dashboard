@@ -45,6 +45,7 @@ struct UsbPipelineOptions
     // and which theme CarPlay draws its own UI in.
     airplay::OemButtonConfig oem_button;
     bool night_mode = false;
+    airplay::PrimaryInput primary_input = airplay::PrimaryInput::Touch;
 };
 
 // Runs the pipeline up to options.max_stage, logging each stage with the
