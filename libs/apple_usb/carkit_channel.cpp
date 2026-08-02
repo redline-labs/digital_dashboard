@@ -435,7 +435,16 @@ std::unique_ptr<CarkitChannel> openCarkitChannel(const std::string& udid,
     const auto device = mux.findDevice(udid);
     if (!device)
     {
-        SPDLOG_ERROR("[carkit] the mux does not list udid={}", udid.substr(0, 8));
+        // Print the whole UDID and what the mux did offer. Truncating to eight
+        // characters hid the thing this failure is usually about -- the UDID
+        // *form* -- and named neither the socket nor what was actually there.
+        SPDLOG_ERROR("[carkit] the mux at {} does not list udid='{}' ({} chars)",
+                     usbmux_socket_path, udid, udid.size());
+        for (const auto& listed : mux.listDevices())
+        {
+            SPDLOG_ERROR("[carkit]   mux offers: id={} serial='{}' type={}", listed.device_id,
+                         listed.serial, listed.connection_type);
+        }
         return nullptr;
     }
 

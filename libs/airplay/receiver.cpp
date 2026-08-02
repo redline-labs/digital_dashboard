@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -409,9 +410,45 @@ bool Receiver::start()
     addr.sin6_port = htons(config_.port);
     addr.sin6_addr = in6addr_any;
 
+    // Binding one address rather than the wildcard, when asked to.
+    //
+    // This is not fussiness. On macOS the system AirPlay Receiver (inside
+    // ControlCenter) already holds *:7000, so the wildcard bind fails outright
+    // with EADDRINUSE -- but a bind to one specific address on the same port
+    // succeeds alongside it, given SO_REUSEADDR above. Since the phone only
+    // ever dials the link-local we advertised, binding exactly that is both the
+    // narrower thing to do and the only thing that works there.
+    //
+    // Resolved with getaddrinfo rather than inet_pton because a link-local is
+    // meaningless without its scope, and only getaddrinfo understands the
+    // "fe80::1%en9" form that carries it.
+    if (!config_.bind_address.empty())
+    {
+        addrinfo hints{};
+        hints.ai_family = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICHOST;
+        addrinfo* resolved = nullptr;
+        const int rc = ::getaddrinfo(config_.bind_address.c_str(), nullptr, &hints, &resolved);
+        if (rc != 0 || resolved == nullptr)
+        {
+            SPDLOG_ERROR("[airplay] cannot parse bind address '{}': {}", config_.bind_address,
+                         ::gai_strerror(rc));
+            ::close(server_fd_);
+            server_fd_ = -1;
+            return false;
+        }
+        const auto* wanted = reinterpret_cast<const sockaddr_in6*>(resolved->ai_addr);
+        addr.sin6_addr = wanted->sin6_addr;
+        addr.sin6_scope_id = wanted->sin6_scope_id;
+        ::freeaddrinfo(resolved);
+    }
+
     if (::bind(server_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
     {
-        SPDLOG_ERROR("[airplay] bind([::]:{}) failed: {}", config_.port, std::strerror(errno));
+        SPDLOG_ERROR("[airplay] bind({}:{}) failed: {}",
+                     config_.bind_address.empty() ? "[::]" : config_.bind_address.c_str(),
+                     config_.port, std::strerror(errno));
         ::close(server_fd_);
         server_fd_ = -1;
         return false;
@@ -460,7 +497,9 @@ bool Receiver::start()
             }
         }
     });
-    SPDLOG_INFO("[airplay] RTSP receiver listening on [::]:{}", config_.port);
+    SPDLOG_INFO("[airplay] RTSP receiver listening on {}:{}",
+                config_.bind_address.empty() ? "[::]" : config_.bind_address.c_str(),
+                config_.port);
     return true;
 }
 

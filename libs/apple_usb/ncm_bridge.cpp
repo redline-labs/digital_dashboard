@@ -9,6 +9,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <net/if.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -213,9 +214,65 @@ bool setInterfaceUp(const std::string& ifname)
     return ok;
 }
 
-// /proc/net/if_inet6 lists every IPv6 address per interface as 32 hex chars.
-// Readable unprivileged, which is what lets us confirm the kernel already
-// assigned the EUI-64 link-local we were about to add.
+// Defensive normalisation for the KAME convention, where a link-local's scope
+// id is stored *inside* the address -- bytes 2 and 3 -- so fe80::1 on interface
+// 4 reads back as fe80:4::1. Linux never does this, and measuring macOS 26
+// (`getifaddrs` on en0/lo0) shows it does not either: the scope arrives in
+// sin6_scope_id and the address is clean. But it is the documented BSD
+// behaviour, other BSDs and older macOS do it, and getting it wrong means
+// comparing or advertising an address nobody else would recognise. Clearing the
+// bytes is a no-op wherever they are already zero, so it costs nothing to be
+// right on the platforms that do embed.
+in6_addr withoutEmbeddedScope(const in6_addr& address)
+{
+    in6_addr out = address;
+    if (IN6_IS_ADDR_LINKLOCAL(&out) || IN6_IS_ADDR_MC_LINKLOCAL(&out))
+    {
+        out.s6_addr[2] = 0;
+        out.s6_addr[3] = 0;
+    }
+    return out;
+}
+
+// Visit each IPv6 address currently on `ifname`, stopping when `visit` returns
+// true. Returns whether it stopped early.
+//
+// getifaddrs(3) replaces what used to be two hand-rolled walks over
+// /proc/net/if_inet6, each re-parsing a 32-character hex string a byte at a
+// time. Half the length, portable to the BSD side if the NCM bridge ever grows
+// a macOS backend, and it drops two more copies of the std::from_chars
+// partial-parse trap that produced a real bug in deriveEui64LinkLocal.
+template <typename Fn>
+bool forEachIpv6(const std::string& ifname, Fn&& visit)
+{
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0)
+    {
+        SPDLOG_WARN("[ncm] getifaddrs failed: {}", std::strerror(errno));
+        return false;
+    }
+
+    bool stopped = false;
+    for (const ifaddrs* it = list; it != nullptr && !stopped; it = it->ifa_next)
+    {
+        if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_INET6)
+        {
+            continue;
+        }
+        if (it->ifa_name == nullptr || ifname != it->ifa_name)
+        {
+            continue;
+        }
+        const auto* sin6 = reinterpret_cast<const sockaddr_in6*>(it->ifa_addr);
+        stopped = visit(withoutEmbeddedScope(sin6->sin6_addr));
+    }
+
+    ::freeifaddrs(list);
+    return stopped;
+}
+
+// Confirms the kernel already assigned the EUI-64 link-local we were about to
+// add, which is what lets the unprivileged path skip adding one.
 bool hasIpv6Address(const std::string& ifname, const std::string& address)
 {
     in6_addr wanted{};
@@ -223,30 +280,9 @@ bool hasIpv6Address(const std::string& ifname, const std::string& address)
     {
         return false;
     }
-
-    std::ifstream in("/proc/net/if_inet6");
-    std::string hex, index, prefix, scope, flags, name;
-    while (in >> hex >> index >> prefix >> scope >> flags >> name)
-    {
-        if (name != ifname || hex.size() != 32)
-        {
-            continue;
-        }
-        in6_addr candidate{};
-        bool parsed = true;
-        for (int i = 0; i < 16 && parsed; ++i)
-        {
-            unsigned byte = 0;
-            const char* start = hex.data() + (i * 2);
-            parsed = std::from_chars(start, start + 2, byte, 16).ec == std::errc{};
-            candidate.s6_addr[i] = static_cast<uint8_t>(byte);
-        }
-        if (parsed && std::memcmp(&candidate, &wanted, sizeof(wanted)) == 0)
-        {
-            return true;
-        }
-    }
-    return false;
+    return forEachIpv6(ifname, [&wanted](const in6_addr& candidate) {
+        return std::memcmp(&candidate, &wanted, sizeof(wanted)) == 0;
+    });
 }
 
 // The link-local the interface actually has, for diagnostics: naming the wrong
@@ -254,30 +290,21 @@ bool hasIpv6Address(const std::string& ifname, const std::string& address)
 // answerable at a glance.
 std::string firstLinkLocal(const std::string& ifname)
 {
-    std::ifstream in("/proc/net/if_inet6");
-    std::string hex, index, prefix, scope, flags, name;
-    while (in >> hex >> index >> prefix >> scope >> flags >> name)
-    {
-        if (name != ifname || hex.size() != 32 || hex.compare(0, 4, "fe80") != 0)
+    std::string found;
+    forEachIpv6(ifname, [&found](const in6_addr& address) {
+        if (!IN6_IS_ADDR_LINKLOCAL(&address))
         {
-            continue;
-        }
-        in6_addr addr{};
-        bool parsed = true;
-        for (int i = 0; i < 16 && parsed; ++i)
-        {
-            unsigned byte = 0;
-            const char* start = hex.data() + (i * 2);
-            parsed = std::from_chars(start, start + 2, byte, 16).ec == std::errc{};
-            addr.s6_addr[i] = static_cast<uint8_t>(byte);
+            return false;
         }
         char text[INET6_ADDRSTRLEN] = {};
-        if (parsed && ::inet_ntop(AF_INET6, &addr, text, sizeof(text)) != nullptr)
+        if (::inet_ntop(AF_INET6, &address, text, sizeof(text)) == nullptr)
         {
-            return text;
+            return false;
         }
-    }
-    return {};
+        found = text;
+        return true;
+    });
+    return found;
 }
 
 // The kernel adds an address asynchronously once the interface has carrier, so

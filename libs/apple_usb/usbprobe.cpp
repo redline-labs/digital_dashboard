@@ -83,26 +83,49 @@ void dumpExtra(const std::vector<uint8_t>& extra)
 int main(int argc, char** argv)
 {
     bool want_serial = false;
+    bool want_drivers = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--serial") == 0)
         {
             want_serial = true;
         }
+        else if (std::strcmp(argv[i], "--drivers") == 0)
+        {
+            want_drivers = true;
+        }
         else
         {
             std::fprintf(stderr,
-                         "usage: %s [--serial]\n\n"
+                         "usage: %s [--serial] [--drivers]\n\n"
                          "Dumps every attached Apple device: physical port path, "
                          "configuration\ndescriptor, interfaces and endpoints. Read-only "
                          "unless --serial is given,\nwhich additionally opens each device to "
-                         "read its UDID.\n",
+                         "read its UDID.\n\n"
+                         "--drivers marks which interfaces already have a driver bound, which "
+                         "is what\ndecides whether they can be claimed. Needs to open the "
+                         "device, so it may need\nroot; it still changes nothing.\n",
                          argv[0]);
             return 2;
         }
     }
 
     spdlog::set_level(spdlog::level::debug);
+
+    // Reported first because it decides whether anything past stage 1 can work,
+    // and because it is answerable with no phone attached -- which makes it the
+    // one part of the privilege story that is checkable before bring-up day.
+    if (std::string why_not; apple_usb::canDetachDevices(why_not))
+    {
+        std::printf("Device capture: available (stages 2+ can take the phone away from the "
+                    "drivers holding it)\n");
+    }
+    else
+    {
+        std::printf("Device capture: UNAVAILABLE -- %s\n", why_not.c_str());
+        std::printf("                Enumeration below still works; the configuration switch "
+                    "will not.\n");
+    }
 
     const auto devices = apple_usb::listAppleDevices();
     std::printf("Apple devices: %zu\n", devices.size());
@@ -152,6 +175,21 @@ int main(int argc, char** argv)
             continue;
         }
 
+        // Which interfaces already have a driver bound. This is what decides
+        // whether an interface can simply be claimed or has to be taken first,
+        // and on macOS taking it means capturing the whole device -- so knowing
+        // that If1 is or is not spoken for is the difference between two very
+        // different bring-up strategies.
+        apple_usb::DeviceHandle driver_handle;
+        if (want_drivers)
+        {
+            driver_handle = apple_usb::openDevice(device);
+            if (!driver_handle)
+            {
+                std::printf("  <could not open device to read driver state; try as root>\n");
+            }
+        }
+
         std::printf("  configuration %u, %zu interface alt settings\n", config->value,
                     config->interfaces.size());
         for (const auto& iface : config->interfaces)
@@ -172,6 +210,14 @@ int main(int argc, char** argv)
             else if (iface.iface_class == 0x0A)
             {
                 std::printf("   <- CDC data");
+            }
+            // Only meaningful once per interface, not per alt setting.
+            if (driver_handle && iface.alt_setting == 0)
+            {
+                std::printf("   [%s]",
+                            apple_usb::kernelDriverActive(driver_handle, iface.number)
+                                ? "DRIVER BOUND"
+                                : "free");
             }
             std::printf("\n");
 

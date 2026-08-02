@@ -149,6 +149,16 @@ DeviceHandle openDevice(const PortPath& port);
 // endpoint 0, so it works even while kernel drivers hold the interfaces.
 std::string readSerial(const DeviceHandle& handle);
 
+// Read an arbitrary string descriptor by index. Empty if it cannot be read.
+//
+// The one that matters here is iMACAddress, named by the CDC Ethernet
+// functional descriptor: it is how the host MAC of an NCM function is found,
+// and on macOS -- where the kernel drives NCM and hands us a ready-made network
+// interface -- it is the only reliable way to tell which interface belongs to
+// which NCM function. Same endpoint-0 control transfer as readSerial(), so it
+// works while drivers hold the interfaces, which is exactly the situation.
+std::string readStringDescriptor(const DeviceHandle& handle, uint8_t index);
+
 // The active configuration's descriptor, or nullopt if it cannot be read.
 std::optional<ConfigInfo> readActiveConfig(const DeviceInfo& device);
 std::optional<ConfigInfo> readActiveConfig(const PortPath& port);
@@ -163,6 +173,20 @@ std::optional<ConfigInfo> readActiveConfig(const PortPath& port);
 // caller must re-read the DeviceInfo afterwards (see findDeviceAt) because the
 // address will have changed.
 bool switchToCarPlayConfiguration(const DeviceInfo& device);
+
+// Whether this process is able to take a device away from the drivers that
+// already own it, which everything from the configuration switch onwards needs.
+//
+// Linux gets that from the udev rules and this is always true there. macOS only
+// grants it to root (the alternative, the com.apple.vm.device-access
+// entitlement, is issued to virtualization vendors), so on macOS the node has
+// to run under sudo. On failure `why_not` is filled in with something worth
+// showing a user.
+//
+// Checking is cheap and touches no device, so callers can use it as a preflight
+// rather than discovering the problem several layers down as a bare
+// LIBUSB_ERROR_ACCESS.
+bool canDetachDevices(std::string& why_not);
 
 // True when a kernel driver currently holds this interface. Always false on
 // platforms with no concept of one.

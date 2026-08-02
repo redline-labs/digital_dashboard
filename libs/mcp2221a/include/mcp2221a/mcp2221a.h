@@ -45,7 +45,18 @@ struct MCP2221AStatus
     I2CSpeedResponse i2c_speed_response;
     uint32_t speed_hz;
     I2CState i2c_state;
-    uint8_t ack_status;
+
+    // Whether the client acknowledged its address on the last transfer.
+    //
+    // This is byte 20 bit 6 of the Status/Set Parameters response, and only
+    // that bit: the datasheet (DS20005565E table 3-2) marks bit 7 and bits 5-0
+    // "don't care", and on real hardware they are not zero. Comparing the whole
+    // byte to zero -- which this used to do -- therefore reads as "NACK" always,
+    // which is why scan_i2c_bus() never found anything on a working bus.
+    //
+    // Sense is inverted on the wire: the datasheet says "if ACK was received
+    // from client value is 0, else 1", so this field is the negation.
+    bool address_acked;
 };
 
 enum class MCP2221ACommands : uint8_t
@@ -78,6 +89,10 @@ public:
 
 private:
     std::optional<MCP2221AStatus> get_status_set_parameters(bool cancel_i2c = false, uint32_t speed_hz = 0);
+
+    // Unwind a latched transfer so the engine is idle. A NACKed address leaves
+    // it stuck, and while stuck every transfer command is refused.
+    bool clear_i2c_engine();
 
     // Resets the device and waits for it to re-enumerate into a usable state.
     // Only called when the I2C engine is found latched in a non-idle state,

@@ -34,8 +34,10 @@ int main(int argc, char** argv)
     if (argc < 2)
     {
         std::fprintf(stderr,
-                     "usage: %s <usbmuxd-socket-path>\n\n"
-                     "Lists what our usbmux client sees through our usbmux server.\n",
+                     "usage: %s <usbmuxd-socket-path> [udid]\n\n"
+                     "Lists what our usbmux client sees through a usbmux server -- ours on\n"
+                     "Linux, or macOS's own at /var/run/usbmuxd. Given a udid, also checks\n"
+                     "findDevice(), which is the lookup stage 4 depends on.\n",
                      argv[0]);
         return 2;
     }
@@ -82,6 +84,27 @@ int main(int argc, char** argv)
         else
         {
             std::printf("  connect to lockdown port %u: FAILED\n", kLockdownPort);
+            ++failures;
+        }
+    }
+
+    // findDevice() is what openCarkitChannel actually calls, and it is a
+    // different code path from listDevices(): it has to reconcile the UDID form
+    // the device reports over USB (24 characters, no separator) with the form
+    // the mux reports (25 characters, dashed). Getting that wrong looks exactly
+    // like a mux failure, so check it with the real thing rather than assuming
+    // that listing implies finding.
+    if (argc > 2)
+    {
+        const std::string udid = argv[2];
+        std::printf("\nfindDevice(\"%s\"):\n", udid.c_str());
+        if (const auto found = client.findDevice(udid); found)
+        {
+            std::printf("  matched id=%u serial=%s\n", found->device_id, found->serial.c_str());
+        }
+        else
+        {
+            std::printf("  NOT FOUND -- this is what stage 4 fails on\n");
             ++failures;
         }
     }

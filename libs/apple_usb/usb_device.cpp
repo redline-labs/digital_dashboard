@@ -17,8 +17,68 @@
 #include <system_error>
 #include <thread>
 
+#ifdef __APPLE__
+#include <unistd.h>
+#endif
+
 namespace apple_usb
 {
+
+namespace
+{
+
+// How this host takes a device away from whatever already owns it.
+//
+// Linux detaches one interface at a time and the driver comes back when we let
+// go. macOS has no such thing: it *captures the whole device* at once
+// (kUSBReEnumerateCaptureDeviceMask), and it needs either root or the
+// com.apple.vm.device-access entitlement, which Apple grants to virtualization
+// vendors and not to us. Root it is -- see docs/carplay_bringup.md.
+//
+// Three consequences worth having written down, because all three are load
+// bearing and none is obvious from the libusb API:
+//
+//  * Capture does NOT re-enumerate the device. libusb's darwin backend follows
+//    it with darwin_restore_state(), which closes and reopens the underlying
+//    IOKit objects behind the same libusb_device_handle and puts the previous
+//    configuration back. So the handle stays valid across a capture, and the
+//    "do not re-enumerate" property switchToCarPlayConfiguration depends on
+//    still holds here.
+//
+//  * Capture is refcounted on libusb's *cached device*, not on the handle, and
+//    closing a handle does not release it. One capture therefore covers the
+//    whole session, across every open/close the pipeline does -- the mux, the
+//    lockdown channel and the NCM bridge each open their own handle and none of
+//    them needs to capture again.
+//
+//  * Nothing in this library may ever call libusb_attach_kernel_driver() or
+//    enable libusb_set_auto_detach_kernel_driver(). Either would drop the
+//    capture refcount mid-session and hand the phone straight back to macOS's
+//    own usbmuxd, which is running and will take it.
+constexpr bool kCaptureIsWholeDevice =
+#ifdef __APPLE__
+    true;
+#else
+    false;
+#endif
+
+}  // namespace
+
+// Declared in the header; see canDetachDevices() there for what it promises.
+bool canDetachDevices(std::string& why_not)
+{
+#ifdef __APPLE__
+    if (::geteuid() != 0)
+    {
+        why_not = "macOS only lets root take a USB device away from its own drivers "
+                  "(the alternative, the com.apple.vm.device-access entitlement, is not "
+                  "available to us). Re-run the node with sudo.";
+        return false;
+    }
+#endif
+    (void)why_not;
+    return true;
+}
 
 namespace
 {
@@ -324,6 +384,37 @@ DeviceHandle openDevice(const DeviceInfo& device)
     return openDevice(device.port);
 }
 
+// String descriptors come back padded. This phone reports its 24-character UDID
+// in a 40-character field, space filled, and libusb hands back all 40 -- so the
+// UDID arrives with sixteen trailing spaces on it.
+//
+// That was invisible for a long time. It does not show in a terminal, and it is
+// harmless while both ends of the usbmux conversation are ours: UsbmuxdServer
+// echoes back the same padded string it was given, so the comparison matches.
+// It only breaks against someone else's mux, which is exactly what macOS is --
+// and there it fails as "the mux does not list udid=...", which looks like a
+// mux problem rather than a string problem.
+namespace
+{
+std::string trimDescriptor(std::string text)
+{
+    const auto is_padding = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\0';
+    };
+    while (!text.empty() && is_padding(static_cast<unsigned char>(text.back())))
+    {
+        text.pop_back();
+    }
+    size_t start = 0;
+    while (start < text.size() && is_padding(static_cast<unsigned char>(text[start])))
+    {
+        ++start;
+    }
+    return text.substr(start);
+}
+
+}  // namespace
+
 std::string readSerial(const DeviceHandle& handle)
 {
     if (!handle)
@@ -345,7 +436,27 @@ std::string readSerial(const DeviceHandle& handle)
         SPDLOG_WARN("[usb] cannot read iSerialNumber: {}", libusb_strerror(n));
         return {};
     }
-    return std::string(reinterpret_cast<const char*>(buffer), static_cast<size_t>(n));
+    return trimDescriptor(std::string(reinterpret_cast<const char*>(buffer),
+                                      static_cast<size_t>(n)));
+}
+
+std::string readStringDescriptor(const DeviceHandle& handle, uint8_t index)
+{
+    if (!handle || index == 0)
+    {
+        return {};
+    }
+
+    unsigned char buffer[128] = {};
+    const int n = libusb_get_string_descriptor_ascii(handle.native(), index, buffer,
+                                                     static_cast<int>(sizeof(buffer)));
+    if (n <= 0)
+    {
+        SPDLOG_DEBUG("[usb] cannot read string descriptor {}: {}", index, libusb_strerror(n));
+        return {};
+    }
+    return trimDescriptor(std::string(reinterpret_cast<const char*>(buffer),
+                                      static_cast<size_t>(n)));
 }
 
 std::optional<ConfigInfo> readActiveConfig(const PortPath& port)
@@ -382,6 +493,28 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
 {
     const PortPath port = device.port;
 
+    // Already there: nothing to do, and -- this is the point -- nothing to ask
+    // permission for. The configuration is sticky across unplugs, so on macOS a
+    // single privileged run switches the phone and every run after it can do
+    // stages 3 onwards unprivileged. Checking before the preflight rather than
+    // after is what makes that true.
+    if (device.active_configuration == kCarPlayConfiguration)
+    {
+        SPDLOG_DEBUG("[usb] port {} is already in configuration {}", port.toString(),
+                     kCarPlayConfiguration);
+        return true;
+    }
+
+    // Fail here rather than several layers down. Without this the macOS story
+    // is a LIBUSB_ERROR_ACCESS inside the detach followed by a "could not set
+    // configuration 6" that says nothing about why.
+    if (std::string why_not; !canDetachDevices(why_not))
+    {
+        SPDLOG_ERROR("[usb] cannot take the phone at port {} away from its drivers: {}",
+                     port.toString(), why_not);
+        return false;
+    }
+
     // The Apple vendor request unlocks the CarPlay configurations; without it
     // the device only advertises configs 1-4. It is a one-shot control
     // transfer, after which the device re-enumerates.
@@ -393,6 +526,24 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
             {
                 return false;
             }
+
+            // On macOS take the device first. libusb tolerates an open that was
+            // refused for exclusive access and still routes endpoint-0 requests
+            // through DeviceRequestAsyncTO, but whether IOKit honours them while
+            // macOS's own usbmuxd holds the phone is not something the API
+            // promises either way. Capturing first makes the question moot, and
+            // costs nothing if the request would have gone through regardless.
+            // The vendor request re-enumerates the device for real, which may
+            // drop this capture -- that is fine, the config switch below takes
+            // it again.
+            if (kCaptureIsWholeDevice)
+            {
+                if (const auto cfg = readActiveConfig(port); cfg)
+                {
+                    detachKernelDrivers(handle, *cfg);
+                }
+            }
+
             try
             {
                 // wIndex 0x0004 mirrors LIVI's request; wLength 1 (device-to-host).
@@ -441,10 +592,13 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
     DeviceHandle handle = openDevice(port);
     if (handle)
     {
-        // The kernel returns EBUSY while any interface is claimed, so every
-        // bound driver (ipheth, cdc_ncm, an earlier client) has to be released
-        // first. Nothing else in this library detaches drivers, which is why
-        // this is done explicitly here.
+        // Linux returns EBUSY while any interface is claimed, so every bound
+        // driver (ipheth, cdc_ncm, an earlier client) has to be released first.
+        // macOS instead captures the whole device in one go -- and it is macOS's
+        // own usbmuxd that has to be displaced, which is running by default and
+        // will reclaim the phone the moment we let go. Either way the handle
+        // survives; see kCaptureIsWholeDevice. Nothing else in this library
+        // detaches drivers, which is why this is done explicitly here.
         if (const auto cfg = readActiveConfig(port); cfg)
         {
             detachKernelDrivers(handle, *cfg);
@@ -453,7 +607,8 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         // libusb_set_configuration issues USBDEVFS_SETCONFIGURATION on Linux,
         // which -- unlike writing sysfs bConfigurationValue -- does not
         // re-enumerate the device, so open fds and, on a VM, the hypervisor's
-        // passthrough binding both survive.
+        // passthrough binding both survive. macOS's capture does not
+        // re-enumerate either, so the same reasoning holds there.
         const int rc = libusb_set_configuration(handle.native(), kCarPlayConfiguration);
         if (rc == LIBUSB_SUCCESS)
         {
@@ -470,9 +625,21 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
     // root can open the usbfs node too, so "sysfs writable but libusb cannot
     // open the device" is a nearly empty set -- and it re-enumerated the device
     // to get there, which is the one thing this function is careful *not* to do.
-    SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}. Either run as root or "
-                 "install nodes/carplay/udev/99-carplay.rules to get usbfs access.",
-                 kCarPlayConfiguration, port.toString());
+    if (kCaptureIsWholeDevice)
+    {
+        // We are already root by the time we get here -- canCaptureDevices()
+        // checked -- so the remaining suspect is contention, not permission.
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}. The device was not "
+                     "captured from macOS's own drivers; usbmuxd may have reclaimed it. "
+                     "Unplug and replug the phone and try again.",
+                     kCarPlayConfiguration, port.toString());
+    }
+    else
+    {
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}. Either run as root or "
+                     "install nodes/carplay/udev/99-carplay.rules to get usbfs access.",
+                     kCarPlayConfiguration, port.toString());
+    }
     return false;
 }
 
@@ -493,13 +660,33 @@ bool detachKernelDriver(const DeviceHandle& handle, uint8_t iface)
     {
         return false;
     }
+    // On macOS `iface` is ignored: the darwin backend captures the whole device
+    // whichever interface it is handed. See kCaptureIsWholeDevice.
     const int rc = libusb_detach_kernel_driver(handle.native(), iface);
     if (rc == LIBUSB_SUCCESS)
     {
         return true;
     }
     // NOT_FOUND just means nothing was bound, which is the desired end state.
-    if (rc != LIBUSB_ERROR_NOT_FOUND)
+    if (rc == LIBUSB_ERROR_NOT_FOUND)
+    {
+        return false;
+    }
+
+    // The two macOS-specific failures are worth naming in full: both are
+    // actionable, and both otherwise surface much later as an unexplained
+    // "could not set configuration 6".
+    if (kCaptureIsWholeDevice && rc == LIBUSB_ERROR_ACCESS)
+    {
+        SPDLOG_ERROR("[usb] refused permission to capture the device from the drivers that "
+                     "hold it. Run the node as root on macOS.");
+    }
+    else if (kCaptureIsWholeDevice && rc == LIBUSB_ERROR_NOT_SUPPORTED)
+    {
+        SPDLOG_ERROR("[usb] this macOS is too old to capture USB devices (libusb needs "
+                     "IOUSBHostDevice interface version 700 or newer).");
+    }
+    else
     {
         SPDLOG_DEBUG("[usb] detach kernel driver from interface {} failed: {}", iface,
                      libusb_strerror(rc));
@@ -525,8 +712,24 @@ unsigned detachKernelDrivers(const DeviceHandle& handle, const ConfigInfo& confi
         }
         if (detachKernelDriver(handle, iface.number))
         {
-            SPDLOG_DEBUG("[usb] released interface {} from its kernel driver", iface.number);
             ++detached;
+            if (kCaptureIsWholeDevice)
+            {
+                // That one call took every interface at once. Going round again
+                // would only bump libusb's capture refcount, which nothing ever
+                // decrements, and would log a per-interface line for something
+                // that did not happen per interface.
+                SPDLOG_DEBUG("[usb] captured the whole device from its drivers");
+                break;
+            }
+            SPDLOG_DEBUG("[usb] released interface {} from its kernel driver", iface.number);
+        }
+        else if (kCaptureIsWholeDevice)
+        {
+            // Capture is all-or-nothing, so a failure here will not turn into a
+            // success on the next interface. detachKernelDriver has already
+            // explained why.
+            break;
         }
     }
     return detached;

@@ -3,7 +3,13 @@
 This is the iterative test plan for the native wired CarPlay stack. The code was
 written in bulk on a macOS dev box **without** an iPhone, MFi coprocessor, or Linux
 host attached. This document is the script for stepping through the hardware
-paths on a Linux host, in order.
+paths, in order.
+
+Most of it assumes a Linux host, which is the target. Since 2026-08-01 **stages
+1–4 and 6 also run on macOS**, verified on hardware — see "Running on macOS"
+under Building. That is a genuinely different route through the same stack
+(macOS supplies both the mux and the NCM link), so read that section before
+following Linux-specific advice on a Mac.
 
 **Reference implementation.** This stack is a port of LIVI
 (https://github.com/f-io/LIVI, GPL-3.0). Its AirPlay/RTSP layer lives in
@@ -165,6 +171,170 @@ step 1 of stage 1b a check you can run off the Linux box.
 Anything from stage 2 onward still needs the phone; stage 6 onward also needs
 Linux. On macOS, `--max-stage 5` stops cleanly before the bridge.
 
+### Running on macOS — the full session works
+
+**Status: verified 2026-08-01** against iPhone `00008140…` (`05ac:12a8`), the
+same phone as the Linux sessions. **Stages 1–7 all run on macOS**, through iAP2
+authentication with the real MFi coprocessor to decoded H.264 — one run streamed
+975 frames before it was stopped.
+
+```
+[usb]    found 05ac:12a8 at port 1-1 (config 6 of 6)
+[usb]    already in configuration 6
+[muxd]   using the system usbmuxd at /var/run/usbmuxd for udid=00008140
+[lockdown] session 3FA8D8C8-…-09170E3755AC up with TLS
+[carkit] com.apple.carkit.service is on port 52113 (ssl=true)
+[carkit] carkit TLS channel up (iAP2) udid=00008140
+[ncm]    NCM function control if3 data if4 (of 2 function(s))
+[ncm]    en9 up, accessory link-local fe80::1ca1:5cd0:be56:35c6
+[airplay] RTSP receiver listening on fe80::1ca1:5cd0:be56:35c6%en9:7000
+[mfi]    using the shared coprocessor, protocol major 2
+[iap2]   link NEGOTIATED (SYN/ACK complete)
+[iap2]   identification ACCEPTED
+[mfi]    answering RequestAuthenticationCertificate      # 908 bytes
+[mfi]    answering RequestAuthenticationChallengeResponse # 128 bytes
+[iap2]   <- AuthenticationSucceeded (0xaa05)
+[video]  screen stream closed after 975 frames
+```
+
+**Port 7000 is already taken on macOS.** The system AirPlay Receiver, inside
+`ControlCenter`, holds `*:7000`, so the receiver's wildcard bind fails with
+`EADDRINUSE`. Binding the NCM link-local specifically succeeds *alongside* it
+given `SO_REUSEADDR`, which the receiver already sets — measured:
+
+```
+bind [::]                      reuse=1 -> Address already in use
+bind fe80::1ca1:5cd0:be56:35c6 reuse=1 -> OK
+```
+
+So `ReceiverConfig::bind_address` is set to the link-local on macOS (it was
+declared but unused until now, and is resolved with `getaddrinfo` so the
+`%en9` scope comes with it). The phone only ever dials the address we
+advertised, so nothing is lost by not holding the wildcard. Turning AirPlay
+Receiver off in System Settings would also free the port, but is not required.
+
+**Root is needed exactly once, for the configuration switch.** Configuration 6
+is sticky across unplugs, so a single privileged run moves the phone into it and
+every run afterwards — stages 3 onwards — works unprivileged:
+
+```bash
+sudo ./build/nodes/carplay/carplay --max-stage 2 --verbose   # once
+./build/nodes/carplay/carplay --max-stage 6 --verbose        # thereafter
+```
+
+**macOS needs less code than Linux, not more**, because it ships both of the
+things we hand-rolled. `usb_pipeline.cpp` selects between them with
+`CARPLAY_USE_SYSTEM_MUX` and `CARPLAY_USE_SYSTEM_NCM`, which default to the host
+and can be overridden so either branch type-checks from either platform:
+
+| Stage | Linux | macOS |
+|---|---|---|
+| 2 — config switch | usbfs + udev rules | whole-device capture, root |
+| 3 — mux | our `MuxHost` drives If1 | the system usbmuxd already does |
+| 4 — usbmuxd socket | our `UsbmuxdServer` on a private path | `/var/run/usbmuxd` |
+| 4 — pair record | we mint one; phone prompts for trust | already exists; no prompt |
+| 6 — NCM link | `NcmBridge` + TAP, ~1,400 lines | `AppleUSBNCM` → `en9` |
+| 7–10 | portable | portable |
+
+**Why not fight the system daemon.** Taking If1 from macOS's usbmuxd would mean
+capturing the whole device, and capture is all-or-nothing — it would also strip
+the NCM interfaces from `AppleUSBNCM`, which is precisely what stage 6 wants to
+keep. Stopping the daemon is not an option either: `launchctl bootout
+system/com.apple.usbmuxd` is refused (`150: Operation not permitted while System
+Integrity Protection is engaged`). Using it is both the cheapest and the only
+route that leaves stage 6 intact.
+
+**Which interface is the AV link.** `AppleUSBNCM` binds *both* NCM pairs and
+creates an interface for each. Pick by MAC, from `iMACAddress` in the CDC
+Ethernet functional descriptor — never by "the interface that just appeared".
+The iAP interface (If2) brings up an `AppleUSBEthernetHost` interface too:
+
+```
+Apple USB Multiplexor@1  +-o usbmuxd  <AppleUSBHostInterfaceUserClient>
+AppleUSBEthernet@2       +-o AppleUSBEthernetHostAQM  +-o en7   <- not this
+NCM Control@3 / Data@4   +-o AppleUSBNCMData          +-o en9   <- first pair
+NCM Control@5 / Data@6   +-o AppleUSBNCMData          +-o en8   <- second pair
+```
+
+`en9`'s MAC `ca:1f:e8:0f:24:b1` shares an allocation with the phone's own
+address, which is the same tell the Linux session used to pick the first pair.
+Note its link-local is a `secured` (RFC 7217) address, *not* the EUI-64 of the
+MAC — same as Linux, and the reason both platforms advertise whatever the kernel
+actually assigned rather than a derived address.
+
+**Why root, specifically, for stage 2.** The configuration switch has to take
+the phone away from whatever already owns it, and the two platforms do that very
+differently:
+
+| | Linux | macOS |
+|---|---|---|
+| Granularity | one interface at a time | the **whole device** at once |
+| Permission | udev rules are enough | root, or `com.apple.vm.device-access` |
+| Re-enumerates? | no | no (see below) |
+| Who is holding it | `ipheth`, `cdc_ncm`, an earlier client | macOS's own `usbmuxd`, always running |
+
+`com.apple.vm.device-access` is a restricted entitlement Apple issues to
+virtualization vendors, so root is the only route open to us. `usbprobe` reports
+whether the current process has what it needs, and it answers with no phone
+attached:
+
+```
+$ ./build/libs/apple_usb/apple_usb_usbprobe
+Device capture: UNAVAILABLE -- macOS only lets root take a USB device away from
+its own drivers ... Re-run the node with sudo.
+```
+
+**Three things about macOS capture that are easy to get wrong**, all verified
+against libusb's darwin backend rather than assumed:
+
+1. **It does not re-enumerate.** `kUSBReEnumerateCaptureDeviceMask` seizes the
+   device, and libusb follows it with `darwin_restore_state()`, which reopens the
+   IOKit objects behind the *same* `libusb_device_handle` and restores the
+   previous configuration. So the handle survives, and the "must not
+   re-enumerate" property the configuration switch is built around holds on both
+   platforms. (An earlier version of this note claimed capture invalidated the
+   handle. It does not.)
+2. **It is refcounted on libusb's cached device, not on the handle**, and
+   `darwin_close()` never releases it. One capture at stage 2 therefore covers
+   the whole session — the mux, the lockdown channel and the NCM bridge each open
+   their own handle and none needs to capture again.
+3. **Never call `libusb_attach_kernel_driver()` or enable
+   `libusb_set_auto_detach_kernel_driver()`.** Either drops the refcount
+   mid-session, and macOS's `usbmuxd` will take the phone back immediately.
+
+Caveats worth knowing before you blame the code:
+
+- Under `sudo`, `$HOME` may be `/var/root`, which moves the state dir. On macOS
+  this matters less than it looks — the pair record comes from the system
+  usbmuxd, not from our state dir — but pass `--state-dir` explicitly if you
+  want one shared location.
+- The vendor request `0x52` triggers a real bus re-enumeration, unlike capture.
+  That can drop the capture taken before it; the configuration switch simply
+  takes it again, which is why the code captures on both sides of the request.
+- **String descriptors are padded.** This phone reports its 24-character UDID in
+  a 40-character field, space filled, and libusb returns all 40. That is
+  invisible in a terminal and harmless while both ends of the usbmux
+  conversation are ours — `UsbmuxdServer` echoes back the same padded string, so
+  the comparison matches. Against the system usbmuxd it fails as *"the mux does
+  not list udid=…"*, which reads like a mux fault and is a string fault.
+  `readSerial()` and `readStringDescriptor()` trim; do not undo that.
+
+**Sanity checks that need no phone-side setup.** `usbprobe` reports whether this
+process can capture, and `--drivers` shows which interfaces already have
+something bound — the two questions that decide whether stage 2 can run:
+
+```bash
+./build/libs/apple_usb/apple_usb_usbprobe --drivers
+```
+
+`muxctl` points our own usbmux client at any usbmuxd, ours or Apple's, and a
+second argument checks `findDevice()` — the lookup stage 4 depends on, and the
+one the UDID padding above breaks:
+
+```bash
+./build/libs/apple_usb/apple_usb_muxctl /var/run/usbmuxd 00008140000138EE0184801C
+```
+
 **Why there is no macOS NCM backend.** macOS has no TAP device. It *could* get
 an ethernet segment from a `feth` pair plus BPF frame injection, so this is not
 impossible — it is just several hundred lines of privileged platform code
@@ -174,7 +344,8 @@ written it replaces `ncm_bridge_null.cpp` rather than growing out of it.
 **Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
 adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
 all three. To run unprivileged instead, install the rules shipped in the repo —
-this is a one-time step per machine:
+this is a one-time step per machine. (On macOS there is no unprivileged option at
+all; see "Running stages 2–5 on macOS" above.)
 
 ```bash
 sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
@@ -225,14 +396,90 @@ i2cdetect -y 0        # expect a device at 0x11
 driver: two separate implementations probing the same bus is the fastest way to
 tell a wiring fault from a software one.
 
-**Conflicting daemons.** The system `usbmuxd` will fight us for the phone (this is
-the core reason we run our own mux). It is not merely untidy: it holds
-interface 1, the exact vendor-specific interface our mux claims
+**The userspace MCP2221A driver was broken until 2026-08-01, and it failed in a
+way that looked exactly like a wiring fault.** Every scan found zero devices and
+every read to 0x11 returned `0x41` forever. That is worth knowing about, because
+"a full-bus scan finds nothing" is *not* the hardware tell it appears to be.
+
+Three separate bugs, all in `libs/mcp2221a/mcp2221a.cpp`:
+
+1. **Every transfer went to the general-call address 0x00.** The report builders
+   were explicit specialisations of a variadic `make_report<Cmd>()`, and a
+   specialisation only matches when the deduced argument types match *exactly*.
+   Call sites passed promoted `int`s — `make_report<I2CWriteData>(0, addr << 1)`
+   deduces `<int, int>`, not `<uint16_t, uint8_t>` — so the specialisation was
+   skipped, the primary template packed the arguments consecutively from byte 1,
+   and the address landed in the length-MSB field while the address byte stayed
+   zero. Nothing ever answered because nothing was ever addressed. Replaced with
+   named builders (`makeI2cWrite` etc.) whose parameter types cannot silently
+   change the overload.
+2. **The ACK test read the wrong thing.** `ack_status` was the whole of response
+   byte 20 compared against zero. DS20005565E table 3-2 says byte 20 carries the
+   ACK status in **bit 6 only** — "if ACK was received from client value is 0,
+   else 1" — with bit 7 and bits 5-0 explicitly "don't care", and they are not
+   zero in practice. Measured: `0x00` when 0x11 answers, `0x40` when nothing
+   does. Now masked.
+3. **A NACK latches the engine and the scan never unwound it.** An unanswered
+   address parks the state machine at `AddressNACKed` (0x25), and while it is
+   parked *every* transfer command is refused with 0x01. `clear_i2c_engine()`
+   now cancels back to idle before each probe.
+
+Plus a timing detail: the write command being accepted only means the engine
+took it, not that the address has been clocked out. Reading the ACK bit
+immediately gives a stale answer, so the scan settles 2 ms first.
+
+With those fixed, on the same hardware that had been "failing" all along:
+
+```
+$ ./build/libs/mcp2221a/mcp2221a_i2c_scan
+Found 1 devices:
+ - 0x11
+
+$ ./build/libs/apple_mfi_ic/apple_mfi_demo
+Device Version: 0x05   Authentication Protocol Version: 2.0
+Subject: /C=US/O=Apple Inc./OU=Apple iPod Accessories/CN=IPA_1212AA…
+Valid: Yes
+Signature: [6c, 94, 27, 27, …]        # 128-byte challenge response
+```
+
+**A single failed transfer at startup is normal, not a fault.** The coprocessor
+sleeps after even a short idle period and **NACKs the first access, waking on
+it** — so the opening read fails and the retry succeeds a few milliseconds
+later. `AppleMFIIC::read_register` retries the write/read pair as a unit (8
+attempts, 20 ms apart) precisely for this, and only logs an error once all of
+them are gone. The MCP2221A layer therefore reports these at DEBUG: it signals
+failure through its return value, and only the caller knows whether a failure
+is terminal. If you see
+
+```
+[error] I2C read from 0x11 failed ... the client did not acknowledge its address
+```
+
+at ERROR level, that is a regression in the logging level, not a bus problem —
+check whether `MFi coprocessor ready` follows shortly after.
+
+**Triage order, corrected.** Before suspecting the bus, prove the driver: a scan
+that finds *nothing at all* is as likely to be an addressing bug as an
+electrical one. Genuine bus faults show up as SCL or SDA stuck low, which the
+status response reports directly in bytes 22 and 23 — on a healthy idle bus both
+read 1. Only once those look right do pull-ups, power, a swapped SDA/SCL pair
+and a held reset line become the likely causes.
+
+Note the MCP2221A backend needs **no privilege** on macOS, unlike the phone.
+
+**Conflicting daemons (Linux).** The system `usbmuxd` will fight us for the phone
+(this is the core reason we run our own mux there). It is not merely untidy: it
+holds interface 1, the exact vendor-specific interface our mux claims
 (`kMuxInterface = 1`). Stop it before testing:
 
 ```bash
 sudo systemctl stop usbmuxd.socket usbmuxd.service
 ```
+
+On **macOS this is inverted**: the system usbmuxd is not a conflict, it is the
+mux we use. Do not try to stop it — SIP refuses, and stopping it would gain
+nothing, since taking If1 requires whole-device capture which would also strip
+the NCM interfaces we depend on. See "Running on macOS" above.
 
 Some distros ship only the service unit and no socket unit; drop
 `usbmuxd.socket` from the command if systemd reports it does not exist. If the
@@ -344,6 +591,20 @@ Check, in this order:
 | Two `<- CDC-NCM control` interfaces | present in config 6 | NCM discovery will find fewer |
 | Bulk endpoints on data **alt 1** | `ep 0x…  bulk` under `alt 1` | `hasBulkPair()` fails |
 | `cdc_subtype=0x0f (Ethernet Networking, iMACAddress=N)` | `N` non-zero | host MAC unreadable |
+
+**Reconciled against real configuration 6 on 2026-08-01 — the fixture was
+right.** `carPlayLikeConfig()` matches a real iPhone in configuration 6 exactly:
+all 11 interface alt settings, the `0xff/0xfd` iAP interface with its three
+altsettings, endpoints `0x87`/`0x88`/`0x06`/`0x89`/`0x07`, `iMACAddress` 18 on
+the first NCM function and 16 on the second, an interrupt endpoint on the first
+NCM control interface and none on the second, and every functional-descriptor
+byte including `wMaxSegmentSize` `0x3e8e` and the NCM functional `06 24 1a 00 01
+3b`. Nothing needed correcting. The comment claiming it is "byte-for-byte what
+the phone reports" is now verified rather than asserted.
+
+Configuration 5 (what the phone boots into) is the same layout **minus** the iAP
+interface, so every interface number and endpoint address below If2 shifts down
+by one. Do not mistake a config-5 dump for a config-6 one.
 
 **Then reconcile against the unit tests.** `test_ncm_discovery.cpp` encodes the
 descriptor shape this port *assumes* (`carPlayLikeConfig()`). If the probe output
@@ -1529,6 +1790,8 @@ Not all stages below are implemented yet. Current state:
 | iAP2 metadata decode | written, unit-tested |
 | NCM ↔ TAP bridge | verified on hardware 2026-07-21 (stage 6); **discovery half rewritten on libusb 2026-08-01**, TAP/IP half untouched |
 | NTB16 framing (`ncm_frame.cpp`) | extracted from the bridge 2026-08-01 and unit-tested for the first time (`apple_usb_test_ncm_frame`, 60 assertions). Framing logic itself unchanged and hardware-proven; the extraction did surface one latent bug in the EUI-64 derivation (stage 6) |
+| **macOS stages 1–7** | **verified on hardware 2026-08-01** — config switch under root, then system usbmuxd + lockdown TLS + carkit + `AppleUSBNCM` + iAP2/MFi auth + 975 decoded video frames, all unprivileged after the one-time switch. See "Running on macOS" |
+| MCP2221A userspace driver | **three bugs fixed 2026-08-01** — every transfer was addressed to 0x00, the ACK bit was unmasked, and a NACK latched the engine. Presented as a wiring fault for a long time; it was not |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
 | **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
 | **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |

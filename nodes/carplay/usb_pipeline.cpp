@@ -6,6 +6,7 @@
 #include "apple_usb/lockdown.h"
 #include "apple_usb/muxd.h"
 #include "apple_usb/ncm_bridge.h"
+#include "apple_usb/ncm_discovery.h"
 
 #include "airplay/receiver.h"
 #include "iap2/mcp2221a_mfi_signer.h"
@@ -13,6 +14,49 @@
 #include "apple_usb/usbmuxd_server.h"
 
 #include <spdlog/spdlog.h>
+
+// Whether the operating system already provides the two things stages 3 and 6
+// would otherwise have to build: a usbmux daemon, and a driven NCM link.
+//
+// macOS provides both. Linux provides neither in a form we can use -- its
+// usbmuxd will not switch the phone to configuration 6, and its cdc_ncm holds
+// the NCM pair without giving us control of the framing.
+//
+// Both default to the host but can be overridden, so either branch can be
+// type-checked from either platform. That is not hypothetical tidiness: the
+// Linux branch below is the one that cannot be built on a developer's Mac
+// otherwise, and it is also the one that matters in the car. Compile it here
+// with -DCARPLAY_USE_SYSTEM_MUX=0 -DCARPLAY_USE_SYSTEM_NCM=0 -- it links too,
+// because ncm_bridge_null.cpp supplies NcmBridge off Linux.
+#if !defined(CARPLAY_USE_SYSTEM_MUX)
+#  if defined(__APPLE__)
+#    define CARPLAY_USE_SYSTEM_MUX 1
+#  else
+#    define CARPLAY_USE_SYSTEM_MUX 0
+#  endif
+#endif
+#if !defined(CARPLAY_USE_SYSTEM_NCM)
+#  if defined(__APPLE__)
+#    define CARPLAY_USE_SYSTEM_NCM 1
+#  else
+#    define CARPLAY_USE_SYSTEM_NCM 0
+#  endif
+#endif
+
+#if CARPLAY_USE_SYSTEM_NCM
+// Stage 6 becomes interface lookup rather than a bridge: the kernel already
+// built the link, so all this needs is getifaddrs and the BSD link-layer
+// sockaddr to match an interface by MAC.
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if_dl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+#include <cctype>
+#include <cerrno>
+#include <cstring>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -227,6 +271,418 @@ struct SessionContext
     std::shared_ptr<std::mutex> mfi_mutex;
 };
 
+// What provides the usbmuxd socket that the lockdown and carkit layers connect
+// to. The two platforms answer this very differently, and the difference is not
+// cosmetic:
+//
+//  * Linux -- nothing else can do it for us. The distro's usbmuxd will not put
+//    the phone into configuration 6, and it has to be stopped anyway or it
+//    fights us for If1. So we drive the mux interface ourselves (MuxHost) and
+//    serve the usbmuxd protocol on a private socket (UsbmuxdServer).
+//
+//  * macOS -- the system usbmuxd already owns If1, through an IOKit user
+//    client rather than a kext, and it keeps muxing the phone after the switch
+//    to configuration 6. Taking If1 from it would mean capturing the whole
+//    device, and capture is all-or-nothing: it would also strip the NCM
+//    interfaces from AppleUSBNCM, which is precisely what stage 6 wants left
+//    alone. Stopping the daemon is not an option either -- launchctl bootout is
+//    refused while SIP is engaged. So we connect to its socket and let it work.
+//
+//    Verified on hardware 2026-08-01 with the phone in configuration 6: our own
+//    UsbmuxClient drives Apple's daemon for ReadBUID, ListDevices,
+//    ReadPairRecord and Connect-to-lockdown, unprivileged. The pair record is
+//    already there, because the Mac is already trusted by the phone -- so macOS
+//    skips the trust prompt that Linux has to wait for.
+class SessionMux
+{
+  public:
+    bool open(const apple_usb::DeviceInfo& device, const std::string& state_dir);
+    void close();
+
+    // False once the phone has gone, which unwinds the session.
+    bool alive() const;
+
+    const std::string& socketPath() const { return socket_path_; }
+
+  private:
+    std::string socket_path_;
+#if CARPLAY_USE_SYSTEM_MUX
+    apple_usb::PortPath port_;
+#else
+    // unique_ptr rather than by value: UsbmuxdServer holds a MuxHost& and both
+    // have to stay put for the life of the session.
+    std::unique_ptr<apple_usb::MuxHost> mux_;
+    std::unique_ptr<apple_usb::UsbmuxdServer> server_;
+#endif
+};
+
+#if CARPLAY_USE_SYSTEM_MUX
+
+// The system daemon's socket. World read/write, so this needs no privilege --
+// the only thing on macOS that does is the configuration switch itself.
+constexpr const char* kSystemUsbmuxdSocket = "/var/run/usbmuxd";
+
+bool SessionMux::open(const apple_usb::DeviceInfo& device, const std::string&)
+{
+    port_ = device.port;
+    socket_path_ = kSystemUsbmuxdSocket;
+
+    std::error_code ec;
+    if (!fs::exists(socket_path_, ec))
+    {
+        SPDLOG_ERROR("[muxd] {} is not there, so the system usbmuxd is not running. It is "
+                     "part of MobileDevice.framework and normally always up; without it "
+                     "there is no way to reach the phone's lockdown port on macOS.",
+                     socket_path_);
+        return false;
+    }
+
+    SPDLOG_INFO("[muxd] using the system usbmuxd at {} for udid={}", socket_path_,
+                shortUdid(device.serial));
+    return true;
+}
+
+void SessionMux::close() {}
+
+bool SessionMux::alive() const
+{
+    // Nothing of ours is attached to the device, so liveness is simply whether
+    // it is still plugged into the same port.
+    return apple_usb::findDeviceAt(port_).has_value();
+}
+
+#else
+
+bool SessionMux::open(const apple_usb::DeviceInfo& device, const std::string& state_dir)
+{
+    mux_ = std::make_unique<apple_usb::MuxHost>(device);
+    if (!mux_->open())
+    {
+        SPDLOG_ERROR("[muxd] could not open the mux for udid={}. Another driver may hold "
+                     "the interface -- check `lsusb -t` and that the system usbmuxd is "
+                     "stopped.", shortUdid(device.serial));
+        mux_.reset();
+        return false;
+    }
+    SPDLOG_INFO("[muxd] mux open for udid={}", shortUdid(device.serial));
+
+    std::error_code ec;
+    socket_path_ =
+        (fs::path(state_dir) / ("usbmuxd-" + shortUdid(device.serial) + ".sock")).string();
+    fs::remove(socket_path_, ec);
+
+    server_ = std::make_unique<apple_usb::UsbmuxdServer>(*mux_, socket_path_, state_dir);
+    if (!server_->start())
+    {
+        SPDLOG_ERROR("[usbmuxd] could not serve on {}", socket_path_);
+        server_.reset();
+        mux_->close();
+        mux_.reset();
+        return false;
+    }
+    SPDLOG_INFO("[usbmuxd] serving {} on {}", shortUdid(device.serial), socket_path_);
+    SPDLOG_INFO("[usbmuxd] sanity-check it independently with:");
+    SPDLOG_INFO("[usbmuxd]   USBMUXD_SOCKET_ADDRESS=UNIX:{} idevice_id -l", socket_path_);
+    return true;
+}
+
+void SessionMux::close()
+{
+    if (server_)
+    {
+        server_->stop();
+        server_.reset();
+    }
+    if (mux_)
+    {
+        mux_->close();
+        mux_.reset();
+    }
+    if (!socket_path_.empty())
+    {
+        std::error_code ec;
+        fs::remove(socket_path_, ec);
+    }
+}
+
+bool SessionMux::alive() const
+{
+    return mux_ && mux_->alive();
+}
+
+#endif
+
+// The accessory-side endpoint the phone is told to dial after authentication:
+// an interface carrying an IPv6 link-local, on the same ethernet segment as the
+// phone's first NCM function.
+//
+//  * Linux -- NcmBridge does all of it. It takes the NCM pair away from
+//    cdc_ncm, drives NTB16 framing in userspace and bridges to a TAP device it
+//    creates and addresses itself.
+//
+//  * macOS -- AppleUSBNCM already did all of that. It binds both NCM pairs as
+//    soon as configuration 6 is applied and gives each one a real network
+//    interface with a link-local address, with no privilege and nothing for us
+//    to drive. So there is no bridge here at all; the only question is *which*
+//    interface belongs to the first NCM function, and iMACAddress answers it.
+//
+//    Verified on hardware 2026-08-01: en9 / ca:1f:e8:0f:24:b1 /
+//    fe80::1ca1:5cd0:be56:35c6 for the first function, en8 for the second.
+//    Do not pick "the interface that just appeared" -- the iAP interface brings
+//    up an AppleUSBEthernetHost one too (en7 there), and it is not this.
+class AvLink
+{
+  public:
+    bool start(const apple_usb::DeviceInfo& device);
+    void stop();
+
+    bool running() const { return running_; }
+    const std::string& interfaceName() const { return ifname_; }
+
+    // The link-local with its scope attached ("fe80::1%en9"), which is the only
+    // form that can actually be bound: a link-local without its interface is
+    // ambiguous. Empty when the link is not up.
+    std::string scopedLinkLocal() const
+    {
+        if (link_local_.empty() || ifname_.empty()) return {};
+        return link_local_ + "%" + ifname_;
+    }
+
+    const std::string& hostMac() const { return host_mac_; }
+    const std::string& linkLocalAddress() const { return link_local_; }
+
+  private:
+    bool running_ = false;
+    std::string ifname_;
+    std::string host_mac_;
+    std::string link_local_;
+#if !CARPLAY_USE_SYSTEM_NCM
+    std::unique_ptr<apple_usb::NcmBridge> bridge_;
+#endif
+};
+
+#if CARPLAY_USE_SYSTEM_NCM
+
+// Normalise a MAC to lowercase colon-separated form. The CDC iMACAddress string
+// descriptor is 12 hex characters with no separators ("CA1FE80F24B1"), while
+// getifaddrs hands back bytes -- so both sides get funnelled through this
+// rather than compared as text in whatever shape they arrived in.
+std::string normaliseMac(const std::string& text)
+{
+    std::string hex;
+    for (const char c : text)
+    {
+        if (std::isxdigit(static_cast<unsigned char>(c)))
+        {
+            hex.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+    }
+    if (hex.size() != 12)
+    {
+        return {};
+    }
+    std::string out;
+    for (size_t i = 0; i < 12; i += 2)
+    {
+        if (!out.empty())
+        {
+            out.push_back(':');
+        }
+        out += hex.substr(i, 2);
+    }
+    return out;
+}
+
+// The BSD name of the interface whose link-layer address is `mac`, or "".
+std::string interfaceWithMac(const std::string& mac)
+{
+    const std::string wanted = normaliseMac(mac);
+    if (wanted.empty())
+    {
+        return {};
+    }
+
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0)
+    {
+        SPDLOG_WARN("[ncm] getifaddrs failed: {}", std::strerror(errno));
+        return {};
+    }
+
+    std::string found;
+    for (const ifaddrs* it = list; it != nullptr && found.empty(); it = it->ifa_next)
+    {
+        if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_LINK)
+        {
+            continue;
+        }
+        const auto* dl = reinterpret_cast<const sockaddr_dl*>(it->ifa_addr);
+        if (dl->sdl_alen != 6)
+        {
+            continue;
+        }
+        const auto* bytes = reinterpret_cast<const unsigned char*>(LLADDR(dl));
+        const std::string candidate =
+            fmt::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", bytes[0], bytes[1], bytes[2],
+                        bytes[3], bytes[4], bytes[5]);
+        if (candidate == wanted && it->ifa_name != nullptr)
+        {
+            found = it->ifa_name;
+        }
+    }
+    ::freeifaddrs(list);
+    return found;
+}
+
+// The first IPv6 link-local on `ifname`, or "".
+std::string linkLocalOf(const std::string& ifname)
+{
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0)
+    {
+        return {};
+    }
+
+    std::string found;
+    for (const ifaddrs* it = list; it != nullptr && found.empty(); it = it->ifa_next)
+    {
+        if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_INET6)
+        {
+            continue;
+        }
+        if (it->ifa_name == nullptr || ifname != it->ifa_name)
+        {
+            continue;
+        }
+        const auto* sin6 = reinterpret_cast<const sockaddr_in6*>(it->ifa_addr);
+        in6_addr address = sin6->sin6_addr;
+        if (!IN6_IS_ADDR_LINKLOCAL(&address))
+        {
+            continue;
+        }
+        // BSD may hide the scope id in bytes 2-3; clear it so what we advertise
+        // is the address as everyone else writes it. See ncm_bridge.cpp.
+        address.s6_addr[2] = 0;
+        address.s6_addr[3] = 0;
+        char text[INET6_ADDRSTRLEN] = {};
+        if (::inet_ntop(AF_INET6, &address, text, sizeof(text)) != nullptr)
+        {
+            found = text;
+        }
+    }
+    ::freeifaddrs(list);
+    return found;
+}
+
+bool AvLink::start(const apple_usb::DeviceInfo& device)
+{
+    const auto config = apple_usb::readActiveConfig(device);
+    if (!config)
+    {
+        SPDLOG_ERROR("[ncm] cannot read the active configuration descriptor");
+        return false;
+    }
+
+    const auto functions = apple_usb::findNcmFunctions(*config);
+    if (functions.empty())
+    {
+        SPDLOG_ERROR("[ncm] no NCM function in configuration {}; is the phone really in the "
+                     "CarPlay configuration?", config->value);
+        return false;
+    }
+    // The first function, same choice the Linux bridge makes: its host MAC
+    // shares an allocation with the phone's own address, the second's does not.
+    const apple_usb::NcmFunction& fn = functions.front();
+    SPDLOG_INFO("[ncm] NCM function control if{} data if{} (of {} function(s))", fn.ctrl_iface,
+                fn.data_iface, functions.size());
+
+    apple_usb::DeviceHandle handle = apple_usb::openDevice(device);
+    if (!handle)
+    {
+        SPDLOG_ERROR("[ncm] cannot open the device to read iMACAddress");
+        return false;
+    }
+    host_mac_ = normaliseMac(apple_usb::readStringDescriptor(handle, fn.mac_string_index));
+    handle.reset();
+    if (host_mac_.empty())
+    {
+        SPDLOG_ERROR("[ncm] iMACAddress (string descriptor {}) is unreadable, so the interface "
+                     "AppleUSBNCM created cannot be identified", fn.mac_string_index);
+        return false;
+    }
+
+    // The driver attaches a moment after the configuration switch, so give it
+    // a little time rather than racing it on the first attachment.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do
+    {
+        ifname_ = interfaceWithMac(host_mac_);
+        if (!ifname_.empty())
+        {
+            link_local_ = linkLocalOf(ifname_);
+        }
+        if (!link_local_.empty())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    if (ifname_.empty())
+    {
+        SPDLOG_ERROR("[ncm] no network interface has the host MAC {}. AppleUSBNCM should have "
+                     "created one when configuration 6 was applied -- check `ifconfig` and "
+                     "that nothing captured the device away from it.", host_mac_);
+        return false;
+    }
+    if (link_local_.empty())
+    {
+        SPDLOG_ERROR("[ncm] {} exists but has no IPv6 link-local address, so there is nothing "
+                     "to advertise to the phone.", ifname_);
+        return false;
+    }
+
+    running_ = true;
+    return true;
+}
+
+void AvLink::stop()
+{
+    // Nothing to tear down: the interface is the kernel's, not ours.
+    running_ = false;
+}
+
+#else
+
+bool AvLink::start(const apple_usb::DeviceInfo& device)
+{
+    bridge_ = std::make_unique<apple_usb::NcmBridge>(device);
+    if (!bridge_->start())
+    {
+        SPDLOG_ERROR("[ncm] bridge did not start. Needs CAP_NET_ADMIN for the TAP device "
+                     "(setcap cap_net_admin+ep on this binary, or run as root).");
+        bridge_.reset();
+        return false;
+    }
+    ifname_ = bridge_->interfaceName();
+    host_mac_ = bridge_->hostMac();
+    link_local_ = bridge_->linkLocalAddress();
+    running_ = true;
+    return true;
+}
+
+void AvLink::stop()
+{
+    if (bridge_)
+    {
+        bridge_->stop();
+        bridge_.reset();
+    }
+    running_ = false;
+}
+
+#endif
+
 // Runs one attachment of one phone, from claiming the mux through to the iAP2
 // session ending. Returns when the phone goes away or `stop` is set; the return
 // value says whether the bring-up itself succeeded.
@@ -238,15 +694,11 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     std::error_code ec;
 
     // --- Stage 3: usbmux over the vendor-specific interface, then the socket --
-    apple_usb::MuxHost mux(device);
-    if (!mux.open())
+    SessionMux mux;
+    if (!mux.open(device, state_dir))
     {
-        SPDLOG_ERROR("[muxd] could not open the mux for udid={}. Another driver may hold "
-                     "the interface -- check `lsusb -t` and that the system usbmuxd is "
-                     "stopped.", shortUdid(device.serial));
         return false;
     }
-    SPDLOG_INFO("[muxd] mux open for udid={}", shortUdid(device.serial));
 
     // Session-scoped stop: set when the node is shutting down *or* the phone
     // has gone. Everything below waits on this rather than the node-wide flag,
@@ -273,20 +725,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         return result;
     };
 
-    const std::string socket_path =
-        (fs::path(state_dir) / ("usbmuxd-" + shortUdid(device.serial) + ".sock")).string();
-    fs::remove(socket_path, ec);
-
-    apple_usb::UsbmuxdServer usbmuxd(mux, socket_path, state_dir);
-    if (!usbmuxd.start())
-    {
-        SPDLOG_ERROR("[usbmuxd] could not serve on {}", socket_path);
-        mux.close();
-        return finish(false);
-    }
-    SPDLOG_INFO("[usbmuxd] serving {} on {}", shortUdid(device.serial), socket_path);
-    SPDLOG_INFO("[usbmuxd] sanity-check it independently with:");
-    SPDLOG_INFO("[usbmuxd]   USBMUXD_SOCKET_ADDRESS=UNIX:{} idevice_id -l", socket_path);
+    const std::string& socket_path = mux.socketPath();
 
     bool ok = true;
     std::unique_ptr<apple_usb::CarkitChannel> carkit;
@@ -319,26 +758,22 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         SPDLOG_INFO("[node] stopping after stage 3 as requested");
     }
 
-    // --- Stage 6: NCM <-> TAP link -------------------------------------------
+    // --- Stage 6: the NCM link ------------------------------------------------
     //
     // Brought up *before* the iAP2 session, not after: the phone asks for the
     // accessory endpoint moments after authentication, and the address only
-    // exists once this bridge is running.
-    std::unique_ptr<apple_usb::NcmBridge> ncm;
+    // exists once this link is up.
+    AvLink ncm;
     if (ok && options.max_stage >= 6)
     {
-        ncm = std::make_unique<apple_usb::NcmBridge>(device);
-        if (!ncm->start())
+        if (!ncm.start(device))
         {
-            SPDLOG_ERROR("[ncm] bridge did not start. Needs CAP_NET_ADMIN for the TAP device "
-                         "(setcap cap_net_admin+ep on this binary, or run as root).");
-            ncm.reset();
             ok = false;
         }
         else
         {
-            SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm->interfaceName(),
-                        ncm->linkLocalAddress());
+            SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm.interfaceName(),
+                        ncm.linkLocalAddress());
         }
     }
 
@@ -357,6 +792,20 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     if (ok && options.max_stage >= 7)
     {
         airplay::ReceiverConfig receiver_config;
+
+#if CARPLAY_USE_SYSTEM_NCM
+        // Bind the AV link's address rather than the wildcard. macOS's own
+        // AirPlay Receiver (inside ControlCenter) already holds *:7000, so the
+        // wildcard bind fails with EADDRINUSE -- but binding this one address on
+        // the same port succeeds alongside it. The phone only ever dials the
+        // link-local we advertised, so this loses nothing.
+        //
+        // Turning AirPlay Receiver off in System Settings would also free the
+        // port, but requiring that of anyone running the node is worse than
+        // simply not taking a port we were never entitled to.
+        receiver_config.bind_address = ncm.scopedLinkLocal();
+#endif
+
         if (ctx.mfi_signer != nullptr)
         {
             iap2::MfiSigner* signer = ctx.mfi_signer;
@@ -566,18 +1015,18 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
         iap2_options.signer = ctx.mfi_signer;
 
-        if (ncm)
+        if (ncm.running())
         {
-            apple_usb::NcmBridge* ncm_bridge = ncm.get();
+            const AvLink* link = &ncm;
             iap2_options.endpoint_provider =
-                [ncm_bridge]() -> std::optional<Iap2SessionOptions::Endpoint> {
-                if (!ncm_bridge->running() || ncm_bridge->linkLocalAddress().empty())
+                [link]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                if (!link->running() || link->linkLocalAddress().empty())
                 {
                     return std::nullopt;
                 }
                 Iap2SessionOptions::Endpoint endpoint;
-                endpoint.link_local_address = ncm_bridge->linkLocalAddress();
-                endpoint.device_identifier = ncm_bridge->hostMac();
+                endpoint.link_local_address = link->linkLocalAddress();
+                endpoint.device_identifier = link->hostMac();
                 return endpoint;
             };
         }
@@ -830,17 +1279,14 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     {
         receiver->stop();
     }
-    if (ncm)
-    {
-        ncm->stop();
-    }
+    ncm.stop();
     if (carkit)
     {
         carkit->close();
     }
-    usbmuxd.stop();
+    // Tears down our own mux and socket on Linux; a no-op on macOS, where the
+    // socket belongs to the system daemon and must outlive us.
     mux.close();
-    fs::remove(socket_path, ec);
     return finish(ok);
 }
 
@@ -849,6 +1295,18 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 bool runUsbPipeline(const UsbPipelineOptions& options, ZenohBridge& bridge,
                     std::atomic<bool>& stop)
 {
+    // Said up front, not when a phone finally turns up: without this the
+    // operator plugs in, waits through the detection poll, and only then learns
+    // they needed sudo. Not fatal -- stage 1 still enumerates, which is worth
+    // having on its own -- so this warns rather than returning.
+    if (std::string why_not; !apple_usb::canDetachDevices(why_not))
+    {
+        SPDLOG_WARN("[usb] {}", why_not);
+        SPDLOG_WARN("[usb] a phone already in configuration {} still works from here; only "
+                    "switching one into it needs the privilege.",
+                    apple_usb::kCarPlayConfiguration);
+    }
+
     const std::string state_dir =
         options.state_dir.empty() ? defaultStateDir() : options.state_dir;
 

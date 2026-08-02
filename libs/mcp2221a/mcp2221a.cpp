@@ -61,80 +61,72 @@ class Report_t
     payload_t data_;
 };
 
-// Generic make_report function that accepts variable arguments
-template<typename... Args>
-constexpr Report_t make_report(MCP2221ACommands cmd, Args... args)
+// One named builder per command, with the byte layout written out.
+//
+// These used to be explicit specialisations of a variadic make_report<Cmd>().
+// That was quietly broken for the entire life of the driver: a specialisation
+// only matches when the deduced argument types match *exactly*, and every call
+// site passed promoted ints -- make_report<I2CWriteData>(0, addr << 1) deduces
+// <int, int>, not <uint16_t, uint8_t>. So the specialisation was skipped, the
+// primary template ran, and it packed the arguments consecutively from byte 1:
+// the address landed in the length-MSB field and the address field stayed 0x00.
+// Every I2C transfer this driver ever issued went to the general-call address,
+// which is why nothing ever answered.
+//
+// Named functions with concrete parameter types cannot fail that way: a
+// mismatched argument is a conversion, not a silent change of overload.
+//
+// Byte layouts are from DS20005565E sections 3.1.1, 3.1.7, 3.1.8 and 3.1.10.
+// Note the report indices below are *command* byte indices; Report_t hides the
+// leading HID report ID.
+
+Report_t makeStatusSetParameters(bool cancel_i2c, uint32_t speed_hz)
 {
-    Report_t report(cmd);
-    size_t index = 1;
-    
-    // Fold expression to set each argument
-    ((report[index++] = static_cast<uint8_t>(args)), ...);
-    
+    Report_t report(MCP2221ACommands::StatusSetParameters);
+    report[1] = 0x00;                                 // don't care
+    report[2] = cancel_i2c ? 0x10 : 0x00;             // cancel current transfer
+    const bool set_speed = speed_hz > 1000u;
+    report[3] = set_speed ? 0x20 : 0x00;              // set communication speed
+    // The divider is only consumed when byte 3 requests a speed change, so
+    // guard the division: callers that only cancel (or only read status) pass
+    // speed_hz == 0, and dividing by that is undefined behaviour -- it traps on
+    // x86 and silently yields garbage on AArch64.
+    report[4] = set_speed ? static_cast<uint8_t>((12000000u / speed_hz) - 3u) : 0x00;
     return report;
 }
 
-// Template function with enum literal as non-type template parameter
-template<MCP2221ACommands Cmd, typename... Args>
-constexpr Report_t make_report(Args... args)
+Report_t makeReset()
 {
-    Report_t report(Cmd);
-    size_t index = 1u;
-    
-    // Fold expression to set each argument
-    ((report[index++] = static_cast<uint8_t>(args)), ...);
-    
+    Report_t report(MCP2221ACommands::Reset);
+    report[1] = 0xAB;
+    report[2] = 0xCD;
+    report[3] = 0xEF;
     return report;
 }
 
-// Template specialization for Reset command with default values
-template<>
-constexpr Report_t make_report<MCP2221ACommands::Reset>()
+// `address8` is the 8-bit form: 7-bit address shifted left, low bit 0 to write
+// and 1 to read (DS20005565E 3.1.7 note 1).
+Report_t makeI2cWrite(uint16_t length, uint8_t address8)
 {
-    return make_report(MCP2221ACommands::Reset, 0xAB, 0xCD, 0xEF);
+    Report_t report(MCP2221ACommands::I2CWriteData);
+    report[1] = static_cast<uint8_t>(length & 0xFFu);         // length LSB
+    report[2] = static_cast<uint8_t>((length >> 8) & 0xFFu);  // length MSB
+    report[3] = address8;
+    return report;
 }
 
-// Template specialization for I2C Write Data command
-template<>
-constexpr Report_t make_report<MCP2221ACommands::I2CWriteData, uint16_t, uint8_t>(uint16_t data_length, uint8_t address)
+Report_t makeI2cRead(uint16_t length, uint8_t address8)
 {
-    return make_report(MCP2221ACommands::I2CWriteData, 
-                       static_cast<uint8_t>(data_length & 0xFF),        // Length LSB
-                       static_cast<uint8_t>((data_length >> 8) & 0xFF), // Length MSB
-                       address);                                         // I2C address
+    Report_t report(MCP2221ACommands::I2CReadData);
+    report[1] = static_cast<uint8_t>(length & 0xFFu);
+    report[2] = static_cast<uint8_t>((length >> 8) & 0xFFu);
+    report[3] = address8;
+    return report;
 }
 
-// Template specialization for I2C Read Data command
-template<>
-constexpr Report_t make_report<MCP2221ACommands::I2CReadData, uint16_t, uint8_t>(uint16_t data_length, uint8_t address)
+Report_t makeGetI2cData()
 {
-    return make_report(MCP2221ACommands::I2CReadData,
-                       static_cast<uint8_t>(data_length & 0xFF),        // Length LSB
-                       static_cast<uint8_t>((data_length >> 8) & 0xFF), // Length MSB
-                       address);                                         // I2C address with read bit
-}
-
-// Template specialization for I2C Get Data command
-template<>
-constexpr Report_t make_report<MCP2221ACommands::I2CGetData>()
-{
-    return make_report(MCP2221ACommands::I2CGetData);
-}
-
-template<>
-constexpr Report_t make_report<MCP2221ACommands::StatusSetParameters, bool, uint32_t>(bool cancel_i2c, uint32_t speed_hz)
-{
-    return make_report(
-        MCP2221ACommands::StatusSetParameters,
-        0x00, // Reserved
-        cancel_i2c ? 0x10 : 0x00,
-        speed_hz > 1000u ? 0x20 : 0x00,
-        // The divider is only consumed when the byte above requests a speed
-        // change, so guard the division: callers that only cancel (or only read
-        // status) pass speed_hz == 0, and dividing by that is undefined
-        // behaviour -- it traps on x86 and silently yields garbage on AArch64.
-        speed_hz > 1000u ? (12000000 / speed_hz) - 3 : 0
-    );
+    return Report_t(MCP2221ACommands::I2CGetData);
 }
 
 
@@ -157,10 +149,18 @@ bool MCP2221A::open()
     device_ = {hid_open(kVendorId, kProductId, nullptr), hid_close};
     if (!device_)
     {
+#ifdef __linux__
         SPDLOG_ERROR("MCP2221A device not found. If it is present in lsusb, check that a "
                      "/dev/hidraw node exists for it and is readable -- the in-kernel "
                      "hid_mcp2221 driver claims the chip without ever creating one, so it "
                      "has to be blacklisted.");
+#else
+        // None of that advice applies here: there is no hidraw node and no
+        // hid_mcp2221 to blacklist, because macOS ships no kernel driver for
+        // this chip -- which is the whole reason this HID backend exists.
+        SPDLOG_ERROR("MCP2221A device not found. Check it is plugged in and appears in "
+                     "System Information > USB as vendor 0x04d8 product 0x00dd.");
+#endif
         return false;
     }
 
@@ -196,7 +196,7 @@ bool MCP2221A::open()
 
 bool MCP2221A::reset_and_reopen()
 {
-    auto report = make_report<MCP2221ACommands::Reset>();
+    auto report = makeReset();
     if (hid_write(device_.get(), report, report.size()) == -1)
     {
         SPDLOG_ERROR("Failed to send reset command");
@@ -257,7 +257,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
         return std::nullopt;
     }
 
-    auto report = make_report<MCP2221ACommands::StatusSetParameters>(cancel_i2c, speed_hz);
+    auto report = makeStatusSetParameters(cancel_i2c, speed_hz);
 
     if (hid_write(device_.get(), report, report.size()) == -1)
     {
@@ -286,7 +286,9 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
     status.i2c_speed_response = static_cast<I2CSpeedResponse>(response[3]);
     status.speed_hz = 12000000 / (response[4] + 3);
     status.i2c_state = static_cast<I2CState>(response[8]);
-    status.ack_status = response[20];
+    // Byte 20 bit 6 only; the surrounding bits are documented "don't care" and
+    // are set in practice. See MCP2221AStatus::address_acked.
+    status.address_acked = (response[20] & 0x40u) == 0u;
 
     return status;
 }
@@ -369,7 +371,7 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
         return false;
     }
 
-    auto report = make_report<MCP2221ACommands::I2CWriteData>(data.size(), address << 1);
+    auto report = makeI2cWrite(static_cast<uint16_t>(data.size()), static_cast<uint8_t>(address << 1));
     
     // Copy the data payload starting at index 4 (which is report[3] due to offset)
     for (size_t i = 0; i < data.size(); ++i) {
@@ -387,6 +389,25 @@ bool MCP2221A::i2c_write(uint8_t address, const std::vector<uint8_t>& data) {
     if ((res <= 0) || (response[0] != 0x90) || (response[1] != 0x00))
     {
         SPDLOG_ERROR("I2C write failed for address 0x{:02X}, res = {}, response[0]=0x{:02X}, response[1]=0x{:02X}", address, res, response[0], response[1]);
+        return false;
+    }
+
+    // Accepting the command only means the engine started; it says nothing
+    // about whether anything answered. Without this check a write to an empty
+    // address "succeeds", and the failure surfaces later as an unexplained read
+    // error -- which is exactly how the MFi coprocessor's silence used to
+    // present.
+    const auto status = get_status();
+    if (status && !status->address_acked)
+    {
+        // DEBUG for the same reason as the read path below: a sleeping client
+        // NACKs its first access and wakes on it, so the caller's retry is
+        // expected to succeed. Raising this here made a normal wake-up look
+        // like a fault in the log.
+        SPDLOG_DEBUG("I2C write to 0x{:02X}: the client did not acknowledge its address "
+                     "(engine state 0x{:02x})",
+                     address, static_cast<uint8_t>(status->i2c_state));
+        clear_i2c_engine();
         return false;
     }
 
@@ -412,7 +433,7 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
     }
     
     // Send I2C read command with the total length
-    auto report = make_report<MCP2221ACommands::I2CReadData>(length, (address << 1) | 0x01);
+    auto report = makeI2cRead(static_cast<uint16_t>(length), static_cast<uint8_t>((address << 1) | 0x01));
 
     if (hid_write(device_.get(), report, report.size()) == -1)
     {
@@ -446,7 +467,7 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
             // is required or not based on the length of the read.
             std::this_thread::sleep_for(std::chrono::milliseconds(10u));
 
-            report = make_report<MCP2221ACommands::I2CGetData>();
+            report = makeGetI2cData();
 
             if (hid_write(device_.get(), report, report.size()) == -1)
             {
@@ -476,8 +497,13 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
             }
             else if (response[1] == 0x41)
             {
-                // I2C engine busy, wait and retry
-                SPDLOG_DEBUG("I2C engine busy (0x41) on attempt {} at offset {}, retrying...", attempt, total_bytes_read);
+                // Not "busy" -- DS20005565E table 3-31 calls 0x41 "error reading
+                // the I2C client data from the I2C engine". Retrying is worth a
+                // couple of goes because the engine may still be clocking the
+                // transfer out, but if it persists the transfer has failed and
+                // the usual cause is that the address was never acknowledged.
+                SPDLOG_DEBUG("I2C get-data error (0x41) on attempt {} at offset {}, retrying...",
+                             attempt, total_bytes_read);
                 continue;
             }
             else
@@ -490,12 +516,34 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
         
         if (!success)
         {
-            SPDLOG_ERROR("Failed to get I2C read data at offset {} after 10 attempts: res={}, response[0]=0x{:02x}, response[1]=0x{:02x}", total_bytes_read, res, response[0], response[1]);
-            cancel();
+            // DEBUG, not ERROR: the failure is already reported through the
+            // return value, and one failed transfer is not by itself a fault.
+            // Clients that sleep -- the Apple MFi coprocessor is one -- NACK the
+            // first access after an idle period and wake on it, so a single
+            // failure here is the *normal* path and the caller's retry succeeds
+            // milliseconds later. Only the caller knows when it has run out of
+            // attempts, so only the caller should raise it; read_register() in
+            // apple_mfi_ic.cpp does exactly that.
+            const auto state = get_status();
+            SPDLOG_DEBUG("I2C read from 0x{:02x} failed at offset {}: response[1]=0x{:02x}{}",
+                         address, total_bytes_read, response[1],
+                         (state && !state->address_acked)
+                             ? " -- the client did not acknowledge its address"
+                             : "");
+            clear_i2c_engine();
             return {};
         }
-        
+
         size_t bytes_available = response[3];
+        // 127 is the datasheet's error marker for this field (table 3-31); the
+        // bytes after it are meaningless and must not be copied.
+        if (bytes_available == 127)
+        {
+            SPDLOG_ERROR("I2C read from 0x{:02x}: engine reported an error at offset {}", address,
+                         total_bytes_read);
+            clear_i2c_engine();
+            return {};
+        }
         if (bytes_available == 0)
         {
             // No more data available
@@ -518,15 +566,52 @@ std::vector<uint8_t> MCP2221A::i2c_read(uint8_t address, size_t length)
     return final_result;
 }
 
+bool MCP2221A::clear_i2c_engine()
+{
+    // An address that goes unanswered leaves the engine latched in
+    // AddressNACKed (0x25), and while it is latched *every* subsequent transfer
+    // command is refused with 0x01. A scan therefore has to unwind the previous
+    // address before probing the next one, or it only ever sees every other
+    // address -- and the first unanswered one poisons the rest.
+    //
+    // Cancelling can take "a few hundreds of microseconds" (DS20005565E table
+    // 3-2, byte 2), so this polls rather than assuming one round trip is enough.
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        const auto current = get_status();
+        if (!current)
+        {
+            return false;
+        }
+        if (current->i2c_state == I2CState::Idle)
+        {
+            return true;
+        }
+        get_status_set_parameters(true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
 std::vector<uint8_t> MCP2221A::scan_i2c_bus()
 {
     std::vector<uint8_t> found_devices;
     if (!is_open()) return found_devices;
 
-    for (uint8_t addr = 1; addr < 128; ++addr) {
-        // Use I2C Write Data command with 0 length to ping the address.
-        // This performs a full START-ADDR-STOP sequence.
-        auto report = make_report<MCP2221ACommands::I2CWriteData>(0, addr << 1);
+    // 0x00 is the general-call address and 0x78-0x7f are reserved; probing them
+    // tells us nothing and 0x00 is answered by parts that are not really there.
+    for (uint8_t addr = 0x03; addr < 0x78; ++addr)
+    {
+        if (!clear_i2c_engine())
+        {
+            SPDLOG_WARN("I2C engine will not return to idle; abandoning the scan at 0x{:02x}",
+                        addr);
+            break;
+        }
+
+        // A zero-length write is a full START-ADDR-STOP with no payload, which
+        // is the least intrusive way to ask "is anybody there".
+        auto report = makeI2cWrite(0, static_cast<uint8_t>(addr << 1));
 
         if (hid_write(device_.get(), report, report.size()) == -1)
         {
@@ -535,25 +620,29 @@ std::vector<uint8_t> MCP2221A::scan_i2c_bus()
         }
 
         std::vector<uint8_t> response(64, 0);
-        int res = hid_read_timeout(device_.get(), response.data(), response.size(), 10);
-
-        if ((res > 0) && (response[0] == 0x90) && (response[1] == 0x00))
+        const int res = hid_read_timeout(device_.get(), response.data(), response.size(), 50);
+        if ((res <= 0) || (response[0] != 0x90) || (response[1] != 0x00))
         {
-            // Now check the ACK status.
-            auto status = get_status();
-            if (status && status->ack_status == 0x00)
-            {
-                found_devices.push_back(addr);
-                //SPDLOG_INFO("Found device at address 0x{:02x}", addr);
-             }
-        }
-        else
-        {
-            // This can happen if the bus is locked. Issue a cancel.
-            get_status_set_parameters(true);
+            continue;
         }
 
+        // The command being accepted only means the engine took it. The address
+        // has not been clocked out yet, so the ACK bit and the state machine
+        // are both still stale -- read them immediately and every address looks
+        // unanswered. At 100 kHz an address byte is ~90 us; 2 ms is generous
+        // and still scans the whole range in well under a second.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+        // Two independent tells, and they should agree: the ACK bit, and the
+        // state machine parking at AddressNACKed. Requiring both means a
+        // misread of either one cannot invent a device.
+        const auto status = get_status();
+        if (status && status->address_acked && status->i2c_state != I2CState::AddressNACKed)
+        {
+            found_devices.push_back(addr);
+        }
     }
 
+    clear_i2c_engine();
     return found_devices;
 }
