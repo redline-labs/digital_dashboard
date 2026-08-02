@@ -5,6 +5,9 @@
 #
 #     add_project_test(TARGET airplay_test_hid LABELS airplay unit)
 #
+# Targets are named <component>_test_<subject> throughout, so `ctest -N` reads
+# as a grouped list and `ctest -R <component>` selects one library's tests.
+#
 # Labels are how you pick a subset. Every test carries its component
 # (airplay, plist, iap2, apple_usb, pub_sub, canopen, dashboard) plus at least
 # one of:

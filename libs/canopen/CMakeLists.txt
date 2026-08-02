@@ -66,14 +66,14 @@ macro(generate_eds_code library_name eds_file)
 endmacro()
 
 # Tests
-add_executable(eds_parse_test
-    tests/eds_parse_test.cpp
+add_executable(canopen_test_eds_parse
+    tests/test_eds_parse.cpp
 )
 
-target_link_libraries(eds_parse_test
+target_link_libraries(canopen_test_eds_parse
     PRIVATE
         canopen
         spdlog::spdlog
         lexy_core
 )
-add_project_test(TARGET eds_parse_test LABELS canopen unit)
+add_project_test(TARGET canopen_test_eds_parse LABELS canopen unit)

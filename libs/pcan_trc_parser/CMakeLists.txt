@@ -17,16 +17,16 @@ target_link_libraries(pcan_trc_parser
 # Consumers can link with pcan_trc_parser via this alias
 add_library(pcan::trc_parser ALIAS pcan_trc_parser)
 
-add_executable(test_pcan_trc_parser
-    test/test_parse.cpp
+add_executable(pcan_trc_parser_test_parse
+    test/test_trc_parse.cpp
 )
 
-target_link_libraries(test_pcan_trc_parser
+target_link_libraries(pcan_trc_parser_test_parse
     PRIVATE
         pcan::trc_parser
         spdlog::spdlog
         helpers
 )
-add_project_test(TARGET test_pcan_trc_parser LABELS pcan_trc_parser unit)
+add_project_test(TARGET pcan_trc_parser_test_parse LABELS pcan_trc_parser unit)
 
 
