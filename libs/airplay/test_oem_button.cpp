@@ -24,7 +24,7 @@ void expect(bool condition, const char* what)
     }
 }
 
-airplay::OemIcon makeIcon(uint32_t size, bool prerendered = false)
+airplay::OemIcon makeIcon(uint32_t size, bool prerendered = true)
 {
     airplay::OemIcon icon;
     icon.png.assign(size, 0x7f);  // stand-in bytes; nothing here decodes them
@@ -76,7 +76,7 @@ int main()
         config.enabled = true;
         config.label = "Dashboard";
         config.icons.push_back(makeIcon(60));
-        config.icons.push_back(makeIcon(120, true));
+        config.icons.push_back(makeIcon(120, false));
         addOemButtonInfo(config, info);
 
         const plist::Value* visible = info.find("oemIconVisible");
@@ -95,8 +95,8 @@ int main()
             expect(first.find("heightPixels")->asInteger() == 60, "icon height");
             expect(first.find("imageData")->isData() && first.find("imageData")->asData().size() == 60,
                    "icon data is passed through verbatim");
-            expect(!first.find("prerendered")->asBool(), "prerendered defaults false");
-            expect(icons->at(1).find("prerendered")->asBool(), "prerendered is per icon");
+            expect(first.find("prerendered")->asBool(), "prerendered defaults TRUE");
+            expect(!icons->at(1).find("prerendered")->asBool(), "and is per icon");
         }
 
         // The whole point of building this is that it survives the wire format
@@ -114,6 +114,35 @@ int main()
         expect(info.find("oemIconVisible") != nullptr, "visibility still advertised");
         expect(info.find("oemIconLabel") == nullptr, "empty label omitted");
         expect(info.find("oemIcons") == nullptr, "empty icon list omitted");
+    }
+
+    // prerendered must default to true, and this is not a style preference.
+    //
+    // Hardware, 2026-08-02, iPhone17,1 / AirPlay 950.7.1: an icon advertised
+    // with prerendered=false renders as an EMPTY TILE. The label shows, the
+    // artwork does not. Sending the identical PNG with prerendered=true renders
+    // it correctly. Both directions were tried against the phone.
+    //
+    // The name misleads -- it reads as "should CarPlay apply its own corner
+    // mask and shine" -- so a future reader may well flip it back on the theory
+    // that a masked icon looks more native. This test is here to stop that.
+    {
+        airplay::OemIcon fresh;
+        expect(fresh.prerendered, "a default-constructed icon is prerendered");
+
+        OemButtonConfig config;
+        config.enabled = true;
+        config.icons.push_back(airplay::OemIcon{});
+        plist::Value info = plist::Value::dict();
+        addOemButtonInfo(config, info);
+        const plist::Value* icons = info.find("oemIcons");
+        expect(icons != nullptr && icons->isArray() && icons->size() == 1, "one icon");
+        if (icons != nullptr && icons->isArray() && icons->size() == 1)
+        {
+            const plist::Value* flag = icons->at(0).find("prerendered");
+            expect(flag != nullptr && flag->isBool() && flag->asBool(),
+                   "and it reaches /info as true -- false renders an empty tile on hardware");
+        }
     }
 
     // The press: requestUI with nothing to open.

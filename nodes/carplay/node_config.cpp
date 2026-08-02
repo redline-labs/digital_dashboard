@@ -238,9 +238,11 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                 for (const YAML::Node& entry : icons)
                 {
                     const std::string icon_path = entry["path"].as<std::string>();
+                    // Defaults true: false renders an empty tile on hardware.
+                    // See airplay::OemIcon::prerendered.
                     const bool prerendered = entry["prerendered"]
                                                  ? entry["prerendered"].as<bool>()
-                                                 : false;
+                                                 : true;
                     const std::filesystem::path resolved =
                         std::filesystem::path(icon_path).is_absolute()
                             ? std::filesystem::path(icon_path)

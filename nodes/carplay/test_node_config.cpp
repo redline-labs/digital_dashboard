@@ -110,16 +110,45 @@ int main()
         writeBytes(good, pngHeader(120, 90));
 
         airplay::OemIcon icon;
-        expect(loadOemIcon(good.string(), false, icon), "a PNG header is accepted");
+        expect(loadOemIcon(good.string(), true, icon), "a PNG header is accepted");
         expect(icon.width_px == 120 && icon.height_px == 90,
                "dimensions come from IHDR, big endian");
-        expect(!icon.prerendered, "prerendered follows the argument");
+        expect(icon.prerendered, "prerendered follows the argument");
+        airplay::OemIcon plain;
+        expect(loadOemIcon(good.string(), false, plain) && !plain.prerendered,
+               "and the other way too");
         expect(icon.png.size() == pngHeader(120, 90).size(),
                "the file is carried verbatim, not re-encoded");
 
-        airplay::OemIcon pre;
-        expect(loadOemIcon(good.string(), true, pre) && pre.prerendered,
-               "prerendered can be set");
+    }
+
+    // A config that does not mention prerendered must get TRUE. On hardware
+    // (iPhone17,1 / AirPlay 950.7.1) false renders an empty tile -- the label
+    // shows and the artwork does not -- so the default is load-bearing and the
+    // shipped config deliberately omits the key.
+    {
+        const fs::path implicit = dir / "implicit_prerender.yaml";
+        writeBytes(dir / "icon2.png", pngHeader(96, 96));
+        writeFile(implicit, "oem_button:\n  icons:\n    - path: icon2.png\n");
+
+        NodeConfig config;
+        expect(loadNodeConfig(implicit.string(), config), "a config omitting prerendered loads");
+        expect(config.oem_button.icons.size() == 1, "one icon");
+        if (config.oem_button.icons.size() == 1)
+        {
+            expect(config.oem_button.icons[0].prerendered,
+                   "an unspecified prerendered defaults to true, not false");
+        }
+
+        // An explicit false is still honoured -- it is a knob, just a
+        // dangerous one.
+        const fs::path explicit_false = dir / "explicit_false.yaml";
+        writeFile(explicit_false,
+                  "oem_button:\n  icons:\n    - path: icon2.png\n      prerendered: false\n");
+        NodeConfig other;
+        expect(loadNodeConfig(explicit_false.string(), other), "an explicit false loads");
+        expect(other.oem_button.icons.size() == 1 && !other.oem_button.icons[0].prerendered,
+               "and is honoured");
     }
 
     // Dimensions above 32767, which a naive signed read would mangle.

@@ -1946,11 +1946,23 @@ an `oemIcons` array (one entry per rendition: `imageData`, `widthPixels`,
 `libs/airplay/oem_button.cpp` and unit-tested by `airplay_test_oem_button`.
 
 Those key names are not guesses — they match LIVI's `getInfo.ts` exactly, which
-is a working implementation. The one place we differ is `prerendered`: LIVI
-always sends **true**, meaning CarPlay draws the artwork untouched. We default
-to false so CarPlay applies its own corner mask, as it does for app icons, which
-suits a full-bleed square image. If the tile looks wrong on hardware, that is
-the knob to turn first, and LIVI's setting is the one with evidence behind it.
+is a working implementation.
+
+**`prerendered` must be true. Verified both ways on hardware 2026-08-02**
+(iPhone17,1, AirPlay 950.7.1). With `prerendered: false` the tile appears and is
+correctly labelled, and the artwork is **an empty square**. The identical PNG
+with `prerendered: true` renders correctly.
+
+The name misleads. It reads as "should CarPlay apply its own corner mask and
+shine, as it does for app icons" — so false looks like the tasteful choice for a
+full-bleed square image. It is not: CarPlay appears to decline to draw the icon
+at all. LIVI hard-codes true, which is why LIVI's icons work; we defaulted to
+false and shipped an empty tile until a phone said otherwise.
+
+Both `airplay::OemIcon::prerendered` and the config parser's default for an
+absent key are now true, and `airplay_test_oem_button` asserts it with this
+paragraph's reasoning attached — the failure mode is invisible in code review
+and a future reader would otherwise reasonably flip it back.
 
 It is advertised **once**, at `/info` time. There is no way to show or hide the
 button mid-session, so a config change needs a new session to take effect.
@@ -1988,16 +2000,21 @@ Without `--config` the button is still advertised, with the default label and no
 artwork; the node warns, because CarPlay then draws its own placeholder, which
 looks enough like a working button to hide the mistake.
 
-**What to check on hardware.** In order: the tile appears on CarPlay's home
-screen (advertisement accepted); it shows our steering wheel rather than a
-placeholder (`oemIcons` accepted); the caption reads right and is not truncated;
-pressing it logs the two lines above.
+**Status: the tile, its label and its artwork are verified on hardware
+(2026-08-02).** The *press* is still unverified — the button renders, but
+nothing has confirmed that pressing it produces `requestUI`.
 
-If the tile appears but the artwork does not, the icon *entry* keys are the
-suspect, not the top-level ones — try a single 120 px entry, and try
-`prerendered: true`, before touching anything else. Turning on `--verbose`
-prints every unrouted event command with its full body, which is where a
-differently-named press would show up.
+If artwork ever goes missing again, the encoding is not the place to look. It
+was ruled out by dumping the exact `/info` we send and reading it with macOS's
+own parser:
+
+```bash
+plutil -p /tmp/info.plist    # oemIcons -> imageData = {length = 819, bytes = 0x89504e47...}
+```
+
+Apple's parser reading our plist correctly means the plist library, the data
+encoding and the PNG bytes are all fine, and the problem is in how CarPlay is
+being *asked* to treat the icon — which is how `prerendered` was found.
 
 ## 12. What LIVI has that we do not, and why
 
@@ -2092,6 +2109,67 @@ build, the thirteen unit suites, and `--simulate`. If a hardware session
 regresses after 2026-08-02 and the symptom is in the handshake, the pairing and
 event-channel commits are where to look first.
 
+## 14. Hardware session, 2026-08-02 — findings
+
+The first hardware run after a large refactor and a feature-parity pass. iPhone
+`00008140…` (iPhone17,1, AirPlay 950.7.1) and the real MFi coprocessor, on
+macOS. Everything from USB detection through H.264 ran, and three bugs came out
+that no amount of desk-checking had.
+
+**1. An event-channel feedback loop (introduced by the refactor, fixed).**
+
+The event channel is the only bidirectional one: the phone sends its own
+commands *and* replies to ours. The inbound handling added with the manufacturer
+button only considered requests — and a status line (`RTSP/1.0 200 OK`) has the
+same three space-separated tokens as a request line, so `parseRequest` accepts
+it with `method="RTSP/1.0"`. We answered its replies; it answered ours.
+
+Measured: **~1000 messages/second for the entire session**, 27,082 error lines in
+35 seconds, a 54,847-line log. Video kept flowing throughout, which is exactly
+why only hardware found it. `rtsp::Message::isResponse()` now names the
+distinction; the same run afterwards logged 672 lines and zero errors. LIVI's
+`cpStack.ts` has this guard and it had not been ported.
+
+**2. The clock sync had never worked on the first sample (pre-existing, fixed).**
+
+Our clock counts from boot; the phone's timestamps are NTP, seconds since 1900.
+That is ~126 years apart — past the ±2³¹ second window a signed 64-bit
+fixed-point difference can represent — so the first offset **wrapped and came
+back with the wrong sign**: a true gap of +3.99e9 s computed as −3.05e8 s. The
+1/8 slew then crawled toward correct over ninety-odd seconds, having stepped the
+wrong way first, and `syncedNtp()` compounded it by casting a negative
+nanosecond count to `uint64_t`.
+
+The first sample now *adopts* the phone's clock via `ntp::toNanos()` instead of
+stepping by a difference that cannot express the gap. On hardware:
+`clock adopted from the phone (offset 2207213529.836 s)` — 69.9 years, the NTP
+epoch offset — and zero large phase errors, down from 96.
+
+`airplay_test_timing` had asserted this case was *"not reachable in practice"*.
+It is reached on every session. The test now says so.
+
+**3. `prerendered: false` renders an empty tile.** See stage 11.
+
+**Still open — the node can take more than five seconds to exit on SIGTERM.**
+Observed while restarting between tests: three `carplay` processes survived
+`pkill` and a five-second wait, one still holding the link-local `:7000`, which
+made the next run fail to bind and look like a fresh bug. The retry backoff loop
+is interruptible (it checks `stop` every second), so the delay is elsewhere in
+teardown — `carkit->close()` and the TLS shutdown against a phone that is going
+away are the first suspects. Not chased, because the hardware was unplugged. If
+you are restarting the node in a loop, confirm the port is free first:
+
+```bash
+lsof -nP -iTCP:7000 -sTCP:LISTEN | grep carplay
+```
+
+**A note on method.** Two of the three findings were mine, and both were the
+same shape: code that is obviously correct in isolation, wrong against a real
+peer. The event-channel loop needed a phone that replies; the clock needed a
+phone whose epoch is not ours. Simulation cannot produce either, because
+`--simulate` has no peer. That is the limit of the hardware-free test net, and
+worth remembering before the next "this is desk-checkable" judgement.
+
 ## What exists today (read before starting)
 
 Not all stages below are implemented yet. Current state:
@@ -2122,7 +2200,7 @@ Not all stages below are implemented yet. Current state:
 | **Night mode** | written 2026-08-02, wired to `--night-mode` / config and to `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
 | **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
 | **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
-| **Manufacturer button** (`/info` advertisement + press decode) | written 2026-08-01, unit-tested (`airplay_test_oem_button`), **not hardware-verified**; the press is logged and goes nowhere — see stage 11 |
+| **Manufacturer button** (`/info` advertisement + press decode) | tile, label and artwork **verified on hardware 2026-08-02** (needs `prerendered: true`); the *press* is still unverified. See stages 11 and 14 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
 | **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |
 | **Microphone uplink** | written; control path verified on hardware; end-to-end voice pending real host audio |

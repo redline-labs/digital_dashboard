@@ -80,8 +80,10 @@ oem_button:
   # scale factor. Paths are relative to this file. Dimensions are read from each
   # PNG, so only the path (and optionally `prerendered`) belongs here.
   #
-  # `prerendered: false` lets CarPlay apply its own icon treatment (corner mask,
-  # shine) exactly as it does for app icons; true hands the image through as-is.
+  # `prerendered` defaults to true and should stay that way. Despite the name,
+  # false does not merely ask CarPlay to apply its own corner mask -- it renders
+  # an empty tile, label and all, with no artwork. Verified both ways against
+  # iPhone17,1 / AirPlay 950.7.1 on 2026-08-02.
   icons:
     - path: oem_icon_60.png
     - path: oem_icon_120.png

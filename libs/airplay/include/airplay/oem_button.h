@@ -28,9 +28,16 @@ struct OemIcon
     std::vector<uint8_t> png;
     uint32_t width_px = 0;
     uint32_t height_px = 0;
-    // False lets CarPlay apply its own icon treatment (corner mask, shine) as
-    // it does for app icons. True hands the artwork through untouched.
-    bool prerendered = false;
+    // True hands the artwork to CarPlay untouched. Defaults true because false
+    // does not work: on iPhone17,1 / AirPlay 950.7.1, an icon sent with
+    // prerendered=false renders as an EMPTY TILE -- the label appears, the
+    // artwork does not. Verified both ways against hardware on 2026-08-02.
+    //
+    // The name suggests false would merely ask CarPlay to apply its own corner
+    // mask and shine, as it does for app icons. It does not; it appears to
+    // decline to draw the icon at all. LIVI hard-codes true, which is why its
+    // icons work. Keep this true unless you have a phone in front of you.
+    bool prerendered = true;
 };
 
 struct OemButtonConfig
