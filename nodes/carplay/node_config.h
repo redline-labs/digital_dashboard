@@ -16,7 +16,7 @@
 #define CARPLAY_NODE_CONFIG_H_
 
 #include "airplay/receiver.h"
-#include "zenoh_bridge.h"
+#include "location_fix.h"
 
 #include <optional>
 #include <string>

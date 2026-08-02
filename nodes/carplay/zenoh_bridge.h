@@ -6,6 +6,8 @@
 #ifndef CARPLAY_ZENOH_BRIDGE_H_
 #define CARPLAY_ZENOH_BRIDGE_H_
 
+#include "location_fix.h"
+
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 
@@ -170,20 +172,6 @@ struct InputEvent
     // What `code` and `value` mean depends on `kind`; see schemas/carplay_input.capnp.
     uint16_t code = 0;
     int32_t value = 0;
-};
-
-// A GPS fix supplied to the phone (dashboard/GPS source -> driver -> phone).
-struct LocationFix
-{
-    double latitude_deg = 0.0;
-    double longitude_deg = 0.0;
-    double altitude_m = 0.0;
-    double speed_knots = 0.0;
-    double course_deg = 0.0;
-    uint32_t satellites = 0;
-    double hdop = 1.0;
-    uint64_t utc_epoch_ms = 0;
-    bool valid = true;
 };
 
 // Owns every zenoh endpoint for the driver. Publishers are not thread-safe,
