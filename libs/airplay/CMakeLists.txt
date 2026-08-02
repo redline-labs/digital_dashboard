@@ -23,6 +23,7 @@ add_library(airplay STATIC
     srp.cpp
     pairing_session.cpp
     nalu.cpp
+    media_stream.cpp
     rtsp.cpp
     event_queue.cpp
     event_channel.cpp

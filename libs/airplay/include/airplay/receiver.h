@@ -10,6 +10,7 @@
 #include "airplay/config.h"
 #include "airplay/crypto.h"
 #include "airplay/hid.h"
+#include "airplay/media_stream.h"
 #include "airplay/nalu.h"
 #include "airplay/oem_button.h"
 #include "plist/value.h"
@@ -26,35 +27,6 @@
 
 namespace airplay
 {
-
-// Decoded media handed to the node for publishing on zenoh.
-struct VideoPacket
-{
-    Bytes data;  // Annex-B
-    uint64_t timestamp = 0;
-    bool keyframe = false;
-    // True for the codec parameter sets rather than a frame. zenoh has no
-    // retained messages, so the node republishes these before every keyframe.
-    bool is_config = false;
-    // The codec the phone announced in the parameter sets, carried on every
-    // packet so the node can label the stream without tracking the config
-    // itself. The phone chooses this, and picks H.264 in practice; H.265 is
-    // wired through because the framing and keyframe rules differ and guessing
-    // wrong is silent (see nalu::isKeyframeNalu).
-    nalu::Codec codec = nalu::Codec::H264;
-};
-
-struct AudioPacket
-{
-    Bytes data;  // interleaved S16LE PCM
-    uint32_t sample_rate = 44100;
-    uint8_t channels = 2;
-    // The CarPlay stream type (100 main, 101 alt, 102 entertainment) and the
-    // audioType category ("media", "telephony", "speechRecognition", ...) so the
-    // node can label the zenoh audio stream.
-    int stream_type = 100;
-    std::string audio_type;
-};
 
 class Receiver
 {
@@ -167,16 +139,6 @@ class Receiver
     // a polite TEARDOWN and the control connection closing behind it are both
     // the same session ending.
     void endSession(const char* reason);
-
-    // Accepts the phone's video data connection and pumps frames until it
-    // closes. `key` is the per-stream ChaCha20-Poly1305 key.
-    void screenStreamLoop(int listen_fd, Bytes key);
-
-    // Receives one CarPlay audio stream on its UDP data port: RTP-framed,
-    // ChaCha20-Poly1305 sealed. Each decrypted payload is either LPCM (big
-    // endian) or, when `is_aac`, a raw AAC-LC access unit decoded to PCM.
-    void audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
-                         int stream_type, std::string audio_type, bool is_aac);
 
     // Brings a microphone uplink up (against the phone's dataPort) or down.
     void startMicUplink(uint16_t phone_port, const Bytes& shared_key, uint32_t sample_rate,
