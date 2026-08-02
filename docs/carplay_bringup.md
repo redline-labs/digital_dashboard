@@ -66,6 +66,9 @@ cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust bui
 ./build/libs/airplay/airplay_test_event_queue # event channel queueing
 ./build/libs/airplay/airplay_test_oem_button  # manufacturer button: /info keys + press decode
 ./build/libs/airplay/airplay_test_hid         # HID descriptors vs. the reports sent on them
+./build/libs/airplay/airplay_test_channel_crypto  # encrypted-channel framing + nonce lockstep
+./build/libs/airplay/airplay_test_info_plist      # the GET /info capability declaration
+./build/libs/airplay/airplay_test_pairing_session # pair-setup/verify/auth-setup, driven as the phone
 ./build/libs/plist/plist_test_binary          # binary plist round-trip
 ./build/libs/plist/plist_test_xml             # XML plist round-trip
 ./build/libs/plist/plist_test_libplist_vectors # differential vectors captured from libplist
@@ -1980,6 +1983,52 @@ its source does not re-derive the same conclusions.
   configuration this vehicle wants.
 - **A playback anchor in `POST /feedback`.** See stage 10b — we cannot produce
   one honestly, because playback happens on the far side of zenoh.
+
+## 13. Where the code lives
+
+Restructured 2026-08-02. `libs/airplay/receiver.cpp` had grown to 2870 lines
+holding five separable jobs behind four mutexes, and nothing inside it could be
+tested without a socket. It is now 1324 lines of RTSP server -- accept, frame,
+dispatch, session lifecycle -- and the rest are units that can be driven from a
+test. That is the whole point of the split: **every concern that came out of the
+receiver gained a test, and everything still inside it has none.**
+
+| Unit | What it owns | Test |
+|---|---|---|
+| `config.h` | what the accessory is, as the phone sees it | — |
+| `info_plist.cpp` | the GET /info capability declaration | `airplay_test_info_plist` |
+| `pairing_session.cpp` | pair-setup, pair-verify, auth-setup, accessory identity | `airplay_test_pairing_session` |
+| `channel_crypto.cpp` | the framed ChaCha20-Poly1305 transport both encrypted channels use | `airplay_test_channel_crypto` |
+| `event_channel.cpp` | the input/command connection, its queue and its two threads | `airplay_test_event_queue` (policy) |
+| `hid.cpp` | the four input devices: descriptors, /info entries, reports | `airplay_test_hid` |
+| `oem_button.cpp` | the manufacturer button, both directions | `airplay_test_oem_button` |
+| `media_stream.cpp` | the screen and audio receive loops | — |
+| `mic_uplink.cpp` | captured audio going back to the phone | — |
+| `net.cpp` | the two socket shapes (dual-stack, ephemeral port) | — |
+| `timing.cpp`, `nalu.cpp`, `crypto.cpp`, `srp.cpp`, `tlv8.cpp`, `aac_decoder.cpp` | as before | yes |
+| `receiver.cpp` | the RTSP server and session lifecycle that wires the above | — |
+
+Two things are worth knowing before changing any of it:
+
+- **A second display is now a data change** in `info_plist.cpp` plus a second
+  screen stream, rather than surgery on the RTSP server. That was the point of
+  extracting it (see stage 12 on the cluster display).
+- **Night mode is split on purpose.** `EventChannel::setNightMode()` records it
+  and `pushNightMode()` sends it, because *when* to send is the session's
+  business: the phone ignores an event command sent before RECORD, and older iOS
+  stalls the bring-up for seconds on one. The channel cannot see that signal.
+
+On the node side, `runAttachedSession` went from 645 lines to 146 by naming its
+two largest stages -- `startAirPlayReceiver` and `runIap2Stage`. The stages run
+3, 4, 6, 7, 5, which is deliberate: the phone dials the AirPlay port within
+milliseconds of the `CarPlayStartSession` that stage 5 sends, so 6 and 7 have to
+be listening first. `UsbPipelineOptions` is gone; `NodeConfig` is the one config
+struct, filled once in `main()`.
+
+**None of this was verified against a phone.** It is code motion checked by the
+build, the thirteen unit suites, and `--simulate`. If a hardware session
+regresses after 2026-08-02 and the symptom is in the handshake, the pairing and
+event-channel commits are where to look first.
 
 ## What exists today (read before starting)
 
