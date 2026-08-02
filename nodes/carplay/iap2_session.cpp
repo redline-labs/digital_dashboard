@@ -141,6 +141,24 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     }
 
     iap2::IdentificationConfig identification;
+    if (options.identity)
+    {
+        // Left unset, IdentificationConfig still identifies the accessory as
+        // the project this was ported from, with its serial number.
+        const VehicleIdentity& vehicle = *options.identity;
+        identification.name = vehicle.name;
+        identification.model_identifier = vehicle.model;
+        identification.manufacturer = vehicle.manufacturer;
+        identification.serial_number = vehicle.serial_number;
+        identification.firmware_version = vehicle.firmware_version;
+        identification.hardware_version = vehicle.hardware_version;
+        identification.engine_type = vehicle.engine_type;
+        identification.current_language = vehicle.language;
+        identification.supported_languages = vehicle.supported_languages;
+        SPDLOG_INFO("[iap2] identifying as {} / {} ({}), serial {}", identification.manufacturer,
+                    identification.model_identifier, identification.name,
+                    identification.serial_number);
+    }
     bool identified = false;
     bool authenticated = false;
     bool session_started = false;

@@ -4,19 +4,66 @@
 #
 #     ./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml
 #
-# Everything here has a built-in default, so the node runs without this file;
-# what the file buys you is the artwork, which cannot be hard-coded.
+# Everything here has a working default, so the node runs without this file --
+# but the defaults describe a generic development rig, not a vehicle. What is
+# *not* here is deliberate: protocol constants (feature bitfields, audio format
+# masks, sourceVersion, the resource arbitration table) stay in code, because
+# they are negotiated behaviour rather than vehicle configuration and a wrong
+# value there ends the session rather than looking wrong.
+
+# Who the vehicle says it is.
+#
+# This reaches the phone by two different routes -- iAP2 identification during
+# bring-up, and the AirPlay GET /info afterwards -- and the phone records some
+# of it against the pairing. Change it before pairing a phone you care about,
+# or that phone remembers the old identity.
+vehicle:
+  # `name` is also signed over in both pairing handshakes.
+  name: "Dashboard"
+  model: "MercedesDashboard1,1"
+  manufacturer: "Dashboard"
+  serial_number: "0123456"
+  firmware_version: "1.0.0"
+  hardware_version: "1.0"
+
+  # Which side the driver sits on. CarPlay mirrors its own layout for this, so
+  # it is worth setting rather than leaving at the default.
+  right_hand_drive: false
+
+  # gas | diesel | electric | cng
+  engine_type: diesel
+
+  # The language CarPlay speaks, and the ones it may offer. IETF tags.
+  language: "en"
+  supported_languages: ["en", "de"]
+
+# The panel CarPlay draws on.
+display:
+  width_px: 800
+  height_px: 600
+  fps: 30
+
+  # Physical width in millimetres; the height follows from the pixel aspect
+  # ratio. CarPlay sizes text and touch targets from this, so a wrong value
+  # gives a UI that is legible on a desk and not at arm's length in a car.
+  physical_width_mm: 200
+
+  # Which input CarPlay lays its own UI out for: "touch" or "knob". A
+  # knob-primary UI gets focus rings and list navigation instead of a
+  # touch-first layout. The touchscreen, rotary controller, media keys and
+  # telephony keypad are all advertised either way; this only says which one to
+  # design for.
+  primary_input: touch
+
+# Advertised as deviceID and as the Bluetooth address in GET /info. Locally
+# administered (the 0x02 bit), which is what an accessory with no real MAC
+# should present. Give each unit its own if you run more than one.
+device_id: "02:00:00:00:00:01"
 
 # Draw CarPlay's own UI in its night theme. Pushed to the phone at RECORD, and
 # re-sent on every session -- the phone does not remember ours, and assumes day.
 # There is no light sensor wired up yet, so this is a static setting.
 night_mode: false
-
-# Which input CarPlay lays its own UI out for: "touch" or "knob". A knob-primary
-# UI gets focus rings and list navigation instead of a touch-first layout. The
-# touchscreen, rotary controller, media keys and telephony keypad are all
-# advertised either way; this only says which one to design for.
-primary_input: touch
 
 # The "manufacturer button": the tile CarPlay draws on its own home screen so
 # the user can hand the screen back to the vehicle's UI. It is advertised to the

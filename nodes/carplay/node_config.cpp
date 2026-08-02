@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <utility>
 #include <vector>
 
 namespace carplay
@@ -47,6 +48,48 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out)
     std::fclose(file);
     out = std::move(bytes);
     return true;
+}
+
+// A scalar key, applied only when present so an absent key keeps the default.
+template <typename T>
+void assignIfPresent(const YAML::Node& parent, const char* key, T& out)
+{
+    if (const YAML::Node node = parent[key])
+    {
+        out = node.as<T>();
+    }
+}
+
+// A key whose value is one of a fixed set of names. Anything else is a typo
+// worth stopping for rather than silently taking a default -- the difference
+// between a diesel and an electric is not something to guess at.
+template <typename T>
+bool assignEnumIfPresent(const YAML::Node& parent, const char* key,
+                         const std::vector<std::pair<const char*, T>>& names, T& out)
+{
+    const YAML::Node node = parent[key];
+    if (!node)
+    {
+        return true;
+    }
+    const std::string value = node.as<std::string>();
+    for (const auto& [name, enumerator] : names)
+    {
+        if (value == name)
+        {
+            out = enumerator;
+            return true;
+        }
+    }
+
+    std::string allowed;
+    for (const auto& [name, enumerator] : names)
+    {
+        allowed += allowed.empty() ? "" : ", ";
+        allowed += name;
+    }
+    SPDLOG_ERROR("[node] {} must be one of [{}], not '{}'", key, allowed, value);
+    return false;
 }
 
 }  // namespace
@@ -108,24 +151,72 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
 
     try
     {
-        if (const YAML::Node night = root["night_mode"])
+        assignIfPresent(root, "night_mode", parsed.night_mode);
+        assignIfPresent(root, "device_id", parsed.device_id);
+
+        if (const YAML::Node vehicle = root["vehicle"]; vehicle && vehicle.IsMap())
         {
-            parsed.night_mode = night.as<bool>();
+            VehicleIdentity& out_vehicle = parsed.vehicle;
+            assignIfPresent(vehicle, "name", out_vehicle.name);
+            assignIfPresent(vehicle, "model", out_vehicle.model);
+            assignIfPresent(vehicle, "manufacturer", out_vehicle.manufacturer);
+            assignIfPresent(vehicle, "serial_number", out_vehicle.serial_number);
+            assignIfPresent(vehicle, "firmware_version", out_vehicle.firmware_version);
+            assignIfPresent(vehicle, "hardware_version", out_vehicle.hardware_version);
+            assignIfPresent(vehicle, "right_hand_drive", out_vehicle.right_hand_drive);
+            assignIfPresent(vehicle, "language", out_vehicle.language);
+
+            if (!assignEnumIfPresent<iap2::EngineType>(
+                    vehicle, "engine_type",
+                    {{"gas", iap2::EngineType::kGas},
+                     {"diesel", iap2::EngineType::kDiesel},
+                     {"electric", iap2::EngineType::kElectric},
+                     {"cng", iap2::EngineType::kCng}},
+                    out_vehicle.engine_type))
+            {
+                return false;
+            }
+
+            if (const YAML::Node languages = vehicle["supported_languages"];
+                languages && languages.IsSequence())
+            {
+                out_vehicle.supported_languages.clear();
+                for (const YAML::Node& language : languages)
+                {
+                    out_vehicle.supported_languages.push_back(language.as<std::string>());
+                }
+                if (out_vehicle.supported_languages.empty())
+                {
+                    SPDLOG_ERROR("[node] supported_languages is empty; the phone needs at least one");
+                    return false;
+                }
+            }
         }
-        if (const YAML::Node primary = root["primary_input"])
+
+        if (const YAML::Node display = root["display"]; display && display.IsMap())
         {
-            const std::string value = primary.as<std::string>();
-            if (value == "touch")
+            DisplayConfig& out_display = parsed.display;
+            assignIfPresent(display, "width_px", out_display.width_px);
+            assignIfPresent(display, "height_px", out_display.height_px);
+            assignIfPresent(display, "fps", out_display.fps);
+            assignIfPresent(display, "physical_width_mm", out_display.physical_width_mm);
+
+            if (!assignEnumIfPresent<airplay::PrimaryInput>(
+                    display, "primary_input",
+                    {{"touch", airplay::PrimaryInput::Touch},
+                     {"knob", airplay::PrimaryInput::Knob}},
+                    out_display.primary_input))
             {
-                parsed.primary_input = airplay::PrimaryInput::Touch;
+                return false;
             }
-            else if (value == "knob")
+
+            // Zero would be advertised to the phone as a display it cannot draw
+            // on, and the session would come up and produce nothing.
+            if (out_display.width_px == 0 || out_display.height_px == 0 ||
+                out_display.fps == 0 || out_display.physical_width_mm == 0)
             {
-                parsed.primary_input = airplay::PrimaryInput::Knob;
-            }
-            else
-            {
-                SPDLOG_ERROR("[node] primary_input must be 'touch' or 'knob', not '{}'", value);
+                SPDLOG_ERROR("[node] display width_px, height_px, fps and physical_width_mm "
+                             "must all be non-zero");
                 return false;
             }
         }

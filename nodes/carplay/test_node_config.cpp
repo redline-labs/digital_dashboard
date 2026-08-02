@@ -96,7 +96,11 @@ int main()
         expect(!defaults.oem_button.label.empty(), "and carries a default label");
         expect(defaults.oem_button.icons.empty(), "but no artwork -- that only comes from a file");
         expect(!defaults.night_mode, "day theme by default");
-        expect(defaults.primary_input == airplay::PrimaryInput::Touch, "touch-primary by default");
+        expect(defaults.display.primary_input == airplay::PrimaryInput::Touch,
+               "touch-primary by default");
+        expect(!defaults.vehicle.right_hand_drive, "left-hand drive by default");
+        expect(defaults.display.width_px > 0 && defaults.display.height_px > 0,
+               "the display has a usable default size");
         expect(defaults.max_stage == 7, "the full pipeline by default");
     }
 
@@ -236,18 +240,90 @@ int main()
         expect(config.oem_button.icons[0].width_px == 32, "with the file's icon");
     }
 
-    // primary_input is a closed set; anything else is a typo worth stopping for.
+    // The vehicle identity, which reaches the phone by two routes and is
+    // recorded against the pairing.
+    {
+        const fs::path vehicle = dir / "vehicle.yaml";
+        writeFile(vehicle,
+                  "vehicle:\n"
+                  "  name: \"Test Car\"\n"
+                  "  model: \"TestModel1,1\"\n"
+                  "  manufacturer: \"Testworks\"\n"
+                  "  serial_number: \"SN12345\"\n"
+                  "  firmware_version: \"2.1.0\"\n"
+                  "  hardware_version: \"3.0\"\n"
+                  "  right_hand_drive: true\n"
+                  "  engine_type: electric\n"
+                  "  language: \"de\"\n"
+                  "  supported_languages: [\"de\", \"en\", \"fr\"]\n");
+
+        NodeConfig config;
+        expect(loadNodeConfig(vehicle.string(), config), "a vehicle identity loads");
+        expect(config.vehicle.name == "Test Car", "name");
+        expect(config.vehicle.model == "TestModel1,1", "model");
+        expect(config.vehicle.manufacturer == "Testworks", "manufacturer");
+        expect(config.vehicle.serial_number == "SN12345", "serial number");
+        expect(config.vehicle.firmware_version == "2.1.0", "firmware version");
+        expect(config.vehicle.hardware_version == "3.0", "hardware version");
+        expect(config.vehicle.right_hand_drive, "right-hand drive");
+        expect(config.vehicle.engine_type == iap2::EngineType::kElectric, "engine type");
+        expect(config.vehicle.language == "de", "language");
+        expect(config.vehicle.supported_languages.size() == 3, "supported languages replace");
+    }
+
+    // Enumerated keys are closed sets. A typo has to stop the node rather than
+    // silently take a default -- the difference between a diesel and an
+    // electric is not something to guess at.
     {
         const fs::path knob = dir / "knob.yaml";
-        writeFile(knob, "primary_input: knob\n");
+        writeFile(knob, "display:\n  primary_input: knob\n");
         NodeConfig config;
         expect(loadNodeConfig(knob.string(), config), "primary_input: knob loads");
-        expect(config.primary_input == airplay::PrimaryInput::Knob, "and selects the knob");
+        expect(config.display.primary_input == airplay::PrimaryInput::Knob, "and selects the knob");
 
         const fs::path wrong = dir / "wrong.yaml";
-        writeFile(wrong, "primary_input: wheel\n");
+        writeFile(wrong, "display:\n  primary_input: wheel\n");
         NodeConfig other;
         expect(!loadNodeConfig(wrong.string(), other), "an unknown primary_input is rejected");
+
+        const fs::path engine = dir / "engine.yaml";
+        writeFile(engine, "vehicle:\n  engine_type: steam\n");
+        NodeConfig third;
+        expect(!loadNodeConfig(engine.string(), third), "an unknown engine_type is rejected");
+    }
+
+    // Display geometry. A zero would be advertised as a panel the phone cannot
+    // draw on: the session comes up and produces nothing.
+    {
+        const fs::path good = dir / "display.yaml";
+        writeFile(good,
+                  "display:\n"
+                  "  width_px: 1920\n"
+                  "  height_px: 720\n"
+                  "  fps: 60\n"
+                  "  physical_width_mm: 260\n");
+        NodeConfig config;
+        expect(loadNodeConfig(good.string(), config), "display geometry loads");
+        expect(config.display.width_px == 1920 && config.display.height_px == 720, "size");
+        expect(config.display.fps == 60, "frame rate");
+        expect(config.display.physical_width_mm == 260, "physical width");
+
+        for (const char* key : {"width_px", "height_px", "fps", "physical_width_mm"})
+        {
+            const fs::path zero = dir / "zero.yaml";
+            writeFile(zero, std::string("display:\n  ") + key + ": 0\n");
+            NodeConfig rejected;
+            expect(!loadNodeConfig(zero.string(), rejected),
+                   std::string("a zero ") + key + " is rejected");
+        }
+    }
+
+    // An empty language list would leave the phone nothing to pick.
+    {
+        const fs::path empty = dir / "no_languages.yaml";
+        writeFile(empty, "vehicle:\n  supported_languages: []\n");
+        NodeConfig config;
+        expect(!loadNodeConfig(empty.string(), config), "an empty supported_languages is rejected");
     }
 
     // Failures must not half-apply. The node refuses to start on a bad config,

@@ -26,7 +26,7 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
     constexpr int64_t kCarplayFeatures = 0x615653aee2LL;
     constexpr int64_t kCarplayAudioFeatures = 0x10004540a00LL;
 
-    const int64_t width_physical = 200;
+    const int64_t width_physical = config.physical_width_mm;
     const int64_t height_physical = std::max<int64_t>(
         1, (width_physical * config.height) / std::max<uint32_t>(1, config.width));
 
@@ -163,11 +163,11 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
     (void)kCarplayAudioFeatures;
     info.set("statusFlags", plist::Value::integer(4));
     info.set("model", plist::Value::string(config.model));
-    info.set("manufacturer", plist::Value::string("Dashboard"));
+    info.set("manufacturer", plist::Value::string(config.manufacturer));
     info.set("deviceID", plist::Value::string(config.device_id));
     info.set("bluetoothIDs", plist::Value::array({plist::Value::string(config.device_id)}));
     info.set("name", plist::Value::string(config.name));
-    info.set("rightHandDrive", plist::Value::boolean(false));
+    info.set("rightHandDrive", plist::Value::boolean(config.right_hand_drive));
     info.set("keepAliveLowPower", plist::Value::boolean(true));
     info.set("keepAliveSendStatsAsBody", plist::Value::boolean(false));
     info.set("modes", std::move(modes));

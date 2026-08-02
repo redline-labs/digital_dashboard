@@ -752,8 +752,17 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
         receiver_config.bind_address = ncm.scopedLinkLocal();
 #endif
 
+        receiver_config.name = options.vehicle.name;
+        receiver_config.model = options.vehicle.model;
+        receiver_config.manufacturer = options.vehicle.manufacturer;
+        receiver_config.right_hand_drive = options.vehicle.right_hand_drive;
+        receiver_config.device_id = options.device_id;
+        receiver_config.width = options.display.width_px;
+        receiver_config.height = options.display.height_px;
+        receiver_config.fps = options.display.fps;
+        receiver_config.physical_width_mm = options.display.physical_width_mm;
+        receiver_config.primary_input = options.display.primary_input;
         receiver_config.oem_button = options.oem_button;
-        receiver_config.primary_input = options.primary_input;
         if (receiver_config.oem_button.enabled && receiver_config.oem_button.icons.empty())
         {
             // The tile still appears, drawn with CarPlay's own placeholder --
@@ -1023,6 +1032,9 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, c
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
         iap2_options.signer = ctx.mfi_signer;
+        // The same identity the AirPlay side advertises, by the other route the
+        // phone learns it: iAP2 identification rather than GET /info.
+        iap2_options.identity = options.vehicle;
 
         if (ncm.running())
         {

@@ -10,6 +10,7 @@
 #include "iap2/location_nmea.h"
 #include "iap2/messages.h"
 #include "iap2/mfi_signer.h"
+#include "node_config.h"
 
 #include <atomic>
 #include <functional>
@@ -21,6 +22,10 @@ namespace carplay
 
 struct Iap2SessionOptions
 {
+    // Who the vehicle says it is. Optional: unset keeps the library's defaults,
+    // which identify the accessory as the project it was ported from.
+    std::optional<VehicleIdentity> identity;
+
     // Continue past MFi authentication when the coprocessor is unreachable.
     // The phone will refuse CarPlay, but the link layer, identification and the
     // phone's own message traffic are still exercised -- which is worth doing

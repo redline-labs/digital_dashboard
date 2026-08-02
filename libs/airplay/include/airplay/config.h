@@ -43,15 +43,27 @@ struct ReceiverConfig
     std::string bind_address;
     uint16_t port = 7000;
 
-    // Advertised in GET /info and used to derive pairing identity.
+    // Advertised in GET /info and used to derive pairing identity. `name` is
+    // also signed over in both pairing handshakes, so it must match what
+    // PairingSession was given.
     std::string name = "Dashboard";
     std::string model = "MercedesDashboard1,1";
+    std::string manufacturer = "Dashboard";
 
     // Screen geometry advertised to the phone. Defaults match the carplay_demo
     // dashboard widget so the phone renders at the widget's aspect ratio.
     uint32_t width = 800;
     uint32_t height = 600;
     uint32_t fps = 30;
+
+    // The panel's physical width in millimetres; the height is derived from it
+    // and the pixel aspect ratio. CarPlay sizes text and touch targets from
+    // this, so a wrong value gives a UI that is legible on a desk and not in a
+    // car.
+    uint32_t physical_width_mm = 200;
+
+    // Which side the driver sits on. CarPlay mirrors its own layout for it.
+    bool right_hand_drive = false;
 
     // Advertised as both deviceID and macAddress in GET /info.
     std::string device_id = "02:00:00:00:00:01";

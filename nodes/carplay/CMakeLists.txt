@@ -10,6 +10,7 @@ target_include_directories(carplay_node_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(carplay_node_config
     PUBLIC
         airplay
+        iap2
     PRIVATE
         spdlog::spdlog
         yaml-cpp::yaml-cpp
