@@ -159,6 +159,11 @@ struct ChannelCrypto
     uint64_t outbound_counter = 0;
 };
 
+// The main display's identity. The phone matches this string between the
+// display entry in /info, the HID devices attached to it, and the keyframe
+// requests aimed at it, so all three have to name it identically.
+constexpr const char* kMainDisplayUuid = "b7e6c5a0-1111-4000-8000-000000000001";
+
 // CarPlay has no screen to show a setup code on, so pair-setup runs in the
 // "transient" mode with a well-known password. 3939 is what Apple's own
 // transient AirPlay pairing uses; overridable while that is being confirmed
@@ -171,52 +176,6 @@ std::string setupPassword()
         return override_value;
     }
     return "3939";
-}
-
-// A two-contact multitouch HID report descriptor, following LIVI's hid.ts.
-// The phone will not treat a display as touch-capable unless a HID device
-// backs the primaryInputDevice it advertises.
-Bytes multitouchDescriptor(uint32_t x_max, uint32_t y_max)
-{
-    constexpr int kContacts = 2;
-    Bytes out{0x05, 0x0D,   // Usage Page (Digitizers)
-              0x09, 0x04,   // Usage (Touch Screen)
-              0xA1, 0x01};  // Collection (Application)
-
-    for (int i = 0; i < kContacts; ++i)
-    {
-        const Bytes finger{
-            0x05, 0x0D,                                            // Usage Page (Digitizers)
-            0x09, 0x22,                                            // Usage (Finger)
-            0xA1, 0x02,                                            // Collection (Logical)
-            0x09, 0x38,                                            // Usage (Transducer Index)
-            0x75, 0x08,                                            // Report Size (8)
-            0x95, 0x01,                                            // Report Count (1)
-            0x81, 0x02,                                            // Input (Data,Var,Abs)
-            0x15, 0x00,                                            // Logical Minimum (0)
-            0x25, 0x01,                                            // Logical Maximum (1)
-            0x09, 0x33,                                            // Usage (Touch)
-            0x75, 0x01,                                            // Report Size (1)
-            0x95, 0x01,                                            // Report Count (1)
-            0x81, 0x02,                                            // Input (Data,Var,Abs)
-            0x95, 0x07,                                            // Report Count (7)
-            0x81, 0x03,                                            // Input (Cnst,Var,Abs) padding
-            0x05, 0x01,                                            // Usage Page (Generic Desktop)
-            0x26, static_cast<uint8_t>(x_max & 0xFF),
-            static_cast<uint8_t>((x_max >> 8) & 0xFF),             // Logical Maximum (xMax)
-            0x09, 0x30,                                            // Usage (X)
-            0x75, 0x10,                                            // Report Size (16)
-            0x95, 0x01,                                            // Report Count (1)
-            0x81, 0x02,                                            // Input (Data,Var,Abs)
-            0x26, static_cast<uint8_t>(y_max & 0xFF),
-            static_cast<uint8_t>((y_max >> 8) & 0xFF),             // Logical Maximum (yMax)
-            0x09, 0x31,                                            // Usage (Y)
-            0x81, 0x02,                                            // Input (Data,Var,Abs)
-            0xC0};                                                 // End Collection
-        out.insert(out.end(), finger.begin(), finger.end());
-    }
-    out.push_back(0xC0);  // End Collection
-    return out;
 }
 
 // Compact recursive dump of a binary plist, for bring-up logging.
@@ -2035,39 +1994,23 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
 
 Bytes Receiver::buildTouchCommand(float x, float y, bool down) const
 {
-    // Two-contact multitouch report: six bytes per finger --
-    // [transducer index, down, x-lo, x-hi, y-lo, y-hi] -- matching the HID
-    // descriptor advertised in /info. We only ever drive contact 0.
-    constexpr int kContacts = 2;
-    constexpr int kBytesPerFinger = 6;
-
+    // The descriptor reports absolute coordinates, so the caller's normalised
+    // 0..1 is scaled to the display it was advertised against. We only ever
+    // drive contact 0; the second slot is reported empty.
     const auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
-    const uint16_t px = static_cast<uint16_t>(clamp01(x) * static_cast<float>(config_.width));
-    const uint16_t py = static_cast<uint16_t>(clamp01(y) * static_cast<float>(config_.height));
+    hid::Contact contact;
+    contact.x = static_cast<uint16_t>(clamp01(x) * static_cast<float>(config_.width));
+    contact.y = static_cast<uint16_t>(clamp01(y) * static_cast<float>(config_.height));
+    contact.down = down;
 
-    Bytes report(kBytesPerFinger * kContacts, 0);
-    for (int i = 0; i < kContacts; ++i)
-    {
-        report[i * kBytesPerFinger] = static_cast<uint8_t>(i);  // transducer index
-    }
-    report[1] = down ? 0x01 : 0x00;
-    report[2] = static_cast<uint8_t>(px & 0xFF);
-    report[3] = static_cast<uint8_t>((px >> 8) & 0xFF);
-    report[4] = static_cast<uint8_t>(py & 0xFF);
-    report[5] = static_cast<uint8_t>((py >> 8) & 0xFF);
-
-    plist::Value command = plist::Value::dict();
-    command.set("type", plist::Value::string("hidSendReport"));
-    command.set("uuid", plist::Value::string("2a2a2a2a"));
-    command.set("hidReport", plist::Value::data(report));
-    return plist::encodeBinary(command);
+    return hid::sendReportCommand(hid::kTouchUid, hid::touchReport({contact}));
 }
 
 Bytes Receiver::buildKeyframeCommand() const
 {
     // forceKeyFrame names the display by the same uuid advertised in /info.
     plist::Value params = plist::Value::dict();
-    params.set("uuid", plist::Value::string("b7e6c5a0-1111-4000-8000-000000000001"));
+    params.set("uuid", plist::Value::string(kMainDisplayUuid));
     plist::Value command = plist::Value::dict();
     command.set("type", plist::Value::string("forceKeyFrame"));
     command.set("params", std::move(params));
@@ -2101,6 +2044,78 @@ void Receiver::sendTouch(float x, float y, TouchPhase phase)
         return;
     }
     state_->send_cv.notify_one();
+}
+
+void Receiver::queueCommand(Bytes body)
+{
+    bool dropped = false;
+    uint64_t drop_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_->send_mutex);
+        dropped = !state_->send_queue.pushControl(std::move(body));
+        drop_count = state_->send_queue.dropped();
+    }
+    if (dropped)
+    {
+        // Unlike a dropped touch move this loses a discrete user action, so it
+        // is worth a line every time rather than a sampled one.
+        SPDLOG_WARN("[airplay] event channel backed up; dropped a control command "
+                    "({} event(s) dropped so far)",
+                    drop_count);
+        return;
+    }
+    state_->send_cv.notify_one();
+}
+
+void Receiver::queueReport(uint32_t uid, const Bytes& report)
+{
+    queueCommand(hid::sendReportCommand(uid, report));
+}
+
+void Receiver::sendKnob(const hid::KnobState& state, bool momentary)
+{
+    queueReport(hid::kKnobUid, hid::knobReport(state));
+    if (momentary)
+    {
+        // The buttons are levels: without this the phone goes on believing the
+        // button is held. The wheel and pointer are relative, so the all-clear
+        // report is a no-op for them and costs only a message.
+        queueReport(hid::kKnobUid, hid::knobReport({}));
+    }
+}
+
+void Receiver::sendMediaKey(hid::MediaKey key)
+{
+    queueReport(hid::kMediaUid, hid::mediaReport(key));
+    queueReport(hid::kMediaUid, hid::mediaReport(hid::MediaKey::None));
+}
+
+void Receiver::sendTelephonyKey(hid::TelephonyKey key)
+{
+    queueReport(hid::kTelephonyUid, hid::telephonyReport(key));
+    queueReport(hid::kTelephonyUid, hid::telephonyReport(hid::TelephonyKey::None));
+}
+
+void Receiver::requestSiri()
+{
+    // siriAction 2 is button-down, 3 button-up. Sent back to back so the phone
+    // sees a click: it then listens until the user stops speaking, rather than
+    // treating the release as "done talking" and cutting them off.
+    constexpr int64_t kSiriButtonDown = 2;
+    constexpr int64_t kSiriButtonUp = 3;
+
+    const auto build = [](int64_t action) {
+        plist::Value params = plist::Value::dict();
+        params.set("siriAction", plist::Value::integer(action));
+        plist::Value command = plist::Value::dict();
+        command.set("type", plist::Value::string("requestSiri"));
+        command.set("params", std::move(params));
+        return plist::encodeBinary(command);
+    };
+
+    SPDLOG_INFO("[airplay] Siri requested");
+    queueCommand(build(kSiriButtonDown));
+    queueCommand(build(kSiriButtonUp));
 }
 
 void Receiver::requestKeyframe()
@@ -2141,6 +2156,9 @@ void Receiver::eventSendLoop()
         {
             case EventQueue::Action::SendKeyframe:
                 writeEventCommand(buildKeyframeCommand());
+                break;
+            case EventQueue::Action::SendControl:
+                writeEventCommand(next.control);
                 break;
             case EventQueue::Action::SendTouch:
                 writeEventCommand(
@@ -2376,7 +2394,7 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
         1, (width_physical * config_.height) / std::max<uint32_t>(1, config_.width));
 
     plist::Value display = plist::Value::dict();
-    display.set("uuid", plist::Value::string("b7e6c5a0-1111-4000-8000-000000000001"));
+    display.set("uuid", plist::Value::string(kMainDisplayUuid));
     display.set("type", plist::Value::integer(kStreamTypeMainScreen));
     display.set("maxFPS", plist::Value::integer(config_.fps));
     display.set("widthPixels", plist::Value::integer(config_.width));
@@ -2520,16 +2538,15 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
                                   plist::Value::string("enhancedRequestCarUI")}));
     info.set("displays", plist::Value::array({std::move(display)}));
 
-    plist::Value touch = plist::Value::dict();
-    touch.set("hidProductID", plist::Value::integer(1));
-    touch.set("hidVendorID", plist::Value::integer(2));
-    touch.set("hidCountryCode", plist::Value::integer(0));
-    touch.set("uuid", plist::Value::string("2a2a2a2a"));
-    touch.set("name", plist::Value::string("Dashboard Touchscreen"));
-    touch.set("displayUUID", plist::Value::string("b7e6c5a0-1111-4000-8000-000000000001"));
-    touch.set("hidDescriptor",
-              plist::Value::data(multitouchDescriptor(config_.width, config_.height)));
-    info.set("hidDevices", plist::Value::array({std::move(touch)}));
+    // Every input the head unit has, each its own HID device. The knob, media
+    // and telephony devices cost nothing when the vehicle has no such controls
+    // -- the phone simply never sees a report on them -- and advertising them
+    // is the only way a vehicle that does have them can use them at all.
+    info.set("hidDevices",
+             plist::Value::array({hid::touchDevice(config_.width, config_.height, kMainDisplayUuid),
+                                  hid::knobDevice(kMainDisplayUuid),
+                                  hid::mediaDevice(kMainDisplayUuid),
+                                  hid::telephonyDevice(kMainDisplayUuid)}));
 
     addOemButtonInfo(config_.oem_button, info);
     if (config_.oem_button.enabled)

@@ -23,6 +23,7 @@ add_library(airplay STATIC
     nalu.cpp
     rtsp.cpp
     event_queue.cpp
+    hid.cpp
     oem_button.cpp
     receiver.cpp
     timing.cpp
@@ -45,7 +46,7 @@ target_link_libraries(airplay
 )
 
 # Round-trip and known-answer tests, runnable without hardware.
-foreach(test tlv8 crypto nalu event_queue oem_button)
+foreach(test tlv8 crypto nalu event_queue oem_button hid)
     add_executable(airplay_test_${test} test_${test}.cpp)
     target_link_libraries(airplay_test_${test} PRIVATE
         airplay

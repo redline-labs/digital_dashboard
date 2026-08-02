@@ -151,9 +151,23 @@ struct InputEvent
         Telephony
     };
 
+    // `code` for a Knob event. The rest of the kinds carry HID usage indices in
+    // `code` directly (airplay::hid::MediaKey, airplay::hid::TelephonyKey), so
+    // they are deliberately not re-listed here -- one numbering, one place.
+    enum class KnobControl : uint16_t
+    {
+        Select = 0,
+        Home = 1,
+        Back = 2,
+        Rotate = 3,
+        PanX = 4,
+        PanY = 5,
+    };
+
     Kind kind = Kind::TouchDown;
     uint16_t x = 0;  // 0..10000 normalized over the widget
     uint16_t y = 0;
+    // What `code` and `value` mean depends on `kind`; see schemas/carplay_input.capnp.
     uint16_t code = 0;
     int32_t value = 0;
 };

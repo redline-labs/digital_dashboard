@@ -65,6 +65,7 @@ cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust bui
 ./build/libs/airplay/airplay_test_aac         # AAC-LC encode/decode round-trip (entertainment audio)
 ./build/libs/airplay/airplay_test_event_queue # event channel queueing
 ./build/libs/airplay/airplay_test_oem_button  # manufacturer button: /info keys + press decode
+./build/libs/airplay/airplay_test_hid         # HID descriptors vs. the reports sent on them
 ./build/libs/plist/plist_test_binary          # binary plist round-trip
 ./build/libs/plist/plist_test_xml             # XML plist round-trip
 ./build/libs/plist/plist_test_libplist_vectors # differential vectors captured from libplist
@@ -1563,6 +1564,43 @@ see. Keep it, but do not add cases to it that the unit tests could hold
 exactly — its rate assertion has to use loose bounds because it measures real
 elapsed time on a possibly-loaded machine.
 
+### The non-touch input devices (knob, media keys, telephony, Siri)
+
+Touch is not the only input CarPlay takes. Since 2026-08-02 the accessory
+advertises **four** HID devices in `/info` rather than one — a touchscreen, a
+rotary controller (select/home/back, a pointer, a detent wheel), consumer media
+keys, and a telephony keypad — all in `libs/airplay/hid.cpp`. Siri is not HID;
+it is a `requestSiri` command on the same event channel.
+
+This is what the `knob`, `mediaKey`, `telephony` and `siri` kinds on
+`nodes/carplay/input` have always claimed to be for. They previously fell
+through a `break` in `usb_pipeline.cpp` and went nowhere.
+
+`schemas/carplay_input.capnp` documents what `code` and `value` mean per kind.
+The media and telephony codes **are the HID usage indices** in the descriptors
+we advertise, so they cannot be renumbered independently of `hid.h`.
+
+Nothing publishes these events yet — no widget has a knob or hard keys wired to
+it — so on hardware this is exercised by publishing to the topic directly.
+
+Two things make an input device fail silently, and both are what
+`airplay_test_hid` checks:
+
+- **A descriptor that disagrees with the report.** The phone accepts the device,
+  then discards every report whose length does not match what the descriptor
+  declared, with no diagnostic anywhere. The test parses each descriptor's item
+  stream, sums its Input item bits, and compares against the report the code
+  actually builds.
+- **A uuid that does not match.** The device's `uuid` in `/info` and the `uuid`
+  on the report are matched as strings, so `2a2a2a2b` and `0x2A2A2A2B` are two
+  different devices, one of which does not exist.
+
+Momentary presses are sent as press-then-release pairs, because the phone acts
+on the transition: a media key that is never released is a key the phone stops
+believing in. The knob's wheel and pointer are *relative*, so a turn is one
+report and needs no release — but `sendKnob()` sends the all-clear anyway, since
+the same report carries the button levels.
+
 ## 9. Audio downlink
 
 **Expect:** music and navigation prompts play through the widget's `QAudioSink`;
@@ -1856,6 +1894,7 @@ Not all stages below are implemented yet. Current state:
 | **Late-joining renderer sync** | working — periodic `forceKeyFrame` over the event channel |
 | **Widget render (YUVJ420P)** | working — full CarPlay home screen renders |
 | **Event channel + touch HID** | **verified on hardware** (single-touch + drag) |
+| **Knob / media key / telephony HID + Siri** | written 2026-08-02, unit-tested (`airplay_test_hid`), **not hardware-verified**. Advertised in `/info` and wired to the `input` topic; nothing publishes them yet |
 | **Event channel inbound commands** | written 2026-08-01 — the phone's own commands are now parsed and acknowledged (they were previously read and discarded); only `requestUI` is routed, the rest are logged with their body |
 | **Manufacturer button** (`/info` advertisement + press decode) | written 2026-08-01, unit-tested (`airplay_test_oem_button`), **not hardware-verified**; the press is logged and goes nowhere — see stage 11 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |

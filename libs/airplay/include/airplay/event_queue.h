@@ -8,11 +8,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <vector>
 
 namespace airplay
 {
 
-// Outbound work for the AirPlay event channel: touch reports headed for the
+// Outbound work for the AirPlay event channel: input reports headed for the
 // phone, and requests for a fresh keyframe.
 //
 // This is policy and data only -- deliberately not thread safe and with no
@@ -21,7 +22,7 @@ namespace airplay
 // decisions (what coalesces, what jumps the queue, what gets dropped) be tested
 // without threads, sockets, timing, or a phone.
 //
-// Two kinds of work with different rules:
+// Three kinds of work with different rules:
 //
 //  - Touch is strictly ordered, because a gesture is a sequence and reordering
 //    it is meaningless. Consecutive moves coalesce onto the tail rather than
@@ -29,6 +30,13 @@ namespace airplay
 //    than the link drains. Down and up never coalesce, so the gesture's shape
 //    survives -- collapsing a down into a following move would relocate the
 //    press and turn a drag into a tap somewhere else.
+//  - A control command -- a knob turn, a media key, a phone key, a Siri
+//    request -- is queued in its own strictly ordered FIFO, and never
+//    coalesced: each one is a distinct press or detent, and merging two of them
+//    loses one. It is handed out ahead of queued touch and is not rate limited.
+//    There is no ordering relationship to lose (they are separate HID devices),
+//    and a button that waits behind a backlog of finger movement is a button
+//    that feels broken.
 //  - A keyframe request is a flag, not a queue entry, because it is idempotent:
 //    several pending requests are one request. It also has no ordering
 //    relationship to touch, so it is handed out ahead of queued touch and is
@@ -47,10 +55,16 @@ class EventQueue
         bool coalescable = false;  // true only for a move
     };
 
+    // One already-encoded event-channel command body. Encoded by the caller,
+    // because the queue has no business knowing what a knob is -- it only
+    // orders and paces.
+    using ControlCommand = std::vector<uint8_t>;
+
     enum class Action
     {
         Idle,          // nothing to do
         SendKeyframe,  // send a keyframe request now
+        SendControl,   // send `control` now
         SendTouch,     // send `touch` now
         WaitTouch,     // touch is ready but rate limited; retry after `wait`
     };
@@ -59,6 +73,7 @@ class EventQueue
     {
         Action action = Action::Idle;
         TouchReport touch{};
+        ControlCommand control;
         std::chrono::steady_clock::duration wait{};
     };
 
@@ -76,6 +91,11 @@ class EventQueue
     // Returns false if the report was dropped because the queue is full.
     bool pushTouch(const TouchReport& report);
 
+    // Same bound, counted against the same drop total. Nothing coalesces here,
+    // so a stalled link fills this queue -- but only at the rate a human can
+    // press buttons, which is why it needs no gate of its own.
+    bool pushControl(ControlCommand command);
+
     void requestKeyframe() { _keyframe_pending = true; }
 
     // Drops everything pending. Used when the event channel closes: what is
@@ -86,7 +106,10 @@ class EventQueue
 
     // True when take() would return something other than Idle, ignoring the
     // rate limit. Suitable as a condition-variable predicate.
-    bool hasWork() const { return _keyframe_pending || !_queue.empty(); }
+    bool hasWork() const
+    {
+        return _keyframe_pending || !_control_queue.empty() || !_queue.empty();
+    }
 
     // Decides what to do at `now`, and consumes whatever it hands out. A
     // WaitTouch result consumes nothing: the caller waits and asks again, which
@@ -95,11 +118,13 @@ class EventQueue
     Next take(std::chrono::steady_clock::time_point now);
 
     size_t size() const { return _queue.size(); }
+    size_t controlSize() const { return _control_queue.size(); }
     bool keyframePending() const { return _keyframe_pending; }
     uint64_t dropped() const { return _dropped; }
 
   private:
     std::deque<TouchReport> _queue;
+    std::deque<ControlCommand> _control_queue;
     bool _keyframe_pending = false;
     helpers::RateGate _touch_gate{kMinTouchGap};
     uint64_t _dropped = 0;

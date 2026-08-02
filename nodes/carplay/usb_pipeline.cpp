@@ -94,6 +94,39 @@ VideoCodec toBridgeCodec(airplay::nalu::Codec codec)
     return codec == airplay::nalu::Codec::H265 ? VideoCodec::H265 : VideoCodec::H264;
 }
 
+// One rotary-controller event from the dashboard onto the knob HID device.
+// Buttons are sent as clicks (press then release), which is what a head unit's
+// momentary switch is; rotation and pan are relative and need no release.
+void sendKnobEvent(airplay::Receiver& receiver, const InputEvent& event)
+{
+    airplay::hid::KnobState state;
+    switch (static_cast<InputEvent::KnobControl>(event.code))
+    {
+        case InputEvent::KnobControl::Select:
+            state.select = event.value != 0;
+            break;
+        case InputEvent::KnobControl::Home:
+            state.home = event.value != 0;
+            break;
+        case InputEvent::KnobControl::Back:
+            state.back = event.value != 0;
+            break;
+        case InputEvent::KnobControl::Rotate:
+            state.wheel = event.value;
+            break;
+        case InputEvent::KnobControl::PanX:
+            state.pan_x = event.value;
+            break;
+        case InputEvent::KnobControl::PanY:
+            state.pan_y = event.value;
+            break;
+        default:
+            SPDLOG_WARN("[node] ignoring unknown knob control {}", event.code);
+            return;
+    }
+    receiver.sendKnob(state);
+}
+
 // The configuration switch re-enumerates the phone, which changes its device
 // address. Everything downstream resolves the device afresh, so the DeviceInfo
 // has to be re-read afterwards rather than reused.
@@ -1011,14 +1044,30 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                         rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
                                       airplay::Receiver::TouchPhase::Up);
                         break;
+                    // The rest ride their own HID devices; see airplay/hid.h.
                     // Listed rather than folded into a default so that adding a
                     // new input kind is a compile error here, not a silent drop.
-                    // These four have no touch equivalent -- they need their own
-                    // HID reports on the event channel, which is not written yet.
                     case InputEvent::Kind::Knob:
+                        sendKnobEvent(*rx, event);
+                        break;
                     case InputEvent::Kind::MediaKey:
-                    case InputEvent::Kind::Siri:
+                        if (!airplay::hid::isKnownMediaKey(event.code))
+                        {
+                            SPDLOG_WARN("[node] ignoring unknown media key {}", event.code);
+                            break;
+                        }
+                        rx->sendMediaKey(static_cast<airplay::hid::MediaKey>(event.code));
+                        break;
                     case InputEvent::Kind::Telephony:
+                        if (!airplay::hid::isKnownTelephonyKey(event.code))
+                        {
+                            SPDLOG_WARN("[node] ignoring unknown telephony key {}", event.code);
+                            break;
+                        }
+                        rx->sendTelephonyKey(static_cast<airplay::hid::TelephonyKey>(event.code));
+                        break;
+                    case InputEvent::Kind::Siri:
+                        rx->requestSiri();
                         break;
                 }
             });

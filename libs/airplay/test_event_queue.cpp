@@ -260,6 +260,58 @@ void testClearDropsAnOrphanedGesture()
     expect(q.take(at(0)).action == Action::Idle, "and nothing to take");
 }
 
+void testControlOvertakesTouchButNotKeyframes()
+{
+    // A button press should not wait behind a backlog of finger movement, and
+    // must not be rate limited by the touch gate -- but a keyframe request
+    // still comes first, because that is what recovers a black screen.
+    EventQueue q;
+    q.pushTouch(down(1, 1));
+    q.pushControl({0xAA});
+    q.requestKeyframe();
+
+    expect(q.take(at(0)).action == Action::SendKeyframe, "keyframes still go first");
+
+    const auto control = q.take(at(0));
+    expect(control.action == Action::SendControl, "control overtakes queued touch");
+    expect(control.control == EventQueue::ControlCommand({0xAA}), "and carries its body");
+
+    // The touch that was queued first is still there, in order.
+    expect(q.take(later(0)).action == Action::SendTouch, "the touch is not lost");
+}
+
+void testControlIsOrderedAndNotCoalesced()
+{
+    // Two presses of the same button are two presses. Nothing here may merge
+    // them the way consecutive moves merge.
+    EventQueue q;
+    q.pushControl({1});
+    q.pushControl({1});
+    q.pushControl({2});
+    expect(q.controlSize() == 3, "identical control commands both survive");
+
+    expect(q.take(at(0)).control == EventQueue::ControlCommand({1}), "first out is first in");
+    expect(q.take(at(0)).control == EventQueue::ControlCommand({1}), "then its duplicate");
+    expect(q.take(at(0)).control == EventQueue::ControlCommand({2}), "then the next");
+    expect(!q.hasWork(), "and the queue drains");
+}
+
+void testControlQueueIsBoundedAndClearedWithTheSession()
+{
+    EventQueue q;
+    for (size_t i = 0; i < EventQueue::kMaxQueued + 5; ++i)
+    {
+        q.pushControl({static_cast<uint8_t>(i)});
+    }
+    expect(q.controlSize() == EventQueue::kMaxQueued, "the control queue is bounded");
+    expect(q.dropped() == 5, "and the overflow is counted as dropped");
+
+    // A held button is the control equivalent of a touch with no release.
+    q.clear();
+    expect(q.controlSize() == 0, "clear drops queued control commands");
+    expect(!q.hasWork(), "leaving no work");
+}
+
 void testHasWorkTracksTakeableWork()
 {
     EventQueue q;
@@ -298,6 +350,9 @@ int main()
     testFullQueueDropsRatherThanGrows();
     testFloodOfMotionNeverGrowsTheQueue();
     testClearDropsAnOrphanedGesture();
+    testControlOvertakesTouchButNotKeyframes();
+    testControlIsOrderedAndNotCoalesced();
+    testControlQueueIsBoundedAndClearedWithTheSession();
     testHasWorkTracksTakeableWork();
 
     if (failures == 0)

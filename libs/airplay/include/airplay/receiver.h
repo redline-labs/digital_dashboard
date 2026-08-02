@@ -8,6 +8,7 @@
 #define AIRPLAY_RECEIVER_H_
 
 #include "airplay/crypto.h"
+#include "airplay/hid.h"
 #include "airplay/nalu.h"
 #include "airplay/oem_button.h"
 #include "plist/value.h"
@@ -132,6 +133,27 @@ class Receiver
     // the event-channel writer. Dropped if the channel is not up.
     void sendTouch(float x, float y, TouchPhase phase);
 
+    // --- The non-touch input devices (see airplay/hid.h) --------------------
+    //
+    // All three queue rather than block, like sendTouch, and are dropped when
+    // the event channel is not up. A head unit's physical controls arrive here.
+
+    // Sends the knob's state. `momentary` follows it with an all-clear report,
+    // which is what turns a press into a click and a turn into a single detent;
+    // pass false to hold a button down until a later report releases it.
+    void sendKnob(const hid::KnobState& state, bool momentary = true);
+
+    // A media or telephony key press. Both are momentary: the key index goes
+    // out followed by a release, because the phone acts on the transition.
+    void sendMediaKey(hid::MediaKey key);
+    void sendTelephonyKey(hid::TelephonyKey key);
+
+    // Asks the phone to start Siri, as a dedicated Siri button rather than
+    // push-to-talk: a down/up click, so the phone opens a conversational
+    // session that listens until the user stops talking. A press-and-hold would
+    // submit on release, cutting the user off before they had said anything.
+    void requestSiri();
+
     // Called when the phone opens (active=true) or closes a microphone uplink,
     // with the sample rate and channel count it expects. The node uses this to
     // tell the dashboard widget to start/stop capturing.
@@ -222,6 +244,13 @@ class Receiver
     // Builds the plist body for a touch report / keyframe request.
     Bytes buildTouchCommand(float x, float y, bool down) const;
     Bytes buildKeyframeCommand() const;
+
+    // Queues one already-encoded event-channel command body for the sender
+    // thread. Everything that is not touch or a keyframe goes through here.
+    void queueCommand(Bytes body);
+
+    // Queues a HID report for one of the non-touch devices.
+    void queueReport(uint32_t uid, const Bytes& report);
 
     ReceiverConfig config_;
     VideoHandler video_handler_;
