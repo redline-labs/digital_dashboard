@@ -157,9 +157,6 @@ class Receiver
     // Dispatch for one parsed request. Returns the response to send.
     rtsp::Message handle(const rtsp::Message& request);
 
-    rtsp::Message handlePairSetup(const rtsp::Message& request);
-    rtsp::Message handlePairVerify(const rtsp::Message& request);
-    rtsp::Message handleAuthSetup(const rtsp::Message& request);
     rtsp::Message handleInfo(const rtsp::Message& request);
     rtsp::Message handleSetup(const rtsp::Message& request);
     rtsp::Message handleRecord(const rtsp::Message& request);
