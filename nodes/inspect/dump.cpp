@@ -14,6 +14,7 @@
 
 #include "pub_sub/session_manager.h"
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/capnp_encoding.h"
 
 #include <capnp/serialize.h>
 #include <capnp/dynamic.h>
@@ -67,13 +68,17 @@ int run_dump(int argc, char** argv)
             const std::vector<uint8_t> bytes = serialized_msg.get_payload().as_vector();
 
             if (!found_schema) {
-                cached_schema_name = serialized_msg.get_encoding().as_string();
+                // as_string() gives the whole encoding ("application/capnp;CanFrame");
+                // the registry is keyed on the schema name alone.
+                const std::string encoding = serialized_msg.get_encoding().as_string();
+                cached_schema_name = std::string(pub_sub::schemaNameFromEncoding(encoding));
                 cached_schema = pub_sub::get_schema(cached_schema_name);
                 found_schema = cached_schema.getProto().getId() != 0;
                 if (found_schema) {
                     SPDLOG_INFO("Using schema '{}' for decoding", cached_schema_name);
                 } else {
-                    SPDLOG_WARN("Schema '{}' not found in registry; falling back to hex dump", cached_schema_name);
+                    SPDLOG_WARN("Schema '{}' (from encoding '{}') not found in registry; "
+                                "falling back to hex dump", cached_schema_name, encoding);
                 }
             }
 

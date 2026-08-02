@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "pub_sub/session_manager.h"
+#include "pub_sub/capnp_encoding.h"
 
 namespace {
 static std::atomic<bool> g_running_info{true};
@@ -55,12 +56,17 @@ int run_info(int argc, char** argv)
         // Strategy:
         // - Try a one-shot subscriber to capture one sample and read encoding schema
         //   and any available source info (if built with unstable API).
+        std::optional<std::string> encoding_name;
         std::optional<std::string> schema_name;
         std::optional<std::string> publisher_id;
 
         auto handler = [&](const zenoh::Sample& sample) {
             try {
-                schema_name = sample.get_encoding().as_string();
+                // Report both: as_string() is the whole encoding
+                // ("application/capnp;CanFrame"), and the label below says
+                // "schema", which is only the half after the ';'.
+                encoding_name = sample.get_encoding().as_string();
+                schema_name = std::string(pub_sub::schemaNameFromEncoding(*encoding_name));
 #if defined(ZENOHCXX) && defined(Z_FEATURE_UNSTABLE_API)
                 // Source info unstable API (zenoh-c only)
                 auto si = sample.get_source_info();
@@ -82,6 +88,7 @@ int run_info(int argc, char** argv)
 
         if (schema_name.has_value()) {
             SPDLOG_INFO("schema: {}", *schema_name);
+            SPDLOG_INFO("encoding: {}", *encoding_name);
         } else {
             SPDLOG_INFO("schema: (unknown - no sample received)");
         }

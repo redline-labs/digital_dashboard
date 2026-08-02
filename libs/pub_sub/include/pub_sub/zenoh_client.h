@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/capnp_encoding.h"
 #include "pub_sub/session_manager.h"
 
 namespace pub_sub
@@ -54,7 +55,7 @@ class ZenohClient
         zenoh::Session::GetOptions opts = zenoh::Session::GetOptions::create_default();
         opts.timeout_ms = mTimeoutMs;
         opts.payload.emplace(std::move(reqBytes));
-        opts.encoding.emplace("application/capnp");
+        opts.encoding.emplace(kCapnpEncodingMime);
         opts.encoding->set_schema(std::string(schema_traits<RequestT>::name));
 
         // Channel-based blocking get

@@ -13,6 +13,7 @@
 #include <kj/io.h>
 
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/capnp_encoding.h"
 #include "pub_sub/session_manager.h"
 
 #include <string_view>
@@ -88,7 +89,7 @@ public:
         };
 
         auto opts = zenoh::Publisher::PutOptions::create_default();
-        opts.encoding.emplace("application/capnp");
+        opts.encoding.emplace(kCapnpEncodingMime);
         opts.encoding->set_schema(schema_traits<SchemaT>::name);
 
         mPublisher->put(zenoh::Bytes(ptr, len, std::move(deleter)), std::move(opts));

@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/capnp_encoding.h"
 
 #include "spdlog/spdlog.h"
 
@@ -73,7 +74,7 @@ class ZenohService
             std::memcpy(respBytes.data(), respBytesView.begin(), respBytesView.size());
 
             zenoh::Query::ReplyOptions ropts = zenoh::Query::ReplyOptions::create_default();
-            ropts.encoding.emplace("application/capnp");
+            ropts.encoding.emplace(kCapnpEncodingMime);
             ropts.encoding->set_schema(std::string(schema_traits<ResponseT>::name));
             query.reply(mKeyExpr, zenoh::Bytes(std::move(respBytes)), std::move(ropts));
         };
