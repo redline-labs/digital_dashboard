@@ -2,6 +2,7 @@
 // Adapted from LIVI src/main/services/projection/driver/cp/iap2/muxd.py (UsbmuxdServer)
 #include "apple_usb/usbmuxd_server.h"
 
+#include "apple_usb/usbmuxd_framing.h"
 #include "plist/xml.h"
 
 #include <spdlog/spdlog.h>
@@ -26,16 +27,6 @@ namespace apple_usb
 
 namespace
 {
-
-// usbmuxd packet header (little-endian): length(incl header), version=1(plist),
-// message=8(plist), tag.
-constexpr uint32_t kPlistVersion = 1;
-constexpr uint32_t kPlistMessage = 8;
-
-// A sane ceiling on a control message. The largest thing a client legitimately
-// sends is a SavePairRecord carrying a few kilobytes of PEM; the length field is
-// attacker-controlled, so it is bounded before it becomes an allocation.
-constexpr uint32_t kMaxRequestBytes = 1u << 20;
 
 bool recvExact(int fd, void* buf, size_t n)
 {
@@ -65,20 +56,20 @@ struct Request
 // that is not a plist -- all of which mean the same thing here (drop the client).
 std::optional<Request> recvPacket(int fd)
 {
-    uint8_t hdr[16];
+    uint8_t hdr[usbmuxd::kHeaderSize];
     if (!recvExact(fd, hdr, sizeof(hdr)))
     {
         return std::nullopt;
     }
-    uint32_t length = 0;
-    Request request;
-    std::memcpy(&length, hdr + 0, 4);
-    std::memcpy(&request.tag, hdr + 12, 4);
-    if (length < 16 || length > kMaxRequestBytes)
+    const auto header = usbmuxd::parseHeader(hdr);
+    if (!header)
     {
         return std::nullopt;
     }
-    std::vector<uint8_t> body(length - 16);
+
+    Request request;
+    request.tag = header->tag;
+    std::vector<uint8_t> body(header->bodySize());
     if (!body.empty() && !recvExact(fd, body.data(), body.size()))
     {
         return std::nullopt;
@@ -95,46 +86,13 @@ std::optional<Request> recvPacket(int fd)
 
 void sendReply(int fd, uint32_t tag, const plist::Value& dict)
 {
-    const std::string xml = plist::encodeXml(dict);
-
-    const std::array<uint32_t, 4> hdr = {static_cast<uint32_t>(16 + xml.size()), kPlistVersion,
-                                         kPlistMessage, tag};
-    ::send(fd, hdr.data(), sizeof(hdr), MSG_NOSIGNAL);
-    ::send(fd, xml.data(), xml.size(), MSG_NOSIGNAL);
+    const std::vector<uint8_t> wire = usbmuxd::encodeReply(tag, dict);
+    ::send(fd, wire.data(), wire.size(), MSG_NOSIGNAL);
 }
 
-plist::Value resultDict(int number)
-{
-    plist::Value d = plist::Value::dict();
-    d.set("MessageType", plist::Value::string("Result"));
-    d.set("Number", plist::Value::integer(number));
-    return d;
-}
-
-std::string dictString(const plist::Value& dict, const char* key)
-{
-    const plist::Value* node = dict.find(key);
-    if (node == nullptr || !node->isString())
-    {
-        return {};
-    }
-    return node->asString();
-}
-
-// The dashed spelling of an undashed 24-character serial, and vice versa.
-// Empty when the input is neither form.
-std::string alternateUdidForm(const std::string& udid)
-{
-    if (udid.size() == 24 && udid.find('-') == std::string::npos)
-    {
-        return udid.substr(0, 8) + "-" + udid.substr(8);
-    }
-    if (udid.size() == 25 && udid[8] == '-')
-    {
-        return udid.substr(0, 8) + udid.substr(9);
-    }
-    return {};
-}
+using usbmuxd::alternateUdidForm;
+using usbmuxd::dictString;
+using usbmuxd::resultDict;
 
 std::string genUuid()
 {

@@ -21,6 +21,7 @@ set(APPLE_USB_SOURCES
     ncm_frame.cpp
     muxd.cpp
     usbmuxd_server.cpp
+    usbmuxd_framing.cpp
     usbmux_client.cpp
     pair_record.cpp
     tls_stream.cpp
@@ -129,3 +130,12 @@ target_link_libraries(apple_usb_usbprobe PRIVATE
     apple_usb
     spdlog::spdlog
 )
+
+# usbmuxd control framing: the header bounds, and the UDID spelling conversion.
+add_executable(apple_usb_test_usbmuxd_framing test_usbmuxd_framing.cpp)
+target_link_libraries(apple_usb_test_usbmuxd_framing PRIVATE
+    apple_usb
+    plist
+    spdlog::spdlog
+)
+add_project_test(TARGET apple_usb_test_usbmuxd_framing LABELS apple_usb unit)
