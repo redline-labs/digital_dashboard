@@ -1,8 +1,8 @@
 #include "pcan_trc_parser/pcan_trc_parser.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -10,6 +10,26 @@
 #include <spdlog/fmt/ranges.h>
 
 using namespace pcan_trc_parser;
+
+namespace
+{
+
+// Checks report through the exit code rather than assert(). The project adds
+// -DNDEBUG unconditionally, not just in Release, so every assert() in here was
+// compiled away and the test passed no matter what the parser returned --
+// verified by making one deliberately false and watching it still pass.
+int failures = 0;
+
+void expect(bool condition, const std::string& what)
+{
+    if (!condition)
+    {
+        SPDLOG_ERROR("FAIL: {}", what);
+        ++failures;
+    }
+}
+
+}  // namespace
 
 // Embed sample.trc contents directly as a string literal
 static constexpr const char kSampleTrc[] =
@@ -66,29 +86,34 @@ int main()
     std::string_view sample_sv{kSampleTrc};
     const std::size_t delivered = parse_string(sample_sv.data(), on_frame);
 
-    // Expect 10 frames parsed
-    (void)delivered;
-    assert(delivered == 10);
-    assert(count == 10);
+    expect(delivered == 10, "parse_string reports 10 frames");
+    expect(count == 10, "and the callback saw 10");
 
-    // Validate first frame
-    assert(first.id == 0x0500);
-    assert(first.len == 8);
-    assert(first.data[0] == 0x40);
+    expect(first.id == 0x0500, "first frame id");
+    expect(first.len == 8, "first frame length");
+    expect(first.data[0] == 0x40, "first frame leading byte");
+    bool first_tail_zero = true;
     for (std::size_t i = 1; i < first.len; ++i)
     {
-        assert(first.data[i] == 0x00);
+        first_tail_zero = first_tail_zero && first.data[i] == 0x00;
     }
+    expect(first_tail_zero, "first frame is zero after the leading byte");
 
-    // Validate last frame
-    assert(last.id == 0x0504);
-    assert(last.len == 8);
+    expect(last.id == 0x0504, "last frame id");
+    expect(last.len == 8, "last frame length");
+    bool last_all_zero = true;
     for (std::size_t i = 0; i < last.len; ++i)
     {
-        assert(last.data[i] == 0x00);
+        last_all_zero = last_all_zero && last.data[i] == 0x00;
     }
+    expect(last_all_zero, "last frame is all zero");
 
-    return 0;
+    if (failures == 0)
+    {
+        SPDLOG_INFO("pcan trc parser tests passed");
+        return EXIT_SUCCESS;
+    }
+    return EXIT_FAILURE;
 }
 
 
