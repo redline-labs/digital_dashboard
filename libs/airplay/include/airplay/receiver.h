@@ -168,10 +168,6 @@ class Receiver
     // the same session ending.
     void endSession(const char* reason);
 
-    // Opens a listening TCP socket on an ephemeral port. Returns the fd and
-    // writes the chosen port, which is what gets advertised to the phone.
-    int openEphemeralListener(uint16_t& port);
-
     // Accepts the phone's video data connection and pumps frames until it
     // closes. `key` is the per-stream ChaCha20-Poly1305 key.
     void screenStreamLoop(int listen_fd, Bytes key);
@@ -182,19 +178,10 @@ class Receiver
     void audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
                          int stream_type, std::string audio_type, bool is_aac);
 
-    // Binds a dual-stack UDP socket on an ephemeral port. Returns the fd and
-    // writes the chosen port.
-    int openUdpSocket(uint16_t& port);
-
     // Brings a microphone uplink up (against the phone's dataPort) or down.
     void startMicUplink(uint16_t phone_port, const Bytes& shared_key, uint32_t sample_rate,
                         uint8_t channels, int stream_type, const plist::Value& stream);
     void stopMicUplink();
-
-    // Accepts and services the phone's encrypted event-channel connection, over
-    // which HID reports (touch) are pushed to the phone and the phone pushes its
-    // own commands back.
-    void eventChannelLoop(int listen_fd);
 
     // Routes one command the phone posted on the event channel. Returns the
     // response to send back; the phone expects every request acknowledged.
@@ -204,32 +191,23 @@ class Receiver
     // Returns false if the channel is not up. Blocking, and called only from
     // eventSendLoop() -- everything else queues instead, so that no caller ends
     // up waiting on a socket write.
-    bool writeEventCommand(const Bytes& plist_body);
 
     // Encrypts and writes an already-framed RTSP message to the event channel:
     // the acknowledgements the receive pump owes the phone.
-    bool writeEventRaw(const Bytes& message);
 
     // The shared body of both writers. Requires State::event_mutex, which is
     // what serialises the outbound nonce against concurrent senders.
-    bool writeEventLocked(const Bytes& message);
 
     // Sole writer of the event channel. Drains queued touch reports and
     // keyframe requests; see State::send_queue for the ordering and coalescing
     // rules it enforces.
-    void eventSendLoop();
 
     // Builds the plist body for a touch report / keyframe request.
-    Bytes buildTouchCommand(float x, float y, bool down) const;
-    Bytes buildKeyframeCommand() const;
-    Bytes buildNightModeCommand() const;
 
     // Queues one already-encoded event-channel command body for the sender
     // thread. Everything that is not touch or a keyframe goes through here.
-    void queueCommand(Bytes body);
 
     // Queues a HID report for one of the non-touch devices.
-    void queueReport(uint32_t uid, const Bytes& report);
 
     ReceiverConfig config_;
     VideoHandler video_handler_;
@@ -250,7 +228,6 @@ class Receiver
     bool speech_active_ = false;
     std::thread accept_thread_;
     std::thread keyframe_thread_;
-    std::thread event_send_thread_;
     // steady_clock ticks (ns) of the last keyframe/config the phone sent. The
     // keyframe thread only nudges the phone when this goes stale, so an animated
     // screen (already emitting keyframes) is not asked for redundant ones.

@@ -3,6 +3,8 @@
 
 #include "airplay/channel_crypto.h"
 #include "airplay/info_plist.h"
+#include "airplay/event_channel.h"
+#include "airplay/net.h"
 #include "airplay/pairing_session.h"
 
 #include "airplay/aac_decoder.h"
@@ -199,8 +201,8 @@ struct Receiver::State
     // The three handshakes, and the accessory identity they establish.
     PairingSession pairing;
 
-    explicit State(PairingSession::Config pairing_config) :
-        pairing(std::move(pairing_config))
+    State(PairingSession::Config pairing_config, EventChannel::Config event_config) :
+        pairing(std::move(pairing_config)), events(std::move(event_config))
     {
     }
 
@@ -213,9 +215,11 @@ struct Receiver::State
     std::string peer_address;
     uint32_t peer_scope = 0;
 
-    // Event channel and per-stream data listeners.
-    int event_fd = -1;
+    // The event channel: input out to the phone, its own commands back.
+    EventChannel events;
     uint16_t event_port = 0;
+
+    // Per-stream data listeners.
     std::vector<int> stream_fds;
 
     // Where a low-power phone sends its keepalive datagrams. Never read: the
@@ -233,25 +237,6 @@ struct Receiver::State
     };
     std::mutex audio_mutex;
     std::vector<AudioStreamInfo> audio_streams;
-
-    // The accepted event-channel socket and its cipher. Guarded because the
-    // accept loop, the receive pump and the event writer all touch it. Only
-    // eventSendLoop() ever writes to the socket.
-    std::mutex event_mutex;
-    int event_client_fd = -1;
-    ChannelCrypto event_crypto;
-    int event_cseq = 0;
-
-    // Outbound work for eventSendLoop(), which is the only thread that touches
-    // the socket. Producers never block on the network: sendTouch() runs on the
-    // zenoh subscriber thread and requestKeyframe() on the keyframe thread, and
-    // neither should be able to stall the other -- or itself -- behind a
-    // congested send(). The ordering, coalescing and drop rules all live in
-    // EventQueue, which is not thread safe; send_mutex is what makes it so.
-    std::mutex send_mutex;
-    std::condition_variable send_cv;
-    EventQueue send_queue;
-    bool send_stop = false;
 
     // Microphone uplink (us -> phone), set up when the phone's main-audio SETUP
     // carries a dataPort of its own. Guarded because feedMic() runs on the zenoh
@@ -280,7 +265,16 @@ Receiver::Receiver(ReceiverConfig config) : config_(std::move(config))
     pairing.mfi_certificate = config_.mfi_certificate;
     pairing.mfi_sign = config_.mfi_sign;
     pairing.mfi_protocol_major = config_.mfi_protocol_major;
-    state_ = std::make_unique<State>(std::move(pairing));
+    EventChannel::Config events;
+    events.width = config_.width;
+    events.height = config_.height;
+    events.display_uuid = kMainDisplayUuid;
+    state_ = std::make_unique<State>(std::move(pairing), std::move(events));
+
+    // Inbound commands are routed by the receiver: what a requestUI means is
+    // session policy, not transport.
+    state_->events.setCommandHandler(
+        [this](const rtsp::Message& request) { return handleEventCommand(request); });
 }
 
 Receiver::~Receiver()
@@ -394,11 +388,6 @@ bool Receiver::start()
 
     // Sole writer of the event channel, so that neither the touch path nor the
     // keyframe path ever blocks on a socket write or on the other.
-    {
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        state_->send_stop = false;
-    }
-    event_send_thread_ = std::thread([this] { eventSendLoop(); });
 
     // Periodically ask the phone for a fresh keyframe. Without this, a static
     // CarPlay screen produces exactly one keyframe (at session start) and then
@@ -421,7 +410,7 @@ bool Receiver::start()
                 std::chrono::steady_clock::duration(last_keyframe_ns_.load()));
             if (std::chrono::steady_clock::now() - last >= kStaleAfter)
             {
-                requestKeyframe();
+                state_->events.requestKeyframe();
             }
         }
     });
@@ -451,15 +440,7 @@ void Receiver::stop()
     {
         keyframe_thread_.join();
     }
-    {
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        state_->send_stop = true;
-    }
-    state_->send_cv.notify_all();
-    if (event_send_thread_.joinable())
-    {
-        event_send_thread_.join();
-    }
+    state_->events.stop();
     for (auto& thread : session_threads_)
     {
         if (thread.joinable())
@@ -469,15 +450,10 @@ void Receiver::stop()
     }
     session_threads_.clear();
 
-    // The listeners handleSetup opened. Closed only here, after the threads
-    // polling them have been joined -- and reset, so a restarted receiver opens
-    // fresh ones rather than advertising ports nothing is listening on.
-    if (state_->event_fd >= 0)
-    {
-        ::close(state_->event_fd);
-        state_->event_fd = -1;
-        state_->event_port = 0;
-    }
+    state_->event_port = 0;
+    // The keepalive listener handleSetup opened. Closed only here, after the
+    // threads are down -- and reset, so a restarted receiver opens a fresh one
+    // rather than advertising a port nothing is listening on.
     if (state_->keep_alive_fd >= 0)
     {
         ::close(state_->keep_alive_fd);
@@ -745,70 +721,7 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
     return rtsp::makeResponse(501, "Not Implemented", "", {});
 }
 
-int Receiver::openEphemeralListener(uint16_t& port)
-{
-    const int fd = ::socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd < 0)
-    {
-        return -1;
-    }
-    int on = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-    int off = 0;
-    ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
 
-    sockaddr_in6 addr{};
-    addr.sin6_family = AF_INET6;
-    addr.sin6_port = 0;  // kernel picks
-    addr.sin6_addr = in6addr_any;
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0 ||
-        ::listen(fd, 4) < 0)
-    {
-        ::close(fd);
-        return -1;
-    }
-
-    sockaddr_in6 bound{};
-    socklen_t len = sizeof(bound);
-    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &len) < 0)
-    {
-        ::close(fd);
-        return -1;
-    }
-    port = ntohs(bound.sin6_port);
-    return fd;
-}
-
-int Receiver::openUdpSocket(uint16_t& port)
-{
-    const int fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
-    if (fd < 0)
-    {
-        return -1;
-    }
-    int off = 0;
-    ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
-
-    sockaddr_in6 addr{};
-    addr.sin6_family = AF_INET6;
-    addr.sin6_port = 0;
-    addr.sin6_addr = in6addr_any;
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
-    {
-        ::close(fd);
-        return -1;
-    }
-
-    sockaddr_in6 bound{};
-    socklen_t len = sizeof(bound);
-    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &len) < 0)
-    {
-        ::close(fd);
-        return -1;
-    }
-    port = ntohs(bound.sin6_port);
-    return fd;
-}
 
 rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 {
@@ -831,19 +744,15 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
                         body->find("model") != nullptr ? body->find("model")->asString() : "?");
         }
 
-        if (state_->event_fd < 0)
+        if (state_->event_port == 0)
         {
-            state_->event_fd = openEphemeralListener(state_->event_port);
-            if (state_->event_fd < 0)
+            // Keyed from the pair-verify secret, which by now exists: the phone
+            // does not reach SETUP without completing pair-verify first.
+            state_->events.useSharedSecret(state_->pairing.verifySharedSecret());
+            if (!state_->events.start(state_->event_port))
             {
-                SPDLOG_ERROR("[airplay] could not open the event channel listener");
                 return rtsp::makeResponse(500, "Internal Server Error", "", {});
             }
-            // The phone dials this as soon as it has the port. Leaving the
-            // connection sitting in the backlog unaccepted looks like a dead
-            // channel from its side.
-            const int listen_fd = state_->event_fd;
-            session_threads_.emplace_back([this, listen_fd] { eventChannelLoop(listen_fd); });
         }
         SPDLOG_INFO("[airplay] SETUP session: advertising eventPort {}", state_->event_port);
 
@@ -874,7 +783,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
         {
             if (state_->keep_alive_fd < 0)
             {
-                state_->keep_alive_fd = openUdpSocket(state_->keep_alive_port);
+                state_->keep_alive_fd = net::openUdpSocket(state_->keep_alive_port);
             }
             keep_alive_port = state_->keep_alive_port;
         }
@@ -927,7 +836,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
         if (stream_type == kStreamMainScreen)
         {
             uint16_t data_port = 0;
-            const int fd = openEphemeralListener(data_port);
+            const int fd = net::openEphemeralListener(data_port);
             if (fd < 0)
             {
                 return rtsp::makeResponse(500, "Internal Server Error", "", {});
@@ -959,8 +868,8 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
 
             uint16_t data_port = 0;
             uint16_t control_port = 0;
-            const int data_fd = openUdpSocket(data_port);
-            const int control_fd = openUdpSocket(control_port);
+            const int data_fd = net::openUdpSocket(data_port);
+            const int control_fd = net::openUdpSocket(control_port);
             if (data_fd < 0 || control_fd < 0)
             {
                 if (data_fd >= 0) ::close(data_fd);
@@ -1034,7 +943,7 @@ rtsp::Message Receiver::handleSetup(const rtsp::Message& request)
             // port and answer so the phone does not tear down, but do not
             // interpret it yet.
             uint16_t data_port = 0;
-            const int fd = openEphemeralListener(data_port);
+            const int fd = net::openEphemeralListener(data_port);
             if (fd < 0)
             {
                 return rtsp::makeResponse(500, "Internal Server Error", "", {});
@@ -1408,120 +1317,6 @@ void Receiver::audioStreamLoop(int data_fd, Bytes key, uint32_t sample_rate, uin
     ::close(data_fd);
 }
 
-void Receiver::eventChannelLoop(int listen_fd)
-{
-    while (run_.load())
-    {
-        pollfd pfd{listen_fd, POLLIN, 0};
-        if (::poll(&pfd, 1, 200) <= 0)
-        {
-            continue;
-        }
-        const int client = ::accept(listen_fd, nullptr, nullptr);
-        if (client < 0)
-        {
-            continue;
-        }
-        SPDLOG_INFO("[airplay] event channel connected");
-
-        // Events keys are derived from the pair-verify shared secret and, unlike
-        // the control channel, are NOT swapped: the accessory writes with
-        // Events-Write and reads with Events-Read.
-        {
-            std::lock_guard<std::mutex> lock(state_->event_mutex);
-            state_->event_client_fd = client;
-            // Not swapped, unlike the control channel: the accessory writes
-            // with Events-Write and reads with Events-Read.
-            state_->event_crypto.activate(
-                crypto::hkdfSha512(state_->pairing.verifySharedSecret(), "Events-Salt",
-                                   "Events-Read-Encryption-Key", 32),
-                crypto::hkdfSha512(state_->pairing.verifySharedSecret(), "Events-Salt",
-                                   "Events-Write-Encryption-Key", 32));
-        }
-
-        Bytes cipher;
-        // Outlives the recv loop: a command can straddle TCP segments, and the
-        // leftover of a partial one has to survive until the rest turns up.
-        Bytes plain;
-        Bytes chunk(8192);
-        while (run_.load())
-        {
-            pollfd cpfd{client, POLLIN, 0};
-            if (::poll(&cpfd, 1, 200) <= 0)
-            {
-                continue;
-            }
-            const ssize_t n = ::recv(client, chunk.data(), chunk.size(), 0);
-            if (n <= 0)
-            {
-                break;
-            }
-            cipher.insert(cipher.end(), chunk.begin(), chunk.begin() + n);
-
-            {
-                std::lock_guard<std::mutex> lock(state_->event_mutex);
-                if (!state_->event_crypto.open(cipher, plain))
-                {
-                    SPDLOG_WARN("[airplay] event channel frame failed to authenticate");
-                    break;
-                }
-            }
-
-            // Drain every complete request the phone has pushed. Same framing as
-            // the control channel: RTSP requests, binary-plist bodies.
-            bool fatal = false;
-            while (true)
-            {
-                rtsp::Message request;
-                const auto consumed = rtsp::parseRequest(plain, request);
-                if (!consumed)
-                {
-                    SPDLOG_WARN("[airplay] malformed event-channel request; closing");
-                    fatal = true;
-                    break;
-                }
-                if (*consumed == 0)
-                {
-                    break;  // need more bytes
-                }
-                plain.erase(plain.begin(), plain.begin() + static_cast<long>(*consumed));
-
-                rtsp::Message response = handleEventCommand(request);
-                // The phone retries a command it never sees acknowledged, so an
-                // unanswered channel looks like a stall rather than a silent drop.
-                if (const std::string* cseq = request.header("CSeq"); cseq != nullptr)
-                {
-                    response.setHeader("CSeq", *cseq);
-                }
-                response.setHeader("Server", "AirTunes/366.0");
-                if (!writeEventRaw(rtsp::serializeResponse(response)))
-                {
-                    fatal = true;
-                    break;
-                }
-            }
-            if (fatal)
-            {
-                break;
-            }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(state_->event_mutex);
-            state_->event_client_fd = -1;
-            state_->event_crypto.deactivate();
-        }
-        // Anything still queued belongs to the session that just ended -- most
-        // likely a touch whose matching release never got sent. Replaying it
-        // into the next session would inject a phantom contact.
-        {
-            std::lock_guard<std::mutex> lock(state_->send_mutex);
-            state_->send_queue.clear();
-        }
-        ::close(client);
-        SPDLOG_INFO("[airplay] event channel closed");
-    }
-}
 
 rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
 {
@@ -1648,209 +1443,18 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
     return rtsp::makeResponse(200, "OK", "", {});
 }
 
-Bytes Receiver::buildTouchCommand(float x, float y, bool down) const
-{
-    // The descriptor reports absolute coordinates, so the caller's normalised
-    // 0..1 is scaled to the display it was advertised against. We only ever
-    // drive contact 0; the second slot is reported empty.
-    const auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
-    hid::Contact contact;
-    contact.x = static_cast<uint16_t>(clamp01(x) * static_cast<float>(config_.width));
-    contact.y = static_cast<uint16_t>(clamp01(y) * static_cast<float>(config_.height));
-    contact.down = down;
 
-    return hid::sendReportCommand(hid::kTouchUid, hid::touchReport({contact}));
-}
 
-Bytes Receiver::buildKeyframeCommand() const
-{
-    // forceKeyFrame names the display by the same uuid advertised in /info.
-    plist::Value params = plist::Value::dict();
-    params.set("uuid", plist::Value::string(kMainDisplayUuid));
-    plist::Value command = plist::Value::dict();
-    command.set("type", plist::Value::string("forceKeyFrame"));
-    command.set("params", std::move(params));
-    return plist::encodeBinary(command);
-}
 
-void Receiver::sendTouch(float x, float y, TouchPhase phase)
-{
-    EventQueue::TouchReport report;
-    report.x = x;
-    report.y = y;
-    report.down = (phase != TouchPhase::Up);
-    report.coalescable = (phase == TouchPhase::Move);
 
-    bool dropped = false;
-    uint64_t drop_count = 0;
-    {
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        dropped = !state_->send_queue.pushTouch(report);
-        drop_count = state_->send_queue.dropped();
-    }
-    if (dropped)
-    {
-        // Means the link itself has stalled, so it is loud -- but rate limited,
-        // since whatever caused it will not have caused it just once.
-        if (drop_count % 100 == 1)
-        {
-            SPDLOG_WARN("[airplay] event channel backed up; dropped {} touch report(s)",
-                        drop_count);
-        }
-        return;
-    }
-    state_->send_cv.notify_one();
-}
 
-void Receiver::queueCommand(Bytes body)
-{
-    bool dropped = false;
-    uint64_t drop_count = 0;
-    {
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        dropped = !state_->send_queue.pushControl(std::move(body));
-        drop_count = state_->send_queue.dropped();
-    }
-    if (dropped)
-    {
-        // Unlike a dropped touch move this loses a discrete user action, so it
-        // is worth a line every time rather than a sampled one.
-        SPDLOG_WARN("[airplay] event channel backed up; dropped a control command "
-                    "({} event(s) dropped so far)",
-                    drop_count);
-        return;
-    }
-    state_->send_cv.notify_one();
-}
 
-void Receiver::queueReport(uint32_t uid, const Bytes& report)
-{
-    queueCommand(hid::sendReportCommand(uid, report));
-}
 
-void Receiver::sendKnob(const hid::KnobState& state, bool momentary)
-{
-    queueReport(hid::kKnobUid, hid::knobReport(state));
-    if (momentary)
-    {
-        // The buttons are levels: without this the phone goes on believing the
-        // button is held. The wheel and pointer are relative, so the all-clear
-        // report is a no-op for them and costs only a message.
-        queueReport(hid::kKnobUid, hid::knobReport({}));
-    }
-}
 
-void Receiver::sendMediaKey(hid::MediaKey key)
-{
-    queueReport(hid::kMediaUid, hid::mediaReport(key));
-    queueReport(hid::kMediaUid, hid::mediaReport(hid::MediaKey::None));
-}
 
-void Receiver::sendTelephonyKey(hid::TelephonyKey key)
-{
-    queueReport(hid::kTelephonyUid, hid::telephonyReport(key));
-    queueReport(hid::kTelephonyUid, hid::telephonyReport(hid::TelephonyKey::None));
-}
 
-void Receiver::setNightMode(bool night)
-{
-    night_mode_.store(night);
-    if (!session_live_.load())
-    {
-        // Pushed at RECORD instead. Sending now would be ignored at best.
-        SPDLOG_DEBUG("[airplay] night mode {} (no session yet; will be sent at RECORD)",
-                     night ? "on" : "off");
-        return;
-    }
-    SPDLOG_INFO("[airplay] night mode {}", night ? "on" : "off");
-    queueCommand(buildNightModeCommand());
-}
 
-Bytes Receiver::buildNightModeCommand() const
-{
-    plist::Value params = plist::Value::dict();
-    params.set("nightMode", plist::Value::boolean(night_mode_.load()));
-    plist::Value command = plist::Value::dict();
-    command.set("type", plist::Value::string("setNightMode"));
-    command.set("params", std::move(params));
-    return plist::encodeBinary(command);
-}
 
-void Receiver::requestSiri()
-{
-    // siriAction 2 is button-down, 3 button-up. Sent back to back so the phone
-    // sees a click: it then listens until the user stops speaking, rather than
-    // treating the release as "done talking" and cutting them off.
-    constexpr int64_t kSiriButtonDown = 2;
-    constexpr int64_t kSiriButtonUp = 3;
-
-    const auto build = [](int64_t action) {
-        plist::Value params = plist::Value::dict();
-        params.set("siriAction", plist::Value::integer(action));
-        plist::Value command = plist::Value::dict();
-        command.set("type", plist::Value::string("requestSiri"));
-        command.set("params", std::move(params));
-        return plist::encodeBinary(command);
-    };
-
-    SPDLOG_INFO("[airplay] Siri requested");
-    queueCommand(build(kSiriButtonDown));
-    queueCommand(build(kSiriButtonUp));
-}
-
-void Receiver::requestKeyframe()
-{
-    {
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        state_->send_queue.requestKeyframe();
-    }
-    state_->send_cv.notify_one();
-}
-
-void Receiver::eventSendLoop()
-{
-    // Threading and I/O only -- what to send, in what order, and what to drop
-    // is EventQueue's business, and is tested directly in test_event_queue.cpp.
-    while (true)
-    {
-        std::unique_lock<std::mutex> lock(state_->send_mutex);
-        state_->send_cv.wait(lock,
-                             [this] { return state_->send_stop || state_->send_queue.hasWork(); });
-        if (state_->send_stop)
-        {
-            return;
-        }
-
-        const auto next = state_->send_queue.take(std::chrono::steady_clock::now());
-        if (next.action == EventQueue::Action::WaitTouch)
-        {
-            // Nothing was consumed. Waiting here rather than sending is what
-            // lets a move arriving meanwhile coalesce, and lets a keyframe
-            // request landing during the wait overtake the queued touch.
-            state_->send_cv.wait_for(lock, next.wait);
-            continue;
-        }
-        lock.unlock();
-
-        switch (next.action)
-        {
-            case EventQueue::Action::SendKeyframe:
-                writeEventCommand(buildKeyframeCommand());
-                break;
-            case EventQueue::Action::SendControl:
-                writeEventCommand(next.control);
-                break;
-            case EventQueue::Action::SendTouch:
-                writeEventCommand(
-                    buildTouchCommand(next.touch.x, next.touch.y, next.touch.down));
-                break;
-            case EventQueue::Action::Idle:
-                break;  // spurious wake, just go round again
-            case EventQueue::Action::WaitTouch:
-                break;  // handled above, before the lock was released
-        }
-    }
-}
 
 void Receiver::startMicUplink(uint16_t phone_port, const Bytes& /*shared_key*/,
                               uint32_t sample_rate, uint8_t channels, int stream_type,
@@ -1934,6 +1538,51 @@ void Receiver::stopMicUplink()
     }
 }
 
+void Receiver::sendTouch(float x, float y, TouchPhase phase)
+{
+    state_->events.sendTouch(x, y, static_cast<EventChannel::TouchPhase>(phase));
+}
+
+void Receiver::sendKnob(const hid::KnobState& state, bool momentary)
+{
+    state_->events.sendKnob(state, momentary);
+}
+
+void Receiver::sendMediaKey(hid::MediaKey key)
+{
+    state_->events.sendMediaKey(key);
+}
+
+void Receiver::sendTelephonyKey(hid::TelephonyKey key)
+{
+    state_->events.sendTelephonyKey(key);
+}
+
+void Receiver::requestSiri()
+{
+    state_->events.requestSiri();
+}
+
+void Receiver::requestKeyframe()
+{
+    state_->events.requestKeyframe();
+}
+
+void Receiver::setNightMode(bool night)
+{
+    night_mode_.store(night);
+    state_->events.setNightMode(night);
+    if (!session_live_.load())
+    {
+        // Pushed at RECORD instead, which is the earliest the phone accepts an
+        // event command; sending one before that stalls older iOS for seconds.
+        SPDLOG_DEBUG("[airplay] night mode {} (no session yet; will be sent at RECORD)",
+                     night ? "on" : "off");
+        return;
+    }
+    state_->events.pushNightMode();
+}
+
 void Receiver::feedMic(const Bytes& pcm)
 {
     std::lock_guard<std::mutex> lock(state_->mic_mutex);
@@ -1991,52 +1640,8 @@ void Receiver::feedMic(const Bytes& pcm)
     }
 }
 
-bool Receiver::writeEventCommand(const Bytes& plist_body)
-{
-    // The CSeq counter and the outbound nonce advance together, under one lock:
-    // taking them separately would let two writers number their messages in one
-    // order and encrypt them in the other, which the phone reads as a replay.
-    std::lock_guard<std::mutex> lock(state_->event_mutex);
 
-    const std::string head = "POST /command RTSP/1.0\r\n"
-                             "Content-Type: application/x-apple-binary-plist\r\n"
-                             "Content-Length: " +
-                             std::to_string(plist_body.size()) +
-                             "\r\nCSeq: " + std::to_string(++state_->event_cseq) + "\r\n\r\n";
 
-    Bytes message(head.begin(), head.end());
-    message.insert(message.end(), plist_body.begin(), plist_body.end());
-    return writeEventLocked(message);
-}
-
-bool Receiver::writeEventRaw(const Bytes& message)
-{
-    std::lock_guard<std::mutex> lock(state_->event_mutex);
-    return writeEventLocked(message);
-}
-
-bool Receiver::writeEventLocked(const Bytes& message)
-{
-    if (state_->event_client_fd < 0 || !state_->event_crypto.active())
-    {
-        return false;  // no event channel yet
-    }
-
-    const Bytes wire = state_->event_crypto.seal(message);
-    size_t sent = 0;
-    while (sent < wire.size())
-    {
-        const ssize_t written = ::send(state_->event_client_fd, wire.data() + sent,
-                                       wire.size() - sent, MSG_NOSIGNAL);
-        if (written <= 0)
-        {
-            SPDLOG_DEBUG("[airplay] event channel send failed: {}", std::strerror(errno));
-            return false;
-        }
-        sent += static_cast<size_t>(written);
-    }
-    return true;
-}
 
 rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
 {
@@ -2048,7 +1653,7 @@ rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
     // session, including when nothing has changed: the phone does not remember
     // ours across sessions, and day is what it assumes.
     SPDLOG_INFO("[airplay] pushing night mode {}", night_mode_.load() ? "on" : "off");
-    queueCommand(buildNightModeCommand());
+    state_->events.pushNightMode();
     if (status_handler_)
     {
         status_handler_(true);
@@ -2074,11 +1679,8 @@ void Receiver::endSession(const char* reason)
         std::lock_guard<std::mutex> lock(state_->audio_mutex);
         state_->audio_streams.clear();
     }
-    {
-        // Whatever is queued belongs to the session that just ended.
-        std::lock_guard<std::mutex> lock(state_->send_mutex);
-        state_->send_queue.clear();
-    }
+    // Whatever is queued belongs to the session that just ended.
+    state_->events.clearQueue();
     if (status_handler_)
     {
         status_handler_(false);

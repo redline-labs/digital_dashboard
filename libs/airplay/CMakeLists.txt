@@ -25,6 +25,8 @@ add_library(airplay STATIC
     nalu.cpp
     rtsp.cpp
     event_queue.cpp
+    event_channel.cpp
+    net.cpp
     hid.cpp
     oem_button.cpp
     info_plist.cpp
