@@ -1883,6 +1883,13 @@ an `oemIcons` array (one entry per rendition: `imageData`, `widthPixels`,
 `heightPixels`, `prerendered`). Built by `addOemButtonInfo()` in
 `libs/airplay/oem_button.cpp` and unit-tested by `airplay_test_oem_button`.
 
+Those key names are not guesses — they match LIVI's `getInfo.ts` exactly, which
+is a working implementation. The one place we differ is `prerendered`: LIVI
+always sends **true**, meaning CarPlay draws the artwork untouched. We default
+to false so CarPlay applies its own corner mask, as it does for app icons, which
+suits a full-bleed square image. If the tile looks wrong on hardware, that is
+the knob to turn first, and LIVI's setting is the one with evidence behind it.
+
 It is advertised **once**, at `/info` time. There is no way to show or hide the
 button mid-session, so a config change needs a new session to take effect.
 
