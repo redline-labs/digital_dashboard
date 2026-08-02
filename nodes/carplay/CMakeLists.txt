@@ -8,6 +8,7 @@ project(carplay)
 # is the only way a refactor there gets caught before it reaches hardware.
 add_executable(carplay
     main.cpp
+    node_config.cpp
     zenoh_bridge.cpp
     simulate.cpp
     usb_pipeline.cpp
@@ -26,6 +27,7 @@ target_include_directories(carplay PRIVATE
 target_link_libraries(carplay PRIVATE
     spdlog::spdlog
     cxxopts::cxxopts
+    yaml-cpp::yaml-cpp
     zenohcxx::zenohc
     schemas
     zenoh_pub_sub

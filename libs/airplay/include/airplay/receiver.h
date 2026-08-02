@@ -9,6 +9,7 @@
 
 #include "airplay/crypto.h"
 #include "airplay/nalu.h"
+#include "airplay/oem_button.h"
 #include "plist/value.h"
 #include "airplay/rtsp.h"
 #include "airplay/timing.h"
@@ -53,6 +54,9 @@ struct ReceiverConfig
     std::function<Bytes(const Bytes& digest)> mfi_sign;
     // 2 => SHA-1/20-byte digests, 3 => SHA-256/32-byte.
     std::function<int()> mfi_protocol_major;
+
+    // The manufacturer button on CarPlay's home screen. Disabled by default.
+    OemButtonConfig oem_button;
 };
 
 // Decoded media handed to the node for publishing on zenoh.
@@ -100,9 +104,15 @@ class Receiver
     // state to the dashboard.
     using StatusHandler = std::function<void(bool recording)>;
 
+    // Called when the user presses the manufacturer button on CarPlay's home
+    // screen -- the phone's way of saying "hand the screen back to the vehicle".
+    // Runs on the event-channel thread, so do not block in it.
+    using OemButtonHandler = std::function<void()>;
+
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
     void setStatusHandler(StatusHandler handler);
+    void setOemButtonHandler(OemButtonHandler handler);
 
     // Which part of a gesture a touch report is. Down and Up both map to the
     // same single "contact down" bit on the wire, so this does not change the
@@ -182,14 +192,27 @@ class Receiver
     void stopMicUplink();
 
     // Accepts and services the phone's encrypted event-channel connection, over
-    // which HID reports (touch) are pushed to the phone.
+    // which HID reports (touch) are pushed to the phone and the phone pushes its
+    // own commands back.
     void eventChannelLoop(int listen_fd);
+
+    // Routes one command the phone posted on the event channel. Returns the
+    // response to send back; the phone expects every request acknowledged.
+    rtsp::Message handleEventCommand(const rtsp::Message& request);
 
     // Encrypts and writes one plist command to the event channel socket.
     // Returns false if the channel is not up. Blocking, and called only from
     // eventSendLoop() -- everything else queues instead, so that no caller ends
     // up waiting on a socket write.
     bool writeEventCommand(const Bytes& plist_body);
+
+    // Encrypts and writes an already-framed RTSP message to the event channel:
+    // the acknowledgements the receive pump owes the phone.
+    bool writeEventRaw(const Bytes& message);
+
+    // The shared body of both writers. Requires State::event_mutex, which is
+    // what serialises the outbound nonce against concurrent senders.
+    bool writeEventLocked(const Bytes& message);
 
     // Sole writer of the event channel. Drains queued touch reports and
     // keyframe requests; see State::send_queue for the ordering and coalescing
@@ -205,6 +228,7 @@ class Receiver
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
     MicStatusHandler mic_status_handler_;
+    OemButtonHandler oem_button_handler_;
 
     int server_fd_ = -1;
     std::atomic<bool> run_{false};

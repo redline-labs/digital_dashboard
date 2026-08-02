@@ -11,6 +11,7 @@
 // dashboard side without any hardware.
 
 #include "zenoh_bridge.h"
+#include "node_config.h"
 #include "simulate.h"
 #include "usb_pipeline.h"
 
@@ -49,6 +50,12 @@ int main(int argc, char** argv)
     options.add_options()
         ("key-prefix", "Zenoh key prefix for all published/subscribed topics",
          cxxopts::value<std::string>()->default_value("nodes/carplay"))
+        ("config", "Node configuration YAML (see configs/carplay/carplay.yaml)",
+         cxxopts::value<std::string>()->default_value(""))
+        ("oem-button", "Show the manufacturer button on CarPlay's home screen",
+         cxxopts::value<bool>()->default_value("true"))
+        ("oem-label", "Caption under the manufacturer button (overrides --config)",
+         cxxopts::value<std::string>()->default_value(""))
         ("state-dir", "Directory for accessory identity and pair records",
          cxxopts::value<std::string>()->default_value(""))
         ("simulate", "Publish a synthetic session (no phone required) for dashboard testing")
@@ -79,6 +86,26 @@ int main(int argc, char** argv)
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
+
+    // Config file first, command line over the top: the flags are for a
+    // bring-up session, the file is what a vehicle ships with.
+    carplay::NodeConfig config;
+    if (const std::string path = args["config"].as<std::string>(); !path.empty())
+    {
+        if (!carplay::loadNodeConfig(path, config))
+        {
+            // Carrying on with defaults would silently drop whatever the file
+            // was configuring, and the icons are the whole point of having one.
+            SPDLOG_ERROR("[node] refusing to start with an unusable --config");
+            return 1;
+        }
+        SPDLOG_INFO("[node] loaded config from {}", path);
+    }
+    config.oem_button.enabled = args["oem-button"].as<bool>();
+    if (const std::string label = args["oem-label"].as<std::string>(); !label.empty())
+    {
+        config.oem_button.label = label;
+    }
 
     const std::string prefix = args["key-prefix"].as<std::string>();
     carplay::ZenohBridge bridge(prefix);
@@ -122,6 +149,7 @@ int main(int argc, char** argv)
     usb_options.max_stage = args["max-stage"].as<int>();
     usb_options.state_dir = args["state-dir"].as<std::string>();
     usb_options.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
+    usb_options.oem_button = config.oem_button;
 
     usb_options.recording = &g_recording;
 

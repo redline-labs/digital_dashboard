@@ -385,6 +385,11 @@ void Receiver::setMicStatusHandler(MicStatusHandler handler)
     mic_status_handler_ = std::move(handler);
 }
 
+void Receiver::setOemButtonHandler(OemButtonHandler handler)
+{
+    oem_button_handler_ = std::move(handler);
+}
+
 bool Receiver::start()
 {
     if (run_.load())
@@ -1896,6 +1901,9 @@ void Receiver::eventChannelLoop(int listen_fd)
         }
 
         Bytes cipher;
+        // Outlives the recv loop: a command can straddle TCP segments, and the
+        // leftover of a partial one has to survive until the rest turns up.
+        Bytes plain;
         Bytes chunk(8192);
         while (run_.load())
         {
@@ -1911,7 +1919,6 @@ void Receiver::eventChannelLoop(int listen_fd)
             }
             cipher.insert(cipher.end(), chunk.begin(), chunk.begin() + n);
 
-            Bytes plain;
             {
                 std::lock_guard<std::mutex> lock(state_->event_mutex);
                 if (!decryptFrames(state_->event_crypto, cipher, plain))
@@ -1920,11 +1927,43 @@ void Receiver::eventChannelLoop(int listen_fd)
                     break;
                 }
             }
-            // Inbound event traffic (the phone's own commands) is not acted on
-            // yet; the channel exists so we can push HID reports to it.
-            if (!plain.empty())
+
+            // Drain every complete request the phone has pushed. Same framing as
+            // the control channel: RTSP requests, binary-plist bodies.
+            bool fatal = false;
+            while (true)
             {
-                SPDLOG_DEBUG("[airplay] event channel: {} plaintext bytes", plain.size());
+                rtsp::Message request;
+                const auto consumed = rtsp::parseRequest(plain, request);
+                if (!consumed)
+                {
+                    SPDLOG_WARN("[airplay] malformed event-channel request; closing");
+                    fatal = true;
+                    break;
+                }
+                if (*consumed == 0)
+                {
+                    break;  // need more bytes
+                }
+                plain.erase(plain.begin(), plain.begin() + static_cast<long>(*consumed));
+
+                rtsp::Message response = handleEventCommand(request);
+                // The phone retries a command it never sees acknowledged, so an
+                // unanswered channel looks like a stall rather than a silent drop.
+                if (const std::string* cseq = request.header("CSeq"); cseq != nullptr)
+                {
+                    response.setHeader("CSeq", *cseq);
+                }
+                response.setHeader("Server", "AirTunes/366.0");
+                if (!writeEventRaw(rtsp::serializeResponse(response)))
+                {
+                    fatal = true;
+                    break;
+                }
+            }
+            if (fatal)
+            {
+                break;
             }
         }
 
@@ -1943,6 +1982,55 @@ void Receiver::eventChannelLoop(int listen_fd)
         ::close(client);
         SPDLOG_INFO("[airplay] event channel closed");
     }
+}
+
+rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
+{
+    // Everything the phone pushes here is POST /command with a binary plist
+    // body; /feedback and the rest only ever travel on the control channel.
+    const auto body = plist::decodeBinary(request.body);
+    if (!body || !body->isDict())
+    {
+        SPDLOG_DEBUG("[airplay] event channel: {} {} with no plist body", request.method,
+                     request.uri);
+        return rtsp::makeResponse(200, "OK", "", {});
+    }
+
+    const plist::Value* type_value = body->find("type");
+    const std::string type = (type_value != nullptr && type_value->isString())
+                                 ? type_value->asString()
+                                 : std::string();
+    const plist::Value* params = body->find("params");
+
+    if (type == "requestUI")
+    {
+        if (isOemButtonPress(*body))
+        {
+            SPDLOG_INFO("[airplay] manufacturer button pressed -- phone is asking for the "
+                        "vehicle's own UI");
+            if (oem_button_handler_)
+            {
+                oem_button_handler_();
+            }
+        }
+        else
+        {
+            // Same command, but an app naming something specific for the head
+            // unit to open. Nothing consumes these yet. Getting here is exactly
+            // the case isOemButtonPress rejects, so params holds a real url.
+            SPDLOG_INFO("[airplay] requestUI for '{}' (not routed anywhere yet)",
+                        params->find("url")->asString());
+        }
+    }
+    else if (!type.empty())
+    {
+        // Not silently dropped: an unrecognised command is how a protocol
+        // feature announces itself, and the body is what identifies it.
+        SPDLOG_INFO("[airplay] event command '{}' has no handler (acknowledged)", type);
+        describePlist(*body, "  ", {});
+    }
+
+    return rtsp::makeResponse(200, "OK", "", {});
 }
 
 Bytes Receiver::buildTouchCommand(float x, float y, bool down) const
@@ -2207,11 +2295,10 @@ void Receiver::feedMic(const Bytes& pcm)
 
 bool Receiver::writeEventCommand(const Bytes& plist_body)
 {
+    // The CSeq counter and the outbound nonce advance together, under one lock:
+    // taking them separately would let two writers number their messages in one
+    // order and encrypt them in the other, which the phone reads as a replay.
     std::lock_guard<std::mutex> lock(state_->event_mutex);
-    if (state_->event_client_fd < 0 || !state_->event_crypto.active)
-    {
-        return false;  // no event channel yet
-    }
 
     const std::string head = "POST /command RTSP/1.0\r\n"
                              "Content-Type: application/x-apple-binary-plist\r\n"
@@ -2221,6 +2308,21 @@ bool Receiver::writeEventCommand(const Bytes& plist_body)
 
     Bytes message(head.begin(), head.end());
     message.insert(message.end(), plist_body.begin(), plist_body.end());
+    return writeEventLocked(message);
+}
+
+bool Receiver::writeEventRaw(const Bytes& message)
+{
+    std::lock_guard<std::mutex> lock(state_->event_mutex);
+    return writeEventLocked(message);
+}
+
+bool Receiver::writeEventLocked(const Bytes& message)
+{
+    if (state_->event_client_fd < 0 || !state_->event_crypto.active)
+    {
+        return false;  // no event channel yet
+    }
 
     const Bytes wire = encryptFrames(state_->event_crypto, message);
     size_t sent = 0;
@@ -2428,6 +2530,13 @@ rtsp::Message Receiver::handleInfo(const rtsp::Message& request)
     touch.set("hidDescriptor",
               plist::Value::data(multitouchDescriptor(config_.width, config_.height)));
     info.set("hidDevices", plist::Value::array({std::move(touch)}));
+
+    addOemButtonInfo(config_.oem_button, info);
+    if (config_.oem_button.enabled)
+    {
+        SPDLOG_INFO("[airplay] advertising manufacturer button: label '{}', {} icon(s)",
+                    config_.oem_button.label, config_.oem_button.icons.size());
+    }
 
     return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist", plist::encodeBinary(info));
 }

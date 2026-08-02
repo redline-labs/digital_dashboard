@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# CarPlay driver node configuration.
+#
+#     ./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml
+#
+# Everything here has a built-in default, so the node runs without this file;
+# what the file buys you is the artwork, which cannot be hard-coded.
+
+# The "manufacturer button": the tile CarPlay draws on its own home screen so
+# the user can hand the screen back to the vehicle's UI. It is advertised to the
+# phone once, in GET /info, which means changes here only take effect on the
+# next session -- there is no way to show or hide it mid-session.
+oem_button:
+  # False leaves the keys out of GET /info entirely, and CarPlay shows no tile.
+  enabled: true
+
+  # Caption under the icon. CarPlay truncates past roughly 13 characters.
+  label: "Dashboard"
+
+  # Artwork, one entry per rendition; CarPlay picks whichever suits the phone's
+  # scale factor. Paths are relative to this file. Dimensions are read from each
+  # PNG, so only the path (and optionally `prerendered`) belongs here.
+  #
+  # `prerendered: false` lets CarPlay apply its own icon treatment (corner mask,
+  # shine) exactly as it does for app icons; true hands the image through as-is.
+  icons:
+    - path: oem_icon_60.png
+    - path: oem_icon_120.png
+    - path: oem_icon_180.png

@@ -806,6 +806,15 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         receiver_config.bind_address = ncm.scopedLinkLocal();
 #endif
 
+        receiver_config.oem_button = options.oem_button;
+        if (receiver_config.oem_button.enabled && receiver_config.oem_button.icons.empty())
+        {
+            // The tile still appears, drawn with CarPlay's own placeholder --
+            // which looks enough like a working button to hide a config mistake.
+            SPDLOG_WARN("[node] manufacturer button is enabled but has no icon; pass "
+                        "--config configs/carplay/carplay.yaml to supply the artwork");
+        }
+
         if (ctx.mfi_signer != nullptr)
         {
             iap2::MfiSigner* signer = ctx.mfi_signer;
@@ -965,6 +974,14 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
                                 active ? "requested" : "released", rate, channels);
                     publish_session();
                 });
+
+            // The manufacturer button. Nothing is hooked up to it yet: this is
+            // where a "show the vehicle's own UI" action belongs, which for this
+            // dashboard means telling the widget stack to leave the CarPlay page.
+            receiver->setOemButtonHandler([]() {
+                SPDLOG_INFO("[node] manufacturer button pressed -- returning to the vehicle's "
+                            "UI is not wired up yet");
+            });
 
             airplay::Receiver* rx = receiver.get();
 

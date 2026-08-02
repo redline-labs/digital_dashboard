@@ -9,6 +9,7 @@
 #ifndef CARPLAY_USB_PIPELINE_H_
 #define CARPLAY_USB_PIPELINE_H_
 
+#include "node_config.h"
 #include "zenoh_bridge.h"
 
 #include <atomic>
@@ -39,6 +40,9 @@ struct UsbPipelineOptions
     // A fixed GPS fix for bench-testing the location uplink. When set it takes
     // precedence over any fix published on <prefix>/location.
     std::optional<LocationFix> static_location;
+
+    // Stage 7 presentation: the manufacturer button advertised in GET /info.
+    airplay::OemButtonConfig oem_button;
 };
 
 // Runs the pipeline up to options.max_stage, logging each stage with the
