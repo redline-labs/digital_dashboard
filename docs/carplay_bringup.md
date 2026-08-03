@@ -2000,9 +2000,17 @@ Without `--config` the button is still advertised, with the default label and no
 artwork; the node warns, because CarPlay then draws its own placeholder, which
 looks enough like a working button to hide the mistake.
 
-**Status: the tile, its label and its artwork are verified on hardware
-(2026-08-02).** The *press* is still unverified — the button renders, but
-nothing has confirmed that pressing it produces `requestUI`.
+**Status: fully verified on hardware (2026-08-02)** — the tile, its label, its
+artwork, and the press. Pressing it on the phone produces exactly:
+
+```
+[airplay] manufacturer button pressed -- phone is asking for the vehicle's own UI
+[node] manufacturer button pressed -- returning to the vehicle's UI is not wired up yet
+```
+
+so `requestUI` with no url is confirmed as the wire form of the press, and
+`isOemButtonPress()` recognises the real thing rather than only the synthetic
+one in its test. What remains is only that nothing is hooked to the handler.
 
 If artwork ever goes missing again, the encoding is not the place to look. It
 was ruled out by dumping the exact `/info` we send and reading it with macOS's
@@ -2150,18 +2158,37 @@ It is reached on every session. The test now says so.
 
 **3. `prerendered: false` renders an empty tile.** See stage 11.
 
-**Still open — the node can take more than five seconds to exit on SIGTERM.**
-Observed while restarting between tests: three `carplay` processes survived
-`pkill` and a five-second wait, one still holding the link-local `:7000`, which
-made the next run fail to bind and look like a fresh bug. The retry backoff loop
-is interruptible (it checks `stop` every second), so the delay is elsewhere in
-teardown — `carkit->close()` and the TLS shutdown against a phone that is going
-away are the first suspects. Not chased, because the hardware was unplugged. If
-you are restarting the node in a loop, confirm the port is free first:
+**Retracted: the node does not shut down slowly.** An earlier version of this
+section reported that it could take more than five seconds to exit on SIGTERM,
+after three `carplay` processes survived a `pkill` and a five-second wait and
+one kept holding the link-local `:7000`.
+
+Measured properly on 2026-08-02 with the hardware back:
+
+| Case | SIGTERM to exit |
+|---|---|
+| healthy session, streaming video | 1.19 s |
+| failed bring-up, inside the retry backoff | 0.60 s |
+| a user's own `^C` on a live session | 1.79 s |
+
+and three start/`pkill`/restart cycles left zero stray processes.
+
+The original claim rested on a check that could not have worked: macOS `pgrep`
+has no `-c` flag, so `pgrep -c -f ... || echo 0` printed a usage error and then
+"0" from the fallback. That "0" was read as "no processes left". The strays were
+almost certainly accumulated by starting nodes in the background across several
+steps without reliably killing the previous one — test hygiene, not the product.
+
+Two things worth keeping from it, since the symptom is real when it happens:
 
 ```bash
-lsof -nP -iTCP:7000 -sTCP:LISTEN | grep carplay
+lsof -nP -iTCP:7000 -sTCP:LISTEN | grep carplay    # who holds the port
+ps -eo pid=,comm= | awk '$2 ~ /\/carplay$/'         # exact count, no zsh wrappers
 ```
+
+`ps aux | grep carplay` is not one of them: it also matches the shell whose
+command line contains the path, which inflates the count and was the second
+wrong number in the same investigation.
 
 **A note on method.** Two of the three findings were mine, and both were the
 same shape: code that is obviously correct in isolation, wrong against a real
@@ -2200,7 +2227,7 @@ Not all stages below are implemented yet. Current state:
 | **Night mode** | written 2026-08-02, wired to `--night-mode` / config and to `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
 | **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
 | **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
-| **Manufacturer button** (`/info` advertisement + press decode) | tile, label and artwork **verified on hardware 2026-08-02** (needs `prerendered: true`); the *press* is still unverified. See stages 11 and 14 |
+| **Manufacturer button** (`/info` advertisement + press decode) | **fully verified on hardware 2026-08-02** — tile, label, artwork (needs `prerendered: true`) and the press. Nothing is hooked to the handler yet. See stages 11 and 14 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
 | **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |
 | **Microphone uplink** | written; control path verified on hardware; end-to-end voice pending real host audio |
