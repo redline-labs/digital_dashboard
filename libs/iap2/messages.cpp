@@ -274,7 +274,6 @@ std::vector<uint16_t> identificationMessagesSent(const IdentificationConfig& con
 {
     std::vector<uint16_t> ids = {
         kMsgVehicleStatusUpdate,
-        kMsgAccessoryWiFiConfigurationInformation,
         kMsgStartNowPlayingUpdates,
         kMsgStopNowPlayingUpdates,
         kMsgStartRouteGuidanceUpdates,
@@ -289,6 +288,12 @@ std::vector<uint16_t> identificationMessagesSent(const IdentificationConfig& con
         // Wired accessories provide power, so they also send PowerSourceUpdate.
         kMsgPowerSourceUpdate,
     };
+    if (config.advertise_wireless_carplay)
+    {
+        // The message that hands our Wi-Fi credentials over. Claiming to send
+        // it is what invites the phone to ask.
+        ids.push_back(kMsgAccessoryWiFiConfigurationInformation);
+    }
     if (config.carplay_wired_start_session)
     {
         ids.push_back(kMsgCarPlayStartSession);
@@ -303,9 +308,10 @@ std::vector<uint16_t> identificationMessagesReceived(const IdentificationConfig&
         kMsgStopExternalAccessoryProtocolSession,
         kMsgStartVehicleStatusUpdates,
         kMsgStopVehicleStatusUpdates,
-        kMsgWirelessCarPlayUpdate,
+        // DeviceTransportIdentifierNotification stays regardless of the
+        // wireless flag: it also carries the phone's *USB* transport id, which
+        // is about the link we are actually on.
         kMsgDeviceTransportIdentifierNotification,
-        kMsgRequestAccessoryWiFiConfigurationInformation,
         kMsgNowPlayingUpdate,
         kMsgRouteGuidanceUpdate,
         kMsgRouteGuidanceManeuverUpdate,
@@ -315,6 +321,11 @@ std::vector<uint16_t> identificationMessagesReceived(const IdentificationConfig&
         kMsgCommunicationsUpdate,
         kMsgCallStateUpdate,
     };
+    if (config.advertise_wireless_carplay)
+    {
+        ids.push_back(kMsgWirelessCarPlayUpdate);
+        ids.push_back(kMsgRequestAccessoryWiFiConfigurationInformation);
+    }
     if (config.carplay_wired_start_session)
     {
         ids.push_back(kMsgCarPlayAvailability);

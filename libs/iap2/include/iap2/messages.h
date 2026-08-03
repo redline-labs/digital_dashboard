@@ -182,6 +182,18 @@ struct IdentificationConfig
     // CarPlayAvailability to the advertised message lists.
     bool carplay_wired_start_session = true;
 
+    // Tell the phone we can take part in a handover to wireless CarPlay.
+    //
+    // Off, because this accessory cannot. Advertising it adds
+    // AccessoryWiFiConfigurationInformation to the messages we claim to *send*
+    // -- which is the message that hands Wi-Fi credentials over -- and the
+    // matching request to the ones we claim to receive. With it on, the phone
+    // asks for our Wi-Fi configuration on every single session and we decline
+    // every time, which is a conversation worth not starting.
+    //
+    // Turn it on only alongside an actual wireless implementation.
+    bool advertise_wireless_carplay = false;
+
     // Optional components. The phone may reject identification because of any
     // of these; clear the offending one and re-send (see
     // IdentificationRejection::droppable()).

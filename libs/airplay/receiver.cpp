@@ -1096,9 +1096,21 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
                 duration_ms = value->asInteger();
             }
         }
+        // Both forms: the phone sends decibels, a mixer wants a linear gain.
+        // Keeping the dB in the log means the number the phone actually sent is
+        // there to compare against, if this ever drives something.
         const double level = (type == "duckAudio") ? std::pow(10.0, volume_db / 20.0) : 1.0;
-        SPDLOG_INFO("[airplay] {} to level {:.3f} over {} ms (no head-unit audio to duck)",
-                    type, level, duration_ms);
+        if (type == "duckAudio")
+        {
+            SPDLOG_INFO("[airplay] duckAudio: {:.1f} dB (linear {:.3f}) over {} ms -- not acted "
+                        "on, this head unit has no audio source of its own to duck",
+                        volume_db, level, duration_ms);
+        }
+        else
+        {
+            SPDLOG_INFO("[airplay] unduckAudio: back to full level over {} ms -- not acted on",
+                        duration_ms);
+        }
     }
     else if (type == "suggestUI")
     {

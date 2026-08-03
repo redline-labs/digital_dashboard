@@ -2058,6 +2058,50 @@ pair-setup, which files the new one. That is the intended behaviour, and
 
 To force a clean slate, delete the two files.
 
+## 11c. We were inviting the phone to try wireless CarPlay
+
+The phone asked for our Wi-Fi configuration
+(`RequestAccessoryWiFiConfigurationInformation`) on **every single session**, and
+we declined every time. That is not the phone being speculative -- it is
+answering something we said.
+
+iAP2 identification declares two message lists: what the accessory sends and
+what it can receive. Ours listed:
+
+| Direction | Message | Meaning |
+|---|---|---|
+| we **send** | `AccessoryWiFiConfigurationInformation` | "I will hand over Wi-Fi credentials" |
+| we receive | `RequestAccessoryWiFiConfigurationInformation` | "you may ask me for them" |
+| we receive | `WirelessCarPlayUpdate` | "tell me about wireless availability" |
+
+The first is the invitation. Claiming to *send* the credentials message is
+exactly how an accessory says it can take part in a handover to wireless
+CarPlay, so the phone dutifully opened that conversation on every connect.
+
+All three are now behind `IdentificationConfig::advertise_wireless_carplay`,
+default **false**. `DeviceTransportIdentifierNotification` deliberately stays in
+the received list regardless: it also carries the phone's *USB* transport id,
+which is about the link we are actually on.
+
+We never advertised a wireless or Bluetooth transport *component* -- only the
+USB one -- so the message lists were the whole of it. `/info`'s `bluetoothIDs`
+is unrelated: it is how the phone correlates the accessory, and LIVI sends it
+too on the wired path.
+
+**Not yet verified on hardware.** The change is unit-tested and the reasoning is
+above, but the run that was to confirm it could not enumerate USB at all. To
+check it, watch a session for the request that should now be absent:
+
+```bash
+./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose \
+  | grep -E "identification ACCEPTED|IdentificationRejected|WiFiConfiguration"
+```
+
+Expect `identification ACCEPTED` and no `WiFiConfiguration` line at all. If
+identification is instead *rejected*, the phone wanted one of those messages
+declared after all -- set `advertise_wireless_carplay = true` to restore the old
+behaviour, and say so here.
+
 ## 12. What LIVI has that we do not, and why
 
 The stack was compared against LIVI's `src/main/services/projection/driver/cp/`
