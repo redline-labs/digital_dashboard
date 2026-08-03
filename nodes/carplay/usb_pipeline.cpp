@@ -5,7 +5,6 @@
 
 #include "apple_usb/lockdown.h"
 #include "apple_usb/muxd.h"
-#include "apple_usb/ncm_bridge.h"
 #include "apple_usb/ncm_discovery.h"
 
 #include "airplay/receiver.h"
@@ -15,19 +14,20 @@
 
 #include <spdlog/spdlog.h>
 
-// Whether the operating system already provides the two things stages 3 and 6
-// would otherwise have to build: a usbmux daemon, and a driven NCM link.
+// Whether the operating system already provides a usbmux daemon we can use.
+// macOS does; Linux's will not switch the phone to configuration 6, so stage 3
+// brings its own.
 //
-// macOS provides both. Linux provides neither in a form we can use -- its
-// usbmuxd will not switch the phone to configuration 6, and its cdc_ncm holds
-// the NCM pair without giving us control of the framing.
-//
-// Both default to the host but can be overridden, so either branch can be
+// Defaults to the host but can be overridden, so either branch can be
 // type-checked from either platform. That is not hypothetical tidiness: the
-// Linux branch below is the one that cannot be built on a developer's Mac
-// otherwise, and it is also the one that matters in the car. Compile it here
-// with -DCARPLAY_USE_SYSTEM_MUX=0 -DCARPLAY_USE_SYSTEM_NCM=0 -- it links too,
-// because ncm_bridge_null.cpp supplies NcmBridge off Linux.
+// Linux branch is the one that cannot be built on a developer's Mac otherwise,
+// and it is also the one that matters in the car. Compile it with
+// -DCARPLAY_USE_SYSTEM_MUX=0.
+//
+// There was a matching CARPLAY_USE_SYSTEM_NCM once, because stage 6 used to
+// have two implementations: look the interface up, or build the link ourselves
+// over usbfs into a TAP. Only the lookup survives -- both operating systems
+// bring the link up on their own -- so there is nothing left to select between.
 #if !defined(CARPLAY_USE_SYSTEM_MUX)
 #  if defined(__APPLE__)
 #    define CARPLAY_USE_SYSTEM_MUX 1
@@ -35,28 +35,24 @@
 #    define CARPLAY_USE_SYSTEM_MUX 0
 #  endif
 #endif
-#if !defined(CARPLAY_USE_SYSTEM_NCM)
-#  if defined(__APPLE__)
-#    define CARPLAY_USE_SYSTEM_NCM 1
-#  else
-#    define CARPLAY_USE_SYSTEM_NCM 0
-#  endif
-#endif
 
-#if CARPLAY_USE_SYSTEM_NCM
-// Stage 6 becomes interface lookup rather than a bridge: the kernel already
-// built the link, so all this needs is getifaddrs and the BSD link-layer
-// sockaddr to match an interface by MAC.
+// Stage 6 is interface lookup: the system NCM driver already built the link, so
+// all this needs is a way to match an interface by MAC and read its link-local.
+// macOS wants the BSD link-layer sockaddr for the first half; Linux publishes
+// the same thing as text in sysfs.
 #include <arpa/inet.h>
 #include <ifaddrs.h>
-#include <net/if_dl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#if defined(__APPLE__)
+#include <net/if_dl.h>
+#else
+#include <fstream>
+#endif
 
 #include <cctype>
 #include <cerrno>
 #include <cstring>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -452,20 +448,25 @@ bool SessionMux::alive() const
 // an interface carrying an IPv6 link-local, on the same ethernet segment as the
 // phone's first NCM function.
 //
-//  * Linux -- NcmBridge does all of it. It takes the NCM pair away from
-//    cdc_ncm, drives NTB16 framing in userspace and bridges to a TAP device it
-//    creates and addresses itself.
+// The system NCM driver has already built this link by the time we look --
+// AppleUSBNCM on macOS, cdc_ncm on Linux -- binding the NCM function as soon as
+// configuration 6 is applied and giving it a real network interface. Neither
+// needs anything driven and neither needs privilege, so there is no bridge
+// here: the only question is *which* interface belongs to the first NCM
+// function, and iMACAddress answers it.
 //
-//  * macOS -- AppleUSBNCM already did all of that. It binds both NCM pairs as
-//    soon as configuration 6 is applied and gives each one a real network
-//    interface with a link-local address, with no privilege and nothing for us
-//    to drive. So there is no bridge here at all; the only question is *which*
-//    interface belongs to the first NCM function, and iMACAddress answers it.
+// Verified on hardware 2026-08-01 (macOS): en9 / ca:1f:e8:0f:24:b1 /
+// fe80::1ca1:5cd0:be56:35c6 for the first function, en8 for the second. And
+// 2026-08-02 (Linux): enxca1fe80f24b1 / fe80::c81f:e8ff:fe0f:24b1, same phone,
+// same host MAC, 4713 frames over three minutes.
 //
-//    Verified on hardware 2026-08-01: en9 / ca:1f:e8:0f:24:b1 /
-//    fe80::1ca1:5cd0:be56:35c6 for the first function, en8 for the second.
-//    Do not pick "the interface that just appeared" -- the iAP interface brings
-//    up an AppleUSBEthernetHost one too (en7 there), and it is not this.
+// Do not pick "the interface that just appeared" -- the iAP interface brings up
+// one too (AppleUSBEthernetHost / ipheth), and it is not this.
+//
+// What the system does *not* do is address the interface: it has to be up with
+// a link-local before this succeeds. macOS does that itself; on Linux it takes
+// a one-line network profile, which is what nodes/carplay/udev/*.network and
+// *.nmconnection are.
 class AvLink
 {
   public:
@@ -492,12 +493,7 @@ class AvLink
     std::string ifname_;
     std::string host_mac_;
     std::string link_local_;
-#if !CARPLAY_USE_SYSTEM_NCM
-    std::unique_ptr<apple_usb::NcmBridge> bridge_;
-#endif
 };
-
-#if CARPLAY_USE_SYSTEM_NCM
 
 // Normalise a MAC to lowercase colon-separated form. The CDC iMACAddress string
 // descriptor is 12 hex characters with no separators ("CA1FE80F24B1"), while
@@ -528,6 +524,40 @@ std::string normaliseMac(const std::string& text)
     }
     return out;
 }
+
+#if !defined(__APPLE__)
+
+// The name of the interface whose link-layer address is `mac`, or "".
+//
+// Linux publishes every interface's MAC as text under /sys/class/net, so this
+// needs no getifaddrs and no link-layer sockaddr at all -- the same lookup the
+// BSD version below spells out in twenty lines.
+std::string interfaceWithMac(const std::string& mac)
+{
+    const std::string wanted = normaliseMac(mac);
+    if (wanted.empty())
+    {
+        return {};
+    }
+
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator("/sys/class/net", ec))
+    {
+        std::ifstream in(entry.path() / "address");
+        std::string text;
+        if (!(in >> text))
+        {
+            continue;
+        }
+        if (normaliseMac(text) == wanted)
+        {
+            return entry.path().filename().string();
+        }
+    }
+    return {};
+}
+
+#else
 
 // The BSD name of the interface whose link-layer address is `mac`, or "".
 std::string interfaceWithMac(const std::string& mac)
@@ -570,6 +600,63 @@ std::string interfaceWithMac(const std::string& mac)
     return found;
 }
 
+#endif
+
+#if !defined(__APPLE__)
+
+// The first *bindable* IPv6 link-local on `ifname`, or "".
+//
+// Read from /proc/net/if_inet6 rather than getifaddrs, because that is the only
+// place an address's flags are visible. An address still running duplicate
+// address detection is reported by getifaddrs exactly like a finished one, but
+// bind() rejects it with EADDRNOTAVAIL -- so taking the first address we see
+// races DAD and fails intermittently on a fresh plug, which is precisely what
+// happened before this was written: the interface came up, the address was
+// there, and the AirPlay listener still could not take it.
+//
+// Columns are: address (32 hex chars), interface index, prefix length, scope,
+// flags, name -- all hex, all without separators.
+std::string linkLocalOf(const std::string& ifname)
+{
+    std::ifstream in("/proc/net/if_inet6");
+    std::string hex, index, prefix_len, scope, flags, name;
+    while (in >> hex >> index >> prefix_len >> scope >> flags >> name)
+    {
+        if (name != ifname || hex.size() != 32)
+        {
+            continue;
+        }
+        // 0x20 is the link-local scope; a global address on this interface is
+        // not what the phone is told to dial.
+        if (std::strtoul(scope.c_str(), nullptr, 16) != 0x20u)
+        {
+            continue;
+        }
+        const unsigned long address_flags = std::strtoul(flags.c_str(), nullptr, 16);
+        // IFA_F_TENTATIVE: DAD has not finished, so bind() would fail.
+        // IFA_F_DADFAILED: someone else answered for it; it will never work.
+        if ((address_flags & 0x40u) != 0 || (address_flags & 0x08u) != 0)
+        {
+            continue;
+        }
+
+        in6_addr address = {};
+        for (size_t i = 0; i < 16; ++i)
+        {
+            address.s6_addr[i] =
+                static_cast<uint8_t>(std::strtoul(hex.substr(i * 2, 2).c_str(), nullptr, 16));
+        }
+        char text[INET6_ADDRSTRLEN] = {};
+        if (::inet_ntop(AF_INET6, &address, text, sizeof(text)) != nullptr)
+        {
+            return text;
+        }
+    }
+    return {};
+}
+
+#else
+
 // The first IPv6 link-local on `ifname`, or "".
 std::string linkLocalOf(const std::string& ifname)
 {
@@ -609,6 +696,8 @@ std::string linkLocalOf(const std::string& ifname)
     ::freeifaddrs(list);
     return found;
 }
+
+#endif
 
 bool AvLink::start(const apple_usb::DeviceInfo& device)
 {
@@ -666,9 +755,10 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
 
     if (ifname_.empty())
     {
-        SPDLOG_ERROR("[ncm] no network interface has the host MAC {}. AppleUSBNCM should have "
-                     "created one when configuration 6 was applied -- check `ifconfig` and "
-                     "that nothing captured the device away from it.", host_mac_);
+        SPDLOG_ERROR("[ncm] no network interface has the host MAC {}. The system NCM driver "
+                     "(AppleUSBNCM / cdc_ncm) should have created one when configuration 6 was "
+                     "applied -- check `ip -br addr` or `ifconfig`, and that nothing captured "
+                     "the device away from it.", host_mac_);
         return false;
     }
     if (link_local_.empty())
@@ -684,40 +774,9 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
 
 void AvLink::stop()
 {
-    // Nothing to tear down: the interface is the kernel's, not ours.
+    // Nothing to tear down: the interface is the system's, not ours.
     running_ = false;
 }
-
-#else
-
-bool AvLink::start(const apple_usb::DeviceInfo& device)
-{
-    bridge_ = std::make_unique<apple_usb::NcmBridge>(device);
-    if (!bridge_->start())
-    {
-        SPDLOG_ERROR("[ncm] bridge did not start. Needs CAP_NET_ADMIN for the TAP device "
-                     "(setcap cap_net_admin+ep on this binary, or run as root).");
-        bridge_.reset();
-        return false;
-    }
-    ifname_ = bridge_->interfaceName();
-    host_mac_ = bridge_->hostMac();
-    link_local_ = bridge_->linkLocalAddress();
-    running_ = true;
-    return true;
-}
-
-void AvLink::stop()
-{
-    if (bridge_)
-    {
-        bridge_->stop();
-        bridge_.reset();
-    }
-    running_ = false;
-}
-
-#endif
 
 // Runs one attachment of one phone, from claiming the mux through to the iAP2
 // session ending. Returns when the phone goes away or `stop` is set; the return
@@ -739,20 +798,17 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
     std::unique_ptr<airplay::Receiver> receiver;
         airplay::ReceiverConfig receiver_config;
 
-#if CARPLAY_USE_SYSTEM_NCM
-        // Bind the AV link's address rather than the wildcard. macOS's own
-        // AirPlay Receiver (inside ControlCenter) already holds *:7000, so the
-        // wildcard bind fails with EADDRINUSE -- but binding this one address on
-        // the same port succeeds alongside it. The phone only ever dials the
-        // link-local we advertised, so this loses nothing.
+        // Bind the AV link's address rather than the wildcard. On macOS the
+        // system AirPlay Receiver (inside ControlCenter) already holds *:7000,
+        // so the wildcard bind fails with EADDRINUSE -- but binding this one
+        // address on the same port succeeds alongside it. The phone only ever
+        // dials the link-local we advertised, so this loses nothing, and on
+        // Linux it is the tighter bind anyway.
         //
         // Turning AirPlay Receiver off in System Settings would also free the
         // port, but requiring that of anyone running the node is worse than
         // simply not taking a port we were never entitled to.
         receiver_config.bind_address = ncm.scopedLinkLocal();
-#else
-        (void)ncm;
-#endif
 
         receiver_config.name = options.vehicle.name;
         receiver_config.model = options.vehicle.model;

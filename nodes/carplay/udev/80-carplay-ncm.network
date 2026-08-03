@@ -1,0 +1,60 @@
+# Link-local addressing for the phone's CarPlay NCM interface, for systems
+# where systemd-networkd owns the network. See carplay-ncm.nmconnection for the
+# NetworkManager equivalent -- install one or the other, not both.
+#
+# Install:
+#   sudo cp nodes/carplay/udev/80-carplay-ncm.network /etc/systemd/network/
+#   sudo systemctl enable --now systemd-networkd
+#   sudo systemctl restart systemd-networkd
+#
+# Why this file exists at all. When the phone is put into the CarPlay
+# configuration, the kernel's cdc_ncm binds the first NCM function and creates
+# a normal ethernet interface for it -- the same thing AppleUSBNCM does on
+# macOS. The driver does not bring the link up or address it, though, and the
+# CarPlay handshake needs exactly one thing from it: an IPv6 link-local to put
+# in CarPlayStartSession, which the phone then dials on port 7000. So all that
+# is left for the system to do is up the link and let addrconf generate that
+# address. That is what this unit is.
+#
+# A udev RUN+= rule would be the obvious alternative and is the wrong tool:
+# udev kills long-running children, RUN+= races whichever network daemon also
+# manages the link, and it cannot express addressing policy. Let the daemon
+# that owns links own this one.
+
+[Match]
+# Both conditions matter. Driver= alone would also catch NCM-based LTE modems,
+# which have nothing to do with CarPlay and do want DHCP.
+#
+# Deliberately not pinned to an interface number or a MAC: the MAC is dictated
+# by the phone and differs per device, and the NCM function's interface number
+# is not guaranteed across iPhone models. If a future kernel binds the second
+# NCM function too, it simply gets the same treatment -- harmless, because the
+# node picks the interface by the iMACAddress of the function it chose.
+Driver=cdc_ncm
+Property=ID_VENDOR_ID=05ac
+
+[Network]
+# The whole point: an fe80::/64 and nothing else. There is no DHCP server on
+# this link and no router, so asking for either just delays bring-up and, on
+# NetworkManager, causes the link to be torn back down when it times out.
+LinkLocalAddressing=ipv6
+DHCP=no
+IPv6AcceptRA=no
+
+# EUI-64 from the phone-dictated host MAC, so the address is derived from
+# something stable rather than from a per-boot secret. Nothing depends on the
+# value -- the node advertises whatever address it finds -- but a predictable
+# one is much easier to recognise in a packet capture.
+IPv6LinkLocalAddressGenerationMode=eui64
+
+# One peer on this link, so duplicate address detection has nothing to find and
+# only delays the address by a second at bring-up.
+IPv6DuplicateAddressDetection=0
+
+# Nothing should be discovering anything over the phone link.
+LLMNR=no
+MulticastDNS=no
+
+[Link]
+# A phone that is not plugged in must never hold up boot.
+RequiredForOnline=no

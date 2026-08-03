@@ -16,8 +16,7 @@ target_link_libraries(carplay_node_config
         yaml-cpp::yaml-cpp
 )
 
-# The whole node builds on every platform. apple_usb carries the platform split
-# internally (a null NcmBridge off Linux), so nothing here is conditional: the
+# The whole node builds on every platform, and nothing here is conditional: the
 # bring-up pipeline is compiled and linked on a developer's macOS box too, which
 # is the only way a refactor there gets caught before it reaches hardware.
 add_executable(carplay

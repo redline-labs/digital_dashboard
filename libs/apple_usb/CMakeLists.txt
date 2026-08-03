@@ -2,23 +2,28 @@ cmake_minimum_required(VERSION 3.10)
 
 project(apple_usb)
 
-# This library splits along a hardware line, and the split is what lets most of
-# it build (and be tested) on a developer's macOS box:
+# Every source here builds on every platform, which is what lets the whole
+# library be built and tested on a developer's macOS box:
 #
 #   * The protocol and service layer -- the usbmux state machine, the usbmuxd
 #     socket server, the lockdown client -- is plain C++ and POSIX sockets.
 #   * The USB transport is libusb, which is portable. Enumeration, descriptor
 #     parsing, configuration selection and every transfer build everywhere.
-#   * Only the NCM bridge's TAP/IP plumbing is Linux-only, and not because of
-#     USB: it needs /dev/net/tun, AF_INET6 ioctls and /proc/sys/net/ipv6.
 #
-# So the Linux-only boundary is the *network* plumbing, not USB. usb_device.h
-# stays a clean interface (libusb_device_handle is forward declared, <libusb.h>
-# is not included) so nothing above it has to know what backs it.
+# There used to be a platform split here for the NCM bridge, which drove NTB16
+# framing over usbfs into a TAP device and needed /dev/net/tun, AF_INET6 ioctls
+# and /proc/sys/net/ipv6. It is gone: the system NCM driver (AppleUSBNCM on
+# macOS, cdc_ncm on Linux) already builds that link when the CarPlay
+# configuration is applied, so the node looks the interface up instead of
+# rebuilding it. All that survives here is descriptor discovery
+# (ncm_discovery.cpp), which is how the right interface is identified.
+#
+# usb_device.h stays a clean interface (libusb_device_handle is forward
+# declared, <libusb.h> is not included) so nothing above it has to know what
+# backs it.
 set(APPLE_USB_SOURCES
     usb_device.cpp
     ncm_discovery.cpp
-    ncm_frame.cpp
     muxd.cpp
     usbmuxd_server.cpp
     usbmuxd_framing.cpp
@@ -28,18 +33,6 @@ set(APPLE_USB_SOURCES
     lockdown_client.cpp
     carkit_channel.cpp
 )
-
-# The bridge is the one platform-split file here, and it is a *substitution*,
-# not an omission: the null backend defines the same four out-of-line NcmBridge
-# methods, so NcmBridge is a complete type that links on every platform and no
-# caller needs an #ifdef around it. Everything the bridge does that is not TAP
-# -- descriptor discovery (ncm_discovery.cpp) and NTB16 framing (ncm_frame.cpp)
-# -- is in the portable list above, compiled and unit tested everywhere.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND APPLE_USB_SOURCES ncm_bridge.cpp)
-else()
-    list(APPEND APPLE_USB_SOURCES ncm_bridge_null.cpp)
-endif()
 
 add_library(apple_usb STATIC ${APPLE_USB_SOURCES})
 
@@ -62,16 +55,6 @@ target_link_libraries(apple_usb PUBLIC plist)
 find_package(OpenSSL REQUIRED)
 target_link_libraries(apple_usb PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Defined so a consumer can *choose* to skip stage 6 rather than watch it
-    # fail. It no longer gates compilation of anything: NcmBridge links here,
-    # start() just refuses. Nothing in the tree tests it today, and that is the
-    # point -- the code above the bridge is identical on both platforms.
-    target_compile_definitions(apple_usb PUBLIC APPLE_USB_NO_NCM=1)
-    message(STATUS
-        "apple_usb: non-Linux host -- USB transport built, NCM bridge is the null backend")
-endif()
-
 # Protocol-level tests. These drive the portable half against mocks, so they run
 # on any host -- no phone, no usbfs.
 add_executable(apple_usb_test_usbmux_client test_usbmux_client.cpp)
@@ -89,17 +72,6 @@ target_link_libraries(apple_usb_test_ncm_discovery PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET apple_usb_test_ncm_discovery LABELS apple_usb unit)
-
-# NTB16 framing, against synthetic transfer blocks. This is the AV data path --
-# every video frame and audio packet the phone sends is parsed here -- and it
-# had no coverage at all while it lived as private members of the Linux-only
-# NcmBridge. Runs anywhere.
-add_executable(apple_usb_test_ncm_frame test_ncm_frame.cpp)
-target_link_libraries(apple_usb_test_ncm_frame PRIVATE
-    apple_usb
-    spdlog::spdlog
-)
-add_project_test(TARGET apple_usb_test_ncm_frame LABELS apple_usb unit)
 
 # Pairing crypto: certificate shape, chain, and the on-disk round trip. Needs
 # OpenSSL directly to inspect what the generator produced.

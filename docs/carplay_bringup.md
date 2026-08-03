@@ -46,7 +46,7 @@ what to run, what you should observe, and how to triage the common failures.
 | `[carkit]` | lockdown / TLS / carkit service | `libs/apple_usb/lockdown.cpp` |
 | `[iap2]` | iAP2 link layer + control messages | `libs/iap2/` |
 | `[mfi]` | MFi coprocessor auth | `libs/iap2/mcp2221a_mfi_signer.cpp` |
-| `[ncm]` | NCM ↔ TAP bridge | `libs/apple_usb/ncm_bridge.cpp` |
+| `[ncm]` | NCM interface lookup | `nodes/carplay/usb_pipeline.cpp` (`AvLink`) |
 | `[airplay]` | RTSP/AirPlay session | `libs/airplay/` |
 | `[video]` / `[audio]` | media streams | `libs/airplay/` |
 | `[node]` | zenoh publishing / orchestration | `nodes/carplay/` |
@@ -99,7 +99,7 @@ What the AirPlay layer covers:
 
 and the layers underneath: `plist_test_{binary,xml,libplist_vectors}`,
 `iap2_test_{framing,csm,nmea}`,
-`apple_usb_test_{ncm_discovery,ncm_frame,pair_record,usbmux_client}`, plus
+`apple_usb_test_{ncm_discovery,pair_record,usbmux_client}`, plus
 `carplay_test_node_config` for the config file and its PNG reader.
 
 `iap2_test_csm` is worth knowing about for one thing in particular: it pins the
@@ -177,17 +177,12 @@ still works against it. Nothing in the build needs them.
   `ncm_discovery.cpp`. libusb runs on macOS, so enumeration, descriptor parsing
   and transfers are real there rather than stubbed. `usb_device_stub.cpp` is
   gone, and so is `APPLE_USB_NO_TRANSPORT`.
-- **Portable since the framing extraction (2026-08-01)** — `ncm_frame.cpp`: the
-  NTB16 parse/build and the EUI-64 link-local derivation, lifted out of
-  `ncm_bridge.cpp`. This is the AV data path, and it now has a unit suite
-  (`apple_usb_test_ncm_frame`) that runs everywhere.
-- **Linux only** — `ncm_bridge.cpp`, because TUN/TAP is. Off Linux it is
-  *substituted*, not omitted: `ncm_bridge_null.cpp` supplies the same four
-  out-of-line `NcmBridge` methods, `start()` refuses with an explanation, and
-  the build prints `apple_usb: non-Linux host -- USB transport built, NCM
-  bridge is the null backend`. `APPLE_USB_NO_NCM` is still defined for anyone
-  who would rather skip stage 6 than watch it fail, but nothing gates
-  compilation on it.
+- **Nothing is Linux-only any more (2026-08-02).** `ncm_bridge.cpp` and
+  `ncm_frame.cpp` were the last platform split — TUN/TAP and userspace NTB16
+  framing — and both are gone, along with `ncm_bridge_null.cpp` and
+  `APPLE_USB_NO_NCM`. Stage 6 is an interface lookup on both platforms now, so
+  every file in this library compiles and is tested everywhere. See the end of
+  stage 6 for why.
 
 The practical consequence: **the entire `carplay` node builds and links on
 macOS**, `usb_pipeline.cpp` and `iap2_session.cpp` included. There is no
@@ -273,7 +268,7 @@ and can be overridden so either branch type-checks from either platform:
 | 3 — mux | our `MuxHost` drives If1 | the system usbmuxd already does |
 | 4 — usbmuxd socket | our `UsbmuxdServer` on a private path | `/var/run/usbmuxd` |
 | 4 — pair record | we mint one; phone prompts for trust | already exists; no prompt |
-| 6 — NCM link | `NcmBridge` + TAP, ~1,400 lines | `AppleUSBNCM` → `en9` |
+| 6 — NCM link | `cdc_ncm` → `enx…`, plus a network profile | `AppleUSBNCM` → `en9` |
 | 7–10 | portable | portable |
 
 **Why not fight the system daemon.** Taking If1 from macOS's usbmuxd would mean
@@ -375,14 +370,16 @@ one the UDID padding above breaks:
 ./build/libs/apple_usb/apple_usb_muxctl /var/run/usbmuxd 00008140000138EE0184801C
 ```
 
-**Why there is no macOS NCM backend.** macOS has no TAP device. It *could* get
-an ethernet segment from a `feth` pair plus BPF frame injection, so this is not
-impossible — it is just several hundred lines of privileged platform code
-serving a host that will not normally have a phone attached. If it is ever
-written it replaces `ncm_bridge_null.cpp` rather than growing out of it.
+**Why there is no NCM backend on either platform any more.** There used to be a
+Linux-only userspace bridge here, and a note explaining that macOS could not
+have one because it has no TAP device. That turned out to be the wrong way
+round: macOS did not need one because `AppleUSBNCM` already builds the link, and
+neither does Linux, because `cdc_ncm` does the same. Stage 6 is an interface
+lookup on both. See the end of stage 6.
 
-**Privileges.** The driver needs raw USB access (usbfs) for the phone, an I²C
-adapter node for the MFi coprocessor, and TUN for the NCM bridge. Running as root covers
+**Privileges.** The driver needs raw USB access (usbfs) for the phone and an I²C
+adapter node for the MFi coprocessor. (It used to need TUN as well, for the NCM
+bridge; that is gone.) Running as root covers
 all three. To run unprivileged instead, install the rules shipped in the repo —
 this is a one-time step per machine. (On macOS there is no unprivileged option at
 all; see "Running stages 2–5 on macOS" above.)
@@ -601,7 +598,7 @@ start reading logs:
 3. **Interfaces and endpoints come from the configuration descriptor.** The mux
    interface is found by its `255/254/2` class triple and the NCM pair by
    walking CDC descriptors, instead of being hardcoded (`muxd.cpp`) or read out
-   of sysfs (`ncm_bridge.cpp`). The 2026-07-21 session recorded that the real
+   of sysfs. The 2026-07-21 session recorded that the real
    phone matches both — this port is what makes the code rely on that rather
    than on constants that happened to agree.
 
@@ -690,40 +687,27 @@ the real ones, from hardware on 2026-08-01:
 Compare every field against step 1's probe output. Then confirm the two
 behaviours the old code got right, because both are easy to lose in a rewrite:
 
-- **The first pair is selected, not the second.** The phone exposes two; the
-  kernel's `cdc_ncm` binds the first, and the release now happens through
-  `libusb_detach_kernel_driver` before the descriptors are read. If the log
-  shows a control interface higher than the first NCM one, the detach silently
-  failed. `CARPLAY_NCM_CTRL_IF=<n>` pins it while you investigate.
-- **The interrupt endpoint is still drained.** See the warning in stage 6 — this
-  is unchanged code, but it is the failure mode that looks like everything is
-  fine, so re-confirm the write counts rather than assuming.
+- **The first pair is selected, not the second.** The phone exposes two and the
+  system NCM driver binds the first, which is the one we want. If the log shows
+  a control interface higher than the first NCM one, descriptor discovery picked
+  wrong. `CARPLAY_NCM_CTRL_IF=<n>` pins it while you investigate.
 
-**Step 5 — NCM throughput under load.** The one change with a genuine
-performance question. The two pumps now issue *synchronous libusb* transfers on
-one handle; libusb's sync API serialises internally on an event lock, so one
-pump can end up servicing the other's completions. The old usbfs ioctls were
-independent. Watch for bulk OUT timeouts appearing *only* under video load, and
-compare NTB in/out counts against the 2026-07-21 baseline (**3960 out / 10026 in,
-zero errors**). `CARPLAY_NCM_NO_READER=1` disables the read pump to test the
-write path in isolation.
+**Step 5 — throughput under load.** This was the one change with a genuine
+performance question, because the AV data path used to run as two synchronous
+libusb pumps on one handle: libusb serialises its sync API on an event lock, so
+one pump could service the other's completions where the old usbfs ioctls were
+independent. Measured 2026-08-01 and found not to starve (3443 NTBs out / 3467
+in, zero errors, 2294 frames over ~100 s).
 
-**Measured 2026-08-01: no starvation.** A ~100 s `--max-stage 7` session with
-video streaming throughout gave **3443 NTBs out / 3467 in, zero errors and zero
-bulk timeouts**, with 2294 video frames decoded over the same span. So libusb's
-sync API serialising both pumps on one event lock is not a problem at CarPlay's
-uplink rate, and the async migration below is not needed. (The in-count is lower
-than the 07-21 baseline's 10026 only because that was a longer session; the
-ratio of errors to transfers is what matters here, and it is zero.)
-
-If this ever does show starvation, the fix is to move the NCM pumps to libusb's
-async API (`libusb_submit_transfer` plus a dedicated event thread) — the mux and
-lockdown paths are low-rate and can stay synchronous.
+**The question is moot since 2026-08-02.** The AV data path is the kernel's now,
+not ours — see the end of stage 6 — so the only libusb traffic left is the mux
+and lockdown, both low-rate. There is nothing here to starve, and the async
+migration this section used to recommend is not needed.
 
 ### What this port did *not* change
 
 Nothing above the transport: usbmux framing, plists, lockdown, TLS, pairing,
-iAP2, AirPlay, NTB16 framing, the TAP device and all IPv6 setup. If a failure
+iAP2 and AirPlay. If a failure
 appears in those layers after this port, suspect the transport underneath rather
 than the layer reporting it — with one exception: a phone rejected at detection
 for an unreadable UDID never reaches them at all.
@@ -1083,122 +1067,110 @@ identification encode + rejection handling, route-guidance merge in both arrival
 orders, call/power/cellular decode, the MFi authenticator on both protocol
 majors, and an end-to-end identification+auth handshake over the link layer.
 
-## 6. NCM/TAP link
+## 6. NCM link
 
 ```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep '\[ncm\]'
-ip -6 addr show cpusb0     # expect an fe80::/64 link-local address
-ping6 -c3 fe80::<phone>%cpusb0
+./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose 2>&1 | grep '\[ncm\]'
+ip -br addr show                          # expect an enx* interface, UP, with an fe80::/64
+ping6 -c3 ff02::1%<iface>                 # the phone answers from its own link-local
 ```
 
-**Expect:** the NCM interface pair claimed, `cpusb0` created and up, and the phone
-answering on its link-local address.
+**Expect:** an interface named after the phone's host MAC, up, carrying a
+link-local, and the phone answering on it. No privilege of any kind is needed.
 
-**⚠ The single most important thing on this stage: drain the control
-interface's interrupt endpoint.** CDC devices announce link state there
-(`NETWORK_CONNECTION`, `CONNECTION_SPEED_CHANGE`) and the kernel's `cdc_ncm`
-always keeps a URB queued on it. If the host never reads it, **the phone refuses
-to service the bulk OUT endpoint entirely** — every write times out while reads
-on the same interface keep working perfectly. It is a maddening signature
-because nothing looks wrong: the pair is claimed, the altsetting is right, the
-endpoints match the descriptors, and downlink is flowing. Draining the endpoint
-took this from 11 failed writes out of 12 to **3960 writes with zero errors**.
+**There is no bridge here, and that is the whole design.** When the phone is put
+into the CarPlay configuration, the system's own NCM driver binds the first NCM
+function and creates a normal ethernet interface for it — `AppleUSBNCM` on
+macOS, `cdc_ncm` on Linux. The handshake needs exactly one thing from that
+interface: an IPv6 link-local to put in `CarPlayStartSession`, which the phone
+then dials on port 7000. So stage 6 is a *lookup*, not a datapath:
 
-**Verified on hardware (2026-07-21):** `cpusb0` up with the phone-dictated MAC,
-3960 NTBs out / 10026 in with no errors, and the phone opening TCP to
-`[fe80::…]:7000` and sending `POST /pair-setup RTSP/1.0`
-(`User-Agent: AirPlay/950.7.1`). Stage 6 is done; that request is stage 7's
-first message.
+1. Read the configuration descriptor and find the first NCM function.
+2. Read its `iMACAddress` string descriptor — that is the host MAC the system
+   driver gave its interface.
+3. Find the interface with that MAC, and read its link-local.
 
-**Running unprivileged.** Creating a TAP needs `CAP_NET_ADMIN`, but *attaching*
-to a persistent one you already own does not — and `setcap` on the binary is
-lost on every rebuild, since it lives on the inode. Create the device once
-instead:
+Do not pick "the interface that just appeared". The iAP interface brings one up
+too (`AppleUSBEthernetHost` on macOS, `ipheth` on Linux) and it is not this one.
+
+**Verified on hardware.** macOS 2026-08-01: `en9` / `ca:1f:e8:0f:24:b1` /
+`fe80::1ca1:5cd0:be56:35c6`. Linux 2026-08-02: `enxca1fe80f24b1` /
+`fe80::c81f:e8ff:fe0f:24b1`, 4713 frames over three minutes with no errors.
+
+**The one piece of setup: the interface has to be addressed.** The NCM driver
+creates the interface but does not bring it up. macOS does that itself. On Linux
+it takes a one-line network profile, and which one depends on who owns links on
+the machine:
 
 ```bash
-sudo cp nodes/carplay/udev/carplay-tap.service /etc/systemd/system/
-sudo systemctl enable --now carplay-tap.service
+# systemd-networkd (head unit, headless)
+sudo cp nodes/carplay/udev/80-carplay-ncm.network /etc/systemd/network/
+sudo systemctl restart systemd-networkd
+
+# NetworkManager (most desktops, so most development machines)
+sudo cp nodes/carplay/udev/carplay-ncm.nmconnection /etc/NetworkManager/system-connections/
+sudo chown root:root /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+sudo chmod 600 /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+sudo nmcli connection reload
 ```
 
-That also sets `addrgenmode eui64`, so the kernel derives exactly the `fe80::`
-the bridge advertises, and `accept_dad=0`. The MAC is still set at runtime (the
-phone dictates it through `iMACAddress` and will ignore us otherwise) via
-`SIOCSIFHWADDR` **on the tun fd**, which the tun driver allows for a device you
-own. No capability is needed anywhere.
+Both say the same thing: link-local addressing only, no DHCP, EUI-64 generation.
+The `chmod 600` is not optional — NetworkManager silently ignores a keyfile that
+is group- or world-readable.
 
-**The advertised `fe80::` does not have to encode our MAC, and relying on that
-is what keeps stage 6 unprivileged.** This cost an hour on 2026-08-01 by looking
-like a permissions problem, so the mechanism is worth stating exactly.
+**⚠ Without that profile, NetworkManager actively breaks stage 6, and it does
+not look like a NetworkManager problem.** It treats the phone's NCM interface as
+an ordinary ethernet port and tries to get IPv4 configuration from it. There is
+no DHCP server on the link, so activation fails, NM deactivates the interface,
+and **the IPv6 link-local it had already assigned goes away with it**. Then it
+retries, forever. The symptoms are a stream of link up/down notifications and a
+bring-up that fails with `no IPv6 link-local address` — except when it happens
+to run inside one of the connected windows, which makes it look intermittent
+rather than systematic. `nmcli device status` showing `connecting (getting IP
+configuration)` on the phone's interface is the tell.
 
-The kernel derives a link-local **when the interface is brought up**, from
-whatever MAC is set at that instant, and it will not revise that address later:
+**⚠ Wait for duplicate address detection before binding.** A fresh link-local
+spends about a second `tentative` while DAD runs. `getifaddrs` reports a
+tentative address exactly like a finished one, but `bind()` rejects it with
+`EADDRNOTAVAIL` — so taking the first address you see races DAD, and the
+AirPlay listener fails to start on a fresh plug perhaps half the time. The
+address flags are the only way to tell, and on Linux they are visible only in
+`/proc/net/if_inet6` (column 5), not through `getifaddrs`:
 
-- IPv6 addresses survive carrier loss — only `NETDEV_DOWN` (admin down) flushes
-  them.
-- addrconf does **not** regenerate on `NETDEV_CHANGEADDR`.
-- It will not add a second link-local when one already exists.
+| flag | meaning |
+|---|---|
+| `0x40` | `IFA_F_TENTATIVE` — DAD still running, `bind()` will fail |
+| `0x08` | `IFA_F_DADFAILED` — someone answered for it; it will never work |
+| `0x80` | `IFA_F_PERMANENT` — usable |
 
-On a persistent TAP nothing has carrier until the bridge attaches, so generation
-is triggered by our own `TUNSETIFF` — and the bridge sets the phone-dictated MAC
-microseconds afterwards. **That is a race**, and it goes both ways in practice:
-both outcomes were observed on 2026-08-01 on the same machine. Whichever address
-lands then sticks for the life of the device. So this is intermittent across
-boots, not a deterministic failure — do not conclude from one good run that it
-is fixed.
+`linkLocalOf()` skips anything tentative or DAD-failed, so the existing 200 ms
+poll simply waits DAD out. Observed directly on 2026-08-02: `flags=c0`
+(permanent|tentative) at T+1.0 s, `flags=80` at T+2.0 s, with the node picking
+the address up at T+1.4 s only after it cleared.
 
-The bridge therefore **advertises whichever link-local the interface actually
-has** rather than insisting on the EUI-64 of the MAC. That address is reachable
-by definition, so nothing has to be added and the one step that wanted
-`CAP_NET_ADMIN` disappears.
-
-**Verified on hardware that the mismatch is harmless** (2026-08-01). With
-`cpusb0` deliberately left holding `fe80::dc70:7eff:fe94:a6ee` while its MAC was
-`ca:1f:e8:0f:24:b1` — forced by attaching, waiting out addrconf, then setting
-the MAC — the phone dialled the advertised address and the session ran to 2061
-decoded frames. The EUI-64 match in LIVI is incidental: it creates the TAP with
-the phone's MAC, so the kernel derives from it anyway. NDP resolves the address
-to whatever MAC we present, which is the part that actually matters.
-
-```
-[ncm]  advertising kernel link-local fe80::dc70:7eff:fe94:a6ee (EUI-64 of this MAC would be fe80::c81f:e8ff:fe0f:24b1)
-[iap2] sending CarPlayStartSession -> [fe80::dc70:7eff:fe94:a6ee]:7000 id=ca:1f:e8:0f:24:b1
-```
-
-`CARPLAY_TAP_MAC` in `carplay-tap.service` is consequently **optional**. Setting
-it to the phone's host MAC before first bring-up makes the derived address
-predictable and removes the race's visible effect, but nothing depends on it,
-and leaving it empty is correct for a head unit that may see more than one phone.
-
-**Recorded because it was tried and does not work:** `TUNSETCARRIER` on our own
-tun fd, to bounce carrier and make addrconf redo the derivation. It is the
-obvious unprivileged lever and it fails for the first reason above — the stale
-address is still present when carrier returns, so generation is skipped.
-Verified directly: with the bridge attached, `ip -6 addr` still showed the old
-address after the bounce. Do not re-attempt it.
+**Two NCM pairs.** The CarPlay configuration exposes two, and the system driver
+claims the first as soon as the configuration is applied — which is the one we
+want: its host MAC shares an allocation with the phone's own address
+(`ca:1f:e8:0f:…` here) while the second pair's is unrelated. On Linux the second
+pair is simply left unbound. `CARPLAY_NCM_CTRL_IF` pins the pair if you need to
+re-test that.
 
 **Triage.**
-- No `cpusb0` → `/dev/net/tun` missing or no `CAP_NET_ADMIN`.
-- `no NCM function pair in configuration 6` → descriptor discovery found nothing;
-  run `apple_usb_usbprobe` and compare against stage 1b's table.
-- `refusing to claim: a kernel driver still holds interface N` → the
-  `libusb_detach_kernel_driver` pass did not take. Confirm with
-  `lsusb -t` that `cdc_ncm` is gone.
-- Interface up but no ping → the kernel `cdc_ncm` driver may have claimed the
-  interface; it must be unbound so we can drive it from userspace.
+- No `enx*`/`en*` interface for the phone → the NCM function was never bound.
+  Confirm the phone really is in configuration 6, and that nothing captured the
+  device away from the system driver.
+- `no NCM function in configuration 6` → descriptor discovery found nothing; run
+  `apple_usb_usbprobe` and compare against stage 1b's table.
+- Interface exists but `has no IPv6 link-local address` → the network profile
+  above is not installed or not applied. On NetworkManager check
+  `nmcli device status`; anything other than `connected` with the `carplay-ncm`
+  profile means it is still fighting you.
+- `bind(...) failed: Cannot assign requested address` → a tentative address got
+  through; see DAD above.
 - Ping works but no inbound TCP → check that `CarPlayStartSession` was sent with
-  the correct accessory fe80 address and port 7000.
-- **Every bulk OUT times out while reads work** → the interrupt endpoint is not
-  being drained; see above. Confirm with usbmon (below): the OUT URBs will show
-  as submitted and then `ENOENT`/unlinked, meaning the device never serviced
-  them at all, while OUT on the usbmux endpoint `0x04` completes normally.
-- `"bulk endpoints not found"` → endpoint discovery now reads the configuration
-  descriptor through libusb, so it no longer depends on having selected the
-  altsetting first and the old sysfs `ep_*` race is gone entirely. Altsetting 1
-  is still where the data interface's bulk pair lives (as in LIVI), confirmed
-  on hardware 2026-08-01 for both NCM pairs.
-- Nothing at all on either endpoint → the phone only powers up its NCM data
-  path once a CarPlay session is actually running. Before `CarPlayStartSession`
-  both directions time out, which is expected, not a fault.
+  the correct accessory `fe80::` address and port 7000.
+- Nothing at all on the link before a session → expected, not a fault. The phone
+  only powers up its NCM data path once a CarPlay session is actually running.
 
 **Debugging USB with usbmon.** When a transfer fails and the cause is not
 visible from the driver's own logs, look at the bus:
@@ -1213,53 +1185,50 @@ tcpdump -i usbmon2 -w /tmp/usb.pcap -s 256      # bus 2; match your phone's bus
 Decode with the summary script pattern: the URB status is what matters.
 `ENOENT`/`ECONNRESET` on completion means *we* cancelled it (our timeout fired
 and the device never responded); `EPIPE` means the device stalled; `OK` on a
-sibling endpoint proves the device is servicing the bus generally, which is what
-localised the fault above.
+sibling endpoint proves the device is servicing the bus generally.
 
-**Two NCM pairs.** The CarPlay configuration exposes two, and `cdc_ncm` claims
-the first as soon as the configuration is applied. The bridge releases it
-(`detachKernelNcmDrivers`) and uses that first pair, which is correct: its host
-MAC shares an allocation with the phone's own address (`ca:1f:e8:0f:…` here)
-while the second pair's is unrelated. `CARPLAY_NCM_CTRL_IF` pins the pair if you
-need to re-test that.
-- `stop()` appears to hang for ~2s → by design; threads are joined rather than
-  having their fds yanked. Longer than that means a usbfs bulk IN ignored its
-  timeout, and there is no `USBDEVFS_DISCARDURB` escape hatch.
+### What used to be here, and why it is gone
 
-**Note on the fe80 address.** `linkLocalAddress()` returns *our* (the head
-unit's) address, derived EUI-64 from the TAP's MAC after it is set — that is the
-address that goes into `CarPlayStartSession` and that the phone dials at :7000.
-It is not the phone's address. The bridge re-reads
-`/sys/class/net/<if>/address` after setting the MAC so a failed `ip link set
-address` cannot desync what we advertise from what is on the wire.
+Until 2026-08-02 Linux ran its own NCM implementation: `NcmBridge` took the NCM
+pair away from `cdc_ncm`, drove NTB16 framing in userspace over usbfs, and
+bridged that to a TAP device created by a root `carplay-tap.service`. About 1900
+lines, plus a systemd unit and a `/dev/net/tun` dependency.
 
-**Verified by differential testing against the Python** (no hardware): NTB16
-block construction is byte-identical to LIVI's `_build_ntb` across 30 cases
-(frame sizes 60–9000, sequence counts including the 512-byte padding boundary
-and 16-bit wrap); NTB parsing matches `_parse_ntb` on 10 malformed/chained
-blocks; EUI-64 derivation matches on 9 MACs. So framing bugs are unlikely —
-suspect enumeration, altsetting, or privileges first.
+It was inherited from the LIVI Python port, where a userspace bridge was the
+only option available. It was never a considered choice against the kernel
+driver — and the macOS port, which had to use `AppleUSBNCM` because nothing else
+exists there, is what made that visible: the same lookup works on Linux, because
+`cdc_ncm` does the same job.
 
-That differential run was a one-off. Since 2026-08-01 the framing lives in
-`ncm_frame.cpp` and `apple_usb_test_ncm_frame` pins it permanently and in-tree
-(60 assertions, runs on any host). It covers what the differential run did not:
-malformed input. Backwards NDP chains, out-of-range datagram pointers,
-truncated blocks and short NDPs are all exercised, because the differential
-cases were all things Python had produced and therefore well-formed.
+Measured before deleting it, same phone, same three-minute soak:
 
-**One latent bug found by that suite** (2026-08-01, fixed): `deriveEui64LinkLocal`
-accepted a malformed MAC. `std::from_chars` reports success on a *partial*
-parse, so `"0g:…"` came back as `0` with the pointer left on the `g`, and the
-end pointer was never checked. In practice the MAC comes from
-`/sys/class/net/<if>/address` and is always well-formed, so this could not fire
-on the current call path — but the failure mode if it ever did is the bad kind:
-a plausible-looking wrong link-local goes into `CarPlayStartSession`, the phone
-dials an address we are not listening on, and the session dies with no error
-anywhere. The fix requires `from_chars` to have consumed both hex digits.
+| path | frames | fps | errors |
+|---|---|---|---|
+| kernel `cdc_ncm` | 4713 | 25.24 | 0 |
+| userspace TAP bridge | 4625 | 24.75 | 0 |
 
-**Known perf limitation:** TX sends one ethernet frame per NTB block (no
-aggregation), i.e. one bulk transfer per frame. If uplink throughput is a
-problem under video-heavy load, this is the thing to fix.
+So the kernel path is not slower, needs no privilege, and deletes the TAP
+service. Two classes of bug went with it, both of which had cost real debugging
+time:
+
+- **The interrupt-endpoint drain.** CDC devices announce link state on the
+  control interface's interrupt endpoint, and if the host never reads it the
+  phone stops servicing the bulk OUT endpoint entirely — every write times out
+  while reads keep working. Diagnosing that took a usbmon capture and most of a
+  day. The kernel driver always keeps a URB queued there, so the failure cannot
+  occur.
+- **The link-local generation race.** addrconf derives the link-local when the
+  interface is brought up, from whatever MAC is set at that instant, and never
+  revises it. On a persistent TAP that raced the bridge setting the
+  phone-dictated MAC — non-deterministically, differently across boots on the
+  same machine. The system driver sets the MAC before the interface exists, so
+  there is nothing to race.
+
+**Known limitation of the old path, recorded in case it ever comes back:** TX
+sent one ethernet frame per NTB block with no aggregation, i.e. one bulk
+transfer per frame. `cdc_ncm` aggregates properly, which is the likeliest reason
+the kernel path measured marginally faster despite doing the same work.
+
 
 ## 7. AirPlay handshake through RECORD
 
@@ -2391,8 +2360,8 @@ Not all stages below are implemented yet. Current state:
 | lockdown client + TLS + pair record + pairing, ours | **the only implementation** — libimobiledevice removed 2026-07-31. Pairs from scratch; 25 consecutive clean runs |
 | iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
 | iAP2 metadata decode | written, unit-tested |
-| NCM ↔ TAP bridge | verified on hardware 2026-07-21 (stage 6); **discovery half rewritten on libusb 2026-08-01**, TAP/IP half untouched |
-| NTB16 framing (`ncm_frame.cpp`) | extracted from the bridge 2026-08-01 and unit-tested for the first time (`apple_usb_test_ncm_frame`, 60 assertions). Framing logic itself unchanged and hardware-proven; the extraction did surface one latent bug in the EUI-64 derivation (stage 6) |
+| NCM link | **rebuilt on the system NCM driver 2026-08-02** — the userspace bridge and its TAP are deleted; verified on hardware, 4713 frames over three minutes with no errors, and measured against the old path (see stage 6) |
+| NTB16 framing | **deleted 2026-08-02** — the kernel NCM driver frames the AV path now, so this code and its unit suite are gone along with the bridge |
 | **macOS stages 1–7** | **verified on hardware 2026-08-01** — config switch under root, then system usbmuxd + lockdown TLS + carkit + `AppleUSBNCM` + iAP2/MFi auth + 975 decoded video frames, all unprivileged after the one-time switch. See "Running on macOS" |
 | MCP2221A userspace driver | **three bugs fixed 2026-08-01** — every transfer was addressed to 0x00, the ACK bit was unmasked, and a NACK latched the engine. Presented as a wiring fault for a long time; it was not |
 | AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |

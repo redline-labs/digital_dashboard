@@ -1,0 +1,49 @@
+# Link-local addressing for the phone's CarPlay NCM interface, for systems
+# where NetworkManager owns the network -- which is most desktops, and so most
+# development machines. See 80-carplay-ncm.network for the systemd-networkd
+# equivalent; install one or the other, not both.
+#
+# Install (the permissions are not optional -- NetworkManager ignores a keyfile
+# that is group- or world-readable):
+#   sudo cp nodes/carplay/udev/carplay-ncm.nmconnection \
+#       /etc/NetworkManager/system-connections/
+#   sudo chown root:root /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+#   sudo chmod 600 /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+#   sudo nmcli connection reload
+#
+# Without this, NetworkManager treats the phone's NCM interface as an ordinary
+# ethernet port and tries to get IPv4 configuration from it. There is no DHCP
+# server on the link, so activation fails, NetworkManager deactivates the
+# interface, and the IPv6 link-local it had already assigned goes away with it.
+# It then retries, forever. The visible symptoms are a stream of link up/down
+# notifications and a CarPlay bring-up that fails with "no IPv6 link-local
+# address" except when it happens to run inside one of the connected windows.
+
+[connection]
+id=carplay-ncm
+type=ethernet
+autoconnect=true
+# Ahead of the default wired profile, which would otherwise claim the interface
+# first and start the DHCP cycle described above.
+autoconnect-priority=100
+
+[match]
+# NetworkManager cannot match on USB vendor, so unlike the networkd unit this
+# matches the driver alone. On a machine that also has an NCM-based LTE modem,
+# narrow it -- add the modem's own higher-priority profile, or pin this one with
+# interface-name=.
+driver=cdc_ncm
+
+[ipv4]
+# Nothing on this link speaks IPv4. Asking is what breaks it.
+method=disabled
+
+[ipv6]
+# The one thing the CarPlay handshake needs: an fe80::/64 to advertise in
+# CarPlayStartSession for the phone to dial on port 7000.
+method=link-local
+# Derived from the phone-dictated host MAC rather than a per-boot secret, so the
+# address is predictable in a packet capture. Nothing depends on the value.
+addr-gen-mode=eui64
+
+[ethernet]
