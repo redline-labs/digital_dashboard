@@ -125,7 +125,11 @@ struct NodeConfig
     // wants the button, whereas airplay::Receiver defaults to advertising
     // nothing so that a caller has to ask for it. No icon is defaulted --
     // artwork only ever comes from a config file.
-    airplay::OemButtonConfig oem_button{.enabled = true, .label = "Dashboard"};
+    airplay::OemButtonConfig oem_button{
+        .enabled = true,
+        .label = "Dashboard",
+        .icons = {}
+    };
 
     // --- Bring-up knobs -----------------------------------------------------
     // Not in the config file: these exist to take one layer at a time during a

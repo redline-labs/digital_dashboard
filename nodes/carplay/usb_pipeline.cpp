@@ -750,6 +750,8 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
         // port, but requiring that of anyone running the node is worse than
         // simply not taking a port we were never entitled to.
         receiver_config.bind_address = ncm.scopedLinkLocal();
+#else
+        (void)ncm;
 #endif
 
         receiver_config.name = options.vehicle.name;
