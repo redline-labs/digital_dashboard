@@ -559,21 +559,46 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         // Wait for it to come back at the same physical port with the CarPlay
         // configurations exposed. The address will have changed; the port has
         // not, which is exactly why the port path is what we track.
+        //
+        // Track whether the phone was ever seen again at all, because "still
+        // settling" and "gone" need different advice and look identical from
+        // the timeout alone.
         bool exposed = false;
+        bool seen_at_all = false;
+        int last_num_configurations = 0;
         for (int i = 0; i < 25; ++i)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            if (const auto d = findDeviceAt(port);
-                d && d->num_configurations >= kCarPlayConfiguration)
+            const auto d = findDeviceAt(port);
+            if (!d)
+            {
+                continue;
+            }
+            seen_at_all = true;
+            last_num_configurations = d->num_configurations;
+            if (d->num_configurations >= kCarPlayConfiguration)
             {
                 exposed = true;
                 break;
             }
         }
+        if (!exposed && !seen_at_all)
+        {
+            // The vendor request re-enumerates the phone, and a hypervisor that
+            // owns the port decides all over again who gets the device when it
+            // comes back. VMware in particular tends to hand it to the host.
+            SPDLOG_ERROR("[usb] device never came back at port {} after the request to expose "
+                         "the CarPlay configurations. It re-enumerates at that point, so on a "
+                         "VM the usual cause is the hypervisor handing it back to the host -- "
+                         "check `lsusb` and re-attach the phone to the guest.",
+                         port.toString());
+            return false;
+        }
         if (!exposed)
         {
-            SPDLOG_ERROR("[usb] device at port {} did not expose CarPlay configurations",
-                         port.toString());
+            SPDLOG_ERROR("[usb] device at port {} came back but exposed only {} configurations, "
+                         "expected at least {}. It may just be slow to settle; try again.",
+                         port.toString(), last_num_configurations, kCarPlayConfiguration);
             return false;
         }
     }
@@ -589,11 +614,26 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         return true;
     }
 
+    // Kept across the block below so the diagnostic can name the actual failure
+    // rather than guessing: the permission story and the contention story have
+    // completely different fixes, and only errno tells them apart. Seeded with
+    // the open-failure case, since failing to open the usbfs node at all is the
+    // one branch that never reaches libusb_set_configuration -- and on Linux
+    // that failure really is about permissions.
+    int set_config_rc = LIBUSB_ERROR_ACCESS;
+
     DeviceHandle handle = openDevice(port);
     if (handle)
     {
         // Linux returns EBUSY while any interface is claimed, so every bound
         // driver (ipheth, cdc_ncm, an earlier client) has to be released first.
+        //
+        // This only reaches *kernel* drivers: an interface claimed from
+        // userspace through usbfs -- gvfsd-gphoto2 is the one that bites on a
+        // GNOME desktop -- is invisible to LIBUSB_CAP_SUPPORTS_DETACH_KERNEL_DRIVER
+        // and still returns EBUSY below. Nothing we can do about that from in
+        // here, so the error path names it instead.
+        //
         // macOS instead captures the whole device in one go -- and it is macOS's
         // own usbmuxd that has to be displaced, which is running by default and
         // will reclaim the phone the moment we let go. Either way the handle
@@ -609,13 +649,13 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
         // re-enumerate the device, so open fds and, on a VM, the hypervisor's
         // passthrough binding both survive. macOS's capture does not
         // re-enumerate either, so the same reasoning holds there.
-        const int rc = libusb_set_configuration(handle.native(), kCarPlayConfiguration);
-        if (rc == LIBUSB_SUCCESS)
+        set_config_rc = libusb_set_configuration(handle.native(), kCarPlayConfiguration);
+        if (set_config_rc == LIBUSB_SUCCESS)
         {
             return true;
         }
         SPDLOG_DEBUG("[usb] libusb_set_configuration({}) failed: {}", kCarPlayConfiguration,
-                     libusb_strerror(rc));
+                     libusb_strerror(set_config_rc));
         handle.reset();
     }
 
@@ -634,11 +674,30 @@ bool switchToCarPlayConfiguration(const DeviceInfo& device)
                      "Unplug and replug the phone and try again.",
                      kCarPlayConfiguration, port.toString());
     }
+    else if (set_config_rc == LIBUSB_ERROR_BUSY)
+    {
+        // Not a permission problem, and telling someone to try root here sends
+        // them down a dead end: root gets the same EBUSY. Something else holds
+        // an interface, and on a desktop it is almost always the gvfs camera
+        // monitor treating the phone as a PTP camera.
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}: another process holds "
+                     "an interface. Root will not help. Find it with "
+                     "`fuser -v /dev/bus/usb/*/*`; on a GNOME desktop it is usually "
+                     "gvfsd-gphoto2, which nodes/carplay/udev/99-carplay.rules now tells "
+                     "gvfs to leave alone -- reinstall the rules and replug.",
+                     kCarPlayConfiguration, port.toString());
+    }
+    else if (set_config_rc == LIBUSB_ERROR_ACCESS)
+    {
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}: permission denied on the "
+                     "usbfs node. Install nodes/carplay/udev/99-carplay.rules and make sure you "
+                     "are in the plugdev group.",
+                     kCarPlayConfiguration, port.toString());
+    }
     else
     {
-        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}. Either run as root or "
-                     "install nodes/carplay/udev/99-carplay.rules to get usbfs access.",
-                     kCarPlayConfiguration, port.toString());
+        SPDLOG_ERROR("[usb] Failed to set configuration {} at port {}: {}", kCarPlayConfiguration,
+                     port.toString(), libusb_strerror(set_config_rc));
     }
     return false;
 }

@@ -21,6 +21,24 @@
 # things working across re-enumeration when logged in locally.
 SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
+# Keep the desktop's camera monitor off the phone. In the configuration it
+# boots into, the phone exposes a PTP still-image interface (class 06/01/01),
+# which /lib/udev/rules.d/60-libgphoto2-*.rules matches on to set ID_GPHOTO2=1.
+# gvfs-gphoto2-volume-monitor sees that tag, spawns gvfsd-gphoto2, and that
+# process claims the interface through usbfs -- at which point our
+# USBDEVFS_SETCONFIGURATION returns EBUSY and the switch to configuration 6
+# fails. It looks like a permission problem and is not one: running as root
+# fails identically, because the interface is claimed, not protected.
+#
+# libusb's detach-kernel-driver path cannot help here either; the claim comes
+# from userspace, not from a kernel driver.
+#
+# This runs at 99-, after 60-, so clearing the variables wins. Tradeoff: the
+# desktop will no longer offer to import photos from an iPhone over USB.
+# Delete this rule if you want that back and are willing to stop gvfsd-gphoto2
+# by hand before each run.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ENV{ID_GPHOTO2}="", ENV{GPHOTO2_DRIVER}=""
+
 # --- MFi coprocessor, reached over I2C --------------------------------------
 # On Linux the MCP2221A is driven by the in-kernel hid_mcp2221 driver, which
 # registers it as a standard I2C adapter; we talk to the MFi chip through
