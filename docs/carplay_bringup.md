@@ -120,7 +120,7 @@ node can publish a synthetic session (encoded H.264 test pattern, a 440 Hz PCM
 tone, and rotating now-playing/nav metadata) on the real zenoh topics:
 
 ```bash
-./build/nodes/carplay/carplay --simulate --verbose      # terminal 1
+./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --simulate --verbose  # terminal 1
 ./build/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml   # terminal 2
 ```
 
@@ -250,9 +250,17 @@ is sticky across unplugs, so a single privileged run moves the phone into it and
 every run afterwards — stages 3 onwards — works unprivileged:
 
 ```bash
-sudo ./build/nodes/carplay/carplay --max-stage 2 --verbose   # once
-./build/nodes/carplay/carplay --max-stage 6 --verbose        # thereafter
+sudo ./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --max-stage 2 --verbose  # once
+./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --max-stage 6 --verbose       # thereafter
 ```
+
+**`--config` (short form `-c`) is required**, including for `--simulate`, which does not read it.
+One rule is easier to remember than one rule with an exception, and everything
+the accessory tells the phone about itself now comes from that file rather than
+being half config and half built-in default. The bring-up knobs (`--max-stage`,
+`--state-dir`, `--location`, `--iap2-allow-missing-mfi`) stay on the command
+line, because they are about taking one layer at a time rather than about what
+the vehicle is.
 
 **macOS needs less code than Linux, not more**, because it ships both of the
 things we hand-rolled. `usb_pipeline.cpp` selects between them with
@@ -1872,11 +1880,8 @@ drifts, this is the first thing to revisit.
 
 **Night mode** switches CarPlay's own UI between its day and night themes:
 
-```bash
-./build/nodes/carplay/carplay --night-mode=true --verbose
-```
-
-or `night_mode:` in the config. It is pushed at RECORD — the phone ignores event
+Set `night_mode:` in the config. There is no command-line override -- what the
+accessory presents to the phone comes from one place. It is pushed at RECORD — the phone ignores event
 commands sent before the session starts, and older iOS stalls the bring-up ~5 s
 on one — and re-sent every session, because the phone does not remember ours and
 assumes day. It is also reflected in `CarPlaySessionState.nightMode`, a field
@@ -1987,9 +1992,11 @@ CarPlay page.
 
 ```bash
 ./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose
-./build/nodes/carplay/carplay --oem-button=false      # advertise no button
-./build/nodes/carplay/carplay --oem-label "Mercedes"  # override the caption
 ```
+
+`oem_button.enabled` and `oem_button.label` in the config control it. There are
+no command-line overrides: everything the accessory presents to the phone comes
+from the config file, so what a vehicle showed is answerable from the file alone.
 
 `configs/carplay/carplay.yaml` documents every field the node exposes -- the
 vehicle's identity, the panel's geometry, and the button below. The artwork it points at is
@@ -2398,7 +2405,7 @@ Not all stages below are implemented yet. Current state:
 | **Event channel inbound commands** | written 2026-08-01 — the phone's own commands are now parsed and acknowledged (they were previously read and discarded). `requestUI`, `modesChanged`, `duckAudio`/`unduckAudio`, `suggestUI` and `disableBluetooth` routed 2026-08-02; see stage 10b |
 | **Session lifecycle (TEARDOWN)** | written 2026-08-02 — TEARDOWN was acknowledged and otherwise ignored, so the dashboard never learned a session had ended. Not hardware-verified |
 | **`POST /feedback` media clock** | written 2026-08-02 — names the open audio streams instead of answering empty. No playback anchor; see stage 10b |
-| **Night mode** | written 2026-08-02, wired to `--night-mode` / config and to `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
+| **Night mode** | written 2026-08-02, set by `night_mode:` in the config and reflected in `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
 | **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
 | **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
 | **Manufacturer button** (`/info` advertisement + press decode) | **fully verified on hardware 2026-08-02** — tile, label, artwork (needs `prerendered: true`) and the press. Nothing is hooked to the handler yet. See stages 11 and 14 |

@@ -76,7 +76,7 @@ display:
   # with every hardware session behind it, and turning this on hands the choice
   # to the phone, which will take it. Both halves go out together: hevcInfo in
   # GET /info and "hevc" in the SETUP enabledFeatures.
-  allow_hevc: false
+  allow_hevc: true
 
 # Advertised as deviceID and as the Bluetooth address in GET /info. Locally
 # administered (the 0x02 bit), which is what an accessory with no real MAC

@@ -55,14 +55,8 @@ int main(int argc, char** argv)
     options.add_options()
         ("key-prefix", "Zenoh key prefix for all published/subscribed topics",
          cxxopts::value<std::string>()->default_value("nodes/carplay"))
-        ("config", "Node configuration YAML (see configs/carplay/carplay.yaml)",
-         cxxopts::value<std::string>()->default_value(""))
-        ("oem-button", "Show the manufacturer button on CarPlay's home screen",
-         cxxopts::value<bool>()->default_value("true"))
-        ("oem-label", "Caption under the manufacturer button (overrides --config)",
-         cxxopts::value<std::string>()->default_value(""))
-        ("night-mode", "Draw CarPlay's own UI in its night theme",
-         cxxopts::value<bool>()->default_value("false"))
+        ("c,config", "Node configuration YAML (required; see configs/carplay/carplay.yaml)",
+         cxxopts::value<std::string>())
         ("state-dir", "Directory for accessory identity and pair records",
          cxxopts::value<std::string>()->default_value(""))
         ("simulate", "Publish a synthetic session (no phone required) for dashboard testing")
@@ -94,34 +88,27 @@ int main(int argc, char** argv)
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
-    // Config file first, command line over the top: the flags are for a
-    // bring-up session, the file is what a vehicle ships with.
+    // Required. What the accessory tells the phone about itself -- its identity,
+    // the panel's size, whether it drives on the left -- is not something to
+    // infer from a built-in default: a wrong value here is invisible on this
+    // side and shapes what the phone draws and records against the pairing.
+    if (args.count("config") == 0)
+    {
+        SPDLOG_ERROR("[node] --config is required. Start from "
+                     "configs/carplay/carplay.yaml, which documents every field.");
+        return 1;
+    }
+
     carplay::NodeConfig config;
-    if (const std::string path = args["config"].as<std::string>(); !path.empty())
+    const std::string config_path = args["config"].as<std::string>();
+    if (!carplay::loadNodeConfig(config_path, config))
     {
-        if (!carplay::loadNodeConfig(path, config))
-        {
-            // Carrying on with defaults would silently drop whatever the file
-            // was configuring, and the icons are the whole point of having one.
-            SPDLOG_ERROR("[node] refusing to start with an unusable --config");
-            return 1;
-        }
-        SPDLOG_INFO("[node] loaded config from {}", path);
+        // Carrying on with defaults would silently drop whatever the file was
+        // configuring, which is the opposite of why it is mandatory.
+        SPDLOG_ERROR("[node] refusing to start with an unusable --config");
+        return 1;
     }
-    // count() is the number of times the flag was actually given, so these only
-    // override when asked for -- a config saying `enabled: false` stands.
-    if (args.count("oem-button") > 0)
-    {
-        config.oem_button.enabled = args["oem-button"].as<bool>();
-    }
-    if (args.count("night-mode") > 0)
-    {
-        config.night_mode = args["night-mode"].as<bool>();
-    }
-    if (const std::string label = args["oem-label"].as<std::string>(); !label.empty())
-    {
-        config.oem_button.label = label;
-    }
+    SPDLOG_INFO("[node] loaded config from {}", config_path);
 
     const std::string prefix = args["key-prefix"].as<std::string>();
     carplay::ZenohBridge bridge(prefix);

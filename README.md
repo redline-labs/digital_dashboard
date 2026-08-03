@@ -102,7 +102,7 @@ tone, rotating metadata) on the real topics so the whole dashboard side can be e
 on any platform:
 
 ```bash
-./nodes/carplay/carplay --simulate
+./nodes/carplay/carplay -c ../configs/carplay/carplay.yaml --simulate
 ```
 
 Hardware bring-up is documented step-by-step in [docs/carplay_bringup.md](docs/carplay_bringup.md).
