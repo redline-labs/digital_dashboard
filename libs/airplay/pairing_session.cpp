@@ -2,6 +2,7 @@
 
 #include "airplay/pairing_session.h"
 
+#include "airplay/pairing_store.h"
 #include "airplay/srp.h"
 #include "airplay/tlv8.h"
 
@@ -45,12 +46,23 @@ Bytes tlvError(uint8_t state, uint8_t error)
 // header does not have to name the SRP and key types.
 struct PairingSession::State
 {
+    explicit State(std::string state_dir) : store(std::move(state_dir))
+    {
+        identity = store.loadOrCreateIdentity();
+    }
+
+    PairingStore store;
+
+    // True when pair-verify checked the phone against a key already on file.
+    bool recognised = false;
+
     // pair-setup (SRP). Recreated per attempt: the phone retries from M1.
     std::unique_ptr<srp::Server> srp_server;
     Bytes srp_session_key;
 
     // Long-term accessory identity, used to sign pair-setup M6 and pair-verify.
-    crypto::Ed25519Pair identity = crypto::ed25519Generate();
+    // Loaded from the store, or generated and saved on first run.
+    crypto::Ed25519Pair identity;
 
     // The phone's identity, learned in M5.
     std::string device_identifier;
@@ -75,8 +87,12 @@ struct PairingSession::State
 };
 
 PairingSession::PairingSession(Config config) :
-    state_(std::make_unique<State>()), config_(std::move(config))
+    state_(std::make_unique<State>(config.state_dir)), config_(std::move(config))
 {
+    if (state_->store.enabled())
+    {
+        SPDLOG_INFO("[airplay] pairing store: {} phone(s) known", state_->store.phoneCount());
+    }
 }
 
 PairingSession::~PairingSession() = default;
@@ -89,6 +105,11 @@ bool PairingSession::paired() const
 bool PairingSession::verified() const
 {
     return state_->verified;
+}
+
+bool PairingSession::recognised() const
+{
+    return state_->recognised;
 }
 
 const Bytes& PairingSession::controlReadKey() const
@@ -230,6 +251,9 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             if (device_ltpk != nullptr)
             {
                 state_->device_ltpk = *device_ltpk;
+                // Persist it so this phone is recognised on the next run
+                // instead of pairing from scratch.
+                state_->store.savePhoneKey(state_->device_identifier, *device_ltpk);
             }
 
             // M6: our identifier, our long-term public key, and a signature
@@ -370,18 +394,40 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
                                    state_->verify_ephemeral.public_key.begin(),
                                    state_->verify_ephemeral.public_key.end());
 
-            if (!state_->device_ltpk.empty() &&
-                !crypto::ed25519Verify(state_->device_ltpk, signed_material, *signature))
+            // Prefer the key on file over the one this session's pair-setup
+            // handed us. They are normally the same; when they differ, the
+            // stored one is the one that means something -- it is evidence
+            // about the phone from before this connection existed.
+            const std::string phone_id(identifier->begin(), identifier->end());
+            const auto stored = state_->store.phoneKey(phone_id);
+            const Bytes& expected = stored ? *stored : state_->device_ltpk;
+            state_->recognised = stored.has_value();
+
+            if (expected.empty())
             {
-                // Logged rather than fatal for now: a persistent pair record
-                // across runs is not implemented, so the LTPK we hold is only
-                // the one from this session's pair-setup.
-                SPDLOG_WARN("[airplay] pair-verify M3 signature did not verify against the "
-                            "stored LTPK; continuing");
+                // No pair-setup this session and nothing on file. Nothing to
+                // check the signature against, so there is no security here to
+                // claim -- say so rather than logging a reassuring "verified".
+                SPDLOG_WARN("[airplay] pair-verify M3 from '{}' with no key to check it against "
+                            "(no pair-setup this session, nothing on file); allowing",
+                            phone_id);
+            }
+            else if (!crypto::ed25519Verify(expected, signed_material, *signature))
+            {
+                // With a key on file this is a real failure: either the phone
+                // is not who it claims, or it rotated its key without redoing
+                // pair-setup. Refuse -- the whole point of persisting the key
+                // was to be able to.
+                SPDLOG_ERROR("[airplay] pair-verify M3 signature from '{}' did NOT verify against "
+                             "the {} key; refusing",
+                             phone_id, stored ? "stored" : "session");
+                return rtsp::makeResponse(200, "OK", kTlvContentType,
+                                          tlvError(4, kErrorAuthentication));
             }
             else
             {
-                SPDLOG_INFO("[airplay] pair-verify M3 signature verified");
+                SPDLOG_INFO("[airplay] pair-verify M3 signature verified against the {} key",
+                            stored ? "stored" : "session");
             }
 
             // Control channel keys for everything after this point.

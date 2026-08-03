@@ -253,6 +253,7 @@ Receiver::Receiver(ReceiverConfig config) : config_(std::move(config))
     pairing.mfi_certificate = config_.mfi_certificate;
     pairing.mfi_sign = config_.mfi_sign;
     pairing.mfi_protocol_major = config_.mfi_protocol_major;
+    pairing.state_dir = config_.state_dir;
     EventChannel::Config events;
     events.width = config_.width;
     events.height = config_.height;

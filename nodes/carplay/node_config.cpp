@@ -177,6 +177,26 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                 return false;
             }
 
+            if (const YAML::Node status = vehicle["status"]; status && status.IsMap())
+            {
+                // Each key independently optional: an absent one is left out of
+                // the update rather than defaulted, because a wrong range is
+                // worse than no range.
+                VehicleStatus& out_status = out_vehicle.status;
+                if (const YAML::Node node = status["range_km"])
+                {
+                    out_status.range_km = node.as<uint16_t>();
+                }
+                if (const YAML::Node node = status["outside_temperature_c"])
+                {
+                    out_status.outside_temperature_c = node.as<int16_t>();
+                }
+                if (const YAML::Node node = status["range_warning"])
+                {
+                    out_status.range_warning = node.as<bool>();
+                }
+            }
+
             if (const YAML::Node languages = vehicle["supported_languages"];
                 languages && languages.IsSequence())
             {

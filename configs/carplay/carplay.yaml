@@ -37,6 +37,22 @@ vehicle:
   language: "en"
   supported_languages: ["en", "de"]
 
+  # What the vehicle reports about itself while a session runs. CarPlay shows
+  # range in the Maps trip planner and outside temperature in the status area.
+  #
+  # Every field is optional and nothing is invented -- an unset field is left
+  # out of the update. If ALL of them are unset the capability is not advertised
+  # at all, because the phone subscribes to it on every session and declaring it
+  # without answering is a promise broken every time.
+  #
+  # Static values for now; the shape is the one a live vehicle-state source
+  # would fill, so wiring it to real signals later changes only where the
+  # numbers come from.
+  status:
+    range_km: 420
+    outside_temperature_c: 21
+    range_warning: false
+
 # The panel CarPlay draws on.
 display:
   width_px: 800

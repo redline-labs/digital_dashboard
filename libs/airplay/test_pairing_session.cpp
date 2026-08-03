@@ -19,6 +19,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -191,10 +192,11 @@ std::optional<PairedPhone> runPairSetup(airplay::PairingSession& session)
     return phone;
 }
 
-airplay::PairingSession::Config makeConfig()
+airplay::PairingSession::Config makeConfig(std::string state_dir = {})
 {
     airplay::PairingSession::Config config;
     config.identifier = kIdentifier;
+    config.state_dir = std::move(state_dir);
     return config;
 }
 
@@ -352,6 +354,138 @@ int main()
         const auto retry = session.handlePairSetup(
             request("/pair-setup", tlv8::encode({{kTlvState, {1}}})));
         expect(!isError(tlv8::decode(retry.body)), "a restarted pair-setup is accepted");
+    }
+
+    // Persistence: a phone that has paired once is recognised on the next run,
+    // and its stored key -- not one it hands over in the moment -- is what its
+    // pair-verify signature is checked against.
+    //
+    // The second run below goes straight to pair-verify with no pair-setup.
+    // That is a capability test, not a description of this phone: on the wired
+    // path iOS uses transient pairing and re-runs pair-setup every session
+    // (measured 2026-08-02). What matters here is that when a stored key exists
+    // it is the one used, and a signature that does not match it is refused --
+    // which could not be enforced at all before the store existed.
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "airplay_pairing_session_test";
+        fs::remove_all(dir);
+
+        // First run: pair from scratch, which files the phone's key.
+        std::optional<PairedPhone> phone;
+        {
+            PairingSession session(makeConfig(dir.string()));
+            phone = runPairSetup(session);
+            expect(phone.has_value(), "the first run pairs");
+        }
+
+        // Second run, same directory: a new PairingSession, as after a restart.
+        {
+            PairingSession session(makeConfig(dir.string()));
+            expect(!session.paired(), "a restarted session has not paired this run");
+
+            // Straight to pair-verify, with no pair-setup first -- which is
+            // what a returning phone actually does.
+            const crypto::X25519Pair ephemeral = crypto::x25519Generate();
+            const auto m2 = session.handlePairVerify(request(
+                "/pair-verify",
+                tlv8::encode({{kTlvState, {1}}, {kTlvPublicKey, ephemeral.public_key}})));
+            const auto m2_items = tlv8::decode(m2.body);
+            expect(!isError(m2_items), "pair-verify M1 is accepted without pair-setup");
+
+            const Bytes* accessory_ephemeral = tlv8::find(m2_items, kTlvPublicKey);
+            const Bytes* sealed = tlv8::find(m2_items, kTlvEncryptedData);
+            expect(accessory_ephemeral != nullptr && sealed != nullptr, "M2 is complete");
+            if (accessory_ephemeral == nullptr || sealed == nullptr || !phone)
+            {
+                return EXIT_FAILURE;
+            }
+
+            const Bytes shared = crypto::x25519Shared(ephemeral.private_key, *accessory_ephemeral);
+            const Bytes session_key = crypto::hkdfSha512(shared, "Pair-Verify-Encrypt-Salt",
+                                                         "Pair-Verify-Encrypt-Info", 32);
+
+            // The accessory signs with its *persisted* identity, so the key the
+            // phone stored on the first run still verifies. This is the whole
+            // point of the store.
+            const auto plain =
+                crypto::chachaOpen(session_key, crypto::nonceLabel("PV-Msg02"), *sealed);
+            expect(plain.has_value(), "M2 decrypts");
+            if (plain)
+            {
+                const auto inner = tlv8::decode(*plain);
+                const Bytes* identifier = tlv8::find(inner, kTlvIdentifier);
+                const Bytes* signature = tlv8::find(inner, kTlvSignature);
+                if (identifier != nullptr && signature != nullptr)
+                {
+                    Bytes material = *accessory_ephemeral;
+                    material.insert(material.end(), identifier->begin(), identifier->end());
+                    material.insert(material.end(), ephemeral.public_key.begin(),
+                                    ephemeral.public_key.end());
+                    expect(crypto::ed25519Verify(phone->accessory_ltpk, material, *signature),
+                           "the accessory signs with the SAME identity as the first run");
+                }
+            }
+
+            // The phone proves itself with the key it registered last time.
+            const Bytes phone_id{'p', 'h', 'o', 'n', 'e'};
+            Bytes material = ephemeral.public_key;
+            material.insert(material.end(), phone_id.begin(), phone_id.end());
+            material.insert(material.end(), accessory_ephemeral->begin(),
+                            accessory_ephemeral->end());
+            const Bytes phone_signature =
+                crypto::ed25519Sign(phone->identity.private_key, material);
+            const Bytes inner =
+                tlv8::encode({{kTlvIdentifier, phone_id}, {kTlvSignature, phone_signature}});
+            const Bytes phone_sealed =
+                crypto::chachaSeal(session_key, crypto::nonceLabel("PV-Msg03"), inner);
+
+            const auto m4 = session.handlePairVerify(request(
+                "/pair-verify", tlv8::encode({{kTlvState, {3}}, {kTlvEncryptedData, phone_sealed}})));
+            expect(!isError(tlv8::decode(m4.body)), "a returning phone verifies with no pair-setup");
+            expect(session.verified(), "and the session is verified");
+            expect(session.recognised(),
+                   "and it is recognised from the store, not from this session");
+        }
+
+        // An impostor claiming the same identifier, signing with a different
+        // key, must be refused. Before the store this could not be enforced.
+        {
+            PairingSession session(makeConfig(dir.string()));
+            const crypto::X25519Pair ephemeral = crypto::x25519Generate();
+            const auto m2 = session.handlePairVerify(request(
+                "/pair-verify",
+                tlv8::encode({{kTlvState, {1}}, {kTlvPublicKey, ephemeral.public_key}})));
+            const auto m2_items = tlv8::decode(m2.body);
+            const Bytes* accessory_ephemeral = tlv8::find(m2_items, kTlvPublicKey);
+            const Bytes* sealed = tlv8::find(m2_items, kTlvEncryptedData);
+            if (accessory_ephemeral == nullptr || sealed == nullptr)
+            {
+                return EXIT_FAILURE;
+            }
+            const Bytes shared = crypto::x25519Shared(ephemeral.private_key, *accessory_ephemeral);
+            const Bytes session_key = crypto::hkdfSha512(shared, "Pair-Verify-Encrypt-Salt",
+                                                         "Pair-Verify-Encrypt-Info", 32);
+
+            const crypto::Ed25519Pair impostor = crypto::ed25519Generate();
+            const Bytes phone_id{'p', 'h', 'o', 'n', 'e'};
+            Bytes material = ephemeral.public_key;
+            material.insert(material.end(), phone_id.begin(), phone_id.end());
+            material.insert(material.end(), accessory_ephemeral->begin(),
+                            accessory_ephemeral->end());
+            const Bytes bad_signature = crypto::ed25519Sign(impostor.private_key, material);
+            const Bytes inner =
+                tlv8::encode({{kTlvIdentifier, phone_id}, {kTlvSignature, bad_signature}});
+            const Bytes phone_sealed =
+                crypto::chachaSeal(session_key, crypto::nonceLabel("PV-Msg03"), inner);
+
+            const auto m4 = session.handlePairVerify(request(
+                "/pair-verify", tlv8::encode({{kTlvState, {3}}, {kTlvEncryptedData, phone_sealed}})));
+            expectTlvError(m4, 4, "a phone signing with the wrong key");
+            expect(!session.verified(), "and the session is NOT verified");
+        }
+
+        fs::remove_all(dir);
     }
 
     // auth-setup, which is what proves an Apple coprocessor is present.

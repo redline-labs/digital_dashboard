@@ -27,6 +27,35 @@
 namespace carplay
 {
 
+// What the vehicle reports about itself while a session is live.
+//
+// The phone subscribes to these with StartVehicleStatusUpdates and CarPlay
+// surfaces them (range in the Maps trip planner, outside temperature in the
+// status area). Every field is optional and nothing is invented: an unset field
+// is left out of the update, and if *all* of them are unset the capability is
+// not advertised at all -- declaring a VehicleStatusComponent and then never
+// answering the phone's subscription is a promise broken on every session.
+//
+// Static values for now. The shape is deliberately the one a live source would
+// fill, so replacing these with a subscription to real vehicle state is a
+// change of where the numbers come from and nothing else.
+struct VehicleStatus
+{
+    // Remaining driving range, in kilometres.
+    std::optional<uint16_t> range_km;
+    // Outside air temperature, in degrees Celsius.
+    std::optional<int16_t> outside_temperature_c;
+    // True when the range is low enough that CarPlay should say so.
+    std::optional<bool> range_warning;
+
+    // Whether there is anything to report at all.
+    bool any() const
+    {
+        return range_km.has_value() || outside_temperature_c.has_value() ||
+               range_warning.has_value();
+    }
+};
+
 // Who the vehicle says it is. The phone records some of this against the
 // pairing and shows some of it to the user, and it reaches the phone twice by
 // two different routes -- iAP2 identification and the AirPlay /info -- which is
@@ -49,6 +78,9 @@ struct VehicleIdentity
     // The language CarPlay speaks, and the ones it may offer. IETF tags.
     std::string language = "en";
     std::vector<std::string> supported_languages = {"en", "de"};
+
+    // Live-ish state. Empty by default, which suppresses the advertisement.
+    VehicleStatus status;
 };
 
 // The panel CarPlay draws on.

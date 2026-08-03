@@ -76,6 +76,11 @@ struct ReceiverConfig
     // 2 => SHA-1/20-byte digests, 3 => SHA-256/32-byte.
     std::function<int()> mfi_protocol_major;
 
+    // Where the accessory's AirPlay identity and its list of known phones are
+    // kept. Empty means no persistence: a fresh identity every run, so every
+    // phone pairs from scratch and pair-verify cannot be enforced.
+    std::string state_dir;
+
     // The manufacturer button on CarPlay's home screen. Disabled by default.
     OemButtonConfig oem_button;
 

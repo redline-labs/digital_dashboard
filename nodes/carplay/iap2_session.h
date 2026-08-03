@@ -26,6 +26,11 @@ struct Iap2SessionOptions
     // which identify the accessory as the project it was ported from.
     std::optional<VehicleIdentity> identity;
 
+    // What the vehicle reports while the session runs. Advertised in
+    // identification only when it carries something, and pushed when the phone
+    // subscribes with StartVehicleStatusUpdates.
+    VehicleStatus vehicle_status;
+
     // Continue past MFi authentication when the coprocessor is unreachable.
     // The phone will refuse CarPlay, but the link layer, identification and the
     // phone's own message traffic are still exercised -- which is worth doing

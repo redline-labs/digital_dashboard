@@ -757,6 +757,8 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
         receiver_config.manufacturer = options.vehicle.manufacturer;
         receiver_config.right_hand_drive = options.vehicle.right_hand_drive;
         receiver_config.device_id = options.device_id;
+        // Same directory the lockdown pair records live in.
+        receiver_config.state_dir = ctx.state_dir;
         receiver_config.width = options.display.width_px;
         receiver_config.height = options.display.height_px;
         receiver_config.fps = options.display.fps;
@@ -1035,6 +1037,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, c
         // The same identity the AirPlay side advertises, by the other route the
         // phone learns it: iAP2 identification rather than GET /info.
         iap2_options.identity = options.vehicle;
+        iap2_options.vehicle_status = options.vehicle.status;
 
         if (ncm.running())
         {

@@ -155,11 +155,22 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
         identification.engine_type = vehicle.engine_type;
         identification.current_language = vehicle.language;
         identification.supported_languages = vehicle.supported_languages;
+        // Only claim a VehicleStatusComponent when we can actually answer the
+        // subscription that follows it. The phone sends
+        // StartVehicleStatusUpdates on every session; advertising range and
+        // outside temperature and then never sending an update is a promise
+        // broken every time.
+        identification.include_vehicle_status = options.vehicle_status.any();
+        SPDLOG_INFO("[iap2] vehicle status {}",
+                    identification.include_vehicle_status
+                        ? "advertised (range/temperature configured)"
+                        : "not advertised (nothing configured)");
         SPDLOG_INFO("[iap2] identifying as {} / {} ({}), serial {}", identification.manufacturer,
                     identification.model_identifier, identification.name,
                     identification.serial_number);
     }
     bool identified = false;
+    bool vehicle_status_active = false;
     bool authenticated = false;
     bool session_started = false;
     bool failed = false;
@@ -417,6 +428,74 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 }
                 break;
             }
+
+            case iap2::kMsgStartVehicleStatusUpdates:
+            {
+                // The phone subscribing. It expects the current values now, and
+                // then again whenever they change -- which, while these come
+                // from static config, is never.
+                vehicle_status_active = true;
+                const VehicleStatus& status = options.vehicle_status;
+                if (!status.any())
+                {
+                    // Only reachable if the phone asks without us having
+                    // advertised the component, which it should not do.
+                    SPDLOG_WARN("[iap2] phone subscribed to vehicle status but none is "
+                                "configured; nothing to send");
+                    break;
+                }
+                SPDLOG_INFO("[iap2] vehicle status subscribed: range={} temp={} warning={}",
+                            status.range_km ? std::to_string(*status.range_km) : "unset",
+                            status.outside_temperature_c
+                                ? std::to_string(*status.outside_temperature_c)
+                                : "unset",
+                            status.range_warning ? (*status.range_warning ? "true" : "false")
+                                                 : "unset");
+                link.sendControlMessage(iap2::encodeVehicleStatusUpdate(
+                    status.range_km, status.outside_temperature_c, status.range_warning));
+                break;
+            }
+
+            case iap2::kMsgStopVehicleStatusUpdates:
+                vehicle_status_active = false;
+                SPDLOG_INFO("[iap2] vehicle status updates stopped");
+                break;
+
+            case iap2::kMsgWirelessCarPlayUpdate:
+            {
+                const auto status = iap2::decodeWirelessCarPlayUpdate(message->params);
+                SPDLOG_INFO("[iap2] wireless CarPlay is {} on the phone (we are wired; nothing "
+                            "to do)",
+                            status && *status == iap2::WirelessCarPlayStatus::kAvailable
+                                ? "available"
+                                : "unavailable");
+                break;
+            }
+
+            case iap2::kMsgDeviceTransportIdentifierNotification:
+            {
+                // The phone naming the transports it can be reached on. Only
+                // useful for handing a session over to Bluetooth or Wi-Fi,
+                // which this accessory does not do.
+                const auto ids =
+                    iap2::decodeDeviceTransportIdentifierNotification(message->params);
+                SPDLOG_INFO("[iap2] device transport identifiers: bluetooth={} usb={}",
+                            ids && ids->bluetooth_transport_id ? *ids->bluetooth_transport_id
+                                                               : "none",
+                            ids && ids->usb_transport_id ? *ids->usb_transport_id : "none");
+                break;
+            }
+
+            case iap2::kMsgRequestAccessoryWiFiConfigurationInformation:
+                // The first step of the handover to wireless CarPlay: the phone
+                // wants our Wi-Fi credentials so it can join and continue
+                // there. Deliberately unanswered -- this is a wired accessory
+                // with no Wi-Fi to offer, and an empty answer is not obviously
+                // better than none. The phone carries on over USB regardless,
+                // which is what we want.
+                SPDLOG_INFO("[iap2] phone asked for our Wi-Fi configuration (wireless CarPlay "
+                            "handover); declining, this accessory is wired only");
+                break;
 
             default:
                 SPDLOG_DEBUG("[iap2] unhandled {} (0x{:04x})",

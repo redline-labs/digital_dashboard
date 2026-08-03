@@ -2024,6 +2024,40 @@ Apple's parser reading our plist correctly means the plist library, the data
 encoding and the PNG bytes are all fine, and the problem is in how CarPlay is
 being *asked* to treat the icon — which is how `prerendered` was found.
 
+## 11b. Persistent pairing, and what it does not buy
+
+The accessory used to generate a fresh Ed25519 identity on every run. It now
+loads one from `<state_dir>/airplay_identity` (0600), and files each phone's
+long-term public key in `<state_dir>/airplay_pairings`. Added 2026-08-02;
+`libs/airplay/pairing_store.cpp`, tested by `airplay_test_pairing_store`.
+
+**It does not stop the phone re-pairing, and that was the expectation going in.**
+Measured on hardware: with a stable identity and the phone's key on file, the
+next session still ran a full pair-setup M1–M6. The phone sends
+`X-Apple-HKP: 0` — *transient* pairing — because wired CarPlay has no Bonjour
+advertisement carrying our pairing id and public key, so it has nothing to
+recognise us by before it connects. LIVI persists these for its **wireless**
+path, where they do appear in the TXT records.
+
+What it does buy, both confirmed on hardware:
+
+- The identity stops changing on every restart. Correct in itself, and a
+  prerequisite for ever offering wireless.
+- **pair-verify M3 is now enforced.** It used to be checked against the key from
+  the same session's pair-setup, which proves nothing about continuity, so a
+  mismatch was logged and ignored. It is now checked against the stored key and
+  a mismatch is refused. The log says which key was used:
+
+```
+[airplay] pair-verify M3 signature verified against the stored key
+```
+
+If a phone ever legitimately rotates its key it will fail here until it redoes
+pair-setup, which files the new one. That is the intended behaviour, and
+`airplay_test_pairing_session` covers both the returning phone and the impostor.
+
+To force a clean slate, delete the two files.
+
 ## 12. What LIVI has that we do not, and why
 
 The stack was compared against LIVI's `src/main/services/projection/driver/cp/`
@@ -2048,6 +2082,25 @@ its source does not re-derive the same conclusions.
   originally — the dongle passes them into its own AirPlay server.
 - **Android Auto** (`driver/aa/`). Out of scope.
 
+**Closed since the first pass (2026-08-02):**
+
+- **Persistent pairing** (`identity.ts`, `pairings.ts`) — see stage 11b.
+- **Vehicle status.** We advertised a VehicleStatusComponent declaring range and
+  outside temperature, the phone subscribed with `StartVehicleStatusUpdates` on
+  every single session, and nothing ever answered — despite
+  `encodeVehicleStatusUpdate()` being written and unit-tested. It is now driven
+  from `vehicle.status` in the config, and the component is advertised **only**
+  when something is configured, because declaring a capability and then ignoring
+  the subscription is a promise broken every session. Values are static for now;
+  the shape is the one a live vehicle-state source would fill.
+- **The four inbound messages the phone sends that went nowhere.**
+  `StartVehicleStatusUpdates` is answered; `WirelessCarPlayUpdate` and
+  `DeviceTransportIdentifierNotification` are decoded and logged (we had the
+  decoders and never called them); `RequestAccessoryWiFiConfigurationInformation`
+  is an explicit, logged decline — it is the first step of a handover to wireless
+  CarPlay and this accessory has no Wi-Fi to offer. The phone carries on over USB
+  regardless, which is what we want.
+
 **Applicable, deliberately not done:**
 
 - **The instrument-cluster display** (alt screen, stream type 111, `showUI` /
@@ -2068,6 +2121,11 @@ its source does not re-derive the same conclusions.
   configuration this vehicle wants.
 - **A playback anchor in `POST /feedback`.** See stage 10b — we cannot produce
   one honestly, because playback happens on the far side of zenoh.
+- **`encodePowerUpdate` / `encodeCommunicationsUpdate`.** Written and tested in
+  `libs/iap2`, never called. Unlike vehicle status these are not advertised and
+  the phone has never asked for them across every session logged, so they are
+  dead code for an unrequested feature rather than a broken promise. Left in
+  place: the encoding is the hard part and it is done.
 
 ## 13. Where the code lives
 

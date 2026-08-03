@@ -55,6 +55,11 @@ class PairingSession
         std::function<Bytes(const Bytes& digest)> mfi_sign;
         // 2 => SHA-1/20-byte digests, 3 => SHA-256/32-byte.
         std::function<int()> mfi_protocol_major;
+
+        // Where the accessory identity and known phones live. Empty keeps the
+        // old behaviour -- a fresh identity per run, so every phone re-pairs
+        // and pair-verify's signature check cannot be enforced.
+        std::string state_dir;
     };
 
     explicit PairingSession(Config config);
@@ -73,6 +78,11 @@ class PairingSession
 
     // True once pair-setup M6 has been sent.
     bool paired() const;
+
+    // True when pair-verify authenticated the phone against a key that was on
+    // file *before* this session started, rather than one it handed over
+    // moments earlier. This is the only form of the check that means anything.
+    bool recognised() const;
     // True once pair-verify M4 has been sent. Everything on the control channel
     // after that point is encrypted.
     bool verified() const;
