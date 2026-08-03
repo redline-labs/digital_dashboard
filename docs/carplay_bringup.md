@@ -2088,19 +2088,21 @@ USB one -- so the message lists were the whole of it. `/info`'s `bluetoothIDs`
 is unrelated: it is how the phone correlates the accessory, and LIVI sends it
 too on the wired path.
 
-**Not yet verified on hardware.** The change is unit-tested and the reasoning is
-above, but the run that was to confirm it could not enumerate USB at all. To
-check it, watch a session for the request that should now be absent:
+**Verified on hardware 2026-08-02.** Both messages disappear from the session
+and identification is unaffected:
 
-```bash
-./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose \
-  | grep -E "identification ACCEPTED|IdentificationRejected|WiFiConfiguration"
-```
+| | before | after |
+|---|---|---|
+| `RequestAccessoryWiFiConfigurationInformation` | every session | **none** |
+| `WirelessCarPlayUpdate` | every session | **none** |
+| `identification ACCEPTED` | yes | yes |
 
-Expect `identification ACCEPTED` and no `WiFiConfiguration` line at all. If
-identification is instead *rejected*, the phone wanted one of those messages
-declared after all -- set `advertise_wireless_carplay = true` to restore the old
-behaviour, and say so here.
+The rest of the session is untouched -- twenty distinct inbound messages, vehicle
+status subscribed and answered, RECORD, video decoding. So the phone does not
+require those declarations; it was simply taking us up on an offer.
+
+If a future iOS *does* reject identification without them, set
+`advertise_wireless_carplay = true` to restore the old behaviour.
 
 ## 12. What LIVI has that we do not, and why
 
