@@ -15,6 +15,8 @@
 #include "simulate.h"
 #include "usb_pipeline.h"
 
+#include "helpers/ffmpeg_log.h"
+
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -45,6 +47,9 @@ int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::info);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    // libavcodec and libswscale otherwise write straight to stderr, untimed and
+    // unfiltered, in the middle of our own output.
+    helpers::routeFfmpegLogsToSpdlog();
 
     cxxopts::Options options("carplay", "Wired CarPlay driver node");
     options.add_options()

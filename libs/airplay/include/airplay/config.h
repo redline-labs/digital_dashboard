@@ -65,6 +65,15 @@ struct ReceiverConfig
     // Which side the driver sits on. CarPlay mirrors its own layout for it.
     bool right_hand_drive = false;
 
+    // Offer H.265 alongside H.264 and let the phone choose. The decode path
+    // handles either -- nalu.cpp rewrites hvcC as well as avcC and knows HEVC's
+    // different keyframe rule, and the codec travels on every packet -- so this
+    // is purely an advertisement.
+    //
+    // Off by default. H.264 is the path with every hardware session behind it,
+    // and turning this on hands the choice to the phone, which will take it.
+    bool allow_hevc = false;
+
     // Advertised as both deviceID and macAddress in GET /info.
     std::string device_id = "02:00:00:00:00:01";
 

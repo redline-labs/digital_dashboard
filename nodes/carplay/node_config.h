@@ -99,6 +99,11 @@ struct DisplayConfig
     // Which input CarPlay lays its own UI out for. Both the touchscreen and the
     // rotary controller are always advertised; this only says which is primary.
     airplay::PrimaryInput primary_input = airplay::PrimaryInput::Touch;
+
+    // Offer H.265 as well as H.264 and let the phone pick. Decode handles
+    // either; this is only the advertisement. Off by default -- H.264 is the
+    // path with hardware behind it.
+    bool allow_hevc = false;
 };
 
 struct NodeConfig

@@ -764,6 +764,7 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
         receiver_config.fps = options.display.fps;
         receiver_config.physical_width_mm = options.display.physical_width_mm;
         receiver_config.primary_input = options.display.primary_input;
+        receiver_config.allow_hevc = options.display.allow_hevc;
         receiver_config.oem_button = options.oem_button;
         if (receiver_config.oem_button.enabled && receiver_config.oem_button.icons.empty())
         {

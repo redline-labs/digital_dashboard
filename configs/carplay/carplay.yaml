@@ -71,6 +71,13 @@ display:
   # design for.
   primary_input: touch
 
+  # Offer H.265 as well as H.264 and let the phone choose. The decode path
+  # handles either, so this is only an advertisement -- but H.264 is the path
+  # with every hardware session behind it, and turning this on hands the choice
+  # to the phone, which will take it. Both halves go out together: hevcInfo in
+  # GET /info and "hevc" in the SETUP enabledFeatures.
+  allow_hevc: false
+
 # Advertised as deviceID and as the Bluetooth address in GET /info. Locally
 # administered (the 0x02 bit), which is what an accessory with no real MAC
 # should present. Give each unit its own if you run more than one.

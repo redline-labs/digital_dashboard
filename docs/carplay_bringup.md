@@ -2108,11 +2108,7 @@ its source does not re-derive the same conclusions.
   digital gauge cluster. This dashboard drives one screen. Adding it is a second
   `displayEntry` in `/info` plus a second screen stream — no new protocol layer,
   so it is a day's work whenever a second panel exists.
-- **HEVC** (`hevcInfo`, `hevc` in `enabledFeatures`). `libs/airplay/nalu.cpp`
-  already handles H.265, including the different keyframe rules, and the video
-  path carries the codec per packet. What is missing is only the advertisement.
-  Not turned on because the wired phone picks H.264 and it works: enabling it
-  would move a proven path onto an unexercised one for no gain.
+- ~~HEVC~~ — **done and hardware-verified 2026-08-02.** See stage 15.
 - **A 48 kHz entertainment rate.** LIVI picks 44.1 or 48 kHz for the type-102
   stream; we advertise 44.1 only. Type 102 has never been exercised on the wired
   path at all (stage 9), so a second untested variant of it is not worth having.
@@ -2255,6 +2251,80 @@ phone whose epoch is not ours. Simulation cannot produce either, because
 `--simulate` has no peer. That is the limit of the hardware-free test net, and
 worth remembering before the next "this is desk-checkable" judgement.
 
+## 15. HEVC, the swscale warning, and shared memory
+
+**HEVC is implemented and verified (2026-08-02).** It was only ever the
+advertisement: `nalu.cpp` already rewrote hvcC as well as avcC and knew HEVC's
+different keyframe rule (IRAP 16..23 rather than a single NAL type), the codec
+travels on every packet, and the widget already picked `AV_CODEC_ID_HEVC` from
+it. Two keys turn it on together — `hevcInfo` in `GET /info` and `"hevc"` in the
+SETUP `enabledFeatures` — and sending one without the other leaves the phone on
+H.264 with nothing to explain why.
+
+Set `display.allow_hevc` in the config. With it on, the phone chose H.265
+immediately and it rendered end to end:
+
+```
+[video]   codec config: H.265 (106 bytes Annex-B)
+[video]   FIRST FRAME decoded: 331 bytes Annex-B
+[carplay] CarPlay video decoder ready (HEVC)
+[carplay] first video frame decoded and rendered (800x600)
+```
+
+It is an offer, not a demand: the phone chooses, and it takes the offer when
+made. Shipped **off**, because H.264 is the path with every other hardware
+session behind it and one HEVC session is not yet a basis for switching the
+default.
+
+**The swscale "no accelerated colorspace conversion" warning cannot be fixed,
+and does not matter.** Probed on this machine: *every* 32-bit destination
+format falls back to the C path for `yuv420p` input.
+
+| dst | bgra | rgba | argb | abgr | bgr0 | rgb0 | 0rgb | 0bgr | rgb24 | bgr24 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| arm64 | C | C | C | C | C | C | C | C | C | C |
+
+swscale's accelerated yuv2rgb converters are x86 SIMD; the aarch64 coverage does
+not include them. So there is no destination format to switch to. Measured cost
+of the C path:
+
+| resolution | per frame | at 30 fps |
+|---|---|---|
+| 800x600 | 0.137 ms | 0.4% of one core |
+| 1280x720 | 0.170 ms | 0.5% |
+| 1920x720 | 0.214 ms | 0.6% |
+
+The only way to avoid it entirely is to stop converting on the CPU — the
+GPU/`QVideoWidget` path, which was implemented and then reverted in `4d143ae`
+because nothing can be layered over that surface. Trading the z-ordering
+constraint for 0.4% of a core is not a trade worth making.
+
+What *was* worth fixing is that the message, and libavcodec's output generally,
+went straight to stderr — untimestamped and unfilterable, in the middle of our
+own logs. `helpers::routeFfmpegLogsToSpdlog()` now maps them into spdlog, with
+ffmpeg's `AV_LOG_INFO` (where codecs put their per-run statistics) landing at
+debug. A `--simulate` run used to carry a wall of raw `[libx264 @ 0x...]` lines;
+it now carries none, and `--verbose` shows them as `[ffmpeg]` at debug.
+
+**Shared-memory transport: not worth enabling.** zenoh-c has
+`ZENOHC_BUILD_WITH_SHARED_MEMORY`, and it is off. Turning it on is not a flag
+flip: the publisher must allocate its payload from an SHM provider instead of a
+normal buffer, both ends must have the feature and be on the same host, and it
+means rebuilding zenoh's Rust from scratch.
+
+The reason not to is the payload. We publish **compressed** video:
+
+| | |
+|---|---|
+| video payload | ~16 KB per frame, ~488 KB/s |
+| a memcpy of that | ~0.0025% of one core |
+| node CPU, real session | ~0.4% |
+| raw RGBA at the same size and rate | 55 MB/s — *this* is what SHM is for |
+
+SHM's benefit scales with payload size, and ours is three orders of magnitude
+below where it starts to matter. Revisit only if something ever publishes raw
+frames.
+
 ## What exists today (read before starting)
 
 Not all stages below are implemented yet. Current state:
@@ -2287,6 +2357,7 @@ Not all stages below are implemented yet. Current state:
 | **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
 | **Manufacturer button** (`/info` advertisement + press decode) | **fully verified on hardware 2026-08-02** — tile, label, artwork (needs `prerendered: true`) and the press. Nothing is hooked to the handler yet. See stages 11 and 14 |
 | **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
+| **HEVC (H.265)** | **verified on hardware 2026-08-02**; off by default, `display.allow_hevc` turns it on. See stage 15 |
 | **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |
 | **Microphone uplink** | written; control path verified on hardware; end-to-end voice pending real host audio |
 | **Now-playing metadata + album art** | **verified on hardware** |

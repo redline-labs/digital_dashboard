@@ -39,6 +39,7 @@ target_include_directories(carplay PRIVATE
 
 target_link_libraries(carplay PRIVATE
     carplay_node_config
+    helpers_ffmpeg
     spdlog::spdlog
     cxxopts::cxxopts
     yaml-cpp::yaml-cpp
@@ -55,6 +56,7 @@ target_link_libraries(carplay PRIVATE
 add_executable(carplay_test_node_config test_node_config.cpp)
 target_link_libraries(carplay_test_node_config PRIVATE
     carplay_node_config
+    helpers_ffmpeg
     spdlog::spdlog
 )
 # The committed artwork is part of what is under test -- a config that ships

@@ -39,6 +39,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::Gui
         Qt6::Multimedia
         helpers
+        helpers_ffmpeg
         reflection
         schemas
         zenoh_pub_sub

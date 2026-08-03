@@ -18,6 +18,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "helpers/ffmpeg_log.h"
+
 #include <cstring>
 
 namespace
@@ -108,6 +110,12 @@ bool CarPlayWidget::ensureDecoder(CarPlayVideo::Codec codec)
         return true;
     }
     destroyDecoder();
+
+    // libavcodec and libswscale otherwise write straight to stderr, untimed and
+    // unfiltered. Notably this is where swscale's "No accelerated colorspace
+    // conversion found" lands -- true on arm64 for every destination format,
+    // and worth about 0.4% of a core, so it is detail rather than news.
+    helpers::routeFfmpegLogsToSpdlog();
 
     const AVCodecID av_id = (codec == CarPlayVideo::Codec::H265) ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
     const AVCodec* decoder = avcodec_find_decoder(av_id);

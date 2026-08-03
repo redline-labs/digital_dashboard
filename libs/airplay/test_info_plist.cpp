@@ -213,6 +213,19 @@ int main()
                "and still advertises every input device");
     }
 
+    // HEVC is offered only when asked for. Both halves of the offer matter --
+    // this is the /info half; the SETUP half is enabledFeatures.
+    {
+        expect(at(info, "hevcInfo") == nullptr, "H.265 is not offered by default");
+
+        airplay::ReceiverConfig hevc = makeConfig();
+        hevc.allow_hevc = true;
+        const plist::Value* offered = at(buildInfoPlist(hevc), "hevcInfo");
+        expect(offered != nullptr, "and is offered when enabled");
+        expect(offered != nullptr && offered->isDict(),
+               "as a dict -- presence is the offer, it carries no parameters");
+    }
+
     // The manufacturer button is off unless asked for (see test_oem_button for
     // the keys themselves); this is the wiring into /info.
     {

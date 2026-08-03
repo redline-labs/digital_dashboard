@@ -186,6 +186,14 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
                                   hid::mediaDevice(kMainDisplayUuid),
                                   hid::telephonyDevice(kMainDisplayUuid)}));
 
+    if (config.allow_hevc)
+    {
+        // Presence is the offer; the dictionary carries no parameters. The
+        // phone answers by picking a codec in the stream SETUP, which arrives
+        // in the parameter sets and travels on every packet from there.
+        info.set("hevcInfo", plist::Value::dict());
+    }
+
     addOemButtonInfo(config.oem_button, info);
     if (config.oem_button.enabled)
     {

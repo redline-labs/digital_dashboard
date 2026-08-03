@@ -813,9 +813,16 @@ rtsp::Message Receiver::handleSessionSetup(const plist::Value& body)
     }
     // Without enabledFeatures the phone has nothing to turn on and tears
     // the session down straight after RECORD.
-    reply.set("enabledFeatures",
-              plist::Value::array({plist::Value::string("iAPChannel"),
-                                   plist::Value::string("viewAreas")}));
+    std::vector<plist::Value> features{plist::Value::string("iAPChannel"),
+                                       plist::Value::string("viewAreas")};
+    if (config_.allow_hevc)
+    {
+        // Both halves are needed: hevcInfo in /info says we can decode it, and
+        // this says to turn it on for the session. Advertising one without the
+        // other leaves the phone sending H.264 and nothing to explain why.
+        features.push_back(plist::Value::string("hevc"));
+    }
+    reply.set("enabledFeatures", plist::Value::array(std::move(features)));
     return rtsp::makeResponse(200, "OK", "application/x-apple-binary-plist",
                               plist::encodeBinary(reply));
 }

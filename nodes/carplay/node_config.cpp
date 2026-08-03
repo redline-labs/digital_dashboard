@@ -220,6 +220,7 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
             assignIfPresent(display, "height_px", out_display.height_px);
             assignIfPresent(display, "fps", out_display.fps);
             assignIfPresent(display, "physical_width_mm", out_display.physical_width_mm);
+            assignIfPresent(display, "allow_hevc", out_display.allow_hevc);
 
             if (!assignEnumIfPresent<airplay::PrimaryInput>(
                     display, "primary_input",
