@@ -202,12 +202,19 @@ class ZenohExpressionSubscriber
      * @param payload Raw Cap'n Proto message bytes
      * @return The evaluated result cast to type T
      */
+  public:
     // Returns nullopt when this sample produced no usable number. That is a
     // deliberately different outcome from "the value is zero": every failure
     // here used to return 0.0, which drove gauges to zero on a corrupt packet.
     // For an oil-pressure or coolant gauge, reading zero because a packet was
     // damaged is the worst available failure -- the caller holds its last good
     // value instead.
+    //
+    // Public because "evaluate this expression against these bytes" is what the
+    // class is for, and because the failure modes it has to get right -- a
+    // truncated payload, a division by zero, a result that does not fit the
+    // destination -- are precisely what wants testing without a live publisher
+    // on the other end of a bus.
     template<typename T>
     std::optional<T> evaluate(const std::vector<uint8_t>& payload)
     {

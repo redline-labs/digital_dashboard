@@ -111,15 +111,21 @@ target_link_libraries(pub_sub_test_session_manager PRIVATE
 )
 add_project_test(TARGET pub_sub_test_session_manager LABELS pub_sub net)
 
+# Expression evaluation, with the emphasis on payloads a publisher should never
+# send. Constructing a subscriber opens a session, so this is `net` and skips
+# itself where none can be opened.
+#
+# This replaces test_expression_parser.cpp, which was commented out of the build
+# and had rotted against the API it was written for -- it constructed the
+# subscriber with a schema *name*, called a public non-templated evaluate(), and
+# asserted that an invalid parser throws. None of those had been true for a long
+# time, so the whole decode/evaluate path had no coverage at all.
+add_executable(pub_sub_test_expression_eval
+    test_expression_eval.cpp
+)
 
-# Add test executable
-#add_executable(test_expression_parser
-#    test_expression_parser.cpp
-#)
-
-#target_link_libraries(test_expression_parser
-#    expression_parser
-#    schemas
-#    capnp
-#    kj
-#)
+target_link_libraries(pub_sub_test_expression_eval PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_expression_eval LABELS pub_sub net)
