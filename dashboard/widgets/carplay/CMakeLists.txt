@@ -48,6 +48,11 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         spdlog::spdlog
 )
 
+# Registered by hand rather than through add_dashboard_widget(): this widget
+# needs ffmpeg via pkg-config and several extra Qt components, which is more
+# than the shared helper should learn to express for one caller.
+dashboard_widget_register(${CARPLAY_WIDGET_LIB})
+
 set_target_properties(${CARPLAY_WIDGET_LIB} PROPERTIES AUTOMOC ON)
 
 # Throttling policy on its own, with time injected: exact interval boundaries

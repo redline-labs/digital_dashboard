@@ -1,29 +1,3 @@
-cmake_minimum_required(VERSION 3.10)
-
-# Enable Qt's automatic MOC, UIC, and RCC processing
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTORCC ON)
-
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
-
-add_library(motec_cdl3_tachometer STATIC
-    motec_cdl3_tachometer.cpp
+add_dashboard_widget(motec_cdl3_tachometer
+    SOURCES motec_cdl3_tachometer.cpp
 )
-
-target_include_directories(motec_cdl3_tachometer PUBLIC
-    ${CMAKE_SOURCE_DIR}/dashboard/include
-    include
-)
-
-target_link_libraries(motec_cdl3_tachometer
-    PUBLIC
-        reflection
-    PRIVATE
-        Qt6::Widgets
-        spdlog::spdlog
-        zenoh_pub_sub
-        helpers
-)
-
-

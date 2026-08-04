@@ -21,25 +21,19 @@ include_directories(
     include
 )
 
-# Widget libraries linked by both the dashboard and the editor. Add new
-# widgets here (and in FOR_EACH_WIDGET / widget_types.h).
-set(WIDGET_LIBS
-    carplay_widget
-    carplay_nav
-    now_playing
-    mercedes_190e_telltales
-    mercedes_190e_speedometer
-    mercedes_190e_tachometer
-    sparkline
-    mercedes_190e_cluster_gauge
-    motec_c125_tachometer
-    motec_cdl3_tachometer
-    static_text
-    value_readout
-    segment_readout
-    center_bar
-    background_rect
-)
+# Widget libraries linked by both the dashboard and the editor.
+#
+# Collected from the widgets themselves: add_dashboard_widget() appends to this
+# property, so a widget is named once, in its own CMakeLists, rather than there
+# and again in a list up here that nothing checks. Read after
+# add_subdirectory(widgets) above, by which point every widget has registered.
+get_property(WIDGET_LIBS GLOBAL PROPERTY DASHBOARD_WIDGET_LIBS)
+
+if(NOT WIDGET_LIBS)
+    message(FATAL_ERROR
+        "No widgets registered. Every widget's CMakeLists should call "
+        "add_dashboard_widget() or dashboard_widget_register().")
+endif()
 
 qt_add_executable(${PROJECT_NAME}
     dashboard/main.cpp

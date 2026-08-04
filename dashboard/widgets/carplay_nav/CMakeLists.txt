@@ -1,30 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
-
-project(carplay_nav)
-
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
-
-set(CMAKE_AUTOMOC ON)
-
-add_library(carplay_nav
-    carplay_nav.cpp
-    include/carplay_nav/carplay_nav.h
-)
-
-target_include_directories(carplay_nav PUBLIC
-    ${CMAKE_SOURCE_DIR}/dashboard/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(carplay_nav
-    PUBLIC
-        reflection
-        schemas
-        zenoh_pub_sub
-        helpers # config.h exposes helpers::Color
-    PRIVATE
-        Qt6::Widgets
-        spdlog::spdlog
+add_dashboard_widget(carplay_nav
+    SOURCES carplay_nav.cpp
+    PUBLIC_LIBS schemas
 )
 
 # The formatting rules are the only part of this widget that is not about

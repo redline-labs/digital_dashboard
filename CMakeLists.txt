@@ -82,6 +82,7 @@ add_subdirectory(third_party)
 enable_testing()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 include(ProjectTest)
+include(DashboardWidget)
 
 
 # Additional compiler options for all our code.
