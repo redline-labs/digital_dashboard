@@ -26,6 +26,14 @@ struct CaptureOptions
     // returned. Screenshots are the expensive payload in this interface; a
     // polling loop that mostly sees no change should mostly cost nothing.
     std::string if_changed_from;
+
+    // Draw a numbered box and label over each addressable child widget before
+    // encoding, and return the number->selector mapping alongside.
+    //
+    // Set-of-mark prompting: picking a target off a labelled picture is far more
+    // reliable than correlating a bare screenshot against a separate snapshot
+    // list, especially on a dashboard where several gauges look alike.
+    bool annotate = false;
 };
 
 // Captures `widget` and returns a JSON object carrying the base64 PNG plus the

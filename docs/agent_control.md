@@ -89,6 +89,33 @@ phone's video into a `QImage` and normalises `pos.x()/width()` itself before
 publishing a touch, so a coordinate read off its screenshot is already the right
 thing to send to `input.click`.
 
+## The debugging loop that matters most
+
+The dashboard is a data-driven display, so most questions are answered by setting
+a value and looking at the gauge:
+
+```
+zenoh_describe_schema(schema="VehicleSpeed")     # what fields exist
+zenoh_publish("vehicle/speed_mps", "VehicleSpeed", {"speedMps": 27.0})
+ui_screenshot(target="#speedo")                  # needle sits at 60 mph
+```
+
+No `test_data_publisher`, no CAN bus, no car. It works for every schema in the
+registry with no per-schema code, because it goes through Cap'n Proto's dynamic
+API — a schema added to `schemas/CMakeLists.txt` is publishable immediately.
+
+Two zenoh properties that will otherwise cost you time, and which the error
+messages now state outright:
+
+- **Discovery only sees live traffic.** `zenoh_list` subscribes for a window and
+  reports what arrives. An empty result means "nothing published during the
+  window", not "nothing exists" — a slow publisher looks identical to an absent
+  one.
+- **There are no retained messages.** Reading back a value you published once
+  will *always* time out, because the read subscribes after that sample is gone.
+  Read from a continuous publisher instead. (This is the same property behind the
+  CarPlay video-config black screen.)
+
 ## Gotchas worth knowing
 
 - **Screenshots work only because rendering goes through Qt's backing store.**
@@ -122,6 +149,44 @@ New methods are reachable from Claude Code immediately via `app_call(method,
 params)` — no Python change needed. `app_methods` lists what a running build
 supports.
 
+## Dragging, and the one thing that cannot be synthesized
+
+`input.drag` sends press, interpolated moves and release. It makes sure the first
+move clears `QApplication::startDragDistance()` whenever the overall distance
+does — Qt reads shorter motion as jitter, so a widget filtering on it would
+otherwise ignore the whole gesture. A drag too short to register at all comes
+back with a warning rather than appearing to work. Use it for CarPlay swipes and
+for moving or resizing on the editor canvas.
+
+**It does not drive Qt's `QDrag`.** `QDrag::exec()` runs a nested event loop that
+grabs the mouse and reads real platform events; synthesized events cannot advance
+it, and on the offscreen platform it may not run at all. So the palette-to-canvas
+drag goes through `input.drop` / `editor.palette_drag`, which send the
+`QDragEnter` → `QDragMove` → `QDrop` triple straight to the drop target. That
+bypasses the drag *source* but runs the entire receiving side — the accept/reject
+logic and the drop handler — which is where the behaviour worth testing lives.
+The only thing left uncovered is the handful of lines inside `exec()`.
+
+## Logs
+
+`--mcp` replaces the rotating file sink with an in-process ring plus stderr.
+`app.logs` takes a `since_seq` cursor, so polling returns only what is new:
+
+```
+app_logs(limit=20)                  # -> records + next_seq
+app_logs(since_seq=<next_seq>)      # -> only what arrived since
+app_logs(level="warn", grep="carplay")
+```
+
+Qt's own diagnostics are bridged into the same stream under the logger `qt`.
+Nothing captured them before — they went to stderr and vanished — and a QPA or
+layout complaint is often the explanation for a screenshot that came back wrong.
+
+A `dropped` field means the ring wrapped and records were lost before you read
+them. The stderr sink stays because the ring dies with the process: a crash would
+otherwise take the entire log history with it, and the companion server captures
+that stderr for exactly that case.
+
 ## Tests
 
 ```bash
@@ -133,14 +198,26 @@ ctest --test-dir build -R agent_control --output-on-failure
   invariant that a response never contains a raw newline.
 - `agent_control_test_selector` (gui) — selector resolution against a real widget
   tree, weighted towards ambiguity, staleness and out-of-range indices.
+- `agent_control_test_log_ring` (unit) — the cursor, filtering, eviction
+  reporting and the Qt message bridge. This one caught a real off-by-one: an
+  exclusive lower bound against a field named `next_seq` silently dropped one
+  record per poll.
 
 ## Status
 
-Implemented: `app.info`, `app.quit`, `ui.snapshot`, `ui.find`, `ui.screenshot`,
-`input.click`, `input.key`, `input.type`, `rpc.methods`, plus `editor.save` and
-`editor.load`.
+Everything in the plan is implemented:
 
-Not yet implemented (see the plan for the full design): the structured log ring
-and `app.logs`, `widget.get/set/describe_config`, `ui.wait_for`, `input.drag`,
-`input.drop` and the rest of the editor verbs, and the zenoh
-publish/read/list/rate methods.
+| Area | Methods |
+|---|---|
+| App | `app.info`, `app.logs`, `app.quit` |
+| Inspect | `ui.snapshot`, `ui.find`, `ui.screenshot` (with `annotate`, `if_changed_from`), `ui.wait_for` |
+| Input | `input.click`, `input.key`, `input.type`, `input.drag`, `input.drop` |
+| Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
+| Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
+| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.save`, `editor.load` |
+| Meta | `rpc.methods` |
+
+Known limits, all deliberate: one instance per app type; `QDrag::exec()` is not
+driven; `Data` fields are reported as a byte count rather than inlined (they are
+H.264 access units and PCM audio); and screenshots depend on rendering going
+through Qt's backing store.

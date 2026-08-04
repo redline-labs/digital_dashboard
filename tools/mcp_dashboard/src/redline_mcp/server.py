@@ -339,6 +339,17 @@ def ui_screenshot(
             ),
         ),
     ] = None,
+    annotate: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Overlay numbered boxes on the addressable widgets and return a "
+                "mark->selector map. Use this when several widgets look alike and "
+                "you need to be sure which one you are aiming at."
+            ),
+        ),
+    ] = False,
 ) -> list[Any]:
     """Capture a widget as a PNG, with the metadata needed to click on it.
 
@@ -358,6 +369,7 @@ def ui_screenshot(
                 "region": region,
                 "max_dim": max_dim,
                 "if_changed_from": if_changed_from,
+                "annotate": annotate,
             },
         )
     except (AgentError, LaunchError, OSError) as exc:

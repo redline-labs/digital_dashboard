@@ -372,6 +372,13 @@ void registerCoreMethods(AgentServer& server, AppInfo info)
             }
             options.if_changed_from = if_changed.value();
 
+            const auto annotate = optBool(params, "annotate", false);
+            if (!annotate.has_value())
+            {
+                return std::unexpected(annotate.error());
+            }
+            options.annotate = annotate.value();
+
             if (params.contains("region"))
             {
                 const auto& region = params["region"];

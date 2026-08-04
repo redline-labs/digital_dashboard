@@ -3,10 +3,13 @@
 #include <QBuffer>
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QFont>
 #include <QImage>
 #include <QMetaObject>
+#include <QPainter>
 #include <QPixmap>
 
+#include <cmath>
 #include <functional>
 
 namespace agent_control
@@ -58,6 +61,102 @@ std::vector<QString> findUncapturableClasses(const QWidget* widget)
     return found;
 }
 
+// Children worth marking: visible, big enough to see, and identifiable. Qt's own
+// scaffolding is skipped -- a box round a layout container tells the reader
+// nothing and crowds out the widgets that matter.
+std::vector<QWidget*> annotationTargets(const QWidget* root)
+{
+    std::vector<QWidget*> targets;
+
+    std::function<void(const QWidget*)> descend = [&](const QWidget* node)
+    {
+        for (QObject* child : node->children())
+        {
+            auto* as_widget = qobject_cast<QWidget*>(child);
+            if (as_widget == nullptr)
+            {
+                continue;
+            }
+
+            const QString class_name = QString::fromUtf8(as_widget->metaObject()->className());
+            const bool identifiable =
+                !as_widget->objectName().isEmpty() || !class_name.startsWith(QLatin1Char('Q'));
+            const bool big_enough = as_widget->width() >= 16 && as_widget->height() >= 16;
+
+            if (as_widget->isVisible() && identifiable && big_enough)
+            {
+                targets.push_back(as_widget);
+                // Do not descend into a marked widget: the interesting target is
+                // the gauge, not the labels inside it.
+                continue;
+            }
+            descend(as_widget);
+        }
+    };
+
+    descend(root);
+    return targets;
+}
+
+// Draws the marks onto an image that is still in *logical* widget coordinates,
+// before any downscale. Doing it after would need the marks scaled too, and the
+// line widths would stop being legible at small sizes.
+json drawAnnotations(QImage& image, QWidget* root, const QRect& region, qreal dpr)
+{
+    const auto targets = annotationTargets(root);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+
+    QFont font = painter.font();
+    font.setPixelSize(11);
+    font.setBold(true);
+    painter.setFont(font);
+
+    json marks = json::array();
+    int index = 1;
+
+    for (QWidget* target : targets)
+    {
+        const QPoint origin = target->mapTo(root, QPoint(0, 0)) - region.topLeft();
+        QRect box(origin, target->size());
+        if (!box.intersects(QRect(QPoint(0, 0), region.size())))
+        {
+            continue;
+        }
+
+        // The image is in device pixels; the geometry is logical.
+        const QRect device_box(QPoint(static_cast<int>(box.x() * dpr),
+                                      static_cast<int>(box.y() * dpr)),
+                               QSize(static_cast<int>(box.width() * dpr),
+                                     static_cast<int>(box.height() * dpr)));
+
+        painter.setPen(QPen(QColor(255, 64, 0), 2));
+        painter.drawRect(device_box.adjusted(0, 0, -1, -1));
+
+        const QString label = QString::number(index);
+        const QRect label_box(device_box.topLeft(), QSize(18, 16));
+        painter.fillRect(label_box, QColor(255, 64, 0));
+        painter.setPen(Qt::white);
+        painter.drawText(label_box, Qt::AlignCenter, label);
+
+        json mark = json::object();
+        mark["mark"] = index;
+        mark["selector"] = !target->objectName().isEmpty()
+                               ? "#" + target->objectName().toStdString()
+                               : WidgetLocator::pathOf(target).toStdString();
+        mark["class"] = target->metaObject()->className();
+        // Local to the CAPTURED widget, which is the space input.click takes for
+        // that same target -- so a mark can be turned into a click directly.
+        mark["rect"] = json::array({box.x(), box.y(), box.width(), box.height()});
+        marks.push_back(std::move(mark));
+
+        ++index;
+    }
+
+    return marks;
+}
+
 }  // namespace
 
 Result<json> captureWidget(WidgetLocator& locator, QWidget* widget, const CaptureOptions& options)
@@ -98,6 +197,12 @@ Result<json> captureWidget(WidgetLocator& locator, QWidget* widget, const Captur
 
     QImage image = pixmap.toImage();
     const qreal dpr = pixmap.devicePixelRatio();
+
+    json marks;
+    if (options.annotate)
+    {
+        marks = drawAnnotations(image, widget, region, dpr);
+    }
 
     // Scale from the *logical* size, so `scale` relates the returned image to
     // widget-local coordinates directly and the caller never has to reason about
@@ -140,6 +245,11 @@ Result<json> captureWidget(WidgetLocator& locator, QWidget* widget, const Captur
     out["dpr"] = static_cast<double>(dpr);
     out["revision"] = locator.revision();
     out["hash"] = hash;
+
+    if (options.annotate)
+    {
+        out["marks"] = std::move(marks);
+    }
 
     const auto uncapturable = findUncapturableClasses(widget);
     if (!uncapturable.empty())
