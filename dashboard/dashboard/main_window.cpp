@@ -71,4 +71,54 @@ const std::string& MainWindow::getWindowName() const
     return _app_cfg.name;
 }
 
+bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
+{
+    for (std::size_t i = 0; i < _widgets.size(); ++i)
+    {
+        if (_widgets[i].get() != existing)
+        {
+            continue;
+        }
+
+        // Keep the identity and placement the caller already knows about --
+        // a set_config that silently moved or renamed the widget would
+        // invalidate every selector and ref pointing at it.
+        const QRect geometry = existing->geometry();
+        const QString object_name = existing->objectName();
+
+        QWidget* replacement = widget_factory::createWidgetFromConfig(cfg, this);
+        if (replacement == nullptr)
+        {
+            SPDLOG_ERROR("Rebuilding widget '{}' failed; leaving the original in place.",
+                         object_name.toStdString());
+            return false;
+        }
+
+        replacement->setObjectName(object_name);
+        replacement->setGeometry(geometry);
+        replacement->show();
+
+        // Keep the stored config in step, so a later read reports what is
+        // actually on screen.
+        if (i < _app_cfg.widgets.size())
+        {
+            const std::string id = _app_cfg.widgets[i].id;
+            _app_cfg.widgets[i] = cfg;
+            _app_cfg.widgets[i].id = id;
+            _app_cfg.widgets[i].x = static_cast<int16_t>(geometry.x());
+            _app_cfg.widgets[i].y = static_cast<int16_t>(geometry.y());
+            _app_cfg.widgets[i].width = static_cast<uint16_t>(geometry.width());
+            _app_cfg.widgets[i].height = static_cast<uint16_t>(geometry.height());
+        }
+
+        // Assigning the unique_ptr destroys the old widget immediately. That is
+        // wanted here: the caller is about to snapshot, and a deleteLater'd
+        // widget would still be in the tree when it did.
+        _widgets[i] = std::unique_ptr<QWidget>(replacement);
+        return true;
+    }
+
+    return false;
+}
+
 #include "dashboard/moc_main_window.cpp"

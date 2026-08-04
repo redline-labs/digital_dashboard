@@ -5,6 +5,7 @@
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
+#include "dashboard/widget_methods.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -95,6 +96,13 @@ int main(int argc, char** argv)
         app_info.app = "dashboard";
         app_info.config_path = args->config_file_path;
         agent_control::registerCoreMethods(*agent, app_info);
+
+        // Dashboard widgets take their config at construction, so applying a new
+        // one means rebuilding the widget in place.
+        dashboard::agent::registerWidgetMethods(
+            *agent,
+            [&window](QWidget* target, const widget_config_t& cfg)
+            { return window.rebuildWidget(target, cfg); });
 
         if (!agent->start(*args->mcp_socket_path))
         {

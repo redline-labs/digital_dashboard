@@ -8,6 +8,8 @@
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
+#include "dashboard/widget_methods.h"
+#include "editor/selection_frame.h"
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
@@ -153,6 +155,33 @@ int main(int argc, char** argv)
         app_info.app = "editor";
         app_info.config_path = args->config_path;
         agent_control::registerCoreMethods(*agent, app_info);
+
+        // The editor rebuilds the child inside its SelectionFrame, which already
+        // knows how to swap a widget out without disturbing the frame's
+        // selection state or geometry.
+        dashboard::agent::registerWidgetMethods(
+            *agent,
+            [](QWidget* target, const widget_config_t& cfg)
+            {
+                auto* frame = qobject_cast<SelectionFrame*>(target->parentWidget());
+                if (frame == nullptr)
+                {
+                    return false;
+                }
+                bool applied = false;
+                std::visit(
+                    [&](const auto& typed)
+                    {
+                        if constexpr (!std::is_same_v<std::decay_t<decltype(typed)>,
+                                                      std::monostate>)
+                        {
+                            frame->applyConfig(typed);
+                            applied = true;
+                        }
+                    },
+                    cfg.config);
+                return applied;
+            });
 
         // Editor-specific verbs. These run on the GUI thread like every other
         // handler, so they can call into the window directly.

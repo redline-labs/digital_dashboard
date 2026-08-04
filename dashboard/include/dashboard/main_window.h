@@ -19,6 +19,12 @@ class MainWindow : public QWidget
     // Get the window name for identification
     const std::string& getWindowName() const;
 
+    // Replaces a live widget with one built from `cfg`, keeping its geometry,
+    // objectName and position in the window. Dashboard widgets take their config
+    // at construction and have no setter, so changing one means rebuilding it.
+    // Returns false if `existing` is not one of this window's widgets.
+    bool rebuildWidget(QWidget* existing, const widget_config_t& cfg);
+
   private:
     void createWidgetsFromConfig();
 

@@ -479,6 +479,87 @@ def input_type(
     return parts
 
 
+# --------------------------------------------------------------- widget config
+
+
+@mcp.tool()
+def widget_describe_config(
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    type: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Widget type name, e.g. 'mercedes_190e_speedometer'. Or pass target.",
+        ),
+    ] = None,
+    target: Annotated[
+        str | None, Field(default=None, description="A live widget to describe instead.")
+    ] = None,
+) -> str:
+    """List a widget's settable fields: names, types, defaults, enum values, docs.
+
+    Read this before widget_set_config rather than guessing field names -- an
+    unknown field is rejected outright, and the descriptions come from what the
+    widget's author wrote.
+    """
+    try:
+        return json.dumps(
+            _call(app, "widget.describe_config", {"type": type, "target": target}), indent=2
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def widget_get_config(
+    target: Annotated[str, TARGET_FIELD],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+) -> str:
+    """Read a live widget's current configuration as JSON."""
+    try:
+        return json.dumps(_call(app, "widget.get_config", {"target": target}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def widget_set_config(
+    target: Annotated[str, TARGET_FIELD],
+    config: Annotated[
+        dict[str, Any],
+        Field(
+            description=(
+                "Only the fields to change. Everything you do not name keeps its "
+                "current value. Nested structs take nested objects."
+            )
+        ),
+    ],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    screenshot: Annotated[
+        bool, Field(default=False, description="Also return a screenshot afterwards.")
+    ] = False,
+) -> list[Any]:
+    """Change a live widget's configuration and rebuild it in place.
+
+    The change is all-or-nothing: if any field is unknown or the wrong type, the
+    call is rejected and nothing changes, with the problems listed. Geometry, id
+    and position are preserved, so selectors and refs stay valid.
+    """
+    try:
+        result = _call(app, "widget.set_config", {"target": target, "config": config})
+    except (AgentError, LaunchError, OSError) as exc:
+        return [_fail(exc)]
+
+    parts: list[Any] = [json.dumps(result, indent=2)]
+    if screenshot:
+        try:
+            shot = _call(app, "ui.screenshot", {"target": target})
+            parts.extend(_screenshot_content(shot))
+        except (AgentError, LaunchError, OSError) as exc:
+            parts.append(_fail(exc))
+    return parts
+
+
 # ------------------------------------------------------------------ escape hatch
 
 

@@ -43,6 +43,12 @@ qt_add_executable(${PROJECT_NAME}
     dashboard/app_config.cpp
     dashboard/main_window.cpp
     dashboard/command_line_args.cpp
+
+    # Shared by both executables: the widget config methods need FOR_EACH_WIDGET,
+    # so they cannot live in libs/agent_control (which knows nothing about
+    # widgets and must not).
+    agent/widget_methods.cpp
+
     resources.qrc
 )
 
@@ -84,6 +90,7 @@ qt_add_executable(editor
     editor/selection_frame.cpp
 
     dashboard/app_config.cpp  # TODO, kinda hack.
+    agent/widget_methods.cpp
 
     resources.qrc
 )
