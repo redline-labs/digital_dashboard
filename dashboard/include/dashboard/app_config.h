@@ -117,8 +117,14 @@ namespace YAML {
 YAML_CONFIG_ENUM(pub_sub::schema_type_t);
 
 YAML_CONFIG_ENUM(ValueReadoutAlignment);
+YAML_CONFIG_ENUM(ValueReadoutFormat);
 YAML_CONFIG_STRUCT(ValueReadoutConfig_t);
 
+YAML_CONFIG_ENUM(SegmentFace);
+YAML_CONFIG_ENUM(SegmentCaptionPosition);
+YAML_CONFIG_STRUCT(SegmentReadoutConfig_t);
+
+YAML_CONFIG_STRUCT(CenterBarConfig_t);
 
 YAML_CONFIG_ENUM(GradientDirection);
 YAML_CONFIG_STRUCT(BackgroundRectConfig_t);
@@ -140,6 +146,7 @@ YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
 
 YAML_CONFIG_STRUCT(CarplayConfig_t);
 YAML_CONFIG_STRUCT(NowPlayingConfig_t);
+YAML_CONFIG_STRUCT(CarPlayNavConfig_t);
 
 YAML_CONFIG_STRUCT(app_config_t);
 

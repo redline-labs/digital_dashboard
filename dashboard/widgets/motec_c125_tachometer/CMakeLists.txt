@@ -19,11 +19,11 @@ target_include_directories(motec_c125_tachometer PUBLIC
 target_link_libraries(motec_c125_tachometer
     PUBLIC
         reflection
+        helpers # config.h exposes helpers::Color
     PRIVATE
         Qt6::Widgets
         spdlog::spdlog
         zenoh_pub_sub
-        helpers
 )
 
 

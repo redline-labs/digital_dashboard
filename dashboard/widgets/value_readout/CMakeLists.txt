@@ -18,6 +18,7 @@ target_include_directories(value_readout PUBLIC
 
 target_link_libraries(value_readout PUBLIC
     reflection
+    helpers # config.h exposes helpers::Color
     PRIVATE
     Qt6::Widgets
     spdlog::spdlog

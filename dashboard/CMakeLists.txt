@@ -25,6 +25,7 @@ include_directories(
 # widgets here (and in FOR_EACH_WIDGET / widget_types.h / YAML_CONFIG_STRUCT).
 set(WIDGET_LIBS
     carplay_widget
+    carplay_nav
     now_playing
     mercedes_190e_telltales
     mercedes_190e_speedometer
@@ -35,6 +36,8 @@ set(WIDGET_LIBS
     motec_cdl3_tachometer
     static_text
     value_readout
+    segment_readout
+    center_bar
     background_rect
 )
 

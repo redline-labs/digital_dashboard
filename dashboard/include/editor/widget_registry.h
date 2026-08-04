@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include "carplay/carplay_widget.h"
+#include "carplay_nav/carplay_nav.h"
 #include "now_playing/now_playing.h"
 #include "mercedes_190e_speedometer/mercedes_190e_speedometer.h"
 #include "mercedes_190e_tachometer/mercedes_190e_tachometer.h"
@@ -18,6 +19,8 @@
 #include "motec_cdl3_tachometer/motec_cdl3_tachometer.h"
 #include "static_text/static_text.h"
 #include "value_readout/value_readout.h"
+#include "segment_readout/segment_readout.h"
+#include "center_bar/center_bar.h"
 #include "background_rect/background_rect.h"
 
 namespace widget_registry
@@ -47,6 +50,8 @@ namespace widget_registry
 #define FOR_EACH_WIDGET(X) \
 	X(StaticTextWidget) \
 	X(ValueReadoutWidget) \
+	X(SegmentReadoutWidget) \
+	X(CenterBarWidget) \
 	X(Mercedes190ESpeedometer) \
 	X(Mercedes190ETachometer) \
 	X(Mercedes190EClusterGauge) \
@@ -56,7 +61,8 @@ namespace widget_registry
 	X(MotecC125Tachometer) \
 	X(MotecCdl3Tachometer) \
 	X(CarPlayWidget) \
-	X(NowPlayingWidget)
+	X(NowPlayingWidget) \
+	X(CarPlayNavWidget)
 
 
 // Generate config_traits specializations from FOR_EACH_WIDGET.

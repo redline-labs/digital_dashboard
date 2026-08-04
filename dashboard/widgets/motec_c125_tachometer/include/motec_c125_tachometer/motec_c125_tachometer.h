@@ -44,6 +44,7 @@ private:
     void drawRedline(QPainter* painter);
     void drawTicks(QPainter* painter);
     void drawCenterDigit(QPainter* painter);
+    void drawPageBanner(QPainter* painter);
 
     MotecC125TachometerConfig_t _cfg;
     float _rpm; // current rpm

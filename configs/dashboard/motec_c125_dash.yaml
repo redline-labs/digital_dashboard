@@ -1,12 +1,24 @@
-# Minimal configuration showing only the new circle_tachometer widget
+# MoTeC C125/C127 race display.
+#
+# Laid out against the manufacturer's own screenshot of the 7" display: a
+# 800x480 black panel, six channel readouts bracketing a central tachometer,
+# and a lap-timing strip along the bottom. The type is orange italic labels over
+# white italic values throughout, which is the single thing that makes it read
+# as a MoTeC rather than as a generic dash.
 name: "main"
 width: 800
 height: 480
 background_color: "#000000"
+
 widgets:
 
-  # Center tachometer.
+  # ---- Centre tachometer -------------------------------------------------
+  # C-shaped dial, open at the bottom. The channel fills orange up to the
+  # current RPM and stays white beyond it, with a red band over the last
+  # 1000 RPM. The page banner, the gear digit and the scale caption sit in the
+  # dark middle.
   - type: motec_c125_tachometer
+    id: tacho
     x: 150
     y: 10
     width: 500
@@ -15,19 +27,30 @@ widgets:
       max_rpm: 6000
       redline_rpm: 5000
       center_page_digit: 5
+      page_label: "RACE"
+      scale_label: "RPM x1000"
+      italic: true
+      fill_color: "#FFB400"
+      redline_color: "#DC0000"
+      ring_color: "#D2D2D2"
+      digit_color: "#FFFFFF"
+
       zenoh_key: "vehicle/engine/rpm"
       schema_type: "EngineRpm"
       rpm_expression: "rpm"
 
-  # Left Side.
+  # ---- Left column -------------------------------------------------------
   - type: value_readout
     x: 10
     y: 40
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "ENGINE OIL TMP"
       alignment: left
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
       value_expression: "temperatureCelsius"
@@ -36,35 +59,44 @@ widgets:
     x: 10
     y: 140
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "GBOX OIL TMP"
       alignment: left
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 2"
+      value_expression: "temperatureCelsius - 3"
 
   - type: value_readout
     x: 10
     y: 240
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "DIFF OIL TMP"
       alignment: left
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
+      value_expression: "temperatureCelsius + 18"
 
-  # Right Side.
+  # ---- Right column ------------------------------------------------------
   - type: value_readout
     x: 550
     y: 40
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "WATER TMP"
       alignment: right
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
       value_expression: "temperatureCelsius"
@@ -73,68 +105,110 @@ widgets:
     x: 550
     y: 140
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "OIL PRESS"
       alignment: right
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 2"
+      value_expression: "temperatureCelsius * 5"
 
   - type: value_readout
     x: 550
     y: 240
     width: 240
-    height: 120
+    height: 96
     config:
       label_text: "FUEL PRESS"
       alignment: right
+      italic: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "celsius_to_fahrenheit(temperatureCelsius)"
+      value_expression: "temperatureCelsius * 3.8"
 
-  # Bottom bar.
+  # ---- Lap timing strip --------------------------------------------------
   - type: background_rect
     x: 0
-    y: 350
+    y: 360
     width: 800
-    height: 130
+    height: 120
     config:
-      colors: ["#222222", "#111111"]
+      colors: ["#141414", "#000000"]
       direction: vertical
 
+  # Lap times are seconds on the wire and m:ss.SS on the screen.
   - type: value_readout
     x: 10
-    y: 360
+    y: 368
     width: 240
-    height: 120
+    height: 76
     config:
       label_text: "REFERENCE LAP"
       alignment: left
+      italic: true
+      format: lap_time
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "1 + temperatureCelsius"
+      value_expression: "144.5"
 
   - type: value_readout
     x: 280
-    y: 360
+    y: 368
     width: 240
-    height: 120
+    height: 76
     config:
       label_text: "GAIN/LOSS"
       alignment: center
+      italic: true
+      decimals: 2
+      show_sign: true
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "(temperatureCelsius - 90) * 0.5"
+      value_expression: "(temperatureCelsius - 90) * 0.05"
 
   - type: value_readout
     x: 550
-    y: 360
+    y: 368
     width: 240
-    height: 120
+    height: 76
     config:
       label_text: "RUNNING LAP"
       alignment: right
+      italic: true
+      format: lap_time
+      label_color: "#FF9500"
+      value_color: "#FFFFFF"
       zenoh_key: "vehicle/engine/temperature_celsius"
       schema_type: "EngineTemperature"
-      value_expression: "-0.5 * temperatureCelsius"
+      value_expression: "144.5 - (temperatureCelsius - 90) * 0.05"
+
+  # The gain/loss strip under the lap figures: LOSS to the left, GAIN to the
+  # right, and a marker that sits at the centre when you are on the reference.
+  - type: center_bar
+    id: gain_loss
+    x: 150
+    y: 450
+    width: 500
+    height: 26
+    config:
+      range: 2.0
+      left_label: "LOSS"
+      right_label: "GAIN"
+      negative_is_good: false
+      track_color: "#2A2A2A"
+      good_color: "#39B54A"
+      bad_color: "#C4281E"
+      label_color: "#9A9A9A"
+      tick_color: "#6E6E6E"
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "(temperatureCelsius - 90) * 0.05"

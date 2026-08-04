@@ -8,6 +8,7 @@
 
 #include "dashboard/expression_subscription.h"
 #include "dashboard/gauge_painting.h"
+#include "dashboard/widget_colors.h"
 #include "dashboard/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
@@ -39,10 +40,11 @@ constexpr float kOuterRingRadius = 90.0f;    // controls distance of the outer g
 constexpr float kOuterRingPen    = 6.0f;     // stroke width for outer arc
 constexpr QColor kOuterRingColor = QColor(200, 200, 200);      // grayscale color (R=G=B)
 
-// Inner dial arc (center-line radius and pen width)
+// Inner dial arc (center-line radius and pen width). Both rings take their
+// colour from ring_color now; kOuterRingColor survives only as the fallback for
+// a colour Qt cannot parse.
 constexpr float kInnerRingRadius = 60.0f;    // controls distance of the inner gray arc from center
 constexpr float kInnerRingPen    = 6.0f;    // stroke width for inner arc
-constexpr QColor kInnerRingColor = QColor(200, 200, 200);      // grayscale color (R=G=B)
 
 // Channel (gap) derived from arcs; used for ticks, labels and fill
 constexpr float kChannelInnerEdge   = kInnerRingRadius + (kInnerRingPen / 2.0f); // outer edge of inner arc
@@ -68,7 +70,15 @@ constexpr float kFillArcRadius      = kChannelCenterRad;        // centered in t
 constexpr float kFillArcThickness   = kChannelThickness;        // completely fills the channel (no gap)
 
 constexpr QColor kFillBaseColor    = QColor(255, 255, 255);     // white background of the fill
-constexpr QColor kFillValueColor   = QColor(255, 180, 0);       // yellow overlay color
+
+// Page banner ("RACE") above the centre digit.
+constexpr float kBannerWidth       = 52.0f;
+constexpr float kBannerHeight      = 15.0f;
+constexpr float kBannerCenterY     = -30.0f;
+constexpr float kBannerRadius      = 3.0f;
+constexpr float kBannerFontPt      = 9.0f;
+constexpr QColor kBannerFillColor  = QColor(38, 38, 38);
+constexpr QColor kBannerEdgeColor  = QColor(150, 150, 150);
 }
 
 MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent):
@@ -78,6 +88,7 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
 {
     // font for the center digit (use bundled Futura if available)
     _digitFont = QFont(dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica"), 40, QFont::Bold);
+    _digitFont.setItalic(_cfg.italic);
 
     _expression_parser = dashboard::makeExpressionSubscription<float>(
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
@@ -116,15 +127,47 @@ void MotecC125Tachometer::paintDynamic(QPainter& painter)
 void MotecC125Tachometer::paintStaticOverlay(QPainter& painter)
 {
     // Outlines and ticks sit on top of the fill band
+    // Redline before the rings: it is a band inside the channel, and the rings
+    // are what close the channel's edges over it.
+    drawRedline(&painter);
     drawDial(&painter);
     drawTicks(&painter);
+    drawPageBanner(&painter);
     drawCenterDigit(&painter);
-    drawRedline(&painter);
+}
+
+void MotecC125Tachometer::drawPageBanner(QPainter* painter)
+{
+    if (_cfg.page_label.empty())
+    {
+        return;
+    }
+
+    painter->save();
+
+    const QRectF banner(-kBannerWidth / 2.0f, kBannerCenterY - kBannerHeight / 2.0f,
+                        kBannerWidth, kBannerHeight);
+
+    painter->setPen(QPen(kBannerEdgeColor, 1.0));
+    painter->setBrush(kBannerFillColor);
+    painter->drawRoundedRect(banner, kBannerRadius, kBannerRadius);
+
+    QFont banner_font = _digitFont;
+    banner_font.setPointSizeF(kBannerFontPt);
+    painter->setFont(banner_font);
+    painter->setPen(dashboard::toQColor(_cfg.digit_color));
+    painter->drawText(banner, Qt::AlignCenter, QString::fromStdString(_cfg.page_label));
+
+    painter->restore();
 }
 
 void MotecC125Tachometer::drawRedline(QPainter* painter)
 {
-    // Redline overlay along outer arc (thin red stroke from configured RPM to end of arc)
+    // The redline is a band filling the channel from the configured RPM to the
+    // end of the scale -- the same weight as the value fill, not a hairline
+    // along the outer ring. It is drawn after the value arc so a needle past the
+    // redline still shows red there, which is what the real display does and
+    // what makes the zone worth having.
     if (_cfg.redline_rpm == 0 || _cfg.redline_rpm > _cfg.max_rpm)
     {
         return;
@@ -136,16 +179,16 @@ void MotecC125Tachometer::drawRedline(QPainter* painter)
     const float sweep_at_red = kSweepTotalDeg * proportion; // degrees after sweep start
     const float redline_start_deg = kValueStartOffsetDeg + sweep_at_red; // relative to visual arc start
 
-    QPen redPen(QColor(220, 0, 0));
-    redPen.setWidthF(2.0f);
+    QPen redPen(dashboard::toQColor(_cfg.redline_color, QColor(220, 0, 0)));
+    redPen.setWidthF(kFillArcThickness);
     redPen.setCapStyle(Qt::FlatCap);
     painter->setPen(redPen);
 
-    const QRectF outerRect(-kOuterRingRadius, -kOuterRingRadius, 2*kOuterRingRadius, 2*kOuterRingRadius);
+    constexpr QRectF rect(-kFillArcRadius, -kFillArcRadius, 2 * kFillArcRadius, 2 * kFillArcRadius);
     // Start from arc start + redline angle, draw to the visual arc end clockwise (negative span)
     const int start_qt = static_cast<int>(-(kArcStartDeg + redline_start_deg) * 16.0f);
     const int span_qt  = static_cast<int>(-(kArcTotalDeg - redline_start_deg) * 16.0f);
-    painter->drawArc(outerRect, start_qt, span_qt);
+    painter->drawArc(rect, start_qt, span_qt);
     painter->restore();
 }
 
@@ -161,8 +204,10 @@ void MotecC125Tachometer::drawDial(QPainter* painter)
     constexpr int start_qt = static_cast<int>(-kArcStartDeg * 16.0f);
     constexpr int span_qt  = static_cast<int>(-kArcTotalDeg * 16.0f);
 
+    const QColor ring_color = dashboard::toQColor(_cfg.ring_color, kOuterRingColor);
+
     // Outer ring (medium/light gray)
-    QPen outerPen(kOuterRingColor);
+    QPen outerPen(ring_color);
     outerPen.setWidthF(kOuterRingPen);
     outerPen.setCapStyle(Qt::FlatCap);
     painter->setPen(outerPen);
@@ -171,7 +216,7 @@ void MotecC125Tachometer::drawDial(QPainter* painter)
     painter->drawArc(outerRect, start_qt, span_qt);
 
     // Inner ring (medium/light gray)
-    QPen innerPen(kInnerRingColor);
+    QPen innerPen(ring_color);
     innerPen.setWidthF(kInnerRingPen);
     innerPen.setCapStyle(Qt::FlatCap);
     painter->setPen(innerPen);
@@ -282,7 +327,7 @@ void MotecC125Tachometer::drawValueArc(QPainter* painter)
 
     // Overlay the current portion in yellow; start from the visual arc start so
     // a small pre-zero yellow segment is visible up to the 0 tick
-    QPen valPen(kFillValueColor);
+    QPen valPen(dashboard::toQColor(_cfg.fill_color, QColor(255, 180, 0)));
     valPen.setWidthF(kFillArcThickness);
     valPen.setCapStyle(Qt::FlatCap);
     painter->setPen(valPen);
@@ -295,8 +340,8 @@ void MotecC125Tachometer::drawValueArc(QPainter* painter)
 
 void MotecC125Tachometer::drawCenterDigit(QPainter* painter)
 {
-    constexpr QColor digit_color = QColor(255, 255, 255);
-    constexpr QColor rpm_label_color = QColor(100, 100, 100);
+    const QColor digit_color = dashboard::toQColor(_cfg.digit_color, Qt::white);
+    constexpr QColor rpm_label_color = QColor(120, 120, 120);
 
     painter->save();
     painter->setPen(digit_color);
@@ -311,7 +356,8 @@ void MotecC125Tachometer::drawCenterDigit(QPainter* painter)
     small.setPointSizeF(8.0f);
     painter->setFont(small);
     painter->setPen(rpm_label_color);
-    painter->drawText(QRectF(-40, 15, 80, 20), Qt::AlignCenter, "RPMx1000");
+    painter->drawText(QRectF(-40, 15, 80, 20), Qt::AlignCenter,
+                      QString::fromStdString(_cfg.scale_label));
     painter->restore();
 }
 

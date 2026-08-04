@@ -14,10 +14,13 @@ REFLECT_ENUM(widget_type_t,
     motec_cdl3_tachometer,
     static_text,
     value_readout,
+    segment_readout,
+    center_bar,
     background_rect,
     sparkline,
     carplay,
     now_playing,
+    carplay_nav,
     unknown
 )
 

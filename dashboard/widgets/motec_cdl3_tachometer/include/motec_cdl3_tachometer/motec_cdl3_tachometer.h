@@ -52,8 +52,8 @@ private:
 
     // The only thing the dynamic layer actually draws: how many of the 46
     // segments are lit. Derived from _rpm when it is set, so the whole display
-    // has at most 47 distinct states and a repaint is only worth asking for
-    // when this number moves -- not on every sample.
+    // has at most kSegments + 1 distinct states and a repaint is only worth
+    // asking for when this number moves -- not on every sample.
     int _on_segments = 0;
 
     // Fonts
@@ -67,8 +67,12 @@ private:
     std::array<float, kLutSamples> _lutAngles{};
     std::array<float, kLutSamples> _lutLengths{};
 
-    // Precomputed geometry
-    static constexpr int kSegments = 46;
+    // Precomputed geometry.
+    //
+    // 70 is the CDL3's own number: MoTeC specify the panel as a "70 segment bar
+    // graph". At this count the segments read as a bar rather than as a row of
+    // blocks, which is most of what makes the real display recognisable.
+    static constexpr int kSegments = 70;
     std::array<float, kSegments> _segmentStartAngles{};  // a0 per segment
     std::array<float, kSegments> _segmentSpanDeg{};      // span (deg) per segment
     std::array<float, kSegments> _segmentLengthPx{};     // pen width per segment

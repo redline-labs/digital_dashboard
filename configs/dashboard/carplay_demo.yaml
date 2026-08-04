@@ -21,6 +21,7 @@ widgets:
   # Supplemental widget fed by the same driver node -- demonstrates that
   # CarPlay metadata is reusable outside the projected video surface.
   - type: now_playing
+    id: now_playing
     x: 810
     y: 20
     width: 380
@@ -29,3 +30,22 @@ widgets:
       zenoh_key: "nodes/carplay/nowplaying"
       show_album_art: true
       show_progress: true
+
+      # A call takes this widget over while it lasts, then hands it back to
+      # the music. Same node, separate topic.
+      show_calls: true
+      call_zenoh_key: "nodes/carplay/call"
+
+  # Turn-by-turn guidance, fed by the same driver node. Independent of the
+  # projected video surface: this keeps working with the CarPlay screen off.
+  - type: carplay_nav
+    id: nav
+    x: 810
+    y: 160
+    width: 380
+    height: 150
+    config:
+      zenoh_key: "nodes/carplay/nav"
+      imperial_units: false
+      show_trip_summary: true
+      background_color: "#111111"

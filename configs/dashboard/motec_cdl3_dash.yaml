@@ -1,0 +1,139 @@
+# MoTeC CDL3 "Club Dash" logger display.
+#
+# The CDL3 is a monochrome segmented LCD behind a teal backlight, not a colour
+# screen: everything is drawn in one dark ink on one background, and every field
+# is a fixed set of segment cells. The cells that are not driven stay faintly
+# visible -- that ghosting is the single most recognisable thing about the panel,
+# and it is why the readouts here are segment_readout rather than static_text.
+#
+# Layout follows the manufacturer's product shot: RPM bargraph sweeping across
+# the top left, gear in the middle, fuel top right, and a two-field alphanumeric
+# strip along the bottom.
+name: "main"
+width: 600
+height: 300
+background_color: "#73C3D0"
+
+widgets:
+
+  # ---- RPM bargraph and scale --------------------------------------------
+  # Segmented arc plus the 0-7 scale beneath it. Oversized and offset upwards
+  # because the widget assumes a square and only the top of that square is the
+  # part the panel actually shows.
+  - type: motec_cdl3_tachometer
+    id: tacho
+    x: -24
+    y: -205
+    width: 580
+    height: 580
+    config:
+      max_rpm: 7000
+      zenoh_key: "vehicle/engine/rpm"
+      schema_type: "EngineRpm"
+      rpm_expression: "rpm"
+
+  # ---- Fuel, top right ----------------------------------------------------
+  # Pushed clear of the bargraph's scale: the tacho draws its 0-7 numbers along
+  # the underside of the arc, and the "7" runs out to x~445. Any earlier and the
+  # fuel figure sits on top of it.
+  - type: segment_readout
+    id: fuel
+    x: 468
+    y: 10
+    width: 124
+    height: 54
+    config:
+      face: seven
+      digits: 2
+      decimals: 0
+      caption: "FUEL"
+      caption_position: right
+      lit_color: "#0E1A24"
+      ghost_color: "#5FAFB9"
+      caption_color: "#0E1A24"
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius * 0.3"
+
+  # ---- Engine temperature, left ------------------------------------------
+  # Right of the arc's "0" tick label and short of the gear cell.
+  - type: segment_readout
+    id: et
+    x: 132
+    y: 162
+    width: 98
+    height: 70
+    config:
+      face: seven
+      digits: 2
+      decimals: 0
+      caption: "ET"
+      caption_position: top
+      lit_color: "#0E1A24"
+      ghost_color: "#5FAFB9"
+      caption_color: "#0E1A24"
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius"
+
+  # ---- Gear, centre -------------------------------------------------------
+  # One cell, no caption, and much larger than everything else -- the gear is
+  # the field the driver reads without looking.
+  - type: segment_readout
+    id: gear
+    x: 234
+    y: 126
+    width: 72
+    height: 108
+    config:
+      face: seven
+      digits: 1
+      decimals: 0
+      lit_color: "#0E1A24"
+      ghost_color: "#5FAFB9"
+      zenoh_key: "vehicle/engine/rpm"
+      schema_type: "EngineRpm"
+      value_expression: "4"
+
+  # ---- Lap time, centre right --------------------------------------------
+  - type: segment_readout
+    id: laptime
+    x: 318
+    y: 144
+    width: 148
+    height: 90
+    config:
+      face: seven
+      digits: 3
+      decimals: 2
+      caption: "TIME"
+      caption_position: top
+      lit_color: "#0E1A24"
+      ghost_color: "#5FAFB9"
+      caption_color: "#0E1A24"
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius * 0.0625"
+
+  # ---- Bottom strip: the alphanumeric bar ---------------------------------
+  # MoTeC specify the CDL3's as "13 digit alphanumeric": ONE field of thirteen
+  # fourteen-segment cells running the width of the panel, holding the channel
+  # name and its value together. Two adjacent widgets would not be the same
+  # thing -- each would size its own cells, so the two halves would not share a
+  # cell pitch and the row would not read as one bar.
+  - type: segment_readout
+    id: channel_bar
+    x: 8
+    y: 242
+    width: 584
+    height: 54
+    config:
+      face: fourteen
+      digits: 13
+      decimals: 1
+      prefix: "OIL PRESS"
+      lit_color: "#0E1A24"
+      ghost_color: "#5FAFB9"
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      value_expression: "temperatureCelsius * 0.5588"
