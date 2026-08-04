@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
+#include "dashboard/widget_colors.h"
 
 // Colors
 static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
@@ -79,12 +80,12 @@ void Mercedes190ETelltale::updateColors()
 {
     if (mAsserted)
     {
-        mBackgroundColor = QColor::fromString(_cfg.warning_color.value());
+        mBackgroundColor = dashboard::toQColor(_cfg.warning_color);
         mIconColor = kAssertedIcon;
     }
     else
     {
-        mBackgroundColor = QColor::fromString(_cfg.normal_color.value());
+        mBackgroundColor = dashboard::toQColor(_cfg.normal_color);
         mIconColor = kNormalIcon;
     }
 }

@@ -6,6 +6,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include "helpers/color.h"
 #include "reflection/reflection.h"
 
 namespace dashboard::config {
@@ -135,6 +136,29 @@ void validateStruct(const YAML::Node& node, const std::string& path, std::vector
                         issues.push_back({Issue::Severity::error, elem_path, e.what()});
                     }
                 }
+            }
+        }
+        else if constexpr (std::is_same_v<Field, helpers::Color>)
+        {
+            // An unparseable colour reaches QColor as "invalid", which paints as
+            // transparent black or -- where the value goes into a stylesheet --
+            // makes Qt drop the rule entirely. Both are silent, so catch the
+            // typo here where the field's path can be named.
+            std::string text;
+            try
+            {
+                text = child.as<std::string>();
+            }
+            catch (const std::exception&)
+            {
+                issues.push_back({Issue::Severity::error, field_path, "expected a colour string"});
+                return;
+            }
+
+            if (!helpers::Color::isValidFormat(text))
+            {
+                issues.push_back({Issue::Severity::error, field_path,
+                                  "'" + text + "' is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA"});
             }
         }
         else if constexpr (std::is_enum_v<Field>)

@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "dashboard/widget_colors.h"
 #include "dashboard/widget_fonts.h"
 
 namespace
@@ -18,11 +19,6 @@ QString secondsToClock(float seconds)
     }
     const int total = static_cast<int>(seconds);
     return QString("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QChar('0'));
-}
-
-QColor toQColor(const helpers::Color& c)
-{
-    return QColor(QString::fromStdString(c.value()));
 }
 
 }  // namespace
@@ -128,7 +124,7 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
 
     if (title.isEmpty())
     {
-        p.setPen(toQColor(_cfg.detail_color));
+        p.setPen(dashboard::toQColor(_cfg.detail_color));
         p.drawText(bounds, Qt::AlignCenter, "Nothing playing");
         return;
     }
@@ -171,14 +167,14 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
     qreal y = text_area.top() + title_fm.height() * 0.2;
 
     p.setFont(title_font);
-    p.setPen(toQColor(_cfg.title_color));
+    p.setPen(dashboard::toQColor(_cfg.title_color));
     p.drawText(QRectF(text_area.left(), y, text_area.width(), title_fm.height()),
                Qt::AlignLeft | Qt::AlignVCenter,
                title_fm.elidedText(title, Qt::ElideRight, text_area.width()));
     y += title_fm.height();
 
     p.setFont(detail_font);
-    p.setPen(toQColor(_cfg.detail_color));
+    p.setPen(dashboard::toQColor(_cfg.detail_color));
     for (const QString& line : {artist, album})
     {
         if (line.isEmpty())
@@ -204,10 +200,10 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
         const qreal fraction = std::clamp<qreal>(elapsed / duration, 0.0, 1.0);
         QRectF filled = track;
         filled.setWidth(track.width() * fraction);
-        p.setBrush(toQColor(_cfg.accent_color));
+        p.setBrush(dashboard::toQColor(_cfg.accent_color));
         p.drawRoundedRect(filled, bar_h / 2.0, bar_h / 2.0);
 
-        p.setPen(toQColor(_cfg.detail_color));
+        p.setPen(dashboard::toQColor(_cfg.detail_color));
         const QRectF times(text_area.left(), track.bottom() + bar_h * 0.5,
                            text_area.width(), detail_fm.height());
         p.drawText(times, Qt::AlignLeft | Qt::AlignVCenter, secondsToClock(elapsed));
@@ -217,7 +213,7 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
     // A subtle paused indicator so a stale display is distinguishable.
     if (!playing)
     {
-        p.setPen(toQColor(_cfg.detail_color));
+        p.setPen(dashboard::toQColor(_cfg.detail_color));
         p.setFont(detail_font);
         p.drawText(bounds.adjusted(0, 0, -4, -2), Qt::AlignRight | Qt::AlignTop, "II");
     }

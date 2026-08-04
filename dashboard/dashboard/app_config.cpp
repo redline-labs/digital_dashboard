@@ -108,6 +108,35 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
         }
     }
 
+    // The window's own scalars. These cannot go through validateStruct against
+    // app_config_t, because its `widgets` field is a vector whose element type
+    // depends on `type` -- so they are checked individually here.
+    if (root["background_color"])
+    {
+        const std::string color = root["background_color"].as<std::string>();
+        if (!helpers::Color::isValidFormat(color))
+        {
+            // This one goes straight into a Qt stylesheet, where an unparseable
+            // value makes Qt drop the whole rule and the window keeps whatever
+            // background it had. Silently.
+            issues.push_back({Issue::Severity::error, "background_color",
+                              "'" + color + "' is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA"});
+        }
+    }
+
+    for (const char* key : {"width", "height"})
+    {
+        if (!root[key]) continue;
+        try
+        {
+            (void)root[key].as<uint16_t>();
+        }
+        catch (const std::exception& e)
+        {
+            issues.push_back({Issue::Severity::error, key, e.what()});
+        }
+    }
+
     if (!root["widgets"])
     {
         issues.push_back({Issue::Severity::warning, "widgets", "missing; the window will be empty"});

@@ -280,6 +280,42 @@ widgets:
     check(issue != nullptr, "a typo inside a nested struct is reported at its full path, got:" + dump(issues));
 }
 
+// An unparseable colour reaches QColor as "invalid", which paints as
+// transparent black -- or, in a stylesheet, makes Qt drop the whole rule and
+// leave the window looking untouched. Both are silent.
+void testMalformedColoursAreReported()
+{
+    const auto issues = issuesFor(R"(
+background_color: "not-a-color"
+widgets:
+  - type: static_text
+    config:
+      color: "0000FF"
+)");
+
+    const Issue* window = find(issues, "background_color");
+    check(window != nullptr && window->severity == Issue::Severity::error,
+          "a malformed window background colour is an error, got:" + dump(issues));
+
+    const Issue* field = find(issues, "widgets[0].config.color");
+    check(field != nullptr && field->severity == Issue::Severity::error,
+          "a colour missing its '#' is an error");
+    if (field)
+    {
+        check(field->message.find("#RRGGBB") != std::string::npos,
+              "the message says what a colour should look like");
+    }
+}
+
+void testWellFormedColoursAreAccepted()
+{
+    for (const char* colour : {"#000", "#00FF00", "#00ff00", "#11223344"})
+    {
+        const std::string yaml = std::string("background_color: \"") + colour + "\"\nwidgets: []\n";
+        check(!hasError(issuesFor(yaml)), std::string("'") + colour + "' is accepted");
+    }
+}
+
 // ---------------------------------------------------------------- range limits
 //
 // The validator above catches what a file *says*; these catch what it *means*.
@@ -402,6 +438,8 @@ int main()
     testAllProblemsAreReportedTogether();
     testMissingConfigIsAWarningNotAnError();
     testNestedStructsAreWalked();
+    testMalformedColoursAreReported();
+    testWellFormedColoursAreAccepted();
 
     testFullScaleIsNeverZero();
     testFullScaleIsCapped();

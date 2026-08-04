@@ -53,6 +53,39 @@ public:
     bool empty() const { return value_.empty(); }
     size_t size() const { return value_.size(); }
     
+    // True if the string is a hex colour this project understands: "#RGB",
+    // "#RRGGBB" or "#RRGGBBAA".
+    //
+    // Anything else -- a missing '#', a stray letter, a colour name -- lands in
+    // QColor as an invalid colour, and an invalid QColor paints as transparent
+    // black or, in a stylesheet, makes Qt drop the whole rule. Both are silent,
+    // so the point of this is to be able to say so at load time instead.
+    static bool isValidFormat(std::string_view text)
+    {
+        if (text.empty() || text.front() != '#')
+        {
+            return false;
+        }
+
+        const std::string_view digits = text.substr(1);
+        if (digits.size() != 3 && digits.size() != 6 && digits.size() != 8)
+        {
+            return false;
+        }
+
+        for (const char c : digits)
+        {
+            const bool is_hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!is_hex)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool isValidFormat() const { return isValidFormat(value_); }
+
     // Comparison operators
     bool operator==(const Color& other) const { return value_ == other.value_; }
     bool operator!=(const Color& other) const { return value_ != other.value_; }
