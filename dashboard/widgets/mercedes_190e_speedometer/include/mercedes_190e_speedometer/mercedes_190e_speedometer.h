@@ -3,6 +3,7 @@
 
 #include "mercedes_190e_speedometer/config.h"
 #include "dashboard/cached_paint_widget.h"
+#include "dashboard/gauge_painting.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -46,14 +47,15 @@ private:
     static constexpr float kAngleSweepDeg = -240.0f;
 
     // Needle properties (Orange, tapered)
-    static constexpr QColor kNeedleColor = QColor(255, 165, 0); // Orange
+    // gauge_paint owns these; redeclaring them here was the third copy.
+    static constexpr QColor kNeedleColor = gauge_paint::kNeedleColor;
     static constexpr float kNeedleLength = 85.0f;      // Length from pivot to tip
     static constexpr float kNeedleBaseWidth = 4.0f;    // Width at the pivot
     static constexpr float kNeedleTipWidth = 2.0f;     // Width at the tip (can be 0 for a sharp point)
 
     // Pivot properties.
     static constexpr float kPivotRadius = 8.0f; // Larger pivot as per image
-    static constexpr QColor kPivotColor = QColor(40, 40, 40); // Dark grey/black
+    static constexpr QColor kPivotColor = gauge_paint::kPivotColor;
 
     // Odometer properties.
     static constexpr uint8_t kNumDigits = 6;

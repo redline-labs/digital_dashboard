@@ -2,8 +2,10 @@
 #define DASHBOARD_GAUGE_PAINTING_H_
 
 #include <QColor>
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPolygonF>
+#include <QString>
 #include <QWidget>
 
 #include <algorithm>
@@ -85,6 +87,37 @@ inline void drawPivot(QPainter& painter, float radius, QColor color = kPivotColo
     painter.setBrush(color);
     painter.drawEllipse(QPointF(0.0f, 0.0f), radius, radius);
     painter.restore();
+}
+
+// Draws one radial tick at `angle_deg`, between two radii from the painter
+// origin. The angle is in the same convention the gauges use -- degrees,
+// measured the way valueToAngleDeg returns them -- and the negation Qt's
+// downward y axis needs happens here rather than at each call site.
+//
+// This block ("angle -> cos/sin -> two points -> drawLine") was copy-pasted five
+// times, twice inside mercedes_190e_speedometer.cpp alone, once per direction
+// the ticks grow. r_from/r_to being independent is what covers both: ticks that
+// grow outward pass the smaller radius first, ticks that grow inward pass the
+// larger.
+inline void drawRadialTick(QPainter& painter, float angle_deg, float r_from, float r_to)
+{
+    const float radians = -angle_deg * static_cast<float>(M_PI) / 180.0f;
+    const float cos_a = std::cos(radians);
+    const float sin_a = std::sin(radians);
+    painter.drawLine(QPointF(r_from * cos_a, r_from * sin_a),
+                     QPointF(r_to * cos_a, r_to * sin_a));
+}
+
+// Draws `text` centred on a point at `radius` and `angle_deg` from the origin.
+// The companion to drawRadialTick: every gauge that draws ticks also labels
+// them, with the same boundingRect/moveCenter/drawText dance each time.
+inline void drawTextAtAngle(QPainter& painter, const QFontMetricsF& fm, float angle_deg,
+                            float radius, const QString& text)
+{
+    const float radians = -angle_deg * static_cast<float>(M_PI) / 180.0f;
+    QRectF box = fm.boundingRect(text);
+    box.moveCenter(QPointF(radius * std::cos(radians), radius * std::sin(radians)));
+    painter.drawText(box, Qt::AlignCenter, text);
 }
 
 // Draws the circular gauge face centered at the painter origin.

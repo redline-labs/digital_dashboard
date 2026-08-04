@@ -211,13 +211,15 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     const float clockNumberRadius = clockRadius - tickLength - 7.0f; // Radius for placing numbers, adjusted
 
     // Needle style properties (copied from tachometer, scaled down)
-    const QColor handColor(255, 165, 0); // Orange, same as tachometer
+    // The shared needle colour: these hands are the same orange as the needle,
+    // and a fourth local copy of it was one edit away from drifting.
+    const QColor handColor = gauge_paint::kNeedleColor;
     const float hourHandBaseWidth = 2.5f;
     const float hourHandTipWidth = 1.0f;
     const float minuteHandBaseWidth = 2.0f;
     const float minuteHandTipWidth = 0.5f;
     const float clockPivotRadius = 5.0f;  // Smaller pivot for the clock
-    const QColor pivotColor(40, 40, 40); // Dark grey, same as tachometer
+    const QColor pivotColor = gauge_paint::kPivotColor;
 
     painter->translate(clockCenterX, clockCenterY);
 

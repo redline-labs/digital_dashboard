@@ -34,7 +34,6 @@ namespace
     constexpr float kGaugeSpanDegrees = 90.0f;
 
     // Needle styling shared by all sub-gauges to match cluster aesthetics.
-    constexpr QColor kNeedleColor(255, 165, 0); // Orange needle for brand consistency
     constexpr float kNeedleBaseWidth = 3.0f;
     constexpr float kNeedleTipWidth  = 2.0f;
     constexpr float kNeedleLength    = 50.0f;
@@ -216,7 +215,7 @@ static void drawGaugeNeedle(
     painter->save();
     painter->translate(centerX, centerY);
     painter->rotate(info.rotateClockwiseNegative ? (-1.0f * needleAngle) : needleAngle);
-    gauge_paint::drawTaperedNeedle(*painter, kNeedleLength, kNeedleBaseWidth, kNeedleTipWidth, kNeedleColor);
+    gauge_paint::drawTaperedNeedle(*painter, kNeedleLength, kNeedleBaseWidth, kNeedleTipWidth);
     painter->restore();
 
     painter->save();

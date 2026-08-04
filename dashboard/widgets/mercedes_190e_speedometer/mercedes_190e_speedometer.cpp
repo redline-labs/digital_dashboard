@@ -254,7 +254,6 @@ void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
         // Skip drawing ticks beyond cfg_.max_speed if they are not also major interval markers like 120 for loop end condition
         // This loop condition allows 120 to be processed. Ticks slightly over might occur if cfg_.max_speed wasn't a multiple of 5.
         float rawAngle = valueToAngle(static_cast<float>(mph), static_cast<float>(cfg_.max_speed));
-        float angleRadForTicks = degrees_to_radians(-1.0f * rawAngle); // Negate angle for tick math
         
         bool isMajorTick = (mph % 10 == 0);
         bool isMinorTick = (mph % 5 == 0); // All ticks in this loop will be at least minor
@@ -266,23 +265,14 @@ void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
             tickPen.setWidthF(isMajorTick ? majorTickPenWidth : minorTickPenWidth);
             painter->setPen(tickPen);
 
-            QPointF p1_mph((kArcRadius + 1.0f) * std::cos(angleRadForTicks), (kArcRadius + 1.0f) * std::sin(angleRadForTicks));
-            QPointF p2_mph((kArcRadius + tickLen) * std::cos(angleRadForTicks), (kArcRadius + tickLen) * std::sin(angleRadForTicks)); 
-            painter->drawLine(p1_mph, p2_mph);
+            gauge_paint::drawRadialTick(*painter, rawAngle, kArcRadius + 1.0f, kArcRadius + tickLen);
         }
 
         // Labels every 20 mph, starting from 20 up to maxSpeedMph
         if (mph % 20 == 0 && mph >= 0 && mph <= cfg_.max_speed)
         {
-            QString strVal = QString::number(mph);
-            float angleRadForNumbers_original = degrees_to_radians(rawAngle);
-            float x_text_orig = kArcNumTextRadius * std::cos(angleRadForNumbers_original);
-            float y_text_cartesian_orig = kArcNumTextRadius * std::sin(angleRadForNumbers_original);
-            
-            QRectF textRect = fm.boundingRect(strVal);
-            textRect.moveCenter(QPointF(x_text_orig, -y_text_cartesian_orig)); 
-            painter->setPen(Qt::white); // Ensure pen is white for text (might have been changed by tick drawing)
-            painter->drawText(textRect, Qt::AlignCenter, strVal);
+            painter->setPen(Qt::white); // tick drawing above may have changed it
+            gauge_paint::drawTextAtAngle(*painter, fm, rawAngle, kArcNumTextRadius, QString::number(mph));
         }
     }
     painter->restore();
@@ -317,7 +307,6 @@ void Mercedes190ESpeedometer::drawKmhTicksAndNumbers(QPainter *painter)
     {
         // Calculate angle for the current KM/H value based on the derived KM/H range
         float rawAngle = valueToAngle(kmh, maxSpeedKmh);
-        float angleRadForTicks = degrees_to_radians(-rawAngle); // Negate for visual orientation
         
         bool isMajorTick = (static_cast<int>(kmh + 0.5f) % 20 == 0 && kmh >= minSpeedKmh); // Adding 0.5 for float comparison robustness
         bool isMinorTick = (static_cast<int>(kmh + 0.5f) % 10 == 0 && kmh >= minSpeedKmh);
@@ -325,9 +314,7 @@ void Mercedes190ESpeedometer::drawKmhTicksAndNumbers(QPainter *painter)
         if (isMajorTick || isMinorTick)
         {
             float tickLen = isMajorTick ? kKmhMajorTickLen : kKmhMinorTickLen;
-            QPointF p1_kmh(kKmhArcRadius * std::cos(angleRadForTicks), kKmhArcRadius * std::sin(angleRadForTicks));
-            QPointF p2_kmh((kKmhArcRadius - tickLen) * std::cos(angleRadForTicks), (kKmhArcRadius - tickLen) * std::sin(angleRadForTicks)); 
-            painter->drawLine(p1_kmh, p2_kmh);
+            gauge_paint::drawRadialTick(*painter, rawAngle, kKmhArcRadius, kKmhArcRadius - tickLen);
         }
 
         if (isMajorTick && kmh > minSpeedKmh - 1.0f /*allow 0 to be skipped if desired by >0 logic*/)
