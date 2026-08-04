@@ -72,7 +72,9 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
 namespace
 {
     template <typename T>
-    QWidget* createLeafEditor(QWidget* parent, std::string_view fieldName, const T& value, std::string_view typeName, const QString& path)
+    // No fieldName/typeName parameters: they existed only to name the field in
+    // the "unsupported type" warning, and that case is a static_assert now.
+    QWidget* createLeafEditor(QWidget* parent, const T& value, const QString& path)
     {
         using FieldType = std::decay_t<T>;
 
@@ -195,12 +197,19 @@ namespace
         }
         else
         {
-            auto* line = new QLineEdit(parent);
-            line->setReadOnly(true);
-            line->setPlaceholderText("(unsupported type)");
-            SPDLOG_WARN("Unsupported type: '{}' for field '{}'", typeName, fieldName);
-            line->setObjectName(QString("field:%1").arg(path));
-            return line;
+            // A compile error, not a runtime warning. This used to build a
+            // read-only "(unsupported type)" box, which readIntoConfig then had
+            // no branch to read back -- so the field was reset to its default on
+            // every Apply. A config field the panel cannot render is a silent
+            // data-loss bug for whoever adds it, and they will not see the log
+            // line. config_json.h has taken this position all along; the editor
+            // is the half that was lenient.
+            //
+            // If you land here: add a branch above for the type, and a matching
+            // one in readLeafFromWidget.
+            static_assert(sizeof(T) == 0,
+                          "properties_panel cannot build an editor for this config field type. "
+                          "Add a branch to createLeafEditor and readLeafFromWidget.");
         }
     }
 
@@ -247,7 +256,13 @@ namespace
                 h->addWidget(idxLabel);
                 Elem valueToUse = initValue ? *initValue : Elem{};
                 const QString childPath = QString("%1[%2]").arg(path).arg(idx);
-                auto* childEditor = createLeafEditor<Elem>(row, fieldName, valueToUse, typeName, childPath);
+
+                // createEditorFor, not createLeafEditor: an element that is
+                // itself a reflected struct needs the nested-struct branch. No
+                // config has a vector of structs today, which is exactly why the
+                // next one would have hit the leaf path and been silently reset
+                // to defaults on Apply.
+                auto* childEditor = createEditorFor<Elem>(row, fieldName, valueToUse, typeName, childPath);
                 h->addWidget(childEditor, 1);
                 row->setLayout(h);
                 itemsLayout->addWidget(row);
@@ -308,7 +323,7 @@ namespace
         }
         else
         {
-            return createLeafEditor<FieldType>(parent, fieldName, ref, typeName, path);
+            return createLeafEditor<FieldType>(parent, ref, path);
         }
     }
 
