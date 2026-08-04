@@ -19,6 +19,7 @@ add_library(agent_control STATIC
     input.cpp
     inspector.cpp
     locator.cpp
+    log_sink.cpp
     methods.cpp
     server.cpp
 
@@ -36,7 +37,8 @@ target_link_libraries(agent_control
         Qt6::Gui
         Qt6::Widgets
         nlohmann_json::nlohmann_json
-    PRIVATE
+        # PUBLIC: log_sink.h exposes a spdlog sink in its interface, so anything
+        # installing the ring needs spdlog's headers too.
         spdlog::spdlog
 )
 
@@ -45,6 +47,10 @@ target_link_libraries(agent_control
 add_executable(agent_control_test_framing test_framing.cpp)
 target_link_libraries(agent_control_test_framing PRIVATE agent_control spdlog::spdlog)
 add_project_test(TARGET agent_control_test_framing LABELS agent_control unit)
+
+add_executable(agent_control_test_log_ring test_log_ring.cpp)
+target_link_libraries(agent_control_test_log_ring PRIVATE agent_control spdlog::spdlog)
+add_project_test(TARGET agent_control_test_log_ring LABELS agent_control unit)
 
 add_executable(agent_control_test_selector test_selector.cpp)
 target_link_libraries(agent_control_test_selector PRIVATE agent_control spdlog::spdlog)

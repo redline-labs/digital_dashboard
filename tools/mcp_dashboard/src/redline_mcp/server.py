@@ -183,6 +183,68 @@ def app_info(app: Annotated[AppName | None, APP_FIELD] = None) -> str:
         return _fail(exc)
 
 
+@mcp.tool()
+def app_logs(
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    since_seq: Annotated[
+        int,
+        Field(
+            default=0,
+            description=(
+                "Return records from this sequence number onwards. Feed back the "
+                "`next_seq` from your previous call to get only what is new. "
+                "0 means from the oldest record still held."
+            ),
+        ),
+    ] = 0,
+    level: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Minimum severity: trace, debug, info, warn, err, critical.",
+        ),
+    ] = None,
+    grep: Annotated[
+        str | None,
+        Field(default=None, description="Case-insensitive substring of the message."),
+    ] = None,
+    logger: Annotated[
+        str | None,
+        Field(default=None, description="Exact logger name. Qt's own messages use 'qt'."),
+    ] = None,
+    limit: Annotated[
+        int, Field(default=200, description="Maximum records; keeps the newest.")
+    ] = 200,
+) -> str:
+    """Read the app's in-process log ring: structured, filterable, with a cursor.
+
+    This is usually faster than guessing when something looks wrong. The app logs
+    each stage of its work, and Qt's own diagnostics (QPA errors, layout
+    warnings) are bridged into the same stream under the 'qt' logger -- a
+    screenshot that came back wrong often has a Qt line behind it.
+
+    A `dropped` field means the ring wrapped and records were lost before you
+    read them; poll more often if you see it.
+    """
+    try:
+        return json.dumps(
+            _call(
+                app,
+                "app.logs",
+                {
+                    "since_seq": since_seq,
+                    "level": level,
+                    "grep": grep,
+                    "logger": logger,
+                    "limit": limit,
+                },
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
 # ---------------------------------------------------------------------- inspect
 
 

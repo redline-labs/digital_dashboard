@@ -5,6 +5,7 @@
 
 #include "editor/editor_window.h"
 
+#include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
 
@@ -121,6 +122,9 @@ int main(int argc, char** argv)
         spdlog::default_logger()->sinks().clear();
         spdlog::default_logger()->sinks().push_back(
             std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
+
+        // The queryable ring behind app.logs, plus the Qt message bridge.
+        agent_control::installLogCapture();
     }
 
     spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);

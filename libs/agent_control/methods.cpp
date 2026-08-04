@@ -3,6 +3,9 @@
 #include "agent_control/capture.h"
 #include "agent_control/inspector.h"
 #include "agent_control/input.h"
+#include "agent_control/log_sink.h"
+
+#include <spdlog/spdlog.h>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -160,6 +163,99 @@ void registerCoreMethods(AgentServer& server, AppInfo info)
             return out;
         },
         AgentServer::MethodKind::kReadOnly);
+
+    // ---------------------------------------------------------------- app.logs
+    server.registerMethod(
+        "app.logs",
+        [](const json& params) -> MethodResult
+        {
+            auto ring = logRing();
+            if (ring == nullptr)
+            {
+                return std::unexpected(AgentError{
+                    ErrorCode::kUnsupportedInApp,
+                    "Log capture is not installed in this process.",
+                    json::object()});
+            }
+
+            RingSink::Query query;
+
+            if (params.contains("since_seq"))
+            {
+                if (!params["since_seq"].is_number_unsigned())
+                {
+                    return std::unexpected(
+                        badParams("'since_seq' must be a non-negative integer."));
+                }
+                query.since_seq = params["since_seq"].get<std::uint64_t>();
+            }
+
+            const auto level_name = optString(params, "level", "");
+            if (!level_name.has_value())
+            {
+                return std::unexpected(level_name.error());
+            }
+            if (!level_name.value().empty())
+            {
+                const auto level = spdlog::level::from_str(level_name.value());
+                // from_str returns `off` for anything it does not recognise, so a
+                // typo would otherwise silently filter out every record.
+                if (level == spdlog::level::off && level_name.value() != "off")
+                {
+                    return std::unexpected(badParams(
+                        "Unknown level '" + level_name.value() +
+                        "'; expected trace, debug, info, warn, err, critical or off."));
+                }
+                query.min_level = static_cast<int>(level);
+            }
+
+            const auto grep = optString(params, "grep", "");
+            if (!grep.has_value())
+            {
+                return std::unexpected(grep.error());
+            }
+            query.grep = grep.value();
+
+            const auto logger = optString(params, "logger", "");
+            if (!logger.has_value())
+            {
+                return std::unexpected(logger.error());
+            }
+            query.logger = logger.value();
+
+            const auto limit = optInt(params, "limit", 200);
+            if (!limit.has_value())
+            {
+                return std::unexpected(limit.error());
+            }
+            if (limit.value() < 0)
+            {
+                return std::unexpected(badParams("'limit' must not be negative."));
+            }
+            query.limit = static_cast<std::size_t>(limit.value());
+
+            const auto result = ring->query(query);
+
+            json records = json::array();
+            for (const LogRecord& record : result.records)
+            {
+                records.push_back(record.toJson());
+            }
+
+            json out = json::object();
+            out["records"] = std::move(records);
+            // Feed this straight back as since_seq to get only what is new.
+            out["next_seq"] = result.next_seq;
+            out["held"] = result.total_held;
+            if (result.dropped > 0)
+            {
+                out["dropped"] = result.dropped;
+                out["dropped_note"] =
+                    "The ring wrapped: this many records were evicted before you read "
+                    "them. Poll more often or raise the ring capacity.";
+            }
+            return out;
+        });
 
     // ------------------------------------------------------------ ui.snapshot
     server.registerMethod(
