@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# CAN bridge configuration: hardware on one side, zenoh topics on the other.
+#
+#     # What can this machine actually see? No config file needed.
+#     ./build/nodes/can_bridge/can_bridge --list
+#
+#     ./build/nodes/can_bridge/can_bridge --config configs/can_bridge/can_bridge.yaml
+#
+# One process opens every channel listed here. That is not a stylistic choice:
+# a PCAN-USB Pro FD is a single USB handle serving two CAN channels, and two
+# processes cannot share it -- the second open fails. Whatever owns the adapter
+# has to own all of its channels.
+
+# One entry per CAN bus.
+channels:
+  # The name is what the topics and the set_bitrate service call this bus. It
+  # is deliberately separate from `device`: swapping a PCAN dongle for a kernel
+  # interface should change one line here and nothing anywhere else.
+  - name: can0
+
+    # Which adapter, as <backend>:<device>[/<channel>]:
+    #
+    #   socketcan:can0     the kernel interface named can0        (Linux only)
+    #   pcan:0             the first PCAN-USB FD adapter, channel 0
+    #   pcan:0/1           that same adapter, channel 1
+    #   pcan:LSN00123/1    the adapter with that serial, channel 1
+    #   virtual:bench      an in-process loopback bus, no hardware
+    #
+    # `--list` prints the ids of everything attached, in this exact form.
+    device: "virtual:bench"
+
+    # Arbitration-phase bit rate. Every node on a bus must agree on this.
+    bitrate: 500000
+
+    # CAN FD data-phase rate. Omit, or set 0, for classic CAN -- eight bytes
+    # maximum and no bit-rate switching. Setting it asks the adapter for FD,
+    # and one that cannot do FD refuses at open rather than later.
+    # data_bitrate: 2000000
+
+    # Where in the bit to sample, in per mille (875 = 87.5%). Omit to take the
+    # CiA default for the rate, which is where every other node on a vehicle
+    # bus will be. Override only to match something that is not: a sample point
+    # in the wrong place gives you a bus that works on a bench cable and fails
+    # on a long harness, which is the worst failure mode available.
+    # sample_point_permille: 875
+    # data_sample_point_permille: 800
+
+    # Receive but never transmit: no acknowledgements, no error frames. The
+    # safe way to attach to a bus you do not own, and the right setting for
+    # anything being observed rather than driven.
+    listen_only: false
+
+    # Topics. Both default from the name -- vehicle/<name>/rx and
+    # vehicle/<name>/tx -- so most channels need neither line.
+    # rx_key: "vehicle/can0/rx"
+    # tx_key: "vehicle/can0/tx"
+
+    # How many frames may back up before the oldest are dropped. A busy
+    # 500 kbit/s bus is roughly 4000 frames a second, so this holds a couple of
+    # seconds of one. Drops are counted and reported on the status topic; a
+    # non-zero count means the capture has holes in it.
+    # rx_queue_depth: 8192
+
+    # publish_rx: false turns off publishing entirely -- for a channel that
+    # exists only to transmit, where echoing a tool's own traffic back at it is
+    # just noise. accept_tx: false is a stronger statement than listen_only:
+    # nothing can even ask this node to transmit.
+    # publish_rx: true
+    # accept_tx: true
+
+  # Two channels on one dongle. Note both entries name the same adapter and
+  # differ only in the channel suffix; the node opens the USB handle once and
+  # demultiplexes.
+  #
+  # - name: chassis
+  #   device: "pcan:0/1"
+  #   bitrate: 250000
+  #   listen_only: true
+
+# Where the bridge's own topics live.
+status_key: "vehicle/can/status"
+set_bitrate_key: "vehicle/can/set_bitrate"
+
+# How often the status topic is republished even when nothing has changed, so a
+# subscriber that joins late does not have to wait for something to go wrong to
+# find out the state of the bus.
+status_interval_ms: 1000
+
+# Take a PCAN adapter away from the kernel driver holding it.
+#
+# Linux only, and it removes the socketcan interface that driver created --
+# which is why it is a key here rather than something inferred. On Linux the
+# socketcan backend is usually the better path anyway; this is for the case
+# where you specifically want the libusb driver.
+pcan_detach_kernel_driver: false
+
+# Carry on when a channel cannot be opened. With two buses configured, one
+# unplugged adapter should not take the other down; the channel that failed is
+# still reported on the status topic, with the reason.
+continue_on_channel_error: true

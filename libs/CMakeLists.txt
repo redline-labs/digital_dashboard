@@ -9,6 +9,10 @@ add_subdirectory(dbc_parser)
 add_subdirectory(core)
 add_subdirectory(pcan_trc_parser)
 add_subdirectory(canopen)
+add_subdirectory(can)
+add_subdirectory(can_pcan)
+add_subdirectory(can_socketcan)
+add_subdirectory(can_backends)
 
 # Wired CarPlay stack (ported from LIVI, GPL-3.0-or-later).
 # plist comes first: both airplay (binary plists on the RTSP channel) and

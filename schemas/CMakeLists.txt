@@ -15,6 +15,7 @@ set(SCHEMA_FILES
     motec_pdm.capnp
     motec_ltc.capnp
     can_frame.capnp
+    can_bridge.capnp
     grayhill_keypad.capnp
 
     carplay_video.capnp
