@@ -61,6 +61,30 @@ template <typename T>
 struct is_reflected_struct<T, std::void_t<decltype(T::reflection_fields()), decltype(T::reflection_type_names())>> : std::true_type {};
 
 template <typename T>
+inline constexpr bool is_reflected_struct_v = is_reflected_struct<T>::value;
+
+// Trait to detect reflected enums (those generated via REFLECT_ENUM).
+//
+// REFLECT_ENUM emits enum_names()/enum_values() as free functions in whichever
+// namespace it was invoked in, so the probe below is deliberately unqualified:
+// it is a dependent call resolved by ADL at instantiation, which is what lets
+// this see enums declared in namespaces reflection knows nothing about.
+//
+// The is_enum_v guard matters. Without it any type with an enum_names()
+// overload in reach would satisfy this, and a struct that happened to have one
+// would match both traits at once -- which, where these drive constrained
+// partial specializations, is an ambiguity rather than a wrong answer.
+template <typename T, typename = void>
+struct is_reflected_enum : std::false_type {};
+
+template <typename T>
+struct is_reflected_enum<T, std::void_t<decltype(enum_names(std::declval<T>()))>>
+    : std::bool_constant<std::is_enum_v<T>> {};
+
+template <typename T>
+inline constexpr bool is_reflected_enum_v = is_reflected_enum<T>::value;
+
+template <typename T>
 struct is_std_vector : std::false_type {};
 
 template <typename U, typename Alloc>

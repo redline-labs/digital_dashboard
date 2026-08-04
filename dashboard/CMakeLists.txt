@@ -22,7 +22,7 @@ include_directories(
 )
 
 # Widget libraries linked by both the dashboard and the editor. Add new
-# widgets here (and in FOR_EACH_WIDGET / widget_types.h / YAML_CONFIG_STRUCT).
+# widgets here (and in FOR_EACH_WIDGET / widget_types.h).
 set(WIDGET_LIBS
     carplay_widget
     carplay_nav

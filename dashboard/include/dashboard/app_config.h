@@ -56,99 +56,81 @@ REFLECT_STRUCT(app_config_t,
 )
 
 
-#define YAML_CONFIG_STRUCT(reflect_struct_name) \
-template<> \
-struct convert<reflect_struct_name> \
-{ \
-    static Node encode(const reflect_struct_name& rhs) \
-    { \
-        Node node = {}; \
-        reflection::visit_fields<reflect_struct_name>(rhs, [&](std::string_view name, const auto& ref, std::string_view /*type*/) \
-        { \
-            node[name] = ref; \
-        }); \
-        return node; \
-    } \
-    static bool decode(const Node& node, reflect_struct_name& rhs) \
-    { \
-        if (!node.IsMap()) return false; \
-        reflection::visit_fields<reflect_struct_name>(rhs, [&](std::string_view name, auto& ref, std::string_view /*type*/) \
-        { \
-            if (node[name]) \
-            { \
-                ref = node[name].as<std::decay_t<decltype(ref)>>(); \
-            } \
-        }); \
-        return true; \
-    } \
-}
-
-#define YAML_CONFIG_ENUM(reflect_enum_name) \
-template<> \
-struct convert<reflect_enum_name> \
-{ \
-    static Node encode(const reflect_enum_name& rhs) \
-    { \
-        return YAML::Node(reflection::enum_to_string(rhs)); \
-    } \
-    static bool decode(const Node& node, reflect_enum_name& rhs) \
-    { \
-        /* Silent on failure by design: validate_app_config() reports the same */ \
-        /* problem with the field's path and the valid alternatives, and two */ \
-        /* messages for one typo is worse than one good one. */ \
-        try \
-        { \
-            const auto value = reflection::enum_traits<reflect_enum_name>::try_from_string(node.as<std::string>()); \
-            if (!value) return false; \
-            rhs = *value; \
-            return true; \
-        } \
-        catch (const std::exception&) \
-        { \
-            return false; \
-        } \
-    } \
-}
-
-
 // Convert from a YAML Node to a native config_t.
 namespace YAML {
 
-YAML_CONFIG_ENUM(pub_sub::schema_type_t);
+// Every REFLECT_STRUCT and REFLECT_ENUM converts to and from YAML, without
+// being named anywhere.
+//
+// These used to be per-type macro invocations -- one line for each widget
+// config, each nested struct and each enum. That list was pure duplication of
+// what the reflection macros already declare, and it failed open: leaving a
+// type out is not a missing-registration error but an "implicit instantiation
+// of undefined template" from deep inside yaml-cpp, pointing at the header that
+// happened to instantiate it rather than at the type. Nested structs and enums
+// were the usual casualty, because adding one to an existing config does not
+// look like it should need registering anywhere.
+//
+// The argument list here is identical to yaml-cpp's primary template, which is
+// normally ill-formed for a partial specialization. C++20 permits it when the
+// specialization is more constrained ([temp.spec.partial]), which is what the
+// requires-clauses provide. Hand-written full specializations -- widget_config_t
+// below, helpers::Color -- are more specialized still and continue to win.
+template <typename T>
+    requires reflection::is_reflected_struct_v<T>
+struct convert<T>
+{
+    static Node encode(const T& rhs)
+    {
+        Node node = {};
+        reflection::visit_fields<T>(rhs, [&](std::string_view name, const auto& ref, std::string_view /*type*/)
+        {
+            node[name] = ref;
+        });
+        return node;
+    }
 
-YAML_CONFIG_ENUM(ValueReadoutAlignment);
-YAML_CONFIG_ENUM(ValueReadoutFormat);
-YAML_CONFIG_STRUCT(ValueReadoutConfig_t);
+    static bool decode(const Node& node, T& rhs)
+    {
+        if (!node.IsMap()) return false;
+        reflection::visit_fields<T>(rhs, [&](std::string_view name, auto& ref, std::string_view /*type*/)
+        {
+            if (node[name])
+            {
+                ref = node[name].as<std::decay_t<decltype(ref)>>();
+            }
+        });
+        return true;
+    }
+};
 
-YAML_CONFIG_ENUM(SegmentFace);
-YAML_CONFIG_ENUM(SegmentCaptionPosition);
-YAML_CONFIG_STRUCT(SegmentReadoutConfig_t);
+template <typename T>
+    requires reflection::is_reflected_enum_v<T>
+struct convert<T>
+{
+    static Node encode(const T& rhs)
+    {
+        return YAML::Node(reflection::enum_to_string(rhs));
+    }
 
-YAML_CONFIG_STRUCT(CenterBarConfig_t);
-
-YAML_CONFIG_ENUM(GradientDirection);
-YAML_CONFIG_STRUCT(BackgroundRectConfig_t);
-
-YAML_CONFIG_STRUCT(StaticTextConfig_t);
-
-YAML_CONFIG_STRUCT(Mercedes190ESpeedometerConfig_t);
-YAML_CONFIG_STRUCT(Mercedes190ETachometerConfig_t);
-YAML_CONFIG_STRUCT(MotecC125TachometerConfig_t);
-YAML_CONFIG_STRUCT(MotecCdl3TachometerConfig_t);
-YAML_CONFIG_STRUCT(SparklineConfig_t);
-
-YAML_CONFIG_ENUM(Mercedes190ETelltaleType);
-YAML_CONFIG_STRUCT(Mercedes190ETelltaleConfig_t);
-
-YAML_CONFIG_STRUCT(sub_gauge_config_t);
-YAML_CONFIG_STRUCT(economy_sweep_config_t);
-YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
-
-YAML_CONFIG_STRUCT(CarplayConfig_t);
-YAML_CONFIG_STRUCT(NowPlayingConfig_t);
-YAML_CONFIG_STRUCT(CarPlayNavConfig_t);
-
-YAML_CONFIG_STRUCT(app_config_t);
+    static bool decode(const Node& node, T& rhs)
+    {
+        // Silent on failure by design: validate_app_config() reports the same
+        // problem with the field's path and the valid alternatives, and two
+        // messages for one typo is worse than one good one.
+        try
+        {
+            const auto value = reflection::enum_traits<T>::try_from_string(node.as<std::string>());
+            if (!value) return false;
+            rhs = *value;
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+};
 
 
 

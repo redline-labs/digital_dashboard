@@ -182,6 +182,52 @@ void testAwkwardStringsSurvive()
           "text with YAML metacharacters survives");
 }
 
+// A reflected type converts without being registered anywhere.
+//
+// These two are declared here and named in no list: not in app_config.h, not in
+// FOR_EACH_WIDGET, nowhere. If conversion still works, adding a nested struct or
+// an enum to a widget config needs no central edit -- which is the whole point
+// of deriving the converters from the reflection traits.
+//
+// The failure this guards against does not look like a missing registration. It
+// is an "implicit instantiation of undefined template" from inside yaml-cpp,
+// blaming whichever header first instantiated it.
+REFLECT_ENUM(TestOnlyFace, flat, raised)
+
+REFLECT_STRUCT(test_only_nested_t,
+    (int32_t, depth, -7),
+    (TestOnlyFace, face, TestOnlyFace::raised)
+)
+
+REFLECT_STRUCT(test_only_outer_t,
+    (std::string, label, "unset"),
+    (test_only_nested_t, nested, {})
+)
+
+void testReflectedTypesNeedNoRegistration()
+{
+    test_only_outer_t original;
+    original.label = "written by nobody's macro";
+    original.nested.depth = 42;
+    original.nested.face = TestOnlyFace::flat;
+
+    YAML::Emitter out;
+    out << YAML::convert<test_only_outer_t>::encode(original);
+
+    const YAML::Node node = YAML::Load(out.c_str());
+    const auto back = node.as<test_only_outer_t>();
+
+    check(back.label == original.label, "an unregistered struct's field survives");
+    check(back.nested.depth == 42, "an unregistered nested struct survives");
+    check(back.nested.face == TestOnlyFace::flat, "an unregistered enum survives");
+
+    // The enum has to go out as its name, not as its underlying integer --
+    // otherwise the file is unreadable and the validator cannot name the
+    // alternatives back to the author.
+    check(node["nested"]["face"].as<std::string>() == "flat",
+          "an unregistered enum is written as its name");
+}
+
 }  // namespace
 
 int main()
@@ -191,6 +237,7 @@ int main()
     testEmptyIdIsOmitted();
     testNumericListsStayNumeric();
     testAwkwardStringsSurvive();
+    testReflectedTypesNeedNoRegistration();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

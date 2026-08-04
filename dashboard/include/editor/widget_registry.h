@@ -36,9 +36,12 @@ namespace widget_registry
 //      - config_t getConfig() const method
 //   2. Add ONE line to FOR_EACH_WIDGET below with just the class name
 //   3. Add an entry to the widget_type_t enum in dashboard/widget_types.h
-//   4. Add YAML_CONFIG_STRUCT/YAML_CONFIG_ENUM lines for your config types in
-//      dashboard/app_config.h
-//   5. Add your widget library to WIDGET_LIBS in dashboard/CMakeLists.txt
+//   4. Add your widget library to WIDGET_LIBS in dashboard/CMakeLists.txt
+//      and add_subdirectory() in dashboard/widgets/CMakeLists.txt
+//
+// Config types need no registration. Anything declared with REFLECT_STRUCT or
+// REFLECT_ENUM converts to and from YAML on its own, nested structs and enums
+// included -- see the constrained convert<> specializations in app_config.h.
 //
 // Format: X(WidgetClass)
 //
