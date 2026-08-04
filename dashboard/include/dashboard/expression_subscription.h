@@ -66,6 +66,7 @@ class ExpressionSubscription
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             pending_ = value;
+            last_sample_ = std::chrono::steady_clock::now();
         });
 
         // The timer is a plain member, so it belongs to the thread that
@@ -81,6 +82,29 @@ class ExpressionSubscription
     ExpressionSubscription& operator=(ExpressionSubscription&&) = delete;
 
     bool isValid() const { return subscriber_ && subscriber_->isValid(); }
+
+    // How long since this subscription last produced a usable value, or nullopt
+    // if it never has.
+    //
+    // Nothing in the dashboard notices when a publisher stops: every gauge holds
+    // its last reading indefinitely, so a dead sensor and a steady one look
+    // identical. That is the wrong failure for a vehicle display, and it gets
+    // more likely with every stream added.
+    //
+    // This is the measurement, deliberately without a policy attached. What
+    // counts as "too long" is per-stream -- an odometer that publishes on change
+    // and a 100 Hz wheel speed cannot share a threshold -- and how a stale gauge
+    // should *look* is a design decision per widget. Both belong with whoever is
+    // adding the streams, not baked in here.
+    std::optional<std::chrono::steady_clock::duration> sinceLastSample() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!last_sample_)
+        {
+            return std::nullopt;
+        }
+        return std::chrono::steady_clock::now() - *last_sample_;
+    }
 
   private:
     void drain()
@@ -99,8 +123,9 @@ class ExpressionSubscription
         }
     }
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::optional<T> pending_;
+    std::optional<std::chrono::steady_clock::time_point> last_sample_;
     std::function<void(T)> deliver_;
     QTimer timer_;
 
