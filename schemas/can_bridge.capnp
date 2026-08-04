@@ -1,11 +1,6 @@
 @0xb4e17a2c9d3f6081;
 
 # Controlling and observing the CAN bridge.
-#
-# Every type here is declared at the top level. The generated schema registry
-# flattens type names, so an inner declaration ends up referred to by its short
-# name and fails to compile -- hence CanBridgeChannelStatus rather than putting
-# it inside CanBridgeStatus.
 
 # Ask a channel to change bit rate.
 #

@@ -41,15 +41,14 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
     }
 
     // Get the schema from the registry
-    schema_ = get_schema(schema_type_);
-    
-    // Check if schema was found
-    if (schema_.getProto().getId() == 0)
+    const auto schema = get_schema(schema_type_);
+    if (!schema)
     {
         SPDLOG_ERROR("Schema '{}' not found in registry", reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type_));
         is_valid_ = false;
         return;
     }
+    schema_ = *schema;
 
     // Add the extend_functions to the symbol table.
     symbol_table_.add_function("mph_to_mps", &mph_to_mps<double>);

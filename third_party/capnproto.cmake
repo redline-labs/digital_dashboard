@@ -1,8 +1,10 @@
 # Fetch capnproto
+set(CAPNPROTO_GIT_TAG v1.5.0)
+
 FetchContent_Declare(
     capnproto
     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-    GIT_TAG v1.5.0
+    GIT_TAG ${CAPNPROTO_GIT_TAG}
     GIT_SHALLOW TRUE
 )
 
@@ -11,30 +13,26 @@ FetchContent_Declare(
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CAPNP_LITE OFF CACHE BOOL "" FORCE)
 
-# We need the capnp compiler for schema compilation
-set(CAPNP_INCLUDE_DIRS ${capnproto_SOURCE_DIR}/c++/src)
-set(CAPNP_EXECUTABLE ${capnproto_BINARY_DIR}/c++/src/capnp/capnp)
-set(CAPNPC_CXX_EXECUTABLE ${capnproto_BINARY_DIR}/c++/src/capnp/capnpc-c++)
-
 FetchContent_MakeAvailable(capnproto)
+
+# Everything downstream refers to the compiler and the code generator by target
+# name -- $<TARGET_FILE:capnp_tool> and $<TARGET_FILE:capnpc_cpp>, see
+# schemas/CMakeLists.txt -- so there are no path variables to keep in sync here.
+# There used to be: CAPNP_EXECUTABLE and friends, set from ${capnproto_SOURCE_DIR}
+# *before* FetchContent_MakeAvailable() had defined it, so they expanded to
+# nothing. Nothing read them, which is the only reason it did not matter.
 
 # Copy capnproto license
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/capnproto)
 file(COPY ${capnproto_SOURCE_DIR}/LICENSE ${capnproto_SOURCE_DIR}/README.md
      DESTINATION ${CMAKE_BINARY_DIR}/licenses/capnproto)
 
-# Write version info
+# Write version info. The tag comes from the variable rather than being written
+# out again -- the literal here said v1.3.0 while we were fetching v1.5.0.
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/capnproto/fetch_info.txt
 "Library: capnproto
 Repository: https://github.com/capnproto/capnproto.git
-Tag/Version: v1.3.0
+Tag/Version: ${CAPNPROTO_GIT_TAG}
 Shallow Clone: TRUE
 Patches Applied: None
 ")
-
-# Create a custom target for calling `capnp id`.
-#add_custom_target(capnp_id
-#    COMMAND $<TARGET_FILE:capnp_tool> id
-#    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-#    DEPENDS capnp_tool
-#)

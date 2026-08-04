@@ -96,8 +96,7 @@ void testEveryRegisteredSchemaRoundTrips()
 
         // 3. And that key actually resolves. This is the assertion that was
         //    false for every schema before the fix.
-        const capnp::Schema schema = pub_sub::get_schema(parsed);
-        expect(schema.getProto().getId() != 0,
+        expect(pub_sub::get_schema(parsed).has_value(),
                std::string("get_schema resolves '") + std::string(name) + "' after the round trip");
     }
 }
@@ -108,12 +107,11 @@ void testEveryRegisteredSchemaRoundTrips()
 void testRawEncodingDoesNotResolve()
 {
     const std::string encoding = encodingStringFor(pub_sub::schema_traits<CanFrame>::name);
-    const capnp::Schema unparsed = pub_sub::get_schema(encoding);
-    expectEq(unparsed.getProto().getId(), uint64_t{0},
-             "the unparsed encoding string is not a registry key (this was the bug)");
+    expect(!pub_sub::get_schema(encoding).has_value(),
+           "the unparsed encoding string is not a registry key (this was the bug)");
 
-    const capnp::Schema parsed = pub_sub::get_schema(pub_sub::schemaNameFromEncoding(encoding));
-    expect(parsed.getProto().getId() != 0, "the parsed schema name is a registry key");
+    expect(pub_sub::get_schema(pub_sub::schemaNameFromEncoding(encoding)).has_value(),
+           "the parsed schema name is a registry key");
 }
 
 // ---------------- schemaNameFromEncoding in isolation ----------------
@@ -135,9 +133,8 @@ void testParseEdgeCases()
              "splits on the first separator only");
 
     // An empty or junk name must not resolve to something.
-    expectEq(pub_sub::get_schema("").getProto().getId(), uint64_t{0}, "empty name resolves to nothing");
-    expectEq(pub_sub::get_schema("NoSuchSchema").getProto().getId(), uint64_t{0},
-             "unknown name resolves to nothing");
+    expect(!pub_sub::get_schema("").has_value(), "empty name resolves to nothing");
+    expect(!pub_sub::get_schema("NoSuchSchema").has_value(), "unknown name resolves to nothing");
 }
 
 // ---------------- the decode that the lookup exists to enable ----------------
@@ -166,8 +163,8 @@ void testDynamicDecodeAgainstResolvedSchema()
 
     // From here on, only what a subscriber has: the encoding and the bytes.
     const std::string encoding = encodingStringFor(pub_sub::schema_traits<CanFrame>::name);
-    const capnp::Schema schema = pub_sub::get_schema(pub_sub::schemaNameFromEncoding(encoding));
-    if (schema.getProto().getId() == 0)
+    const auto schema = pub_sub::get_schema(pub_sub::schemaNameFromEncoding(encoding));
+    if (!schema)
     {
         ++failures;
         ++checks;
@@ -178,7 +175,7 @@ void testDynamicDecodeAgainstResolvedSchema()
     const auto flat = kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.begin()),
                                    bytes.size() / sizeof(capnp::word));
     capnp::FlatArrayMessageReader reader(flat);
-    auto root = reader.getRoot<capnp::DynamicStruct>(schema.asStruct());
+    auto root = reader.getRoot<capnp::DynamicStruct>(schema->asStruct());
 
     expectEq(root.get("id").as<uint32_t>(), kId, "dynamic decode reads id");
     expectEq(root.get("len").as<uint8_t>(), kLen, "dynamic decode reads len");

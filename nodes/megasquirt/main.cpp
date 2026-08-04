@@ -3,6 +3,7 @@
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
+#include "megasquirt.capnp.h"
 
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>

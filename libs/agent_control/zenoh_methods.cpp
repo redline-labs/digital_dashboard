@@ -35,8 +35,8 @@ json knownSchemas()
 
 std::expected<capnp::Schema, AgentError> schemaByName(const std::string& name)
 {
-    capnp::Schema schema = pub_sub::get_schema(name);
-    if (schema.getProto().getId() == 0)
+    const auto schema = pub_sub::get_schema(name);
+    if (!schema)
     {
         json data = json::object();
         data["schema"] = name;
@@ -45,7 +45,7 @@ std::expected<capnp::Schema, AgentError> schemaByName(const std::string& name)
                                           "Unknown schema '" + name + "'.",
                                           std::move(data)});
     }
-    return schema;
+    return *schema;
 }
 
 std::expected<std::string, AgentError> requiredString(const json& params, const char* key)
