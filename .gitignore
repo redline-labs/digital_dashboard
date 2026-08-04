@@ -29,3 +29,10 @@ build/
 assets/
 logs/
 .cache/
+
+# Python tooling under tools/. uv.lock IS tracked -- it pins the MCP server's
+# dependencies so a fresh clone resolves the same versions rather than picking up
+# whatever is current.
+__pycache__/
+*.py[cod]
+.venv/

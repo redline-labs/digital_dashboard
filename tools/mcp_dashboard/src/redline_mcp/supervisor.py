@@ -56,8 +56,31 @@ class Instance:
 
 
 def _repo_root() -> pathlib.Path:
-    # tools/mcp_dashboard/src/redline_mcp/supervisor.py -> repo root
-    return pathlib.Path(__file__).resolve().parents[4]
+    """Locate the repository root.
+
+    Walks up looking for a marker rather than counting parent directories. A
+    fixed count encodes the current layout in a number: move this package one
+    level and it silently resolves to the wrong directory, then fails much later
+    as a confusing "no dashboard binary" error rather than at the cause.
+
+    REDLINE_REPO_ROOT overrides it, which is the escape hatch for running the
+    server from outside the tree (installed non-editable, say, where __file__ is
+    in site-packages and no marker is above it).
+    """
+    override = os.environ.get("REDLINE_REPO_ROOT")
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+
+    here = pathlib.Path(__file__).resolve()
+    for candidate in here.parents:
+        # Both markers, so a nested git repo or a stray CMakeLists cannot match.
+        if (candidate / ".git").exists() and (candidate / "CMakeLists.txt").is_file():
+            return candidate
+
+    raise LaunchError(
+        f"Could not find the repository root above {here}. "
+        f"Set REDLINE_REPO_ROOT to the checkout directory."
+    )
 
 
 def binary_for(app: AppName) -> pathlib.Path:

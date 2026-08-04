@@ -43,7 +43,33 @@ so a crash comes back with the log tail that preceded it.
 
 ## Under Claude Code
 
-`.mcp.json` in the repo root registers the server. Then:
+`.mcp.json` in the repo root registers the server, so a fresh clone gets it with
+no setup beyond having `uv` installed:
+
+```json
+{ "mcpServers": { "redline": {
+    "command": "uv",
+    "args": ["run", "--directory", "tools/mcp_dashboard", "redline-mcp"] } } }
+```
+
+It lives in the repo on purpose. The server's tool descriptions encode the
+selector grammar, the coordinate contract and the widget types — all of which
+change with the code they describe, so a copy kept anywhere else drifts silently.
+`uv.lock` is committed alongside it, so dependency versions are pinned rather
+than resolved fresh on each machine.
+
+Two assumptions worth knowing:
+
+- **The `--directory` path is relative**, so the client must launch the server
+  with the repo root as its working directory. Claude Code does. Another client
+  that does not would fail at `uv` before Python starts — use an absolute path in
+  that client's own config if so.
+- **The server locates the repo by walking up for `.git` + `CMakeLists.txt`**,
+  not by counting directories, so it works regardless of where it is launched
+  from once running. `REDLINE_REPO_ROOT` overrides it; `REDLINE_BUILD_DIR`
+  overrides where it looks for binaries.
+
+Then:
 
 ```
 app_launch(app="dashboard", config="configs/dashboard/mercedes_190e_dash.yaml")
@@ -135,6 +161,15 @@ messages now state outright:
 - **`accepted: false` from `input.click`** means the event was delivered but
   nothing consumed it. Normal for a decorative gauge; a real clue for a widget
   you expected to react.
+- **A single screenshot proves very little on an animated widget.** The CarPlay
+  simulator's test pattern moves, so two frames legitimately look wildly
+  different and a colour "regression" can be pure frame timing. Compare hashes
+  across several frames, or check pixel statistics, before concluding anything
+  about rendering.
+- **Use `carplay --simulate` for anything CarPlay-shaped.** It publishes a
+  synthetic session — H.264 video, PCM audio, rotating metadata — on the real
+  zenoh topics, so the whole dashboard side is exercisable with no iPhone
+  attached. Launch it through `app_launch`'s sibling process handling or by hand.
 
 ## Adding a method
 
