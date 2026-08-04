@@ -196,10 +196,20 @@ void Canvas::setMouseTransparentRecursive(QWidget* w, bool on)
 
 void Canvas::dragEnterEvent(QDragEnterEvent* event)
 {
-    if (event->mimeData()->hasText())
+    // Accept only text that actually names a widget type. Accepting any text at
+    // all meant a drag from a browser or a file manager was welcomed here and
+    // then blew up in dropEvent, where the type lookup used to throw straight
+    // out of a Qt event handler -- Qt is not exception-safe across notify(), so
+    // that terminated the editor.
+    if (event->mimeData()->hasText() && droppedWidgetType(event->mimeData()->text()).has_value())
     {
         event->acceptProposedAction();
     }
+}
+
+std::optional<widget_type_t> Canvas::droppedWidgetType(const QString& mimeText)
+{
+    return reflection::enum_traits<widget_type_t>::try_from_string(mimeText.toStdString());
 }
 
 SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const QSize& size)
@@ -308,8 +318,14 @@ std::vector<SelectionFrame*> Canvas::frames() const
 void Canvas::dropEvent(QDropEvent* event)
 {
     const QString typeKey = event->mimeData()->text();
-    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
-    if (addWidget(type, event->position().toPoint()) != nullptr)
+    const auto type = droppedWidgetType(typeKey);
+    if (!type)
+    {
+        SPDLOG_WARN("Ignoring a drop of '{}': not a known widget type.", typeKey.toStdString());
+        return;
+    }
+
+    if (addWidget(*type, event->position().toPoint()) != nullptr)
     {
         event->acceptProposedAction();
     }

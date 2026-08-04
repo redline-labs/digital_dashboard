@@ -4,6 +4,7 @@
 #include <QWidget>
 #include <QPoint>
 #include <QMouseEvent>
+#include <optional>
 #include <vector>
 
 #include "dashboard/app_config.h"
@@ -65,6 +66,11 @@ private:
     QPoint dragStartPos_;
     QRect dragStartRect_;
     bool editorMode_;
+
+    // The widget type a drag payload names, or nullopt if it names none. Shared
+    // by dragEnterEvent and dropEvent so the drag is refused up front rather
+    // than accepted and then discarded.
+    static std::optional<widget_type_t> droppedWidgetType(const QString& mimeText);
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);

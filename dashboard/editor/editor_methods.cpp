@@ -35,27 +35,25 @@ std::expected<widget_type_t, AgentError> parseType(const json& params)
     {
         return std::unexpected(badParams("'type' is required, e.g. 'carplay'."));
     }
-    try
+    if (const auto type = reflection::enum_traits<widget_type_t>::try_from_string(
+            params["type"].get<std::string>()))
     {
-        return reflection::enum_traits<widget_type_t>::from_string(
-            params["type"].get<std::string>());
+        return *type;
     }
-    catch (const std::exception&)
-    {
-        // Offering the valid set matters: the type names come from an enum the
-        // caller cannot see, so a rejection without them is a dead end.
-        json known = json::array();
+
+    // Offering the valid set matters: the type names come from an enum the
+    // caller cannot see, so a rejection without them is a dead end.
+    json known = json::array();
 #define KNOWN_CASE(widget_class) \
     known.push_back(std::string(reflection::enum_to_string(widget_class::kWidgetType)));
-        FOR_EACH_WIDGET(KNOWN_CASE)
+    FOR_EACH_WIDGET(KNOWN_CASE)
 #undef KNOWN_CASE
-        json data = json::object();
-        data["known_types"] = std::move(known);
-        return std::unexpected(AgentError{
-            ErrorCode::kBadParams,
-            "Unknown widget type '" + params["type"].get<std::string>() + "'.",
-            std::move(data)});
-    }
+    json data = json::object();
+    data["known_types"] = std::move(known);
+    return std::unexpected(AgentError{
+        ErrorCode::kBadParams,
+        "Unknown widget type '" + params["type"].get<std::string>() + "'.",
+        std::move(data)});
 }
 
 json describeFrame(const SelectionFrame* frame)

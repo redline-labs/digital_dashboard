@@ -41,6 +41,8 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -542,7 +544,11 @@ struct enum_traits
         return std::string_view{};
     }
 
-    static constexpr Enum from_string(std::string_view s)
+    // Non-throwing lookup. Prefer this anywhere the string comes from outside the
+    // program -- a config file, a drag-and-drop payload, an agent request. The
+    // throwing form below is a landmine in a Qt event handler, which is not
+    // exception-safe across QApplication::notify().
+    static constexpr std::optional<Enum> try_from_string(std::string_view s)
     {
         constexpr auto n = names();
         constexpr auto vs = values();
@@ -550,7 +556,31 @@ struct enum_traits
         {
             if (n[i] == s) return vs[i];
         }
-        throw std::invalid_argument("Invalid string for enum");
+        return std::nullopt;
+    }
+
+    // Every valid spelling, comma-separated. Callers put this in error messages:
+    // "invalid value" without the alternatives sends the reader to the source.
+    static std::string known_values()
+    {
+        std::string out;
+        for (const auto& name : names())
+        {
+            if (!out.empty()) out += ", ";
+            out.append(name);
+        }
+        return out;
+    }
+
+    static constexpr Enum from_string(std::string_view s)
+    {
+        if (const auto v = try_from_string(s)) return *v;
+
+        // Names the offending value and the valid set. The old message was just
+        // "Invalid string for enum", which told you nothing about which enum,
+        // which value, or what would have worked.
+        throw std::invalid_argument("Invalid value '" + std::string(s) + "' for enum; expected one of: " +
+                                    known_values());
     }
 };
 

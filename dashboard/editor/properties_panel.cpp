@@ -334,7 +334,21 @@ namespace
         {
             if (auto* w = page->findChild<QComboBox*>(on))
             {
-                out = reflection::enum_traits<FieldType>::from_string(w->currentText().toStdString());
+                // Non-throwing: this runs on a user-interaction path, and an
+                // exception here would unwind through QApplication::notify().
+                // The combo is populated from the enum, so a miss means the page
+                // is stale -- keep the caller's existing value rather than
+                // inventing one.
+                if (const auto v = reflection::enum_traits<FieldType>::try_from_string(
+                        w->currentText().toStdString()))
+                {
+                    out = *v;
+                }
+                else
+                {
+                    SPDLOG_WARN("Ignoring unknown value '{}' for field '{}'.",
+                                w->currentText().toStdString(), path.toStdString());
+                }
             }
         }
         else if constexpr (std::is_integral_v<FieldType>)
