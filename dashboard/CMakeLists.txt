@@ -51,7 +51,11 @@ qt_add_executable(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Widgets
-    
+
+    # Agent control interface (--mcp). Always built in; only listens when the
+    # flag is supplied.
+    agent_control
+
     # Link common logging interface (wraps spdlog)
     zenoh_pub_sub
     helpers
@@ -103,9 +107,13 @@ target_link_libraries(editor PRIVATE
     Qt6::Core
     Qt6::Widgets
 
+    # Agent control interface (--mcp), same as the dashboard.
+    agent_control
+
     # Reuse existing libraries and widgets
     spdlog::spdlog
     yaml-cpp::yaml-cpp
+    cxxopts::cxxopts
     zenoh_pub_sub
     helpers
 

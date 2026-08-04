@@ -15,6 +15,14 @@ public:
     explicit EditorWindow(QWidget* parent = nullptr);
     ~EditorWindow() override = default;
 
+    // Dialog-free load/save, so a config can be opened from the command line and
+    // driven by the agent control interface. The menu actions are thin wrappers
+    // that pick a path with QFileDialog and then call these.
+    bool loadConfigFrom(const QString& path);
+    bool saveConfigTo(const QString& path);
+
+    Canvas* canvas() const { return canvas_; }
+
 private:
     void buildMenuBar();
     void loadConfig();

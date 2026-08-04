@@ -12,7 +12,16 @@ struct CommandLineArgs
     std::string config_file_path;  ///< Path to the YAML configuration file
     bool debug_enabled;            ///< Whether debug logging is enabled
     bool help_requested;           ///< Whether help was requested
+
+    /// Unix socket path for the agent control interface, set by --mcp.
+    /// Present means the interface is enabled, which also forces the Qt platform
+    /// to "offscreen" so the app runs completely headless.
+    std::optional<std::string> mcp_socket_path;
 };
+
+/// Default socket path when --mcp is given with no value. Includes the pid so
+/// two apps (a dashboard and an editor) never collide.
+std::string default_mcp_socket_path();
 
 /**
  * @brief Parse command line arguments

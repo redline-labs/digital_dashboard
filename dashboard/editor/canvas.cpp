@@ -2,6 +2,8 @@
 #include "editor/editor_constants.h"
 #include "editor/selection_frame.h"
 
+#include "dashboard/widget_identity.h"
+
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -76,6 +78,15 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         {
             continue;
         }
+
+        // Carry the config's id onto the frame so it survives a load/save round
+        // trip and so the agent control interface can address it. When the
+        // config has no id, fall back to the same derived "<type>#<index>" name
+        // the dashboard uses, so one selector addresses the same widget in both
+        // apps. setId() only stores a non-empty id, so the fallback names the
+        // frame without inventing an id that would then be written to the YAML.
+        frame->setId(wcfg.id);
+        frame->setObjectName(dashboard::widgetObjectName(wcfg, items_.size()));
 
         // Apply typed widget configuration
         std::visit([&](auto const& cfg){
@@ -198,6 +209,12 @@ void Canvas::dropEvent(QDropEvent* event)
     SelectionFrame* frame = new SelectionFrame(type, this);
     if (frame)
     {
+        // Name it on the same rule as a loaded widget, so something just dropped
+        // is immediately addressable rather than only after a save and reload.
+        widget_config_t naming_cfg;
+        naming_cfg.type = type;
+        frame->setObjectName(dashboard::widgetObjectName(naming_cfg, items_.size()));
+
         const QPoint pos = event->position().toPoint();
         // Provide a reasonable default size for various widgets
         if (frame->child() && frame->child()->sizeHint().isValid())

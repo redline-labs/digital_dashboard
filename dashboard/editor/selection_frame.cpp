@@ -29,6 +29,23 @@ SelectionFrame::SelectionFrame(widget_type_t type, QWidget* parent)
     overlay_->installEventFilter(this);
 }
 
+void SelectionFrame::setId(std::string id)
+{
+    id_ = std::move(id);
+
+    // Mirror onto objectName so the agent control interface addresses a frame in
+    // the editor by exactly the string the dashboard will use for the same
+    // widget once the config is saved and loaded.
+    //
+    // An empty id deliberately leaves objectName alone: the caller then applies
+    // the derived "<type>#<index>" fallback, and clearing it here would undo
+    // that. Only a real id overrides the derived name.
+    if (!id_.empty())
+    {
+        setObjectName(QString::fromStdString(id_));
+    }
+}
+
 void SelectionFrame::setChild(QWidget* newChild)
 {
     if (child_ == newChild)

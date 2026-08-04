@@ -27,6 +27,13 @@ struct widget_config_t {
     {}
 
     widget_type_t type;
+
+    // Optional stable handle for tooling (the agent control interface addresses
+    // widgets as "#<id>"). Empty means "unnamed": the widget still gets an
+    // objectName, derived as "<type>#<index>", but that one shifts when widgets
+    // are added or reordered.
+    std::string id;
+
     int16_t x;
     int16_t y;
     uint16_t width;
@@ -137,6 +144,13 @@ struct convert<widget_config_t> {
     {
         Node node = {};
 
+        // Omitted entirely when unset, so a config saved by the editor stays
+        // byte-identical to one that never had an id.
+        if (!rhs.id.empty())
+        {
+            node["id"] = rhs.id;
+        }
+
         node["x"] = rhs.x;
         node["y"] = rhs.y;
         node["width"] = rhs.width;
@@ -161,6 +175,7 @@ struct convert<widget_config_t> {
 
         std::string type = node["type"].as<std::string>();
         
+        if (node["id"]) rhs.id = node["id"].as<std::string>();
         if (node["x"]) rhs.x = node["x"].as<int16_t>();
         if (node["y"]) rhs.y = node["y"].as<int16_t>();
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();

@@ -34,6 +34,12 @@ public:
     widget_type_t type() const { return type_; }
     QWidget* child() const { return child_; }
 
+    // Optional stable handle, round-tripped through the YAML `id:` key. Set on
+    // the frame rather than the child so it survives applyConfig() rebuilding
+    // the child widget.
+    const std::string& id() const { return id_; }
+    void setId(std::string id);
+
     void setSelected(bool on);
     bool isSelected() const { return selected_; }
 
@@ -67,6 +73,7 @@ public:
     {
         widget_config_t wc;
         wc.type = type_;
+        wc.id = id_;
         wc.x = static_cast<int16_t>(frameRect.x());
         wc.y = static_cast<int16_t>(frameRect.y());
         wc.width = static_cast<uint16_t>(frameRect.width());
@@ -103,6 +110,7 @@ protected:
 
 private:
     widget_type_t type_;
+    std::string id_;
     QWidget* child_ = nullptr;
     bool selected_ = false;
     bool editorMode_ = true;

@@ -109,47 +109,44 @@ void EditorWindow::buildMenuBar()
     fileMenu->addAction(actionSave);
 }
 
-void EditorWindow::loadConfig()
+bool EditorWindow::loadConfigFrom(const QString& path)
 {
-    const QString path = QFileDialog::getOpenFileName(this,
-                                                      "Open Dashboard Config",
-                                                      "",
-                                                      "YAML Files (*.yaml *.yml)");
     if (path.isEmpty())
     {
-        return;
+        return false;
     }
+
     SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
     auto cfg = load_app_config(path.toStdString());
     if (!cfg)
     {
         SPDLOG_ERROR("Config failed to load: {}", path.toStdString());
-        return;
+        return false;
     }
 
-    if (canvas_)
+    if (!canvas_)
     {
-        canvas_->loadFromAppConfig(cfg.value());
-        statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
-                                 .arg(QString::fromStdString(cfg.value().name))
-                                 .arg(cfg.value().width)
-                                 .arg(cfg.value().height), 3000);
-        if (auto* props = findChild<PropertiesPanel*>())
-        {
-            props->syncFromCanvas();
-        }
+        return false;
     }
+
+    canvas_->loadFromAppConfig(cfg.value());
+    statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
+                             .arg(QString::fromStdString(cfg.value().name))
+                             .arg(cfg.value().width)
+                             .arg(cfg.value().height), 3000);
+    if (auto* props = findChild<PropertiesPanel*>())
+    {
+        props->syncFromCanvas();
+    }
+    return true;
 }
 
-void EditorWindow::saveConfig()
+bool EditorWindow::saveConfigTo(const QString& path)
 {
-    if (!canvas_) return;
-    // Ask for a filename in configs/dashboard
-    const QString path = QFileDialog::getSaveFileName(this,
-                                                        "Save Dashboard Config",
-                                                        "untitled.yaml",
-                                                        "YAML Files (*.yaml *.yml)");
-    if (path.isEmpty()) return;
+    if (!canvas_ || path.isEmpty())
+    {
+        return false;
+    }
 
     // Export current canvas to a single-window app config
     app_config_t app = canvas_->exportAppConfig("editor_window");
@@ -164,11 +161,31 @@ void EditorWindow::saveConfig()
         ofs.close();
         statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
         SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
+        return true;
     }
     catch (const std::exception& e)
     {
         SPDLOG_ERROR("Failed to save config: {}", e.what());
+        return false;
     }
+}
+
+void EditorWindow::loadConfig()
+{
+    const QString path = QFileDialog::getOpenFileName(this,
+                                                      "Open Dashboard Config",
+                                                      "",
+                                                      "YAML Files (*.yaml *.yml)");
+    loadConfigFrom(path);
+}
+
+void EditorWindow::saveConfig()
+{
+    const QString path = QFileDialog::getSaveFileName(this,
+                                                        "Save Dashboard Config",
+                                                        "untitled.yaml",
+                                                        "YAML Files (*.yaml *.yml)");
+    saveConfigTo(path);
 }
 
 
