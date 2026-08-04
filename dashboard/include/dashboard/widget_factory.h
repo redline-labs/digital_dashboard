@@ -2,12 +2,41 @@
 #define DASHBOARD_WIDGET_FACTORY_H
 
 #include "dashboard/app_config.h"
+#include "dashboard/config_limits.h"
 
+#include <concepts>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 namespace widget_factory
 {
+
+// Detects the optional validate() hook described in dashboard/config_limits.h.
+// Found by ADL, so a config declares it as a free function next to the struct
+// and REFLECT_STRUCT does not have to know about it.
+template <typename Cfg>
+concept HasValidate = requires(Cfg& cfg) {
+    { validate(cfg) } -> std::same_as<std::vector<std::string>>;
+};
+
+// Runs a config's range checking, if it has any, and logs what it changed.
+// Called on the way to construction, so a widget never sees a config it cannot
+// draw -- a max of zero to divide by, an inverted range, a list long enough to
+// stall a paint.
+template <typename Cfg>
+void applyLimits(Cfg& cfg, std::string_view widget_type)
+{
+    if constexpr (HasValidate<Cfg>)
+    {
+        for (const std::string& note : validate(cfg))
+        {
+            SPDLOG_WARN("{}: {}.", widget_type, note);
+        }
+    }
+}
 
 inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWidget* parent)
 {
@@ -36,7 +65,12 @@ inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWi
                 return;
             }
 
-            widget = new widget_t(cfg, parent);
+            // Copy, because clamping has to happen before the widget reads the
+            // config and the caller's copy is const.
+            cfg_t checked = cfg;
+            applyLimits(checked, reflection::enum_to_string(traits::type));
+
+            widget = new widget_t(checked, parent);
         }
     }, widget_config.config);
 

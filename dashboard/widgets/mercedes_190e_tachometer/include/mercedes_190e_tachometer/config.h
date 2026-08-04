@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "dashboard/config_limits.h"
 
 REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (uint16_t, max_rpm, 7000),
@@ -14,5 +15,15 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm),
     (std::string, rpm_expression, "")
 )
+
+// max_rpm scales the dial; redline_rpm above it makes drawRedZone compute a
+// negative span and sweep the red arc backwards off the face.
+inline std::vector<std::string> validate(Mercedes190ETachometerConfig_t& cfg)
+{
+    std::vector<std::string> notes;
+    dashboard::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
+    dashboard::limits::clampInto<uint16_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
+    return notes;
+}
 
 #endif // MERCEDES_190E_TACHOMETER_CONFIG_H

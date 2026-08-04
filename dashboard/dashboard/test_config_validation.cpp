@@ -6,6 +6,8 @@
 // the loader previously accepted in silence or rejected without saying where.
 
 #include "dashboard/app_config.h"
+#include "dashboard/config_limits.h"
+#include "editor/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -278,6 +280,113 @@ widgets:
     check(issue != nullptr, "a typo inside a nested struct is reported at its full path, got:" + dump(issues));
 }
 
+// ---------------------------------------------------------------- range limits
+//
+// The validator above catches what a file *says*; these catch what it *means*.
+// A well-formed number can still be one the widget cannot draw, and each of
+// these was a live defect: a divisor of zero, a tick loop that never terminated,
+// undefined behaviour in std::clamp, a 0 ms repaint timer.
+
+void testFullScaleIsNeverZero()
+{
+    MotecCdl3TachometerConfig_t cdl3;
+    cdl3.max_rpm = 0;
+    check(!validate(cdl3).empty(), "a zero max_rpm is reported");
+    check(cdl3.max_rpm > 0, "a zero max_rpm is raised off zero, so nothing divides by it");
+}
+
+void testFullScaleIsCapped()
+{
+    // This value made `rpm += 100` wrap on a uint32_t, so the tick loop never
+    // terminated -- and once counted rather than accumulated, it still asked for
+    // 43 million ticks.
+    MotecCdl3TachometerConfig_t cdl3;
+    cdl3.max_rpm = 4294967200u;
+    check(!validate(cdl3).empty(), "an absurd max_rpm is reported");
+    check(cdl3.max_rpm <= dashboard::limits::kMaxRpmCeiling,
+          "an absurd max_rpm is capped to something drawable");
+}
+
+void testRedlineCannotExceedFullScale()
+{
+    Mercedes190ETachometerConfig_t tach;
+    tach.max_rpm = 7000;
+    tach.redline_rpm = 9000;
+    check(!validate(tach).empty(), "a redline above max_rpm is reported");
+    check(tach.redline_rpm <= tach.max_rpm,
+          "a redline above max_rpm is pulled back, so the red zone is not drawn backwards");
+}
+
+void testInvertedRangesAreOrdered()
+{
+    // std::clamp's precondition is !(max < min); the cluster gauge clamped four
+    // readings against unvalidated pairs.
+    Mercedes190EClusterGaugeConfig_t cluster;
+    cluster.fuel_gauge.min_value = 100.0f;
+    cluster.fuel_gauge.max_value = 0.0f;
+    check(!validate(cluster).empty(), "an inverted range is reported");
+    check(cluster.fuel_gauge.min_value < cluster.fuel_gauge.max_value,
+          "an inverted range comes back the right way round");
+
+    // A zero-width range makes the value-to-position division degenerate.
+    Mercedes190EClusterGaugeConfig_t flat;
+    flat.left_gauge.min_value = 50.0f;
+    flat.left_gauge.max_value = 50.0f;
+    check(!validate(flat).empty(), "a zero-width range is reported");
+    check(flat.left_gauge.min_value < flat.left_gauge.max_value, "a zero-width range is widened");
+}
+
+void testUpdateRateCannotBecomeAZeroMillisecondTimer()
+{
+    // update_rate feeds `1000 / update_rate` as a millisecond interval, so 2000
+    // became start(0) -- a repaint on every pass of the event loop.
+    SparklineConfig_t spark;
+    spark.update_rate = 2000;
+    check(!validate(spark).empty(), "an absurd update_rate is reported");
+    check(spark.update_rate > 0 && 1000 / spark.update_rate > 0,
+          "the clamped update_rate still yields a non-zero timer interval");
+
+    SparklineConfig_t zero;
+    zero.update_rate = 0;
+    (void)validate(zero);
+    check(zero.update_rate > 0, "a zero update_rate is raised off zero");
+}
+
+void testOverlongListsAreCapped()
+{
+    Mercedes190ESpeedometerConfig_t speedo;
+    speedo.shift_box_markers.assign(5000, 42);
+    check(!validate(speedo).empty(), "an overlong marker list is reported");
+    check(speedo.shift_box_markers.size() <= dashboard::limits::kMaxMarkers,
+          "an overlong marker list is truncated, so paint stays bounded");
+}
+
+void testOdometerCannotOutrunItsDigits()
+{
+    // The odometer renders six digits. A larger value silently displayed the
+    // wrong ones: the zenoh setter clamped, the config path did not.
+    Mercedes190ESpeedometerConfig_t speedo;
+    speedo.odometer_value = 12345678;
+    check(!validate(speedo).empty(), "an out-of-range odometer value is reported");
+    check(speedo.odometer_value <= 999999, "an out-of-range odometer value is clamped to six digits");
+}
+
+void testAReasonableConfigIsLeftAlone()
+{
+    MotecCdl3TachometerConfig_t cdl3;
+    cdl3.max_rpm = 8000;
+    check(validate(cdl3).empty(), "a sensible config produces no adjustments");
+    check(cdl3.max_rpm == 8000, "a sensible config is not modified");
+
+    SparklineConfig_t spark;
+    spark.update_rate = 30;
+    spark.min_value = 0.0;
+    spark.max_value = 100.0;
+    check(validate(spark).empty(), "a sensible sparkline config produces no adjustments");
+    check(spark.update_rate == 30 && spark.max_value == 100.0,
+          "a sensible sparkline config is not modified");
+}
+
 }  // namespace
 
 int main()
@@ -293,6 +402,15 @@ int main()
     testAllProblemsAreReportedTogether();
     testMissingConfigIsAWarningNotAnError();
     testNestedStructsAreWalked();
+
+    testFullScaleIsNeverZero();
+    testFullScaleIsCapped();
+    testRedlineCannotExceedFullScale();
+    testInvertedRangesAreOrdered();
+    testUpdateRateCannotBecomeAZeroMillisecondTimer();
+    testOverlongListsAreCapped();
+    testOdometerCannotOutrunItsDigits();
+    testAReasonableConfigIsLeftAlone();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
