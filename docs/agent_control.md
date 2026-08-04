@@ -166,6 +166,17 @@ messages now state outright:
   different and a colour "regression" can be pure frame timing. Compare hashes
   across several frames, or check pixel statistics, before concluding anything
   about rendering.
+- **Editor edits are undoable, including the ones you make.** `editor.add_widget`,
+  `editor.delete`, `editor.move`, `editor.resize` and `widget.set_config` all go
+  onto the same history the GUI's Ctrl+Z uses, so `editor.undo` / `editor.redo`
+  will walk back a sequence an agent built. Both report `can_undo`, `can_redo`
+  and `dirty`, so you can tell whether the layout still differs from the file on
+  disk without saving it to find out. Widget names survive an undo — a selector
+  you are holding stays valid.
+- **The editor does not prompt about unsaved work under `--mcp`.** A modal
+  dialog with nobody at the screen is a hang, not a question, so `app_launch`
+  replacing an editor discards unsaved changes with a log line and no dialog.
+  `editor.save` first if you care about them.
 - **Use `carplay --simulate` for anything CarPlay-shaped.** It publishes a
   synthetic session — H.264 video, PCM audio, rotating metadata — on the real
   zenoh topics, so the whole dashboard side is exercisable with no iPhone
@@ -249,7 +260,7 @@ Everything in the plan is implemented:
 | Input | `input.click`, `input.key`, `input.type`, `input.drag`, `input.drop` |
 | Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
 | Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
-| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.save`, `editor.load` |
+| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load` |
 | Meta | `rpc.methods` |
 
 Known limits, all deliberate: one instance per app type; `QDrag::exec()` is not

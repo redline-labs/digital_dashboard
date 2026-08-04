@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QSurfaceFormat>
 
+#include "editor/canvas.h"
 #include "editor/editor_window.h"
 
 #include "agent_control/log_sink.h"
@@ -136,6 +137,10 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
 
     EditorWindow w;
+
+    // Under --mcp there is nobody at the screen: an unsaved-changes dialog on
+    // close would be a hang, not a prompt.
+    w.setHeadless(agent_mode);
     w.resize(1200, 800);
     w.show();
 
@@ -163,13 +168,22 @@ int main(int argc, char** argv)
         // selection state or geometry.
         dashboard::agent::registerWidgetMethods(
             *agent,
-            [](QWidget* target, const widget_config_t& cfg)
+            [&w](QWidget* target, const widget_config_t& cfg)
             {
                 auto* frame = qobject_cast<SelectionFrame*>(target->parentWidget());
                 if (frame == nullptr)
                 {
                     return false;
                 }
+
+                // Through the canvas's history: a config applied by an agent is
+                // as undoable as one applied from the properties panel.
+                Canvas* canvas = w.canvas();
+                if (canvas != nullptr)
+                {
+                    canvas->beginEdit();
+                }
+
                 bool applied = false;
                 std::visit(
                     [&](const auto& typed)
@@ -185,6 +199,11 @@ int main(int argc, char** argv)
                         }
                     },
                     cfg.config);
+
+                if (canvas != nullptr)
+                {
+                    canvas->commitEdit();
+                }
                 return applied;
             });
 

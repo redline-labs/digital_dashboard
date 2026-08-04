@@ -16,8 +16,10 @@
 #include <QApplication>
 #include <QLineEdit>
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -236,6 +238,120 @@ void testAnUnknownWidgetDoesNotShiftLaterNames()
     }
 }
 
+// ------------------------------------------------------------- edit history
+
+std::vector<std::string> idsOf(const Canvas& canvas)
+{
+    std::vector<std::string> out;
+    for (const SelectionFrame* frame : canvas.frames())
+    {
+        out.push_back(frame->objectName().toStdString());
+    }
+    return out;
+}
+
+void testUndoAndRedoWalkTheEditHistory()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+    canvas.markSaved();
+
+    check(!canvas.canUndo() && !canvas.canRedo(), "a freshly loaded canvas has no history");
+    check(!canvas.undo(), "undo on an empty history reports that it did nothing");
+
+    const auto after_load = idsOf(canvas);
+
+    canvas.addWidget(widget_type_t::static_text, QPoint(0, 0));
+    canvas.addWidget(widget_type_t::value_readout, QPoint(10, 10));
+    const auto after_two_adds = idsOf(canvas);
+    check(after_two_adds.size() == after_load.size() + 2, "both widgets were added");
+
+    check(canvas.undo(), "the second add is undone");
+    check(idsOf(canvas).size() == after_load.size() + 1, "one widget is left");
+    check(canvas.undo(), "the first add is undone");
+    check(idsOf(canvas) == after_load, "the canvas is back to the loaded state");
+    check(!canvas.canUndo(), "the history is exhausted");
+
+    check(canvas.redo(), "the first add is redone");
+    check(canvas.redo(), "the second add is redone");
+    check(idsOf(canvas) == after_two_adds,
+          "redoing both restores exactly what was there, names included");
+}
+
+// Undo restores through loadFromAppConfig, which derives names from config
+// position -- so without care a widget created as static_text#4 comes back as
+// static_text#3, silently invalidating any selector held on it.
+void testNamesSurviveAnUndo()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    SelectionFrame* added = canvas.addWidget(widget_type_t::static_text, QPoint(0, 0));
+    if (!added)
+    {
+        check(false, "expected a widget to be added");
+        return;
+    }
+    const std::string name = added->objectName().toStdString();
+
+    canvas.addWidget(widget_type_t::value_readout, QPoint(10, 10));
+    check(canvas.undo(), "the second add is undone");
+
+    const auto ids = idsOf(canvas);
+    check(std::find(ids.begin(), ids.end(), name) != ids.end(),
+          "the surviving widget keeps the name it was created with ('" + name + "')");
+}
+
+// A no-op edit must not land on the stack: an undo step that appears to do
+// nothing is worse than no undo step.
+void testNoOpEditsAreNotRecorded()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    canvas.beginEdit();
+    canvas.commitEdit();
+    check(!canvas.canUndo(), "an edit that changed nothing is not recorded");
+
+    // A drag that ends where it started is the real-world version of this.
+    const auto frames = canvas.frames();
+    if (!frames.empty())
+    {
+        canvas.beginEdit();
+        const QPoint origin = frames[0]->pos();
+        frames[0]->move(origin + QPoint(50, 50));
+        frames[0]->move(origin);
+        canvas.commitEdit();
+        check(!canvas.canUndo(), "a move that ends where it started is not recorded");
+    }
+}
+
+void testDirtyTracksTheLastSave()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+    canvas.markSaved();
+
+    check(!canvas.isDirty(), "a just-saved canvas is clean");
+
+    canvas.addWidget(widget_type_t::static_text, QPoint(0, 0));
+    check(canvas.isDirty(), "adding a widget makes it dirty");
+
+    // Undoing back to the saved state makes it clean again -- comparing against
+    // the saved snapshot rather than counting edits is what buys this.
+    check(canvas.undo(), "the add is undone");
+    check(!canvas.isDirty(), "undoing back to the saved state is clean again");
+
+    canvas.addWidget(widget_type_t::value_readout, QPoint(5, 5));
+    check(canvas.isDirty(), "a further edit is dirty");
+    canvas.markSaved();
+    check(!canvas.isDirty(), "saving makes the current state the new baseline");
+}
+
 // A drag carrying text that is not a widget type used to reach a throwing
 // lookup inside a Qt event handler and terminate the editor.
 void testUnknownDropPayloadIsRefused()
@@ -269,6 +385,10 @@ int main(int argc, char** argv)
     testDeletingTheSelectionLeavesAConsistentCanvas();
     testDerivedNamesAreNotReusedAfterADelete();
     testAnUnknownWidgetDoesNotShiftLaterNames();
+    testUndoAndRedoWalkTheEditHistory();
+    testNamesSurviveAnUndo();
+    testNoOpEditsAreNotRecorded();
+    testDirtyTracksTheLastSave();
     testUnknownDropPayloadIsRefused();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);

@@ -43,8 +43,41 @@ public:
     std::vector<SelectionFrame*> frames() const;
     bool editorMode() const { return editorMode_; }
 
+    // ------------------------------------------------------------- edit history
+    //
+    // Snapshot-based: each entry is a whole exported config, not an inverse
+    // operation. With a few dozen widgets that is cheap, and it cannot drift the
+    // way a set of hand-written undo/redo pairs does -- every mutation is
+    // covered by construction, including the ones the agent interface makes,
+    // because they all end up changing what exportAppConfig() returns.
+    //
+    // Wrap a mutation in beginEdit()/commitEdit(). commitEdit() compares the
+    // result against the snapshot and records nothing if they match, so a drag
+    // that ends where it started, or an Apply that changes no field, does not
+    // fill the history with no-ops.
+    void beginEdit();
+    void commitEdit();
+
+    // Drops the history. Called after a load: undoing past it would restore the
+    // previous document, which is not what anyone means by undo.
+    void clearHistory();
+
+    bool canUndo() const { return !undo_stack_.empty(); }
+    bool canRedo() const { return !redo_stack_.empty(); }
+    bool undo();
+    bool redo();
+
+    // True when the canvas differs from the last save (or load). Saving calls
+    // markSaved() to make the current state the new baseline.
+    bool isDirty() const;
+    void markSaved();
+
 signals:
     void selectionChanged(QWidget* selected);
+
+    // Emitted whenever undo/redo availability or the dirty flag may have moved,
+    // so the window can update its title and menu without polling.
+    void historyChanged();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -92,6 +125,37 @@ private:
     // by dragEnterEvent and dropEvent so the drag is refused up front rather
     // than accepted and then discarded.
     static std::optional<widget_type_t> droppedWidgetType(const QString& mimeText);
+
+    // The canvas serialised, used as the unit of history and as the dirty
+    // comparison. YAML rather than an app_config_t because comparing two configs
+    // would mean an operator== on every widget config struct, and the YAML is
+    // what actually gets saved anyway.
+    //
+    // The object names ride alongside because they are NOT in the YAML: a widget
+    // with no explicit `id:` gets a name derived from its position in the config,
+    // so restoring through loadFromAppConfig would renumber it. A widget that
+    // silently changes name when you undo breaks every selector pointing at it,
+    // which is exactly what the agent verbs are used through.
+    struct Snapshot
+    {
+        std::string yaml;
+        std::vector<QString> names;
+
+        // Only the YAML decides whether anything changed. Names follow the
+        // widgets, so comparing them too would be comparing the same fact twice.
+        bool operator==(const Snapshot& other) const { return yaml == other.yaml; }
+    };
+
+    Snapshot snapshot() const;
+    void restore(const Snapshot& state);
+
+    std::vector<Snapshot> undo_stack_;
+    std::vector<Snapshot> redo_stack_;
+    std::optional<Snapshot> pending_edit_;
+    Snapshot saved_snapshot_;
+
+    // Bounded so a long editing session cannot grow without limit.
+    static constexpr std::size_t kMaxHistory = 100;
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);

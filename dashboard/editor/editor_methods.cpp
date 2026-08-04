@@ -208,7 +208,7 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
     // ----------------------------------------------------------- editor.move
     server.registerMethod(
         "editor.move",
-        [frameOf](const json& params) -> MethodResult
+        [frameOf, canvasOf](const json& params) -> MethodResult
         {
             auto frame = frameOf(params);
             if (!frame.has_value())
@@ -220,7 +220,14 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
             {
                 return std::unexpected(badParams("'x' and 'y' are required integers."));
             }
+            // Through the canvas's history, so an agent-driven move is undoable
+            // in the same stack as a dragged one. add_widget and delete get this
+            // from Canvas itself; move and resize touch the frame directly.
+            auto canvas = canvasOf();
+            if (canvas.has_value()) canvas.value()->beginEdit();
             frame.value()->move(params["x"].get<int>(), params["y"].get<int>());
+            if (canvas.has_value()) canvas.value()->commitEdit();
+
             return describeFrame(frame.value());
         },
         AgentServer::MethodKind::kMutating);
@@ -228,7 +235,7 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
     // --------------------------------------------------------- editor.resize
     server.registerMethod(
         "editor.resize",
-        [frameOf](const json& params) -> MethodResult
+        [frameOf, canvasOf](const json& params) -> MethodResult
         {
             auto frame = frameOf(params);
             if (!frame.has_value())
@@ -246,11 +253,15 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
             {
                 return std::unexpected(badParams("'width' and 'height' must be positive."));
             }
+            auto canvas = canvasOf();
+            if (canvas.has_value()) canvas.value()->beginEdit();
             if (frame.value()->child())
             {
                 frame.value()->child()->resize(size);
             }
             frame.value()->resize(size);
+            if (canvas.has_value()) canvas.value()->commitEdit();
+
             return describeFrame(frame.value());
         },
         AgentServer::MethodKind::kMutating);
@@ -280,6 +291,38 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
             return out;
         },
         AgentServer::MethodKind::kMutating);
+
+    // ------------------------------------------------- editor.undo / .redo
+    //
+    // The agent's edits go on the same stack as the GUI's, so a sequence built
+    // by an agent can be stepped back the same way -- and an agent that has just
+    // made a mess of a layout can put it back rather than reloading the file and
+    // losing everything else it did.
+    const auto historyStep = [canvasOf](bool undo) -> MethodResult
+    {
+        auto canvas = canvasOf();
+        if (!canvas.has_value())
+        {
+            return std::unexpected(canvas.error());
+        }
+
+        const bool moved = undo ? canvas.value()->undo() : canvas.value()->redo();
+
+        json out = json::object();
+        out[undo ? "undone" : "redone"] = moved;
+        out["can_undo"] = canvas.value()->canUndo();
+        out["can_redo"] = canvas.value()->canRedo();
+        out["dirty"] = canvas.value()->isDirty();
+        return out;
+    };
+
+    server.registerMethod("editor.undo",
+                          [historyStep](const json&) -> MethodResult { return historyStep(true); },
+                          AgentServer::MethodKind::kMutating);
+
+    server.registerMethod("editor.redo",
+                          [historyStep](const json&) -> MethodResult { return historyStep(false); },
+                          AgentServer::MethodKind::kMutating);
 
     // ---------------------------------------------------------- editor.items
     server.registerMethod("editor.items",

@@ -23,14 +23,27 @@ public:
 
     Canvas* canvas() const { return canvas_; }
 
+    // Suppresses the unsaved-changes dialog. Set under --mcp, where the editor
+    // is driven headlessly: a modal dialog there is not a prompt, it is a hang.
+    void setHeadless(bool headless) { headless_ = headless; }
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private:
     void buildMenuBar();
     void loadConfig();
     void saveConfig();
+    void updateHistoryUi();
+    bool confirmDiscardChanges(const QString& action);
 
     WidgetPalette* widgetPalette_;
     Canvas* canvas_;
+    PropertiesPanel* propertiesPanel_ = nullptr;
     QAction* toggleInterceptAction_;
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
+    bool headless_ = false;
 };
 
 #endif // DASHBOARD_EDITOR_EDITOR_WINDOW_H

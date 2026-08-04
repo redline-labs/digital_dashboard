@@ -506,6 +506,15 @@ namespace
             const widget_type_t type = frame->type();
             bool applied = false;
 
+            // One history entry per Apply. commitEdit() discards it if every
+            // field came back the same, so pressing Apply without changing
+            // anything does not add an undo step that appears to do nothing.
+            Canvas* canvas = that->canvas();
+            if (canvas)
+            {
+                canvas->beginEdit();
+            }
+
             // Use FOR_EACH_WIDGET to generate switch cases. qobject_cast, not
             // static_cast: if the frame's declared type and its actual child
             // ever disagree, a static_cast here is undefined behaviour, and the
@@ -533,6 +542,11 @@ namespace
             {
                 SPDLOG_ERROR("Apply did nothing for '{}': the form and the widget disagree about its type.",
                              frame->objectName().toStdString());
+            }
+
+            if (canvas)
+            {
+                canvas->commitEdit();
             }
         });
         return page;

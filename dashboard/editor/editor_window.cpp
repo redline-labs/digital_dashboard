@@ -14,7 +14,10 @@
 #include <QAction>
 #include <QToolButton>
 #include <QMenuBar>
+#include <QCloseEvent>
 #include <QFileDialog>
+#include <QKeySequence>
+#include <QMessageBox>
 #include "spdlog/spdlog.h"
 #include "dashboard/app_config.h"
 
@@ -33,7 +36,8 @@ EditorWindow::EditorWindow(QWidget* parent) :
     auto* left = new QSplitter(Qt::Vertical, splitter);
     widgetPalette_ = new WidgetPalette(left);
 
-    auto* properties = new PropertiesPanel(left);
+    propertiesPanel_ = new PropertiesPanel(left);
+    auto* properties = propertiesPanel_;
     auto* propertiesScroll = new QScrollArea(left);
     propertiesScroll->setWidget(properties);
     propertiesScroll->setWidgetResizable(true);
@@ -101,12 +105,107 @@ void EditorWindow::buildMenuBar()
     auto* fileMenu = menuBar()->addMenu("File");
 
     auto* actionLoad = new QAction("Load", this);
+    actionLoad->setShortcut(QKeySequence::Open);
     connect(actionLoad, &QAction::triggered, this, &EditorWindow::loadConfig);
     fileMenu->addAction(actionLoad);
 
     auto* actionSave = new QAction("Save", this);
+    actionSave->setShortcut(QKeySequence::Save);
     connect(actionSave, &QAction::triggered, this, &EditorWindow::saveConfig);
     fileMenu->addAction(actionSave);
+
+    auto* editMenu = menuBar()->addMenu("Edit");
+
+    undoAction_ = new QAction("Undo", this);
+    undoAction_->setShortcut(QKeySequence::Undo);
+    connect(undoAction_, &QAction::triggered, this, [this]
+    {
+        if (canvas_ && canvas_->undo())
+        {
+            // The canvas rebuilt its widgets, so the panel's form points at a
+            // frame that no longer exists.
+            if (auto* props = propertiesPanel_) props->setSelectedWidget(nullptr);
+        }
+    });
+    editMenu->addAction(undoAction_);
+
+    redoAction_ = new QAction("Redo", this);
+    redoAction_->setShortcut(QKeySequence::Redo);
+    connect(redoAction_, &QAction::triggered, this, [this]
+    {
+        if (canvas_ && canvas_->redo())
+        {
+            if (auto* props = propertiesPanel_) props->setSelectedWidget(nullptr);
+        }
+    });
+    editMenu->addAction(redoAction_);
+
+    connect(canvas_, &Canvas::historyChanged, this, &EditorWindow::updateHistoryUi);
+    updateHistoryUi();
+}
+
+// Keeps the Edit menu and the title bar honest about the document's state.
+void EditorWindow::updateHistoryUi()
+{
+    if (!canvas_)
+    {
+        return;
+    }
+
+    if (undoAction_) undoAction_->setEnabled(canvas_->canUndo());
+    if (redoAction_) redoAction_->setEnabled(canvas_->canRedo());
+
+    const QString name = QString::fromStdString(canvas_->windowName());
+    setWindowTitle(QString("%1%2 - Dashboard Editor")
+                       .arg(name.isEmpty() ? QString("untitled") : name)
+                       .arg(canvas_->isDirty() ? " *" : ""));
+}
+
+// Nothing used to stand between an unsaved layout and a closed window.
+void EditorWindow::closeEvent(QCloseEvent* event)
+{
+    if (!confirmDiscardChanges("closing"))
+    {
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
+}
+
+// Returns false if the user wants to keep what they have. Silent when there is
+// nothing to lose, and when there is no one at the screen to ask -- under --mcp
+// the editor is driven headlessly and a modal dialog would hang it.
+bool EditorWindow::confirmDiscardChanges(const QString& action)
+{
+    if (!canvas_ || !canvas_->isDirty())
+    {
+        return true;
+    }
+
+    if (headless_)
+    {
+        SPDLOG_WARN("Discarding unsaved editor changes on {} (headless: nobody to ask).",
+                    action.toStdString());
+        return true;
+    }
+
+    const auto choice = QMessageBox::warning(
+        this, "Unsaved changes",
+        QString("This layout has unsaved changes.\n\nSave before %1?").arg(action),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+
+    if (choice == QMessageBox::Cancel)
+    {
+        return false;
+    }
+    if (choice == QMessageBox::Save)
+    {
+        saveConfig();
+        // A failed or cancelled save must not fall through into discarding.
+        return !canvas_->isDirty();
+    }
+    return true;
 }
 
 bool EditorWindow::loadConfigFrom(const QString& path)
@@ -130,14 +229,24 @@ bool EditorWindow::loadConfigFrom(const QString& path)
     }
 
     canvas_->loadFromAppConfig(cfg.value());
+
+    // A freshly loaded document is clean, and its history starts here -- undoing
+    // past a load into the previous document would be nonsense.
+    canvas_->clearHistory();
+    canvas_->markSaved();
+
     statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
                              .arg(QString::fromStdString(cfg.value().name))
                              .arg(cfg.value().width)
                              .arg(cfg.value().height), 3000);
-    if (auto* props = findChild<PropertiesPanel*>())
+    if (propertiesPanel_)
     {
-        props->syncFromCanvas();
+        // Clear the selection first: the panel's form points at frames the load
+        // has just destroyed.
+        propertiesPanel_->setSelectedWidget(nullptr);
+        propertiesPanel_->syncFromCanvas();
     }
+    updateHistoryUi();
     return true;
 }
 
@@ -180,6 +289,8 @@ bool EditorWindow::saveConfigTo(const QString& path)
             return false;
         }
 
+        canvas_->markSaved();
+        updateHistoryUi();
         statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
         SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
         return true;
@@ -193,6 +304,11 @@ bool EditorWindow::saveConfigTo(const QString& path)
 
 void EditorWindow::loadConfig()
 {
+    if (!confirmDiscardChanges("opening another layout"))
+    {
+        return;
+    }
+
     const QString path = QFileDialog::getOpenFileName(this,
                                                       "Open Dashboard Config",
                                                       "",

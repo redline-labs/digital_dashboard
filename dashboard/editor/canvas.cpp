@@ -136,6 +136,147 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
     update();
 }
 
+// ------------------------------------------------------------------ history
+
+Canvas::Snapshot Canvas::snapshot() const
+{
+    Snapshot state;
+
+    YAML::Emitter out;
+    out << YAML::convert<app_config_t>::encode(exportAppConfig());
+    state.yaml = out.c_str();
+
+    state.names.reserve(items_.size());
+    for (const auto& item : items_)
+    {
+        if (item.widget)
+        {
+            state.names.push_back(item.widget->objectName());
+        }
+    }
+
+    return state;
+}
+
+void Canvas::restore(const Snapshot& state)
+{
+    // loadFromAppConfig resets the naming counter, which would let a restored
+    // state hand out a name a later widget already has. Keep the counter moving
+    // forward across an undo.
+    const std::size_t names_before = nextNameIndex_;
+    loadFromAppConfig(YAML::Load(state.yaml).as<app_config_t>());
+    nextNameIndex_ = std::max(nextNameIndex_, names_before);
+
+    // Put the names back. loadFromAppConfig derives them from config position,
+    // so without this a widget created as static_text#4 would come back from an
+    // undo as static_text#3 -- silently invalidating any selector held on it.
+    if (state.names.size() == items_.size())
+    {
+        for (std::size_t i = 0; i < items_.size(); ++i)
+        {
+            if (items_[i].widget)
+            {
+                items_[i].widget->setObjectName(state.names[i]);
+            }
+        }
+    }
+    else
+    {
+        SPDLOG_WARN("Restored {} widgets but had {} names; leaving the derived ones.",
+                    items_.size(), state.names.size());
+    }
+
+    emit selectionChanged(nullptr);
+    emit historyChanged();
+}
+
+void Canvas::beginEdit()
+{
+    // Nested or repeated begins collapse into the outermost one, so a drag that
+    // arrives as press/move/move/release records a single entry.
+    if (!pending_edit_)
+    {
+        pending_edit_ = snapshot();
+    }
+}
+
+void Canvas::commitEdit()
+{
+    if (!pending_edit_)
+    {
+        return;
+    }
+
+    const Snapshot before = *pending_edit_;
+    pending_edit_.reset();
+
+    // Nothing actually changed -- a drag that ended where it started, an Apply
+    // that set every field to what it already was. Recording it would mean an
+    // undo that appears to do nothing.
+    if (before == snapshot())
+    {
+        return;
+    }
+
+    undo_stack_.push_back(before);
+    if (undo_stack_.size() > kMaxHistory)
+    {
+        undo_stack_.erase(undo_stack_.begin());
+    }
+
+    // A new edit invalidates the redo branch, as everywhere else.
+    redo_stack_.clear();
+
+    emit historyChanged();
+}
+
+bool Canvas::undo()
+{
+    if (undo_stack_.empty())
+    {
+        return false;
+    }
+
+    redo_stack_.push_back(snapshot());
+    const Snapshot target = undo_stack_.back();
+    undo_stack_.pop_back();
+    restore(target);
+    return true;
+}
+
+bool Canvas::redo()
+{
+    if (redo_stack_.empty())
+    {
+        return false;
+    }
+
+    undo_stack_.push_back(snapshot());
+    const Snapshot target = redo_stack_.back();
+    redo_stack_.pop_back();
+    restore(target);
+    return true;
+}
+
+void Canvas::clearHistory()
+{
+    undo_stack_.clear();
+    redo_stack_.clear();
+    pending_edit_.reset();
+    emit historyChanged();
+}
+
+bool Canvas::isDirty() const
+{
+    return !(snapshot() == saved_snapshot_);
+}
+
+void Canvas::markSaved()
+{
+    saved_snapshot_ = snapshot();
+    emit historyChanged();
+}
+
 app_config_t Canvas::exportAppConfig() const
 {
     app_config_t cfg;
@@ -235,6 +376,8 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
         return nullptr;
     }
 
+    beginEdit();
+
     SelectionFrame* frame = new SelectionFrame(type, this);
     if (!frame)
     {
@@ -276,6 +419,7 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
 
     items_.push_back(Item{frame});
     update();
+    commitEdit();
 
     selectFrame(frame);
     return frame;
@@ -307,6 +451,8 @@ bool Canvas::removeFrame(SelectionFrame* frame)
     {
         return false;
     }
+
+    beginEdit();
     items_.erase(it, items_.end());
 
     if (selected_ == frame)
@@ -315,6 +461,11 @@ bool Canvas::removeFrame(SelectionFrame* frame)
     }
     frame->deleteLater();
     update();
+
+    // deleteLater leaves the frame in the child list until the event loop runs,
+    // but items_ is what exportAppConfig walks, so the snapshot is already
+    // correct.
+    commitEdit();
     return true;
 }
 
@@ -422,6 +573,14 @@ void Canvas::mousePressEvent(QMouseEvent* event)
         dragMode_ = hitTestSelectionAt(pos);
         dragStartPos_ = pos;
         dragStartRect_ = selectedRect_;
+
+        // One history entry per drag, not per mouse-move: beginEdit collapses
+        // repeated calls, and commitEdit on release discards it if the widget
+        // ended up where it started.
+        if (dragMode_ != DragMode::None)
+        {
+            beginEdit();
+        }
         update();
         return;
     }
@@ -435,6 +594,7 @@ void Canvas::mousePressEvent(QMouseEvent* event)
             dragMode_ = hm;
             dragStartPos_ = pos;
             dragStartRect_ = selectedRect_;
+            beginEdit();
             update();
             return;
         }
@@ -498,6 +658,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent* event)
     }
 
     dragMode_ = DragMode::None;
+    commitEdit();
 }
 
 void Canvas::keyPressEvent(QKeyEvent* event)
