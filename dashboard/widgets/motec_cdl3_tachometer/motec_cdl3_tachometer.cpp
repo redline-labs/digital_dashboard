@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
 #include "dashboard/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
@@ -50,7 +51,28 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
 
 void MotecCdl3Tachometer::setRpm(float rpm)
 {
-    _rpm = std::clamp(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
+    // clampToRange, not std::clamp: it tolerates max_rpm of 0 and refuses to
+    // pass a non-finite value through, which std::clamp does.
+    _rpm = gauge_paint::clampToRange(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
+
+    // max_rpm is validated non-zero at load, but guard anyway rather than
+    // divide here.
+    const float span = static_cast<float>(_cfg.max_rpm);
+    const float p_now = (span > 0.0f) ? gauge_paint::clampToRange(_rpm / span, 0.0f, 1.0f) : 0.0f;
+
+    // Clamp as a float, then cast. Casting first meant a non-finite or
+    // out-of-range intermediate reached static_cast<int>, which is undefined --
+    // the clamp afterwards was too late to help.
+    const int on_segments = static_cast<int>(
+        gauge_paint::clampToRange(std::floor(p_now * static_cast<float>(kSegments) + 1e-4f),
+                                  0.0f, static_cast<float>(kSegments)));
+
+    if (on_segments == _on_segments)
+    {
+        return;
+    }
+
+    _on_segments = on_segments;
     update();
 }
 
@@ -194,9 +216,18 @@ void MotecCdl3Tachometer::buildStaticGeometry()
         curArc = segEndArc + gap_px;
     }
 
-    // Precompute tick angles at 1000 RPM using LUT proportion mapping
+    // Precompute tick angles at 1000 RPM using LUT proportion mapping.
+    //
+    // Counted by tick index: `rpm += 1000` wraps on a uint32_t near the top of
+    // the range, and with `rpm <= max_rpm` as the condition this ran forever --
+    // push_back'ing as it went, in the constructor, before the window was even
+    // shown. Deriving the count first cannot overflow.
+    constexpr uint32_t kTickStepRpm = 1000u;
+    const uint32_t tick_count = _cfg.max_rpm / kTickStepRpm;
     _tickAngles.clear();
-    for (uint32_t rpm = 0; rpm <= _cfg.max_rpm; rpm += 1000) {
+    _tickAngles.reserve(tick_count + 1u);
+    for (uint32_t tick = 0; tick <= tick_count; ++tick) {
+        const uint32_t rpm = tick * kTickStepRpm;
         float u = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
         _tickAngles.push_back(angleAtU(u));
     }
@@ -234,11 +265,9 @@ void MotecCdl3Tachometer::paintDynamic(QPainter& painter)
     // Why: mirror vertically so the arc bows downward (dashboard-like rainbow)
     painter.scale(1.0f, -1.0f);
 
-    // The active proportion as dark segments; each segment is either on or off (no partials).
-    const float p_now = std::clamp(_rpm / static_cast<float>(_cfg.max_rpm), 0.0f, 1.0f);
-    const int on_segments = std::clamp(static_cast<int>(std::floor(p_now * static_cast<float>(kSegments) + 1e-4f)), 0, kSegments);
-
-    for (int i = 0; i < on_segments; ++i)
+    // Each segment is either on or off (no partials). The count is computed in
+    // setRpm, which is also what decides whether a repaint was worth asking for.
+    for (int i = 0; i < _on_segments; ++i)
     {
         const float a0 = _segmentStartAngles[i];
         const float span = _segmentSpanDeg[i];

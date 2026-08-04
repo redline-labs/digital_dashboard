@@ -194,9 +194,18 @@ void MotecC125Tachometer::drawTicks(QPainter* painter)
     pen.setCapStyle(Qt::FlatCap);
     painter->setPen(pen);
 
-    // Draw ticks at RPM-based intervals (100, 500, 1000)
-    for (uint32_t rpm = 0; rpm <= _cfg.max_rpm; rpm += 100)
+    // Draw ticks at RPM-based intervals (100, 500, 1000).
+    //
+    // Counted by tick index rather than by adding to `rpm`: `rpm += 100` on a
+    // uint32_t wraps past UINT32_MAX-100, and the loop condition is `rpm <=
+    // max_rpm`, so a large enough configured max_rpm made this run forever.
+    // Deriving the count first cannot overflow. (The count itself still scales
+    // with max_rpm; validation caps that at load.)
+    constexpr uint32_t kTickStepRpm = 100u;
+    const uint32_t tick_count = _cfg.max_rpm / kTickStepRpm;
+    for (uint32_t tick = 0; tick <= tick_count; ++tick)
     {
+        const uint32_t rpm = tick * kTickStepRpm;
         float proportion = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
         float a = kSweepStartDeg + kSweepTotalDeg * proportion; // clockwise
         if (a >= 360.0f) a -= 360.0f;
@@ -220,8 +229,12 @@ void MotecC125Tachometer::drawTicks(QPainter* painter)
     painter->setPen(Qt::black);
     // Place labels closer to inner arc to avoid overlap with shorter ticks
     constexpr float label_radius = kLabelRadius;
-    for (uint32_t rpm = 0u; rpm <= _cfg.max_rpm; rpm += 1000u)
+    // Same counted form as the tick loop above, and for the same reason.
+    constexpr uint32_t kLabelStepRpm = 1000u;
+    const uint32_t label_count = _cfg.max_rpm / kLabelStepRpm;
+    for (uint32_t label = 0u; label <= label_count; ++label)
     {
+        const uint32_t rpm = label * kLabelStepRpm;
         float proportion = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
         float a = kSweepStartDeg + kSweepTotalDeg * proportion;
         if (a >= 360.0f) a -= 360.0f;

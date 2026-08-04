@@ -270,28 +270,60 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     }
 }
 
+namespace {
+
+// Four sub-gauges, four independent zenoh streams, one widget. Repainting on
+// every sample meant a 50 Hz feed on each was 200 full repaints a second, most
+// of them redrawing an identical needle. Only ask for a repaint when the value
+// actually moved, and clamp through the shared helper so an inverted or
+// non-finite range cannot reach the painter.
+bool updateGaugeValue(float& current, float incoming, float min, float max)
+{
+    const float clamped = gauge_paint::clampToRange(incoming, min, max);
+    if (clamped == current)
+    {
+        return false;
+    }
+    current = clamped;
+    return true;
+}
+
+}  // namespace
+
 void Mercedes190EClusterGauge::setFuelGaugeValue(float value)
 {
-    fuel_gauge_current_value_ = std::clamp(value, m_config.fuel_gauge.min_value, m_config.fuel_gauge.max_value);
-    update();
+    if (updateGaugeValue(fuel_gauge_current_value_, value,
+                         m_config.fuel_gauge.min_value, m_config.fuel_gauge.max_value))
+    {
+        update();
+    }
 }
 
 void Mercedes190EClusterGauge::setOilPressureGaugeValue(float value)
 {
-    oil_pressure_gauge_current_value_ = std::clamp(value, m_config.right_gauge.min_value, m_config.right_gauge.max_value);
-    update();
+    if (updateGaugeValue(oil_pressure_gauge_current_value_, value,
+                         m_config.right_gauge.min_value, m_config.right_gauge.max_value))
+    {
+        update();
+    }
 }
 
 void Mercedes190EClusterGauge::setEconomyGaugeValue(float value)
 {
-    economy_gauge_current_value_ = std::clamp(value, m_config.bottom_gauge.min_value, m_config.bottom_gauge.max_value);
-    update();
+    if (updateGaugeValue(economy_gauge_current_value_, value,
+                         m_config.bottom_gauge.min_value, m_config.bottom_gauge.max_value))
+    {
+        update();
+    }
 }
 
 void Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue(float value)
 {
-    coolant_temperature_gauge_current_value_ = std::clamp(value, m_config.left_gauge.min_value, m_config.left_gauge.max_value);
-    update();
+    if (updateGaugeValue(coolant_temperature_gauge_current_value_, value,
+                         m_config.left_gauge.min_value, m_config.left_gauge.max_value))
+    {
+        update();
+    }
 }
 
 void Mercedes190EClusterGauge::applyPaintTransform(QPainter& painter) const

@@ -88,7 +88,11 @@ def _screenshot_content(result: dict[str, Any]) -> list[Any]:
     parts: list[Any] = [json.dumps(meta, indent=2)]
     encoded = result.get("image_png_base64")
     if encoded:
-        parts.append(Image(data=base64.b64decode(encoded), format="png"))
+        # to_image_content(), not the Image itself: the server only serializes
+        # content types when they are returned inside a list, and a bare Image
+        # comes back as "Unable to serialize unknown type" -- which fails every
+        # screenshot, i.e. the one tool you cannot work around by guessing.
+        parts.append(Image(data=base64.b64decode(encoded), format="png").to_image_content())
     return parts
 
 

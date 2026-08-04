@@ -50,6 +50,12 @@ private:
     MotecCdl3TachometerConfig_t _cfg;
     float _rpm; // current rpm
 
+    // The only thing the dynamic layer actually draws: how many of the 46
+    // segments are lit. Derived from _rpm when it is set, so the whole display
+    // has at most 47 distinct states and a repaint is only worth asking for
+    // when this number moves -- not on every sample.
+    int _on_segments = 0;
+
     // Fonts
     QFont _segmentFont; // DSEG-like font for labels
 

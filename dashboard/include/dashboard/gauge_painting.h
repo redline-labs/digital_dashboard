@@ -7,6 +7,8 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 namespace gauge_paint {
 
@@ -23,6 +25,30 @@ inline void applyCenteredScale(QPainter& painter, const QWidget& widget, float l
     painter.scale(side / logical_size, side / logical_size);
 }
 
+// Clamps a reading to a configured range, tolerating the two things a config
+// file can hand you that std::clamp cannot take.
+//
+// std::clamp's precondition is !(max < min) -- an inverted range is undefined
+// behaviour, and min/max come straight from YAML with nothing checking their
+// order. And std::clamp passes NaN through unchanged, because both of its
+// comparisons are false for NaN, so a NaN reading would sail past a "clamp" and
+// into painter.rotate(). Every gauge setter should go through here.
+inline float clampToRange(float value, float min, float max)
+{
+    if (max < min)
+    {
+        std::swap(min, max);
+    }
+
+    // Park at the bottom of the range rather than propagate a non-finite value.
+    if (!std::isfinite(value))
+    {
+        return min;
+    }
+
+    return std::clamp(value, min, max);
+}
+
 // Maps a value in [min, max] onto a dial angle: start_deg + proportion * sweep_deg.
 inline float valueToAngleDeg(float value, float min, float max, float start_deg, float sweep_deg)
 {
@@ -30,7 +56,7 @@ inline float valueToAngleDeg(float value, float min, float max, float start_deg,
     {
         return start_deg;
     }
-    const float proportion = (std::clamp(value, min, max) - min) / (max - min);
+    const float proportion = (clampToRange(value, min, max) - min) / (max - min);
     return start_deg + proportion * sweep_deg;
 }
 
