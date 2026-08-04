@@ -14,11 +14,14 @@
 
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <memory>
 
 #include <QApplication>
+#include <QTimer>
 
 // Patches to third party:
 // LibUSB core for debug messages.
@@ -123,11 +126,24 @@ int main(int argc, char** argv)
         std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
     }
 
-    std::signal(SIGINT, [](int /* signum */)
+    // Only a flag is set from the handler. Neither spdlog nor
+    // QCoreApplication::quit() is async-signal-safe -- calling them here could
+    // deadlock on a lock the interrupted thread already held, which is a hang at
+    // exactly the moment you are trying to stop the process. A timer polls the
+    // flag and does the real work on the GUI thread.
+    static std::atomic<bool> interrupted{false};
+    std::signal(SIGINT, [](int /* signum */) { interrupted.store(true, std::memory_order_relaxed); });
+
+    QTimer interrupt_poll;
+    QObject::connect(&interrupt_poll, &QTimer::timeout, &app, [&]()
     {
-        SPDLOG_WARN("SIGINT received, quitting.");
-        QCoreApplication::quit();
+        if (interrupted.load(std::memory_order_relaxed))
+        {
+            SPDLOG_WARN("SIGINT received, quitting.");
+            QCoreApplication::quit();
+        }
     });
+    interrupt_poll.start(std::chrono::milliseconds{100});
 
     app.exec();  // Blocking.
 

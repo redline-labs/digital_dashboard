@@ -89,11 +89,17 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         frame->setId(wcfg.id);
         frame->setObjectName(dashboard::widgetObjectName(wcfg, items_.size()));
 
-        // Apply typed widget configuration
+        // Apply typed widget configuration. A mismatch here means the config's
+        // `type` and its `config` block disagree, which the YAML decoder should
+        // have caught -- say so rather than silently showing a default widget.
         std::visit([&](auto const& cfg){
             if constexpr (!std::is_same_v<std::decay_t<decltype(cfg)>, std::monostate>)
             {
-                frame->applyConfig(cfg);
+                if (!frame->applyConfig(cfg))
+                {
+                    SPDLOG_ERROR("Widget '{}' kept its default configuration.",
+                                 frame->objectName().toStdString());
+                }
             }
         }, wcfg.config);
 
@@ -396,17 +402,17 @@ void Canvas::mousePressEvent(QMouseEvent* event)
     const QPoint pos = event->pos();
     // Determine if clicking on a top-level child widget using stored layout (works with transparent children)
     QWidget* topLevel = topLevelWidgetAt(pos);
-    if (topLevel)
+    if (auto* frame = qobject_cast<SelectionFrame*>(topLevel))
     {
-        if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
-        selected_ = topLevel;
-        if (auto* f = qobject_cast<SelectionFrame*>(selected_)) f->setSelected(true);
-        selectedRect_ = widgetRect(selected_);
+        // selectFrame() rather than a third hand-rolled copy of "deselect the
+        // old, select the new, update selectedRect_, emit" -- it already does
+        // all of that, and keeping one implementation is what stops the copies
+        // drifting apart.
+        selectFrame(frame);
         dragMode_ = hitTestSelectionAt(pos);
         dragStartPos_ = pos;
         dragStartRect_ = selectedRect_;
         update();
-        emit selectionChanged(selected_);
         return;
     }
 
@@ -488,15 +494,12 @@ void Canvas::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)
     {
-        if (selected_)
+        // Route through removeFrame rather than inlining a second copy of the
+        // erase-and-deselect logic. The inlined one had already drifted: it did
+        // not go through selectFrame(), so selectedRect_ kept describing the
+        // widget that had just been deleted.
+        if (selected_ && removeFrame(selected_))
         {
-            auto it = std::remove_if(items_.begin(), items_.end(), [this](const Item& item){ return item.widget == selected_; });
-            items_.erase(it, items_.end());
-            if (auto* f = qobject_cast<SelectionFrame*>(selected_)) f->setSelected(false);
-            selected_->deleteLater();
-            selected_ = nullptr;
-            update();
-            emit selectionChanged(nullptr);
             event->accept();
             return;
         }

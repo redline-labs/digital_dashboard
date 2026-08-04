@@ -50,8 +50,11 @@ public:
     // Hit-test using canvas coordinates (parent space)
     Handle hitTestCanvasPos(const QPoint& canvasPos) const;
 
+    // Returns false if `cfg` is not for this frame's type. Callers must check:
+    // the agent's set_config used to report `applied` unconditionally, so a
+    // rejected config came back as a success.
     template <typename Config>
-    void applyConfig(const Config& cfg)
+    [[nodiscard]] bool applyConfig(const Config& cfg)
     {
         using traits = widget_registry::config_traits<Config>;
         using widget_t = typename traits::widget_t;
@@ -61,11 +64,12 @@ public:
         if (type_ != traits::type)
         {
             SPDLOG_ERROR("Type mismatch, expected '{}', received '{}'.", reflection::enum_to_string(type_), reflection::enum_to_string(traits::type));
-            return;
+            return false;
         }
 
         // Rebuild child
         setChild(new widget_t(cfg, nullptr));
+        return true;
     }
 
     // Convert the contained widget back into a widget_config_t for saving

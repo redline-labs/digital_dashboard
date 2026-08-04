@@ -177,8 +177,11 @@ int main(int argc, char** argv)
                         if constexpr (!std::is_same_v<std::decay_t<decltype(typed)>,
                                                       std::monostate>)
                         {
-                            frame->applyConfig(typed);
-                            applied = true;
+                            // Report what applyConfig actually did. This used to
+                            // set applied unconditionally, so a config rejected
+                            // for the wrong type came back to the agent as a
+                            // success.
+                            applied = frame->applyConfig(typed);
                         }
                     },
                     cfg.config);

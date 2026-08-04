@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QPoint>
+#include <QPointer>
 #include <QMouseEvent>
 #include <optional>
 #include <vector>
@@ -66,7 +67,10 @@ private:
 
     std::string windowName_;
 
-    QWidget* selected_ = nullptr; // points to SelectionFrame now
+    // QPointer, not a raw pointer: this used to rely on every deletion path
+    // remembering to null it. They all did, but the next one added would not
+    // have, and the failure is a dangling dereference on the next click.
+    QPointer<SelectionFrame> selected_;
     QRect selectedRect_;
 
     enum class DragMode { None, Move, ResizeTL, ResizeTR, ResizeBL, ResizeBR };

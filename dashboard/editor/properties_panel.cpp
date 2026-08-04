@@ -489,6 +489,7 @@ namespace
             if (!frame) return; // editor always wraps in SelectionFrame
 
             const widget_type_t type = frame->type();
+            bool applied = false;
 
             // Use FOR_EACH_WIDGET to generate switch cases. qobject_cast, not
             // static_cast: if the frame's declared type and its actual child
@@ -500,7 +501,8 @@ namespace
                 case widget_class::kWidgetType: \
                     if (auto* typed = qobject_cast<widget_class*>(frame->child())) \
                     { \
-                        frame->applyConfig(readIntoConfig<widget_class::config_t>(page, typed->getConfig())); \
+                        applied = frame->applyConfig( \
+                            readIntoConfig<widget_class::config_t>(page, typed->getConfig())); \
                     } \
                     break;
 
@@ -510,6 +512,12 @@ namespace
                 case widget_type_t::unknown:
                 default:
                     break;
+            }
+
+            if (!applied)
+            {
+                SPDLOG_ERROR("Apply did nothing for '{}': the form and the widget disagree about its type.",
+                             frame->objectName().toStdString());
             }
         });
         return page;

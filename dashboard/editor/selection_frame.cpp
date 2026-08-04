@@ -55,7 +55,12 @@ void SelectionFrame::setChild(QWidget* newChild)
 
     if (child_)
     {
-        child_->setParent(nullptr);
+        // deleteLater alone -- do NOT setParent(nullptr) first. A parentless
+        // QWidget is a top-level window, so between here and the next event-loop
+        // turn the outgoing child showed up in QApplication::topLevelWidgets(),
+        // which is what the agent's WidgetLocator enumerates as snapshot roots.
+        // That turned an ordinary property edit into a second root and an
+        // ambiguous selector.
         child_->deleteLater();
     }
 
