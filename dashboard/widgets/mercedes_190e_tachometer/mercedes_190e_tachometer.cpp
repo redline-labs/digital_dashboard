@@ -50,15 +50,14 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
 }
 
 void Mercedes190ETachometer::setRpm(float rpm) {
-    float clampedRpm = rpm;
-    if (clampedRpm < 0.0f) {
-        clampedRpm = 0.0f;
-    }
-    if (clampedRpm > _cfg.max_rpm) {
-        clampedRpm = _cfg.max_rpm;
+    // The hand-rolled clamp was two `<`/`>` comparisons, both false for NaN, so
+    // a NaN reading passed through untouched and reached painter.rotate().
+    const float clamped = gauge_paint::clampToRange(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
+    if (clamped == m_currentRpmValue) {
+        return;
     }
 
-    m_currentRpmValue = clampedRpm;
+    m_currentRpmValue = clamped;
     update();
 }
 

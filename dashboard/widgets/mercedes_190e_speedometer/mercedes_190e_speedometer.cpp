@@ -62,7 +62,15 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
 
 void Mercedes190ESpeedometer::setSpeed(float speed) // speed in MPH
 {
-    current_speed_mph_ = std::clamp(speed, 0.0f, static_cast<float>(cfg_.max_speed));
+    // clampToRange, not std::clamp: it refuses to pass a non-finite value into
+    // the needle rotation, which std::clamp does. And only repaint when the
+    // needle actually moves -- this ran on every sample regardless.
+    const float clamped = gauge_paint::clampToRange(speed, 0.0f, static_cast<float>(cfg_.max_speed));
+    if (clamped == current_speed_mph_)
+    {
+        return;
+    }
+    current_speed_mph_ = clamped;
     update();
 }
 
@@ -73,7 +81,13 @@ float Mercedes190ESpeedometer::valueToAngle(float value, float maxVal)
 
 void Mercedes190ESpeedometer::setOdometerValue(int value)
 {
-    odometer_value_ = std::clamp(value, 0, 999999);
+    // Six digits are rendered, so anything past that is not displayable.
+    const int clamped = std::clamp(value, 0, 999999);
+    if (clamped == odometer_value_)
+    {
+        return;
+    }
+    odometer_value_ = clamped;
     update();
 }
 

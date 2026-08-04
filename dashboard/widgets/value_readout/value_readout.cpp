@@ -22,7 +22,24 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 
 void ValueReadoutWidget::setValue(double value)
 {
-	_value = value;
+	// The readout renders a rounded integer, so the visible text changes far
+	// less often than the value does. Compare what is actually drawn rather
+	// than the raw double, and skip the repaint when it has not moved.
+	if (!std::isfinite(value))
+	{
+		return;
+	}
+
+	const double clamped = std::clamp(value, -1.0e9, 1.0e9);
+	const long long rendered = std::llround(clamped);
+	if (_value_valid && rendered == _rendered_value)
+	{
+		return;
+	}
+
+	_value = clamped;
+	_rendered_value = rendered;
+	_value_valid = true;
 	update();
 }
 
@@ -89,7 +106,10 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 	// Maintain relative vertical offset while allowing scaling
 	QRectF valueRect = bounds.adjusted(0, -bounds.height() * 0.20f, 0, 0);
 
-	QString valueText = QString::number(static_cast<int>(std::round(_value)));
+	// _rendered_value, not a fresh cast of _value: casting a double that does not
+	// fit the destination is undefined, and the rounding has already been done
+	// where the value arrived.
+	QString valueText = QString::number(_rendered_value);
 	painter->drawText(valueRect, hAlign | Qt::AlignVCenter, valueText);
 
 	painter->restore();

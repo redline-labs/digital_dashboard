@@ -45,11 +45,18 @@ class CachedPaintWidget : public QWidget {
             return;
         }
 
-        if (cached_size_ != size())
+        // Keyed on the device pixel ratio as well as the size. Layers are
+        // rendered at the DPR of the screen they were built for, so a window
+        // dragged between a Retina display and an external monitor -- same
+        // logical size, different DPR -- kept its old layers and drew them soft
+        // or oversharp.
+        const qreal dpr = devicePixelRatioF();
+        if (cached_size_ != size() || !qFuzzyCompare(cached_dpr_, dpr))
         {
             underlay_ = renderLayer(&CachedPaintWidget::paintStaticUnderlay);
             overlay_ = hasStaticOverlay() ? renderLayer(&CachedPaintWidget::paintStaticOverlay) : QPixmap();
             cached_size_ = size();
+            cached_dpr_ = dpr;
         }
 
         QPainter painter(this);
@@ -86,6 +93,7 @@ class CachedPaintWidget : public QWidget {
     QPixmap underlay_;
     QPixmap overlay_;
     QSize cached_size_;
+    qreal cached_dpr_ = 0.0;
 };
 
 }  // namespace dashboard

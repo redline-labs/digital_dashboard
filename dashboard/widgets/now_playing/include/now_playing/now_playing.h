@@ -8,7 +8,11 @@
 #include "carplay_nowplaying.capnp.h"
 
 #include <QtWidgets/QWidget>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QImage>
+#include <QPixmap>
+#include <QSize>
 #include <QString>
 
 #include <memory>
@@ -48,8 +52,31 @@ class NowPlayingWidget : public QWidget
     float _duration_sec = 0.0f;
     float _elapsed_sec = 0.0f;
     bool _playing = false;
-    uint32_t _art_seq = 0;
+    // Sentinel rather than 0: the artwork is only decoded when the sequence
+    // changes, and a publisher whose first artwork carries seq 0 -- a fresh
+    // process, or one that never sets the field -- matched the initial value and
+    // had its artwork dropped forever.
+    static constexpr uint32_t kNoArtSeq = UINT32_MAX;
+    uint32_t _art_seq = kNoArtSeq;
     QImage _album_art;
+
+    // Paint-path caches. None of this belongs in paintEvent: the font family
+    // came from a QFontDatabase registration on every repaint, and the fonts,
+    // their metrics and the scaled artwork all derive from things that change
+    // far more slowly than the frame rate.
+    QString _font_family;
+    void rebuildFontsFor(qreal scale);
+    qreal _font_scale = -1.0;
+    QFont _title_font;
+    QFont _detail_font;
+    std::unique_ptr<QFontMetricsF> _title_fm;
+    std::unique_ptr<QFontMetricsF> _detail_fm;
+
+    // Artwork scaled to the box it is drawn in, keyed on both the box and which
+    // artwork it is.
+    QPixmap _scaled_art;
+    QSize _scaled_art_size;
+    uint32_t _scaled_art_seq = kNoArtSeq;
 
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayNowPlaying>> _sub;
 };

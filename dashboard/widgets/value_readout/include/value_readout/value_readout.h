@@ -37,6 +37,12 @@ private:
 	ValueReadoutConfig_t _cfg;
 	double _value; // current value
 
+	// What is actually drawn: a rounded integer. Repaints are decided on this
+	// rather than on _value, because the text changes far less often than the
+	// reading does. _value_valid distinguishes "never set" from "set to 0".
+	long long _rendered_value = 0;
+	bool _value_valid = false;
+
 	QFont _labelFont;
 	QFont _valueFont;
 

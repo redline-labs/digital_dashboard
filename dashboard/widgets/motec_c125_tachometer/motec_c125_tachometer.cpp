@@ -86,7 +86,12 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
 
 void MotecC125Tachometer::setRpm(float rpm)
 {
-    _rpm = std::clamp(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
+    const float clamped = gauge_paint::clampToRange(rpm, 0.0f, static_cast<float>(_cfg.max_rpm));
+    if (clamped == _rpm)
+    {
+        return;
+    }
+    _rpm = clamped;
     update();
 }
 

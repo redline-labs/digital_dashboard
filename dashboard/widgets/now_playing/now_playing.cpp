@@ -31,6 +31,10 @@ NowPlayingWidget::NowPlayingWidget(NowPlayingConfig_t cfg, QWidget* parent) :
     QWidget(parent),
     _cfg(std::move(cfg))
 {
+    // Resolved once, here, like every other widget. paintEvent used to call this
+    // per repaint, which re-registered the font with QFontDatabase each time.
+    _font_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+
     _sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayNowPlaying>>(
         _cfg.zenoh_key,
         [this](CarPlayNowPlaying::Reader reader) { onNowPlaying(reader); });
@@ -72,6 +76,29 @@ void NowPlayingWidget::onNowPlaying(CarPlayNowPlaying::Reader reader)
     QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
 }
 
+// Rebuilds the fonts and their metrics for a new scale. Cheap to call every
+// frame; it does nothing unless the scale actually moved.
+void NowPlayingWidget::rebuildFontsFor(qreal scale)
+{
+    if (_title_fm && _detail_fm && qFuzzyCompare(scale, _font_scale))
+    {
+        return;
+    }
+
+    _font_scale = scale;
+
+    _title_font = QFont(_font_family);
+    _title_font.setPointSizeF(std::max<qreal>(8.0, 16.0 * scale));
+    _title_font.setBold(true);
+
+    _detail_font = QFont(_font_family);
+    _detail_font.setPointSizeF(std::max<qreal>(6.0, 11.0 * scale));
+
+    // QFontMetricsF has no default constructor, hence the indirection.
+    _title_fm = std::make_unique<QFontMetricsF>(_title_font);
+    _detail_fm = std::make_unique<QFontMetricsF>(_detail_font);
+}
+
 void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QString title, artist, album, app;
@@ -79,6 +106,7 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
     float elapsed = 0.0f;
     bool playing = false;
     QImage art;
+    uint32_t art_seq = kNoArtSeq;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         title = _title;
@@ -89,6 +117,7 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
         elapsed = _elapsed_sec;
         playing = _playing;
         art = _album_art;
+        art_seq = _art_seq;
     }
 
     QPainter p(this);
@@ -104,28 +133,40 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
         return;
     }
 
-    // Album art occupies a square on the left when present.
+    // Album art occupies a square on the left when present. Scaling the
+    // full-resolution image with SmoothPixmapTransform is the single most
+    // expensive thing on this path, and the result only changes when the box or
+    // the artwork does -- so keep the scaled copy.
     QRectF text_area = bounds;
     if (_cfg.show_album_art && !art.isNull())
     {
         const qreal side = bounds.height();
         const QRectF art_rect(bounds.left(), bounds.top(), side, side);
-        p.drawImage(art_rect, art);
+        const QSize target = art_rect.size().toSize();
+
+        if (_scaled_art_size != target || _scaled_art_seq != art_seq || _scaled_art.isNull())
+        {
+            _scaled_art = QPixmap::fromImage(
+                art.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            _scaled_art_size = target;
+            _scaled_art_seq = art_seq;
+        }
+
+        p.drawPixmap(art_rect.topLeft(), _scaled_art);
         text_area.setLeft(art_rect.right() + side * 0.08);
     }
 
-    // Scale text to the widget the way the other widgets do.
+    // Scale text to the widget the way the other widgets do. The fonts and their
+    // metrics derive only from this number, so they are rebuilt when it moves
+    // rather than on every frame -- this used to re-register the TTF with
+    // QFontDatabase per repaint.
     const qreal s = std::max<qreal>(0.4, text_area.height() / 90.0);
-    const QString family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    rebuildFontsFor(s);
 
-    QFont title_font(family);
-    title_font.setPointSizeF(std::max<qreal>(8.0, 16.0 * s));
-    title_font.setBold(true);
-    QFont detail_font(family);
-    detail_font.setPointSizeF(std::max<qreal>(6.0, 11.0 * s));
-
-    const QFontMetricsF title_fm(title_font);
-    const QFontMetricsF detail_fm(detail_font);
+    const QFont& title_font = _title_font;
+    const QFont& detail_font = _detail_font;
+    const QFontMetricsF& title_fm = *_title_fm;
+    const QFontMetricsF& detail_fm = *_detail_fm;
 
     qreal y = text_area.top() + title_fm.height() * 0.2;
 
