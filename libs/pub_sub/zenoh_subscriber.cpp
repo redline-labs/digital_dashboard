@@ -26,8 +26,8 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
     field_cache_{},
     zenoh_key_{zenoh_key},
     zenoh_session_{},
-    zenoh_subscriber_{},
-    evaluation_handler_{}
+    evaluation_handler_{},
+    zenoh_subscriber_{}
 {
     
     // Assume valid until proven otherwise
@@ -89,6 +89,10 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
         if (!zenoh_session_)
         {
             SPDLOG_ERROR("No zenoh session available to subscribe to '{}'", zenoh_key_);
+            // isValid() must mean "this will deliver data", not merely "the
+            // expression parsed". Leaving it true here handed callers a
+            // subscriber that passed validation and then sat silent forever.
+            is_valid_ = false;
             return;
         }
 
@@ -110,9 +114,13 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
                         std::vector<uint8_t> bytes = sample.get_payload().as_vector();
                         evaluation_handler_(bytes);
                     }
-                    catch (const std::exception& e)
+                    catch (...)
                     {
-                        SPDLOG_ERROR("Error handling zenoh sample: {}", e.what());
+                        // This frame sits directly on zenoh's Rust FFI boundary.
+                        // Letting anything unwind past here aborts the process,
+                        // so the net has to catch everything, not just
+                        // std::exception.
+                        SPDLOG_ERROR("Error handling zenoh sample on key '{}'.", zenoh_key_);
                     }
                 },
                 zenoh::closures::none
@@ -123,6 +131,9 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type, 
     catch (const std::exception& e)
     {
         SPDLOG_ERROR("Failed to subscribe to key '{}': {}", zenoh_key_, e.what());
+        // Same reasoning as the null-session path above: a subscriber that never
+        // got a subscription is not valid, whatever its expression says.
+        is_valid_ = false;
     }
 }
 
@@ -287,6 +298,25 @@ void ZenohExpressionSubscriber::buildFieldCache()
             expected_type = capnp::DynamicValue::TEXT;
         }
         
+        // A field the expression can never turn into a number is a config error,
+        // and it is knowable right here rather than once per sample forever.
+        // Previously this warned from extractFieldValues at the sample rate and
+        // substituted 0.0, so the gauge read a confident, permanent zero while
+        // the log filled up. Treat it like an unknown variable instead.
+        // An if-chain rather than a switch: -Wswitch-enum makes a switch over a
+        // large external enum like DynamicValue::Type impractical here.
+        const bool is_numeric = (expected_type == capnp::DynamicValue::BOOL) ||
+                                (expected_type == capnp::DynamicValue::INT) ||
+                                (expected_type == capnp::DynamicValue::UINT) ||
+                                (expected_type == capnp::DynamicValue::FLOAT);
+        if (!is_numeric)
+        {
+            SPDLOG_ERROR("Field '{}' of schema '{}' is not numeric, so expression '{}' cannot be "
+                         "evaluated against it.",
+                         var_name, reflection::enum_to_string(schema_type_), expression_);
+            is_valid_ = false;
+        }
+
         // Cache the field information
         field_cache_.push_back({field, var_name, expected_type});
     }
@@ -329,7 +359,9 @@ void ZenohExpressionSubscriber::extractFieldValues(capnp::DynamicStruct::Reader 
             case capnp::DynamicValue::CAPABILITY:
             case capnp::DynamicValue::ANY_POINTER:
             default:
-                SPDLOG_WARN("Skipping field '{}' in expression evaluation", cached_field.name);
+                // Unreachable: buildFieldCache() rejects non-numeric fields up
+                // front, so a subscriber carrying one is never valid enough to
+                // reach evaluation. Kept silent -- this used to log per sample.
                 numeric_value = 0.0;
         }
         
