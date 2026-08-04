@@ -5,6 +5,7 @@
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
+#include "agent_control/zenoh_methods.h"
 #include "dashboard/widget_methods.h"
 
 #include <spdlog/spdlog.h>
@@ -103,6 +104,10 @@ int main(int argc, char** argv)
             *agent,
             [&window](QWidget* target, const widget_config_t& cfg)
             { return window.rebuildWidget(target, cfg); });
+
+        // Publishing a known value and screenshotting the gauge that subscribes
+        // to it is the fastest way to check a dashboard change.
+        agent_control::registerZenohMethods(*agent);
 
         if (!agent->start(*args->mcp_socket_path))
         {

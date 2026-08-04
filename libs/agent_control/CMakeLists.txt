@@ -22,6 +22,7 @@ add_library(agent_control STATIC
     log_sink.cpp
     methods.cpp
     server.cpp
+    zenoh_methods.cpp
 
     # Listed as a source so AUTOMOC sees the Q_OBJECT in it. Headers under
     # include/ are otherwise skipped by the moc scan, which shows up as a link
@@ -40,6 +41,11 @@ target_link_libraries(agent_control
         # PUBLIC: log_sink.h exposes a spdlog sink in its interface, so anything
         # installing the ring needs spdlog's headers too.
         spdlog::spdlog
+    PRIVATE
+        # zenoh.* methods. Both apps already link this; it is here so the
+        # capnp<->JSON and topic-observation code is shared with nodes/inspect
+        # rather than reimplemented.
+        zenoh_pub_sub
 )
 
 # ---------------------------------------------------------------------- tests

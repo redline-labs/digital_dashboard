@@ -852,6 +852,124 @@ def widget_set_config(
     return parts
 
 
+# ----------------------------------------------------------------------- zenoh
+
+
+@mcp.tool()
+def zenoh_list(
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    key: Annotated[
+        str, Field(default="**", description="Key expression filter, e.g. 'vehicle/**'.")
+    ] = "**",
+    window_ms: Annotated[
+        int, Field(default=1000, description="How long to listen for traffic.")
+    ] = 1000,
+) -> str:
+    """List the zenoh topics currently carrying traffic, with schema and rate.
+
+    Topics are discovered by listening, because zenoh has no retained messages
+    and no registry. An empty result means nothing published during the window,
+    NOT that nothing exists -- a slow publisher looks the same as an absent one.
+    Try a longer window_ms before concluding a topic is missing.
+    """
+    try:
+        return json.dumps(
+            _call(app, "zenoh.list", {"key": key, "window_ms": window_ms, "_timeout_ms": window_ms + 5000}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def zenoh_read(
+    key: Annotated[str, Field(description="Exact zenoh key, e.g. 'vehicle/speed_mps'.")],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    timeout_ms: Annotated[
+        int, Field(default=2000, description="How long to wait for a sample.")
+    ] = 2000,
+) -> str:
+    """Read the next sample on a zenoh key, decoded to JSON.
+
+    Works for every schema in the registry with no per-schema support, because
+    the decode goes through Cap'n Proto's dynamic API using the schema name the
+    publisher stamps on each sample.
+    """
+    try:
+        return json.dumps(
+            _call(app, "zenoh.read", {"key": key, "timeout_ms": timeout_ms, "_timeout_ms": timeout_ms + 5000}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def zenoh_publish(
+    key: Annotated[str, Field(description="Zenoh key to publish on.")],
+    schema: Annotated[
+        str, Field(description="Schema name, e.g. 'VehicleSpeed'. See zenoh_describe_schema.")
+    ],
+    fields: Annotated[
+        dict[str, Any],
+        Field(description='Message fields, e.g. {"speedMps": 27.0, "timestamp": 0}.'),
+    ],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+) -> str:
+    """Publish a message onto the vehicle bus. This is the fastest feedback loop.
+
+    Set a value, screenshot the gauge that subscribes to it, and see whether the
+    needle moved -- no test_data_publisher, no CAN bus, no car. Publishing stamps
+    the same encoding a real publisher uses, so subscribers accept it and their
+    schema checks stay quiet.
+
+    Rejected all-or-nothing if any field is unknown or the wrong type, with the
+    problems listed. Note it publishes to the whole bus, so anything else
+    listening sees it too.
+    """
+    try:
+        return json.dumps(
+            _call(app, "zenoh.publish", {"key": key, "schema": schema, "fields": fields}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def zenoh_rate(
+    key: Annotated[str, Field(description="Key expression to measure.")],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    window_ms: Annotated[int, Field(default=1000, description="Measurement window.")] = 1000,
+) -> str:
+    """Measure how fast a key is publishing. Useful for 'is this stream alive?'."""
+    try:
+        return json.dumps(
+            _call(app, "zenoh.rate", {"key": key, "window_ms": window_ms, "_timeout_ms": window_ms + 5000}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def zenoh_describe_schema(
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    schema: Annotated[
+        str | None,
+        Field(default=None, description="Schema name. Omit to list every known schema."),
+    ] = None,
+) -> str:
+    """List the fields of a capnp schema, or every schema the build knows about.
+
+    Read this before zenoh_publish rather than guessing field names.
+    """
+    try:
+        return json.dumps(_call(app, "zenoh.describe_schema", {"schema": schema}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
 # ------------------------------------------------------------------ escape hatch
 
 

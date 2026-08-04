@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "pub_sub/session_manager.h"
+#include "pub_sub/topic_discovery.h"
 
 // List available keys by issuing a query over a broad key expression and printing reply keyexprs.
 int run_list(int argc, char** argv)
@@ -40,36 +40,18 @@ int run_list(int argc, char** argv)
     const uint64_t timeout_ms = result["timeout"].as<uint64_t>();
 
     try {
-        auto session = pub_sub::SessionManager::getOrCreate();
-        if (!session)
+        // Shared with the agent control interface's zenoh.list, so the two
+        // cannot disagree about what is on the bus.
+        const auto topics = pub_sub::observeTopics(filter, static_cast<int>(timeout_ms));
+
+        SPDLOG_INFO("Found {} keys matching '{}'.", topics.size(), filter);
+        for (const auto& topic : topics)
         {
-            SPDLOG_ERROR("Failed to obtain zenoh session");
-            return 1;
-        }
-
-        // Subscribe to the provided keyexpr and collect keys seen during the time window.
-        std::vector<std::string> keys;
-        auto sub = session->declare_subscriber(
-            zenoh::KeyExpr(filter),
-            [&](const zenoh::Sample& sample)
-            {
-                keys.emplace_back(std::string(sample.get_keyexpr().as_string_view()));
-            },
-            zenoh::closures::none);
-
-        // Collect for the timeout window
-        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
-
-        // Ensure subscriber is torn down before printing
-        (void)sub;
-
-        std::sort(keys.begin(), keys.end());
-        keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-
-        SPDLOG_INFO("Found {} keys matching '{}'.", keys.size(), filter);
-        for (const auto& k : keys)
-        {
-            SPDLOG_INFO("{}", k);
+            SPDLOG_INFO("{}  [{}]  {} msgs, {:.1f} Hz",
+                        topic.key,
+                        topic.schema.empty() ? "no schema" : topic.schema,
+                        topic.count,
+                        topic.hz);
         }
 
         return 0;

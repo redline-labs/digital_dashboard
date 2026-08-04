@@ -58,6 +58,12 @@ add_library(zenoh_pub_sub STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp
     zenoh_subscriber.cpp
     session_manager.cpp
+
+    # Generic capnp<->JSON over the dynamic API, and topic observation. Shared by
+    # nodes/inspect and the agent control interface so the two cannot disagree
+    # about what is on the bus.
+    capnp_json.cpp
+    topic_discovery.cpp
 )
 
 target_include_directories(zenoh_pub_sub PUBLIC
@@ -74,6 +80,7 @@ target_link_libraries(zenoh_pub_sub PUBLIC
     zenohcxx::zenohc
     helpers
     reflection
+    nlohmann_json::nlohmann_json
 )
 
 

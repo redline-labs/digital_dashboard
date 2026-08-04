@@ -8,6 +8,7 @@
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
+#include "agent_control/zenoh_methods.h"
 #include "dashboard/widget_methods.h"
 #include "editor/editor_methods.h"
 #include "editor/selection_frame.h"
@@ -183,6 +184,10 @@ int main(int argc, char** argv)
                     cfg.config);
                 return applied;
             });
+
+        // The editor previews live widgets, so injecting data is just as useful
+        // here as in the dashboard.
+        agent_control::registerZenohMethods(*agent);
 
         // Editor-specific verbs. These run on the GUI thread like every other
         // handler, so they can call into the window directly.
