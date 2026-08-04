@@ -15,6 +15,8 @@
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/session_manager.h"
 
+#include "spdlog/spdlog.h"
+
 namespace pub_sub
 {
 

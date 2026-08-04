@@ -25,6 +25,7 @@
 
 #include "can_bridge.capnp.h"
 #include "can_frame.capnp.h"
+#include "pub_sub/zenoh_client.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/zenoh_subscriber.h"
@@ -308,42 +309,47 @@ std::optional<BitrateRequest> parse_set_bitrate(const std::string& text)
 
 bool call_set_bitrate(const std::string& key, const BitrateRequest& request)
 {
-    bool ok = false;
+    pub_sub::ZenohClient<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse> client(key, 2000);
 
-    const bool answered
-        = pub_sub::call_service<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse>(
-            key,
-            [&](CanBridgeSetBitrateRequest::Builder builder)
+    auto& fields = client.fields();
+    fields.setChannel(request.channel);
+    fields.setNominalBps(request.nominalBps);
+    fields.setDataBps(request.dataBps);
+
+    bool ok = false;
+    // False means nobody answered, which for a service is how you discover the
+    // node providing it is not running -- zenoh has no registry to ask.
+    const bool answered = client.request(
+        [&](CanBridgeSetBitrateResponse::Reader response)
+        {
+            ok = response.getOk();
+            if (ok)
             {
-                builder.setChannel(request.channel);
-                builder.setNominalBps(request.nominalBps);
-                builder.setDataBps(request.dataBps);
-            },
-            [&](CanBridgeSetBitrateResponse::Reader response)
+                SPDLOG_INFO("[node] {} is now at {} bit/s{}", request.channel,
+                            response.getActualNominalBps(),
+                            response.getActualDataBps() != 0
+                                ? fmt::format(" + {} bit/s data", response.getActualDataBps())
+                                : "");
+            }
+            else
             {
-                ok = response.getOk();
-                if (ok)
+                SPDLOG_ERROR("[node] {}", response.getError().cStr());
+                // What the channel was left at matters as much as the failure:
+                // it says whether the bus is still usable. Only meaningful when
+                // there was a channel -- a request naming one that does not
+                // exist has nothing to report.
+                if (response.getActualNominalBps() != 0)
                 {
-                    SPDLOG_INFO("[node] {} is now at {} bit/s{}", request.channel,
-                                response.getActualNominalBps(),
-                                response.getActualDataBps() != 0
-                                    ? fmt::format(" + {} bit/s data", response.getActualDataBps())
-                                    : "");
+                    SPDLOG_ERROR("[node] {} is still at {} bit/s", request.channel,
+                                 response.getActualNominalBps());
                 }
-                else
-                {
-                    SPDLOG_ERROR("[node] {}", response.getError().cStr());
-                    // What the channel was left at matters as much as the
-                    // failure: it says whether the bus is still usable. Only
-                    // meaningful when there was a channel -- a request naming
-                    // one that does not exist has nothing to report.
-                    if (response.getActualNominalBps() != 0)
-                    {
-                        SPDLOG_ERROR("[node] {} is still at {} bit/s", request.channel,
-                                     response.getActualNominalBps());
-                    }
-                }
-            });
+            }
+        });
+
+    if (!answered)
+    {
+        SPDLOG_ERROR("[node] no bridge answered on '{}' -- is one running?", key);
+    }
 
     return answered && ok;
 }
