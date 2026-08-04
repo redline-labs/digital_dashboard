@@ -21,9 +21,12 @@ prints and always returns 0 is a demo, and registering it makes a green run mean
 nothing.
 
 New code compiles with `-Werror -Wshadow -Wold-style-cast -Wswitch-enum
--Wsuggest-override`. `-Wswitch-enum` in particular means a `switch` over a large
-external enum (`Qt::WindowType`, `capnp::schema::Type::Which`) is impractical —
-use an if-chain there.
+-Wsuggest-override`. **Spell out every case in a `switch` over an enum.** Do not
+dodge `-Wswitch-enum` by rewriting the switch as an if-chain, and do not add a
+`default:` that swallows the cases you did not want to name — both throw away
+the only thing that tells you where to look when a value is added to the enum.
+If a trailing fallback is genuinely needed, put it after the last `case`, not in
+a `default:`.
 
 ## How to prove a change works
 
