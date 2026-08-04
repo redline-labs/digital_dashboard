@@ -20,7 +20,7 @@
 #include <memory>
 
 // Forward declarations
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class Mercedes190EClusterGauge : public dashboard::CachedPaintWidget
 {
@@ -79,10 +79,10 @@ private:
     float economy_gauge_current_value_;
 
     // Expression parsers for each sub-gauge
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> top_gauge_expression_parser_;
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> right_gauge_expression_parser_;
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> bottom_gauge_expression_parser_;
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> left_gauge_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> top_gauge_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> right_gauge_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> bottom_gauge_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> left_gauge_expression_parser_;
 
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;

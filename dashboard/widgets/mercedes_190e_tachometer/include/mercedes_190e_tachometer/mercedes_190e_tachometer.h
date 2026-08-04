@@ -20,7 +20,7 @@
 class QPainter;
 
 // Forward declarations
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class Mercedes190ETachometer : public dashboard::CachedPaintWidget
 {
@@ -79,7 +79,7 @@ private:
     void updateClockTime();
 
     // Expression parser for RPM calculation
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> rpm_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> rpm_expression_parser_;
 };
 
 #endif // TACHOMETERWIDGET_H 

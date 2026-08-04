@@ -19,7 +19,7 @@
 #include <memory>
 
 // Forward declarations
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class Mercedes190ESpeedometer : public dashboard::CachedPaintWidget
 {
@@ -105,8 +105,8 @@ private:
     QFont vdo_font_;
 
     // Expression parsers for speed and odometer calculations
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> speed_expression_parser_;
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> odometer_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<float> speed_expression_parser_;
+    dashboard::ExpressionSubscriptionPtr<int> odometer_expression_parser_;
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

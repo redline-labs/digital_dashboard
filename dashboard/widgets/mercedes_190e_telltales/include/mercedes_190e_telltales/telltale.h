@@ -16,7 +16,7 @@
 // Forward declarations
 class QSvgRenderer;
 
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 
 class Mercedes190ETelltale : public dashboard::CachedPaintWidget
@@ -54,7 +54,7 @@ private:
     QString mSvgAlias;
 
     // Expression parser for condition evaluation
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
+    dashboard::ExpressionSubscriptionPtr<bool> _expression_parser;
 };
 
 #endif // TELLTALEWIDGET_H

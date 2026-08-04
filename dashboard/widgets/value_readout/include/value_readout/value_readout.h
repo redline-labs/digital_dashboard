@@ -10,7 +10,7 @@
 #include <memory>
 #include <string_view>
 
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class QPainter;
 
@@ -40,7 +40,7 @@ private:
 	QFont _labelFont;
 	QFont _valueFont;
 
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
+    dashboard::ExpressionSubscriptionPtr<double> _expression_parser;
 };
 
 #endif // VALUE_READOUT_WIDGET_H

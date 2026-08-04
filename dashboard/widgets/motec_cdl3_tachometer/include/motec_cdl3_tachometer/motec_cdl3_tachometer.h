@@ -14,7 +14,7 @@
 #include <array>
 #include <vector>
 
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class QPainter;
 
@@ -60,7 +60,7 @@ private:
     QFont _segmentFont; // DSEG-like font for labels
 
     // Optional live data
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
+    dashboard::ExpressionSubscriptionPtr<float> _expression_parser;
 
     // LUT storage
     static constexpr int kLutSamples = 512;

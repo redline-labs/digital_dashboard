@@ -14,7 +14,7 @@
 #include <memory>
 #include <string_view>
 
-namespace pub_sub { class ZenohExpressionSubscriber; }
+#include "dashboard/expression_subscription.h"
 
 class SparklineItem : public QWidget {
     Q_OBJECT
@@ -54,7 +54,7 @@ private:
     static const int MAX_DATA_POINTS = 100; // Max points to display in sparkline
 
     // Expression parser owned subscription if configured
-    std::unique_ptr<pub_sub::ZenohExpressionSubscriber> _expression_parser;
+    dashboard::ExpressionSubscriptionPtr<double> _expression_parser;
 };
 
 #endif // SPARKLINEITEM_H 
