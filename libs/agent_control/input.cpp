@@ -3,12 +3,20 @@
 #include "agent_control/locator.h"
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMimeData>
 #include <QMouseEvent>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace agent_control
 {
@@ -184,6 +192,176 @@ Result<json> sendClick(QWidget* widget, const ClickOptions& options)
             "Widget has WA_TransparentForMouseEvents set, so it does not normally "
             "receive mouse input. The event was delivered directly anyway.";
     }
+    return out;
+}
+
+Result<json> sendDrag(QWidget* widget, const DragOptions& options)
+{
+    if (widget == nullptr)
+    {
+        return std::unexpected(internalError("sendDrag received a null widget."));
+    }
+    if (!widget->isVisible())
+    {
+        json data = json::object();
+        data["target"] = WidgetLocator::pathOf(widget).toStdString();
+        return std::unexpected(AgentError{ErrorCode::kWidgetNotVisible,
+                                          "Widget is not visible, so a drag cannot reach it.",
+                                          std::move(data)});
+    }
+    if (options.steps < 1)
+    {
+        return std::unexpected(badParams("'steps' must be at least 1."));
+    }
+
+    for (const auto& [name, pos] : {std::pair{"from", options.from}, std::pair{"to", options.to}})
+    {
+        if (!positionIsInside(widget, pos))
+        {
+            json data = json::object();
+            data["target"] = WidgetLocator::pathOf(widget).toStdString();
+            data["widget_rect"] = json::array({0, 0, widget->width(), widget->height()});
+            return std::unexpected(badParams(
+                std::string("'") + name +
+                "' is outside the widget. Coordinates are widget-local logical pixels."));
+        }
+    }
+
+    QMouseEvent press = makeMouseEvent(QEvent::MouseButtonPress, widget, options.from,
+                                       options.button, options.button, options.modifiers);
+    QApplication::sendEvent(widget, &press);
+
+    if (options.hold_ms > 0)
+    {
+        // Some press-and-hold interactions only arm after a delay. Spinning the
+        // event loop rather than sleeping keeps timers running, which is what
+        // those interactions are usually waiting on.
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < options.hold_ms)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        }
+    }
+
+    // Qt only treats motion as a drag once it exceeds startDragDistance. A first
+    // step shorter than that reads as jitter, and a widget that filters on it
+    // would ignore the whole gesture -- so make sure the first move clears it
+    // whenever the overall distance does.
+    const double dx = options.to.x() - options.from.x();
+    const double dy = options.to.y() - options.from.y();
+    const double distance = std::sqrt(dx * dx + dy * dy);
+    const double threshold = QApplication::startDragDistance();
+
+    json moves = json::array();
+    for (int i = 1; i <= options.steps; ++i)
+    {
+        double t = static_cast<double>(i) / static_cast<double>(options.steps);
+        if (i == 1 && distance > threshold && distance * t <= threshold)
+        {
+            t = std::min(1.0, (threshold + 1.0) / distance);
+        }
+
+        const QPointF at(options.from.x() + dx * t, options.from.y() + dy * t);
+        QMouseEvent move = makeMouseEvent(QEvent::MouseMove, widget, at, Qt::NoButton,
+                                          options.button, options.modifiers);
+        QApplication::sendEvent(widget, &move);
+        moves.push_back(json::array({at.x(), at.y()}));
+    }
+
+    QMouseEvent release = makeMouseEvent(QEvent::MouseButtonRelease, widget, options.to,
+                                         options.button, Qt::NoButton, options.modifiers);
+    QApplication::sendEvent(widget, &release);
+
+    json out = json::object();
+    out["target"] = WidgetLocator::pathOf(widget).toStdString();
+    out["from"] = json::array({options.from.x(), options.from.y()});
+    out["to"] = json::array({options.to.x(), options.to.y()});
+    out["moves"] = std::move(moves);
+    out["distance"] = distance;
+    if (distance <= threshold)
+    {
+        out["warning"] =
+            "The drag is shorter than QApplication::startDragDistance (" +
+            std::to_string(static_cast<int>(threshold)) +
+            " px), so Qt may treat it as a click rather than a drag.";
+    }
+    return out;
+}
+
+Result<json> sendDrop(QWidget* target,
+                      const QPointF& pos,
+                      const std::vector<std::pair<QString, QByteArray>>& mime,
+                      Qt::DropAction action)
+{
+    if (target == nullptr)
+    {
+        return std::unexpected(internalError("sendDrop received a null widget."));
+    }
+    if (!target->acceptDrops())
+    {
+        json data = json::object();
+        data["target"] = WidgetLocator::pathOf(target).toStdString();
+        return std::unexpected(AgentError{
+            ErrorCode::kBadParams,
+            "That widget does not accept drops (setAcceptDrops is false), so a real "
+            "drag would never reach it either.",
+            std::move(data)});
+    }
+    if (!positionIsInside(target, pos))
+    {
+        return std::unexpected(
+            badParams("Drop position is outside the widget. Coordinates are widget-local."));
+    }
+
+    // Owned here and outlives every event below. Qt's own drag machinery keeps
+    // the QMimeData alive for the duration of the drag; nothing takes ownership
+    // from us on this path.
+    QMimeData mime_data;
+    json formats = json::array();
+    for (const auto& [format, payload] : mime)
+    {
+        mime_data.setData(format, payload);
+        formats.push_back(format.toStdString());
+
+        // Canvas::dragEnterEvent tests hasText() and dropEvent reads text(), so
+        // a caller supplying only the custom format would be rejected by code
+        // that a real palette drag satisfies. Mirror what QDrag would carry.
+        if (format == QLatin1String("text/plain"))
+        {
+            mime_data.setText(QString::fromUtf8(payload));
+        }
+    }
+
+    QDragEnterEvent enter(pos.toPoint(), action, &mime_data, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &enter);
+    if (!enter.isAccepted())
+    {
+        json data = json::object();
+        data["target"] = WidgetLocator::pathOf(target).toStdString();
+        data["formats"] = formats;
+        return std::unexpected(AgentError{
+            ErrorCode::kBadParams,
+            "The widget rejected the drag on entry, so the drop was not attempted. "
+            "Check the mime formats against what its dragEnterEvent looks for.",
+            std::move(data)});
+    }
+
+    QDragMoveEvent move(pos.toPoint(), action, &mime_data, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &move);
+
+    QDropEvent drop(pos, action, &mime_data, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &drop);
+
+    json out = json::object();
+    out["target"] = WidgetLocator::pathOf(target).toStdString();
+    out["pos"] = json::array({pos.x(), pos.y()});
+    out["formats"] = std::move(formats);
+    out["accepted"] = drop.isAccepted();
+    out["note"] =
+        "The drag source was bypassed: QDrag::exec() runs a nested loop reading real "
+        "platform events and cannot be driven synthetically. The receiving side "
+        "(dragEnterEvent and dropEvent) ran for real.";
     return out;
 }
 

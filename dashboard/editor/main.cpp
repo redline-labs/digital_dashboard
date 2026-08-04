@@ -9,6 +9,7 @@
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
 #include "dashboard/widget_methods.h"
+#include "editor/editor_methods.h"
 #include "editor/selection_frame.h"
 
 #include <cxxopts.hpp>
@@ -185,47 +186,7 @@ int main(int argc, char** argv)
 
         // Editor-specific verbs. These run on the GUI thread like every other
         // handler, so they can call into the window directly.
-        EditorWindow* window = &w;
-
-        agent->registerMethod(
-            "editor.save",
-            [window](const nlohmann::json& params) -> agent_control::MethodResult
-            {
-                if (!params.contains("path") || !params["path"].is_string())
-                {
-                    return std::unexpected(agent_control::badParams("'path' is required."));
-                }
-                const auto path = params["path"].get<std::string>();
-                if (!window->saveConfigTo(QString::fromStdString(path)))
-                {
-                    return std::unexpected(
-                        agent_control::internalError("Failed to save config to '" + path + "'."));
-                }
-                nlohmann::json out = nlohmann::json::object();
-                out["saved"] = path;
-                return out;
-            },
-            agent_control::AgentServer::MethodKind::kMutating);
-
-        agent->registerMethod(
-            "editor.load",
-            [window](const nlohmann::json& params) -> agent_control::MethodResult
-            {
-                if (!params.contains("path") || !params["path"].is_string())
-                {
-                    return std::unexpected(agent_control::badParams("'path' is required."));
-                }
-                const auto path = params["path"].get<std::string>();
-                if (!window->loadConfigFrom(QString::fromStdString(path)))
-                {
-                    return std::unexpected(agent_control::internalError(
-                        "Failed to load config from '" + path + "'."));
-                }
-                nlohmann::json out = nlohmann::json::object();
-                out["loaded"] = path;
-                return out;
-            },
-            agent_control::AgentServer::MethodKind::kMutating);
+        editor::agent::registerEditorMethods(*agent, w);
 
         if (!agent->start(*args->mcp_socket_path))
         {

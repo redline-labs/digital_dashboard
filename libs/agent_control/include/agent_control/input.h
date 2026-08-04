@@ -3,11 +3,14 @@
 
 #include "agent_control/error.h"
 
+#include <QByteArray>
 #include <QPointF>
 #include <QString>
 #include <QWidget>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace agent_control
 {
@@ -30,6 +33,40 @@ struct ClickOptions
 // `widget` via QApplication::sendEvent, mirroring what
 // dashboard/widgets/carplay/test_touch_rate.cpp already does.
 Result<json> sendClick(QWidget* widget, const ClickOptions& options);
+
+struct DragOptions
+{
+    QPointF from;
+    QPointF to;
+    Qt::MouseButton button = Qt::LeftButton;
+    Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+    int steps = 10;     // Intermediate move events between press and release.
+    int hold_ms = 0;    // Pause after the press, before moving.
+};
+
+// Press, N interpolated moves, release -- all widget-local.
+//
+// Covers the two drags in this project that are plain mouse tracking: a CarPlay
+// swipe (which becomes TOUCH_DOWN/MOVE/UP, coalesced by TouchThrottle at ~60 Hz)
+// and the editor Canvas's own move/resize handling.
+//
+// It does NOT drive Qt's QDrag: QDrag::exec() runs a nested event loop that
+// grabs the mouse and reads real platform events, so synthesized events cannot
+// advance it. The palette-to-canvas drag needs sendDrop() instead.
+Result<json> sendDrag(QWidget* widget, const DragOptions& options);
+
+// Synthesizes the QDragEnter -> QDragMove -> QDrop triple directly on a drop
+// target, with a QMimeData built from `mime` (format -> UTF-8 payload).
+//
+// This deliberately bypasses the drag *source*: QDrag::exec() cannot be driven
+// by synthesized events, and on the offscreen platform may not run at all. What
+// it does exercise is the whole of the receiving side -- dragEnterEvent's
+// accept/reject logic and dropEvent's handling -- which is where the behaviour
+// worth testing actually lives.
+Result<json> sendDrop(QWidget* target,
+                      const QPointF& pos,
+                      const std::vector<std::pair<QString, QByteArray>>& mime,
+                      Qt::DropAction action);
 
 // A key sequence in QKeySequence's text form: "Ctrl+S", "Delete", "F5".
 // Delivered to `widget`, or to the focus widget when `widget` is null.

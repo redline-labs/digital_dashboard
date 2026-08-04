@@ -88,6 +88,7 @@ qt_add_executable(editor
     editor/canvas.cpp
     editor/properties_panel.cpp
     editor/selection_frame.cpp
+    editor/editor_methods.cpp
 
     dashboard/app_config.cpp  # TODO, kinda hack.
     agent/widget_methods.cpp

@@ -202,50 +202,116 @@ void Canvas::dragEnterEvent(QDragEnterEvent* event)
     }
 }
 
-void Canvas::dropEvent(QDropEvent* event)
+SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const QSize& size)
 {
-    const QString typeKey = event->mimeData()->text();
-    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
-    SelectionFrame* frame = new SelectionFrame(type, this);
-    if (frame)
+    if (type == widget_type_t::unknown)
     {
-        // Name it on the same rule as a loaded widget, so something just dropped
-        // is immediately addressable rather than only after a save and reload.
-        widget_config_t naming_cfg;
-        naming_cfg.type = type;
-        frame->setObjectName(dashboard::widgetObjectName(naming_cfg, items_.size()));
+        return nullptr;
+    }
 
-        const QPoint pos = event->position().toPoint();
-        // Provide a reasonable default size for various widgets
-        if (frame->child() && frame->child()->sizeHint().isValid())
+    SelectionFrame* frame = new SelectionFrame(type, this);
+    if (!frame)
+    {
+        return nullptr;
+    }
+
+    // Name it on the same rule as a loaded widget, so something just added is
+    // immediately addressable rather than only after a save and reload.
+    widget_config_t naming_cfg;
+    naming_cfg.type = type;
+    frame->setObjectName(dashboard::widgetObjectName(naming_cfg, items_.size()));
+
+    if (frame->child())
+    {
+        if (size.isValid() && !size.isEmpty())
+        {
+            frame->child()->resize(size);
+        }
+        else if (frame->child()->sizeHint().isValid())
         {
             frame->child()->resize(frame->child()->sizeHint());
         }
         else
         {
-            if (frame->child()) frame->child()->resize(200, 200);
+            frame->child()->resize(200, 200);
         }
+    }
 
-        frame->move(pos);
-        if (frame->child()) frame->resize(frame->child()->size());
-        frame->show();
-        // Apply current editor mode to the new widget subtree
-        frame->setEditorModeCapture(editorMode_);
-        Item item;
-        item.widget = frame;
-        item.type = type;
-        item.position = pos;
-        items_.push_back(std::move(item));
-        update();
-        event->acceptProposedAction();
+    frame->move(pos);
+    if (frame->child()) frame->resize(frame->child()->size());
+    frame->show();
+    // Apply current editor mode to the new widget subtree
+    frame->setEditorModeCapture(editorMode_);
 
-        // Select newly dropped widget
-        if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
-        selected_ = frame;
+    Item item;
+    item.widget = frame;
+    item.type = type;
+    item.position = pos;
+    items_.push_back(std::move(item));
+    update();
+
+    selectFrame(frame);
+    return frame;
+}
+
+void Canvas::selectFrame(SelectionFrame* frame)
+{
+    if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
+    selected_ = frame;
+    if (frame != nullptr)
+    {
         frame->setSelected(true);
         selectedRect_ = widgetRect(selected_);
-        dragMode_ = DragMode::None;
-        emit selectionChanged(selected_);
+    }
+    dragMode_ = DragMode::None;
+    emit selectionChanged(selected_);
+}
+
+bool Canvas::removeFrame(SelectionFrame* frame)
+{
+    if (frame == nullptr)
+    {
+        return false;
+    }
+
+    const auto it = std::remove_if(items_.begin(), items_.end(),
+                                   [frame](const Item& item) { return item.widget == frame; });
+    if (it == items_.end())
+    {
+        return false;
+    }
+    items_.erase(it, items_.end());
+
+    if (selected_ == frame)
+    {
+        selectFrame(nullptr);
+    }
+    frame->deleteLater();
+    update();
+    return true;
+}
+
+std::vector<SelectionFrame*> Canvas::frames() const
+{
+    std::vector<SelectionFrame*> out;
+    out.reserve(items_.size());
+    for (const Item& item : items_)
+    {
+        if (auto* frame = qobject_cast<SelectionFrame*>(item.widget))
+        {
+            out.push_back(frame);
+        }
+    }
+    return out;
+}
+
+void Canvas::dropEvent(QDropEvent* event)
+{
+    const QString typeKey = event->mimeData()->text();
+    const widget_type_t type = reflection::enum_traits<widget_type_t>::from_string(typeKey.toStdString());
+    if (addWidget(type, event->position().toPoint()) != nullptr)
+    {
+        event->acceptProposedAction();
     }
 }
 

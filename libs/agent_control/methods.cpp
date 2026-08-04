@@ -9,6 +9,8 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QLibraryInfo>
 #include <QRect>
 #include <QTimer>
@@ -387,6 +389,233 @@ void registerCoreMethods(AgentServer& server, AppInfo info)
 
             return captureWidget(server_ptr->locator(), widget, options);
         });
+
+    // ------------------------------------------------------------ ui.wait_for
+    server.registerMethod(
+        "ui.wait_for",
+        [server_ptr](const json& params) -> MethodResult
+        {
+            const auto condition = optString(params, "condition", "exists");
+            if (!condition.has_value())
+            {
+                return std::unexpected(condition.error());
+            }
+
+            const auto selector = optString(params, "target", "");
+            if (!selector.has_value())
+            {
+                return std::unexpected(selector.error());
+            }
+            if (selector.value().empty())
+            {
+                return std::unexpected(badParams("'target' is required."));
+            }
+
+            const auto timeout_ms = optInt(params, "timeout_ms", 3000);
+            if (!timeout_ms.has_value())
+            {
+                return std::unexpected(timeout_ms.error());
+            }
+
+            const auto poll_ms = optInt(params, "poll_ms", 50);
+            if (!poll_ms.has_value())
+            {
+                return std::unexpected(poll_ms.error());
+            }
+
+            enum class Condition
+            {
+                kExists,
+                kVisible,
+                kGone,
+                kEnabled,
+            };
+
+            Condition wanted = Condition::kExists;
+            if (condition.value() == "exists")      { wanted = Condition::kExists; }
+            else if (condition.value() == "visible"){ wanted = Condition::kVisible; }
+            else if (condition.value() == "gone")   { wanted = Condition::kGone; }
+            else if (condition.value() == "enabled"){ wanted = Condition::kEnabled; }
+            else
+            {
+                return std::unexpected(badParams(
+                    "Unknown condition '" + condition.value() +
+                    "'; expected exists, visible, gone or enabled."));
+            }
+
+            // This runs ON the GUI thread, so the wait must pump the event loop
+            // rather than sleep -- otherwise nothing could ever change and every
+            // wait would time out. That also means the caller's own dispatch
+            // timeout must exceed this one, which is why the reply says so.
+            QElapsedTimer timer;
+            timer.start();
+            bool satisfied = false;
+
+            for (;;)
+            {
+                auto found = server_ptr->locator().resolve(selector.value());
+                switch (wanted)
+                {
+                    case Condition::kExists:
+                        satisfied = found.has_value();
+                        break;
+                    case Condition::kVisible:
+                        satisfied = found.has_value() && found.value()->isVisible();
+                        break;
+                    case Condition::kEnabled:
+                        satisfied = found.has_value() && found.value()->isEnabled();
+                        break;
+                    case Condition::kGone:
+                        satisfied = !found.has_value() || !found.value()->isVisible();
+                        break;
+                }
+
+                if (satisfied || timer.elapsed() >= timeout_ms.value())
+                {
+                    break;
+                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, poll_ms.value());
+            }
+
+            json out = json::object();
+            out["target"] = selector.value();
+            out["condition"] = condition.value();
+            out["satisfied"] = satisfied;
+            out["waited_ms"] = static_cast<int>(timer.elapsed());
+            if (!satisfied)
+            {
+                out["note"] =
+                    "Timed out. If the app is slow rather than stuck, raise timeout_ms -- "
+                    "and raise _timeout_ms above it too, or the dispatcher gives up first.";
+            }
+            return out;
+        });
+
+    // ------------------------------------------------------------- input.drag
+    server.registerMethod(
+        "input.drag",
+        [server_ptr](const json& params) -> MethodResult
+        {
+            auto target = resolveTarget(*server_ptr, params, /*optional=*/false);
+            if (!target.has_value())
+            {
+                return std::unexpected(target.error());
+            }
+
+            DragOptions options;
+
+            for (const char* key : {"from_x", "from_y", "to_x", "to_y"})
+            {
+                if (!params.contains(key) || !params[key].is_number())
+                {
+                    return std::unexpected(badParams(
+                        "'from_x', 'from_y', 'to_x' and 'to_y' are all required numbers, "
+                        "in widget-local logical pixels."));
+                }
+            }
+            options.from = QPointF(params["from_x"].get<double>(), params["from_y"].get<double>());
+            options.to = QPointF(params["to_x"].get<double>(), params["to_y"].get<double>());
+
+            const auto button_name = optString(params, "button", "left");
+            if (!button_name.has_value())
+            {
+                return std::unexpected(button_name.error());
+            }
+            const auto button = parseMouseButton(button_name.value());
+            if (!button.has_value())
+            {
+                return std::unexpected(button.error());
+            }
+            options.button = button.value();
+
+            const auto modifier_spec = optString(params, "modifiers", "");
+            if (!modifier_spec.has_value())
+            {
+                return std::unexpected(modifier_spec.error());
+            }
+            const auto modifiers = parseModifiers(modifier_spec.value());
+            if (!modifiers.has_value())
+            {
+                return std::unexpected(modifiers.error());
+            }
+            options.modifiers = modifiers.value();
+
+            const auto steps = optInt(params, "steps", 10);
+            if (!steps.has_value())
+            {
+                return std::unexpected(steps.error());
+            }
+            options.steps = steps.value();
+
+            const auto hold = optInt(params, "hold_ms", 0);
+            if (!hold.has_value())
+            {
+                return std::unexpected(hold.error());
+            }
+            options.hold_ms = hold.value();
+
+            auto result = sendDrag(target.value(), options);
+            if (!result.has_value())
+            {
+                return std::unexpected(result.error());
+            }
+
+            json out = std::move(result.value());
+            maybeAttachScreenshot(*server_ptr, params, target.value(), out);
+            return out;
+        },
+        AgentServer::MethodKind::kMutating);
+
+    // ------------------------------------------------------------- input.drop
+    server.registerMethod(
+        "input.drop",
+        [server_ptr](const json& params) -> MethodResult
+        {
+            auto target = resolveTarget(*server_ptr, params, /*optional=*/false);
+            if (!target.has_value())
+            {
+                return std::unexpected(target.error());
+            }
+
+            if (!params.contains("x") || !params.contains("y") || !params["x"].is_number() ||
+                !params["y"].is_number())
+            {
+                return std::unexpected(
+                    badParams("'x' and 'y' are required numbers, in widget-local pixels."));
+            }
+            const QPointF pos(params["x"].get<double>(), params["y"].get<double>());
+
+            if (!params.contains("mime") || !params["mime"].is_object() ||
+                params["mime"].empty())
+            {
+                return std::unexpected(badParams(
+                    "'mime' must be a non-empty object of {format: payload}, e.g. "
+                    "{\"text/plain\": \"carplay\"}."));
+            }
+
+            std::vector<std::pair<QString, QByteArray>> mime;
+            for (const auto& [format, payload] : params["mime"].items())
+            {
+                if (!payload.is_string())
+                {
+                    return std::unexpected(
+                        badParams("mime payload for '" + format + "' must be a string."));
+                }
+                mime.emplace_back(QString::fromStdString(format),
+                                  QByteArray::fromStdString(payload.get<std::string>()));
+            }
+
+            auto result = sendDrop(target.value(), pos, mime, Qt::CopyAction);
+            if (!result.has_value())
+            {
+                return std::unexpected(result.error());
+            }
+
+            json out = std::move(result.value());
+            maybeAttachScreenshot(*server_ptr, params, target.value(), out);
+            return out;
+        },
+        AgentServer::MethodKind::kMutating);
 
     // ------------------------------------------------------------ input.click
     server.registerMethod(

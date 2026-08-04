@@ -479,6 +479,298 @@ def input_type(
     return parts
 
 
+@mcp.tool()
+def ui_wait_for(
+    target: Annotated[str, TARGET_FIELD],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    condition: Annotated[
+        Literal["exists", "visible", "gone", "enabled"],
+        Field(default="visible", description="What to wait for."),
+    ] = "visible",
+    timeout_ms: Annotated[
+        int, Field(default=3000, description="How long to wait before giving up.")
+    ] = 3000,
+) -> str:
+    """Wait until a widget reaches a state, pumping the app's event loop.
+
+    Use this instead of taking a screenshot and hoping: it is the difference
+    between a check that is deterministic and one that is a race. The reply says
+    whether the condition was met and how long it took.
+    """
+    try:
+        return json.dumps(
+            _call(
+                app,
+                "ui.wait_for",
+                {
+                    "target": target,
+                    "condition": condition,
+                    "timeout_ms": timeout_ms,
+                    # The dispatcher's own deadline has to outlast the wait, or it
+                    # gives up first and reports a busy GUI thread instead of a
+                    # plain timeout.
+                    "_timeout_ms": timeout_ms + 5000,
+                },
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def input_drag(
+    target: Annotated[str, TARGET_FIELD],
+    from_x: Annotated[float, Field(description="Start x, widget-local.")],
+    from_y: Annotated[float, Field(description="Start y, widget-local.")],
+    to_x: Annotated[float, Field(description="End x, widget-local.")],
+    to_y: Annotated[float, Field(description="End y, widget-local.")],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    steps: Annotated[
+        int, Field(default=10, description="Intermediate move events between press and release.")
+    ] = 10,
+    hold_ms: Annotated[
+        int, Field(default=0, description="Pause after pressing, before moving.")
+    ] = 0,
+    screenshot: Annotated[
+        bool, Field(default=False, description="Also return a screenshot afterwards.")
+    ] = False,
+) -> list[Any]:
+    """Press, move and release: a mouse drag in widget-local coordinates.
+
+    This is the right tool for a CarPlay swipe and for moving or resizing a
+    widget on the editor canvas. It is NOT the tool for dragging from the editor
+    palette onto the canvas -- that uses Qt's QDrag, whose nested event loop
+    reads real platform events and cannot be driven synthetically. Use
+    editor_palette_drag for that.
+
+    A drag shorter than Qt's startDragDistance comes back with a warning, since
+    Qt may read it as a click.
+    """
+    try:
+        result = _call(
+            app,
+            "input.drag",
+            {
+                "target": target,
+                "from_x": from_x,
+                "from_y": from_y,
+                "to_x": to_x,
+                "to_y": to_y,
+                "steps": steps,
+                "hold_ms": hold_ms,
+                "screenshot": screenshot,
+            },
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return [_fail(exc)]
+
+    shot = result.pop("screenshot", None)
+    parts: list[Any] = [json.dumps(result, indent=2)]
+    if shot:
+        parts.extend(_screenshot_content(shot))
+    return parts
+
+
+@mcp.tool()
+def input_drop(
+    target: Annotated[str, TARGET_FIELD],
+    x: Annotated[float, Field(description="Drop x, widget-local.")],
+    y: Annotated[float, Field(description="Drop y, widget-local.")],
+    mime: Annotated[
+        dict[str, str],
+        Field(description='Mime payload, e.g. {"text/plain": "carplay"}.'),
+    ],
+    app: Annotated[AppName | None, APP_FIELD] = None,
+    screenshot: Annotated[
+        bool, Field(default=False, description="Also return a screenshot afterwards.")
+    ] = False,
+) -> list[Any]:
+    """Synthesize a drag-and-drop onto a widget that accepts drops.
+
+    Sends the real QDragEnter/QDragMove/QDrop sequence straight to the target,
+    bypassing the drag source (QDrag::exec cannot be driven synthetically). The
+    receiving side -- the accept/reject logic and the drop handler -- runs for
+    real, which is where the behaviour worth testing lives.
+
+    If the widget rejects the drag on entry you get an error naming the formats
+    you sent, which usually means they do not match what its handler looks for.
+    """
+    try:
+        result = _call(
+            app,
+            "input.drop",
+            {"target": target, "x": x, "y": y, "mime": mime, "screenshot": screenshot},
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return [_fail(exc)]
+
+    shot = result.pop("screenshot", None)
+    parts: list[Any] = [json.dumps(result, indent=2)]
+    if shot:
+        parts.extend(_screenshot_content(shot))
+    return parts
+
+
+# --------------------------------------------------------------------- editor
+
+
+@mcp.tool()
+def editor_palette() -> str:
+    """List the widget types that can be added, with their friendly names."""
+    try:
+        return json.dumps(_call("editor", "editor.palette"), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_items() -> str:
+    """List what is currently on the editor canvas, with ids and geometry."""
+    try:
+        return json.dumps(_call("editor", "editor.items"), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_add_widget(
+    type: Annotated[str, Field(description="Widget type, e.g. 'carplay'. See editor_palette.")],
+    x: Annotated[int, Field(description="Canvas x.")],
+    y: Annotated[int, Field(description="Canvas y.")],
+    width: Annotated[
+        int | None,
+        Field(default=None, description="Width; omit (with height) to use the size hint."),
+    ] = None,
+    height: Annotated[int | None, Field(default=None, description="Height.")] = None,
+) -> str:
+    """Add a widget to the editor canvas and select it.
+
+    Goes through the same Canvas::addWidget that a palette drag ends up calling,
+    so the result is identical to dragging one in by hand.
+    """
+    try:
+        return json.dumps(
+            _call(
+                "editor",
+                "editor.add_widget",
+                {"type": type, "x": x, "y": y, "width": width, "height": height},
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_palette_drag(
+    type: Annotated[str, Field(description="Widget type to drag in.")],
+    x: Annotated[float, Field(description="Canvas x to drop at.")],
+    y: Annotated[float, Field(description="Canvas y to drop at.")],
+) -> str:
+    """Drag a widget from the palette onto the canvas, the way a user would.
+
+    Builds the mime payload exactly as WidgetPalette::startDrag does and feeds it
+    to the real drop path. Prefer this over editor_add_widget when you want to
+    exercise the drag-and-drop code rather than just arrange a layout: it covers
+    everything except the few lines inside QDrag::exec().
+    """
+    try:
+        return json.dumps(
+            _call("editor", "editor.palette_drag", {"type": type, "x": x, "y": y}), indent=2
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_move(
+    target: Annotated[str, TARGET_FIELD],
+    x: Annotated[int, Field(description="New canvas x.")],
+    y: Annotated[int, Field(description="New canvas y.")],
+) -> str:
+    """Move a widget on the editor canvas to an exact position."""
+    try:
+        return json.dumps(_call("editor", "editor.move", {"target": target, "x": x, "y": y}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_resize(
+    target: Annotated[str, TARGET_FIELD],
+    width: Annotated[int, Field(description="New width.")],
+    height: Annotated[int, Field(description="New height.")],
+) -> str:
+    """Resize a widget on the editor canvas."""
+    try:
+        return json.dumps(
+            _call("editor", "editor.resize", {"target": target, "width": width, "height": height}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_select(target: Annotated[str, TARGET_FIELD]) -> str:
+    """Select a widget on the canvas, as clicking it would."""
+    try:
+        return json.dumps(_call("editor", "editor.select", {"target": target}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_delete(target: Annotated[str, TARGET_FIELD]) -> str:
+    """Remove a widget from the editor canvas."""
+    try:
+        return json.dumps(_call("editor", "editor.delete", {"target": target}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_set_mode(
+    editor_mode: Annotated[
+        bool,
+        Field(
+            description=(
+                "True: grid and selection chrome, frames capture clicks. False: "
+                "frames become mouse-transparent and clicks reach the live widgets."
+            )
+        ),
+    ],
+) -> str:
+    """Toggle the editor's edit/live mode.
+
+    Worth knowing: in live mode the frames set WA_TransparentForMouseEvents, so a
+    click aimed at a frame does nothing. ui_snapshot reports that flag.
+    """
+    try:
+        return json.dumps(_call("editor", "editor.set_mode", {"editor_mode": editor_mode}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_save(path: Annotated[str, Field(description="Where to write the YAML.")]) -> str:
+    """Save the editor canvas as a dashboard YAML config."""
+    try:
+        return json.dumps(_call("editor", "editor.save", {"path": path}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_load(path: Annotated[str, Field(description="YAML config to open.")]) -> str:
+    """Load a dashboard YAML config into the editor canvas."""
+    try:
+        return json.dumps(_call("editor", "editor.load", {"path": path}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
 # --------------------------------------------------------------- widget config
 
 

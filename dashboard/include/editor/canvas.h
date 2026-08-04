@@ -26,6 +26,15 @@ public:
     // Current background color hex string (e.g. "#1e1e1e")
     QString getBackgroundColorHex() const;
 
+    // Dialog-free, event-free editing. dropEvent is a thin wrapper over
+    // addWidget, so a widget added by an agent and one added by dragging from
+    // the palette go through exactly the same path.
+    SelectionFrame* addWidget(widget_type_t type, const QPoint& pos, const QSize& size = QSize());
+    void selectFrame(SelectionFrame* frame);
+    bool removeFrame(SelectionFrame* frame);
+    std::vector<SelectionFrame*> frames() const;
+    bool editorMode() const { return editorMode_; }
+
 signals:
     void selectionChanged(QWidget* selected);
 
