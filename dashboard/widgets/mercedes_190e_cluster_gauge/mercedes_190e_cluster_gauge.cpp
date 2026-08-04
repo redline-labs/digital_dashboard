@@ -72,7 +72,65 @@ namespace
     constexpr float kFuelTriangleOffsetY = 30.0f;
     constexpr float kFuelTriangleSize = 8.0f;
 
+    // Economy sweep geometry, measured from the bottom sub-gauge's pivot.
+    //
+    // The band sits just past the needle tip (kNeedleLength) so the needle reads
+    // against it rather than over it, and it tapers: on a real cluster the
+    // economical end is a hairline and the uneconomical end is several times
+    // thicker. kEconomySweepDegrees is narrower than kGaugeSpanDegrees because
+    // the printed band stops short of the needle's travel at both ends.
+    constexpr float kEconomySweepRadius = 48.0f;
+    constexpr float kEconomySweepDegrees = 80.0f;
+    constexpr float kEconomyThicknessStart = 1.5f;
+    constexpr float kEconomyThicknessEnd = 9.0f;
+    constexpr float kEconomyOutlineWidth = 1.4f;
+    // Sampling resolution of the band outline. The taper means it cannot be a
+    // QPainterPath arc -- the inner edge is not concentric with the outer one --
+    // so both edges are walked as polylines.
+    constexpr int kEconomySweepSegments = 48;
+    // Label sits above the band, centred on the sub-gauge's vertical axis.
+    constexpr float kEconomyLabelOffsetY = 29.0f;
+    constexpr float kEconomyLabelFontPt = 8.0f;
+
     enum class GaugeOrientation { Up, Right, Down, Left };
+
+    // One edge of the economy band, walked from the economical end (u=0) to the
+    // uneconomical one (u=1) over [u_from, u_to].
+    //
+    // `edge_sign` picks which edge: +1 is the outer one, -1 the inner. The band
+    // is centred on kEconomySweepRadius and tapers about it, so the two edges are
+    // not concentric and neither is an arc QPainterPath could draw.
+    QPolygonF economyEdge(float center_x, float center_y, float u_from, float u_to, float edge_sign)
+    {
+        QPolygonF edge;
+        edge.reserve(kEconomySweepSegments + 1);
+        for (int i = 0; i <= kEconomySweepSegments; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(kEconomySweepSegments);
+            const float u = u_from + (u_to - u_from) * t;
+            // Angles run the same way the bottom needle does: high value to the
+            // right, so u=1 lands at the smaller angle.
+            const float angle_deg = 90.0f + (kEconomySweepDegrees / 2.0f) - (u * kEconomySweepDegrees);
+            const float angle_rad = degrees_to_radians(angle_deg);
+            const float thickness = kEconomyThicknessStart +
+                                    (kEconomyThicknessEnd - kEconomyThicknessStart) * u;
+            const float radius = kEconomySweepRadius + edge_sign * (thickness / 2.0f);
+            edge << QPointF(center_x + radius * std::cos(angle_rad),
+                            center_y + radius * std::sin(angle_rad));
+        }
+        return edge;
+    }
+
+    // Closed outline of the band over [u_from, u_to]: out along the outer edge,
+    // back along the inner one.
+    QPolygonF economyBand(float center_x, float center_y, float u_from, float u_to)
+    {
+        QPolygonF band = economyEdge(center_x, center_y, u_from, u_to, 1.0f);
+        QPolygonF inner = economyEdge(center_x, center_y, u_from, u_to, -1.0f);
+        std::reverse(inner.begin(), inner.end());
+        band << inner;
+        return band;
+    }
 }
 
 struct GaugeOrientationInfo
@@ -464,13 +522,54 @@ void Mercedes190EClusterGauge::drawEconomyGaugeBase(QPainter *painter, const sub
                                                     float centerX, float centerY)
 {
     Q_UNUSED(gauge);
-    QFont baseFont(m_fontFamily);
-    painter->setFont(baseFont);
+    const economy_sweep_config_t& sweep = m_config.economy_sweep;
 
-    // The 190E economy gauge has an unlabeled scale from economical (left) to
-    // uneconomical (right); ticks only.
-    const std::vector<const char*> labels = {};
-    drawGaugeBase(painter, centerX, centerY, GaugeOrientation::Down, 5, true, labels);
+    // Not drawGaugeBase: the real economy gauge has no ticks and no numbers. It
+    // is a printed crescent that thickens towards the uneconomical end, with the
+    // upper part of that end filled red, and the needle simply sweeps across it.
+    const QColor outline_color(QString::fromStdString(sweep.outline_color.value()));
+    const QColor red_color(QString::fromStdString(sweep.red_color.value()));
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+
+    // Red section first, so the outline drawn over it closes the shape cleanly.
+    if (sweep.red_start_fraction < 1.0f)
+    {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(red_color);
+        painter->drawPolygon(economyBand(centerX, centerY, sweep.red_start_fraction, 1.0f));
+    }
+
+    QPen outline_pen(outline_color);
+    outline_pen.setWidthF(kEconomyOutlineWidth);
+    outline_pen.setJoinStyle(Qt::RoundJoin);
+    painter->setPen(outline_pen);
+    painter->setBrush(Qt::NoBrush);
+    painter->drawPolygon(economyBand(centerX, centerY, 0.0f, 1.0f));
+
+    painter->restore();
+
+    if (sweep.label.empty())
+    {
+        return;
+    }
+
+    painter->save();
+    QFont label_font(m_fontFamily);
+    label_font.setPointSizeF(kEconomyLabelFontPt);
+    // The cluster prints it letter-spaced; without this it reads as a single
+    // dense blob at this size.
+    label_font.setLetterSpacing(QFont::PercentageSpacing, 108.0);
+    painter->setFont(label_font);
+    painter->setPen(outline_color);
+
+    const QString label = QString::fromStdString(sweep.label);
+    QFontMetricsF fm(label_font);
+    QRectF label_rect = fm.boundingRect(label);
+    label_rect.moveCenter(QPointF(centerX, centerY + kEconomyLabelOffsetY));
+    painter->drawText(label_rect, Qt::AlignCenter, label);
+    painter->restore();
 }
 
 void Mercedes190EClusterGauge::drawEconomyGaugeNeedle(QPainter *painter, const sub_gauge_config_t& gauge,

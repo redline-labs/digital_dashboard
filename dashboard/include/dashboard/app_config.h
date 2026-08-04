@@ -119,6 +119,7 @@ YAML_CONFIG_ENUM(pub_sub::schema_type_t);
 YAML_CONFIG_ENUM(ValueReadoutAlignment);
 YAML_CONFIG_STRUCT(ValueReadoutConfig_t);
 
+
 YAML_CONFIG_ENUM(GradientDirection);
 YAML_CONFIG_STRUCT(BackgroundRectConfig_t);
 
@@ -134,6 +135,7 @@ YAML_CONFIG_ENUM(Mercedes190ETelltaleType);
 YAML_CONFIG_STRUCT(Mercedes190ETelltaleConfig_t);
 
 YAML_CONFIG_STRUCT(sub_gauge_config_t);
+YAML_CONFIG_STRUCT(economy_sweep_config_t);
 YAML_CONFIG_STRUCT(Mercedes190EClusterGaugeConfig_t);
 
 YAML_CONFIG_STRUCT(CarplayConfig_t);

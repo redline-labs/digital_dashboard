@@ -23,9 +23,9 @@ target_link_libraries(mercedes_190e_cluster_gauge
     PUBLIC
         reflection
         Qt6::Svg
+        helpers # config.h exposes helpers::Color, so this cannot be PRIVATE
     PRIVATE
         Qt6::Widgets
         spdlog::spdlog
         zenoh_pub_sub # For expression evaluation
-        helpers
 ) 

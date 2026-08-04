@@ -372,6 +372,32 @@ void testInvertedRangesAreOrdered()
     check(flat.left_gauge.min_value < flat.left_gauge.max_value, "a zero-width range is widened");
 }
 
+void testEconomyRedStartStaysOnTheBand()
+{
+    // red_start_fraction is the parameter the economy band's red section is
+    // walked from. Below 0 it starts off the economical end of the band; above 1
+    // the sub-band runs backwards and paints past the uneconomical end.
+    Mercedes190EClusterGaugeConfig_t below;
+    below.economy_sweep.red_start_fraction = -0.5f;
+    check(!validate(below).empty(), "a negative red_start_fraction is reported");
+    check(below.economy_sweep.red_start_fraction >= 0.0f,
+          "a negative red_start_fraction is pulled onto the band");
+
+    Mercedes190EClusterGaugeConfig_t above;
+    above.economy_sweep.red_start_fraction = 4.0f;
+    check(!validate(above).empty(), "a red_start_fraction past the end is reported");
+    check(above.economy_sweep.red_start_fraction <= 1.0f,
+          "a red_start_fraction past the end is pulled back onto the band");
+
+    // The default has to survive validation untouched, or every stock cluster
+    // logs a spurious adjustment at load.
+    Mercedes190EClusterGaugeConfig_t stock;
+    const float before = stock.economy_sweep.red_start_fraction;
+    (void)validate(stock);
+    check(stock.economy_sweep.red_start_fraction == before,
+          "the default red_start_fraction is left alone");
+}
+
 void testUpdateRateCannotBecomeAZeroMillisecondTimer()
 {
     // update_rate feeds `1000 / update_rate` as a millisecond interval, so 2000
@@ -445,6 +471,7 @@ int main()
     testFullScaleIsCapped();
     testRedlineCannotExceedFullScale();
     testInvertedRangesAreOrdered();
+    testEconomyRedStartStaysOnTheBand();
     testUpdateRateCannotBecomeAZeroMillisecondTimer();
     testOverlongListsAreCapped();
     testOdometerCannotOutrunItsDigits();

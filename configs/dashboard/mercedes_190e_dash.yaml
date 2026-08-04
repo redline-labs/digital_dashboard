@@ -145,6 +145,8 @@ widgets:
         zenoh_key: "vehicle/speed_mps"
         schema_type: "VehicleSpeed"
         value_expression: "psi_to_bar(speedMps)"
+      # The economy gauge. Reads low (economical) on the left, high on the
+      # right, where the printed band turns red.
       bottom_gauge:
         min_value: 0
         max_value: 80
@@ -152,6 +154,15 @@ widgets:
         zenoh_key: "vehicle/engine/temperature_celsius"
         schema_type: "EngineTemperature"
         value_expression: "temperatureCelsius"
+
+      # The band itself: label and colours, so a different cluster can say
+      # something other than ECONOMY without a rebuild.
+      economy_sweep:
+        label: "ECONOMY"
+        red_start_fraction: 0.60
+        outline_color: "#FFFFFF"
+        red_color: "#C4281E"
+
       left_gauge:
         min_value: 40
         max_value: 120
