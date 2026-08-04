@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Desired state for grayhill_keypad_reconfigure.
+#
+#     # See what it would do -- this is the default, and sends nothing:
+#     ./build/nodes/grayhill_keypad/grayhill_keypad_reconfigure \
+#         --config configs/grayhill_keypad/reconfigure.example.yaml
+#
+#     # Do it, against the simulated keypad:
+#     ... --apply
+#
+#     # Do it for real, once a CAN bridge is terminating vehicle/can0/{tx,rx}:
+#     ... --apply --transport zenoh --single-node-bus
+#
+# EVERY KEY UNDER `target` IS OPTIONAL, AND AN ABSENT KEY MEANS LEAVE IT ALONE.
+# This is not the convention the runtime configs use, where an absent key takes
+# a default. The difference is deliberate: this tool writes non-volatile memory
+# on a device that, if its addressing is wrong, can only be found again by
+# sweeping bit rates. Silently rewriting a COB-ID nobody mentioned is exactly
+# the surprise it must not produce.
+
+# How to reach the keypad RIGHT NOW. Both are required.
+#
+# The bit rate is not optional and not guessable: a keypad at the wrong bit
+# rate is indistinguishable from a keypad that is not there. Grayhill ships at
+# 250 kbit/s; MoTeC ships keypads configured for 1 Mbit/s.
+current:
+  node_id: 0x0A
+  bitrate: 250000
+
+target:
+  # --- what MoTeC's PDM Manager checks for ------------------------------------
+  #
+  # Its OpVerifyKeypad step reads exactly two objects and requires both to be
+  # 0xFE: the TPDO1 transmission type (0x1800:02) and the backlight brightness
+  # scalar (0x2010:02). Stock Grayhill firmware has both at 0xFF, which is why
+  # PDM Manager refuses to configure a stock keypad.
+  #
+  # This shorthand sets both. Setting it *and* giving either of them a
+  # different value is an error rather than a silent override.
+  motec_compatible: true
+
+  # --- addressing (LSS; applied last, after everything above) -----------------
+  #
+  # Uncomment to move the keypad. Both of these go over LSS rather than SDO,
+  # persist through LSS Store rather than the 0x1010 "save", and take effect on
+  # the reset that follows. The tool always does them last: change the device's
+  # own addressing before you have finished talking to it and you lose it
+  # mid-sequence.
+  #
+  # LSS switch-state is a GLOBAL broadcast -- every CANopen device on the bus
+  # enters configuration mode and takes the node ID being written. The tool
+  # refuses to send it without --single-node-bus for that reason.
+  #
+  # node_id: 0x0B
+  # bitrate: 1000000
+
+  # --- PDO identifiers --------------------------------------------------------
+  #
+  # Give the 11-bit identifier alone; the tool adds the CiA valid and
+  # RTR-not-supported bits itself, and writes each one in the two steps CiA
+  # requires (invalidate, then assign).
+  #
+  # cob_ids:
+  #   buttons:    0x18B   # TPDO1 -> 0x1800:01
+  #   indicators: 0x20B   # RPDO1 -> 0x1400:01
+  #   brightness: 0x30B   # RPDO2 -> 0x1401:01
+
+  # --- timing -----------------------------------------------------------------
+  #
+  # heartbeat_ms:    0     # 0x1017:00. PDM Manager's own configuration sets 0.
+  # event_timer_ms:  200   # 0x1800:05. PDM Manager's own configuration sets 200.
+  # inhibit_time_us: 0     # 0x1800:03, in units of 100 us.
+
+  # --- brightness scalars -----------------------------------------------------
+  #
+  # indicator_scalar: 0xFF   # 0x2010:01, range 0x00..0xFF
+  # backlight_scalar: 0xFE   # 0x2010:02, range 0x40..0xFF -- set by
+  #                          # motec_compatible above
+
+# 0x1010:01 <- "save". Without this nothing above survives the next power
+# cycle, so it is on by default; turn it off only to try something out.
+store: true
+
+# NMT reset node, then wait for the boot-up frame, then read everything back.
+# The read-back is what distinguishes "the keypad accepted the write" from
+# "the write is still there", which is the question `store` exists to answer.
+reset_after: true

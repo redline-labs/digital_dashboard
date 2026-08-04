@@ -1,14 +1,14 @@
 [Comments]
 Lines=12
 Line1=Started with the DS401-Generic IO.eds and modified it to fit the Grayhill Std Keypads
-Line2=
-Line3=
-Line4=
-Line5=
-Line6=
-Line7=
-Line8=
-Line9=
+Line2=Corrected against Grayhill 3KG1 CANopen manual 3KUM1331-1 rev D (2024-01-23):
+Line3=1000h DefaultValue 000D0191h -> 000B0191h (manual 5.1).
+Line4=Added 1010h/1011h Store/Restore Parameters (manual 5.6, 5.7, 9.2).
+Line5=Added 6006h/6007h/6008h TPDO1 interrupt masks (manual 6.2.1).
+Line6=2010h sub1 LowLimit 128 -> 0, sub2 LowLimit 128 -> 64 (manual 5.16, Table 1).
+Line7=2010h sub widths left UNSIGNED16: confirmed on hardware via SDO cs 0x4B.
+Line8=6411h sub1 DefaultValue 0 -> 255: 0 is below its own LowLimit of 1 (manual Table 1).
+Line9=6200h sub4 ParameterName typo 'Indicaors' -> 'Indicators'.
 Line10=
 Line11=
 Line12=
@@ -16,15 +16,15 @@ Line12=
 [FileInfo]
 FileName=C:\Users\admin\Desktop\DS401_3K_C.eds
 FileVersion=1
-FileRevision=3
+FileRevision=4
 EDSVersion=4.0
 Description=Device Profile 401 - for Grayhill Std Keypads
 CreationTime=11:18AM
 CreationDate=07-03-2003
 CreatedBy=Grayhill
 ModificationTime=10:43AM
-ModificationDate=12-14-2016
-ModifiedBy=Grayhill
+ModificationDate=08-03-2026
+ModifiedBy=Grayhill; corrected per 3KUM1331-1 rev D
 
 [DeviceInfo]
 Vendorname=Grayhill Inc
@@ -73,7 +73,7 @@ DataType=0x0007
 LowLimit=
 HighLimit=
 AccessType=ro
-DefaultValue=0x000D0191
+DefaultValue=0x000B0191
 PDOMapping=0
 ObjFlags=0x0
 
@@ -149,20 +149,25 @@ PDOMapping=0
 ObjFlags=0x0
 
 [OptionalObjects]
-SupportedObjects=13
+SupportedObjects=18
 1=0x1008
 2=0x1009
 3=0x100A
-4=0x1017
-5=0x1400
-6=0x1401
-7=0x1600
-8=0x1601
-9=0x1800
-10=0x1A00
-11=0x6000
-12=0x6200
-13=0x6411
+4=0x1010
+5=0x1011
+6=0x1017
+7=0x1400
+8=0x1401
+9=0x1600
+10=0x1601
+11=0x1800
+12=0x1A00
+13=0x6000
+14=0x6006
+15=0x6007
+16=0x6008
+17=0x6200
+18=0x6411
 
 [1008]
 ParameterName=Manufacturer device name
@@ -194,6 +199,60 @@ LowLimit=
 HighLimit=
 AccessType=const
 DefaultValue=sw version
+PDOMapping=0
+ObjFlags=0x0
+
+[1010]
+ParameterName=Store Parameters
+SubNumber=2
+ObjectType=0x8
+
+[1010sub0]
+ParameterName=Number of entries
+ObjectType=0x7
+DataType=0x0005
+LowLimit=1
+HighLimit=4
+AccessType=ro
+DefaultValue=1
+PDOMapping=0
+ObjFlags=0x0
+
+[1010sub1]
+ParameterName=Save all parameters
+ObjectType=0x7
+DataType=0x0007
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=1
+PDOMapping=0
+ObjFlags=0x0
+
+[1011]
+ParameterName=Restore Default Parameters
+SubNumber=2
+ObjectType=0x8
+
+[1011sub0]
+ParameterName=Number of entries
+ObjectType=0x7
+DataType=0x0005
+LowLimit=1
+HighLimit=4
+AccessType=ro
+DefaultValue=1
+PDOMapping=0
+ObjFlags=0x0
+
+[1011sub1]
+ParameterName=Restore all default parameters
+ObjectType=0x7
+DataType=0x0007
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=1
 PDOMapping=0
 ObjFlags=0x0
 
@@ -584,6 +643,153 @@ DefaultValue=
 PDOMapping=1
 ObjFlags=0x0
 
+[6006]
+ParameterName=Interrupt Mask Any Change 8-bit
+SubNumber=4
+ObjectType=0x8
+
+[6006sub0]
+ParameterName=Number of entries
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=ro
+DefaultValue=3
+PDOMapping=0
+ObjFlags=0x0
+
+[6006sub1]
+ParameterName=Interrupt Mask Any Change Buttons 1 through 8
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6006sub2]
+ParameterName=Interrupt Mask Any Change Buttons 9 through 16
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6006sub3]
+ParameterName=Interrupt Mask Any Change Buttons 17 through 24
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6007]
+ParameterName=Interrupt Mask Low to High 8-bit
+SubNumber=4
+ObjectType=0x8
+
+[6007sub0]
+ParameterName=Number of entries
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=ro
+DefaultValue=3
+PDOMapping=0
+ObjFlags=0x0
+
+[6007sub1]
+ParameterName=Interrupt Mask Low to High Buttons 1 through 8
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6007sub2]
+ParameterName=Interrupt Mask Low to High Buttons 9 through 16
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6007sub3]
+ParameterName=Interrupt Mask Low to High Buttons 17 through 24
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6008]
+ParameterName=Interrupt Mask High to Low 8-bit
+SubNumber=4
+ObjectType=0x8
+
+[6008sub0]
+ParameterName=Number of entries
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=ro
+DefaultValue=3
+PDOMapping=0
+ObjFlags=0x0
+
+[6008sub1]
+ParameterName=Interrupt Mask High to Low Buttons 1 through 8
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6008sub2]
+ParameterName=Interrupt Mask High to Low Buttons 9 through 16
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
+[6008sub3]
+ParameterName=Interrupt Mask High to Low Buttons 17 through 24
+ObjectType=0x7
+DataType=0x0005
+LowLimit=
+HighLimit=
+AccessType=rw
+DefaultValue=
+PDOMapping=0
+ObjFlags=0x0
+
 [6200]
 ParameterName=Digital Output Indicators
 SubNumber=9
@@ -634,7 +840,7 @@ PDOMapping=1
 ObjFlags=0x0
 
 [6200sub4]
-ParameterName=Digital Output Indicaors 25 through 32
+ParameterName=Digital Output Indicators 25 through 32
 ObjectType=0x7
 DataType=0x0005
 LowLimit=
@@ -711,7 +917,7 @@ DataType=0x0003
 LowLimit=1
 HighLimit=255
 AccessType=rww
-DefaultValue=0
+DefaultValue=255
 PDOMapping=1
 ObjFlags=0x0
 
@@ -750,7 +956,7 @@ ObjFlags=0x0
 ParameterName=Indicator Scalar
 ObjectType=0x7
 DataType=0x0006
-LowLimit=128
+LowLimit=0
 HighLimit=255
 AccessType=rw
 DefaultValue=255
@@ -761,7 +967,7 @@ ObjFlags=0x0
 ParameterName=Backlight Scalar
 ObjectType=0x7
 DataType=0x0006
-LowLimit=128
+LowLimit=64
 HighLimit=255
 AccessType=rw
 DefaultValue=255

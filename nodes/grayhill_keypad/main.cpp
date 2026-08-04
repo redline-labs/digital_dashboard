@@ -1,140 +1,385 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// The Grayhill 3K keypad, as a running device: buttons out, indicators and
+// brightness in.
+//
+// This node speaks PDO, and confirms the one SDO write it makes. It does not
+// configure the keypad -- no COB-IDs, no node ID, no bit rate, nothing that
+// touches non-volatile memory. That is grayhill_keypad_reconfigure's job, and
+// keeping the two apart means neither has to reason about the other's state.
+//
+// Four things here were wrong before and are worth naming, because each of them
+// looked like it worked:
+//
+//   * The startup burst went out immediately after the publisher was
+//     constructed, while the subscriber was still being declared. Zenoh has no
+//     retained messages, so with peering not yet established those frames were
+//     simply lost, and nothing noticed.
+//   * The heartbeat SDO write was fire-and-forget. A keypad that aborted it
+//     was indistinguishable from one that accepted it.
+//   * Every received frame that was not TPDO1 was discarded, so heartbeats,
+//     boot-ups and emergencies all arrived and were thrown away.
+//   * Each brightness service sent RPDO2 with the other channel zeroed, so
+//     setting one blanked the other -- and zero is below what the indicator
+//     channel accepts, so it was also out of range.
+
+#include "node_config.h"
+
+#include "canopen/nmt.h"
+#include "canopen/sdo.h"
+#include "canopen/zenoh_bus.h"
+
+#include "canopen_grayhill_helpers.h"
+#include "canopen_grayhill_node.h"
+
+#include "grayhill_keypad.capnp.h"
+#include "pub_sub/zenoh_publisher.h"
+#include "pub_sub/zenoh_service.h"
+
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 
-#include <array>
-#include <algorithm>
-#include <thread>
+#include <atomic>
+#include <csignal>
+#include <string>
 
-#include "pub_sub/zenoh_publisher.h"
-#include "pub_sub/zenoh_subscriber.h"
-#include "pub_sub/zenoh_service.h"
-#include "can_frame.capnp.h"
-#include "helpers/can_frame.h"
-#include "canopen/transport.h"
-#include "grayhill_keypad.capnp.h"
-
-#include "canopen_grayhill_node.h"
-#include "canopen_grayhill_helpers.h"
-
-static void send_frame(pub_sub::ZenohPublisher<::CanFrame>& pub, const helpers::CanFrame& f)
+namespace
 {
-    auto& fields = pub.fields();
-    fields.setId(f.id);
-    fields.setLen(f.len);
 
-    const size_t n = std::min<size_t>(f.data.size(), static_cast<size_t>(f.len));
-    auto dataList = fields.initData(n);
+std::atomic<bool> running { true };
 
-    for (size_t i = 0; i < n; ++i)
-    {
-        dataList.set(i, f.data[i]);
-    }
-
-    pub.put();
+void handle_signal(int)
+{
+    running = false;
 }
+
+// The brightness the keypad was last told to use. RPDO2 carries both channels
+// in one frame, so a request about one channel has to say what the other one
+// is -- and the only honest answer is "whatever we last sent".
+struct Brightness
+{
+    uint16_t indicator { 255 };
+    uint16_t backlight { 0 };
+};
+
+GrayhillStatus::State to_schema_state(canopen::NmtState state)
+{
+    switch (state)
+    {
+    case canopen::NmtState::BootUp: return GrayhillStatus::State::BOOT_UP;
+    case canopen::NmtState::Stopped: return GrayhillStatus::State::STOPPED;
+    case canopen::NmtState::Operational: return GrayhillStatus::State::OPERATIONAL;
+    case canopen::NmtState::PreOperational: return GrayhillStatus::State::PRE_OPERATIONAL;
+    }
+    return GrayhillStatus::State::UNKNOWN;
+}
+
+} // namespace
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::info);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
-    cxxopts::Options options("grayhill_keypad", "Grayhill 3K CANopen keypad node");
+    cxxopts::Options options("grayhill_keypad", "Grayhill 3K CANopen keypad");
     options.add_options()
-        ("node-id", "CANopen node id (1..127)", cxxopts::value<int>()->default_value("10"))
-        ("rx-key", "Zenoh RX key", cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
-        ("tx-key", "Zenoh TX key", cxxopts::value<std::string>()->default_value("vehicle/can0/tx"))
+        ("config", "Node configuration YAML", cxxopts::value<std::string>())
+        ("v,verbose", "Enable debug logging")
         ("h,help", "Print usage");
 
-    auto result = options.parse(argc, argv);
-    if (result.count("help"))
+    cxxopts::ParseResult args;
+    try
+    {
+        args = options.parse(argc, argv);
+    }
+    catch (const std::exception& error)
+    {
+        SPDLOG_ERROR("[node] {}", error.what());
+        return 1;
+    }
+
+    if (args.count("help") != 0)
     {
         SPDLOG_INFO("{}", options.help());
         return 0;
     }
-
-    const uint8_t node_id = static_cast<uint8_t>(result["node-id"].as<int>());
-    const std::string rx_key = result["rx-key"].as<std::string>();
-    const std::string tx_key = result["tx-key"].as<std::string>();
-
-    SPDLOG_INFO("grayhill_keypad starting: node_id={}, rx='{}', tx='{}'", node_id, rx_key, tx_key);
-
-    pub_sub::ZenohPublisher<::CanFrame> tx_pub(tx_key);
-
-    canopen_grayhill::node device(node_id);
-
-    device.on_buttons([](uint8_t b1_8, uint8_t b9_16, uint8_t b17_24){
-        SPDLOG_INFO("Buttons: [1..8]=0x{:02X} [9..16]=0x{:02X} [17..24]=0x{:02X}", b1_8, b9_16, b17_24);
-    });
-
-    pub_sub::ZenohTypedSubscriber<::CanFrame> rx_subscriber(
-        rx_key,
-        [&device](::CanFrame::Reader frame)
-        {
-            helpers::CanFrame f{};
-            f.id = frame.getId();
-            f.len = frame.getLen();
-            auto dataList = frame.getData();
-            const size_t n = std::min<size_t>(f.data.size(), std::min<size_t>(static_cast<size_t>(f.len), dataList.size()));
-            for (size_t i = 0; i < n; ++i)
-            {
-                f.data[i] = static_cast<uint8_t>(dataList[i]);
-            }
-
-            (void)device.handle_frame(f);
-        });
-
-    // Move to PRE-OPERATIONAL, set heartbeat, then OPERATIONAL
+    if (args.count("verbose") != 0)
     {
-        // NMT pre-operational (0x80)
-        auto nmt_preop = canopen::make_nmt(canopen::NmtCommand::EnterPreOperational, node_id);
-        send_frame(tx_pub, nmt_preop);
-        SPDLOG_INFO("Sent NMT pre-operational to node {}", node_id);
-
-        // Configure Producer Heartbeat Time (0x1017) on the device so it emits
-        // its OWN heartbeat frames (COB-ID 0x700 + node) reflecting real NMT state.
-        // Preferred approach when supported; survives our process restarts and stays
-        // consistent with the keypad's true state transitions.
-        // SDO expedited download command: 0x2B for 16-bit data (cs=0010, n=2)
-        auto sdo_hb = canopen::make_sdo_download_u16(node_id, 0x1017, 0x00, 1000);
-        send_frame(tx_pub, sdo_hb);
-        SPDLOG_INFO("Requested heartbeat time via SDO (0x1017)=1000ms");
-
-        // NMT operational (0x01)
-        auto nmt_start = canopen::make_nmt(canopen::NmtCommand::Start, node_id);
-        send_frame(tx_pub, nmt_start);
-        SPDLOG_INFO("Sent NMT start to node {}", node_id);
+        spdlog::set_level(spdlog::level::debug);
     }
 
-    // Services for brightness control
-    pub_sub::ZenohService<GrayhillSetIndicatorBrightnessRequest, GrayhillSetIndicatorBrightnessResponse> svc_ind(
-        "nodes/grayhill_keypad/set_indicator_brightness",
-        [node_id, &tx_pub](const GrayhillSetIndicatorBrightnessRequest::Reader& req, GrayhillSetIndicatorBrightnessResponse::Builder& rsp)
-        {
-            uint16_t indicator_brightness = req.getValue();
-            uint16_t backlight_brightness = 0u;  // TODO.
-            auto f = canopen_grayhill::pack_rpdo2_brightness(indicator_brightness, backlight_brightness, node_id);
-            send_frame(tx_pub, f);
-            rsp.setOk(true);
-        });
-
-    pub_sub::ZenohService<GrayhillSetBacklightBrightnessRequest, GrayhillSetBacklightBrightnessResponse> svc_bk(
-        "nodes/grayhill_keypad/set_backlight_brightness",
-        [node_id, &tx_pub](const GrayhillSetBacklightBrightnessRequest::Reader& req, GrayhillSetBacklightBrightnessResponse::Builder& rsp)
-        {
-            uint16_t indicator_brightness = 0u;  // TODO.
-            uint16_t backlight_brightness = req.getValue();
-            auto f = canopen_grayhill::pack_rpdo2_brightness(indicator_brightness, backlight_brightness, node_id);
-            send_frame(tx_pub, f);
-            rsp.setOk(true);
-        });
-
-    // Keep process alive
-    for (;;)
+    if (args.count("config") == 0)
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        SPDLOG_ERROR("[node] --config is required. Start from "
+                     "configs/grayhill_keypad/grayhill_keypad.yaml, which documents every field.");
+        return 1;
+    }
+
+    grayhill::NodeConfig config;
+    if (!grayhill::load_node_config(args["config"].as<std::string>(), config))
+    {
+        SPDLOG_ERROR("[node] refusing to start with an unusable --config");
+        return 1;
+    }
+
+    std::signal(SIGINT, handle_signal);
+    std::signal(SIGTERM, handle_signal);
+
+    SPDLOG_INFO("[node] keypad at node {} on '{}' / '{}'", config.nodeId, config.rxKey,
+                config.txKey);
+
+    canopen::ZenohBus bus(config.txKey, config.rxKey);
+    if (!bus.is_valid())
+    {
+        SPDLOG_ERROR("[node] could not open a zenoh session");
+        return 1;
+    }
+
+    canopen::NmtMaster nmt(bus);
+    canopen::SdoClient sdo(bus, config.nodeId);
+    canopen_grayhill::node device(config.nodeId);
+
+    // The generated class handles the PDOs it knows; everything else -- SDO
+    // responses, heartbeats, emergencies -- is picked up by the subscribers
+    // that NmtMaster and SdoClient installed on the bus.
+    bus.subscribe([&device](const helpers::CanFrame& frame) { (void)device.handle_frame(frame); });
+
+    // --- what we publish ----------------------------------------------------
+    pub_sub::ZenohPublisher<GrayhillButtons> buttonsPublisher(config.topicPrefix + "/buttons");
+    pub_sub::ZenohPublisher<GrayhillStatus> statusPublisher(config.topicPrefix + "/status");
+
+    uint32_t bootCount = 0;
+    uint16_t lastEmergency = 0;
+    auto publishStatus = [&](canopen::NmtState state)
+    {
+        auto& fields = statusPublisher.fields();
+        fields.setState(to_schema_state(state));
+        fields.setBootCount(bootCount);
+        fields.setLastEmergencyCode(lastEmergency);
+        statusPublisher.put();
+    };
+
+    device.on_tpdo1(
+        [&](const canopen_grayhill::Tpdo1& buttons)
+        {
+            auto& fields = buttonsPublisher.fields();
+            fields.setButtons1To8(buttons.digital_input_buttons_1_through_8);
+            fields.setButtons9To16(buttons.digital_input_buttons_9_through_16);
+            fields.setButtons17To24(buttons.digital_input_buttons_17_through_24);
+            buttonsPublisher.put();
+
+            SPDLOG_DEBUG("[keypad] buttons 0x{:02X} 0x{:02X} 0x{:02X}",
+                         buttons.digital_input_buttons_1_through_8,
+                         buttons.digital_input_buttons_9_through_16,
+                         buttons.digital_input_buttons_17_through_24);
+        });
+
+    nmt.on_state_change(
+        [&](uint8_t nodeId, canopen::NmtState state)
+        {
+            if (nodeId != config.nodeId)
+            {
+                return;
+            }
+            if (state == canopen::NmtState::BootUp)
+            {
+                ++bootCount;
+                // A keypad that reboots on its own is a wiring or supply
+                // problem, and it is worth saying so rather than silently
+                // re-applying settings.
+                SPDLOG_WARN("[keypad] node {} booted (boot #{})", nodeId, bootCount);
+            }
+            else
+            {
+                SPDLOG_INFO("[keypad] node {} is {}", nodeId, canopen::to_string(state));
+            }
+            publishStatus(state);
+        });
+
+    nmt.on_emergency(
+        [&](const canopen::EmcyMessage& message)
+        {
+            if (message.nodeId != config.nodeId)
+            {
+                return;
+            }
+            lastEmergency = message.errorCode;
+            SPDLOG_WARN("[keypad] {}", canopen::to_string(message));
+            publishStatus(nmt.state(config.nodeId).value_or(canopen::NmtState::PreOperational));
+        });
+
+    // --- let zenoh settle before saying anything ----------------------------
+    //
+    // Everything above declares a publisher or a subscriber. Sending before
+    // peering is established loses the frames, so the startup sequence waits
+    // rather than racing.
+    for (uint32_t elapsed = 0; elapsed < config.startupDelayMs && running; elapsed += 20)
+    {
+        bus.poll(canopen::Duration { 20 });
+    }
+
+    Brightness brightness { config.indicatorBrightness, config.backlightBrightness };
+
+    if (config.driveNmt && running)
+    {
+        nmt.command(canopen::NmtCommand::EnterPreOperational, config.nodeId);
+        bus.poll(canopen::Duration { 50 });
+
+        if (config.heartbeatMs != 0)
+        {
+            // Confirmed, unlike before. A keypad that refuses this is a keypad
+            // whose state we will never hear about, which is worth a warning
+            // rather than silence.
+            auto result = sdo.download_u16(0x1017, 0, config.heartbeatMs);
+            if (result.has_value())
+            {
+                SPDLOG_INFO("[keypad] producer heartbeat set to {} ms", config.heartbeatMs);
+            }
+            else
+            {
+                SPDLOG_WARN("[keypad] could not set the producer heartbeat: {}",
+                            canopen::to_string(result.error()));
+                SPDLOG_WARN("[keypad] the node will run without heartbeat tracking");
+            }
+        }
+
+        nmt.command(canopen::NmtCommand::Start, config.nodeId);
+        bus.poll(canopen::Duration { 50 });
+        SPDLOG_INFO("[keypad] node {} taken to operational", config.nodeId);
+    }
+
+    // Apply the configured brightness once, now that the keypad is running.
+    {
+        canopen_grayhill::Rpdo2 frame {};
+        frame.analog_output_indicator_brightness = static_cast<int16_t>(brightness.indicator);
+        frame.analog_output_backlight_brightness = static_cast<int16_t>(brightness.backlight);
+        bus.send(device.make_rpdo2(frame));
+    }
+
+    // --- services -----------------------------------------------------------
+    //
+    // Both brightness services send the whole frame, with the channel they are
+    // not about carried over from what was last sent. Sending zero for it --
+    // which is what these used to do -- blanked the other channel, and for the
+    // indicator channel zero is below the device's minimum of 1.
+    auto sendBrightness = [&](uint16_t indicator, uint16_t backlight) -> std::string
+    {
+        if (indicator < 1 || indicator > 255)
+        {
+            return fmt::format("indicator brightness {} is outside the device's range 1..255",
+                               indicator);
+        }
+        if (backlight > 255)
+        {
+            return fmt::format("backlight brightness {} is outside the device's range 0..255",
+                               backlight);
+        }
+
+        canopen_grayhill::Rpdo2 frame {};
+        frame.analog_output_indicator_brightness = static_cast<int16_t>(indicator);
+        frame.analog_output_backlight_brightness = static_cast<int16_t>(backlight);
+        bus.send(device.make_rpdo2(frame));
+
+        brightness.indicator = indicator;
+        brightness.backlight = backlight;
+        return {};
+    };
+
+    pub_sub::ZenohService<GrayhillSetIndicatorBrightnessRequest,
+                          GrayhillSetIndicatorBrightnessResponse>
+        indicatorService(
+            config.topicPrefix + "/set_indicator_brightness",
+            [&](const GrayhillSetIndicatorBrightnessRequest::Reader& request,
+                GrayhillSetIndicatorBrightnessResponse::Builder& response)
+            {
+                const uint16_t backlight = request.getBacklight() == OtherChannel::ZERO
+                    ? 0
+                    : brightness.backlight;
+                const std::string error = sendBrightness(request.getValue(), backlight);
+                response.setOk(error.empty());
+                response.setError(error);
+                if (!error.empty())
+                {
+                    SPDLOG_WARN("[keypad] {}", error);
+                }
+            });
+
+    pub_sub::ZenohService<GrayhillSetBacklightBrightnessRequest,
+                          GrayhillSetBacklightBrightnessResponse>
+        backlightService(
+            config.topicPrefix + "/set_backlight_brightness",
+            [&](const GrayhillSetBacklightBrightnessRequest::Reader& request,
+                GrayhillSetBacklightBrightnessResponse::Builder& response)
+            {
+                // `zero` is not offered for the indicator channel because the
+                // device would abort it; the request can ask, and gets told.
+                const uint16_t indicator = request.getIndicator() == OtherChannel::ZERO
+                    ? 0
+                    : brightness.indicator;
+                const std::string error = sendBrightness(indicator, request.getValue());
+                response.setOk(error.empty());
+                response.setError(error);
+                if (!error.empty())
+                {
+                    SPDLOG_WARN("[keypad] {}", error);
+                }
+            });
+
+    pub_sub::ZenohService<GrayhillSetIndicatorsRequest, GrayhillSetIndicatorsResponse>
+        indicatorsService(
+            config.topicPrefix + "/set_indicators",
+            [&](const GrayhillSetIndicatorsRequest::Reader& request,
+                GrayhillSetIndicatorsResponse::Builder& response)
+            {
+                auto bytes = request.getIndicators();
+                if (bytes.size() > canopen_grayhill::RPDO1_LENGTH)
+                {
+                    const std::string error
+                        = fmt::format("{} indicator bytes given; RPDO1 carries {}", bytes.size(),
+                                      canopen_grayhill::RPDO1_LENGTH);
+                    response.setOk(false);
+                    response.setError(error);
+                    SPDLOG_WARN("[keypad] {}", error);
+                    return;
+                }
+
+                // The generated struct has a named field per mapped byte, so
+                // filling it from a list means going through the frame the
+                // mapping describes rather than assuming a layout.
+                canopen_grayhill::Rpdo1 indicators {};
+                auto frame = canopen_grayhill::pack_rpdo1(indicators, config.nodeId);
+                for (unsigned i = 0; i < bytes.size(); ++i)
+                {
+                    frame.data[i] = bytes[i];
+                }
+                bus.send(frame);
+
+                response.setOk(true);
+                response.setError("");
+            });
+
+    SPDLOG_INFO("[node] running; publishing buttons on '{}/buttons'", config.topicPrefix);
+    publishStatus(nmt.state(config.nodeId).value_or(canopen::NmtState::PreOperational));
+
+    while (running)
+    {
+        bus.poll(canopen::Duration { 50 });
+    }
+
+    // --- shutdown -----------------------------------------------------------
+    //
+    // Leaving the keypad operational after this process exits means it keeps
+    // transmitting button state at nobody, and its indicators keep whatever
+    // they were last told. Stopping it is the honest end state.
+    SPDLOG_INFO("[node] shutting down");
+    if (config.driveNmt)
+    {
+        canopen_grayhill::Rpdo1 dark {};
+        bus.send(device.make_rpdo1(dark));
+
+        nmt.command(canopen::NmtCommand::EnterPreOperational, config.nodeId);
+        bus.poll(canopen::Duration { 50 });
     }
 
     return 0;
 }
-
-

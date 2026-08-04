@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Grayhill 3K keypad node configuration.
+#
+#     ./build/nodes/grayhill_keypad/grayhill_keypad \
+#         --config configs/grayhill_keypad/grayhill_keypad.yaml
+#
+# This node speaks PDO: buttons in, indicators and brightness out. It never
+# writes the keypad's object dictionary. Changing what the keypad *is* -- its
+# node ID, bit rate, COB-IDs, or the two 0xFE values MoTeC's PDM Manager checks
+# for -- is grayhill_keypad_reconfigure's job, and that tool runs once and
+# exits. See configs/grayhill_keypad/reconfigure.example.yaml.
+
+keypad:
+  # Grayhill ships keypads at node 10 (0x0A) and 250 kbit/s. A keypad that has
+  # been through PDM Manager is usually somewhere else, at 1 Mbit/s.
+  node_id: 10
+
+  # Whether this node takes the keypad through pre-operational to operational
+  # at startup. Turn it off when another CANopen master owns the bus: two
+  # masters issuing NMT will fight over the keypad's state.
+  drive_nmt: true
+
+  # Producer heartbeat period in milliseconds, written over SDO at startup, or
+  # 0 to leave whatever the keypad already has.
+  #
+  # Worth setting: without it the keypad says nothing about its own state, and
+  # a keypad that has quietly reset looks identical to one with no buttons
+  # pressed. Note that a MoTeC-configured keypad has this disabled, and that
+  # 0 here does not disable it -- it means "do not touch it".
+  heartbeat_ms: 1000
+
+  # How long to wait for zenoh peering before sending anything. Zenoh has no
+  # retained messages, so frames published before peers connect are simply
+  # lost; the startup NMT sequence used to go out into that gap.
+  startup_delay_ms: 500
+
+zenoh:
+  rx_key: "vehicle/can0/rx"
+  tx_key: "vehicle/can0/tx"
+
+  # Where this keypad's topics live. Give a second keypad a different prefix.
+  #
+  #   <prefix>/buttons                     published, on every TPDO1
+  #   <prefix>/status                      published, on state changes
+  #   <prefix>/set_indicator_brightness    service
+  #   <prefix>/set_backlight_brightness    service
+  #   <prefix>/set_indicators              service
+  topic_prefix: "nodes/grayhill_keypad"
+
+# Applied once, after the keypad reaches operational. Both channels travel in
+# one frame (RPDO2), so both are given here.
+brightness:
+  # The button LEDs. Range 1..255 -- zero is not "off", it is outside what the
+  # device accepts, and it aborts a write of it.
+  indicator: 255
+
+  # The panel backlight. Range 0..255, and 0 really is off.
+  backlight: 0
