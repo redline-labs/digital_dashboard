@@ -34,46 +34,46 @@ namespace widget_registry
 //      - static constexpr std::string_view kFriendlyName = "User Friendly Name for Widget";
 //      - using config_t = YourConfigType
 //      - config_t getConfig() const method
-//   2. Add ONE line to FOR_EACH_WIDGET below with just the class name
-//   3. Add an entry to the widget_type_t enum in dashboard/widget_types.h
-//   4. Add your widget library to WIDGET_LIBS in dashboard/CMakeLists.txt
-//      and add_subdirectory() in dashboard/widgets/CMakeLists.txt
+//   2. Add ONE line to DASHBOARD_WIDGET_TABLE in dashboard/widget_table.h
+//   3. Call add_dashboard_widget() in your widget's CMakeLists.txt, and
+//      add_subdirectory() in dashboard/widgets/CMakeLists.txt
 //
 // Config types need no registration. Anything declared with REFLECT_STRUCT or
 // REFLECT_ENUM converts to and from YAML on its own, nested structs and enums
 // included -- see the constrained convert<> specializations in app_config.h.
 //
-// Format: X(WidgetClass)
+// DASHBOARD_WIDGET_TABLE drives every sweep over the widget set, and the
+// widget_type_t enumerators come from the same table, so the two cannot drift
+// apart. Everything else is derived from the widget class: the widget name
+// string comes from kWidgetType via reflection::enum_to_string(), and the
+// widget_config_t variant alternatives from the table.
 //
-// The macro extracts kWidgetType and kFriendlyName from the widget class.
-// The widget name string is derived from kWidgetType via reflection::enum_to_string().
-// The widget_config_t variant alternatives are derived from FOR_EACH_WIDGET.
+// A sweep macro takes both columns -- X(enum_name, WidgetClass) -- and most
+// ignore the first. Threading a one-argument macro through the table instead
+// would need an adapter holding the caller's macro in a fixed name, which is
+// less readable than an unused parameter.
 // ============================================================================
 
-#define FOR_EACH_WIDGET(X) \
-	X(StaticTextWidget) \
-	X(ValueReadoutWidget) \
-	X(SegmentReadoutWidget) \
-	X(CenterBarWidget) \
-	X(Mercedes190ESpeedometer) \
-	X(Mercedes190ETachometer) \
-	X(Mercedes190EClusterGauge) \
-	X(SparklineItem) \
-	X(BackgroundRectWidget) \
-	X(Mercedes190ETelltale) \
-	X(MotecC125Tachometer) \
-	X(MotecCdl3Tachometer) \
-	X(CarPlayWidget) \
-	X(NowPlayingWidget) \
-	X(CarPlayNavWidget)
+// The enum and the sweeps are generated from the same table, so they cannot
+// drift apart on their own. This pins that they were in fact generated: it
+// fires if an enumerator is ever added to widget_types.h by hand, which is the
+// one way back to the silent failure the table exists to prevent.
+#define DASHBOARD_WIDGET_COUNT_ONE(enum_name, widget_class) +1
+static_assert(
+	reflection::enum_traits<widget_type_t>::names().size()
+		== static_cast<std::size_t>(1 DASHBOARD_WIDGET_TABLE(DASHBOARD_WIDGET_COUNT_ONE)),
+	"widget_type_t does not match DASHBOARD_WIDGET_TABLE. The enum is generated "
+	"from the table, so add widgets to widget_table.h rather than to "
+	"widget_types.h. The 1 is `unknown`, which is deliberately not in the table.");
+#undef DASHBOARD_WIDGET_COUNT_ONE
 
 
-// Generate config_traits specializations from FOR_EACH_WIDGET.
+// Generate config_traits specializations from the widget table.
 // This is used to go backwards from a widget_config_t to the widget class
 // at compile time.
 template <typename Config> struct config_traits;
 
-#define WIDGET_TRAITS_SPECIALIZATION(widget_class) \
+#define WIDGET_TRAITS_SPECIALIZATION(enum_name, widget_class) \
 	template <> \
 	struct config_traits<widget_class::config_t> \
 	{ \
@@ -81,10 +81,10 @@ template <typename Config> struct config_traits;
 		using widget_t = widget_class; \
 	};
 
-FOR_EACH_WIDGET(WIDGET_TRAITS_SPECIALIZATION)
+DASHBOARD_WIDGET_TABLE(WIDGET_TRAITS_SPECIALIZATION)
 #undef WIDGET_TRAITS_SPECIALIZATION
 
-// Generate instantiateWidget function from FOR_EACH_WIDGET
+// Generate instantiateWidget function from the widget table
 // This is to actually construct a dashboard widget from a widget_config_t enum
 // at runtime.
 inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
@@ -92,14 +92,14 @@ inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
 	QWidget* w = nullptr;
 	switch (type)
 	{
-#define INSTANTIATE_CASE(widget_class) \
+#define INSTANTIATE_CASE(enum_name, widget_class) \
 		case widget_class::kWidgetType: { \
 			widget_class::config_t cfg; \
 			w = new widget_class(cfg, parent); \
 			break; \
 		}
 		
-		FOR_EACH_WIDGET(INSTANTIATE_CASE)
+		DASHBOARD_WIDGET_TABLE(INSTANTIATE_CASE)
 #undef INSTANTIATE_CASE
 		
 		case widget_type_t::unknown:

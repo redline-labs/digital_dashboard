@@ -42,8 +42,8 @@ struct widget_config_t {
 
     // Alternatives are derived from the widget registry; std::monostate is the
     // "unknown" state (and absorbs the trailing comma from the macro).
-#define WIDGET_CONFIG_ALT(widget_class) widget_class::config_t,
-    std::variant<FOR_EACH_WIDGET(WIDGET_CONFIG_ALT) std::monostate> config;
+#define WIDGET_CONFIG_ALT(enum_name, widget_class) widget_class::config_t,
+    std::variant<DASHBOARD_WIDGET_TABLE(WIDGET_CONFIG_ALT) std::monostate> config;
 #undef WIDGET_CONFIG_ALT
 };
 
@@ -177,17 +177,17 @@ struct convert<widget_config_t> {
         if (node["width"]) rhs.width = node["width"].as<uint16_t>();
         if (node["height"]) rhs.height = node["height"].as<uint16_t>();
 
-        // Use FOR_EACH_WIDGET to generate if-else chain
+        // Use the widget table to generate the if-else chain
         bool matched = false;
         
-#define DECODE_CONFIG_IF(widget_class) \
+#define DECODE_CONFIG_IF(enum_name, widget_class) \
         if (!matched && type == reflection::enum_to_string(widget_class::kWidgetType)) { \
             rhs.type = widget_class::kWidgetType; \
             rhs.config = node["config"].as<widget_class::config_t>(); \
             matched = true; \
         }
         
-        FOR_EACH_WIDGET(DECODE_CONFIG_IF)
+        DASHBOARD_WIDGET_TABLE(DECODE_CONFIG_IF)
 #undef DECODE_CONFIG_IF
 
         if (!matched) {

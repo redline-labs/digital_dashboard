@@ -88,15 +88,15 @@ public:
             return wc;
         }
 
-        // Use FOR_EACH_WIDGET to generate switch cases
+        // Use the widget table to generate switch cases
         switch (type_)
         {
-#define GET_CONFIG_CASE(widget_class) \
+#define GET_CONFIG_CASE(enum_name, widget_class) \
             case widget_class::kWidgetType: \
                 wc.config = static_cast<widget_class*>(child_)->getConfig(); \
                 break;
             
-            FOR_EACH_WIDGET(GET_CONFIG_CASE)
+            DASHBOARD_WIDGET_TABLE(GET_CONFIG_CASE)
 #undef GET_CONFIG_CASE
             
             case widget_type_t::unknown:

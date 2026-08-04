@@ -515,13 +515,13 @@ namespace
                 canvas->beginEdit();
             }
 
-            // Use FOR_EACH_WIDGET to generate switch cases. qobject_cast, not
+            // Use the widget table to generate switch cases. qobject_cast, not
             // static_cast: if the frame's declared type and its actual child
             // ever disagree, a static_cast here is undefined behaviour, and the
             // seed below would read a config out of the wrong object.
             switch (type)
             {
-#define APPLY_CONFIG_CASE(widget_class) \
+#define APPLY_CONFIG_CASE(enum_name, widget_class) \
                 case widget_class::kWidgetType: \
                     if (auto* typed = qobject_cast<widget_class*>(frame->child())) \
                     { \
@@ -530,7 +530,7 @@ namespace
                     } \
                     break;
 
-                FOR_EACH_WIDGET(APPLY_CONFIG_CASE)
+                DASHBOARD_WIDGET_TABLE(APPLY_CONFIG_CASE)
 #undef APPLY_CONFIG_CASE
 
                 case widget_type_t::unknown:
@@ -668,11 +668,11 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return widget_type_t::unknown;
     }();
     
-    // Use FOR_EACH_WIDGET to generate switch cases
+    // Use the widget table to generate switch cases
     QWidget* page = nullptr;
     switch (type)
     {
-#define BUILD_FORM_CASE(widget_class) \
+#define BUILD_FORM_CASE(enum_name, widget_class) \
         case widget_class::kWidgetType: \
             if (auto* typed = qobject_cast<widget_class*>(uiWidget)) \
             { \
@@ -680,7 +680,7 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
             } \
             break;
         
-        FOR_EACH_WIDGET(BUILD_FORM_CASE)
+        DASHBOARD_WIDGET_TABLE(BUILD_FORM_CASE)
 #undef BUILD_FORM_CASE
         
         case widget_type_t::unknown:

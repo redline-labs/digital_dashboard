@@ -11,7 +11,7 @@ WidgetPalette::WidgetPalette(QWidget* parent)
 {
 
 // Add each of the available widgets to the palette.
- #define WIDGET_INFO_ENTRY(widget_class) \
+ #define WIDGET_INFO_ENTRY(enum_name, widget_class) \
     { \
         auto* entry = new QListWidgetItem(QString::fromUtf8(widget_class::kFriendlyName)); \
         const std::string_view type_name = reflection::enum_to_string(widget_class::kWidgetType); \
@@ -19,7 +19,7 @@ WidgetPalette::WidgetPalette(QWidget* parent)
         addItem(entry); \
     }
 
-    FOR_EACH_WIDGET(WIDGET_INFO_ENTRY)
+    DASHBOARD_WIDGET_TABLE(WIDGET_INFO_ENTRY)
 #undef WIDGET_INFO_ENTRY
 
     setSelectionMode(QAbstractItemView::SingleSelection);

@@ -10,7 +10,7 @@ using dashboard::config::Issue;
 
 // Validates one entry of the `widgets:` list. The per-widget `config:` block is
 // a different struct for every `type:`, so the walk has to dispatch, and
-// FOR_EACH_WIDGET is what makes that automatic for a widget added later.
+// The widget table is what makes that automatic for a widget added later.
 void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue>& issues)
 {
     const std::string path = "widgets[" + std::to_string(index) + "]";
@@ -34,15 +34,15 @@ void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue
     const auto type = reflection::enum_traits<widget_type_t>::try_from_string(type_name);
     if (!type || *type == widget_type_t::unknown)
     {
-        // Built from FOR_EACH_WIDGET rather than the enum, so `unknown` -- which
+        // Built from the widget table rather than the enum, so `unknown` -- which
         // is an internal state, not something anyone should write in a file --
         // is not offered as a suggestion.
         std::string known;
-#define KNOWN_TYPE(widget_class)                                                             \
+#define KNOWN_TYPE(enum_name, widget_class)                                                             \
     if (!known.empty()) known += ", ";                                                       \
     known += std::string(reflection::enum_to_string(widget_class::kWidgetType));
 
-        FOR_EACH_WIDGET(KNOWN_TYPE)
+        DASHBOARD_WIDGET_TABLE(KNOWN_TYPE)
 #undef KNOWN_TYPE
 
         issues.push_back({Issue::Severity::error, path + ".type",
@@ -72,7 +72,7 @@ void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue
     }
 
     const std::string cfg_path = path + ".config";
-#define VALIDATE_CONFIG_CASE(widget_class)                                                   \
+#define VALIDATE_CONFIG_CASE(enum_name, widget_class)                                                   \
     if (*type == widget_class::kWidgetType)                                                  \
     {                                                                                        \
         dashboard::config::detail::validateStruct<widget_class::config_t>(                   \
@@ -80,7 +80,7 @@ void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue
         return;                                                                              \
     }
 
-    FOR_EACH_WIDGET(VALIDATE_CONFIG_CASE)
+    DASHBOARD_WIDGET_TABLE(VALIDATE_CONFIG_CASE)
 #undef VALIDATE_CONFIG_CASE
 }
 

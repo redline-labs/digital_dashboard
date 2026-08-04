@@ -6,7 +6,7 @@
 // became a raw 0x1c control byte in the file -- because yaml-cpp treats an
 // 8-bit integer as a char. Both were invisible until someone diffed a file.
 //
-// The widget sweep is driven by FOR_EACH_WIDGET, so a widget added later is
+// The widget sweep is driven by DASHBOARD_WIDGET_TABLE, so a widget added later is
 // covered here without anyone remembering to come back.
 
 #include "dashboard/app_config.h"
@@ -76,7 +76,7 @@ void testEveryWidgetTypeSurvives()
     app_config_t cfg;
     cfg.name = "sweep";
 
-#define ADD_WIDGET(widget_class)                                    \
+#define ADD_WIDGET(enum_name, widget_class)                                    \
     {                                                               \
         widget_config_t wc;                                         \
         wc.type = widget_class::kWidgetType;                        \
@@ -90,7 +90,7 @@ void testEveryWidgetTypeSurvives()
         cfg.widgets.push_back(wc);                                  \
     }
 
-    FOR_EACH_WIDGET(ADD_WIDGET)
+    DASHBOARD_WIDGET_TABLE(ADD_WIDGET)
 #undef ADD_WIDGET
 
     const app_config_t back = reload(cfg);
@@ -185,7 +185,7 @@ void testAwkwardStringsSurvive()
 // A reflected type converts without being registered anywhere.
 //
 // These two are declared here and named in no list: not in app_config.h, not in
-// FOR_EACH_WIDGET, nowhere. If conversion still works, adding a nested struct or
+// the widget table, nowhere. If conversion still works, adding a nested struct or
 // an enum to a widget config needs no central edit -- which is the whole point
 // of deriving the converters from the reflection traits.
 //

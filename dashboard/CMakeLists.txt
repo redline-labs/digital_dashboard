@@ -41,7 +41,7 @@ qt_add_executable(${PROJECT_NAME}
     dashboard/main_window.cpp
     dashboard/command_line_args.cpp
 
-    # Shared by both executables: the widget config methods need FOR_EACH_WIDGET,
+    # Shared by both executables: the widget config methods sweep the widget table,
     # so they cannot live in libs/agent_control (which knows nothing about
     # widgets and must not).
     agent/widget_methods.cpp
@@ -112,7 +112,7 @@ endif()
 
 # The YAML codec and the validator are plain logic over reflected structs, so
 # they are unit-testable without a display. Both link the widget libraries
-# because their coverage is driven by FOR_EACH_WIDGET.
+# because their coverage is driven by DASHBOARD_WIDGET_TABLE.
 foreach(config_test roundtrip validation)
     add_executable(dashboard_test_config_${config_test} dashboard/test_config_${config_test}.cpp)
     target_include_directories(dashboard_test_config_${config_test} PRIVATE include)

@@ -32,13 +32,13 @@ std::optional<widget_type_t> widgetTypeOf(const QWidget* widget)
         return std::nullopt;
     }
 
-#define TYPE_OF_CASE(widget_class)                                    \
+#define TYPE_OF_CASE(enum_name, widget_class)                                    \
     if (qobject_cast<const widget_class*>(widget) != nullptr)         \
     {                                                                 \
         return widget_class::kWidgetType;                             \
     }
 
-    FOR_EACH_WIDGET(TYPE_OF_CASE)
+    DASHBOARD_WIDGET_TABLE(TYPE_OF_CASE)
 #undef TYPE_OF_CASE
 
     return std::nullopt;
@@ -55,7 +55,7 @@ MethodResult configOf(QWidget* widget)
     json config;
     bool found = false;
 
-#define GET_CONFIG_CASE(widget_class)                                             \
+#define GET_CONFIG_CASE(enum_name, widget_class)                                             \
     if (!found)                                                                   \
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
@@ -65,7 +65,7 @@ MethodResult configOf(QWidget* widget)
         }                                                                         \
     }
 
-    FOR_EACH_WIDGET(GET_CONFIG_CASE)
+    DASHBOARD_WIDGET_TABLE(GET_CONFIG_CASE)
 #undef GET_CONFIG_CASE
 
     if (!found)
@@ -95,7 +95,7 @@ std::expected<widget_config_t, AgentError> patchedConfig(QWidget* widget, const 
     std::vector<std::string> errors;
     bool found = false;
 
-#define PATCH_CONFIG_CASE(widget_class)                                           \
+#define PATCH_CONFIG_CASE(enum_name, widget_class)                                           \
     if (!found)                                                                   \
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
@@ -107,7 +107,7 @@ std::expected<widget_config_t, AgentError> patchedConfig(QWidget* widget, const 
         }                                                                         \
     }
 
-    FOR_EACH_WIDGET(PATCH_CONFIG_CASE)
+    DASHBOARD_WIDGET_TABLE(PATCH_CONFIG_CASE)
 #undef PATCH_CONFIG_CASE
 
     if (!found)
@@ -232,9 +232,9 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
                 {
                     json data = json::object();
                     json known = json::array();
-#define KNOWN_TYPE_CASE(widget_class) \
+#define KNOWN_TYPE_CASE(enum_name, widget_class) \
     known.push_back(std::string(reflection::enum_to_string(widget_class::kWidgetType)));
-                    FOR_EACH_WIDGET(KNOWN_TYPE_CASE)
+                    DASHBOARD_WIDGET_TABLE(KNOWN_TYPE_CASE)
 #undef KNOWN_TYPE_CASE
                     data["known_types"] = std::move(known);
                     return std::unexpected(AgentError{
@@ -260,14 +260,14 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
 
             json schema;
             bool found = false;
-#define DESCRIBE_CASE(widget_class)                                                    \
+#define DESCRIBE_CASE(enum_name, widget_class)                                                    \
     if (!found && *type == widget_class::kWidgetType)                                  \
     {                                                                                  \
         schema = config_json::describeType<widget_class::config_t>();                   \
         schema["friendly_name"] = std::string(widget_class::kFriendlyName);             \
         found = true;                                                                   \
     }
-            FOR_EACH_WIDGET(DESCRIBE_CASE)
+            DASHBOARD_WIDGET_TABLE(DESCRIBE_CASE)
 #undef DESCRIBE_CASE
 
             if (!found)
