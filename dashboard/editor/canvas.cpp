@@ -66,9 +66,18 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
     resize(app_cfg.width, app_cfg.height);
     setBackgroundColor(QString::fromStdString(app_cfg.background_color));
 
-    // Create and place widgets per config
+    // Create and place widgets per config.
+    //
+    // The naming index counts config entries, not successfully created frames.
+    // MainWindow does the same, and it has to: a config with one unknown widget
+    // would otherwise give every widget after it a different derived
+    // "<type>#<index>" in the editor than in the dashboard -- which is exactly
+    // what widget_identity.h exists to prevent.
+    std::size_t config_index = 0;
     for (const auto& wcfg : app_cfg.widgets)
     {
+        const std::size_t this_index = config_index++;
+
         if (wcfg.type == widget_type_t::unknown)
         {
             SPDLOG_WARN("Skipping widget with unknown type at ({}, {})", wcfg.x, wcfg.y);
@@ -87,7 +96,7 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         // apps. setId() only stores a non-empty id, so the fallback names the
         // frame without inventing an id that would then be written to the YAML.
         frame->setId(wcfg.id);
-        frame->setObjectName(dashboard::widgetObjectName(wcfg, items_.size()));
+        frame->setObjectName(dashboard::widgetObjectName(wcfg, this_index));
 
         // Apply typed widget configuration. A mismatch here means the config's
         // `type` and its `config` block disagree, which the YAML decoder should
@@ -114,12 +123,12 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         // Apply editor mode mouse transparency
         frame->setEditorModeCapture(editorMode_);
 
-        Item item;
-        item.widget = frame;
-        item.type = wcfg.type;
-        item.position = QPoint(wcfg.x, wcfg.y);
-        items_.push_back(std::move(item));
+        items_.push_back(Item{frame});
     }
+
+    // Continue naming past whatever the file used, so a widget added right after
+    // a load cannot collide with one that came out of it.
+    nextNameIndex_ = config_index;
 
     // No selection after load
     selected_ = nullptr;
@@ -234,9 +243,14 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
 
     // Name it on the same rule as a loaded widget, so something just added is
     // immediately addressable rather than only after a save and reload.
+    //
+    // The index comes from a counter that only ever goes up, not from
+    // items_.size(). With the size, adding three widgets and deleting the middle
+    // one left the next addition reusing a live name -- and an agent selector
+    // that matches two widgets is an AMBIGUOUS_SELECTOR error, not a coin toss.
     widget_config_t naming_cfg;
     naming_cfg.type = type;
-    frame->setObjectName(dashboard::widgetObjectName(naming_cfg, items_.size()));
+    frame->setObjectName(dashboard::widgetObjectName(naming_cfg, nextNameIndex_++));
 
     if (frame->child())
     {
@@ -260,11 +274,7 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
     // Apply current editor mode to the new widget subtree
     frame->setEditorModeCapture(editorMode_);
 
-    Item item;
-    item.widget = frame;
-    item.type = type;
-    item.position = pos;
-    items_.push_back(std::move(item));
+    items_.push_back(Item{frame});
     update();
 
     selectFrame(frame);

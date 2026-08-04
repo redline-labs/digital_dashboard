@@ -163,6 +163,79 @@ void testDeletingTheSelectionLeavesAConsistentCanvas()
     }
 }
 
+// Derived names used to come from items_.size(), so deleting one widget and
+// adding another handed out a name that was already in use. An agent selector
+// matching two widgets is an AMBIGUOUS_SELECTOR error, not a coin toss.
+void testDerivedNamesAreNotReusedAfterADelete()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+
+    SelectionFrame* a = canvas.addWidget(widget_type_t::static_text, QPoint(0, 0));
+    SelectionFrame* b = canvas.addWidget(widget_type_t::static_text, QPoint(10, 10));
+    if (!a || !b)
+    {
+        check(false, "expected two widgets to be added");
+        return;
+    }
+
+    const QString name_b = b->objectName();
+    check(a->objectName() != name_b, "two added widgets get different names");
+
+    check(canvas.removeFrame(a), "the first added widget is removed");
+
+    SelectionFrame* c = canvas.addWidget(widget_type_t::static_text, QPoint(20, 20));
+    check(c != nullptr && c->objectName() != name_b,
+          "a widget added after a delete does not reuse a live name (got '" +
+              (c ? c->objectName().toStdString() : std::string("<null>")) + "', live is '" +
+              name_b.toStdString() + "')");
+
+    // ...and it must not collide with the names the loaded config produced.
+    for (SelectionFrame* frame : canvas.frames())
+    {
+        if (frame != c)
+        {
+            check(frame->objectName() != c->objectName(),
+                  "the new name does not collide with '" + frame->objectName().toStdString() + "'");
+        }
+    }
+}
+
+// The naming index counts config entries, not created frames. A config with one
+// unrecognised widget in it would otherwise shift every later widget's derived
+// name in the editor relative to the dashboard.
+void testAnUnknownWidgetDoesNotShiftLaterNames()
+{
+    app_config_t cfg = twoStaticTexts("w");
+
+    // Insert an entry the editor will skip, ahead of the others.
+    widget_config_t broken;
+    broken.type = widget_type_t::unknown;
+    cfg.widgets.insert(cfg.widgets.begin(), broken);
+
+    // Strip the explicit ids so the derived names are what gets tested.
+    for (auto& wc : cfg.widgets)
+    {
+        wc.id.clear();
+    }
+
+    Canvas canvas;
+    canvas.loadFromAppConfig(cfg);
+
+    const auto frames = canvas.frames();
+    check(frames.size() == 2, "the unknown widget is skipped, the others are not");
+    if (frames.size() == 2)
+    {
+        // Config indices 1 and 2 -- what MainWindow would derive for the same file.
+        check(frames[0]->objectName() == "static_text#1",
+              "the first real widget keeps its config index, got '" +
+                  frames[0]->objectName().toStdString() + "'");
+        check(frames[1]->objectName() == "static_text#2",
+              "the second real widget keeps its config index, got '" +
+                  frames[1]->objectName().toStdString() + "'");
+    }
+}
+
 // A drag carrying text that is not a widget type used to reach a throwing
 // lookup inside a Qt event handler and terminate the editor.
 void testUnknownDropPayloadIsRefused()
@@ -194,6 +267,8 @@ int main(int argc, char** argv)
     testWidgetIdentityAndConfigSurviveTheEditor();
     testSelectingASecondWidgetOfTheSameTypeShowsItsOwnValues();
     testDeletingTheSelectionLeavesAConsistentCanvas();
+    testDerivedNamesAreNotReusedAfterADelete();
+    testAnUnknownWidgetDoesNotShiftLaterNames();
     testUnknownDropPayloadIsRefused();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);

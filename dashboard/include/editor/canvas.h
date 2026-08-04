@@ -57,13 +57,22 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    // Just the frame. There were two more fields here -- a cached `type` and a
+    // `position` -- and both were dead weight that had already gone stale:
+    // `position` was written when the widget was created and never updated by a
+    // drag, editor.move or editor.resize, and nothing read it (widgetRect() asks
+    // the widget). `type` duplicated SelectionFrame::type_, which every reader
+    // used instead. A second copy of state that nobody maintains is where the
+    // next bug comes from.
     struct Item {
         QWidget* widget;
-        widget_type_t type; // cached type for this widget
-        QPoint position; // top-left position in canvas coordinates
     };
 
     std::vector<Item> items_;
+
+    // Monotonic source of derived widget names. Never reset by a deletion, so a
+    // name is not handed out twice within one editing session.
+    std::size_t nextNameIndex_ = 0;
 
     std::string windowName_;
 
