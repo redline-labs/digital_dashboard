@@ -559,15 +559,26 @@ struct enum_traits
         return std::nullopt;
     }
 
-    // Every valid spelling, comma-separated. Callers put this in error messages:
+    // Valid spellings, comma-separated. Callers put this in error messages:
     // "invalid value" without the alternatives sends the reader to the source.
-    static std::string known_values()
+    //
+    // Capped, because some of these enums are large -- the schema registry has
+    // 70-odd entries, and a wall of them buries the one line that says what was
+    // actually wrong.
+    static std::string known_values(std::size_t limit = 12)
     {
         std::string out;
+        std::size_t shown = 0;
         for (const auto& name : names())
         {
+            if (shown == limit)
+            {
+                out += ", ... (" + std::to_string(names().size() - shown) + " more)";
+                break;
+            }
             if (!out.empty()) out += ", ";
             out.append(name);
+            ++shown;
         }
         return out;
     }

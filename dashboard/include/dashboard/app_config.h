@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "reflection/reflection.h"
+#include "dashboard/config_validation.h"
 #include "dashboard/widget_types.h"
 #include "helpers/color.h"
 
@@ -92,14 +93,18 @@ struct convert<reflect_enum_name> \
     } \
     static bool decode(const Node& node, reflect_enum_name& rhs) \
     { \
+        /* Silent on failure by design: validate_app_config() reports the same */ \
+        /* problem with the field's path and the valid alternatives, and two */ \
+        /* messages for one typo is worse than one good one. */ \
         try \
         { \
-            rhs = reflection::enum_traits<reflect_enum_name>::from_string(node.as<std::string>()); \
+            const auto value = reflection::enum_traits<reflect_enum_name>::try_from_string(node.as<std::string>()); \
+            if (!value) return false; \
+            rhs = *value; \
             return true; \
         } \
-        catch (const std::exception& e) \
+        catch (const std::exception&) \
         { \
-            SPDLOG_ERROR("{}.", e.what()); \
             return false; \
         } \
     } \
@@ -205,6 +210,11 @@ struct convert<widget_config_t> {
 
 }   // namespace YAML
 
+
+// Checks a parsed config tree and returns everything wrong with it, each with a
+// path like "widgets[3].config.zenoh_key". Errors mean the file cannot be loaded
+// as written; warnings mean something in it was ignored.
+std::vector<dashboard::config::Issue> validate_app_config(const YAML::Node& root);
 
 std::optional<app_config_t> load_app_config(const std::string& config_filepath);
 
