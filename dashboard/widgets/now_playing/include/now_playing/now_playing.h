@@ -6,6 +6,7 @@
 
 #include "pub_sub/zenoh_subscriber.h"
 #include "carplay_nowplaying.capnp.h"
+#include "carplay_call.capnp.h"
 
 #include <QtWidgets/QWidget>
 #include <QFont>
@@ -14,6 +15,8 @@
 #include <QPixmap>
 #include <QSize>
 #include <QString>
+#include <QTimer>
+#include <QVariantAnimation>
 
 #include <memory>
 #include <mutex>
@@ -38,8 +41,16 @@ class NowPlayingWidget : public QWidget
     void paintEvent(QPaintEvent* event) override;
 
   private:
-    // Runs on the zenoh subscriber thread.
+    // Both run on zenoh subscriber threads.
     void onNowPlaying(CarPlayNowPlaying::Reader reader);
+    void onCall(CarPlayCall::Reader reader);
+
+    // Qt thread. Starts the fade towards `to_call` if it is not already headed
+    // there, and arms the linger timer when a call has just ended.
+    void driveTransition(bool to_call);
+
+    void paintMusic(QPainter& p, const QRectF& bounds);
+    void paintCall(QPainter& p, const QRectF& bounds);
 
     NowPlayingConfig_t _cfg;
 
@@ -78,7 +89,26 @@ class NowPlayingWidget : public QWidget
     QSize _scaled_art_size;
     uint32_t _scaled_art_seq = kNoArtSeq;
 
+    // ---- Call takeover -----------------------------------------------------
+    // Guarded by _mutex like the media fields above; written by the call
+    // subscriber thread, read by paint.
+    CarPlayCall::State _call_state = CarPlayCall::State::IDLE;
+    QString _call_name;
+    QString _call_number;
+    float _call_duration_sec = 0.0f;
+
+    // 0 is fully music, 1 is fully call. Qt thread only -- the animation that
+    // drives it and the paint that reads it both run there, so it needs no lock.
+    qreal _call_mix = 0.0;
+    // What the animation is currently heading towards, so a repeated update for
+    // an unchanged call state does not restart the fade on every sample.
+    bool _showing_call = false;
+    QVariantAnimation _transition;
+    // Holds the call face up for call_linger_ms after the phone hangs up.
+    QTimer _linger;
+
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayNowPlaying>> _sub;
+    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayCall>> _call_sub;
 };
 
 #endif  // NOW_PLAYING_WIDGET_H_

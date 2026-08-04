@@ -398,6 +398,29 @@ void testEconomyRedStartStaysOnTheBand()
           "the default red_start_fraction is left alone");
 }
 
+void testCallTakeoverTimingsStayBounded()
+{
+    // transition_ms drives a QVariantAnimation and call_linger_ms a QTimer. An
+    // unbounded transition parks the widget half-way through the cross-fade;
+    // an unbounded linger holds the call face up long after the call ended.
+    NowPlayingConfig_t slow;
+    slow.transition_ms = 60000;
+    check(!validate(slow).empty(), "an absurd transition_ms is reported");
+    check(slow.transition_ms <= 2000, "an absurd transition_ms is pulled back");
+
+    NowPlayingConfig_t sticky;
+    sticky.call_linger_ms = 60000;
+    check(!validate(sticky).empty(), "an absurd call_linger_ms is reported");
+    check(sticky.call_linger_ms <= 10000, "an absurd call_linger_ms is pulled back");
+
+    // Zero is legal on both -- an instant cut, and no lingering "Call ended" --
+    // so it must pass through without being reported as an adjustment.
+    NowPlayingConfig_t instant;
+    instant.transition_ms = 0;
+    instant.call_linger_ms = 0;
+    check(validate(instant).empty(), "zero timings are left alone");
+}
+
 void testUpdateRateCannotBecomeAZeroMillisecondTimer()
 {
     // update_rate feeds `1000 / update_rate` as a millisecond interval, so 2000
@@ -472,6 +495,7 @@ int main()
     testRedlineCannotExceedFullScale();
     testInvertedRangesAreOrdered();
     testEconomyRedStartStaysOnTheBand();
+    testCallTakeoverTimingsStayBounded();
     testUpdateRateCannotBecomeAZeroMillisecondTimer();
     testOverlongListsAreCapped();
     testOdometerCannotOutrunItsDigits();
