@@ -22,10 +22,16 @@ public:
     void setEditorMode(bool enabled);
     // Clear and populate from a dashboard window configuration
     void loadFromAppConfig(const app_config_t& app_cfg);
-    // Export current canvas as a window configuration with given name
-    app_config_t exportAppConfig(const std::string& window_name) const;
+    // Export current canvas as a window configuration.
+    app_config_t exportAppConfig() const;
     // Current background color hex string (e.g. "#1e1e1e")
     QString getBackgroundColorHex() const;
+
+    // The window's name, carried through load -> save so a config keeps the one
+    // it arrived with. The canvas owns it for the same reason it owns the
+    // background colour: it is window state, and it has to survive an export.
+    const std::string& windowName() const { return windowName_; }
+    void setWindowName(std::string name) { windowName_ = std::move(name); }
 
     // Dialog-free, event-free editing. dropEvent is a thin wrapper over
     // addWidget, so a widget added by an agent and one added by dragging from
@@ -57,6 +63,8 @@ private:
     };
 
     std::vector<Item> items_;
+
+    std::string windowName_;
 
     QWidget* selected_ = nullptr; // points to SelectionFrame now
     QRect selectedRect_;

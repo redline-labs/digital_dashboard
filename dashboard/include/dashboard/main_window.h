@@ -29,7 +29,18 @@ class MainWindow : public QWidget
     void createWidgetsFromConfig();
 
     app_config_t _app_cfg;
-    std::vector<std::unique_ptr<QWidget>> _widgets;
+
+    // A live widget and the index of the config entry it was built from. The
+    // two are not the same number: a widget that fails to construct is skipped
+    // here but kept in _app_cfg.widgets, so after one failure the positions
+    // drift apart and rebuildWidget() wrote a new config over its neighbour.
+    struct LiveWidget
+    {
+        std::unique_ptr<QWidget> widget;
+        std::size_t config_index;
+    };
+
+    std::vector<LiveWidget> _widgets;
 };  // class MainWindow
 
 

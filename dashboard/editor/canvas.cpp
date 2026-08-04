@@ -61,7 +61,8 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
     // Remove existing first
     clearAll();
 
-    // Canvas adopts window size and background color
+    // Canvas adopts window name, size and background color
+    windowName_ = app_cfg.name;
     resize(app_cfg.width, app_cfg.height);
     setBackgroundColor(QString::fromStdString(app_cfg.background_color));
 
@@ -120,10 +121,10 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
     update();
 }
 
-app_config_t Canvas::exportAppConfig(const std::string& window_name) const
+app_config_t Canvas::exportAppConfig() const
 {
     app_config_t cfg;
-    cfg.name = window_name;
+    cfg.name = windowName_;
     cfg.width = static_cast<uint16_t>(width());
     cfg.height = static_cast<uint16_t>(height());
     cfg.background_color = getBackgroundColorHex().toStdString();

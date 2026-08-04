@@ -28,8 +28,16 @@ private:
 
     QStackedWidget* stack_;
 
-    // Cache of dynamically built pages keyed by widget class name
-    QHash<QString, QWidget*> widgetPages_;
+    // The form for the current selection. Rebuilt on every selection change and
+    // owned only until the next one.
+    //
+    // This used to be a cache keyed by widget *class* name, which meant two
+    // widgets of the same type shared one page: selecting the second showed the
+    // first's values, and Apply then wrote them into the second. A per-instance
+    // cache would fix the values but still leak a page per widget, and the form
+    // has to be re-read from the live config on selection anyway -- so there is
+    // nothing worth keeping between selections.
+    QPointer<QWidget> currentPage_;
 
     // Window editors
     QWidget* windowPage_;
@@ -40,6 +48,8 @@ private:
     Canvas* canvas_;
     bool isSyncing_;
 
+    void discardCurrentPage();
+    void showPage(QWidget* page);
     void showUnsupported(const QString& name);
     void buildWindowPage();
     void applyWindowEdits();

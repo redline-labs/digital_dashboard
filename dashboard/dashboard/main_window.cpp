@@ -45,8 +45,9 @@ void MainWindow::createWidgetsFromConfig()
             widget->setGeometry(widget_config.x, widget_config.y, widget_config.width, widget_config.height);
             widget->show();
 
-            // Store the widget
-            _widgets.emplace_back(std::unique_ptr<QWidget>(widget));
+            // Store the widget alongside the config entry it came from, so a
+            // later rebuild updates the right one.
+            _widgets.emplace_back(LiveWidget{std::unique_ptr<QWidget>(widget), this_index});
 
             SPDLOG_INFO("Created widget '{}' (id '{}') at ({}, {}) with size {}x{} in window '{}'",
                 reflection::enum_to_string(widget_config.type),
@@ -75,7 +76,7 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
 {
     for (std::size_t i = 0; i < _widgets.size(); ++i)
     {
-        if (_widgets[i].get() != existing)
+        if (_widgets[i].widget.get() != existing)
         {
             continue;
         }
@@ -99,22 +100,25 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
         replacement->show();
 
         // Keep the stored config in step, so a later read reports what is
-        // actually on screen.
-        if (i < _app_cfg.widgets.size())
+        // actually on screen. Index through the widget's own config_index: the
+        // position in _widgets is not the position in _app_cfg.widgets once any
+        // widget has failed to build.
+        const std::size_t cfg_index = _widgets[i].config_index;
+        if (cfg_index < _app_cfg.widgets.size())
         {
-            const std::string id = _app_cfg.widgets[i].id;
-            _app_cfg.widgets[i] = cfg;
-            _app_cfg.widgets[i].id = id;
-            _app_cfg.widgets[i].x = static_cast<int16_t>(geometry.x());
-            _app_cfg.widgets[i].y = static_cast<int16_t>(geometry.y());
-            _app_cfg.widgets[i].width = static_cast<uint16_t>(geometry.width());
-            _app_cfg.widgets[i].height = static_cast<uint16_t>(geometry.height());
+            const std::string id = _app_cfg.widgets[cfg_index].id;
+            _app_cfg.widgets[cfg_index] = cfg;
+            _app_cfg.widgets[cfg_index].id = id;
+            _app_cfg.widgets[cfg_index].x = static_cast<int16_t>(geometry.x());
+            _app_cfg.widgets[cfg_index].y = static_cast<int16_t>(geometry.y());
+            _app_cfg.widgets[cfg_index].width = static_cast<uint16_t>(geometry.width());
+            _app_cfg.widgets[cfg_index].height = static_cast<uint16_t>(geometry.height());
         }
 
         // Assigning the unique_ptr destroys the old widget immediately. That is
         // wanted here: the caller is about to snapshot, and a deleteLater'd
         // widget would still be in the tree when it did.
-        _widgets[i] = std::unique_ptr<QWidget>(replacement);
+        _widgets[i].widget = std::unique_ptr<QWidget>(replacement);
         return true;
     }
 

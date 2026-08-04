@@ -34,7 +34,7 @@ PropertiesPanel::PropertiesPanel(QWidget* parent):
   QWidget(parent),
   selected_(nullptr),
   stack_(new QStackedWidget(this)),
-  widgetPages_(),
+  currentPage_(nullptr),
   windowPage_(nullptr),
   winNameEdit_(nullptr),
   winWidthSpin_(nullptr),
@@ -361,11 +361,17 @@ namespace
         }
     }
 
+    // Patches `cfg` in place from the form's editors and returns it.
+    //
+    // The seed matters. This used to start from a default-constructed Config, so
+    // every field the form could not render -- an unsupported type, a missing
+    // editor -- was written back as the type default, silently destroying it on
+    // each Apply. Starting from the widget's live config means a field the form
+    // does not touch simply survives, which is what the agent's set_config path
+    // has always done (see patchedConfig in dashboard/agent/widget_methods.cpp).
     template <typename Config>
-    Config readIntoConfig(QWidget* page, const QString& basePath = "")
+    Config readIntoConfig(QWidget* page, Config cfg, const QString& basePath = "")
     {
-        Config cfg{};
-
         reflection::visit_fields(cfg, [&](std::string_view name, auto& ref, std::string_view /*typeName*/)
         {
             const QString field = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
@@ -373,7 +379,7 @@ namespace
             using FieldType = std::decay_t<decltype(ref)>;
             if constexpr (reflection::is_reflected_struct<FieldType>::value)
             {
-                ref = readIntoConfig<FieldType>(page, path);
+                ref = readIntoConfig<FieldType>(page, ref, path);
             }
             else if constexpr (reflection::is_std_vector<FieldType>::value)
             {
@@ -385,7 +391,10 @@ namespace
                     const QString on = QString("field:%1").arg(elemPath);
                     QWidget* any = page->findChild<QWidget*>(on);
                     if (!any) break;
-                    Elem v{};
+
+                    // Seed each element from the one already at that index, for
+                    // the same reason as the struct case above.
+                    Elem v = (static_cast<std::size_t>(i) < ref.size()) ? ref[static_cast<std::size_t>(i)] : Elem{};
                     readLeafFromWidget(page, elemPath, v);
                     outVec.push_back(std::move(v));
                 }
@@ -480,18 +489,24 @@ namespace
             if (!frame) return; // editor always wraps in SelectionFrame
 
             const widget_type_t type = frame->type();
-            
-            // Use FOR_EACH_WIDGET to generate switch cases
+
+            // Use FOR_EACH_WIDGET to generate switch cases. qobject_cast, not
+            // static_cast: if the frame's declared type and its actual child
+            // ever disagree, a static_cast here is undefined behaviour, and the
+            // seed below would read a config out of the wrong object.
             switch (type)
             {
 #define APPLY_CONFIG_CASE(widget_class) \
                 case widget_class::kWidgetType: \
-                    frame->applyConfig(readIntoConfig<widget_class::config_t>(page)); \
+                    if (auto* typed = qobject_cast<widget_class*>(frame->child())) \
+                    { \
+                        frame->applyConfig(readIntoConfig<widget_class::config_t>(page, typed->getConfig())); \
+                    } \
                     break;
-                
+
                 FOR_EACH_WIDGET(APPLY_CONFIG_CASE)
 #undef APPLY_CONFIG_CASE
-                
+
                 case widget_type_t::unknown:
                 default:
                     break;
@@ -537,19 +552,43 @@ void PropertiesPanel::buildWindowPage()
     connect(winBgColorEdit_, &QLineEdit::textEdited, this, [this]{ applyWindowEdits(); });
 }
 
+void PropertiesPanel::discardCurrentPage()
+{
+    if (currentPage_)
+    {
+        // Take it out of the stack before deleting so the stack never holds a
+        // dangling entry. This used to leak a page into the stack on every
+        // selection.
+        stack_->removeWidget(currentPage_);
+        currentPage_->deleteLater();
+        currentPage_ = nullptr;
+    }
+}
+
+void PropertiesPanel::showPage(QWidget* page)
+{
+    currentPage_ = page;
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
+}
+
 void PropertiesPanel::showUnsupported(const QString& name)
 {
     auto* page = new QWidget(this);
     auto* v = new QVBoxLayout(page);
     v->addWidget(new QLabel(QString("%1 properties not yet supported").arg(name)));
     v->addStretch();
-    stack_->addWidget(page);
-    stack_->setCurrentWidget(page);
+    showPage(page);
 }
 
 void PropertiesPanel::setSelectedWidget(QWidget* w)
 {
     selected_ = w;
+
+    // Always start from a clean page. The form's values come from this
+    // selection's live config, so nothing from the previous one may survive.
+    discardCurrentPage();
+
     if (!w)
     {
         // Show window properties when no widget selected
@@ -564,11 +603,13 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
     // Unwrap SelectionFrame for UI classification
     QWidget* uiWidget = w;
     if (auto* frame = qobject_cast<SelectionFrame*>(uiWidget)) uiWidget = frame->child();
-    if (!uiWidget) uiWidget = w; // fallback
-    const QString qtClass = uiWidget->metaObject()->className();
-    if (widgetPages_.contains(qtClass))
+
+    // No child means the frame holds nothing to configure. Bail rather than
+    // fall through to `uiWidget = w`, which fed a SelectionFrame* into a
+    // static_cast to an unrelated widget type below.
+    if (!uiWidget)
     {
-        stack_->setCurrentWidget(widgetPages_.value(qtClass));
+        showUnsupported(w->metaObject()->className());
         return;
     }
 
@@ -585,7 +626,10 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
     {
 #define BUILD_FORM_CASE(widget_class) \
         case widget_class::kWidgetType: \
-            page = buildFormFromConfig<widget_class::config_t>(this, static_cast<widget_class*>(uiWidget)->getConfig()); \
+            if (auto* typed = qobject_cast<widget_class*>(uiWidget)) \
+            { \
+                page = buildFormFromConfig<widget_class::config_t>(this, typed->getConfig()); \
+            } \
             break;
         
         FOR_EACH_WIDGET(BUILD_FORM_CASE)
@@ -598,9 +642,7 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
 
     if (page)
     {
-        widgetPages_.insert(qtClass, page);
-        stack_->addWidget(page);
-        stack_->setCurrentWidget(page);
+        showPage(page);
         return;
     }
 
@@ -615,7 +657,11 @@ void PropertiesPanel::applyWindowEdits()
 {
     if (isSyncing_) return; // avoid pushing during UI sync
     if (!canvas_) return;
-    // Apply background immediately; name/size can be used for serialization later
+
+    // The name is round-tripped through the canvas into the saved YAML. It used
+    // to be collected here and never read, while save hardcoded its own.
+    canvas_->setWindowName(winNameEdit_->text().toStdString());
+
     if (!winBgColorEdit_->text().isEmpty())
     {
         canvas_->setBackgroundColor(winBgColorEdit_->text());
@@ -634,6 +680,7 @@ void PropertiesPanel::syncFromCanvas()
     const QSignalBlocker b3(winHeightSpin_);
     const QSignalBlocker b4(winBgColorEdit_);
     isSyncing_ = true;
+    winNameEdit_->setText(QString::fromStdString(canvas_->windowName()));
     winWidthSpin_->setValue(canvas_->width());
     winHeightSpin_->setValue(canvas_->height());
     winBgColorEdit_->setText(canvas_->getBackgroundColorHex());

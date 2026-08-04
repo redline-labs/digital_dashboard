@@ -148,17 +148,38 @@ bool EditorWindow::saveConfigTo(const QString& path)
         return false;
     }
 
-    // Export current canvas to a single-window app config
-    app_config_t app = canvas_->exportAppConfig("editor_window");
+    // Export current canvas to a single-window app config. The name comes from
+    // the canvas, which carries the one the config was loaded with -- this used
+    // to be hardcoded to "editor_window", so load-then-save renamed every
+    // config it touched.
+    app_config_t app = canvas_->exportAppConfig();
 
     try
     {
         YAML::Node node = YAML::convert<app_config_t>::encode(app);
         YAML::Emitter emitter;
         emitter << node;
+
+        // Check the stream, both at open and after writing. This reported
+        // success unconditionally, so saving to a path the process cannot write
+        // showed "Saved config to ..." and dropped the layout on the floor.
         std::ofstream ofs(path.toStdString());
+        if (!ofs)
+        {
+            SPDLOG_ERROR("Failed to open '{}' for writing.", path.toStdString());
+            statusBar()->showMessage(QString("Could not write %1").arg(path), 5000);
+            return false;
+        }
+
         ofs << emitter.c_str();
         ofs.close();
+        if (!ofs)
+        {
+            SPDLOG_ERROR("Failed to write '{}'.", path.toStdString());
+            statusBar()->showMessage(QString("Could not write %1").arg(path), 5000);
+            return false;
+        }
+
         statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
         SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
         return true;

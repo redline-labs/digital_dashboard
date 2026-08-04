@@ -216,9 +216,12 @@ void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
     painter->setPen(Qt::NoPen); // No border for the boxes
     painter->setBrush(Qt::white); // White boxes
 
-    for (uint8_t i = 0; i < cfg_.shift_box_markers.size(); ++i)
+    // std::size_t, not uint8_t: the counter used to be the same width as the
+    // element type, so a config with 256 or more markers wrapped it back to 0
+    // and this loop never ended.
+    for (std::size_t i = 0; i < cfg_.shift_box_markers.size(); ++i)
     {
-        drawBoxesAtMPH(painter, static_cast<float>(cfg_.shift_box_markers[i]), i + 1);
+        drawBoxesAtMPH(painter, static_cast<float>(cfg_.shift_box_markers[i]), static_cast<int>(i) + 1);
     }
 
     painter->restore(); // Restores pen and brush settings set before drawing markers
