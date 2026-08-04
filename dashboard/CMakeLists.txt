@@ -111,6 +111,48 @@ if (APPLE)
     #set_source_files_properties("${DEFAULT_EDITOR_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif()
 
+# ---------------------------------------------------------------------- tests
+
+# The YAML codec and the validator are plain logic over reflected structs, so
+# they are unit-testable without a display. Both link the widget libraries
+# because their coverage is driven by FOR_EACH_WIDGET.
+foreach(config_test roundtrip validation)
+    add_executable(dashboard_test_config_${config_test} dashboard/test_config_${config_test}.cpp)
+    target_include_directories(dashboard_test_config_${config_test} PRIVATE include)
+    target_sources(dashboard_test_config_${config_test} PRIVATE dashboard/app_config.cpp)
+    target_link_libraries(dashboard_test_config_${config_test} PRIVATE
+        Qt6::Core
+        Qt6::Widgets
+        zenoh_pub_sub
+        helpers
+        spdlog::spdlog
+        yaml-cpp::yaml-cpp
+        ${WIDGET_LIBS}
+    )
+    add_project_test(TARGET dashboard_test_config_${config_test} LABELS dashboard unit)
+endforeach()
+
+# The editor's own load/edit/export path, above the codec. Constructs real
+# widgets, so it is a gui test and runs offscreen.
+qt_add_executable(editor_test_roundtrip
+    editor/test_editor_roundtrip.cpp
+    editor/canvas.cpp
+    editor/properties_panel.cpp
+    editor/selection_frame.cpp
+    dashboard/app_config.cpp
+)
+target_include_directories(editor_test_roundtrip PRIVATE include)
+target_link_libraries(editor_test_roundtrip PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    zenoh_pub_sub
+    helpers
+    spdlog::spdlog
+    yaml-cpp::yaml-cpp
+    ${WIDGET_LIBS}
+)
+add_project_test(TARGET editor_test_roundtrip LABELS dashboard gui)
+
 target_link_libraries(editor PRIVATE
     Qt6::Core
     Qt6::Widgets

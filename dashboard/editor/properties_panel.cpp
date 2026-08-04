@@ -568,7 +568,18 @@ void PropertiesPanel::discardCurrentPage()
         // dangling entry. This used to leak a page into the stack on every
         // selection.
         stack_->removeWidget(currentPage_);
-        currentPage_->deleteLater();
+
+        // Destroyed now, not deleteLater'd. removeWidget() only takes the page
+        // out of the layout -- it stays a child of the stack until it is really
+        // deleted, and every field editor on it keeps its "field:<path>"
+        // objectName. Anything doing findChild() before the event loop next runs
+        // would then find the *old* page's editor and read the previously
+        // selected widget's values. MainWindow::rebuildWidget destroys
+        // synchronously for the same reason.
+        //
+        // Safe here because selection changes arrive from the canvas, never from
+        // inside one of this page's own widgets.
+        delete currentPage_;
         currentPage_ = nullptr;
     }
 }
