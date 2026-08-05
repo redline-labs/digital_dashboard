@@ -1,0 +1,139 @@
+#include "scope/command_line_args.h"
+#include "scope/scope_window.h"
+
+#include "agent_control/log_sink.h"
+#include "agent_control/methods.h"
+#include "agent_control/server.h"
+#include "agent_control/zenoh_methods.h"
+
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <iostream>
+#include <memory>
+
+#include <QApplication>
+#include <QTimer>
+
+int main(int argc, char** argv)
+{
+    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+
+    // Parse before touching sinks or Qt: --mcp changes both where logs go and
+    // which platform plugin QApplication will pick, and the platform can only
+    // be chosen before QApplication is constructed.
+    auto args = scope::parseCommandLineArgs(argc, argv);
+    if (!args)
+    {
+        return -1;
+    }
+
+    const bool agent_mode = args->mcp_socket_path.has_value();
+
+    if (agent_mode)
+    {
+        // Headless, always. No window manager, no display, no way for a stray
+        // window to steal focus on a developer's desktop.
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+
+        // stdout carries the AGENT_READY handshake line and nothing else, so
+        // the supervising process can parse it without wading through log
+        // output. Logs go to stderr, which the companion server captures for
+        // post-mortem after a crash (the in-process ring dies with the process).
+        spdlog::default_logger()->sinks().clear();
+        spdlog::default_logger()->sinks().push_back(
+            std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
+
+        // The queryable ring behind app.logs, plus the bridge that routes Qt's
+        // own diagnostics into the same stream.
+        agent_control::installLogCapture();
+    }
+    else
+    {
+        const size_t max_size_bytes = 5u * 1024u * 1024u;
+        const size_t max_files = 3u;
+        spdlog::default_logger()->sinks().push_back(
+            std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                "logs/scope.txt", max_size_bytes, max_files, true));
+    }
+
+    spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
+
+    QApplication app(argc, argv);
+
+    scope::ScopeWindow window;
+    if (!args->workspace_path.empty())
+    {
+        // Loading lands in M5; until then the path is recorded so app.info
+        // reports what was asked for rather than claiming nothing was.
+        window.setWorkspacePath(QString::fromStdString(args->workspace_path));
+        SPDLOG_INFO("Workspace '{}' requested.", args->workspace_path);
+    }
+    window.show();
+
+    std::unique_ptr<agent_control::AgentServer> agent;
+    if (agent_mode)
+    {
+        agent = std::make_unique<agent_control::AgentServer>("scope");
+
+        agent_control::AppInfo app_info;
+        app_info.app = "scope";
+        app_info.config_path = args->workspace_path;
+        agent_control::registerCoreMethods(*agent, app_info);
+
+        // Publishing a known value and screenshotting the panel that plots it
+        // is the fastest way to check a rendering change, so the zenoh verbs
+        // are as load-bearing here as they are in the dashboard.
+        agent_control::registerZenohMethods(*agent);
+
+        if (!agent->start(*args->mcp_socket_path))
+        {
+            SPDLOG_CRITICAL("Failed to start the agent control interface on '{}'.",
+                            *args->mcp_socket_path);
+            return -1;
+        }
+
+        // The readiness handshake. A supervising process waits for this line
+        // rather than polling for the socket file: the socket exists from the
+        // moment bind() returns, which is before the window is up, so a poller
+        // would connect too early and see an empty widget tree.
+        std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
+    }
+
+    // Only a flag is set from the handler. Neither spdlog nor
+    // QCoreApplication::quit() is async-signal-safe -- calling them here could
+    // deadlock on a lock the interrupted thread already held, which is a hang
+    // at exactly the moment you are trying to stop the process. A timer polls
+    // the flag and does the real work on the GUI thread.
+    static std::atomic<bool> interrupted{false};
+    std::signal(SIGINT, [](int /*signum*/) { interrupted.store(true, std::memory_order_relaxed); });
+
+    QTimer interrupt_poll;
+    QObject::connect(&interrupt_poll, &QTimer::timeout, &app, [&]()
+    {
+        if (interrupted.load(std::memory_order_relaxed))
+        {
+            SPDLOG_WARN("SIGINT received, quitting.");
+            QCoreApplication::quit();
+        }
+    });
+    interrupt_poll.start(std::chrono::milliseconds{100});
+
+    app.exec();  // Blocking.
+
+    SPDLOG_WARN("Exit received, tearing down.");
+
+    // Stop serving before the widgets it points at start being destroyed.
+    if (agent)
+    {
+        agent->stop();
+    }
+
+    return 0;
+}

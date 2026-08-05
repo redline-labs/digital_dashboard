@@ -122,14 +122,27 @@ discovery seeing only live traffic, and what `accepted: false` and
 dashboard/          the dashboard app, the editor, and every widget
   include/          shared headers (widget registry, config, agent glue)
   widgets/<name>/   one static lib per widget, each with its own config.h
+scope/              the time-series visualizer app
+  panels/<name>/    one panel type per directory, each with its own config.h
 libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
-                    airplay, iap2, apple_usb, plist, canopen, dbc_parser
+                    config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
+                    canopen, dbc_parser
 nodes/              single-purpose executables that bridge hardware to zenoh
 schemas/            .capnp definitions; add one line to its CMakeLists to register
 configs/dashboard/  runtime YAML layouts
+configs/scope/      runtime YAML workspaces
 tools/mcp_dashboard/ the MCP server (Python, uv)
 docs/               architecture and bring-up notes
 ```
+
+`config_codec` and `qt_helpers` are the shared layer between the GUI apps.
+`config_codec` is the reflected-struct machinery -- YAML both ways, JSON both
+ways plus a self-description for tooling, validation by field path, and range
+clamping -- and has no Qt in it, deliberately, because the headless config tests
+are its main consumer. `qt_helpers` is the Qt-using sibling of the Qt-free
+`helpers`: the layered paint-cache widget base, colour conversion, resource
+fonts. Anything an app needs that is not about *that* app belongs in one of
+these two, not in the app's include tree.
 
 `docs/carplay_bringup.md` is the deepest doc in the tree and doubles as design
 rationale for the zenoh, threading and paint-lock decisions. Read it before

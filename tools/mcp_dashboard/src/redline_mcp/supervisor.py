@@ -22,7 +22,7 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor"]
+AppName = Literal["dashboard", "editor", "scope"]
 
 # How long to wait for the AGENT_READY handshake before giving up on a launch.
 # Generous because a debug build loading a large config on a cold page cache is
@@ -89,6 +89,10 @@ def binary_for(app: AppName) -> pathlib.Path:
 
     if app == "dashboard":
         candidates = [build / "dashboard" / "dashboard"]
+    elif app == "scope":
+        # Top-level target, and a plain executable everywhere: only the editor
+        # is built as a macOS bundle.
+        candidates = [build / "scope" / "scope"]
     else:
         # The editor is a macOS bundle in this tree; plain executable elsewhere.
         candidates = [

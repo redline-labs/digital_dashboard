@@ -13,13 +13,14 @@ from .client import AgentError
 from .supervisor import AppName, LaunchError, Supervisor
 
 # Repeated verbatim on every tool that takes an `app`. The type is already a
-# two-valued enum, which makes a second instance unrepresentable in the schema;
-# this says why, so the constraint reads as intentional rather than as a gap.
+# closed enum, which makes a second instance of any type unrepresentable in the
+# schema; this says why, so the constraint reads as intentional rather than as
+# a gap.
 APP_FIELD = Field(
     default=None,
     description=(
-        "Which app to target: 'dashboard' or 'editor'. Optional when only one is "
-        "running. There is at most one instance of each type."
+        "Which app to target: 'dashboard', 'editor' or 'scope'. Optional when only "
+        "one is running. There is at most one instance of each type."
     ),
 )
 
@@ -34,14 +35,14 @@ TARGET_FIELD = Field(
 )
 
 INSTRUCTIONS = """\
-Drives the Redline dashboard and editor headlessly (Qt 'offscreen' platform) so
-you can see and interact with them without a human at the screen.
+Drives the Redline dashboard, editor and scope headlessly (Qt 'offscreen'
+platform) so you can see and interact with them without a human at the screen.
 
-AT MOST ONE `dashboard` AND ONE `editor` RUN AT A TIME. There is no support for
-running two dashboards: instances share a zenoh bus, so a second one would
-observe samples injected at the first. `app_launch` on a type that is already
-running REPLACES that instance (any unsaved editor state is lost). To run a
-dashboard and an editor together, call `app_launch` once per type.
+AT MOST ONE OF EACH APP TYPE RUNS AT A TIME. There is no support for running two
+dashboards: instances share a zenoh bus, so a second one would observe samples
+injected at the first. `app_launch` on a type that is already running REPLACES
+that instance (any unsaved editor or scope state is lost). To run several
+together, call `app_launch` once per type.
 
 COORDINATES: every coordinate in this interface is in logical pixels, local to
 the widget you name. There are no screen coordinates anywhere. `ui_screenshot`
