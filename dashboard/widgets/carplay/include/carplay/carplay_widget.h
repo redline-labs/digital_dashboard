@@ -73,9 +73,11 @@ class CarPlayWidget : public QWidget
     void onAudioMessage(CarPlayAudio::Reader reader);
     void onSessionMessage(CarPlaySessionState::Reader reader);
 
-    // Recreates the sink and ring buffer when the phone changes format. Safe to
-    // call from the subscriber thread; hops to the GUI thread internally.
-    void ensureAudioSink(int sample_rate, int channels);
+    // Rebuilds the sink when the phone changes format. Called from the
+    // subscriber thread; queues the work onto the GUI thread and returns
+    // immediately, without waiting for it. See the definition for why the wait
+    // is not merely unnecessary but a deadlock.
+    void requestAudioSink(int sample_rate, int channels);
     void startMicrophone(int sample_rate, int channels);
     void stopMicrophone();
 
@@ -169,6 +171,13 @@ class CarPlayWidget : public QWidget
     // own audio thread, decoupled from the bursty network delivery. The zenoh
     // subscriber thread pushes PCM into the ring directly (it is thread-safe),
     // so audio no longer competes with video on the GUI event loop.
+    //
+    // The ring is built once, in the constructor, and never replaced: a format
+    // change reconfigures it in place. The subscriber thread reads this pointer
+    // without a lock, so swapping it would be both a race on the pointer and a
+    // free of the buffer being pushed into. It used to be rebuilt per format
+    // change, which is what forced the sink rebuild to block the subscriber
+    // thread -- and that block is what deadlocked against widget teardown.
     std::unique_ptr<QAudioSink> _audio_sink;
     std::unique_ptr<AudioRingBuffer> _audio_ring;
     std::atomic<int> _sink_sample_rate{0};

@@ -74,6 +74,13 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
 
     _input_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayInput>>(_cfg.input_key);
 
+    // Before the audio subscriber, which pushes into it from the moment it is
+    // declared. Unconfigured until the first packet names a format; push()
+    // discards into a zero-capacity ring until then, which is what we want --
+    // we do not know the sample rate to buffer it at yet.
+    _audio_ring = std::make_unique<AudioRingBuffer>();
+    _audio_ring->open(QIODevice::ReadOnly);
+
     _video_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayVideo>>(
         _cfg.video_key,
         [this](CarPlayVideo::Reader reader) { onVideoMessage(reader); });
@@ -457,19 +464,41 @@ void CarPlayWidget::onAudioMessage(CarPlayAudio::Reader reader)
     // this (subscriber) thread, with no GUI-thread hop per packet.
     if (rate != _sink_sample_rate.load() || channels != _sink_channels.load())
     {
-        ensureAudioSink(rate, channels);
+        requestAudioSink(rate, channels);
     }
-    if (_audio_ring)
-    {
-        _audio_ring->push(reinterpret_cast<const char*>(pcm.begin()),
-                          static_cast<qint64>(pcm.size()));
-    }
+    _audio_ring->push(reinterpret_cast<const char*>(pcm.begin()),
+                      static_cast<qint64>(pcm.size()));
 }
 
-void CarPlayWidget::ensureAudioSink(int sample_rate, int channels)
+void CarPlayWidget::requestAudioSink(int sample_rate, int channels)
 {
-    // QAudioSink lives on the GUI thread; recreate it there. Block so the ring
-    // exists before we return to the caller that is about to push into it.
+    // Claim the format here, on this (subscriber) thread, rather than inside the
+    // lambda. The next packet is 20 ms behind this one and the GUI thread will
+    // not necessarily have run by then, so leaving the claim to the lambda
+    // queues a fresh rebuild per packet until it does.
+    _sink_sample_rate.store(sample_rate);
+    _sink_channels.store(channels);
+
+    // QAudioSink lives on the GUI thread, so build it there -- with a
+    // QueuedConnection, and never a BlockingQueuedConnection.
+    //
+    // We are on a zenoh RX thread. The GUI thread may at this instant be inside
+    // ~CarPlayWidget, in z_undeclare_subscriber, waiting for zenoh to join the
+    // callback we are standing in; zenoh runs every subscription in the process
+    // on a two-thread RX pool, so it need not even be this widget's subscriber
+    // it is waiting for. Blocking here closes the cycle -- the RX thread waits
+    // for the GUI thread to drain its event queue, the GUI thread waits for the
+    // RX thread to leave the callback -- and the app hangs with no CPU burnt.
+    //
+    // The editor makes that overlap ordinary rather than exotic: undo, redo and
+    // load each destroy and rebuild every widget, so an outgoing CarPlayWidget
+    // is being torn down at the same moment the incoming one takes its first
+    // audio packet. That first packet is precisely the one that lands here,
+    // because it is the one that finds the format changed.
+    //
+    // Not waiting costs nothing. Audio that arrives before the sink is up goes
+    // into the ring regardless, and configure() clears it anyway: whatever is
+    // buffered when the format changes is the wrong shape to play.
     QMetaObject::invokeMethod(
         this,
         [this, sample_rate, channels] {
@@ -487,25 +516,20 @@ void CarPlayWidget::ensureAudioSink(int sample_rate, int channels)
                 format = device.preferredFormat();
             }
 
-            auto ring = std::make_unique<AudioRingBuffer>();
-            ring->configure(format.sampleRate(), format.channelCount());
-            ring->open(QIODevice::ReadOnly);
+            // Stop the old sink before touching the ring it is pulling from, or
+            // its audio thread reads a buffer being resized under it.
+            // ~QAudioSink joins that thread.
+            _audio_sink.reset();
+            _audio_ring->configure(format.sampleRate(), format.channelCount());
 
             auto sink = std::make_unique<QAudioSink>(device, format);
-            sink->start(ring.get());  // pull mode: the sink drains the ring
-
-            // Stop the old sink before freeing the old ring, or its audio thread
-            // pulls from freed memory. ~QAudioSink joins the audio thread.
-            _audio_sink.reset();
-            _audio_ring = std::move(ring);
+            sink->start(_audio_ring.get());  // pull mode: the sink drains the ring
             _audio_sink = std::move(sink);
-            _sink_sample_rate.store(sample_rate);
-            _sink_channels.store(channels);
             SPDLOG_INFO("[carplay] audio sink started (pull mode): {} Hz / {} ch on '{}'",
                         format.sampleRate(), format.channelCount(),
                         device.description().toStdString());
         },
-        Qt::BlockingQueuedConnection);
+        Qt::QueuedConnection);
 }
 
 void CarPlayWidget::startMicrophone(int sample_rate, int channels)
