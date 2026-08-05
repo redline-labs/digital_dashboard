@@ -139,6 +139,10 @@ qt_add_executable(editor_test_roundtrip
     dashboard/app_config.cpp
 )
 target_include_directories(editor_test_roundtrip PRIVATE include)
+# The shipped configs are the corpus for the byte-stability check, so the test
+# has to find them wherever ctest happens to be run from.
+target_compile_definitions(editor_test_roundtrip PRIVATE
+    DASHBOARD_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/dashboard")
 target_link_libraries(editor_test_roundtrip PRIVATE
     Qt6::Core
     Qt6::Widgets

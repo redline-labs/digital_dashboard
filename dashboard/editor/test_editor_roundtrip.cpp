@@ -16,9 +16,13 @@
 #include <QApplication>
 #include <QLineEdit>
 
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace
@@ -35,6 +39,15 @@ void check(bool condition, const std::string& what)
         ++g_failures;
         std::fprintf(stderr, "FAIL: %s\n", what.c_str());
     }
+}
+
+// The document as it would be written to disk. Not named `emit`: Qt defines
+// that as a macro.
+std::string toYaml(const app_config_t& cfg)
+{
+    YAML::Emitter out;
+    out << YAML::convert<app_config_t>::encode(cfg);
+    return out.c_str();
 }
 
 app_config_t twoStaticTexts(const std::string& window_name)
@@ -575,6 +588,66 @@ void testBackgroundSurvivesTheCanvas()
               canvas.exportAppConfig().background_color.value() + "'");
 }
 
+// ------------------------------------------------------------ byte stability
+//
+// Every config we ship, opened in the editor and exported again, has to come
+// back identical. Not "close enough": identical, because the editor's Save
+// writes exactly this and overwrites the user's file with it.
+//
+// The corpus is the real configs/ directory rather than a fixture, so a config
+// that grows a field the editor cannot carry fails here rather than in someone's
+// working tree. Compared as emitted YAML, which is what actually gets written --
+// the source file is not comparable directly, since it carries comments and its
+// own key order.
+//
+// This is the guard for moving the document out of the widget tree: geometry and
+// config are read back off live QWidgets today, so any mutation path that forgets
+// to write back is a silent loss on save, and this is what catches it.
+void testShippedConfigsSurviveTheEditorUnchanged()
+{
+    const std::filesystem::path dir{DASHBOARD_CONFIG_DIR};
+
+    std::error_code ec;
+    auto it = std::filesystem::directory_iterator(dir, ec);
+    if (ec)
+    {
+        check(false, "cannot read the config directory " + dir.string() + ": " + ec.message());
+        return;
+    }
+
+    std::vector<std::filesystem::path> configs;
+    for (const auto& entry : it)
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml")
+        {
+            configs.push_back(entry.path());
+        }
+    }
+    std::sort(configs.begin(), configs.end());
+
+    // A corpus that silently became empty would make this test pass forever.
+    check(!configs.empty(), "there is at least one shipped config to check");
+
+    for (const auto& path : configs)
+    {
+        const auto loaded = load_app_config(path.string());
+        if (!loaded)
+        {
+            check(false, path.filename().string() + " loads");
+            continue;
+        }
+
+        Canvas canvas;
+        canvas.loadFromAppConfig(*loaded);
+
+        const std::string before = toYaml(*loaded);
+        const std::string after = toYaml(canvas.exportAppConfig());
+        check(before == after,
+              path.filename().string() + " survives load -> export unchanged\n--- before ---\n" +
+                  before + "\n--- after ---\n" + after);
+    }
+}
+
 // A drag carrying text that is not a widget type used to reach a throwing
 // lookup inside a Qt event handler and terminate the editor.
 void testUnknownDropPayloadIsRefused()
@@ -618,6 +691,7 @@ int main(int argc, char** argv)
     testAnOpenWindowEditDoesNotSwallowTheNextEdit();
     testHalfTypedColoursAreNotApplied();
     testBackgroundSurvivesTheCanvas();
+    testShippedConfigsSurviveTheEditorUnchanged();
     testUnknownDropPayloadIsRefused();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
