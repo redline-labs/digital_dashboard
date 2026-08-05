@@ -18,9 +18,26 @@ SelectionFrame::SelectionFrame(widget_type_t type, QWidget* parent)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_NoSystemBackground);
-    QWidget* w = widget_registry::instantiateWidget(type_, nullptr);
-    setChild(w);
-    // Overlay that always draws above child
+
+    // The child is deliberately NOT built here.
+    //
+    // It used to be, with a default config, and every caller that has a config
+    // block then called applyConfig() -- which replaces the child. So each load,
+    // undo and redo built every widget twice and threw the first one away:
+    // measured at exactly 2.00 CarPlayWidget constructions per load. That is not
+    // a cheap object to build and discard. It declares three zenoh
+    // subscriptions and two publishers, and if a packet happens to land in the
+    // few milliseconds it is alive it also opens an H.264 decoder and a
+    // CoreAudio sink, on the real output device.
+    //
+    // It was not only waste. The discarded widget is torn down at the same
+    // moment its replacement is starting up, which is exactly the overlap the
+    // zenoh-callback/GUI-thread deadlock needed (see
+    // CarPlayWidget::requestAudioSink). Undo manufactured that race on every
+    // press.
+    //
+    // Callers with no config to apply -- a palette drop -- ask for the default
+    // child explicitly with ensureChild().
     overlay_ = new QWidget(this);
     overlay_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     overlay_->setAttribute(Qt::WA_NoSystemBackground, true);
@@ -43,6 +60,14 @@ void SelectionFrame::setId(std::string id)
     if (!id_.empty())
     {
         setObjectName(QString::fromStdString(id_));
+    }
+}
+
+void SelectionFrame::ensureChild()
+{
+    if (child_ == nullptr)
+    {
+        setChild(widget_registry::instantiateWidget(type_, nullptr));
     }
 }
 
@@ -73,6 +98,16 @@ void SelectionFrame::setChild(QWidget* newChild)
         // Keep frame size; resize new child to fit current frame
         child_->resize(size());
         child_->show();
+
+        // A child added after the overlay stacks above it and hides the
+        // selection chrome. paintEvent re-raises as well, but only once
+        // something asks for a repaint; do it here so the frame is correct the
+        // moment the child appears. This matters now that the overlay is always
+        // created first -- it used to be built after the constructor's child.
+        if (overlay_)
+        {
+            overlay_->raise();
+        }
     }
 }
 

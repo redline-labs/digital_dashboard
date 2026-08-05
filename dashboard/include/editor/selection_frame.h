@@ -34,6 +34,12 @@ public:
     widget_type_t type() const { return type_; }
     QWidget* child() const { return child_; }
 
+    // Builds the default-configured child, if applyConfig() has not already
+    // built a configured one. A frame is constructed childless precisely so that
+    // a caller holding a config does not pay for a widget it is about to
+    // replace; every caller must therefore end up calling one or the other.
+    void ensureChild();
+
     // Optional stable handle, round-tripped through the YAML `id:` key. Set on
     // the frame rather than the child so it survives applyConfig() rebuilding
     // the child widget.

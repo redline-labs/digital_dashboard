@@ -112,6 +112,12 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
             }
         }, wcfg.config);
 
+        // A config block built the child above. A widget with no `config:` key
+        // has none yet, so give it the default one -- the frame is constructed
+        // childless so that the common case does not build a widget only to
+        // replace it.
+        frame->ensureChild();
+
         // If child provides a size hint, prefer it, otherwise use config size
         QSize targetSize(wcfg.width, wcfg.height);
 
@@ -383,6 +389,10 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
     {
         return nullptr;
     }
+
+    // Nothing here has a config to apply -- a palette drop and an agent add both
+    // want the widget's own defaults -- so this is the path that asks for them.
+    frame->ensureChild();
 
     // Name it on the same rule as a loaded widget, so something just added is
     // immediately addressable rather than only after a save and reload.
