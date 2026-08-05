@@ -5,6 +5,7 @@
 #include "can_frame.capnp.h"
 #include "msel_master_relay.capnp.h"
 
+#include <span>
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -86,7 +87,10 @@ int main(int argc, char** argv)
             {
                 bytes[i] = static_cast<uint8_t>(dataList[i]);
             }
-            parser.handle_can_frame(id, bytes);
+            // The real length, not the padded buffer: a frame shorter than the
+            // message it claims to be must be rejected, not decoded as though
+            // the padding were readings.
+            parser.handle_can_frame(id, std::span<const uint8_t>(bytes.data(), n));
         });
 
     for (;;)

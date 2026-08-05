@@ -1,51 +1,203 @@
 #include "dbc_parser/dbc_parser.h"
 
+#include <algorithm>
+#include <array>
 #include <charconv>
-#include <cstdlib>
-#include <regex>
-#include <string>
-
-#include <spdlog/spdlog.h>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <set>
+#include <string_view>
+#include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace dbc_parser
 {
-
-static bool parseUint(const std::string &s, uint32_t &out)
+namespace
 {
-    auto first = s.data();
-    auto last = s.data() + s.size();
-    unsigned long long temp = 0ULL;
-    auto [ptr, ec] = std::from_chars(first, last, temp);
-    if (ec != std::errc() || ptr != last)
+
+// std::from_chars is the only conversion in the standard library that ignores
+// the global locale. strtod does not: under a comma-decimal locale it stops at
+// the '.' in "0.1", which used to fail the scale parse and -- because failures
+// were swallowed -- delete the enclosing message from the build.
+bool parseUintText(const std::string &text, uint32_t &out)
+{
+    uint64_t wide = 0;
+    const char *first = text.data();
+    const char *last = text.data() + text.size();
+    auto [ptr, ec] = std::from_chars(first, last, wide);
+    if ((ec != std::errc()) || (ptr != last) || (wide > 0xFFFFFFFFull))
+    {
+        return false;
+    }
+    out = static_cast<uint32_t>(wide);
+    return true;
+}
+
+bool parseInt64Text(const std::string &text, int64_t &out)
+{
+    const char *first = text.data();
+    const char *last = text.data() + text.size();
+    auto [ptr, ec] = std::from_chars(first, last, out);
+    return (ec == std::errc()) && (ptr == last);
+}
+
+bool parseDoubleText(const std::string &text, double &out)
+{
+    const char *first = text.data();
+    const char *last = text.data() + text.size();
+    auto [ptr, ec] = std::from_chars(first, last, out);
+    if ((ec != std::errc()) || (ptr != last))
     {
         return false;
     }
 
-    out = static_cast<uint32_t>(temp);
-    return true;
+    // A non-finite scale or offset would be emitted into generated source as
+    // `inf`, which is not valid C++.
+    return std::isfinite(out);
 }
 
-static bool parseDouble(const std::string &s, double &out)
+constexpr std::array kReservedWords{
+    std::string_view{"alignas"},      std::string_view{"alignof"},
+    std::string_view{"and"},          std::string_view{"and_eq"},
+    std::string_view{"asm"},          std::string_view{"auto"},
+    std::string_view{"bitand"},       std::string_view{"bitor"},
+    std::string_view{"bool"},         std::string_view{"break"},
+    std::string_view{"case"},         std::string_view{"catch"},
+    std::string_view{"char"},         std::string_view{"char16_t"},
+    std::string_view{"char32_t"},     std::string_view{"char8_t"},
+    std::string_view{"class"},        std::string_view{"co_await"},
+    std::string_view{"co_return"},    std::string_view{"co_yield"},
+    std::string_view{"compl"},        std::string_view{"concept"},
+    std::string_view{"const"},        std::string_view{"const_cast"},
+    std::string_view{"consteval"},    std::string_view{"constexpr"},
+    std::string_view{"constinit"},    std::string_view{"continue"},
+    std::string_view{"decltype"},     std::string_view{"default"},
+    std::string_view{"delete"},       std::string_view{"do"},
+    std::string_view{"double"},       std::string_view{"dynamic_cast"},
+    std::string_view{"else"},         std::string_view{"enum"},
+    std::string_view{"explicit"},     std::string_view{"export"},
+    std::string_view{"extern"},       std::string_view{"false"},
+    std::string_view{"float"},        std::string_view{"for"},
+    std::string_view{"friend"},       std::string_view{"goto"},
+    std::string_view{"if"},           std::string_view{"inline"},
+    std::string_view{"int"},          std::string_view{"long"},
+    std::string_view{"mutable"},      std::string_view{"namespace"},
+    std::string_view{"new"},          std::string_view{"noexcept"},
+    std::string_view{"not"},          std::string_view{"not_eq"},
+    std::string_view{"nullptr"},      std::string_view{"operator"},
+    std::string_view{"or"},           std::string_view{"or_eq"},
+    std::string_view{"private"},      std::string_view{"protected"},
+    std::string_view{"public"},       std::string_view{"register"},
+    std::string_view{"reinterpret_cast"}, std::string_view{"requires"},
+    std::string_view{"return"},       std::string_view{"short"},
+    std::string_view{"signed"},       std::string_view{"sizeof"},
+    std::string_view{"static"},       std::string_view{"static_assert"},
+    std::string_view{"static_cast"},  std::string_view{"struct"},
+    std::string_view{"switch"},       std::string_view{"template"},
+    std::string_view{"this"},         std::string_view{"thread_local"},
+    std::string_view{"throw"},        std::string_view{"true"},
+    std::string_view{"try"},          std::string_view{"typedef"},
+    std::string_view{"typeid"},       std::string_view{"typename"},
+    std::string_view{"union"},        std::string_view{"unsigned"},
+    std::string_view{"using"},        std::string_view{"virtual"},
+    std::string_view{"void"},         std::string_view{"volatile"},
+    std::string_view{"wchar_t"},      std::string_view{"while"},
+    std::string_view{"xor"},          std::string_view{"xor_eq"},
+};
+
+// Sections we recognise but model nothing from. Skipping these is a deliberate
+// decision rather than a hole, so they do not deserve a warning; anything not
+// on this list and not handled does.
+constexpr std::array kIgnoredSections{
+    std::string_view{"BO_TX_BU_"},     std::string_view{"SIG_GROUP_"},
+    std::string_view{"EV_"},           std::string_view{"EV_DATA_"},
+    std::string_view{"ENVVAR_DATA_"},  std::string_view{"CAT_"},
+    std::string_view{"CAT_DEF_"},      std::string_view{"FILTER"},
+    std::string_view{"SGTYPE_"},       std::string_view{"SGTYPE_VAL_"},
+    std::string_view{"BA_SGTYPE_"},    std::string_view{"SIG_TYPE_REF_"},
+    std::string_view{"SIGTYPE_VALTYPE_"}, std::string_view{"NS_DESC_"},
+};
+
+bool contains(const auto &haystack, std::string_view needle)
 {
-    char *end = nullptr;
-    out = std::strtod(s.c_str(), &end);
-    return end && *end == '\0';
+    return std::find(haystack.begin(), haystack.end(), needle) != haystack.end();
+}
+
+std::string hex(uint32_t value)
+{
+    constexpr char kDigits[] = "0123456789ABCDEF";
+    std::string out;
+    do
+    {
+        out.insert(out.begin(), kDigits[value & 0xFu]);
+        value >>= 4u;
+    } while (value != 0u);
+    return out;
+}
+
+} // namespace
+
+bool isUsableIdentifier(std::string_view name)
+{
+    if (name.empty())
+    {
+        return false;
+    }
+
+    if (!std::isalpha(static_cast<unsigned char>(name.front())) && (name.front() != '_'))
+    {
+        return false;
+    }
+
+    for (char c : name)
+    {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && (c != '_'))
+        {
+            return false;
+        }
+    }
+
+    return !contains(kReservedWords, name);
 }
 
 Parser::Parser(std::string_view input)
 {
-    Lexer lex(input);
+    Lexer lex(input, diags_);
     tokens_ = lex.tokenize();
+}
+
+const Diagnostics &Parser::diagnostics() const
+{
+    return diags_;
 }
 
 const Token &Parser::peek() const
 {
-    return tokens_[index_];
+    return peekAhead(0);
+}
+
+const Token &Parser::peekAhead(size_t offset) const
+{
+    // tokenize() always appends EndOfFile, so clamping to the last token means
+    // lookahead past the end reads that rather than running off the vector.
+    size_t wanted = index_ + offset;
+    if (wanted >= tokens_.size())
+    {
+        wanted = tokens_.size() - 1;
+    }
+    return tokens_[wanted];
 }
 
 const Token &Parser::get()
 {
-    return tokens_[index_++];
+    const Token &tok = peek();
+    if (index_ < (tokens_.size() - 1))
+    {
+        index_ += 1;
+    }
+    return tok;
 }
 
 bool Parser::eof() const
@@ -63,157 +215,257 @@ bool Parser::accept(TokenKind kind)
     return false;
 }
 
-bool Parser::expect(TokenKind kind, ParseError &err, std::string_view what) {
+bool Parser::expect(TokenKind kind, std::string_view context)
+{
     if (accept(kind))
     {
         return true;
     }
-    err.line = peek().line;
-    err.column = peek().column;
-    err.message = std::string("Expected ") + std::string(what);
-    SPDLOG_ERROR("{} (line {})", err.message,peek().line);
+
+    errorHere(std::string(context) + " expects " + std::string(describe(kind)) +
+              ", found " + std::string(describe(peek().kind)));
     return false;
 }
 
-std::optional<Database> Parser::parse(ParseError &errorOut)
+void Parser::errorHere(std::string message)
+{
+    diags_.error(peek().line, peek().column, std::move(message));
+}
+
+void Parser::warnHere(std::string message)
+{
+    diags_.warn(peek().line, peek().column, std::move(message));
+}
+
+void Parser::skipToNextLine()
+{
+    while (!eof() && (peek().kind != TokenKind::Newline))
+    {
+        get();
+    }
+    accept(TokenKind::Newline);
+}
+
+bool Parser::takeUint(uint32_t &out, std::string_view what)
+{
+    if (peek().kind != TokenKind::Number)
+    {
+        errorHere(std::string(what) + " expects a number, found " +
+                  std::string(describe(peek().kind)));
+        return false;
+    }
+
+    const Token &tok = get();
+    if (!parseUintText(tok.lexeme, out))
+    {
+        diags_.error(tok.line, tok.column,
+                     std::string(what) + ": '" + tok.lexeme +
+                         "' is not a whole number that fits in 32 bits");
+        return false;
+    }
+    return true;
+}
+
+bool Parser::takeInt64(int64_t &out, std::string_view what)
+{
+    if (peek().kind != TokenKind::Number)
+    {
+        errorHere(std::string(what) + " expects a number, found " +
+                  std::string(describe(peek().kind)));
+        return false;
+    }
+
+    const Token &tok = get();
+    if (!parseInt64Text(tok.lexeme, out))
+    {
+        diags_.error(tok.line, tok.column,
+                     std::string(what) + ": '" + tok.lexeme +
+                         "' is not a whole number that fits in 64 bits");
+        return false;
+    }
+    return true;
+}
+
+bool Parser::takeDouble(double &out, std::string_view what)
+{
+    if (peek().kind != TokenKind::Number)
+    {
+        errorHere(std::string(what) + " expects a number, found " +
+                  std::string(describe(peek().kind)));
+        return false;
+    }
+
+    const Token &tok = get();
+    if (!parseDoubleText(tok.lexeme, out))
+    {
+        diags_.error(tok.line, tok.column,
+                     std::string(what) + ": '" + tok.lexeme + "' is not a finite number");
+        return false;
+    }
+    return true;
+}
+
+bool Parser::takeIdentifier(std::string &out, std::string_view what)
+{
+    if (peek().kind != TokenKind::Identifier)
+    {
+        errorHere(std::string(what) + " expects a name, found " +
+                  std::string(describe(peek().kind)));
+        return false;
+    }
+    out = get().lexeme;
+    return true;
+}
+
+bool Parser::takeString(std::string &out, std::string_view what)
+{
+    if (peek().kind != TokenKind::String)
+    {
+        errorHere(std::string(what) + " expects a quoted string, found " +
+                  std::string(describe(peek().kind)));
+        return false;
+    }
+    out = get().lexeme;
+    return true;
+}
+
+std::optional<Database> Parser::parse()
 {
     Database db;
-    // Single forward pass in known section order
+    std::set<std::string> warnedKeywords;
+
     while (!eof())
     {
+        if (peek().kind == TokenKind::Newline)
+        {
+            get();
+            continue;
+        }
+
         if (peek().kind != TokenKind::Identifier)
         {
-            get();
+            errorHere("expected a section keyword, found " +
+                      std::string(describe(peek().kind)));
+            skipToNextLine();
             continue;
         }
 
-        const Token &tok = peek();
+        const std::string keyword = peek().lexeme;
 
-        if (tok.lexeme == "VERSION")
+        if (keyword == "VERSION")
         {
-            if (!parseVersion(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse VERSION ({}, line {})", errorOut.message, errorOut.line);
-            }
-
-            continue;
+            parseVersion(db);
         }
-        if (tok.lexeme == "NS_")
+        else if (keyword == "NS_")
         {
-            if (!parseNamespaceSection(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse NS_ ({}, line {})", errorOut.message, errorOut.line);
-            }
-
-            continue;
+            parseSkippedSection(keyword);
         }
-        if (tok.lexeme == "BS_") // skip bit timing section lines
+        else if (keyword == "BS_")
         {
             get();
-
-            while (!eof() && peek().kind != TokenKind::Newline)
-            {
-                get();
-            }
-
-            if (peek().kind == TokenKind::Newline)
-            {
-                get();
-            }
-
-            continue;
+            skipToNextLine();
         }
-        if (tok.lexeme == "BU_")
+        else if (keyword == "BU_")
         {
-            if (!parseNodes(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse BU_ ({}, line {})", errorOut.message, errorOut.line);
-            }
-            continue;
+            parseNodes(db);
         }
-        if (tok.lexeme == "BO_")
+        else if (keyword == "BO_")
         {
-            if (!parseMessage(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse BO_ ({}, line {})", errorOut.message, errorOut.line);
-            }
-            continue;
+            parseMessage(db);
         }
-        if (tok.lexeme == "CM_")
+        else if (keyword == "SG_")
         {
-            if (!parseComment(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse CM_ ({}, line {})", errorOut.message, errorOut.line);
-            }
-            continue;
+            errorHere("SG_ outside of a BO_ message");
+            skipToNextLine();
         }
-        if (tok.lexeme == "VAL_")
+        else if (keyword == "CM_")
         {
-            if (!parseValueTable(db, errorOut))
-            {
-                SPDLOG_ERROR("Failed to parse VAL_ ({}, line {})", errorOut.message, errorOut.line);
-            }
-            continue;
+            parseComment();
         }
-
-        // Fallback: skip line
-        while (!eof() && peek().kind != TokenKind::Newline)
+        else if (keyword == "VAL_")
+        {
+            parseValueTable(db);
+        }
+        else if (keyword == "VAL_TABLE_")
+        {
+            parseNamedValueTable(db);
+        }
+        else if (keyword == "SIG_VALTYPE_")
+        {
+            parseSignalValueType();
+        }
+        else if (keyword == "BA_")
+        {
+            parseAttribute();
+        }
+        else if ((keyword == "BA_DEF_") || (keyword == "BA_DEF_DEF_") ||
+                 (keyword == "BA_DEF_REL_") || (keyword == "BA_DEF_DEF_REL_") ||
+                 (keyword == "BA_REL_") || (keyword == "BA_DEF_SGTYPE_"))
+        {
+            parseAttributeDefinition();
+        }
+        else if (keyword == "SG_MUL_VAL_")
+        {
+            // Extended multiplexing changes which signals are valid for a given
+            // multiplexor value. Ignoring it does not lose a field, it decodes
+            // the wrong ones -- so this has to stop the build, not warn.
+            errorHere("SG_MUL_VAL_ (extended multiplexing) is not supported, and "
+                      "ignoring it would decode the wrong signals");
+            skipToNextLine();
+        }
+        else if (contains(kIgnoredSections, keyword))
         {
             get();
+            skipToNextLine();
         }
+        else
+        {
+            if (warnedKeywords.insert(keyword).second)
+            {
+                warnHere("ignoring unrecognised section '" + keyword + "'");
+            }
+            skipToNextLine();
+        }
+    }
+
+    resolvePending(db);
+    validate(db);
+
+    if (diags_.hasErrors())
+    {
+        return std::nullopt;
     }
 
     return db;
 }
 
-bool Parser::parseVersion(Database &db, ParseError &err)
+void Parser::parseVersion(Database &db)
 {
-    // VERSION "..."
     get(); // VERSION
+
     if (peek().kind == TokenKind::String)
     {
         db.version = get().lexeme;
-        // consume to end of line
-        while (!eof() && peek().kind != TokenKind::Newline)
-        {
-            get();
-        }
-        if (peek().kind == TokenKind::Newline)
-        {
-            get();
-        }
-        return true;
     }
-    // Some DBCs have VERSION without quotes. Accept identifier/number fallback.
-    if (peek().kind == TokenKind::Identifier || peek().kind == TokenKind::Number)
+    else if ((peek().kind == TokenKind::Identifier) || (peek().kind == TokenKind::Number))
     {
+        // Some tools emit VERSION without quotes.
         db.version = get().lexeme;
-        while (!eof() && peek().kind != TokenKind::Newline)
-        {
-            get();
-        }
-        if (peek().kind == TokenKind::Newline)
-        {
-            get();
-        }
-        return true;
     }
-    err.line = peek().line;
-    err.column = peek().column;
-    err.message = "VERSION expects a string or identifier";
-    return false;
+    else if (peek().kind != TokenKind::Newline)
+    {
+        errorHere("VERSION expects a quoted string");
+    }
+
+    skipToNextLine();
 }
 
-bool Parser::parseNodes(Database &db, ParseError & /*err*/)
+void Parser::parseNodes(Database &db)
 {
-    // BU_: nodeA nodeB ... (may span after identifier)
     get(); // BU_
-    if (!accept(TokenKind::Colon))
-    {
-        // Some files put BU_: on same tokenization as identifier then colon as separate token, which we handle
-    }
-    // Collect until newline
-    while (!eof() && peek().kind != TokenKind::Newline)
+    accept(TokenKind::Colon);
+
+    while (!eof() && (peek().kind != TokenKind::Newline))
     {
         if (peek().kind == TokenKind::Identifier)
         {
@@ -221,100 +473,71 @@ bool Parser::parseNodes(Database &db, ParseError & /*err*/)
         }
         else
         {
-            get();
+            errorHere("BU_ expects node names, found " +
+                      std::string(describe(peek().kind)));
+            skipToNextLine();
+            return;
         }
     }
-    if (peek().kind == TokenKind::Newline)
-    {
-        get();
-    }
 
-    return true;
+    accept(TokenKind::Newline);
 }
 
-bool Parser::parseMessage(Database &db, ParseError &err)
+void Parser::parseMessage(Database &db)
 {
-    // BO_ <id> <name> : <dlc> <transmitter>
+    const int headerLine = peek().line;
     get(); // BO_
-    if (peek().kind != TokenKind::Number)
-    {
-        err.message = "BO_ expects numeric id";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
 
     Message msg;
-    uint32_t id = 0;
-    if (!parseUint(get().lexeme, id))
+
+    uint32_t rawId = 0;
+    if (!takeUint(rawId, "BO_ message id"))
     {
-        err.message = "Invalid message id";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        skipToNextLine();
+        return;
     }
 
-    msg.id = id;
-
-    if (peek().kind != TokenKind::Identifier)
+    // A DBC records an extended (29-bit) identifier by setting bit 31. A CAN
+    // driver never sets that bit, so an id carried through verbatim would be
+    // compared against incoming frames and match nothing at all.
+    msg.isExtended = (rawId & 0x80000000u) != 0u;
+    msg.id = rawId & 0x1FFFFFFFu;
+    if (msg.id > 0x7FFu)
     {
-        err.message = "BO_ expects name";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
-    msg.name = get().lexeme;
-
-    if (!accept(TokenKind::Colon))
-    {
-        err.message = "BO_ expects ':'";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        msg.isExtended = true;
     }
 
-    if (peek().kind != TokenKind::Number)
+    if (!takeIdentifier(msg.name, "BO_ message name"))
     {
-        err.message = "BO_ expects DLC";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        skipToNextLine();
+        return;
     }
 
-    uint32_t dlc = 0;
-
-    if (!parseUint(get().lexeme, dlc))
+    if (!expect(TokenKind::Colon, "BO_"))
     {
-        err.message = "Invalid DLC";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        skipToNextLine();
+        return;
     }
 
-    msg.dlc = dlc;
-
-    if (peek().kind != TokenKind::Identifier)
+    if (!takeUint(msg.dlc, "BO_ data length"))
     {
-        err.message = "BO_ expects transmitter";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        skipToNextLine();
+        return;
     }
 
-    msg.transmitter = get().lexeme;
-
-    // End of message header line
-    while (!eof() && peek().kind != TokenKind::Newline)
+    if (!takeIdentifier(msg.transmitter, "BO_ transmitter"))
     {
-        get();
+        skipToNextLine();
+        return;
     }
 
-    if (peek().kind == TokenKind::Newline)
+    if (peek().kind != TokenKind::Newline)
     {
-        get();
+        errorHere("unexpected text after the BO_ header");
     }
+    skipToNextLine();
 
-    // Read following SG_ lines until next top-level section (anything not SG_)
+    // Signals belong to this message until a line starts with something else.
     while (!eof())
     {
         if (peek().kind == TokenKind::Newline)
@@ -322,578 +545,824 @@ bool Parser::parseMessage(Database &db, ParseError &err)
             get();
             continue;
         }
-        if (peek().kind == TokenKind::Identifier)
+
+        if ((peek().kind == TokenKind::Identifier) && (peek().lexeme == "SG_"))
         {
-            if (peek().lexeme == "SG_")
+            if (!parseSignal(msg))
             {
-                if (!parseSignal(msg, err)) return false;
-                // attach signal comments if any (legacy; currently unused)
-                if (auto it = signalCommentsByMsgId_.find(msg.id); it != signalCommentsByMsgId_.end())
-                {
-                    auto &byName = it->second;
-                    if (!msg.signals.empty())
-                    {
-                        Signal &last = msg.signals.back();
-                        if (auto it2 = byName.find(last.name); it2 != byName.end())
-                        {
-                            last.comment = it2->second;
-                        }
-                    }
-                }
-                continue;
+                skipToNextLine();
             }
-            // Any other identifier indicates end of this message's signal section.
-            break;
+            continue;
         }
-        // consume unrecognized line within message
+
         break;
     }
+
+    messageDefinitionLines_.emplace_back(msg.id, headerLine);
     db.messages.push_back(std::move(msg));
-    return true;
 }
 
-bool Parser::parseSignal(Message &msg, ParseError &err)
+bool Parser::parseSignal(Message &msg)
 {
-    // SG_ <name> : <start>|<len>@<endianness><sign> (<scale>,<offset>) [<min>|<max>] "unit" <receivers...>
+    // SG_ <name> [mux] : <start>|<len>@<endian><sign> (<scale>,<offset>)
+    //     [<min>|<max>] "unit" <receivers...>
     get(); // SG_
-    if (peek().kind != TokenKind::Identifier)
+
+    Signal sig;
+    if (!takeIdentifier(sig.name, "SG_ signal name"))
     {
-        err.message = "SG_ expects name";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    Signal sig;
-    sig.name = get().lexeme;
-    // Optional multiplexer token between name and ':' (e.g., m4, m0, or M)
+    // Optional multiplexer token between the name and ':'. `M` selects,
+    // `m<idx>` is gated, and `m<idx>M` is both -- the combined form used to
+    // fall through and take the whole message down on the missing ':'.
     if (peek().kind == TokenKind::Identifier)
     {
-        const std::string &maybeMux = peek().lexeme;
-        bool isMuxToken = false;
-        bool isMuxorToken = false;
-        uint32_t muxGroup = 0;
+        const std::string token = peek().lexeme;
+        bool isMultiplexor = (token == "M");
+        bool isMultiplexed = false;
+        uint32_t group = 0;
 
-        if (maybeMux == "M")
+        if (!isMultiplexor && (token.size() > 1) && (token.front() == 'm'))
         {
-            isMuxToken = true;
-            isMuxorToken = true;
-        }
-        else if (!maybeMux.empty() && maybeMux[0] == 'm')
-        {
-            // m followed by digits
-            isMuxToken = maybeMux.size() > 1;
-            for (size_t i = 1; isMuxToken && i < maybeMux.size(); ++i)
+            std::string digits = token.substr(1);
+            bool trailingM = (digits.back() == 'M');
+            if (trailingM)
             {
-                if (!std::isdigit(static_cast<unsigned char>(maybeMux[i])))
-                {
-                    isMuxToken = false;
-                }
+                digits.pop_back();
             }
-            if (isMuxToken)
+
+            const bool allDigits =
+                !digits.empty() &&
+                std::all_of(digits.begin(), digits.end(), [](unsigned char c) {
+                    return std::isdigit(c) != 0;
+                });
+
+            if (allDigits && parseUintText(digits, group))
             {
-                // parse digits after 'm'
-                const std::string digits = maybeMux.substr(1);
-                uint32_t val = 0;
-                if (parseUint(digits, val))
-                {
-                    muxGroup = val;
-                }
+                isMultiplexed = true;
+                isMultiplexor = trailingM;
             }
         }
-        if (isMuxToken)
+
+        if (isMultiplexor || isMultiplexed)
         {
-            get(); // consume mux token
-            sig.isMultiplexor = isMuxorToken;
-            sig.isMultiplex = !isMuxorToken;
-            if (!isMuxorToken)
-            {
-                sig.multiplexedGroupIdx = muxGroup;
-            }
+            get();
+            sig.isMultiplexor = isMultiplexor;
+            sig.isMultiplex = isMultiplexed;
+            sig.multiplexedGroupIdx = group;
             msg.isMultiplexed = true;
         }
     }
 
-    if (!accept(TokenKind::Colon))
+    if (!expect(TokenKind::Colon, "SG_"))
     {
-        err.message = "SG_ expects ':'";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    // start
-    if (peek().kind != TokenKind::Number)
+    if (!takeUint(sig.startBit, "SG_ start bit"))
     {
-        err.message = "SG_ expects start bit";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    uint32_t start = 0;
-    if (!parseUint(get().lexeme, start))
+    if (!expect(TokenKind::Pipe, "SG_ bit layout"))
     {
-        err.message = "Invalid start bit";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    sig.startBit = start;
-    if (!accept(TokenKind::Pipe))
+    if (!takeUint(sig.length, "SG_ length"))
     {
-        err.message = "SG_ expects '|'";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    // len
-    if (peek().kind != TokenKind::Number)
+    if (!expect(TokenKind::At, "SG_ bit layout"))
     {
-        err.message = "SG_ expects length";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
-    
-    uint32_t len = 0;
-    if (!parseUint(get().lexeme, len))
-    {
-        err.message = "Invalid length";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    sig.length = len;
-    if (!accept(TokenKind::At))
+    uint32_t endianMarker = 0;
+    if (!takeUint(endianMarker, "SG_ byte order"))
     {
-        err.message = "SG_ expects '@'";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    // endianness and sign marker like 0+ or 1-
-    if (peek().kind != TokenKind::Number)
+    if (endianMarker > 1u)
     {
-        err.message = "SG_ expects endianness marker";
-        err.line = peek().line;
-        err.column = peek().column;
+        errorHere("SG_ byte order must be 0 (Motorola) or 1 (Intel)");
         return false;
     }
 
-    uint32_t endMarker = 0;
+    sig.littleEndian = (endianMarker == 1u);
 
-    if (!parseUint(get().lexeme, endMarker))
+    if (accept(TokenKind::Plus))
     {
-        err.message = "Invalid endianness marker";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
+        sig.isSigned = false;
     }
-
-    // DBC: @0 = Motorola (big-endian), @1 = Intel (little-endian)
-    sig.littleEndian = (endMarker == 1);
-
-    if (peek().kind == TokenKind::Plus)
-    {
-        sig.isSigned = false; get();
-    }
-    else if (peek().kind == TokenKind::Minus)
+    else if (accept(TokenKind::Minus))
     {
         sig.isSigned = true;
-        get();
     }
-
-    // (scale,offset)
-    if (!accept(TokenKind::LParen))
+    else
     {
-        err.message = "SG_ expects '('";
-        err.line = peek().line;
-        err.column = peek().column;
+        errorHere("SG_ expects '+' or '-' after the byte order");
         return false;
     }
 
-    if (peek().kind != TokenKind::Number)
+    if (!expect(TokenKind::LParen, "SG_ scale and offset"))
     {
-        err.message = "SG_ expects scale number";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    double scale = 0.0;
-    if (!parseDouble(get().lexeme, scale))
+    if (!takeDouble(sig.scale, "SG_ scale"))
     {
-        err.message = "Invalid scale";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    sig.scale = scale;
-    accept(TokenKind::Comma);
-    double offset = 0.0;
-    if (peek().kind != TokenKind::Number)
+    if (!expect(TokenKind::Comma, "SG_ scale and offset"))
     {
-        err.message = "SG_ expects offset number";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    if (!parseDouble(get().lexeme, offset))
+    if (!takeDouble(sig.offset, "SG_ offset"))
     {
-        err.message = "Invalid offset";
-        err.line = peek().line;
-        err.column = peek().column;
         return false;
     }
 
-    sig.offset = offset;
-
-    if (!accept(TokenKind::RParen))
+    if (!expect(TokenKind::RParen, "SG_ scale and offset"))
     {
-        /* tolerate missing ) */
+        return false;
     }
 
-    // [min|max]
-    if (accept(TokenKind::LBracket))
+    if (!expect(TokenKind::LBracket, "SG_ range"))
     {
-        double minv = 0.0, maxv = 0.0;
-        if (peek().kind == TokenKind::Number)
-        {
-            parseDouble(get().lexeme, minv);
-        }
-
-        // TODO: fix this
-        if (!accept(TokenKind::Pipe)) {}
-    
-        if (peek().kind == TokenKind::Number)
-        {
-            parseDouble(get().lexeme, maxv);
-        }
-        accept(TokenKind::RBracket);
-        sig.minimum = minv; sig.maximum = maxv;
+        return false;
     }
 
-    // "unit"
-    if (peek().kind == TokenKind::String)
+    if (!takeDouble(sig.minimum, "SG_ minimum"))
     {
-        sig.unit = get().lexeme;
+        return false;
     }
 
-    // Receivers list until end of line, identifiers separated by commas
-    while (!eof() && peek().kind != TokenKind::Newline)
+    if (!expect(TokenKind::Pipe, "SG_ range"))
+    {
+        return false;
+    }
+
+    if (!takeDouble(sig.maximum, "SG_ maximum"))
+    {
+        return false;
+    }
+
+    if (!expect(TokenKind::RBracket, "SG_ range"))
+    {
+        return false;
+    }
+
+    if (!takeString(sig.unit, "SG_ unit"))
+    {
+        return false;
+    }
+
+    while (!eof() && (peek().kind != TokenKind::Newline))
     {
         if (peek().kind == TokenKind::Identifier)
         {
             sig.receivers.push_back(get().lexeme);
         }
-        else
+        else if (peek().kind == TokenKind::Comma)
         {
             get();
         }
+        else
+        {
+            errorHere("SG_ expects a comma separated receiver list, found " +
+                      std::string(describe(peek().kind)));
+            return false;
+        }
     }
 
-    if (peek().kind == TokenKind::Newline)
-    {
-        get();
-    }
+    accept(TokenKind::Newline);
 
     msg.signals.push_back(std::move(sig));
     return true;
 }
 
-bool Parser::parseComment(Database &db, ParseError &err)
+void Parser::parseComment()
 {
-    // CM_ BO_ <id> "..." or CM_ SG_ <id> <sig> "..."
+    const int line = peek().line;
+    const int column = peek().column;
     get(); // CM_
 
-    if (peek().kind != TokenKind::Identifier)
-    {
-        while (!eof() && peek().kind != TokenKind::Newline)
-        {
-            get();
-        }
-        if (peek().kind == TokenKind::Newline)
-        {
-            get();
-        }
+    PendingComment pending;
+    pending.line = line;
+    pending.column = column;
 
-        return true;
+    // A bare `CM_ "text";` is a comment on the database itself.
+    if (peek().kind == TokenKind::String)
+    {
+        skipToNextLine();
+        return;
     }
 
-    std::string kind = get().lexeme; // BO_ or SG_
-    if (kind == "BO_")
+    if (!takeIdentifier(pending.kind, "CM_ target"))
     {
-        if (peek().kind != TokenKind::Number)
-        {
-            err.message = "CM_ BO_ expects id";
-            err.line = peek().line;
-            err.column = peek().column;
-            return false;
-        }
-
-        uint32_t id = 0;
-        if (!parseUint(get().lexeme, id))
-        {
-            err.message = "Invalid id";
-            err.line = peek().line;
-            err.column = peek().column;
-            return false;
-        }
-
-        // DBC terminates with ';' after string; tolerate missing semicolon too
-        if (peek().kind == TokenKind::String)
-        {
-            std::string c = get().lexeme;
-            // Remove linefeeds from the comment.
-            c.erase(std::remove(c.begin(), c.end(), '\n'), c.end());
-            // Remove carriage return characters (\r)
-            c.erase(std::remove(c.begin(), c.end(), '\r'), c.end());
-
-            if (peek().kind == TokenKind::Semicolon)
-            {
-                get();
-            }
-
-            for (auto &m : db.messages)
-            {
-                if (m.id == id)
-                {
-                    m.comment = std::move(c);
-                    break;
-                }
-            }
-        }
-    }
-    else if (kind == "SG_")
-    {
-        if (peek().kind != TokenKind::Number)
-        {
-            err.message = "CM_ SG_ expects message id";
-            err.line = peek().line;
-            err.column = peek().column;
-            return false;
-        }
-
-        uint32_t id = 0;
-        if (!parseUint(get().lexeme, id))
-        {
-            err.message = "Invalid id";
-            err.line = peek().line;
-            err.column = peek().column;
-            return false;
-        }
-
-        if (peek().kind != TokenKind::Identifier)
-        {
-            err.message = "CM_ SG_ expects signal name";
-            err.line = peek().line;
-            err.column = peek().column;
-            return false;
-        }
-
-        std::string sigName = get().lexeme;
-
-        if (peek().kind == TokenKind::String)
-        {
-            std::string c = get().lexeme;
-            // Remove linefeeds from the comment.
-            c.erase(std::remove(c.begin(), c.end(), '\n'), c.end());
-            // Remove carriage return characters (\r)
-            c.erase(std::remove(c.begin(), c.end(), '\r'), c.end());
-
-            if (peek().kind == TokenKind::Semicolon)
-            {
-                get();
-            }
-
-            for (auto &m : db.messages)
-            {
-                if (m.id == id)
-                {
-                    for (auto &s : m.signals)
-                    {
-                        if (s.name == sigName)
-                        {
-                            s.comment = std::move(c);
-                            break;
-                        }
-                    }
-                    break;
-                }
-            }
-        }
+        skipToNextLine();
+        return;
     }
 
-    while (!eof() && peek().kind != TokenKind::Newline)
+    if (pending.kind == "BO_")
     {
-        get();
+        if (!takeUint(pending.messageId, "CM_ BO_ message id"))
+        {
+            skipToNextLine();
+            return;
+        }
+    }
+    else if (pending.kind == "SG_")
+    {
+        if (!takeUint(pending.messageId, "CM_ SG_ message id") ||
+            !takeIdentifier(pending.signalName, "CM_ SG_ signal name"))
+        {
+            skipToNextLine();
+            return;
+        }
+    }
+    else
+    {
+        // CM_ BU_ / CM_ EV_ carry nothing the generated code exposes.
+        skipToNextLine();
+        return;
     }
 
-    if (peek().kind == TokenKind::Newline)
+    if (!takeString(pending.text, "CM_ text"))
     {
-        get();
+        skipToNextLine();
+        return;
     }
 
-    return true;
+    pending.messageId &= 0x1FFFFFFFu;
+    accept(TokenKind::Semicolon);
+    skipToNextLine();
+
+    pendingComments_.push_back(std::move(pending));
 }
 
-bool Parser::parseValueTable(Database &db, ParseError &err)
+bool Parser::parseValueMappings(std::vector<ValueMapping> &out)
 {
-    // Format: VAL_ <msgId> <signalName> <raw> "text" <raw> "text" ... ;
-    get(); // VAL_
-    if (peek().kind != TokenKind::Number)
+    while (!eof() && (peek().kind != TokenKind::Newline))
     {
-        err.message = "VAL_ expects message id";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
-    uint32_t msgId = 0;
-    if (!parseUint(get().lexeme, msgId))
-    {
-        err.message = "Invalid VAL_ message id";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
-    if (peek().kind != TokenKind::Identifier)
-    {
-        err.message = "VAL_ expects signal name";
-        err.line = peek().line;
-        err.column = peek().column;
-        return false;
-    }
-    std::string sigName = get().lexeme;
+        if (accept(TokenKind::Semicolon))
+        {
+            return true;
+        }
 
-    // Parse pairs: number string ... until end of line or ';'
-    std::vector<ValueMapping> mappings;
-    while (!eof() && peek().kind != TokenKind::Newline)
-    {
-        if (peek().kind == TokenKind::Semicolon)
-        {
-            get();
-            break;
-        }
-        if (peek().kind != TokenKind::Number)
-        {
-            // If stray tokens appear, consume to end of line
-            while (!eof() && peek().kind != TokenKind::Newline) get();
-            break;
-        }
         int64_t raw = 0;
+        if (!takeInt64(raw, "value table entry"))
         {
-            // allow negative raw values
-            std::string num = get().lexeme;
-            raw = std::strtoll(num.c_str(), nullptr, 10);
+            return false;
         }
-        if (peek().kind != TokenKind::String)
-        {
-            // malformed pair; bail out of this VAL_ line
-            while (!eof() && peek().kind != TokenKind::Newline) get();
-            break;
-        }
-        std::string text = get().lexeme;
-        // Replace any non-alphanumeric characters with underscores.
-        text = std::regex_replace(text, std::regex("[^a-zA-Z0-9]"), "_");
 
-        mappings.push_back(ValueMapping{raw, std::move(text)});
-    }
-    if (peek().kind == TokenKind::Newline)
-    {
-        get();
+        std::string text;
+        if (!takeString(text, "value table description"))
+        {
+            return false;
+        }
+
+        out.push_back(ValueMapping{raw, std::move(text)});
     }
 
-    // Check to see if there are any duplicate enum values. If so, append the raw value to the description.
-    for (auto &m : mappings)
-    {
-        for (auto &n : mappings)
-        {
-            if (m.description == n.description)
-            {
-                n.description += "_" + std::to_string(m.rawValue);
-            }
-        }
-    }
-
-    // Attach mappings to the corresponding signal
-    for (auto &m : db.messages)
-    {
-        if (m.id == msgId)
-        {
-            for (auto &s : m.signals)
-            {
-                if (s.name == sigName)
-                {
-                    s.valueTable = std::move(mappings);
-                    return true;
-                }
-            }
-            break;
-        }
-    }
     return true;
 }
 
-bool Parser::parseNamespaceSection(Database & /*db*/, ParseError & /*err*/)
+void Parser::parseValueTable(Database &db)
 {
-    // NS_ : followed by a list of identifiers possibly across lines until a blank line or another top-level token
-    get(); // NS_
-    // Optional colon
-    if (accept(TokenKind::Colon))
-    {
-        // consume the rest of the current line
-        while (!eof() && peek().kind != TokenKind::Newline)
-        {
-            get();
-        }
+    (void)db;
 
-        if (peek().kind == TokenKind::Newline)
-        {
-            get();
-        }
+    PendingValues pending;
+    pending.line = peek().line;
+    pending.column = peek().column;
+    get(); // VAL_
+
+    if (!takeUint(pending.messageId, "VAL_ message id") ||
+        !takeIdentifier(pending.signalName, "VAL_ signal name"))
+    {
+        skipToNextLine();
+        return;
     }
 
-    // The section usually lists keywords each on its own line; skip until we hit a blank line or a known top-level marker
+    pending.messageId &= 0x1FFFFFFFu;
+
+    // `VAL_ <id> <signal> <TableName> ;` refers to a VAL_TABLE_ rather than
+    // listing the pairs inline.
+    if (peek().kind == TokenKind::Identifier)
+    {
+        pending.tableName = get().lexeme;
+        accept(TokenKind::Semicolon);
+        skipToNextLine();
+        pendingValues_.push_back(std::move(pending));
+        return;
+    }
+
+    if (!parseValueMappings(pending.mappings))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    skipToNextLine();
+    pendingValues_.push_back(std::move(pending));
+}
+
+void Parser::parseNamedValueTable(Database &db)
+{
+    const int line = peek().line;
+    const int column = peek().column;
+    get(); // VAL_TABLE_
+
+    std::string name;
+    if (!takeIdentifier(name, "VAL_TABLE_ name"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    std::vector<ValueMapping> mappings;
+    if (!parseValueMappings(mappings))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    skipToNextLine();
+
+    if (!db.valueTables.emplace(name, std::move(mappings)).second)
+    {
+        diags_.error(line, column, "VAL_TABLE_ '" + name + "' is defined more than once");
+    }
+}
+
+void Parser::parseSignalValueType()
+{
+    PendingValueType pending;
+    pending.line = peek().line;
+    pending.column = peek().column;
+    get(); // SIG_VALTYPE_
+
+    if (!takeUint(pending.messageId, "SIG_VALTYPE_ message id") ||
+        !takeIdentifier(pending.signalName, "SIG_VALTYPE_ signal name"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    pending.messageId &= 0x1FFFFFFFu;
+    accept(TokenKind::Colon);
+
+    uint32_t code = 0;
+    if (!takeUint(code, "SIG_VALTYPE_ type"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    switch (code)
+    {
+    case 0u:
+        pending.type = SignalValueType::Integer;
+        break;
+
+    case 1u:
+        pending.type = SignalValueType::Float;
+        break;
+
+    case 2u:
+        pending.type = SignalValueType::Double;
+        break;
+
+    default:
+        errorHere("SIG_VALTYPE_ type must be 0 (integer), 1 (float) or 2 (double)");
+        skipToNextLine();
+        return;
+    }
+
+    accept(TokenKind::Semicolon);
+    skipToNextLine();
+
+    pendingValueTypes_.push_back(std::move(pending));
+}
+
+void Parser::parseAttribute()
+{
+    PendingAttribute pending;
+    pending.line = peek().line;
+    pending.column = peek().column;
+    get(); // BA_
+
+    if (!takeString(pending.name, "BA_ attribute name"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    // Only the BO_-scoped form carries anything a message can use.
+    if ((peek().kind != TokenKind::Identifier) || (peek().lexeme != "BO_"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    get(); // BO_
+    if (!takeUint(pending.messageId, "BA_ message id"))
+    {
+        skipToNextLine();
+        return;
+    }
+
+    pending.messageId &= 0x1FFFFFFFu;
+
+    if (peek().kind == TokenKind::String)
+    {
+        pending.value = get().lexeme;
+    }
+    else if (peek().kind == TokenKind::Number)
+    {
+        pending.value = get().lexeme;
+    }
+    else if (peek().kind == TokenKind::Identifier)
+    {
+        pending.value = get().lexeme;
+    }
+
+    accept(TokenKind::Semicolon);
+    skipToNextLine();
+
+    pendingAttributes_.push_back(std::move(pending));
+}
+
+void Parser::parseAttributeDefinition()
+{
+    // The definitions describe types and defaults for BA_ values. Nothing in
+    // the generated code depends on them, but they are consumed here rather
+    // than by the unknown-section fallback so a real typo still gets a warning.
+    get();
+    skipToNextLine();
+}
+
+void Parser::parseSkippedSection(std::string_view keyword)
+{
+    (void)keyword;
+
+    get(); // NS_
+    accept(TokenKind::Colon);
+    skipToNextLine();
+
+    // The NS_ body is one bare keyword per line. Testing for that shape rather
+    // than for indentation means a file that does not indent the block still
+    // ends up with the same sections parsed.
     while (!eof())
     {
-        // Stop if next token starts a new well-known section
-        if (peek().kind == TokenKind::Identifier)
-        {
-            const std::string &kw = peek().lexeme;
-            if (kw == "BU_" || kw == "BO_" || kw == "VERSION" || kw == "BS_")
-            {
-                break;
-            }
-        }
-
-        // advance to next line
-        while (!eof() && peek().kind != TokenKind::Newline)
-        {
-            get();
-        }
-
         if (peek().kind == TokenKind::Newline)
         {
             get();
+            continue;
         }
 
-        // A blank line usually ends NS_ block as well
-        if (peek().kind == TokenKind::Newline)
+        const bool bareKeywordLine = (peek().kind == TokenKind::Identifier) &&
+                                     (peekAhead(1).kind == TokenKind::Newline);
+        if (!bareKeywordLine)
         {
-            get();
-            break; 
+            break;
+        }
+
+        get();
+        get();
+    }
+}
+
+Message *Parser::findMessage(Database &db, uint32_t id)
+{
+    for (auto &msg : db.messages)
+    {
+        if (msg.id == id)
+        {
+            return &msg;
         }
     }
-    return true;
+    return nullptr;
+}
+
+void Parser::resolvePending(Database &db)
+{
+    for (const auto &pending : pendingComments_)
+    {
+        Message *msg = findMessage(db, pending.messageId);
+        if (msg == nullptr)
+        {
+            diags_.warn(pending.line, pending.column,
+                        "comment refers to message id " +
+                            std::to_string(pending.messageId) + ", which is not defined");
+            continue;
+        }
+
+        if (pending.kind == "BO_")
+        {
+            msg->comment = pending.text;
+            continue;
+        }
+
+        auto found = std::find_if(msg->signals.begin(), msg->signals.end(),
+                                  [&](const Signal &s) { return s.name == pending.signalName; });
+        if (found == msg->signals.end())
+        {
+            diags_.warn(pending.line, pending.column,
+                        "comment refers to signal '" + pending.signalName +
+                            "', which message '" + msg->name + "' does not define");
+            continue;
+        }
+
+        found->comment = pending.text;
+    }
+
+    for (auto &pending : pendingValues_)
+    {
+        Message *msg = findMessage(db, pending.messageId);
+        if (msg == nullptr)
+        {
+            // Unlike a comment, a dropped value table silently changes the
+            // generated type of a signal from an enum to a bare integer.
+            diags_.error(pending.line, pending.column,
+                         "VAL_ refers to message id " + std::to_string(pending.messageId) +
+                             ", which is not defined");
+            continue;
+        }
+
+        auto found = std::find_if(msg->signals.begin(), msg->signals.end(),
+                                  [&](const Signal &s) { return s.name == pending.signalName; });
+        if (found == msg->signals.end())
+        {
+            diags_.error(pending.line, pending.column,
+                         "VAL_ refers to signal '" + pending.signalName +
+                             "', which message '" + msg->name + "' does not define");
+            continue;
+        }
+
+        if (!pending.tableName.empty())
+        {
+            auto table = db.valueTables.find(pending.tableName);
+            if (table == db.valueTables.end())
+            {
+                diags_.error(pending.line, pending.column,
+                             "VAL_ names value table '" + pending.tableName +
+                                 "', which is not defined by any VAL_TABLE_");
+                continue;
+            }
+            found->valueTable = table->second;
+        }
+        else
+        {
+            found->valueTable = std::move(pending.mappings);
+        }
+    }
+
+    for (const auto &pending : pendingValueTypes_)
+    {
+        Message *msg = findMessage(db, pending.messageId);
+        if (msg == nullptr)
+        {
+            diags_.error(pending.line, pending.column,
+                         "SIG_VALTYPE_ refers to message id " +
+                             std::to_string(pending.messageId) + ", which is not defined");
+            continue;
+        }
+
+        auto found = std::find_if(msg->signals.begin(), msg->signals.end(),
+                                  [&](const Signal &s) { return s.name == pending.signalName; });
+        if (found == msg->signals.end())
+        {
+            diags_.error(pending.line, pending.column,
+                         "SIG_VALTYPE_ refers to signal '" + pending.signalName +
+                             "', which message '" + msg->name + "' does not define");
+            continue;
+        }
+
+        found->valueType = pending.type;
+    }
+
+    for (const auto &pending : pendingAttributes_)
+    {
+        Message *msg = findMessage(db, pending.messageId);
+        if (msg == nullptr)
+        {
+            continue;
+        }
+
+        msg->attributes[pending.name] = pending.value;
+
+        // An explicit VFrameFormat overrides what the id's top bit implied.
+        if (pending.name == "VFrameFormat")
+        {
+            if ((pending.value == "ExtendedCAN") || (pending.value == "J1939PG"))
+            {
+                msg->isExtended = true;
+            }
+            else if (pending.value == "StandardCAN")
+            {
+                msg->isExtended = false;
+            }
+        }
+    }
+}
+
+void Parser::validate(Database &db)
+{
+    // A file with no BO_ in it is not a DBC we can do anything with, and
+    // saying so here is what stops arbitrary text from generating a valid,
+    // empty, useless library and exiting 0.
+    if (db.messages.empty())
+    {
+        diags_.error(1, 1, "no BO_ message definitions found");
+        return;
+    }
+
+    std::unordered_map<uint32_t, size_t> idCounts;
+    std::unordered_set<std::string> seenNames;
+
+    for (const auto &msg : db.messages)
+    {
+        idCounts[msg.id] += 1;
+    }
+
+    // messageDefinitionLines_ is appended in lockstep with db.messages, so the
+    // index is the message's own entry rather than a lookup by id -- which
+    // would pick the wrong one for exactly the duplicate ids reported here.
+    for (size_t i = 0; i < db.messages.size(); ++i)
+    {
+        const Message &msg = db.messages[i];
+        const int line = messageDefinitionLines_[i].second;
+
+        if (idCounts[msg.id] > 1)
+        {
+            // Two messages with one id generate duplicate switch labels, and
+            // only the first would ever be reached anyway.
+            diags_.error(line, 1, "message id 0x" + hex(msg.id) +
+                                      " is defined by more than one BO_");
+            idCounts[msg.id] = 1; // report it once, not once per copy
+        }
+
+        if (!seenNames.insert(msg.name).second)
+        {
+            diags_.error(line, 1, "message name '" + msg.name + "' is used more than once");
+        }
+
+        validateMessage(msg, line);
+    }
+}
+
+void Parser::validateMessage(const Message &msg, int line)
+{
+    if (!isUsableIdentifier(msg.name))
+    {
+        diags_.error(line, 1,
+                     "message name '" + msg.name +
+                         "' cannot be used as a C++ identifier in generated code");
+    }
+
+    // CAN is 8 bytes, CAN FD is up to 64. Anything past that is a typo, and
+    // left alone it sizes a std::array the decoder then indexes out of.
+    if (msg.dlc > 64u)
+    {
+        diags_.error(line, 1, "message '" + msg.name + "' declares a length of " +
+                                  std::to_string(msg.dlc) + " bytes, which no CAN frame has");
+    }
+
+    size_t multiplexorCount = 0;
+    for (const auto &sig : msg.signals)
+    {
+        if (sig.isMultiplexor)
+        {
+            multiplexorCount += 1;
+        }
+    }
+
+    // `m3M` marks a signal that is gated by group 3 and itself selects a
+    // nested level. The generated decoder has one flat multiplexor per
+    // message, so it cannot express that -- and quietly treating the signal as
+    // an ordinary multiplexor would decode the wrong fields, which is exactly
+    // why SG_MUL_VAL_ is refused too. The token is still lexed properly, so
+    // this reports the real problem instead of failing on a missing ':'.
+    for (const auto &sig : msg.signals)
+    {
+        if (sig.isMultiplex && sig.isMultiplexor)
+        {
+            diags_.error(line, 1, "signal '" + msg.name + "." + sig.name +
+                                      "' is both multiplexed and a multiplexor (nested "
+                                      "multiplexing), which is not supported");
+        }
+    }
+
+    if (msg.isMultiplexed && (multiplexorCount == 0))
+    {
+        // This used to reach the generator, which dereferenced the missing
+        // multiplexor and died with a segfault part way through a header.
+        diags_.error(line, 1,
+                     "message '" + msg.name +
+                         "' has multiplexed signals but no multiplexor signal (one "
+                         "signal needs the 'M' marker)");
+    }
+
+    if (multiplexorCount > 1)
+    {
+        diags_.error(line, 1, "message '" + msg.name +
+                                  "' has more than one multiplexor signal");
+    }
+
+    std::unordered_set<std::string> signalNames;
+    for (const auto &sig : msg.signals)
+    {
+        if (!signalNames.insert(sig.name).second)
+        {
+            diags_.error(line, 1, "message '" + msg.name + "' defines signal '" +
+                                      sig.name + "' more than once");
+        }
+
+        validateSignal(msg, sig, line);
+    }
+}
+
+void Parser::validateSignal(const Message &msg, const Signal &sig, int line)
+{
+    const std::string where = "signal '" + msg.name + "." + sig.name + "'";
+
+    if (!isUsableIdentifier(sig.name))
+    {
+        diags_.error(line, 1,
+                     where + " cannot be used as a C++ identifier in generated code");
+    }
+
+    if (sig.length == 0u)
+    {
+        diags_.error(line, 1, where + " has zero length");
+        return;
+    }
+
+    if (sig.length > 64u)
+    {
+        diags_.error(line, 1, where + " is " + std::to_string(sig.length) +
+                                  " bits, and the decoder works in 64 bit words");
+        return;
+    }
+
+    // Nothing used to check this, so a bad start bit produced generated code
+    // that indexed past the end of the frame array with no warning anywhere.
+    const uint32_t lastBit = sig.lastBitIndex();
+    if (lastBit >= (msg.dlc * 8u))
+    {
+        diags_.error(line, 1, where + " occupies bit " + std::to_string(lastBit) +
+                                  ", past the end of a " + std::to_string(msg.dlc) +
+                                  " byte frame");
+    }
+
+    // encode() divides by the scale.
+    if (sig.scale == 0.0)
+    {
+        diags_.error(line, 1, where + " has a scale of zero");
+    }
+
+    switch (sig.valueType)
+    {
+    case SignalValueType::Integer:
+        break;
+
+    case SignalValueType::Float:
+        if (sig.length != 32u)
+        {
+            diags_.error(line, 1, where + " is declared IEEE float by SIG_VALTYPE_ but is " +
+                                      std::to_string(sig.length) + " bits, not 32");
+        }
+        break;
+
+    case SignalValueType::Double:
+        if (sig.length != 64u)
+        {
+            diags_.error(line, 1, where + " is declared IEEE double by SIG_VALTYPE_ but is " +
+                                      std::to_string(sig.length) + " bits, not 64");
+        }
+        break;
+    }
+
+    for (const auto &mapping : sig.valueTable)
+    {
+        const int64_t widest = (sig.length >= 64u)
+                                   ? INT64_MAX
+                                   : ((static_cast<int64_t>(1) << sig.length) - 1);
+        if (!sig.isSigned && ((mapping.rawValue < 0) || (mapping.rawValue > widest)))
+        {
+            diags_.warn(line, 1, where + " has a value table entry " +
+                                     std::to_string(mapping.rawValue) +
+                                     " that the signal cannot represent");
+        }
+    }
 }
 
 } // namespace dbc_parser
-
-

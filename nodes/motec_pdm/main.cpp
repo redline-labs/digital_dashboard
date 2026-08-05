@@ -1,3 +1,4 @@
+#include <span>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 #include <cxxopts.hpp>
@@ -25,19 +26,19 @@ PdmOutputStatusEnum convert_enum_to_capnp(EnumT input)
 {
     switch (input)
     {
-        case EnumT::Output_Off_0:
+        case EnumT::Output_Off:
             return PdmOutputStatusEnum::OFF;
 
-        case EnumT::Output_On_1:
+        case EnumT::Output_On:
             return PdmOutputStatusEnum::ON;
 
-        case EnumT::Output_Fault_Error_2:
+        case EnumT::Output_Fault_Error:
             return PdmOutputStatusEnum::FAULT_ERROR;
 
-        case EnumT::Output_Over_Current_Error_4:
+        case EnumT::Output_Over_Current_Error:
             return PdmOutputStatusEnum::OVER_CURRENT_ERROR;
 
-        case EnumT::Output_Retries_Reached_8:
+        case EnumT::Output_Retries_Reached:
             return PdmOutputStatusEnum::RETRIES_REACHED;
 
         default:
@@ -340,7 +341,10 @@ int main(int argc, char** argv)
                 bytes[i] = static_cast<uint8_t>(dataList[i]);
             }
             
-            parser.handle_can_frame(id, bytes);
+            // The real length, not the padded buffer: a frame shorter than the
+            // message it claims to be must be rejected, not decoded as though
+            // the padding were readings.
+            parser.handle_can_frame(id, std::span<const uint8_t>(bytes.data(), n));
         });
 
     for (;;)

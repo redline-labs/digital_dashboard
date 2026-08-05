@@ -97,11 +97,34 @@ int main(int argc, char **argv)
         std::ostringstream ss;
         ss << in.rdbuf();
         dbc_parser::Parser parser(ss.str());
-        dbc_parser::ParseError err;
-        auto db = parser.parse(err);
+        auto db = parser.parse();
+
+        // Every diagnostic is reported, whether or not the parse survived, and
+        // every one names a line. Warnings are shown even on success -- they
+        // are how an ignored section becomes visible instead of vanishing.
+        for (const auto &entry : parser.diagnostics().entries())
+        {
+            const std::string location =
+                fmt::format("{}:{}:{}", inputPath.string(), entry.line, entry.column);
+
+            switch (entry.severity)
+            {
+            case dbc_parser::Severity::Warning:
+                SPDLOG_WARN("{}: {}", location, entry.message);
+                break;
+
+            case dbc_parser::Severity::Error:
+                SPDLOG_ERROR("{}: {}", location, entry.message);
+                break;
+            }
+        }
+
         if (!db)
         {
-            SPDLOG_ERROR("Parse error at {}:{}: {}", err.line, err.column, err.message);
+            // Generating from a file we only half understood is how a single
+            // typo used to delete a whole message from the build and still
+            // exit 0.
+            SPDLOG_ERROR("Refusing to generate from {}", inputPath.string());
             return 3;
         }
 
@@ -116,10 +139,7 @@ int main(int argc, char **argv)
             return 13;
         }
 
-        // Invoke generators
-        dbc_codegen::generate_cpp_header(*db, base, outputDir);
-        dbc_codegen::generate_cpp_parser_header(*db, base, outputDir);
-        dbc_codegen::generate_cpp_parser_source(*db, base, outputDir);
+        dbc_codegen::write_sources(dbc_codegen::generate_sources(*db, base), outputDir);
 
         SPDLOG_INFO("Generation completed.");
         return 0;

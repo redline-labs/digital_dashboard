@@ -2,33 +2,92 @@
 
 #include <cctype>
 
-#include <spdlog/spdlog.h>
-
 namespace dbc_parser
 {
 
-Lexer::Lexer(std::string_view input) :
+std::string_view describe(TokenKind kind)
+{
+    switch (kind)
+    {
+    case TokenKind::EndOfFile:
+        return "end of file";
+
+    case TokenKind::Newline:
+        return "end of line";
+
+    case TokenKind::Identifier:
+        return "a name";
+
+    case TokenKind::Number:
+        return "a number";
+
+    case TokenKind::String:
+        return "a quoted string";
+
+    case TokenKind::Colon:
+        return "':'";
+
+    case TokenKind::Semicolon:
+        return "';'";
+
+    case TokenKind::At:
+        return "'@'";
+
+    case TokenKind::Plus:
+        return "'+'";
+
+    case TokenKind::Minus:
+        return "'-'";
+
+    case TokenKind::Pipe:
+        return "'|'";
+
+    case TokenKind::LParen:
+        return "'('";
+
+    case TokenKind::RParen:
+        return "')'";
+
+    case TokenKind::LBracket:
+        return "'['";
+
+    case TokenKind::RBracket:
+        return "']'";
+
+    case TokenKind::Comma:
+        return "','";
+    }
+
+    return "something unrecognised";
+}
+
+Lexer::Lexer(std::string_view input, Diagnostics &diags) :
     input_(input),
-    index_(0),
-    line_(1),
-    column_(1)
+    diags_(diags)
 {
 }
 
 char Lexer::peek() const
 {
-    if (index_ >= input_.size())
-    {
-        return '\0';
-    }
-    return input_[index_];
+    return peekAhead(0);
 }
 
-char Lexer::get() {
+char Lexer::peekAhead(size_t offset) const
+{
+    if ((index_ + offset) >= input_.size())
+    {
+        return '\0';
+    }
+    return input_[index_ + offset];
+}
+
+char Lexer::get()
+{
     if (index_ >= input_.size())
     {
         return '\0';
     }
+
     char c = input_[index_++];
     if (c == '\n')
     {
@@ -57,21 +116,18 @@ void Lexer::skipWhitespaceExceptNewline()
             get();
             continue;
         }
+
         // comments start with '//' skip to end of line
-        if (c == '/' && index_ + 1 < input_.size() && input_[index_ + 1] == '/')
+        if ((c == '/') && (peekAhead(1) == '/'))
         {
-            while (!eof() && peek() != '\n') get();
+            while (!eof() && (peek() != '\n'))
+            {
+                get();
+            }
             continue;
         }
-        break;
-    }
-}
 
-void Lexer::consumeNewline()
-{
-    if (peek() == '\n')
-    {
-        get();
+        break;
     }
 }
 
@@ -81,7 +137,7 @@ Token Lexer::readIdentifier()
     while (!eof())
     {
         char c = peek();
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.')
+        if (std::isalnum(static_cast<unsigned char>(c)) || (c == '_') || (c == '.'))
         {
             tok.lexeme.push_back(get());
         }
@@ -96,46 +152,73 @@ Token Lexer::readIdentifier()
 Token Lexer::readNumber()
 {
     Token tok{TokenKind::Number, {}, line_, column_};
-    bool seenDot = false;
-    while (!eof()) {
-        char c = peek();
-        if (std::isdigit(static_cast<unsigned char>(c)))
+
+    if (peek() == '-')
+    {
+        tok.lexeme.push_back(get());
+    }
+
+    while (!eof() && std::isdigit(static_cast<unsigned char>(peek())))
+    {
+        tok.lexeme.push_back(get());
+    }
+
+    if ((peek() == '.') && std::isdigit(static_cast<unsigned char>(peekAhead(1))))
+    {
+        tok.lexeme.push_back(get());
+        while (!eof() && std::isdigit(static_cast<unsigned char>(peek())))
         {
             tok.lexeme.push_back(get());
         }
-        else if (c == '.' && !seenDot)
+    }
+
+    // An exponent is only part of the number if it is actually well formed.
+    // Swallowing a bare 'e' would turn `1eee` into a number token that no
+    // conversion accepts, and the resulting "invalid scale" would point at the
+    // wrong thing.
+    if ((peek() == 'e') || (peek() == 'E'))
+    {
+        size_t digitOffset = 1;
+        if ((peekAhead(1) == '+') || (peekAhead(1) == '-'))
         {
-            seenDot = true;
-            tok.lexeme.push_back(get());
+            digitOffset = 2;
         }
-        else if (c == 'e' || c == 'E')
+
+        if (std::isdigit(static_cast<unsigned char>(peekAhead(digitOffset))))
         {
-            tok.lexeme.push_back(get());
-            if (peek() == '+' || peek() == '-')
+            for (size_t i = 0; i < digitOffset; ++i)
+            {
+                tok.lexeme.push_back(get());
+            }
+            while (!eof() && std::isdigit(static_cast<unsigned char>(peek())))
             {
                 tok.lexeme.push_back(get());
             }
         }
-        else
-        {
-            break;
-        }
     }
+
     return tok;
 }
 
 Token Lexer::readString()
 {
     Token tok{TokenKind::String, {}, line_, column_};
+
     // consume opening quote
     get();
+
+    bool terminated = false;
     while (!eof())
     {
         char c = get();
         if (c == '"')
         {
+            terminated = true;
             break;
         }
+
+        // The lexeme holds the *unescaped* text. Anything emitting it into
+        // generated source has to escape it again.
         if (c == '\\')
         {
             if (!eof())
@@ -148,6 +231,19 @@ Token Lexer::readString()
             tok.lexeme.push_back(c);
         }
     }
+
+    if (!terminated)
+    {
+        diags_.error(tok.line, tok.column, "unterminated string");
+    }
+
+    return tok;
+}
+
+Token Lexer::punctuation(TokenKind kind)
+{
+    Token tok{kind, {}, line_, column_};
+    tok.lexeme.push_back(get());
     return tok;
 }
 
@@ -162,17 +258,16 @@ std::vector<Token> Lexer::tokenize()
         {
             break;
         }
+
         // Now emit newline tokens on '\n'
         if (peek() == '\n')
         {
-            Token t{TokenKind::Newline, "\n", line_, column_};
-            get();
-            tokens.push_back(std::move(t));
+            tokens.push_back(punctuation(TokenKind::Newline));
             continue;
         }
 
         char c = peek();
-        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' )
+        if (std::isalpha(static_cast<unsigned char>(c)) || (c == '_'))
         {
             tokens.push_back(readIdentifier());
             continue;
@@ -184,73 +279,69 @@ std::vector<Token> Lexer::tokenize()
             continue;
         }
 
-        if (c == '-' && index_ + 1 < input_.size() && std::isdigit(static_cast<unsigned char>(input_[index_ + 1])))
+        if ((c == '-') && std::isdigit(static_cast<unsigned char>(peekAhead(1))))
         {
-            // negative number
-            Token t{TokenKind::Number, "-", line_, column_};
-            get();
-            Token rest = readNumber();
-            t.lexeme += rest.lexeme;
-            t.kind = TokenKind::Number;
-            tokens.push_back(std::move(t));
+            tokens.push_back(readNumber());
             continue;
         }
-    
+
         switch (c)
         {
-            case ':':
-                tokens.push_back({TokenKind::Colon, std::string(1, get()), line_, column_});
-                break;
+        case ':':
+            tokens.push_back(punctuation(TokenKind::Colon));
+            break;
 
-            case ';':
-                tokens.push_back({TokenKind::Semicolon, std::string(1, get()), line_, column_});
-                break;
+        case ';':
+            tokens.push_back(punctuation(TokenKind::Semicolon));
+            break;
 
-            case '@':
-                tokens.push_back({TokenKind::At, std::string(1, get()), line_, column_});
-                break;
+        case '@':
+            tokens.push_back(punctuation(TokenKind::At));
+            break;
 
-            case '+':
-                tokens.push_back({TokenKind::Plus, std::string(1, get()), line_, column_});
-                break;
+        case '+':
+            tokens.push_back(punctuation(TokenKind::Plus));
+            break;
 
-            case '-':
-                tokens.push_back({TokenKind::Minus, std::string(1, get()), line_, column_});
-                break;
+        case '-':
+            tokens.push_back(punctuation(TokenKind::Minus));
+            break;
 
-            case '|':
-                tokens.push_back({TokenKind::Pipe, std::string(1, get()), line_, column_});
-                break;
+        case '|':
+            tokens.push_back(punctuation(TokenKind::Pipe));
+            break;
 
-            case '(':
-                tokens.push_back({TokenKind::LParen, std::string(1, get()), line_, column_});
-                break;
+        case '(':
+            tokens.push_back(punctuation(TokenKind::LParen));
+            break;
 
-            case ')':
-                tokens.push_back({TokenKind::RParen, std::string(1, get()), line_, column_});
-                break;
+        case ')':
+            tokens.push_back(punctuation(TokenKind::RParen));
+            break;
 
-            case '[':
-                tokens.push_back({TokenKind::LBracket, std::string(1, get()), line_, column_});
-                break;
+        case '[':
+            tokens.push_back(punctuation(TokenKind::LBracket));
+            break;
 
-            case ']':
-                tokens.push_back({TokenKind::RBracket, std::string(1, get()), line_, column_});
-                break;
+        case ']':
+            tokens.push_back(punctuation(TokenKind::RBracket));
+            break;
 
-            case ',':
-                tokens.push_back({TokenKind::Comma, std::string(1, get()), line_, column_});
-                break;
+        case ',':
+            tokens.push_back(punctuation(TokenKind::Comma));
+            break;
 
-            case '"':
-                tokens.push_back(readString());
-                break;
+        case '"':
+            tokens.push_back(readString());
+            break;
 
-            default:
-                // unrecognized char, consume to avoid infinite loop
-                SPDLOG_ERROR("Unrecognized character: {} (0x{:02X}) at line {} column {}", c, static_cast<unsigned char>(c), line_, column_);
-                get();
-                break;
+        default:
+            // Consume it so we cannot loop forever, but do not pretend the file
+            // was understood.
+            diags_.error(line_, column_,
+                         "unrecognised character '" + std::string(1, c) + "'");
+            get();
+            break;
         }
     }
 
@@ -259,5 +350,3 @@ std::vector<Token> Lexer::tokenize()
 }
 
 } // namespace dbc_parser
-
-

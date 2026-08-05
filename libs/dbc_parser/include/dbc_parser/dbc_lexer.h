@@ -1,9 +1,10 @@
 #pragma once
 
+#include "dbc_parser/diagnostic.h"
+
 #include <string>
 #include <string_view>
 #include <vector>
-#include <optional>
 
 namespace dbc_parser
 {
@@ -27,8 +28,10 @@ enum class TokenKind
     LBracket,    // [
     RBracket,    // ]
     Comma,       // ,
-    Quote,       // "
 };
+
+// Human-readable name for a kind, for diagnostics like "expected ':', got '@'".
+std::string_view describe(TokenKind kind);
 
 struct Token
 {
@@ -41,28 +44,33 @@ struct Token
 class Lexer
 {
   public:
-    explicit Lexer(std::string_view input);
+    // Diagnostics for unrecognised characters and unterminated strings land in
+    // `diags`, which must outlive the lexer.
+    Lexer(std::string_view input, Diagnostics &diags);
 
     // Tokenize entire input into tokens including Newline markers.
     std::vector<Token> tokenize();
 
   private:
     char peek() const;
+    char peekAhead(size_t offset) const;
     char get();
     bool eof() const;
     void skipWhitespaceExceptNewline();
-    void consumeNewline();
     Token readIdentifier();
     Token readNumber();
     Token readString();
 
-private:
+    // Punctuation, recorded at the position of the character itself. Reading
+    // the position after consuming the character is what used to put every
+    // punctuation token one column to the right of where it actually was.
+    Token punctuation(TokenKind kind);
+
     std::string_view input_;
-    size_t index_;
-    int line_;
-    int column_;
+    Diagnostics &diags_;
+    size_t index_{0};
+    int line_{1};
+    int column_{1};
 };
 
 } // namespace dbc_parser
-
-

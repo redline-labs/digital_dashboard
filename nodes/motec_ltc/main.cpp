@@ -5,6 +5,7 @@
 #include "can_frame.capnp.h"
 #include "motec_ltc.capnp.h"
 
+#include <span>
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -34,47 +35,47 @@ static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::Zenoh
 
     switch (m.LTC1_SensorState)
     {
-        case SensorState::START_0:
+        case SensorState::START:
             out.setSensorState(LtcSensorState::START);
             break;
 
-        case SensorState::DIAGNOSTICS_1:
+        case SensorState::DIAGNOSTICS:
             out.setSensorState(LtcSensorState::DIAGNOSTICS);
             break;
 
-        case SensorState::PRE_CAL_2:
+        case SensorState::PRE_CAL:
             out.setSensorState(LtcSensorState::PRE_CAL);
             break;
 
-        case SensorState::CALIBRATION_3:
+        case SensorState::CALIBRATION:
             out.setSensorState(LtcSensorState::CALIBRATION);
             break;
 
-        case SensorState::POST_CAL_4:
+        case SensorState::POST_CAL:
             out.setSensorState(LtcSensorState::POST_CAL);
             break;
 
-        case SensorState::PAUSED_5:
+        case SensorState::PAUSED:
             out.setSensorState(LtcSensorState::PAUSED);
             break;
 
-        case SensorState::HEATING_6:
+        case SensorState::HEATING:
             out.setSensorState(LtcSensorState::HEATING);
             break;
 
-        case SensorState::RUNNING_7:
+        case SensorState::RUNNING:
             out.setSensorState(LtcSensorState::RUNNING);
             break;
 
-        case SensorState::COOLING_8:
+        case SensorState::COOLING:
             out.setSensorState(LtcSensorState::COOLING);
             break;
 
-        case SensorState::PUMP_START_9:
+        case SensorState::PUMP_START:
             out.setSensorState(LtcSensorState::PUMP_START);
             break;
 
-        case SensorState::PUMP_OFF_10:
+        case SensorState::PUMP_OFF:
             out.setSensorState(LtcSensorState::PUMP_OFF);
             break;
 
@@ -127,7 +128,10 @@ int main(int argc, char** argv)
             {
                 bytes[i] = static_cast<uint8_t>(dataList[i]);
             }
-            parser.handle_can_frame(id, bytes);
+            // The real length, not the padded buffer: a frame shorter than the
+            // message it claims to be must be rejected, not decoded as though
+            // the padding were readings.
+            parser.handle_can_frame(id, std::span<const uint8_t>(bytes.data(), n));
         });
 
     for (;;)
