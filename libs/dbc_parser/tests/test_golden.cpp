@@ -33,7 +33,7 @@ constexpr std::array<uint8_t, 8> kMuxGroup2{0x2A, 0x5C, 0x13, 0x77, 0x91, 0xE0, 
 constexpr int64_t decodedMuxIndex()
 {
     Multiplexed_t message;
-    message.decode(kMuxGroup2);
+    (void)message.decode(kMuxGroup2);
     return static_cast<int64_t>(message.MuxIndex);
 }
 

@@ -77,13 +77,14 @@ void testShortFrameLeavesValuesAlone()
 
     std::array<uint8_t, 8> frame = statusFrame(0);
     frame[7] = 0xAB;
-    db.decode(Multiplexed_t::id, frame);
+    (void)db.decode(Multiplexed_t::id, frame);
 
     // Whatever the last byte decoded to, a rejected short frame must not
     // change it -- the old behaviour overwrote it with the caller's padding.
     std::vector<uint8_t> shortFrame(frame.begin(), frame.end() - 1);
     const auto before = db.Multiplexed;
-    db.decode(Multiplexed_t::id, shortFrame);
+    // Deliberately ignored: the point is what it did *not* write.
+    (void)db.decode(Multiplexed_t::id, shortFrame);
 
     bool identical = true;
     db.Multiplexed.visit([&](const auto &value, auto tag) {
@@ -168,6 +169,117 @@ void testEnumeratorNames()
     static_assert(static_cast<int64_t>(Plain::Standby) == 2);
 }
 
+// Frames for two of the plain, non-multiplexed messages.
+std::array<uint8_t, 8> valuesFrame()
+{
+    WithValues_t message;
+    return message.encode();
+}
+
+std::array<uint8_t, 8> floatFrame()
+{
+    FloatSignals_t message;
+    return message.encode();
+}
+
+void testAggregatorWaitsForEveryMember()
+{
+    dbc_test_features_parser parser;
+
+    int completed = 0;
+    parser.add_message_aggregator<dbc_test_features_t::Messages::WithValues,
+                                  dbc_test_features_t::Messages::FloatSignals>(
+        [&](const dbc_test_features_t &) { completed += 1; });
+
+    // The first member alone, repeatedly: never a complete set.
+    for (int i = 0; i < 5; ++i)
+    {
+        parser.handle_can_frame(WithValues_t::id, valuesFrame());
+    }
+    check(completed == 0, "an aggregator must not fire before every member has arrived");
+
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    check(completed == 1, "an aggregator should fire once the set is complete");
+
+    // And it resets, rather than firing on every subsequent frame.
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    check(completed == 1, "an aggregator must reset after firing");
+
+    parser.handle_can_frame(WithValues_t::id, valuesFrame());
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    check(completed == 2, "an aggregator should fire again on the next complete set");
+}
+
+void testAggregatorAlignsToTheFirstMember()
+{
+    dbc_test_features_parser parser;
+
+    int completed = 0;
+    parser.add_message_aggregator<dbc_test_features_t::Messages::WithValues,
+                                  dbc_test_features_t::Messages::FloatSignals>(
+        [&](const dbc_test_features_t &) { completed += 1; });
+
+    // Second member first. It must not count towards a set, or a batch could
+    // be assembled from halves of two different cycles.
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    check(completed == 0, "a trailing member seen before the first must not count");
+
+    parser.handle_can_frame(WithValues_t::id, valuesFrame());
+    check(completed == 0, "the first member alone is still not a complete set");
+
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    check(completed == 1, "the set completes once the members arrive in order");
+}
+
+void testAggregatorCoexistsWithDirectHandlers()
+{
+    dbc_test_features_parser parser;
+
+    // The bug this pins: registering used to assign to a single std::function,
+    // so the aggregator's registration silently threw this handler away.
+    int direct = 0;
+    parser.on_WithValues([&](const WithValues_t &) { direct += 1; });
+
+    int firstAggregate = 0;
+    int secondAggregate = 0;
+    parser.add_message_aggregator<dbc_test_features_t::Messages::WithValues,
+                                  dbc_test_features_t::Messages::FloatSignals>(
+        [&](const dbc_test_features_t &) { firstAggregate += 1; });
+    // A second aggregator sharing a message with the first.
+    parser.add_message_aggregator<dbc_test_features_t::Messages::WithValues,
+                                  dbc_test_features_t::Messages::DoubleSignal>(
+        [&](const dbc_test_features_t &) { secondAggregate += 1; });
+
+    parser.handle_can_frame(WithValues_t::id, valuesFrame());
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+    parser.handle_can_frame(DoubleSignal_t::id, DoubleSignal_t{}.encode());
+
+    check(direct == 1, "a direct handler must survive an aggregator registering after it");
+    check(firstAggregate == 1, "the first aggregator should have completed");
+    check(secondAggregate == 1, "a second aggregator sharing a message should also complete");
+}
+
+void testAggregatorSeesDecodedValues()
+{
+    dbc_test_features_parser parser;
+
+    // The aggregate callback is handed the database, so the point is that the
+    // members hold what was just decoded rather than a stale or empty struct.
+    bool matched = false;
+    parser.add_message_aggregator<dbc_test_features_t::Messages::WithValues,
+                                  dbc_test_features_t::Messages::FloatSignals>(
+        [&](const dbc_test_features_t &db) {
+            matched = (static_cast<int64_t>(db.WithValues.Plain) == 7);
+        });
+
+    WithValues_t source;
+    source.Plain = static_cast<WithValues_t::sig_Plain_t::Type>(7);
+    parser.handle_can_frame(WithValues_t::id, source.encode());
+    parser.handle_can_frame(FloatSignals_t::id, floatFrame());
+
+    check(matched, "the aggregate callback should see freshly decoded values");
+}
+
 void testRoundTrip()
 {
     for (uint32_t group : Multiplexed_t::multiplexor_group_indexes)
@@ -192,6 +304,10 @@ int main()
     testHandlersAccumulate();
     testMultiplexGatingPolicies();
     testEnumeratorNames();
+    testAggregatorWaitsForEveryMember();
+    testAggregatorAlignsToTheFirstMember();
+    testAggregatorCoexistsWithDirectHandlers();
+    testAggregatorSeesDecodedValues();
     testRoundTrip();
 
     if (failures != 0)

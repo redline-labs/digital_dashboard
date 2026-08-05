@@ -620,7 +620,7 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     generateBitHelpers(out);
 
     // encode
-    fmt::print(out, "    constexpr std::array<uint8_t, {}u> encode() const\n", message.dlc);
+    fmt::print(out, "    [[nodiscard]] constexpr std::array<uint8_t, {}u> encode() const\n", message.dlc);
     fmt::print(out, "    {{\n");
     fmt::print(out, "        std::array<uint8_t, {}u> data{{}};\n", message.dlc);
     fmt::print(out, "        const std::span<uint8_t> out{{data}};\n");
@@ -670,7 +670,7 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     fmt::print(out, "    // False if the frame is shorter than this message, in which case\n");
     fmt::print(out, "    // nothing is written. A short frame used to be zero padded by the\n");
     fmt::print(out, "    // caller and decoded as though those zeroes were real readings.\n");
-    fmt::print(out, "    constexpr bool decode(std::span<const uint8_t> data)\n");
+    fmt::print(out, "    [[nodiscard]] constexpr bool decode(std::span<const uint8_t> data)\n");
     fmt::print(out, "    {{\n");
     fmt::print(out, "        if (data.size() < dlc)\n");
     fmt::print(out, "        {{\n");
@@ -908,7 +908,7 @@ void generate_cpp_header(const dbc_parser::Database &db, const std::string &base
     fmt::print(hout, "    // Decodes into the matching member and names it. Unknown if the id\n");
     fmt::print(hout, "    // is not ours, and Unknown too if the frame was too short for the\n");
     fmt::print(hout, "    // message it claims to be -- in which case nothing was written.\n");
-    fmt::print(hout, "    constexpr Messages decode(uint32_t message_id, std::span<const uint8_t> data)\n");
+    fmt::print(hout, "    [[nodiscard]] constexpr Messages decode(uint32_t message_id, std::span<const uint8_t> data)\n");
     fmt::print(hout, "    {{\n");
     fmt::print(hout, "        switch (message_id)\n");
     fmt::print(hout, "        {{\n");
