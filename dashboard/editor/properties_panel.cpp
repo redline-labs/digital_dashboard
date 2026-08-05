@@ -327,27 +327,71 @@ namespace
         }
     }
 
-    // Reading helpers
+    // ------------------------------------------------------------- reading back
+    //
+    // The read walks the widget subtree that the build produced, and is handed
+    // each editor directly.
+    //
+    // It used to be two independent walks joined only by a convention: the build
+    // stamped "field:<path>" onto every editor and the read went looking for that
+    // string with findChild. The two had to agree on traversal order AND on how a
+    // path is spelled, with nothing to enforce either -- a field that fell out of
+    // step stopped round-tripping in silence, and the fix was always to go and
+    // read both walks. findChild made it worse: it searches the whole subtree, so
+    // a page that had not been destroyed yet could answer for the one being read,
+    // which is the bug discardCurrentPage() below still carries a comment about.
+    //
+    // Structure is now the only thing the two sides share, and they cannot
+    // disagree about it, because one of them built it. The objectNames are still
+    // set, but purely so a test or the agent interface can address a field by
+    // name; nothing here reads them.
+
+    // The field widget of row `row` of a form.
+    QWidget* formFieldAt(QFormLayout* form, int row)
+    {
+        if (form == nullptr || row < 0 || row >= form->rowCount())
+        {
+            return nullptr;
+        }
+        QLayoutItem* item = form->itemAt(row, QFormLayout::FieldRole);
+        return item ? item->widget() : nullptr;
+    }
+
     template <typename T>
-    void readLeafFromWidget(QWidget* page, const QString& path, T& out)
+    void readEditorInto(QWidget* editor, T& out);
+
+    // A leaf: the widget handed in IS the editor the build made for this type.
+    template <typename T>
+    void readLeafInto(QWidget* editor, T& out)
     {
         using FieldType = std::decay_t<T>;
-        const QString on = QString("field:%1").arg(path);
+        if (editor == nullptr)
+        {
+            return;
+        }
+
         if constexpr (std::is_same_v<FieldType, std::string>)
         {
-            if (auto* w = page->findChild<QLineEdit*>(on)) out = w->text().toStdString();
+            if (auto* w = qobject_cast<QLineEdit*>(editor)) out = w->text().toStdString();
         }
         else if constexpr (std::is_same_v<FieldType, helpers::Color>)
         {
-            if (auto* w = page->findChild<QLineEdit*>(on)) out = helpers::Color(w->text().toStdString());
+            // A container: the line edit, then the picker button.
+            if (auto* layout = editor->layout(); layout != nullptr && layout->count() > 0)
+            {
+                if (auto* w = qobject_cast<QLineEdit*>(layout->itemAt(0)->widget()))
+                {
+                    out = helpers::Color(w->text().toStdString());
+                }
+            }
         }
         else if constexpr (std::is_same_v<FieldType, bool>)
         {
-            if (auto* w = page->findChild<QCheckBox*>(on)) out = w->isChecked();
+            if (auto* w = qobject_cast<QCheckBox*>(editor)) out = w->isChecked();
         }
         else if constexpr (std::is_enum_v<FieldType>)
         {
-            if (auto* w = page->findChild<QComboBox*>(on))
+            if (auto* w = qobject_cast<QComboBox*>(editor))
             {
                 // Non-throwing: this runs on a user-interaction path, and an
                 // exception here would unwind through QApplication::notify().
@@ -362,17 +406,89 @@ namespace
                 else
                 {
                     SPDLOG_WARN("Ignoring unknown value '{}' for field '{}'.",
-                                w->currentText().toStdString(), path.toStdString());
+                                w->currentText().toStdString(),
+                                editor->objectName().toStdString());
                 }
             }
         }
         else if constexpr (std::is_integral_v<FieldType>)
         {
-            if (auto* w = page->findChild<QSpinBox*>(on)) out = static_cast<FieldType>(w->value());
+            if (auto* w = qobject_cast<QSpinBox*>(editor)) out = static_cast<FieldType>(w->value());
         }
         else if constexpr (std::is_floating_point_v<FieldType>)
         {
-            if (auto* w = page->findChild<QDoubleSpinBox*>(on)) out = static_cast<FieldType>(w->value());
+            if (auto* w = qobject_cast<QDoubleSpinBox*>(editor))
+                out = static_cast<FieldType>(w->value());
+        }
+    }
+
+    // Reads whatever createEditorFor() built for a field of type T.
+    template <typename T>
+    void readEditorInto(QWidget* editor, T& out)
+    {
+        using FieldType = std::decay_t<T>;
+        if (editor == nullptr)
+        {
+            return;
+        }
+
+        if constexpr (reflection::is_std_vector<FieldType>::value)
+        {
+            using Elem = typename reflection::is_std_vector<FieldType>::value_type;
+
+            // The container's second entry is the items area; its rows are the
+            // elements. Read the rows that are there NOW rather than the ones
+            // that were there at build time -- Add and Remove change the count
+            // after the fact, which is exactly what a positional index into a
+            // list captured during the build could not have survived.
+            auto* outer = editor->layout();
+            if (outer == nullptr || outer->count() < 2)
+            {
+                return;
+            }
+            QWidget* items = outer->itemAt(1)->widget();
+            QLayout* itemsLayout = items ? items->layout() : nullptr;
+            if (itemsLayout == nullptr)
+            {
+                return;
+            }
+
+            FieldType result;
+            for (int i = 0; i < itemsLayout->count(); ++i)
+            {
+                QWidget* row = itemsLayout->itemAt(i)->widget();
+                QLayout* rowLayout = row ? row->layout() : nullptr;
+                if (rowLayout == nullptr || rowLayout->count() < 2)
+                {
+                    continue;
+                }
+                // [0] is the "[i]" label, [1] is the element's editor.
+                // Seeded from the element already at that index so a field the
+                // form does not render survives, as in the struct case below.
+                Elem value = (static_cast<std::size_t>(result.size()) < out.size())
+                                 ? out[static_cast<std::size_t>(result.size())]
+                                 : Elem{};
+                readEditorInto<Elem>(rowLayout->itemAt(1)->widget(), value);
+                result.push_back(std::move(value));
+            }
+            out = std::move(result);
+        }
+        else if constexpr (reflection::is_reflected_struct<FieldType>::value)
+        {
+            // An inset QFrame carrying a QFormLayout, one row per field, built in
+            // reflection order -- so read them back in reflection order.
+            auto* form = qobject_cast<QFormLayout*>(editor->layout());
+            int row = 0;
+            reflection::visit_fields(out, [&](std::string_view /*name*/, auto& ref,
+                                              std::string_view /*type*/)
+            {
+                readEditorInto(formFieldAt(form, row), ref);
+                ++row;
+            });
+        }
+        else
+        {
+            readLeafInto<FieldType>(editor, out);
         }
     }
 
@@ -385,42 +501,15 @@ namespace
     // does not touch simply survives, which is what the agent's set_config path
     // has always done (see patchedConfig in dashboard/agent/widget_methods.cpp).
     template <typename Config>
-    Config readIntoConfig(QWidget* page, Config cfg, const QString& basePath = "")
+    Config readIntoConfig(QFormLayout* form, Config cfg)
     {
-        reflection::visit_fields(cfg, [&](std::string_view name, auto& ref, std::string_view /*typeName*/)
+        int row = 0;
+        reflection::visit_fields(cfg, [&](std::string_view /*name*/, auto& ref,
+                                          std::string_view /*typeName*/)
         {
-            const QString field = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
-            const QString path = basePath.isEmpty() ? field : QString("%1.%2").arg(basePath, field);
-            using FieldType = std::decay_t<decltype(ref)>;
-            if constexpr (reflection::is_reflected_struct<FieldType>::value)
-            {
-                ref = readIntoConfig<FieldType>(page, ref, path);
-            }
-            else if constexpr (reflection::is_std_vector<FieldType>::value)
-            {
-                using Elem = typename reflection::is_std_vector<FieldType>::value_type;
-                FieldType outVec;
-                for (int i = 0; ; ++i)
-                {
-                    const QString elemPath = QString("%1[%2]").arg(path).arg(i);
-                    const QString on = QString("field:%1").arg(elemPath);
-                    QWidget* any = page->findChild<QWidget*>(on);
-                    if (!any) break;
-
-                    // Seed each element from the one already at that index, for
-                    // the same reason as the struct case above.
-                    Elem v = (static_cast<std::size_t>(i) < ref.size()) ? ref[static_cast<std::size_t>(i)] : Elem{};
-                    readLeafFromWidget(page, elemPath, v);
-                    outVec.push_back(std::move(v));
-                }
-                ref = std::move(outVec);
-            }
-            else
-            {
-                readLeafFromWidget(page, path, ref);
-            }
+            readEditorInto(formFieldAt(form, row), ref);
+            ++row;
         });
-
         return cfg;
     }
 
@@ -496,7 +585,7 @@ namespace
         page->setLayout(vbox);
 
         PropertiesPanel* that = qobject_cast<PropertiesPanel*>(parent);
-        QObject::connect(applyBtn, &QPushButton::clicked, page, [page, that]()
+        QObject::connect(applyBtn, &QPushButton::clicked, page, [form, that]()
         {
             if (!that || !that->selected()) return;
             QWidget* w = that->selected();
@@ -527,7 +616,7 @@ namespace
                     using cfg_t = std::decay_t<decltype(current)>;
                     if constexpr (!std::is_same_v<cfg_t, std::monostate>)
                     {
-                        applied = frame->applyConfig(readIntoConfig<cfg_t>(page, current));
+                        applied = frame->applyConfig(readIntoConfig<cfg_t>(form, current));
                     }
                 },
                 frame->config());

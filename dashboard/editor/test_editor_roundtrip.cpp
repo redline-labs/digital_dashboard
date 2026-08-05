@@ -15,6 +15,8 @@
 
 #include <QApplication>
 #include <QLineEdit>
+#include <QPushButton>
+#include <QSpinBox>
 
 #include <yaml-cpp/yaml.h>
 
@@ -588,6 +590,202 @@ void testBackgroundSurvivesTheCanvas()
               canvas.exportAppConfig().background_color.value() + "'");
 }
 
+// --------------------------------------------------- the properties panel Apply
+//
+// Apply reads the form back into the config. Build and read used to be two
+// independent walks joined only by the "field:<path>" objectNames, so a field
+// that fell out of step stopped round-tripping in silence. The read now walks
+// the widget subtree the build produced. These exercise the shapes that
+// convention was worst at: a scalar, a vector, and a vector whose elements are
+// themselves composite editors.
+
+// Presses the page's Apply button, which is the only QPushButton whose text is
+// "Apply" (the others are the vector's Add/Remove and the colour pickers).
+bool pressApply(PropertiesPanel& panel)
+{
+    for (QPushButton* button : panel.findChildren<QPushButton*>())
+    {
+        if (button->text() == "Apply")
+        {
+            button->click();
+            return true;
+        }
+    }
+    return false;
+}
+
+void testApplyWritesScalarFieldsBack()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+    QObject::connect(&canvas, &Canvas::selectionChanged, &panel, &PropertiesPanel::setSelectedWidget);
+
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    const auto frames = canvas.frames();
+    if (frames.empty())
+    {
+        check(false, "expected a frame");
+        return;
+    }
+    canvas.selectFrame(frames[0]);
+
+    auto* text = panel.findChild<QLineEdit*>("field:text");
+    if (text == nullptr)
+    {
+        check(false, "the form has a text field");
+        return;
+    }
+    text->setText("applied");
+    check(pressApply(panel), "the page has an Apply button");
+
+    check(std::get<StaticTextConfig_t>(frames[0]->config()).text == "applied",
+          "Apply wrote the edited text back, got '" +
+              std::get<StaticTextConfig_t>(frames[0]->config()).text + "'");
+}
+
+// A vector of a leaf type. Each element's editor is a plain spin box, and the
+// count can change between build and read.
+void testApplyRoundTripsAVectorField()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+    QObject::connect(&canvas, &Canvas::selectionChanged, &panel, &PropertiesPanel::setSelectedWidget);
+
+    app_config_t app;
+    app.name = "vec";
+    app.width = 640;
+    app.height = 480;
+    widget_config_t wc;
+    wc.type = Mercedes190ESpeedometer::kWidgetType;
+    wc.id = "speedo";
+    wc.width = 200;
+    wc.height = 200;
+    Mercedes190ESpeedometerConfig_t sc;
+    sc.shift_box_markers = {30, 60, 90};
+    wc.config = sc;
+    app.widgets.push_back(wc);
+
+    canvas.loadFromAppConfig(app);
+    const auto frames = canvas.frames();
+    if (frames.empty())
+    {
+        check(false, "expected a frame");
+        return;
+    }
+    canvas.selectFrame(frames[0]);
+
+    // Untouched, the values have to survive an Apply unchanged.
+    check(pressApply(panel), "the page has an Apply button");
+    {
+        const auto& markers =
+            std::get<Mercedes190ESpeedometerConfig_t>(frames[0]->config()).shift_box_markers;
+        check(markers == std::vector<uint16_t>({30, 60, 90}),
+              "an untouched vector survives Apply, got " + std::to_string(markers.size()) +
+                  " elements");
+    }
+
+    // Now edit one element in place.
+    auto* second = panel.findChild<QSpinBox*>("field:shift_box_markers[1]");
+    if (second == nullptr)
+    {
+        check(false, "the form has an editor for the second element");
+        return;
+    }
+    second->setValue(65);
+    check(pressApply(panel), "Apply again");
+    {
+        const auto& markers =
+            std::get<Mercedes190ESpeedometerConfig_t>(frames[0]->config()).shift_box_markers;
+        check(markers == std::vector<uint16_t>({30, 65, 90}),
+              "Apply wrote the edited element back");
+    }
+}
+
+// A vector whose elements are composite editors (a line edit plus a colour
+// picker), and whose length changes after the form was built. Reading by
+// position into a list captured at build time could not have survived this.
+void testApplyFollowsVectorAddAndRemove()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+    QObject::connect(&canvas, &Canvas::selectionChanged, &panel, &PropertiesPanel::setSelectedWidget);
+
+    app_config_t app;
+    app.name = "colors";
+    app.width = 640;
+    app.height = 480;
+    widget_config_t wc;
+    wc.type = BackgroundRectWidget::kWidgetType;
+    wc.id = "bg";
+    wc.width = 100;
+    wc.height = 100;
+    BackgroundRectConfig_t bc;
+    bc.colors = {helpers::Color("#111111"), helpers::Color("#222222")};
+    wc.config = bc;
+    app.widgets.push_back(wc);
+
+    canvas.loadFromAppConfig(app);
+    const auto frames = canvas.frames();
+    if (frames.empty())
+    {
+        check(false, "expected a frame");
+        return;
+    }
+    canvas.selectFrame(frames[0]);
+
+    const auto colours = [&]
+    { return std::get<BackgroundRectConfig_t>(frames[0]->config()).colors; };
+
+    check(pressApply(panel), "the page has an Apply button");
+    check(colours().size() == 2 && colours()[0] == helpers::Color("#111111") &&
+              colours()[1] == helpers::Color("#222222"),
+          "two composite elements survive an untouched Apply");
+
+    // Add a row, then fill it in.
+    QPushButton* add = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>())
+    {
+        if (button->text() == "Add") add = button;
+    }
+    if (add == nullptr)
+    {
+        check(false, "the vector editor has an Add button");
+        return;
+    }
+    add->click();
+
+    auto* third = panel.findChild<QLineEdit*>("field:colors[2]");
+    if (third == nullptr)
+    {
+        check(false, "the added row has an editor");
+        return;
+    }
+    third->setText("#333333");
+    check(pressApply(panel), "Apply after Add");
+    check(colours().size() == 3 && colours()[2] == helpers::Color("#333333"),
+          "Apply picked up the row added after the form was built, got " +
+              std::to_string(colours().size()) + " colours");
+
+    // And removing one has to shorten the config.
+    QPushButton* remove = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>())
+    {
+        if (button->text() == "Remove") remove = button;
+    }
+    if (remove == nullptr)
+    {
+        check(false, "the vector editor has a Remove button");
+        return;
+    }
+    remove->click();
+    check(pressApply(panel), "Apply after Remove");
+    check(colours().size() == 2, "Apply followed the row removal, got " +
+                                     std::to_string(colours().size()) + " colours");
+}
+
 // ------------------------------------------------------ undo keeps its widgets
 //
 // Restoring a history entry used to reload the whole document: destroy every
@@ -888,6 +1086,9 @@ int main(int argc, char** argv)
     testAnOpenWindowEditDoesNotSwallowTheNextEdit();
     testHalfTypedColoursAreNotApplied();
     testBackgroundSurvivesTheCanvas();
+    testApplyWritesScalarFieldsBack();
+    testApplyRoundTripsAVectorField();
+    testApplyFollowsVectorAddAndRemove();
     testUndoingAMoveDoesNotRebuildWidgets();
     testUndoingAConfigChangeRebuildsOnlyThatWidget();
     testUndoRestoresAddedAndDeletedWidgets();
