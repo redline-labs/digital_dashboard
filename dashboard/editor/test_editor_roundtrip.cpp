@@ -769,21 +769,29 @@ void testApplyFollowsVectorAddAndRemove()
           "Apply picked up the row added after the form was built, got " +
               std::to_string(colours().size()) + " colours");
 
-    // And removing one has to shorten the config.
-    QPushButton* remove = nullptr;
+    // Removing the MIDDLE row. Each row carries its own remove button, so the
+    // entries after it keep their values -- the single global "remove the last
+    // one" could only drop entries off the end, which meant retyping everything
+    // after the one you actually wanted gone.
+    std::vector<QPushButton*> removes;
     for (QPushButton* button : panel.findChildren<QPushButton*>())
     {
-        if (button->text() == "Remove") remove = button;
+        if (button->text() == "✕") removes.push_back(button);
     }
-    if (remove == nullptr)
+    check(removes.size() == 3, "every row carries its own remove button, got " +
+                                   std::to_string(removes.size()));
+    if (removes.size() != 3)
     {
-        check(false, "the vector editor has a Remove button");
         return;
     }
-    remove->click();
-    check(pressApply(panel), "Apply after Remove");
-    check(colours().size() == 2, "Apply followed the row removal, got " +
+
+    removes[1]->click();
+    check(pressApply(panel), "Apply after removing the middle row");
+    check(colours().size() == 2, "the removed row is gone, got " +
                                      std::to_string(colours().size()) + " colours");
+    check(colours().size() == 2 && colours()[0] == helpers::Color("#111111") &&
+              colours()[1] == helpers::Color("#333333"),
+          "the rows either side of it kept their own values");
 }
 
 // ------------------------------------------------------ undo keeps its widgets

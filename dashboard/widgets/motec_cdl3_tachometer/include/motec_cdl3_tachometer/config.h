@@ -14,6 +14,13 @@ REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
     (std::string, rpm_expression, "")
 )
 
+REFLECT_METADATA(MotecCdl3TachometerConfig_t,
+    (max_rpm, "Maximum RPM", "Full-scale reading; sets how many segments the bar spans"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (rpm_expression, "RPM Expression", "Expression evaluated against the message to produce engine RPM")
+)
+
 // max_rpm is the divisor for the segment count and the bound on the tick loop
 // that runs in the constructor. Zero divided; a value near UINT32_MAX made that
 // loop allocate until the process died.

@@ -16,6 +16,16 @@ REFLECT_STRUCT(sub_gauge_config_t,
     (std::string, value_expression, "")
 )
 
+// One block for the sub-gauge type, not one per sub-gauge: all four use the
+// same struct, so the panel shows these labels wherever a sub-gauge is nested.
+REFLECT_METADATA(sub_gauge_config_t,
+    (min_value, "Minimum Value", "Reading at the empty end of the sweep"),
+    (max_value, "Maximum Value", "Reading at the full end of the sweep"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (value_expression, "Value Expression", "Expression evaluated against the message to produce the reading")
+)
+
 // The bottom sub-gauge on a real 190E cluster is not a tick scale. It is a
 // tapered crescent -- thin at the economical end, thick at the uneconomical one
 // -- outlined in white with its upper portion filled solid red, and the word
@@ -43,6 +53,14 @@ REFLECT_STRUCT(Mercedes190EClusterGaugeConfig_t,
     (sub_gauge_config_t, bottom_gauge, sub_gauge_config_t{}),
     (sub_gauge_config_t, left_gauge, sub_gauge_config_t{}),
     (economy_sweep_config_t, economy_sweep, economy_sweep_config_t{})
+)
+
+REFLECT_METADATA(Mercedes190EClusterGaugeConfig_t,
+    (fuel_gauge, "Fuel Gauge", "The sub-gauge in the fuel position"),
+    (right_gauge, "Right Gauge", "The sub-gauge on the right of the cluster"),
+    (bottom_gauge, "Bottom Gauge", "The sub-gauge along the bottom; what the economy sweep reads"),
+    (left_gauge, "Left Gauge", "The sub-gauge on the left of the cluster"),
+    (economy_sweep, "Economy Sweep", "The tapered ECONOMY band drawn over the bottom gauge")
 )
 
 // Each sub-gauge clamps incoming readings to its own min/max. Those come

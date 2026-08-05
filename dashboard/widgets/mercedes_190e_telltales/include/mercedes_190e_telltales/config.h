@@ -25,4 +25,13 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
     (std::string, condition_expression, "")
 )
 
+REFLECT_METADATA(Mercedes190ETelltaleConfig_t,
+    (telltale_type, "Telltale", "Which warning symbol this lamp draws"),
+    (warning_color, "Warning Color", "Colour of the lamp while the condition holds"),
+    (normal_color, "Normal Color", "Colour of the lamp the rest of the time"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (condition_expression, "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero")
+)
+
 #endif // MERCEDES_190E_TELLTALES_CONFIG_H

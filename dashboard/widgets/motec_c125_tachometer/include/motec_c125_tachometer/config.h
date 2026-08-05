@@ -33,6 +33,22 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (helpers::Color, digit_color, "#FFFFFF")
 )
 
+REFLECT_METADATA(MotecC125TachometerConfig_t,
+    (max_rpm, "Maximum RPM", "Full-scale reading at the end of the dial"),
+    (redline_rpm, "Redline RPM", "Where the red zone begins; clamped to at most the maximum"),
+    (center_page_digit, "Center Digit", "The large digit in the middle of the dial; the gear on a real display"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (rpm_expression, "RPM Expression", "Expression evaluated against the message to produce engine RPM"),
+    (page_label, "Page Label", "Banner above the centre digit; names the active page on a real display"),
+    (scale_label, "Scale Label", "Caption printed under the centre digit"),
+    (italic, "Italic", "Set the dial's text in an italic face, as the MoTeC screens are"),
+    (fill_color, "Fill Color", "Colour of the sweep below the redline"),
+    (redline_color, "Redline Color", "Colour of the sweep at and above the redline"),
+    (ring_color, "Ring Color", "Colour of the outer ring and the tick marks"),
+    (digit_color, "Digit Color", "Colour of the centre digit and the dial labels")
+)
+
 // max_rpm divides the needle position and bounds both the tick loop and the
 // label loop; zero divided, and a value near UINT32_MAX made `rpm += 100` wrap
 // so neither loop terminated. redline_rpm above max_rpm draws a red zone that

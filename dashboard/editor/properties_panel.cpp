@@ -45,11 +45,25 @@ PropertiesPanel::PropertiesPanel(QWidget* parent):
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
-    layout->addWidget(new QLabel("Properties"));
+    layout->setSpacing(6);
+
+    // Says what is being edited, not just that something is. The panel used to
+    // be headed "Properties" whatever was selected, so with two widgets of the
+    // same type on the canvas there was nothing on screen to tell you which
+    // one's values you were looking at.
+    heading_ = new QLabel(this);
+    heading_->setStyleSheet("QLabel { font-weight: 700; font-size: 13px; }");
+    subheading_ = new QLabel(this);
+    subheading_->setStyleSheet("QLabel { color: palette(mid); font-size: 11px; }");
+    subheading_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    layout->addWidget(heading_);
+    layout->addWidget(subheading_);
     layout->addWidget(stack_);
     layout->addStretch();
     setLayout(layout);
+
+    showHeading(nullptr);
 
     // Default page
     buildWindowPage();
@@ -58,6 +72,32 @@ PropertiesPanel::PropertiesPanel(QWidget* parent):
     winWidthSpin_->setValue(editor_defaults::kDefaultCanvasWidth);
     winHeightSpin_->setValue(editor_defaults::kDefaultCanvasHeight);
     stack_->setCurrentWidget(windowPage_);
+}
+
+// The heading for the current selection: the widget's friendly name over the
+// selector that addresses it. Nothing selected means the window's own
+// properties, which is what the panel falls back to.
+void PropertiesPanel::showHeading(SelectionFrame* frame)
+{
+    if (frame == nullptr)
+    {
+        heading_->setText("Window");
+        subheading_->setText("No widget selected");
+        return;
+    }
+
+    QString friendly = QString::fromStdString(std::string(reflection::enum_to_string(frame->type())));
+#define FRIENDLY_NAME_CASE(enum_name, widget_class)                  \
+    if (frame->type() == widget_class::kWidgetType)                  \
+    {                                                                \
+        friendly = QString::fromUtf8(widget_class::kFriendlyName.data(), \
+                                     static_cast<int>(widget_class::kFriendlyName.size())); \
+    }
+    DASHBOARD_WIDGET_TABLE(FRIENDLY_NAME_CASE)
+#undef FRIENDLY_NAME_CASE
+
+    heading_->setText(friendly);
+    subheading_->setText(frame->objectName());
 }
 
 void PropertiesPanel::setCanvas(Canvas* canvas)
@@ -71,6 +111,27 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
 
 namespace
 {
+    // Stops one editor from setting the width of the whole panel.
+    //
+    // Qt sizes a spin box's minimum to fit its widest possible value, and the
+    // integer editors are ranged to INT_MAX -- so every one of them demanded
+    // room for "2147483647". A combo box does the same for its longest item.
+    // Between them the form's minimum came out wider than the panel, which is
+    // what put a horizontal scrollbar under a form whose rows all fit. These are
+    // free to grow into whatever width is available; they just may not insist
+    // on it.
+    constexpr int kMinEditorWidth = 60;
+
+    void constrainEditorWidth(QWidget* editor)
+    {
+        editor->setMinimumWidth(kMinEditorWidth);
+        if (auto* combo = qobject_cast<QComboBox*>(editor))
+        {
+            combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            combo->setMinimumContentsLength(6);
+        }
+    }
+
     template <typename T>
     // No fieldName/typeName parameters: they existed only to name the field in
     // the "unsupported type" warning, and that case is a static_assert now.
@@ -85,6 +146,7 @@ namespace
             line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             line->setText(QString::fromUtf8(value.data(), static_cast<int>(value.size())));
             line->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(line);
             return line;
         }
         else if constexpr (std::is_same_v<FieldType, helpers::Color>)
@@ -141,6 +203,7 @@ namespace
             layout->addWidget(colorBtn);
             container->setLayout(layout);
             container->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(container);
             return container;
         }
         else if constexpr (std::is_enum_v<FieldType>)
@@ -158,6 +221,7 @@ namespace
             const int idx = combo->findText(QString::fromUtf8(cur.data(), static_cast<int>(cur.size())));
             if (idx >= 0) combo->setCurrentIndex(idx);
             combo->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(combo);
             return combo;
         }
         else if constexpr (std::is_same_v<FieldType, bool>)
@@ -181,6 +245,7 @@ namespace
             spin->setRange(minVal, maxVal);
             spin->setValue(static_cast<int>(value));
             spin->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(spin);
             return spin;
         }
         else if constexpr (std::is_floating_point_v<FieldType>)
@@ -193,6 +258,7 @@ namespace
             dspin->setRange(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max());
             dspin->setValue(static_cast<double>(value));
             dspin->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(dspin);
             return dspin;
         }
         else
@@ -211,6 +277,66 @@ namespace
                           "properties_panel cannot build an editor for this config field type. "
                           "Add a branch to createLeafEditor and readLeafFromWidget.");
         }
+    }
+
+    // The label for one field of `Struct`: its friendly name, plus an info icon
+    // carrying the description when the config supplies one.
+    //
+    // Shared by the top-level form and by nested structs. The nested case used
+    // to print the raw field name -- `red_start_fraction` rather than "Red
+    // Start" -- and had no way to show a description at all, because the label
+    // was built inline from the string reflection handed it. Everything a field
+    // is called now comes from one place.
+    template <typename Struct>
+    QWidget* createFieldLabel(QWidget* parent, std::string_view fieldName)
+    {
+        const std::string_view friendly = reflection::get_friendly_name<Struct>(fieldName);
+        const QString text = QString::fromUtf8(friendly.data(), static_cast<int>(friendly.size()));
+
+        const std::string_view description = reflection::get_description<Struct>(fieldName);
+        if (description.empty())
+        {
+            auto* label = new QLabel(text, parent);
+            label->setStyleSheet("QLabel { font-weight: 600; }");
+            return label;
+        }
+
+        auto* container = new QWidget(parent);
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(4);
+
+        auto* textLabel = new QLabel(text, container);
+        textLabel->setStyleSheet("QLabel { font-weight: 600; }");
+        layout->addWidget(textLabel);
+
+        auto* infoIcon = new QLabel("ⓘ", container);
+        infoIcon->setStyleSheet("QLabel { color: #0066cc; font-size: 12px; }");
+        infoIcon->setToolTip(
+            QString::fromUtf8(description.data(), static_cast<int>(description.size())));
+        layout->addWidget(infoIcon);
+
+        layout->addStretch();
+        container->setLayout(layout);
+        return container;
+    }
+
+    // Label above the editor rather than beside it.
+    //
+    // Beside it, the label column took whatever width the longest name wanted
+    // and the editors got the remainder -- which in a 259px panel was about
+    // 90px, so "vehicle/speed_mps" displayed as "vehicle/sp" and the form grew a
+    // horizontal scrollbar. Wrapping gives every editor the full width of the
+    // panel, at the cost of a taller form. The values are the part you need to
+    // be able to read.
+    void applyFormStyle(QFormLayout* form)
+    {
+        form->setRowWrapPolicy(QFormLayout::WrapAllRows);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->setFormAlignment(Qt::AlignTop);
+        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(4);
     }
 
     template <typename T>
@@ -232,10 +358,9 @@ namespace
             headerLayout->setContentsMargins(0,0,0,0);
             headerLayout->setSpacing(6);
             auto* addBtn = new QPushButton("Add", header);
-            auto* removeBtn = new QPushButton("Remove", header);
+            addBtn->setToolTip("Add an entry to the end of the list");
             headerLayout->addStretch();
             headerLayout->addWidget(addBtn);
-            headerLayout->addWidget(removeBtn);
             header->setLayout(headerLayout);
             outer->addWidget(header);
 
@@ -252,8 +377,6 @@ namespace
                 auto* h = new QHBoxLayout(row);
                 h->setContentsMargins(0,2,0,2);
                 h->setSpacing(6);
-                auto* idxLabel = new QLabel(QString("[%1]").arg(idx), row);
-                h->addWidget(idxLabel);
                 Elem valueToUse = initValue ? *initValue : Elem{};
                 const QString childPath = QString("%1[%2]").arg(path).arg(idx);
 
@@ -262,8 +385,33 @@ namespace
                 // config has a vector of structs today, which is exactly why the
                 // next one would have hit the leaf path and been silently reset
                 // to defaults on Apply.
+                //
+                // The editor is item 0 of the row and the remove button item 1;
+                // readEditorInto() reads the row positionally, so anything added
+                // here has to keep the editor first.
                 auto* childEditor = createEditorFor<Elem>(row, fieldName, valueToUse, typeName, childPath);
                 h->addWidget(childEditor, 1);
+
+                // Remove this row, rather than "remove the last one". The single
+                // global button could only drop entries off the end, so taking
+                // an entry out of the middle of a list meant retyping every
+                // value after it.
+                auto* rowRemove = new QPushButton("✕", row);
+                rowRemove->setToolTip("Remove this entry");
+                rowRemove->setFixedWidth(24);
+                rowRemove->setFlat(true);
+                QObject::connect(rowRemove, &QPushButton::clicked, row, [row]
+                {
+                    // Detached from the layout AND hidden, because the read walks
+                    // the layout and deleteLater does not take it out until the
+                    // event loop next runs -- so an Apply in between would see a
+                    // row the user had already removed.
+                    row->hide();
+                    row->setParent(nullptr);
+                    row->deleteLater();
+                });
+                h->addWidget(rowRemove, 0);
+
                 row->setLayout(h);
                 itemsLayout->addWidget(row);
             };
@@ -274,19 +422,7 @@ namespace
                 addRow(&elem);
             }
 
-            // Wire buttons
             QObject::connect(addBtn, &QPushButton::clicked, container, [addRow]{ addRow(nullptr); });
-            QObject::connect(removeBtn, &QPushButton::clicked, container, [itemsLayout]()
-            {
-                const int count = itemsLayout->count();
-                if (count <= 0) return;
-                auto* item = itemsLayout->takeAt(count - 1);
-                if (item)
-                {
-                    if (auto* w = item->widget()) { w->deleteLater(); }
-                    delete item;
-                }
-            });
 
             items->setLayout(itemsLayout);
             outer->addWidget(items);
@@ -303,19 +439,20 @@ namespace
             frame->setStyleSheet("#insetStructFrame{ border:1px solid palette(mid); border-radius:4px; }");
 
             auto* form = new QFormLayout(frame);
-            form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-            form->setFormAlignment(Qt::AlignTop);
-            form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            applyFormStyle(form);
             form->setContentsMargins(8,8,8,8);
-            form->setHorizontalSpacing(10);
-            form->setVerticalSpacing(8);
 
             reflection::visit_fields(ref, [&](std::string_view childName, auto& childRef, std::string_view childType)
             {
-                const QString childLabel = QString::fromUtf8(childName.data(), static_cast<int>(childName.size()));
-                const QString childPath = QString("%1.%2").arg(path, childLabel);
+                // The path keeps the raw field name: it only names the editor
+                // for addressing, and a friendly name would change whenever
+                // someone reworded a label.
+                const QString childPath =
+                    QString("%1.%2").arg(path,
+                                         QString::fromUtf8(childName.data(),
+                                                           static_cast<int>(childName.size())));
                 QWidget* childEditor = createEditorFor(frame, childName, childRef, childType, childPath);
-                form->addRow(childLabel, childEditor);
+                form->addRow(createFieldLabel<FieldType>(frame, childName), childEditor);
             });
 
             frame->setLayout(form);
@@ -458,17 +595,19 @@ namespace
             {
                 QWidget* row = itemsLayout->itemAt(i)->widget();
                 QLayout* rowLayout = row ? row->layout() : nullptr;
-                if (rowLayout == nullptr || rowLayout->count() < 2)
+                if (rowLayout == nullptr || rowLayout->count() < 1)
                 {
                     continue;
                 }
-                // [0] is the "[i]" label, [1] is the element's editor.
+                // [0] is the element's editor, [1] its remove button. Keep this
+                // in step with addRow(): the row is read by position, so putting
+                // anything before the editor silently reads the wrong widget.
                 // Seeded from the element already at that index so a field the
                 // form does not render survives, as in the struct case below.
                 Elem value = (static_cast<std::size_t>(result.size()) < out.size())
                                  ? out[static_cast<std::size_t>(result.size())]
                                  : Elem{};
-                readEditorInto<Elem>(rowLayout->itemAt(1)->widget(), value);
+                readEditorInto<Elem>(rowLayout->itemAt(0)->widget(), value);
                 result.push_back(std::move(value));
             }
             out = std::move(result);
@@ -525,51 +664,14 @@ namespace
         scroll->setFrameShape(QFrame::NoFrame);
         auto* scrollContent = new QWidget(scroll);
         auto* form = new QFormLayout();
-        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        form->setFormAlignment(Qt::AlignTop);
-        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        form->setContentsMargins(8,8,8,8);
-        form->setHorizontalSpacing(12);
+        applyFormStyle(form);
+        form->setContentsMargins(10, 8, 10, 8);
         form->setVerticalSpacing(10);
         reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
         {
-            // Use friendly name from metadata if available, otherwise use field name
-            std::string_view displayName = reflection::get_friendly_name<Config>(name);
-            const QString labelText = QString::fromUtf8(displayName.data(), static_cast<int>(displayName.size()));
             const QString fieldPath = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
             QWidget* editor = createEditorFor(scrollContent, name, ref, type, fieldPath);
-            
-            // Check if there's a description for this field
-            std::string_view description = reflection::get_description<Config>(name);
-            
-            if (!description.empty())
-            {
-                // Create a label widget with info icon for fields with descriptions
-                auto* labelWidget = new QWidget(scrollContent);
-                auto* labelLayout = new QHBoxLayout(labelWidget);
-                labelLayout->setContentsMargins(0, 0, 0, 0);
-                labelLayout->setSpacing(4);
-                
-                auto* textLabel = new QLabel(labelText, labelWidget);
-                labelLayout->addWidget(textLabel);
-                
-                // Add info icon with tooltip
-                auto* infoIcon = new QLabel("ⓘ", labelWidget);
-                infoIcon->setStyleSheet("QLabel { color: #0066cc; font-size: 12px; }");
-                const QString tooltip = QString::fromUtf8(description.data(), static_cast<int>(description.size()));
-                infoIcon->setToolTip(tooltip);
-                labelLayout->addWidget(infoIcon);
-                
-                labelLayout->addStretch();
-                labelWidget->setLayout(labelLayout);
-                
-                form->addRow(labelWidget, editor);
-            }
-            else
-            {
-                // No description, use simple text label
-                form->addRow(labelText, editor);
-            }
+            form->addRow(createFieldLabel<Config>(scrollContent, name), editor);
         });
         scrollContent->setLayout(form);
         scroll->setWidget(scrollContent);
@@ -737,6 +839,7 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
     // Always start from a clean page. The form's values come from this
     // selection's live config, so nothing from the previous one may survive.
     discardCurrentPage();
+    showHeading(qobject_cast<SelectionFrame*>(w));
 
     if (!w)
     {

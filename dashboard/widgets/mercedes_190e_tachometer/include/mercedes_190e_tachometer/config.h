@@ -16,6 +16,15 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (std::string, rpm_expression, "")
 )
 
+REFLECT_METADATA(Mercedes190ETachometerConfig_t,
+    (max_rpm, "Maximum RPM", "Full-scale reading at the end of the dial"),
+    (redline_rpm, "Redline RPM", "Where the red zone begins; clamped to at most the maximum"),
+    (show_clock, "Show Clock", "Draw the analogue clock inset in the dial face"),
+    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (schema_type, "Schema Type", "Data schema type for the subscription"),
+    (rpm_expression, "RPM Expression", "Expression evaluated against the message to produce engine RPM")
+)
+
 // max_rpm scales the dial; redline_rpm above it makes drawRedZone compute a
 // negative span and sweep the red arc backwards off the face.
 inline std::vector<std::string> validate(Mercedes190ETachometerConfig_t& cfg)

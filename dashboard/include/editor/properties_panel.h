@@ -8,7 +8,9 @@ class QStackedWidget;
 class QLineEdit;
 class QSpinBox;
 class QComboBox;
+class QLabel;
 class Canvas;
+class SelectionFrame;
 
 class PropertiesPanel : public QWidget
 {
@@ -38,6 +40,12 @@ private:
     // has to be re-read from the live config on selection anyway -- so there is
     // nothing worth keeping between selections.
     QPointer<QWidget> currentPage_;
+
+    // Names what is currently being edited: the widget's friendly type over the
+    // selector that addresses it, or "Window" when nothing is selected.
+    QLabel* heading_ = nullptr;
+    QLabel* subheading_ = nullptr;
+    void showHeading(SelectionFrame* frame);
 
     // Window editors
     QWidget* windowPage_;

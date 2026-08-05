@@ -25,6 +25,18 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
     (std::vector<uint16_t>, shift_box_markers, {})
 )
 
+REFLECT_METADATA(Mercedes190ESpeedometerConfig_t,
+    (odometer_value, "Odometer Reading", "Starting reading for the six-digit odometer"),
+    (max_speed, "Maximum Speed", "Full-scale reading at the end of the dial"),
+    (zenoh_key, "Speed Zenoh Key", "Zenoh topic key the road speed is read from"),
+    (schema_type, "Speed Schema Type", "Data schema type for the speed subscription"),
+    (speed_expression, "Speed Expression", "Expression evaluated against the speed message, in the dial's own units"),
+    (odometer_zenoh_key, "Odometer Zenoh Key", "Zenoh topic key the odometer reading is read from"),
+    (odometer_schema_type, "Odometer Schema Type", "Data schema type for the odometer subscription"),
+    (odometer_expression, "Odometer Expression", "Expression evaluated against the odometer message"),
+    (shift_box_markers, "Shift Markers", "Speeds, in dial units, at which to draw a shift box on the face")
+)
+
 // max_speed scales the dial and divides the needle position. The odometer
 // renders six digits, so a larger value silently displayed the wrong ones -- the
 // zenoh setter clamped, but the value straight from the config did not. And the
