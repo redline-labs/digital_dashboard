@@ -146,7 +146,7 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 
 // ------------------------------------------------------------------ history
 
-Canvas::Snapshot Canvas::snapshot() const
+Canvas::Snapshot Canvas::captureDocument() const
 {
     Snapshot state;
     state.doc = exportAppConfig();
@@ -163,7 +163,7 @@ Canvas::Snapshot Canvas::snapshot() const
     return state;
 }
 
-void Canvas::restore(const Snapshot& state)
+void Canvas::applyDocument(const Snapshot& state)
 {
     // Restoring used to be loadFromAppConfig(): destroy every widget, build every
     // widget. Correct, and brutal. Undoing a nudge of one static_text tore down
@@ -293,98 +293,52 @@ void Canvas::restore(const Snapshot& state)
 
 void Canvas::beginEdit(EditSource source)
 {
-    // An edit already open from somewhere else is closed, not joined. Otherwise
-    // it absorbs this one and the two come back as a single undo step -- see
-    // EditSource. Committing first also means the entry it records ends at the
-    // right place rather than trailing into whatever follows.
-    if (pending_edit_ && pending_source_ != source)
-    {
-        commitEdit();
-    }
-
-    // Nested or repeated begins collapse into the outermost one, so a drag that
-    // arrives as press/move/move/release records a single entry.
-    if (!pending_edit_)
-    {
-        pending_edit_ = snapshot();
-        pending_source_ = source;
-    }
+    history_.begin(source);
 }
 
 void Canvas::commitEdit()
 {
-    if (!pending_edit_)
-    {
-        return;
-    }
-
-    const Snapshot before = *pending_edit_;
-    pending_edit_.reset();
-
-    // Nothing actually changed -- a drag that ended where it started, an Apply
-    // that set every field to what it already was. Recording it would mean an
-    // undo that appears to do nothing.
-    if (before == snapshot())
-    {
-        return;
-    }
-
-    undo_stack_.push_back(before);
-    if (undo_stack_.size() > kMaxHistory)
-    {
-        undo_stack_.erase(undo_stack_.begin());
-    }
-
-    // A new edit invalidates the redo branch, as everywhere else.
-    redo_stack_.clear();
-
+    // historyChanged, not the stacks: the canvas owns telling the window that
+    // undo availability or the dirty flag may have moved. EditorDocument has no
+    // idea a window exists.
+    history_.commit();
     emit historyChanged();
 }
 
 bool Canvas::undo()
 {
-    if (undo_stack_.empty())
-    {
-        return false;
-    }
-
-    redo_stack_.push_back(snapshot());
-    const Snapshot target = undo_stack_.back();
-    undo_stack_.pop_back();
-    restore(target);
-    return true;
+    return history_.undo();
 }
 
 bool Canvas::redo()
 {
-    if (redo_stack_.empty())
-    {
-        return false;
-    }
+    return history_.redo();
+}
 
-    undo_stack_.push_back(snapshot());
-    const Snapshot target = redo_stack_.back();
-    redo_stack_.pop_back();
-    restore(target);
-    return true;
+bool Canvas::canUndo() const
+{
+    return history_.canUndo();
+}
+
+bool Canvas::canRedo() const
+{
+    return history_.canRedo();
 }
 
 void Canvas::clearHistory()
 {
-    undo_stack_.clear();
-    redo_stack_.clear();
-    pending_edit_.reset();
+    history_.clearHistory();
     emit historyChanged();
 }
 
 bool Canvas::isDirty() const
 {
-    return !(snapshot() == saved_snapshot_);
+    return history_.isDirty();
 }
 
 void Canvas::markSaved()
 {
-    saved_snapshot_ = snapshot();
+    history_.markSaved();
     emit historyChanged();
 }
 

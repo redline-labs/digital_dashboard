@@ -83,6 +83,7 @@ qt_add_executable(editor
     editor/editor_window.cpp
     editor/widget_palette.cpp
     editor/canvas.cpp
+    editor/editor_document.cpp
     editor/properties_panel.cpp
     editor/selection_frame.cpp
     editor/editor_methods.cpp
@@ -129,11 +130,31 @@ foreach(config_test roundtrip validation colors)
     add_project_test(TARGET dashboard_test_config_${config_test} LABELS dashboard unit)
 endforeach()
 
+# The undo/redo history on its own, against a fake document. No widgets, so
+# unlike the editor test below it needs no display and no QApplication.
+add_executable(editor_test_document
+    editor/test_editor_document.cpp
+    editor/editor_document.cpp
+    dashboard/app_config.cpp
+)
+target_include_directories(editor_test_document PRIVATE include)
+target_link_libraries(editor_test_document PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    zenoh_pub_sub
+    helpers
+    spdlog::spdlog
+    yaml-cpp::yaml-cpp
+    ${WIDGET_LIBS}
+)
+add_project_test(TARGET editor_test_document LABELS dashboard unit)
+
 # The editor's own load/edit/export path, above the codec. Constructs real
 # widgets, so it is a gui test and runs offscreen.
 qt_add_executable(editor_test_roundtrip
     editor/test_editor_roundtrip.cpp
     editor/canvas.cpp
+    editor/editor_document.cpp
     editor/properties_panel.cpp
     editor/selection_frame.cpp
     dashboard/app_config.cpp

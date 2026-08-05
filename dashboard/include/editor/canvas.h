@@ -9,11 +9,12 @@
 #include <vector>
 
 #include "dashboard/app_config.h"
+#include "editor/editor_document.h"
 #include "editor/selection_frame.h"
 
 // No global selection overlay when using per-widget SelectionFrame
 
-class Canvas : public QWidget
+class Canvas : public QWidget, private EditorDocument::Owner
 {
     Q_OBJECT
 public:
@@ -51,24 +52,11 @@ public:
     // covered by construction, including the ones the agent interface makes,
     // because they all end up changing what exportAppConfig() returns.
     //
-    // Wrap a mutation in beginEdit()/commitEdit(). commitEdit() compares the
-    // result against the snapshot and records nothing if they match, so a drag
-    // that ends where it started, or an Apply that changes no field, does not
-    // fill the history with no-ops.
-
-    // Where an edit came from. An entry stays open across repeated beginEdit()
-    // calls from the SAME source -- that is what collapses a drag's stream of
-    // mouse-moves, or a field's stream of keystrokes, into one undo step -- but a
-    // beginEdit() from a DIFFERENT source closes the open one first.
-    //
-    // Without that, an edit that is still open swallows the next unrelated one.
-    // The window fields are the case that forced this: they commit on
-    // editingFinished, which needs a focus change, and the agent interface never
-    // touches focus -- so a background colour typed over the control socket
-    // stayed open and merged with whatever was edited next. Two edits, one undo
-    // step. Deliberately not solved with a timer: this way the boundary is
-    // exact rather than a race.
-    enum class EditSource { Widget, Window };
+    // The mechanics live in EditorDocument; what remains here is the widget half
+    // -- capturing the canvas as a document and putting one back -- plus the
+    // signals the window listens to. These forward, so that every caller keeps
+    // talking to the canvas rather than reaching past it into its history.
+    using EditSource = EditorDocument::EditSource;
 
     void beginEdit(EditSource source = EditSource::Widget);
     void commitEdit();
@@ -113,8 +101,8 @@ public:
     // previous document, which is not what anyone means by undo.
     void clearHistory();
 
-    bool canUndo() const { return !undo_stack_.empty(); }
-    bool canRedo() const { return !redo_stack_.empty(); }
+    bool canUndo() const;
+    bool canRedo() const;
     bool undo();
     bool redo();
 
@@ -183,42 +171,13 @@ private:
     // than accepted and then discarded.
     static std::optional<widget_type_t> droppedWidgetType(const QString& mimeText);
 
-    // The canvas as a document, used as the unit of history and as the dirty
-    // comparison.
-    //
-    // This was the emitted YAML, because comparing two app_config_t values would
-    // have meant an operator== on every widget config struct. Reflection supplies
-    // those now (see app_config.h), so the document is kept as itself: no
-    // serialising on every drag release and every title-bar update, and -- the
-    // reason it matters -- restore() can compare widget against widget and touch
-    // only what differs.
-    //
-    // The object names ride alongside because they are NOT part of the config: a
-    // widget with no explicit `id:` gets a name derived from its position, so
-    // rebuilding from the config alone would renumber it. A widget that silently
-    // changes name when you undo breaks every selector pointing at it, which is
-    // exactly what the agent verbs are used through.
-    struct Snapshot
-    {
-        app_config_t doc;
-        std::vector<QString> names;
+    // The widget half of the history: the canvas as a document, and a document
+    // put back onto the canvas. EditorDocument calls these; it holds the stacks.
+    using Snapshot = EditorDocument::Snapshot;
+    Snapshot captureDocument() const override;
+    void applyDocument(const Snapshot& state) override;
 
-        // Only the document decides whether anything changed. Names follow the
-        // widgets, so comparing them too would be comparing the same fact twice.
-        bool operator==(const Snapshot& other) const { return doc == other.doc; }
-    };
-
-    Snapshot snapshot() const;
-    void restore(const Snapshot& state);
-
-    std::vector<Snapshot> undo_stack_;
-    std::vector<Snapshot> redo_stack_;
-    std::optional<Snapshot> pending_edit_;
-    EditSource pending_source_ = EditSource::Widget;
-    Snapshot saved_snapshot_;
-
-    // Bounded so a long editing session cannot grow without limit.
-    static constexpr std::size_t kMaxHistory = 100;
+    EditorDocument history_{*this};
 
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);
