@@ -15,7 +15,7 @@
 
 class QPainter;
 
-class MotecC125Tachometer : public dashboard::CachedPaintWidget
+class MotecC125Tachometer : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 

@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_CONFIG_LIMITS_H_
-#define DASHBOARD_CONFIG_LIMITS_H_
+#ifndef CONFIG_CODEC_CONFIG_LIMITS_H_
+#define CONFIG_CODEC_CONFIG_LIMITS_H_
 
 #include <algorithm>
 #include <cstdint>
@@ -29,7 +29,7 @@
 //
 // Declaring it is optional -- a config with no ranges to check does not need
 // one -- and the factory detects it, so nothing breaks by leaving it out.
-namespace dashboard::limits {
+namespace config_codec::limits {
 
 // Ceilings chosen so a typo cannot turn into a hang. Each one is far above any
 // plausible real value and far below the point where the drawing loops that
@@ -91,6 +91,6 @@ void capLength(Container& items, std::size_t limit, const char* field, std::vect
     }
 }
 
-}  // namespace dashboard::limits
+}  // namespace config_codec::limits
 
-#endif  // DASHBOARD_CONFIG_LIMITS_H_
+#endif  // CONFIG_CODEC_CONFIG_LIMITS_H_

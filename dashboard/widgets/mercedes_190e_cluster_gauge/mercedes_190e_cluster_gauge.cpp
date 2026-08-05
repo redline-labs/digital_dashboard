@@ -283,14 +283,14 @@ static void drawGaugeNeedle(
 }
 
 Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaugeConfig_t& cfg, QWidget *parent):
-  dashboard::CachedPaintWidget(parent),
+  qt_helpers::CachedPaintWidget(parent),
   m_config(cfg),
   fuel_gauge_current_value_(0.0f),
   oil_pressure_gauge_current_value_(0.0f),
   coolant_temperature_gauge_current_value_(0.0f),
   economy_gauge_current_value_(0.0f)
 {
-    m_fontFamily = dashboard::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
+    m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
     top_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.fuel_gauge.schema_type, m_config.fuel_gauge.value_expression, m_config.fuel_gauge.zenoh_key,

@@ -35,7 +35,7 @@ void StaticTextWidget::applyConfig()
     };
     if (auto it = kResourceFonts.find(_cfg.font); it != kResourceFonts.end())
     {
-        dashboard::loadResourceFont(it->second);
+        qt_helpers::loadResourceFont(it->second);
     }
 
     QFont font(QString::fromStdString(_cfg.font));

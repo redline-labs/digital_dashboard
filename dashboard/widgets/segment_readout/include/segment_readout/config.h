@@ -88,8 +88,8 @@ REFLECT_STRUCT(SegmentReadoutConfig_t,
 inline std::vector<std::string> validate(SegmentReadoutConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::clampInto<uint16_t>(cfg.digits, 1u, 16u, "digits", notes);
-    dashboard::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.digits, 1u, 16u, "digits", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
     return notes;
 }
 

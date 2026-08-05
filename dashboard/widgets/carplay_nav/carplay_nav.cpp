@@ -68,7 +68,7 @@ CarPlayNavWidget::CarPlayNavWidget(CarPlayNavConfig_t cfg, QWidget* parent) :
     QWidget(parent),
     _cfg(std::move(cfg))
 {
-    _font_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 
     _sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayNav>>(
         _cfg.zenoh_key,
@@ -176,7 +176,7 @@ void CarPlayNavWidget::paintEvent(QPaintEvent* /*event*/)
 
     const QRectF bounds(0, 0, width(), height());
 
-    const QColor background = dashboard::toQColor(_cfg.background_color, Qt::transparent);
+    const QColor background = qt_helpers::toQColor(_cfg.background_color, Qt::transparent);
     if (background.alpha() > 0)
     {
         p.fillRect(bounds, background);
@@ -198,7 +198,7 @@ void CarPlayNavWidget::paintEvent(QPaintEvent* /*event*/)
 void CarPlayNavWidget::paintIdle(QPainter& p, const QRectF& bounds)
 {
     p.setFont(_road_font);
-    p.setPen(dashboard::toQColor(_cfg.detail_color));
+    p.setPen(qt_helpers::toQColor(_cfg.detail_color));
     p.drawText(bounds, Qt::AlignCenter, QString::fromStdString(_cfg.idle_text));
 }
 
@@ -245,7 +245,7 @@ void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
                            arrow_side, arrow_side);
 
     const ManeuverGlyph glyph = carplay_nav::glyphForAngle(angle);
-    const QColor arrow_color = dashboard::toQColor(_cfg.arrow_color);
+    const QColor arrow_color = qt_helpers::toQColor(_cfg.arrow_color);
 
     p.save();
     p.translate(arrow_box.center());
@@ -289,7 +289,7 @@ void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
     qreal y = text_area.top() + card.height() * 0.10;
 
     p.setFont(_distance_font);
-    p.setPen(dashboard::toQColor(_cfg.distance_color));
+    p.setPen(qt_helpers::toQColor(_cfg.distance_color));
     p.drawText(QRectF(text_area.left(), y, text_area.width(), distance_fm.height()),
                Qt::AlignLeft | Qt::AlignVCenter,
                QString::fromStdString(
@@ -302,7 +302,7 @@ void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
     if (!primary.isEmpty())
     {
         p.setFont(_road_font);
-        p.setPen(dashboard::toQColor(_cfg.road_color));
+        p.setPen(qt_helpers::toQColor(_cfg.road_color));
         p.drawText(QRectF(text_area.left(), y, text_area.width(), road_fm.height()),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    road_fm.elidedText(primary, Qt::ElideRight, text_area.width()));
@@ -312,7 +312,7 @@ void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
     if (!after_road.isEmpty() && !road.isEmpty() && road != after_road)
     {
         p.setFont(_detail_font);
-        p.setPen(dashboard::toQColor(_cfg.detail_color));
+        p.setPen(qt_helpers::toQColor(_cfg.detail_color));
         p.drawText(QRectF(text_area.left(), y, text_area.width(), detail_fm.height()),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    detail_fm.elidedText(QStringLiteral("on ") + road, Qt::ElideRight,
@@ -325,7 +325,7 @@ void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
     }
 
     p.setFont(_detail_font);
-    p.setPen(dashboard::toQColor(_cfg.detail_color));
+    p.setPen(qt_helpers::toQColor(_cfg.detail_color));
 
     const QString eta_text = etaClock(eta);
     QString left_text = QString::fromStdString(carplay_nav::formatDuration(time_remaining)) +

@@ -31,7 +31,7 @@ void check(bool condition, const std::string& what)
     }
 }
 
-using dashboard::config::Issue;
+using config_codec::Issue;
 
 std::vector<Issue> issuesFor(const std::string& yaml)
 {
@@ -339,7 +339,7 @@ void testFullScaleIsCapped()
     MotecCdl3TachometerConfig_t cdl3;
     cdl3.max_rpm = 4294967200u;
     check(!validate(cdl3).empty(), "an absurd max_rpm is reported");
-    check(cdl3.max_rpm <= dashboard::limits::kMaxRpmCeiling,
+    check(cdl3.max_rpm <= config_codec::limits::kMaxRpmCeiling,
           "an absurd max_rpm is capped to something drawable");
 }
 
@@ -442,7 +442,7 @@ void testOverlongListsAreCapped()
     Mercedes190ESpeedometerConfig_t speedo;
     speedo.shift_box_markers.assign(5000, 42);
     check(!validate(speedo).empty(), "an overlong marker list is reported");
-    check(speedo.shift_box_markers.size() <= dashboard::limits::kMaxMarkers,
+    check(speedo.shift_box_markers.size() <= config_codec::limits::kMaxMarkers,
           "an overlong marker list is truncated, so paint stays bounded");
 }
 

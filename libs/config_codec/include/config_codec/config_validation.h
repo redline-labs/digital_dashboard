@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_CONFIG_VALIDATION_H_
-#define DASHBOARD_CONFIG_VALIDATION_H_
+#ifndef CONFIG_CODEC_CONFIG_VALIDATION_H_
+#define CONFIG_CODEC_CONFIG_VALIDATION_H_
 
 #include <string>
 #include <vector>
@@ -9,7 +9,7 @@
 #include "helpers/color.h"
 #include "reflection/reflection.h"
 
-namespace dashboard::config {
+namespace config_codec {
 
 // One problem found in a config file, with the path that leads to it.
 //
@@ -201,6 +201,6 @@ void validateStruct(const YAML::Node& node, const std::string& path, std::vector
 }
 
 }  // namespace detail
-}  // namespace dashboard::config
+}  // namespace config_codec
 
-#endif  // DASHBOARD_CONFIG_VALIDATION_H_
+#endif  // CONFIG_CODEC_CONFIG_VALIDATION_H_

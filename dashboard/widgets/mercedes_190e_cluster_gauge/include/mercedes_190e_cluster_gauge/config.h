@@ -59,17 +59,17 @@ REFLECT_STRUCT(Mercedes190EClusterGaugeConfig_t,
 inline std::vector<std::string> validate(Mercedes190EClusterGaugeConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::orderRange(cfg.fuel_gauge.min_value, cfg.fuel_gauge.max_value,
+    config_codec::limits::orderRange(cfg.fuel_gauge.min_value, cfg.fuel_gauge.max_value,
                                   "fuel_gauge", notes);
-    dashboard::limits::orderRange(cfg.right_gauge.min_value, cfg.right_gauge.max_value,
+    config_codec::limits::orderRange(cfg.right_gauge.min_value, cfg.right_gauge.max_value,
                                   "right_gauge", notes);
-    dashboard::limits::orderRange(cfg.bottom_gauge.min_value, cfg.bottom_gauge.max_value,
+    config_codec::limits::orderRange(cfg.bottom_gauge.min_value, cfg.bottom_gauge.max_value,
                                   "bottom_gauge", notes);
-    dashboard::limits::orderRange(cfg.left_gauge.min_value, cfg.left_gauge.max_value,
+    config_codec::limits::orderRange(cfg.left_gauge.min_value, cfg.left_gauge.max_value,
                                   "left_gauge", notes);
     // Drives where along the band the red fill starts. Outside [0, 1] it either
     // runs backwards off the band or paints past its end.
-    dashboard::limits::clampInto(cfg.economy_sweep.red_start_fraction, 0.0f, 1.0f,
+    config_codec::limits::clampInto(cfg.economy_sweep.red_start_fraction, 0.0f, 1.0f,
                                  "economy_sweep.red_start_fraction", notes);
     return notes;
 }

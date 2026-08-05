@@ -36,7 +36,7 @@
 // cannot, and std::variant picks its own up for free once every alternative has
 // one -- which is what makes widget_config_t's comparison three lines rather
 // than a switch over the widget table.
-namespace dashboard::config::detail
+namespace config_codec::detail
 {
 // Compares field-by-field through the member pointers reflection already holds,
 // rather than by walking both objects with visit_fields and matching names --
@@ -49,7 +49,7 @@ bool fieldsEqual(const T& lhs, const T& rhs, std::index_sequence<I...>)
     return (... && (lhs.*(std::get<I>(fields).member_ptr) ==
                     rhs.*(std::get<I>(fields).member_ptr)));
 }
-}  // namespace dashboard::config::detail
+}  // namespace config_codec::detail
 
 template <typename T>
     requires reflection::is_reflected_struct_v<T>
@@ -57,7 +57,7 @@ bool operator==(const T& lhs, const T& rhs)
 {
     constexpr std::size_t kFieldCount =
         std::tuple_size_v<decltype(T::reflection_fields())>;
-    return dashboard::config::detail::fieldsEqual(lhs, rhs,
+    return config_codec::detail::fieldsEqual(lhs, rhs,
                                              std::make_index_sequence<kFieldCount>{});
 }
 

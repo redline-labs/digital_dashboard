@@ -60,7 +60,7 @@ MethodResult configOf(QWidget* widget)
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
         {                                                                         \
-            config = dashboard::config_json::toJson(typed->getConfig());                     \
+            config = config_codec::toJson(typed->getConfig());                     \
             found = true;                                                         \
         }                                                                         \
     }
@@ -101,7 +101,7 @@ std::expected<widget_config_t, AgentError> patchedConfig(QWidget* widget, const 
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
         {                                                                         \
             auto cfg = typed->getConfig();                                        \
-            dashboard::config_json::applyJson(patch, cfg, "", errors);                       \
+            config_codec::applyJson(patch, cfg, "", errors);                       \
             out.config = std::move(cfg);                                          \
             found = true;                                                         \
         }                                                                         \
@@ -263,7 +263,7 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
 #define DESCRIBE_CASE(enum_name, widget_class)                                                    \
     if (!found && *type == widget_class::kWidgetType)                                  \
     {                                                                                  \
-        schema = dashboard::config_json::describeType<widget_class::config_t>();                   \
+        schema = config_codec::describeType<widget_class::config_t>();                   \
         schema["friendly_name"] = std::string(widget_class::kFriendlyName);             \
         found = true;                                                                   \
     }

@@ -63,7 +63,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     m_writeIndex = 0;
 
     // Build paint resources once; they only depend on config.
-    m_lineColor = dashboard::toQColor(_cfg.line_color);
+    m_lineColor = qt_helpers::toQColor(_cfg.line_color);
     m_gradientStartColor = m_lineColor.darker(120);
     m_gradientEndColor = m_gradientStartColor;
     m_gradientEndColor.setAlpha(0x00); // Fade to transparent at the bottom

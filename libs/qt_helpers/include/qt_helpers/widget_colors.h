@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_WIDGET_COLORS_H_
-#define DASHBOARD_WIDGET_COLORS_H_
+#ifndef QT_HELPERS_WIDGET_COLORS_H_
+#define QT_HELPERS_WIDGET_COLORS_H_
 
 #include <QColor>
 #include <QString>
@@ -10,7 +10,7 @@
 
 #include "helpers/color.h"
 
-namespace dashboard {
+namespace qt_helpers {
 
 // The one way to turn a configured colour into a QColor.
 //
@@ -63,6 +63,6 @@ inline QColor toQColor(const helpers::Color& color, const QColor& fallback = Qt:
     return fallback;
 }
 
-}  // namespace dashboard
+}  // namespace qt_helpers
 
-#endif  // DASHBOARD_WIDGET_COLORS_H_
+#endif  // QT_HELPERS_WIDGET_COLORS_H_

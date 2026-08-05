@@ -25,7 +25,7 @@ CenterBarWidget::CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent) 
     QWidget(parent),
     _cfg{cfg}
 {
-    const QString family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    const QString family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
     _label_font = QFont(family, 9, QFont::DemiBold);
 
     _expression_parser = dashboard::makeExpressionSubscription<double>(
@@ -73,7 +73,7 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
     const qreal left_width = left_label.isEmpty() ? 0.0 : fm.horizontalAdvance(left_label) + gap;
     const qreal right_width = right_label.isEmpty() ? 0.0 : fm.horizontalAdvance(right_label) + gap;
 
-    p.setPen(dashboard::toQColor(_cfg.label_color));
+    p.setPen(qt_helpers::toQColor(_cfg.label_color));
     if (!left_label.isEmpty())
     {
         p.drawText(QRectF(bounds.left(), bounds.top(), left_width - gap, bounds.height()),
@@ -99,12 +99,12 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
     }
 
     p.setPen(Qt::NoPen);
-    p.setBrush(dashboard::toQColor(_cfg.track_color));
+    p.setBrush(qt_helpers::toQColor(_cfg.track_color));
     p.drawRoundedRect(track, track_height / 2.0, track_height / 2.0);
 
     // Centre tick: the zero the marker is read against.
     const qreal centre_x = track.center().x();
-    QPen tick_pen(dashboard::toQColor(_cfg.tick_color));
+    QPen tick_pen(qt_helpers::toQColor(_cfg.tick_color));
     tick_pen.setWidthF(std::max<qreal>(1.0, bounds.height() * 0.04));
     p.setPen(tick_pen);
     p.drawLine(QPointF(centre_x, track.top() - track_height * 0.35),
@@ -120,7 +120,7 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
 
     const bool good = _cfg.negative_is_good ? (_value <= 0.0) : (_value >= 0.0);
     p.setPen(Qt::NoPen);
-    p.setBrush(dashboard::toQColor(good ? _cfg.good_color : _cfg.bad_color));
+    p.setBrush(qt_helpers::toQColor(good ? _cfg.good_color : _cfg.bad_color));
     p.drawRoundedRect(marker, marker_width / 3.0, marker_width / 3.0);
 }
 

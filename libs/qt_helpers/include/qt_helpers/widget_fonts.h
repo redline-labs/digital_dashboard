@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_WIDGET_FONTS_H_
-#define DASHBOARD_WIDGET_FONTS_H_
+#ifndef QT_HELPERS_WIDGET_FONTS_H_
+#define QT_HELPERS_WIDGET_FONTS_H_
 
 #include <QFont>
 #include <QFontDatabase>
@@ -8,7 +8,7 @@
 
 #include <spdlog/spdlog.h>
 
-namespace dashboard {
+namespace qt_helpers {
 
 // Loads a font from Qt resources and returns its family name. Falls back to
 // `fallback_family` (or the application default when empty) with a warning if
@@ -62,6 +62,6 @@ inline QString loadResourceFont(const char* resource_path, const QString& fallba
     return families.at(0);
 }
 
-}  // namespace dashboard
+}  // namespace qt_helpers
 
-#endif  // DASHBOARD_WIDGET_FONTS_H_
+#endif  // QT_HELPERS_WIDGET_FONTS_H_

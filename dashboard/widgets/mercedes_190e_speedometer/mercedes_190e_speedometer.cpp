@@ -13,7 +13,7 @@
 #include <cmath>
 
 Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerConfig_t& cfg, QWidget *parent):
-    dashboard::CachedPaintWidget(parent),
+    qt_helpers::CachedPaintWidget(parent),
     current_speed_mph_(0.0f),
     cfg_{cfg},
     odometer_value_(cfg.odometer_value)
@@ -26,7 +26,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
         cfg_.odometer_schema_type, cfg_.odometer_expression, cfg_.odometer_zenoh_key,
         this, &Mercedes190ESpeedometer::setOdometerValue, "speedometer odometer");
 
-    QString font_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
+    QString font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
     // Set up the odometer font
     odo_font_ = QFont(font_family);

@@ -24,7 +24,7 @@ REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
 inline std::vector<std::string> validate(MotecCdl3TachometerConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
+    config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
     return notes;
 }
 

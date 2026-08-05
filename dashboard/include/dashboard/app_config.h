@@ -189,7 +189,7 @@ struct convert<widget_config_t> {
 // Checks a parsed config tree and returns everything wrong with it, each with a
 // path like "widgets[3].config.zenoh_key". Errors mean the file cannot be loaded
 // as written; warnings mean something in it was ignored.
-std::vector<dashboard::config::Issue> validate_app_config(const YAML::Node& root);
+std::vector<config_codec::Issue> validate_app_config(const YAML::Node& root);
 
 std::optional<app_config_t> load_app_config(const std::string& config_filepath);
 

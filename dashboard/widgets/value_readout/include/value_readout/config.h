@@ -64,7 +64,7 @@ REFLECT_STRUCT(ValueReadoutConfig_t,
 inline std::vector<std::string> validate(ValueReadoutConfig_t& cfg)
 {
 	std::vector<std::string> notes;
-	dashboard::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
+	config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
 	return notes;
 }
 

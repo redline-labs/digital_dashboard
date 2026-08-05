@@ -22,7 +22,7 @@
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ESpeedometer : public dashboard::CachedPaintWidget
+class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 public:

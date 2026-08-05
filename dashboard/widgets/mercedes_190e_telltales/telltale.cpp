@@ -13,7 +13,7 @@ static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White w
 static constexpr QColor kNormalIcon = QColor(120, 120, 120);          // Light gray when normal
 
 Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& cfg, QWidget *parent)
-    : dashboard::CachedPaintWidget(parent)
+    : qt_helpers::CachedPaintWidget(parent)
     , _cfg{cfg}
     , mSvgRenderer(nullptr)
     , mAsserted(false)
@@ -80,12 +80,12 @@ void Mercedes190ETelltale::updateColors()
 {
     if (mAsserted)
     {
-        mBackgroundColor = dashboard::toQColor(_cfg.warning_color);
+        mBackgroundColor = qt_helpers::toQColor(_cfg.warning_color);
         mIconColor = kAssertedIcon;
     }
     else
     {
-        mBackgroundColor = dashboard::toQColor(_cfg.normal_color);
+        mBackgroundColor = qt_helpers::toQColor(_cfg.normal_color);
         mIconColor = kNormalIcon;
     }
 }

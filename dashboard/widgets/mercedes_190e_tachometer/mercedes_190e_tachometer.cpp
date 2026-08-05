@@ -14,7 +14,7 @@
 #include "helpers/unit_conversion.h"
 
 Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent)
-    : dashboard::CachedPaintWidget(parent),
+    : qt_helpers::CachedPaintWidget(parent),
       m_currentRpmValue(0.0f),
 
       m_angleStart_deg(160.0f),    // 0 RPM at 7 o'clock
@@ -34,7 +34,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
         this, &Mercedes190ETachometer::setRpm, "tachometer rpm");
 
-    m_fontFamily = dashboard::loadResourceFont(":/fonts/futura.ttf");
+    m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf");
     // Adjusted font sizes based on new reference image (numbers are quite large)
     m_dialFont = QFont(m_fontFamily, 12, QFont::Normal);
     m_labelFont = QFont(m_fontFamily, 7, QFont::Normal);

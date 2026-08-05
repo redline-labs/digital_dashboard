@@ -68,7 +68,7 @@ NowPlayingWidget::NowPlayingWidget(NowPlayingConfig_t cfg, QWidget* parent) :
 {
     // Resolved once, here, like every other widget. paintEvent used to call this
     // per repaint, which re-registered the font with QFontDatabase each time.
-    _font_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 
     // The cross-fade and the linger both live on the Qt thread; the zenoh
     // callbacks only ever post to them.
@@ -271,7 +271,7 @@ void NowPlayingWidget::paintCall(QPainter& p, const QRectF& bounds)
     const QFontMetricsF& title_fm = *_title_fm;
     const QFontMetricsF& detail_fm = *_detail_fm;
 
-    const QColor accent = dashboard::toQColor(_cfg.call_accent_color);
+    const QColor accent = qt_helpers::toQColor(_cfg.call_accent_color);
 
     // A caller badge occupies the same square the album art does, so the two
     // faces line up through the fade instead of the text jumping sideways.
@@ -301,7 +301,7 @@ void NowPlayingWidget::paintCall(QPainter& p, const QRectF& bounds)
     qreal y = text_area.top() + title_fm.height() * 0.2;
 
     p.setFont(_title_font);
-    p.setPen(dashboard::toQColor(_cfg.title_color));
+    p.setPen(qt_helpers::toQColor(_cfg.title_color));
     p.drawText(QRectF(text_area.left(), y, text_area.width(), title_fm.height()),
                Qt::AlignLeft | Qt::AlignVCenter,
                title_fm.elidedText(display_name.isEmpty() ? QStringLiteral("Unknown caller")
@@ -314,14 +314,14 @@ void NowPlayingWidget::paintCall(QPainter& p, const QRectF& bounds)
     // Only worth a second line when the first one was the name.
     if (!name.isEmpty() && !number.isEmpty())
     {
-        p.setPen(dashboard::toQColor(_cfg.detail_color));
+        p.setPen(qt_helpers::toQColor(_cfg.detail_color));
         p.drawText(QRectF(text_area.left(), y, text_area.width(), detail_fm.height()),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    detail_fm.elidedText(number, Qt::ElideRight, text_area.width()));
         y += detail_fm.height();
     }
 
-    p.setPen(callHasEnded(state) ? dashboard::toQColor(_cfg.detail_color) : accent);
+    p.setPen(callHasEnded(state) ? qt_helpers::toQColor(_cfg.detail_color) : accent);
     p.drawText(QRectF(text_area.left(), y, text_area.width(), detail_fm.height()),
                Qt::AlignLeft | Qt::AlignVCenter, callStatusLine(state, duration));
 }
@@ -349,7 +349,7 @@ void NowPlayingWidget::paintMusic(QPainter& p, const QRectF& bounds)
 
     if (title.isEmpty())
     {
-        p.setPen(dashboard::toQColor(_cfg.detail_color));
+        p.setPen(qt_helpers::toQColor(_cfg.detail_color));
         p.drawText(bounds, Qt::AlignCenter, "Nothing playing");
         return;
     }
@@ -404,14 +404,14 @@ void NowPlayingWidget::paintMusic(QPainter& p, const QRectF& bounds)
     qreal y = text_area.top() + title_fm.height() * 0.2;
 
     p.setFont(title_font);
-    p.setPen(dashboard::toQColor(_cfg.title_color));
+    p.setPen(qt_helpers::toQColor(_cfg.title_color));
     p.drawText(QRectF(text_area.left(), y, text_area.width(), title_fm.height()),
                Qt::AlignLeft | Qt::AlignVCenter,
                title_fm.elidedText(title, Qt::ElideRight, text_area.width()));
     y += title_fm.height();
 
     p.setFont(detail_font);
-    p.setPen(dashboard::toQColor(_cfg.detail_color));
+    p.setPen(qt_helpers::toQColor(_cfg.detail_color));
     for (const QString& line : {artist, album})
     {
         if (line.isEmpty())
@@ -443,10 +443,10 @@ void NowPlayingWidget::paintMusic(QPainter& p, const QRectF& bounds)
         const qreal fraction = std::clamp<qreal>(elapsed / duration, 0.0, 1.0);
         QRectF filled = track;
         filled.setWidth(track.width() * fraction);
-        p.setBrush(dashboard::toQColor(_cfg.accent_color));
+        p.setBrush(qt_helpers::toQColor(_cfg.accent_color));
         p.drawRoundedRect(filled, bar_h / 2.0, bar_h / 2.0);
 
-        p.setPen(dashboard::toQColor(_cfg.detail_color));
+        p.setPen(qt_helpers::toQColor(_cfg.detail_color));
         const QRectF times(text_area.left(), track.bottom() + bar_h * 0.5,
                            text_area.width(), detail_fm.height());
         p.drawText(times, Qt::AlignLeft | Qt::AlignVCenter, secondsToClock(elapsed));
@@ -456,7 +456,7 @@ void NowPlayingWidget::paintMusic(QPainter& p, const QRectF& bounds)
     // A subtle paused indicator so a stale display is distinguishable.
     if (!playing)
     {
-        p.setPen(dashboard::toQColor(_cfg.detail_color));
+        p.setPen(qt_helpers::toQColor(_cfg.detail_color));
         p.setFont(detail_font);
         p.drawText(bounds.adjusted(0, 0, -4, -2), Qt::AlignRight | Qt::AlignTop, "II");
     }

@@ -401,7 +401,7 @@ void Canvas::setBackgroundColor(const QString& hexColor)
     backgroundColor_ = hexColor.toStdString();
 
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, dashboard::toQColor(backgroundColor_));
+    pal.setColor(QPalette::Window, qt_helpers::toQColor(backgroundColor_));
     setPalette(pal);
 
     update();

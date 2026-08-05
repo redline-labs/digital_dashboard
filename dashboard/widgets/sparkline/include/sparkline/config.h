@@ -42,11 +42,11 @@ REFLECT_STRUCT(SparklineConfig_t,
 inline std::vector<std::string> validate(SparklineConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::clampInto<uint16_t>(cfg.update_rate, 1u, dashboard::limits::kMaxUpdateRateHz,
+    config_codec::limits::clampInto<uint16_t>(cfg.update_rate, 1u, config_codec::limits::kMaxUpdateRateHz,
                                            "update_rate", notes);
-    dashboard::limits::orderRange(cfg.min_value, cfg.max_value, "the value range", notes);
-    dashboard::limits::clampInto<uint16_t>(cfg.font_size_value, 1u, 200u, "font_size_value", notes);
-    dashboard::limits::clampInto<uint16_t>(cfg.font_size_units, 1u, 200u, "font_size_units", notes);
+    config_codec::limits::orderRange(cfg.min_value, cfg.max_value, "the value range", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.font_size_value, 1u, 200u, "font_size_value", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.font_size_units, 1u, 200u, "font_size_units", notes);
     return notes;
 }
 

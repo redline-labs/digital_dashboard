@@ -22,7 +22,7 @@ class QPainter;
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ETachometer : public dashboard::CachedPaintWidget
+class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 

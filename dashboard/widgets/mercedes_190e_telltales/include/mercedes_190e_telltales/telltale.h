@@ -19,7 +19,7 @@ class QSvgRenderer;
 #include "dashboard/expression_subscription.h"
 
 
-class Mercedes190ETelltale : public dashboard::CachedPaintWidget
+class Mercedes190ETelltale : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 

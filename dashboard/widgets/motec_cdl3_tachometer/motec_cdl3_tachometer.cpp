@@ -30,14 +30,14 @@ constexpr float kDecorationMargin = 14.0f;
 }
 
 MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent):
-  dashboard::CachedPaintWidget(parent),
+  qt_helpers::CachedPaintWidget(parent),
   _cfg{cfg},
   _rpm{0.0f},
   _maxOuterA{0.0f},
   _maxOuterB{0.0f}
 {
     // Load segmented display font (DSEG)
-    _segmentFont = QFont(dashboard::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf", "Helvetica"), 10, QFont::Bold);
+    _segmentFont = QFont(qt_helpers::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf", "Helvetica"), 10, QFont::Bold);
 
     _expression_parser = dashboard::makeExpressionSubscription<float>(
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,

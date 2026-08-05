@@ -18,7 +18,7 @@
 
 class QPainter;
 
-class MotecCdl3Tachometer : public dashboard::CachedPaintWidget {
+class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget {
     Q_OBJECT
 
 public:

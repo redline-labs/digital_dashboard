@@ -27,8 +27,8 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
 inline std::vector<std::string> validate(Mercedes190ETachometerConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
-    dashboard::limits::clampInto<uint16_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
+    config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
     return notes;
 }
 

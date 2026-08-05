@@ -14,7 +14,7 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 	: QWidget(parent), _cfg{cfg}, _value{0.0}
 {
 	// Load fonts similar to other widgets
-	QString family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+	QString family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 	_labelFont = QFont(family, 14, QFont::DemiBold);
 	_valueFont = QFont(family, 40, QFont::Bold);
 	_labelFont.setItalic(_cfg.italic);
@@ -112,8 +112,8 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 
 	QRectF bounds(0, 0, width(), height());
 
-	const QColor labelColor = dashboard::toQColor(_cfg.label_color, QColor(255, 165, 0));
-	const QColor valueColor = dashboard::toQColor(_cfg.value_color, Qt::white);
+	const QColor labelColor = qt_helpers::toQColor(_cfg.label_color, QColor(255, 165, 0));
+	const QColor valueColor = qt_helpers::toQColor(_cfg.value_color, Qt::white);
 
 	// Layout: horizontal alignment. Every case is named and there is no
 	// `default:`, so adding an alignment is a build error here rather than a

@@ -53,8 +53,8 @@ REFLECT_STRUCT(NowPlayingConfig_t,
 inline std::vector<std::string> validate(NowPlayingConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    dashboard::limits::clampInto<uint16_t>(cfg.transition_ms, 0u, 2000u, "transition_ms", notes);
-    dashboard::limits::clampInto<uint16_t>(cfg.call_linger_ms, 0u, 10000u, "call_linger_ms", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.transition_ms, 0u, 2000u, "transition_ms", notes);
+    config_codec::limits::clampInto<uint16_t>(cfg.call_linger_ms, 0u, 10000u, "call_linger_ms", notes);
     return notes;
 }
 

@@ -63,16 +63,16 @@ SegmentReadoutWidget::SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QW
     switch (_cfg.face)
     {
         case SegmentFace::seven:
-            _segment_family = dashboard::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf",
+            _segment_family = qt_helpers::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf",
                                                           "Courier New");
             break;
         case SegmentFace::fourteen:
-            _segment_family = dashboard::loadResourceFont(":/fonts/DSEG14Classic-Regular.ttf",
+            _segment_family = qt_helpers::loadResourceFont(":/fonts/DSEG14Classic-Regular.ttf",
                                                           "Courier New");
             break;
     }
 
-    _caption_family = dashboard::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _caption_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 
     _ghost = QString(static_cast<int>(_cfg.digits), kAllSegmentsOn);
 
@@ -210,7 +210,7 @@ void SegmentReadoutWidget::paintEvent(QPaintEvent* /*event*/)
     if (!_cfg.caption.empty())
     {
         p.setFont(_caption_font);
-        p.setPen(dashboard::toQColor(_cfg.caption_color));
+        p.setPen(qt_helpers::toQColor(_cfg.caption_color));
         const QString caption = QString::fromStdString(_cfg.caption);
 
         switch (_cfg.caption_position)
@@ -243,11 +243,11 @@ void SegmentReadoutWidget::paintEvent(QPaintEvent* /*event*/)
     // zero width, so "53.60" advances the same four cells as "~~~~".
     if (_cfg.show_ghosts)
     {
-        p.setPen(dashboard::toQColor(_cfg.ghost_color));
+        p.setPen(qt_helpers::toQColor(_cfg.ghost_color));
         p.drawText(value_area, Qt::AlignRight | Qt::AlignVCenter, _ghost);
     }
 
-    p.setPen(dashboard::toQColor(_cfg.lit_color));
+    p.setPen(qt_helpers::toQColor(_cfg.lit_color));
     p.drawText(value_area, Qt::AlignRight | Qt::AlignVCenter, _text);
 }
 

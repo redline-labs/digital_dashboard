@@ -6,7 +6,7 @@
 
 namespace {
 
-using dashboard::config::Issue;
+using config_codec::Issue;
 
 // Validates one entry of the `widgets:` list. The per-widget `config:` block is
 // a different struct for every `type:`, so the walk has to dispatch, and
@@ -75,7 +75,7 @@ void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue
 #define VALIDATE_CONFIG_CASE(enum_name, widget_class)                                                   \
     if (*type == widget_class::kWidgetType)                                                  \
     {                                                                                        \
-        dashboard::config::detail::validateStruct<widget_class::config_t>(                   \
+        config_codec::detail::validateStruct<widget_class::config_t>(                   \
             node["config"], cfg_path, issues);                                               \
         return;                                                                              \
     }
@@ -177,7 +177,7 @@ std::optional<app_config_t> load_app_config(const std::string& config_filepath)
         {
             const std::string where = issue.path.empty() ? config_filepath
                                                          : config_filepath + ": " + issue.path;
-            if (issue.severity == dashboard::config::Issue::Severity::error)
+            if (issue.severity == config_codec::Issue::Severity::error)
             {
                 fatal = true;
                 SPDLOG_ERROR("{}: {}", where, issue.message);

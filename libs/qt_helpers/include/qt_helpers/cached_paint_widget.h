@@ -1,11 +1,11 @@
-#ifndef DASHBOARD_CACHED_PAINT_WIDGET_H_
-#define DASHBOARD_CACHED_PAINT_WIDGET_H_
+#ifndef QT_HELPERS_CACHED_PAINT_WIDGET_H_
+#define QT_HELPERS_CACHED_PAINT_WIDGET_H_
 
 #include <QPainter>
 #include <QPixmap>
 #include <QWidget>
 
-namespace dashboard {
+namespace qt_helpers {
 
 // QWidget base that composes a repaint as: cached static underlay pixmap →
 // per-frame dynamic content → optional cached static overlay pixmap. The
@@ -96,6 +96,6 @@ class CachedPaintWidget : public QWidget {
     qreal cached_dpr_ = 0.0;
 };
 
-}  // namespace dashboard
+}  // namespace qt_helpers
 
-#endif  // DASHBOARD_CACHED_PAINT_WIDGET_H_
+#endif  // QT_HELPERS_CACHED_PAINT_WIDGET_H_

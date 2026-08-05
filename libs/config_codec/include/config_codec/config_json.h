@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_CONFIG_JSON_H_
-#define DASHBOARD_CONFIG_JSON_H_
+#ifndef CONFIG_CODEC_CONFIG_JSON_H_
+#define CONFIG_CODEC_CONFIG_JSON_H_
 
 #include "helpers/color.h"
 #include "reflection/reflection.h"
@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace dashboard::config_json
+namespace config_codec
 {
 
 using json = nlohmann::json;
@@ -399,6 +399,6 @@ json describeType()
     }
 }
 
-}  // namespace dashboard::config_json
+}  // namespace config_codec
 
-#endif  // DASHBOARD_CONFIG_JSON_H_
+#endif  // CONFIG_CODEC_CONFIG_JSON_H_
