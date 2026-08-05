@@ -2,7 +2,7 @@
 #include "editor/editor_constants.h"
 #include "editor/selection_frame.h"
 
-#include "dashboard/widget_colors.h"
+#include "qt_helpers/widget_colors.h"
 #include "dashboard/widget_identity.h"
 
 #include <QDragEnterEvent>

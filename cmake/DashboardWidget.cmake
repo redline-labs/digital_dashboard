@@ -19,7 +19,8 @@
 #
 # Defaults, applied to every widget:
 #
-#   PUBLIC   reflection, helpers, zenoh_pub_sub, Qt6::Widgets, QT_COMPONENTS
+#   PUBLIC   reflection, helpers, config_codec, qt_helpers, zenoh_pub_sub,
+#            Qt6::Widgets, QT_COMPONENTS
 #   PRIVATE  spdlog::spdlog
 #   includes dashboard/include and the widget's own include/
 #   AUTOMOC  on, per target
@@ -90,6 +91,8 @@ function(add_dashboard_widget widget_name)
         PUBLIC
             reflection
             helpers        # config.h is public and normally names helpers::Color
+            config_codec   # config.h calls config_codec::limits from validate()
+            qt_helpers     # several widget headers derive from CachedPaintWidget
             zenoh_pub_sub  # the widget header usually holds a subscription
             Qt6::Widgets   # the widget header is a QWidget subclass
             ${DW_PUBLIC_LIBS}

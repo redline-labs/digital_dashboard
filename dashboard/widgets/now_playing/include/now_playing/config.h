@@ -6,7 +6,7 @@
 #include <vector>
 #include "helpers/color.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 // Now-playing widget: renders media metadata published by the carplay driver
 // node. Purely a subscriber -- it works alongside (or entirely without) the

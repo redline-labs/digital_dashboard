@@ -5,7 +5,7 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (uint16_t, max_rpm, 7000,

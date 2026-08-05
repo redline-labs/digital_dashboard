@@ -7,7 +7,7 @@
 
 #include "dashboard/expression_subscription.h"
 #include "dashboard/gauge_painting.h"
-#include "dashboard/widget_fonts.h"
+#include "qt_helpers/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
 #include <cmath>

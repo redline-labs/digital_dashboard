@@ -8,7 +8,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "dashboard/widget_fonts.h"
+#include "qt_helpers/widget_fonts.h"
 
 StaticTextWidget::StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* parent)
     : QWidget(parent), _cfg{cfg}, _label{new QLabel(this)}

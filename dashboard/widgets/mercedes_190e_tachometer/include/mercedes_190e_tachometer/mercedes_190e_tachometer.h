@@ -2,7 +2,7 @@
 #define TACHOMETERWIDGET_H
 
 #include "mercedes_190e_tachometer/config.h"
-#include "dashboard/cached_paint_widget.h"
+#include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>

@@ -5,8 +5,8 @@
 
 #include <spdlog/spdlog.h>
 
-#include "dashboard/widget_colors.h"
-#include "dashboard/widget_fonts.h"
+#include "qt_helpers/widget_colors.h"
+#include "qt_helpers/widget_fonts.h"
 
 namespace
 {

@@ -7,7 +7,7 @@
 
 #include "helpers/color.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 // Turn-by-turn guidance from CarPlay. Like now_playing, this is purely a
 // subscriber to the driver node's metadata topic -- it needs no USB, no AirPlay

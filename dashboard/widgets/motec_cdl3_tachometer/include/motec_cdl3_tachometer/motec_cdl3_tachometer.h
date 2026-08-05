@@ -2,7 +2,7 @@
 #define MOTEC_CDL3_TACHOMETER_H
 
 #include "motec_cdl3_tachometer/config.h"
-#include "dashboard/cached_paint_widget.h"
+#include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>

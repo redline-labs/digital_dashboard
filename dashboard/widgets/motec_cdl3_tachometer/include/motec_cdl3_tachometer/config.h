@@ -5,7 +5,7 @@
 #include <string>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
     (uint32_t, max_rpm, 6000,

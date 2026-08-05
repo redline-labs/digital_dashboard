@@ -6,7 +6,7 @@
 #include <vector>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 // Widget-specific configuration structs
 REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,

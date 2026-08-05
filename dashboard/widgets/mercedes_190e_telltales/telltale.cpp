@@ -6,7 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
-#include "dashboard/widget_colors.h"
+#include "qt_helpers/widget_colors.h"
 
 // Colors
 static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted

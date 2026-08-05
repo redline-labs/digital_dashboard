@@ -6,7 +6,7 @@
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 #include "helpers/color.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(SparklineConfig_t,
     (std::string, units, "Untitled",

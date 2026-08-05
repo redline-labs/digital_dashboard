@@ -6,7 +6,7 @@
 // the loader previously accepted in silence or rejected without saying where.
 
 #include "dashboard/app_config.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 #include "editor/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>

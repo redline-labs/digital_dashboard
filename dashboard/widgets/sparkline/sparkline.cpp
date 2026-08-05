@@ -10,7 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
-#include "dashboard/widget_colors.h"
+#include "qt_helpers/widget_colors.h"
 #include <algorithm>
 #include <memory>
 

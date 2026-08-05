@@ -2,7 +2,7 @@
 #define DASHBOARD_WIDGET_FACTORY_H
 
 #include "dashboard/app_config.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 #include <concepts>
 #include <string>
@@ -14,7 +14,7 @@
 namespace widget_factory
 {
 
-// Detects the optional validate() hook described in dashboard/config_limits.h.
+// Detects the optional validate() hook described in config_codec/config_limits.h.
 // Found by ADL, so a config declares it as a free function next to the struct
 // and REFLECT_STRUCT does not have to know about it.
 template <typename Cfg>

@@ -2,7 +2,7 @@
 #define SPEEDOMETERWIDGETMPH_H
 
 #include "mercedes_190e_speedometer/config.h"
-#include "dashboard/cached_paint_widget.h"
+#include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/gauge_painting.h"
 #include "dashboard/widget_types.h"
 

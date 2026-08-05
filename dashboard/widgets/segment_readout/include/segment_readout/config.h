@@ -8,7 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 // Which DSEG face the readout is set in. Seven-segment can only render digits;
 // fourteen-segment can render letters, which is what the CDL3's alphanumeric

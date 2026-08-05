@@ -1,6 +1,6 @@
 #include "dashboard/widget_methods.h"
 
-#include "dashboard/config_json.h"
+#include "config_codec/config_json.h"
 #include "editor/widget_registry.h"
 
 #include <algorithm>
@@ -60,7 +60,7 @@ MethodResult configOf(QWidget* widget)
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
         {                                                                         \
-            config = config_json::toJson(typed->getConfig());                     \
+            config = dashboard::config_json::toJson(typed->getConfig());                     \
             found = true;                                                         \
         }                                                                         \
     }
@@ -101,7 +101,7 @@ std::expected<widget_config_t, AgentError> patchedConfig(QWidget* widget, const 
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
         {                                                                         \
             auto cfg = typed->getConfig();                                        \
-            config_json::applyJson(patch, cfg, "", errors);                       \
+            dashboard::config_json::applyJson(patch, cfg, "", errors);                       \
             out.config = std::move(cfg);                                          \
             found = true;                                                         \
         }                                                                         \
@@ -263,7 +263,7 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
 #define DESCRIBE_CASE(enum_name, widget_class)                                                    \
     if (!found && *type == widget_class::kWidgetType)                                  \
     {                                                                                  \
-        schema = config_json::describeType<widget_class::config_t>();                   \
+        schema = dashboard::config_json::describeType<widget_class::config_t>();                   \
         schema["friendly_name"] = std::string(widget_class::kFriendlyName);             \
         found = true;                                                                   \
     }

@@ -9,7 +9,7 @@
 // These assertions are about the channel values rather than about "it parsed",
 // because parsing was never the failure.
 
-#include "dashboard/widget_colors.h"
+#include "qt_helpers/widget_colors.h"
 #include "helpers/color.h"
 
 #include <cstdio>

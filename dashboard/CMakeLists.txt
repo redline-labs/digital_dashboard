@@ -62,6 +62,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     # Link common logging interface (wraps spdlog)
     zenoh_pub_sub
     helpers
+
+    # Reflected-struct config: YAML/JSON codecs, validation, clamping.
+    config_codec
+
+    # Qt widget helpers: cached paint layers, colours, resource fonts.
+    qt_helpers
     
     # Link spdlog
     spdlog::spdlog
@@ -123,6 +129,8 @@ foreach(config_test roundtrip validation colors)
         Qt6::Widgets
         zenoh_pub_sub
         helpers
+        config_codec
+        qt_helpers
         spdlog::spdlog
         yaml-cpp::yaml-cpp
         ${WIDGET_LIBS}
@@ -143,6 +151,8 @@ target_link_libraries(editor_test_document PRIVATE
     Qt6::Widgets
     zenoh_pub_sub
     helpers
+    config_codec
+    qt_helpers
     spdlog::spdlog
     yaml-cpp::yaml-cpp
     ${WIDGET_LIBS}
@@ -169,6 +179,8 @@ target_link_libraries(editor_test_roundtrip PRIVATE
     Qt6::Widgets
     zenoh_pub_sub
     helpers
+    config_codec
+    qt_helpers
     spdlog::spdlog
     yaml-cpp::yaml-cpp
     ${WIDGET_LIBS}
@@ -188,6 +200,8 @@ target_link_libraries(editor PRIVATE
     cxxopts::cxxopts
     zenoh_pub_sub
     helpers
+    config_codec
+    qt_helpers
 
     ${WIDGET_LIBS}
 )

@@ -8,7 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "dashboard/config_limits.h"
+#include "config_codec/config_limits.h"
 
 // A horizontal bar whose origin is the middle, not the left edge: the marker
 // sits at the centre for zero and travels either way from there. This is the
