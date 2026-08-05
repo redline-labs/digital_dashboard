@@ -96,10 +96,21 @@ struct FieldMetadata {
     std::string_view field_name;
     std::string_view friendly_name;
     std::string_view description;
-    
-    constexpr FieldMetadata() : field_name(""), friendly_name(""), description("") {}
-    constexpr explicit FieldMetadata(std::string_view field, std::string_view fn, std::string_view desc = "") 
-        : field_name(field), friendly_name(fn), description(desc) {}
+
+    // Did the author actually supply a friendly name, or is this entry just a
+    // fallback carrying the field's own name?
+    //
+    // The distinction matters because an entry always exists once a struct
+    // declares any metadata, so "has an entry" is not the same question as "has
+    // been given a human-readable label". Only the latter is worth asserting on
+    // -- see metadata_covers_all_fields().
+    bool annotated;
+
+    constexpr FieldMetadata()
+        : field_name(""), friendly_name(""), description(""), annotated(false) {}
+    constexpr explicit FieldMetadata(std::string_view field, std::string_view fn,
+                                     std::string_view desc = "", bool was_annotated = true)
+        : field_name(field), friendly_name(fn), description(desc), annotated(was_annotated) {}
 };
 
 // Field metadata
@@ -505,6 +516,90 @@ constexpr std::string_view get_description(std::string_view field_name)
     else
     {
         return "";
+    }
+}
+
+// ------------------------------------------------- metadata completeness
+//
+// These answer "has every field of this struct been given a human-readable
+// label?", which is a question only some callers need to ask. A struct is
+// reflected for lots of reasons -- app_config_t and the codec tests' throwaway
+// structs are reflected and will never appear in a UI -- so this is deliberately
+// NOT enforced at the point of declaration. It is for a caller that renders a
+// struct to assert on; see PropertiesPanel.
+//
+// Checking `annotated` rather than mere presence matters: once metadata is
+// generated for every field, an entry always exists, and only the flag still
+// distinguishes a real label from a fallback carrying the field's own name.
+
+template <typename Struct>
+constexpr bool field_is_annotated(std::string_view field_name)
+{
+    if constexpr (!field_metadata_traits<Struct>::has_metadata)
+    {
+        return false;
+    }
+    else
+    {
+        for (const auto& entry : field_metadata_traits<Struct>::metadata())
+        {
+            if (entry.field_name == field_name)
+            {
+                return entry.annotated;
+            }
+        }
+        return false;
+    }
+}
+
+template <typename Struct, std::size_t... I>
+constexpr bool metadata_covers_all_fields_impl(std::index_sequence<I...>)
+{
+    const auto fields = Struct::reflection_fields();
+    return (... && field_is_annotated<Struct>(std::get<I>(fields).name));
+}
+
+// True when every field of `Struct` has an author-supplied friendly name.
+template <typename Struct>
+constexpr bool metadata_covers_all_fields()
+{
+    constexpr std::size_t count =
+        std::tuple_size_v<decltype(Struct::reflection_fields())>;
+    return metadata_covers_all_fields_impl<Struct>(std::make_index_sequence<count>{});
+}
+
+template <typename Struct, std::size_t... I>
+constexpr bool struct_has_field_impl(std::string_view name, std::index_sequence<I...>)
+{
+    const auto fields = Struct::reflection_fields();
+    return (... || (std::get<I>(fields).name == name));
+}
+
+// True when every metadata entry names a field that actually exists.
+//
+// This is the other half of the drift: a mistyped field name in a metadata entry
+// is silently ignored by the name-keyed lookup, so the field it was meant for
+// falls back to its raw name and the stray entry is never read.
+template <typename Struct>
+constexpr bool metadata_has_no_orphan_entries()
+{
+    if constexpr (!field_metadata_traits<Struct>::has_metadata)
+    {
+        return true;
+    }
+    else
+    {
+        constexpr std::size_t count =
+            std::tuple_size_v<decltype(Struct::reflection_fields())>;
+        for (const auto& entry : field_metadata_traits<Struct>::metadata())
+        {
+            if (!struct_has_field_impl<Struct>(entry.field_name,
+                                               std::make_index_sequence<count>{}))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 }
 

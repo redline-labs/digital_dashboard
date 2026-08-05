@@ -290,6 +290,29 @@ namespace
     template <typename Struct>
     QWidget* createFieldLabel(QWidget* parent, std::string_view fieldName)
     {
+        // Every struct this panel renders needs friendly names -- and this is the
+        // one place they are read, for the top-level config and for nested
+        // structs alike, so it is where the requirement belongs.
+        //
+        // Asserting here rather than at the declaration is deliberate. A struct
+        // is reflected for many reasons; app_config_t and the codec tests'
+        // throwaway structs will never appear in a UI and must not be made to
+        // carry labels. A config needs metadata because it is *rendered*, not
+        // because it is reflected.
+        //
+        // Seven of the fifteen widget configs had no metadata at all, and nothing
+        // said so: get_friendly_name falls back to the field name, so the panel
+        // showed `odometer_zenoh_key` and looked like it was working.
+        static_assert(reflection::metadata_covers_all_fields<Struct>(),
+                      "A config rendered in the properties panel has a field with no "
+                      "friendly name. Every field needs one, or the panel falls back "
+                      "to the raw field name and silently looks fine.");
+        static_assert(reflection::metadata_has_no_orphan_entries<Struct>(),
+                      "A metadata entry names a field this struct does not have -- "
+                      "usually a typo or a renamed field. The lookup is by name, so "
+                      "the entry is silently ignored and the field it was meant for "
+                      "falls back to its raw name.");
+
         const std::string_view friendly = reflection::get_friendly_name<Struct>(fieldName);
         const QString text = QString::fromUtf8(friendly.data(), static_cast<int>(friendly.size()));
 
