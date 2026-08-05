@@ -35,54 +35,51 @@ REFLECT_ENUM(SegmentCaptionPosition,
 // the live value over the top, in the same face at the same position, so the two
 // line up cell for cell.
 REFLECT_STRUCT(SegmentReadoutConfig_t,
-    (std::string, zenoh_key, ""),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
-    (std::string, value_expression, ""),
+    (std::string, zenoh_key, "",
+        "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
+        "Schema Type", "Data schema type for the subscription"),
+    (std::string, value_expression, "",
+        "Value Expression", "Expression to compute the displayed value"),
 
     // Shown instead of a subscribed value when there is no expression. This is
     // how the fixed alphanumeric fields ("OILPRESS") are set.
-    (std::string, static_text, ""),
+    (std::string, static_text, "",
+        "Static Text", "Fixed text to display when there is no expression"),
 
     // Fixed text held in the leading cells, with the value right-aligned in what
     // is left. This is what the CDL3's alphanumeric bar actually does: it is one
     // 13-character field reading "OIL PRESS   85", not a label widget sitting
     // next to a number widget. Drawing it as two fields gets the cells wrong,
     // because each field would round its own cell width independently.
-    (std::string, prefix, ""),
+    (std::string, prefix, "",
+        "Prefix", "Fixed text in the leading cells, value right-aligned after it"),
 
-    (SegmentFace, face, SegmentFace::seven),
+    (SegmentFace, face, SegmentFace::seven,
+        "Face", "seven for digits only, fourteen for alphanumerics"),
     // Number of cells. The ghost string is this many full-house characters, so
     // it also fixes how wide the readout draws regardless of the current value.
-    (uint16_t, digits, 4),
-    (uint16_t, decimals, 0),
+    (uint16_t, digits, 4,
+        "Digits", "Number of cells, which also fixes the drawn width"),
+    (uint16_t, decimals, 0,
+        "Decimals", "Digits after the decimal point"),
 
-    (helpers::Color, lit_color, "#101820"),
+    (helpers::Color, lit_color, "#101820",
+        "Lit Color", "Colour of the driven segments"),
     // The unlit segments. Low contrast against the backlight on purpose; too
     // strong and it reads as garbage text rather than as an idle display.
-    (helpers::Color, ghost_color, "#5AB4BE"),
-    (bool, show_ghosts, true),
+    (helpers::Color, ghost_color, "#5AB4BE",
+        "Ghost Color", "Colour of the undriven segments"),
+    (bool, show_ghosts, true,
+        "Show Ghosts", "Draw the undriven segments behind the value"),
 
     // Small caption drawn alongside, like the CDL3's "FUEL" and "TIME".
-    (std::string, caption, ""),
-    (SegmentCaptionPosition, caption_position, SegmentCaptionPosition::right),
-    (helpers::Color, caption_color, "#101820")
-)
-
-REFLECT_METADATA(SegmentReadoutConfig_t,
-    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (schema_type, "Schema Type", "Data schema type for the subscription"),
-    (value_expression, "Value Expression", "Expression to compute the displayed value"),
-    (static_text, "Static Text", "Fixed text to display when there is no expression"),
-    (prefix, "Prefix", "Fixed text in the leading cells, value right-aligned after it"),
-    (face, "Face", "seven for digits only, fourteen for alphanumerics"),
-    (digits, "Digits", "Number of cells, which also fixes the drawn width"),
-    (decimals, "Decimals", "Digits after the decimal point"),
-    (lit_color, "Lit Color", "Colour of the driven segments"),
-    (ghost_color, "Ghost Color", "Colour of the undriven segments"),
-    (show_ghosts, "Show Ghosts", "Draw the undriven segments behind the value"),
-    (caption, "Caption", "Small label drawn beside the value"),
-    (caption_position, "Caption Position", "right of the value, or above it"),
-    (caption_color, "Caption Color", "Colour of the caption")
+    (std::string, caption, "",
+        "Caption", "Small label drawn beside the value"),
+    (SegmentCaptionPosition, caption_position, SegmentCaptionPosition::right,
+        "Caption Position", "right of the value, or above it"),
+    (helpers::Color, caption_color, "#101820",
+        "Caption Color", "Colour of the caption")
 )
 
 // `digits` sizes the ghost string that is built on every config change, and

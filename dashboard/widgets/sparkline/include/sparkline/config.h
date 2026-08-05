@@ -8,35 +8,31 @@
 #include "helpers/color.h"
 #include "dashboard/config_limits.h"
 
-
 REFLECT_STRUCT(SparklineConfig_t,
-    (std::string, units, "Untitled"),
-    (double, min_value, 0.0),
-    (double, max_value, 100.0),
-    (helpers::Color, line_color, "#0000FF"),
-    (helpers::Color, text_color, "#FFFFFF"),
-    (std::string, font_family, "Arial"),
-    (uint16_t, font_size_value, 24),
-    (uint16_t, font_size_units, 10),
-    (uint16_t, update_rate, 30),
-    (std::string, zenoh_key, ""),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
-    (std::string, value_expression, "")
-)
-
-REFLECT_METADATA(SparklineConfig_t,
-    (units, "Units Label", "Units text to display (e.g., mph, °C)"),
-    (min_value, "Minimum Value", "Minimum value for the Y-axis scale"),
-    (max_value, "Maximum Value", "Maximum value for the Y-axis scale"),
-    (line_color, "Line Color", "Color of the sparkline graph"),
-    (text_color, "Text Color", "Color of the value and units text"),
-    (font_family, "Font Family", "Font family for the displayed text"),
-    (font_size_value, "Value Font Size", "Font size for the numeric value"),
-    (font_size_units, "Units Font Size", "Font size for the units label"),
-    (update_rate, "Update Rate (Hz)", "Graph update rate in Hertz"),
-    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (schema_type, "Schema Type", "Data schema type for the subscription"),
-    (value_expression, "Value Expression", "Expression to extract/compute the value")
+    (std::string, units, "Untitled",
+        "Units Label", "Units text to display (e.g., mph, °C)"),
+    (double, min_value, 0.0,
+        "Minimum Value", "Minimum value for the Y-axis scale"),
+    (double, max_value, 100.0,
+        "Maximum Value", "Maximum value for the Y-axis scale"),
+    (helpers::Color, line_color, "#0000FF",
+        "Line Color", "Color of the sparkline graph"),
+    (helpers::Color, text_color, "#FFFFFF",
+        "Text Color", "Color of the value and units text"),
+    (std::string, font_family, "Arial",
+        "Font Family", "Font family for the displayed text"),
+    (uint16_t, font_size_value, 24,
+        "Value Font Size", "Font size for the numeric value"),
+    (uint16_t, font_size_units, 10,
+        "Units Font Size", "Font size for the units label"),
+    (uint16_t, update_rate, 30,
+        "Update Rate (Hz)", "Graph update rate in Hertz"),
+    (std::string, zenoh_key, "",
+        "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
+        "Schema Type", "Data schema type for the subscription"),
+    (std::string, value_expression, "",
+        "Value Expression", "Expression to extract/compute the value")
 )
 
 // update_rate feeds `1000 / update_rate` as a millisecond timer interval, so

@@ -8,7 +8,6 @@
 #include "helpers/color.h"
 #include "reflection/reflection.h"
 
-
 REFLECT_ENUM(Mercedes190ETelltaleType,
     battery,
     brake_system,
@@ -17,21 +16,18 @@ REFLECT_ENUM(Mercedes190ETelltaleType,
 )
 
 REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
-    (Mercedes190ETelltaleType, telltale_type, Mercedes190ETelltaleType::battery),
-    (helpers::Color, warning_color, "#FF0000"),
-    (helpers::Color, normal_color, "#333333"),
-    (std::string, zenoh_key, ""),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
-    (std::string, condition_expression, "")
-)
-
-REFLECT_METADATA(Mercedes190ETelltaleConfig_t,
-    (telltale_type, "Telltale", "Which warning symbol this lamp draws"),
-    (warning_color, "Warning Color", "Colour of the lamp while the condition holds"),
-    (normal_color, "Normal Color", "Colour of the lamp the rest of the time"),
-    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (schema_type, "Schema Type", "Data schema type for the subscription"),
-    (condition_expression, "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero")
+    (Mercedes190ETelltaleType, telltale_type, Mercedes190ETelltaleType::battery,
+        "Telltale", "Which warning symbol this lamp draws"),
+    (helpers::Color, warning_color, "#FF0000",
+        "Warning Color", "Colour of the lamp while the condition holds"),
+    (helpers::Color, normal_color, "#333333",
+        "Normal Color", "Colour of the lamp the rest of the time"),
+    (std::string, zenoh_key, "",
+        "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
+        "Schema Type", "Data schema type for the subscription"),
+    (std::string, condition_expression, "",
+        "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero")
 )
 
 #endif // MERCEDES_190E_TELLTALES_CONFIG_H

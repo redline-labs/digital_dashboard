@@ -15,41 +15,38 @@
 // MoTeC gain/loss strip -- how far ahead or behind the reference lap you are --
 // and anything else that is naturally signed around a target.
 REFLECT_STRUCT(CenterBarConfig_t,
-    (std::string, zenoh_key, ""),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed),
-    (std::string, value_expression, ""),
+    (std::string, zenoh_key, "",
+        "Zenoh Key", "Zenoh topic key to subscribe to"),
+    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
+        "Schema Type", "Data schema type for the subscription"),
+    (std::string, value_expression, "",
+        "Value Expression", "Expression to compute the signed value"),
 
     // Full-scale deflection either side of centre, in the value's own units.
-    (float, range, 1.0),
+    (float, range, 1.0,
+        "Range", "Full-scale deflection either side of centre"),
 
-    (std::string, left_label, "LOSS"),
-    (std::string, right_label, "GAIN"),
+    (std::string, left_label, "LOSS",
+        "Left Label", "Label at the left end of the bar"),
+    (std::string, right_label, "GAIN",
+        "Right Label", "Label at the right end of the bar"),
 
     // Which direction counts as good. On a gain/loss strip the useful value is
     // negative -- you are under the reference lap -- so the good end is the left
     // one, and this flips which colour the marker takes.
-    (bool, negative_is_good, true),
+    (bool, negative_is_good, true,
+        "Negative Is Good", "Colour negative values with good_color"),
 
-    (helpers::Color, track_color, "#333333"),
-    (helpers::Color, good_color, "#39B54A"),
-    (helpers::Color, bad_color, "#C4281E"),
-    (helpers::Color, label_color, "#AAAAAA"),
-    (helpers::Color, tick_color, "#777777")
-)
-
-REFLECT_METADATA(CenterBarConfig_t,
-    (zenoh_key, "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (schema_type, "Schema Type", "Data schema type for the subscription"),
-    (value_expression, "Value Expression", "Expression to compute the signed value"),
-    (range, "Range", "Full-scale deflection either side of centre"),
-    (left_label, "Left Label", "Label at the left end of the bar"),
-    (right_label, "Right Label", "Label at the right end of the bar"),
-    (negative_is_good, "Negative Is Good", "Colour negative values with good_color"),
-    (track_color, "Track Color", "Colour of the unfilled bar"),
-    (good_color, "Good Color", "Marker colour on the good side"),
-    (bad_color, "Bad Color", "Marker colour on the bad side"),
-    (label_color, "Label Color", "Colour of the end labels"),
-    (tick_color, "Tick Color", "Colour of the centre tick")
+    (helpers::Color, track_color, "#333333",
+        "Track Color", "Colour of the unfilled bar"),
+    (helpers::Color, good_color, "#39B54A",
+        "Good Color", "Marker colour on the good side"),
+    (helpers::Color, bad_color, "#C4281E",
+        "Bad Color", "Marker colour on the bad side"),
+    (helpers::Color, label_color, "#AAAAAA",
+        "Label Color", "Colour of the end labels"),
+    (helpers::Color, tick_color, "#777777",
+        "Tick Color", "Colour of the centre tick")
 )
 
 // `range` is the divisor that turns a reading into a position along the bar.

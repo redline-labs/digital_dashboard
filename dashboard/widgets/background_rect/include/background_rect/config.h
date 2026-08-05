@@ -13,13 +13,10 @@ REFLECT_ENUM(GradientDirection,
 )
 
 REFLECT_STRUCT(BackgroundRectConfig_t,
-    (std::vector<helpers::Color>, colors, {}),
-    (GradientDirection, direction, GradientDirection::vertical)
-)
-
-REFLECT_METADATA(BackgroundRectConfig_t,
-    (colors, "Gradient Colors", "List of colors for the gradient (hex format). Single color for solid fill."),
-    (direction, "Gradient Direction", "Direction of the gradient (vertical or horizontal)")
+    (std::vector<helpers::Color>, colors, {},
+        "Gradient Colors", "List of colors for the gradient (hex format). Single color for solid fill."),
+    (GradientDirection, direction, GradientDirection::vertical,
+        "Gradient Direction", "Direction of the gradient (vertical or horizontal)")
 )
 
 #endif // BACKGROUND_RECT_CONFIG_H

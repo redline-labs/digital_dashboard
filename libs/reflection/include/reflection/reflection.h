@@ -170,9 +170,61 @@ constexpr void visit_fields(const Struct& object, Visitor&& visitor) {
 #define REFLECTION_GET_SECOND(a, b, ...) b
 #define REFLECTION_GET_THIRD(a, b, c, ...) c
 
+#define REFLECTION_CONCAT_IMPL(a, b) a##b
+#define REFLECTION_CONCAT(a, b) REFLECTION_CONCAT_IMPL(a, b)
+
+#define REFLECTION_GET_FOURTH(a, b, c, d, ...) d
+#define REFLECTION_GET_FIFTH(a, b, c, d, e, ...) e
+
 #define REFLECTION_FIELD_TYPE(pair) REFLECTION_EXPAND(REFLECTION_GET_FIRST pair)
 #define REFLECTION_FIELD_NAME(pair) REFLECTION_EXPAND(REFLECTION_GET_SECOND pair)
 #define REFLECTION_FIELD_INITVAL(triple) REFLECTION_EXPAND(REFLECTION_GET_THIRD triple)
+
+// A field may carry its own label, so the thing a field IS and the thing it is
+// CALLED are declared together:
+//
+//     (uint32_t,    max_rpm,   6000)                              -- no label
+//     (uint32_t,    max_rpm,   6000, "Maximum RPM")               -- label
+//     (uint32_t,    max_rpm,   6000, "Maximum RPM", "Full scale") -- and help
+//
+// The three forms coexist in one REFLECT_STRUCT, which is what let the ~130
+// existing fields keep working while they were migrated one file at a time.
+//
+// Dispatch is on the arity of the tuple. The counter has to consume the tuple
+// directly -- handing it to a one-argument macro would pass its elements as
+// separate arguments and count them wrong.
+//
+// The limitation this inherits: a type containing a comma (std::map<K, V>) is
+// seen by the preprocessor as two arguments and throws the count off. That
+// already breaks REFLECT_STRUCT today, at the member declaration, because the
+// type is split in half -- so it is not a new restriction, but the diagnostic is
+// worse here. No such type exists in the repo. If one is ever needed, alias it
+// first: `using kv_t = std::map<K, V>;`.
+#define REFLECTION_COUNT_ARGS_(a, b, c, d, e, N, ...) N
+#define REFLECTION_COUNT_ARGS(...) REFLECTION_COUNT_ARGS_(__VA_ARGS__, 5, 4, 3, 2, 1)
+#define REFLECTION_TUPLE_ARITY(tuple) REFLECTION_COUNT_ARGS tuple
+
+// Friendly name: the 4th element when present, else the field's own name.
+#define REFLECTION_FRIENDLY_3(t) REFLECTION_STRINGIZE(REFLECTION_FIELD_NAME(t))
+#define REFLECTION_FRIENDLY_4(t) REFLECTION_EXPAND(REFLECTION_GET_FOURTH t)
+#define REFLECTION_FRIENDLY_5(t) REFLECTION_EXPAND(REFLECTION_GET_FOURTH t)
+#define REFLECTION_FIELD_FRIENDLY_(n, t) REFLECTION_CONCAT(REFLECTION_FRIENDLY_, n)(t)
+#define REFLECTION_FIELD_FRIENDLY(t) REFLECTION_FIELD_FRIENDLY_(REFLECTION_TUPLE_ARITY(t), t)
+
+// Description: the 5th element when present, else nothing.
+#define REFLECTION_DESCRIPTION_3(t) ""
+#define REFLECTION_DESCRIPTION_4(t) ""
+#define REFLECTION_DESCRIPTION_5(t) REFLECTION_EXPAND(REFLECTION_GET_FIFTH t)
+#define REFLECTION_FIELD_DESCRIPTION_(n, t) REFLECTION_CONCAT(REFLECTION_DESCRIPTION_, n)(t)
+#define REFLECTION_FIELD_DESCRIPTION(t) REFLECTION_FIELD_DESCRIPTION_(REFLECTION_TUPLE_ARITY(t), t)
+
+// Whether the author supplied a label, as opposed to us falling back to the
+// field name. See FieldMetadata::annotated.
+#define REFLECTION_ANNOTATED_3(t) false
+#define REFLECTION_ANNOTATED_4(t) true
+#define REFLECTION_ANNOTATED_5(t) true
+#define REFLECTION_FIELD_ANNOTATED_(n, t) REFLECTION_CONCAT(REFLECTION_ANNOTATED_, n)(t)
+#define REFLECTION_FIELD_ANNOTATED(t) REFLECTION_FIELD_ANNOTATED_(REFLECTION_TUPLE_ARITY(t), t)
 
 #define REFLECTION_STRINGIZE_IMPL(x) #x
 #define REFLECTION_STRINGIZE(x) REFLECTION_STRINGIZE_IMPL(x)
@@ -434,6 +486,15 @@ constexpr void visit_fields(const Struct& object, Visitor&& visitor) {
 #define REFLECTION_FIELD_TYPE_NAME(StructName, triple) \
     std::string_view{REFLECTION_STRINGIZE(REFLECTION_FIELD_TYPE(triple))}
 
+// One metadata entry per field, taken from the field's own declaration. A field
+// that supplied no label gets one carrying its own name, marked not-annotated so
+// that metadata_covers_all_fields() can still tell the two apart.
+#define REFLECTION_MAKE_FIELD_METADATA(StructName, t) \
+    ::reflection::FieldMetadata{REFLECTION_STRINGIZE(REFLECTION_FIELD_NAME(t)), \
+                                REFLECTION_FIELD_FRIENDLY(t), \
+                                REFLECTION_FIELD_DESCRIPTION(t), \
+                                REFLECTION_FIELD_ANNOTATED(t)}
+
 #define REFLECT_STRUCT(StructName, ...) \
 struct StructName { \
     REFLECTION_FOR_EACH_SEQ(REFLECTION_DECLARE_MEMBER_FROM_TRIPLE, StructName, __VA_ARGS__) \
@@ -447,20 +508,62 @@ struct StructName { \
     static constexpr auto reflection_type_names() { \
         return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_FIELD_TYPE_NAME, StructName, __VA_ARGS__) }; \
     } \
+    static constexpr auto reflection_field_metadata() { \
+        return std::array{ REFLECTION_FOR_EACH_LIST(REFLECTION_MAKE_FIELD_METADATA, StructName, __VA_ARGS__) }; \
+    } \
 };
 
 // =========================
 // Field metadata utilities
 // =========================
 
-// Default metadata traits - can be specialized for each struct
+// Does this struct carry metadata generated from its own field declarations?
+// True for anything declared with REFLECT_STRUCT, which emits the table whether
+// or not any field was labelled.
+template <typename T, typename = void>
+struct has_inline_field_metadata : std::false_type {};
+
 template <typename T>
+struct has_inline_field_metadata<T, std::void_t<decltype(T::reflection_field_metadata())>>
+    : std::true_type {};
+
+// Field metadata, taken from the struct's own declaration.
+//
+// This used to be empty by default and filled in by a separate REFLECT_METADATA
+// specialisation -- a second list of the same fields, in a second place, that
+// nothing kept in step with the first. Labels are now declared on the field they
+// belong to, so the table comes from the struct itself.
+//
+// Still a template that can be specialised, for a struct whose declaration you
+// do not own.
+// Did anyone label any field of this struct?
+//
+// Not the same as "the table exists": REFLECT_STRUCT emits an entry for every
+// field whether or not it was labelled, so presence answers nothing. Callers
+// asking this want to know whether looking a label up is worth it at all.
+template <typename T>
+constexpr bool any_field_annotated() {
+    if constexpr (!has_inline_field_metadata<T>::value) {
+        return false;
+    } else {
+        for (const auto& entry : T::reflection_field_metadata()) {
+            if (entry.annotated) return true;
+        }
+        return false;
+    }
+}
+
+template <typename T, typename = void>
 struct field_metadata_traits {
     static constexpr auto metadata() {
-        // Return empty array by default (size 0)
-        return std::array<FieldMetadata, 0>{};
+        if constexpr (has_inline_field_metadata<T>::value) {
+            return T::reflection_field_metadata();
+        } else {
+            // Not a reflected struct, or one declared some other way.
+            return std::array<FieldMetadata, 0>{};
+        }
     }
-    static constexpr bool has_metadata = false;
+    static constexpr bool has_metadata = any_field_annotated<T>();
 };
 
 // Helper implementation - search metadata by field name
@@ -532,6 +635,11 @@ constexpr std::string_view get_description(std::string_view field_name)
 // generated for every field, an entry always exists, and only the flag still
 // distinguishes a real label from a fallback carrying the field's own name.
 
+// True when `field_name` resolves to an author-supplied label, i.e. exactly when
+// get_friendly_name() will NOT fall back to the raw field name. Both of that
+// lookup's escapes have to be covered: an unannotated entry, and an annotated one
+// whose label is the empty string -- get_friendly_name_impl skips empty labels, so
+// checking the flag alone would pass a field the panel still renders as `max_rpm`.
 template <typename Struct>
 constexpr bool field_is_annotated(std::string_view field_name)
 {
@@ -545,7 +653,7 @@ constexpr bool field_is_annotated(std::string_view field_name)
         {
             if (entry.field_name == field_name)
             {
-                return entry.annotated;
+                return entry.annotated && !entry.friendly_name.empty();
             }
         }
         return false;
@@ -603,35 +711,12 @@ constexpr bool metadata_has_no_orphan_entries()
     }
 }
 
-// Macro helpers for metadata - use different extractors to avoid conflicts
-#define REFLECTION_METADATA_GET_FIELD(field, friendly, ...) field
-#define REFLECTION_METADATA_GET_FRIENDLY(field, friendly, ...) friendly
-#define REFLECTION_METADATA_GET_DESCRIPTION(field, friendly, ...) __VA_ARGS__
-
-#define REFLECTION_METADATA_PAIR_FIELD(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_FIELD pair)
-#define REFLECTION_METADATA_PAIR_FRIENDLY(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_FRIENDLY pair)
-#define REFLECTION_METADATA_PAIR_DESCRIPTION(pair) REFLECTION_EXPAND(REFLECTION_METADATA_GET_DESCRIPTION pair)
-
-// Helper to create a FieldMetadata entry for a tuple (field_name, "Friendly Name") or (field_name, "Friendly Name", "Description")
-// The field name is stringified and stored so we can do name-based lookups
-#define REFLECTION_MAKE_METADATA_ENTRY(StructName, pair) \
-    ::reflection::FieldMetadata{REFLECTION_STRINGIZE(REFLECTION_METADATA_PAIR_FIELD(pair)), REFLECTION_METADATA_PAIR_FRIENDLY(pair), REFLECTION_METADATA_PAIR_DESCRIPTION(pair)}
-
-// Macro to define metadata for a struct by specializing field_metadata_traits
-// Usage: REFLECT_METADATA(MyStruct, (field1, "Friendly Field 1"), (field2, "Friendly Field 2"))
-// Note: You can provide metadata for a subset of fields - omitted fields will use their field name as the friendly name
-#define REFLECT_METADATA(StructName, ...) \
-namespace reflection { \
-template <> \
-struct field_metadata_traits<StructName> { \
-    static constexpr auto metadata() { \
-        return std::array{ \
-            REFLECTION_FOR_EACH_LIST(REFLECTION_MAKE_METADATA_ENTRY, StructName, __VA_ARGS__) \
-        }; \
-    } \
-    static constexpr bool has_metadata = true; \
-}; \
-}
+// REFLECT_METADATA is gone. Labels are declared on the field they belong to --
+// see REFLECT_STRUCT -- so there is no second list to keep in step, and no way
+// for a stale block to quietly override what a field says about itself.
+//
+// To attach labels to a struct whose declaration you do not own, specialise
+// reflection::field_metadata_traits for it directly.
 
 // =========================
 // Enum reflection utilities

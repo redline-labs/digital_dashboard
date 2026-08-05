@@ -17,23 +17,20 @@ REFLECT_STRUCT(Nested,
     (float, random, 1.0f)
 )
 
+// All three field forms in one struct, which is the point: `name` is left
+// unlabelled on purpose, to check it still falls back to the field's own name,
+// and `nested` carries a label but no description.
 REFLECT_STRUCT(Demo,
-    (int, id, 0),
+    (int, id, 0,
+        "Unique Identifier", "A unique identifier for this demo object"),
     (std::string, name, ""),
-    (double, value, 0.0),
-    (Nested, nested, Nested{})
+    (double, value, 0.0,
+        "Numeric Value", "The floating-point value stored in this demo"),
+    (Nested, nested, Nested{},
+        "Nested Object")
 )
 
-// Define metadata with friendly names and descriptions for Demo struct.
-// Purposely exclude name from metadata to test the fallback to field name.
-// Mix entries with and without descriptions to test both formats.
-REFLECT_METADATA(Demo,
-    (id, "Unique Identifier", "A unique identifier for this demo object"),
-    (value, "Numeric Value", "The floating-point value stored in this demo"),
-    (nested, "Nested Object")  // No description provided
-)
-
-// Example struct without metadata
+// Nothing labelled at all.
 REFLECT_STRUCT(NoMetadata,
     (int, x, 0),
     (int, y, 0)

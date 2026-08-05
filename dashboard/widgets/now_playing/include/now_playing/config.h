@@ -16,37 +16,34 @@
 // lasts and hands it back to the music afterwards, which is what the head unit
 // in the car does: one panel, and whatever matters most at the time is in it.
 REFLECT_STRUCT(NowPlayingConfig_t,
-    (std::string, zenoh_key, "nodes/carplay/nowplaying"),
-    (bool, show_album_art, true),
-    (bool, show_progress, true),
-    (helpers::Color, title_color, "#FFFFFF"),
-    (helpers::Color, detail_color, "#AAAAAA"),
-    (helpers::Color, accent_color, "#FFA500"),
+    (std::string, zenoh_key, "nodes/carplay/nowplaying",
+        "Zenoh Key", "Zenoh topic publishing CarPlayNowPlaying metadata"),
+    (bool, show_album_art, true,
+        "Show Album Art", "Draw album artwork when the phone provides it"),
+    (bool, show_progress, true,
+        "Show Progress", "Draw the track progress bar and elapsed/duration times"),
+    (helpers::Color, title_color, "#FFFFFF",
+        "Title Color", "Color of the track title"),
+    (helpers::Color, detail_color, "#AAAAAA",
+        "Detail Color", "Color of the artist/album/app text"),
+    (helpers::Color, accent_color, "#FFA500",
+        "Accent Color", "Color of the progress bar"),
 
     // Call takeover.
-    (bool, show_calls, true),
-    (std::string, call_zenoh_key, "nodes/carplay/call"),
-    (helpers::Color, call_accent_color, "#39B54A"),
+    (bool, show_calls, true,
+        "Show Calls", "Let an active phone call take the widget over"),
+    (std::string, call_zenoh_key, "nodes/carplay/call",
+        "Call Zenoh Key", "Zenoh topic publishing CarPlayCall state"),
+    (helpers::Color, call_accent_color, "#39B54A",
+        "Call Accent Color", "Color of the call badge and status text"),
     // How long the cross-fade between the music and the call face runs.
-    (uint16_t, transition_ms, 260),
+    (uint16_t, transition_ms, 260,
+        "Transition (ms)", "Duration of the cross-fade between music and call"),
     // How long "Call ended" stays up after the phone hangs up, before the music
     // comes back. Without it the call face vanishes the instant the call drops
     // and the takeover reads as a glitch rather than a state.
-    (uint16_t, call_linger_ms, 1600)
-)
-
-REFLECT_METADATA(NowPlayingConfig_t,
-    (zenoh_key, "Zenoh Key", "Zenoh topic publishing CarPlayNowPlaying metadata"),
-    (show_album_art, "Show Album Art", "Draw album artwork when the phone provides it"),
-    (show_progress, "Show Progress", "Draw the track progress bar and elapsed/duration times"),
-    (title_color, "Title Color", "Color of the track title"),
-    (detail_color, "Detail Color", "Color of the artist/album/app text"),
-    (accent_color, "Accent Color", "Color of the progress bar"),
-    (show_calls, "Show Calls", "Let an active phone call take the widget over"),
-    (call_zenoh_key, "Call Zenoh Key", "Zenoh topic publishing CarPlayCall state"),
-    (call_accent_color, "Call Accent Color", "Color of the call badge and status text"),
-    (transition_ms, "Transition (ms)", "Duration of the cross-fade between music and call"),
-    (call_linger_ms, "Call Linger (ms)", "How long 'Call ended' stays up before the music returns")
+    (uint16_t, call_linger_ms, 1600,
+        "Call Linger (ms)", "How long 'Call ended' stays up before the music returns")
 )
 
 // transition_ms drives a QVariantAnimation and call_linger_ms a QTimer. Zero on
