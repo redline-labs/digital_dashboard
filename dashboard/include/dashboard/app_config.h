@@ -180,10 +180,22 @@ struct convert<widget_config_t> {
         // Use the widget table to generate the if-else chain
         bool matched = false;
         
+        // A missing `config:` is legal and means "every default" -- validate_widget()
+        // says so in as many words and only warns about it. The decoder disagreed:
+        // it read node["config"] unconditionally, and yaml-cpp throws on an
+        // undefined node, so the exception escaped to load_app_config and failed the
+        // whole file. A config the validator passes has to be a config the decoder
+        // accepts, or the validation is theatre.
+        //
+        // Default-CONSTRUCT rather than leave the variant empty. std::monostate has
+        // exactly one meaning downstream -- "unknown widget type, construct nothing"
+        // (see widget_factory.h) -- so parking a known type on it would render the
+        // widget in the editor and silently omit it from the dashboard.
 #define DECODE_CONFIG_IF(enum_name, widget_class) \
         if (!matched && type == reflection::enum_to_string(widget_class::kWidgetType)) { \
             rhs.type = widget_class::kWidgetType; \
-            rhs.config = node["config"].as<widget_class::config_t>(); \
+            rhs.config = node["config"] ? node["config"].as<widget_class::config_t>() \
+                                        : widget_class::config_t{}; \
             matched = true; \
         }
         

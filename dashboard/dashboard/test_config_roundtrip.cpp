@@ -182,6 +182,62 @@ void testAwkwardStringsSurvive()
           "text with YAML metacharacters survives");
 }
 
+// A widget with no `config:` block loads, and loads as that widget's defaults.
+//
+// validate_widget() calls this legal and only warns, but the decoder used to read
+// node["config"] unconditionally -- and yaml-cpp throws on an undefined node, so
+// the exception escaped to load_app_config and took the whole file down. Nothing
+// shipped in configs/ omits the block, so nothing caught it.
+//
+// The variant must hold the widget's own config, not std::monostate: monostate
+// means "unknown widget type, construct nothing" to widget_factory.h, which would
+// have shown the widget in the editor and silently dropped it from the dashboard.
+void testMissingConfigBlockLoadsDefaults()
+{
+    const auto node = YAML::Load(R"(
+name: "no_config_block"
+width: 800
+height: 400
+widgets:
+  - type: static_text
+    id: bare
+    x: 10
+    y: 20
+    width: 200
+    height: 60
+)");
+
+    app_config_t cfg;
+    bool threw = false;
+    try
+    {
+        cfg = node.as<app_config_t>();
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+
+    check(!threw, "a widget with no config block decodes instead of throwing");
+    if (threw)
+    {
+        return;
+    }
+
+    check(cfg.widgets.size() == 1, "the config-less widget is kept");
+    const widget_config_t& wc = cfg.widgets.at(0);
+    check(wc.type == StaticTextWidget::kWidgetType, "its type is decoded from `type:`");
+    check(wc.x == 10 && wc.y == 20, "its placement keys are decoded");
+    check(std::holds_alternative<StaticTextConfig_t>(wc.config),
+          "its config variant holds the widget's own type, not monostate");
+
+    if (std::holds_alternative<StaticTextConfig_t>(wc.config))
+    {
+        check(std::get<StaticTextConfig_t>(wc.config).text == StaticTextConfig_t{}.text,
+              "the decoded config equals a default-constructed one");
+    }
+}
+
 // A reflected type converts without being registered anywhere.
 //
 // These two are declared here and named in no list: not in app_config.h, not in
@@ -237,6 +293,7 @@ int main()
     testEmptyIdIsOmitted();
     testNumericListsStayNumeric();
     testAwkwardStringsSurvive();
+    testMissingConfigBlockLoadsDefaults();
     testReflectedTypesNeedNoRegistration();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
