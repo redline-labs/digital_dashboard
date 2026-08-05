@@ -1,8 +1,9 @@
 #include "pub_sub/capnp_json.h"
 
+#include "pub_sub/capnp_payload.h"
+
 #include <capnp/serialize.h>
 
-#include <algorithm>
 #include <limits>
 
 namespace pub_sub
@@ -293,15 +294,19 @@ void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field 
 
 json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema)
 {
-    // capnp requires word alignment, and a zenoh payload is only byte-aligned.
-    // Copying into a word-aligned buffer is what makes this safe on every
-    // platform rather than only where unaligned loads happen to work.
-    const std::size_t words = bytes.size() / sizeof(capnp::word);
-    kj::Array<capnp::word> aligned = kj::heapArray<capnp::word>(words);
-    std::copy_n(bytes.data(), words * sizeof(capnp::word),
-                reinterpret_cast<std::uint8_t*>(aligned.begin()));
+    // This used to copy into a word-aligned buffer unconditionally, which was
+    // safe but paid for a heap allocation on every sample. WordAlignedPayload
+    // only copies when the payload really is misaligned.
+    const WordAlignedPayload aligned(bytes);
 
-    capnp::FlatArrayMessageReader reader(aligned.asPtr());
+    // The old code divided the length down to whole words and decoded the
+    // remainder, so a truncated payload came back as a JSON object full of
+    // defaults -- indistinguishable from a healthy message reading zero. This is
+    // the "throws kj::Exception on a malformed message" the header promises.
+    KJ_REQUIRE(!aligned.empty(), "payload is not a whole number of capnp words",
+               bytes.size(), sizeof(capnp::word));
+
+    capnp::FlatArrayMessageReader reader(aligned.words());
     return structToJson(reader.getRoot<capnp::DynamicStruct>(schema.asStruct()));
 }
 

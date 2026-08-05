@@ -16,7 +16,7 @@
 
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/session_manager.h"
-#include "pub_sub/zenoh_subscriber.h"
+#include "pub_sub/expression_subscriber.h"
 
 #include "engine_rpm.capnp.h"
 

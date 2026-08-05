@@ -15,6 +15,7 @@
 #include "pub_sub/session_manager.h"
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/capnp_encoding.h"
+#include "pub_sub/capnp_payload.h"
 
 #include <capnp/serialize.h>
 #include <capnp/dynamic.h>
@@ -83,12 +84,21 @@ int run_dump(int argc, char** argv)
                 }
             }
 
-            if (found_schema) {
-                auto words = kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.data()), bytes.size() / sizeof(capnp::word));
-                capnp::FlatArrayMessageReader reader(words);
+            const pub_sub::WordAlignedPayload aligned(bytes);
+
+            if (found_schema && !aligned.empty()) {
+                capnp::FlatArrayMessageReader reader(aligned.words());
                 auto root = reader.getRoot<capnp::DynamicStruct>(cached_schema.asStruct());
                 auto s = capnp::prettyPrint(root).flatten();
                 SPDLOG_INFO("Decoded {} bytes: {}", bytes.size(), s.cStr());
+            } else if (found_schema) {
+                // Not a whole number of words, so there is no message here to
+                // decode. This used to divide the length down and decode the
+                // truncated remainder, which prints a plausible-looking struct
+                // full of defaults -- the hex dump is the honest answer.
+                SPDLOG_WARN("{} bytes is not a whole number of {}-byte capnp words; "
+                            "falling back to hex dump", bytes.size(), sizeof(capnp::word));
+                SPDLOG_INFO("{} bytes: [{:02X}]", bytes.size(), fmt::join(bytes, ", "));
             } else {
                 SPDLOG_INFO("{} bytes: [{:02X}]", bytes.size(), fmt::join(bytes, ", "));
             }

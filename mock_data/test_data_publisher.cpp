@@ -113,16 +113,12 @@ public:
     }
     
 private:
-    static zenoh::Publisher::PutOptions capnpPutOptions(std::string_view schema)
-    {
-        auto opts = zenoh::Publisher::PutOptions::create_default();
-        opts.encoding.emplace("application/capnp");
-        opts.encoding->set_schema(schema);
-
-        //auto ts = mSession->new_timestamp();
-        //opts.timestamp = ts;
-        return opts;
-    }
+    // There was a capnpPutOptions() helper here that built the encoding by hand,
+    // hardcoding "application/capnp" alongside kCapnpEncodingMime. Nothing called
+    // it -- ZenohPublisher::put() has stamped the encoding itself for a long time
+    // -- and it only still compiled because zenoh_publisher.h used to leak
+    // <zenoh.hxx> to whoever included it. It does not any more, which is how the
+    // dead code surfaced.
 
     void generateAndPublishData(double elapsed)
     {

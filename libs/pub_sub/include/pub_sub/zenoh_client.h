@@ -13,6 +13,7 @@
 
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/capnp_encoding.h"
+#include "pub_sub/capnp_payload.h"
 #include "pub_sub/session_manager.h"
 
 #include "spdlog/spdlog.h"
@@ -83,10 +84,10 @@ class ZenohClient
                 {
                     const auto& sample = reply.get_ok();
                     auto v = sample.get_payload().as_vector();
-                    if (v.size() % sizeof(capnp::word) == 0)
+                    const WordAlignedPayload aligned(v);
+                    if (!aligned.empty())
                     {
-                        auto words = kj::arrayPtr(reinterpret_cast<const capnp::word*>(v.data()), v.size() / sizeof(capnp::word));
-                        capnp::FlatArrayMessageReader reader(words);
+                        capnp::FlatArrayMessageReader reader(aligned.words());
                         auto resp = reader.template getRoot<ResponseT>();
                         SPDLOG_DEBUG("Received response from key '{}' = {}", mKeyExpr, resp.toString().flatten().cStr());
                         on_response(resp);

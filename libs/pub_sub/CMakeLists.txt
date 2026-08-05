@@ -8,6 +8,13 @@ add_library(zenoh_pub_sub STATIC
     zenoh_subscriber.cpp
     session_manager.cpp
 
+    # The zenoh boundary. ZenohPublisher/ZenohTypedSubscriber are templated on a
+    # capnp schema and so must be defined in headers; these hold the parts that
+    # are not templated, so <zenoh.hxx> is compiled once here instead of in every
+    # translation unit that touches the bus. See detail/byte_publisher.h.
+    detail/byte_publisher.cpp
+    detail/byte_subscriber.cpp
+
     # Generic capnp<->JSON over the dynamic API, and topic observation. Shared by
     # nodes/inspect and the agent control interface so the two cannot disagree
     # about what is on the bus.
@@ -77,3 +84,17 @@ target_link_libraries(pub_sub_test_expression_eval PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_expression_eval LABELS pub_sub net)
+
+# ZenohPublisher reuses one buffer as the builder's first segment, so the
+# contents of consecutive messages -- especially either side of the size where
+# that buffer has to grow -- are a correctness question. Drives a real publisher
+# into a real subscriber, so it needs a session: `net`.
+add_executable(pub_sub_test_publisher_reuse
+    test_publisher_reuse.cpp
+)
+
+target_link_libraries(pub_sub_test_publisher_reuse PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_publisher_reuse LABELS pub_sub net)

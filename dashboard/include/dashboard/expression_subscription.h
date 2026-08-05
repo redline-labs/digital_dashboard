@@ -14,7 +14,11 @@
 
 #include <spdlog/spdlog.h>
 
-#include "pub_sub/zenoh_subscriber.h"
+// The lean header, not pub_sub/zenoh_subscriber.h: this is what every widget
+// reaches the bus through, so what it drags in is paid for across the whole
+// dashboard. ZenohTypedSubscriber lives in the other one and needs capnp in its
+// header; nothing here does.
+#include "pub_sub/expression_subscriber.h"
 #include "reflection/reflection.h"
 
 namespace dashboard {

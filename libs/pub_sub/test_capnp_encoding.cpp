@@ -17,6 +17,7 @@
 // That matters -- a test that built the string itself would have agreed with
 // the broken code.
 #include "pub_sub/capnp_encoding.h"
+#include "pub_sub/capnp_payload.h"
 #include "pub_sub/schema_registry.h"
 
 #include "can_frame.capnp.h"
@@ -29,6 +30,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -172,9 +175,8 @@ void testDynamicDecodeAgainstResolvedSchema()
         return;
     }
 
-    const auto flat = kj::arrayPtr(reinterpret_cast<const capnp::word*>(bytes.begin()),
-                                   bytes.size() / sizeof(capnp::word));
-    capnp::FlatArrayMessageReader reader(flat);
+    const pub_sub::WordAlignedPayload aligned(bytes);
+    capnp::FlatArrayMessageReader reader(aligned.words());
     auto root = reader.getRoot<capnp::DynamicStruct>(schema->asStruct());
 
     expectEq(root.get("id").as<uint32_t>(), kId, "dynamic decode reads id");
@@ -190,6 +192,68 @@ void testDynamicDecodeAgainstResolvedSchema()
     }
 }
 
+// ---------------------- the payload alignment the wire needs -----------------
+
+// A zenoh payload is a byte buffer, so its address need not be 8-aligned; capnp
+// reads whole words. Every decode site in this tree used to cast the byte pointer
+// straight to `const word*`, and was correct only because zenoh's as_vector()
+// hands back a fresh std::vector whose data() is aligned for max_align_t. That
+// is why no test could have caught it by accident -- a payload built the ordinary
+// way is always aligned. This one manufactures the misalignment, which is what
+// capnp's own arena guard rejects with "Detected unaligned data".
+//
+// The sibling test in test_expression_eval.cpp is named
+// testTruncatedAndMisalignedPayloadsAreRejected, but every case in it varies the
+// payload *length*. This is the only coverage of the address.
+void testMisalignedPayloadDecodes()
+{
+    constexpr uint32_t kId = 0x1AB;
+    constexpr uint8_t kLen = 4;
+
+    capnp::MallocMessageBuilder message;
+    auto frame = message.initRoot<CanFrame>();
+    frame.setId(kId);
+    frame.setLen(kLen);
+
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+
+    // Offset by one byte inside a larger buffer. A vector's data() is aligned for
+    // max_align_t, so data() + 1 cannot be word-aligned.
+    std::vector<uint8_t> shifted(bytes.size() + 1, 0);
+    std::memcpy(shifted.data() + 1, bytes.begin(), bytes.size());
+    const uint8_t* const misaligned = shifted.data() + 1;
+
+    expect(reinterpret_cast<std::uintptr_t>(misaligned) % sizeof(capnp::word) != 0,
+           "the test payload really is misaligned (otherwise this proves nothing)");
+
+    const pub_sub::WordAlignedPayload aligned(
+        reinterpret_cast<const kj::byte*>(misaligned), bytes.size());
+
+    expect(!aligned.empty(), "a misaligned whole-word payload is still decodable");
+    expect(reinterpret_cast<std::uintptr_t>(aligned.words().begin()) % sizeof(capnp::word) == 0,
+           "the view handed to capnp is word-aligned");
+
+    capnp::FlatArrayMessageReader reader(aligned.words());
+    auto root = reader.getRoot<CanFrame>();
+    expectEq(root.getId(), kId, "misaligned decode reads id");
+    expectEq(root.getLen(), kLen, "misaligned decode reads len");
+
+    // An already-aligned payload must not pay for a copy.
+    const pub_sub::WordAlignedPayload direct(bytes);
+    expect(direct.words().begin() == words.begin(),
+           "an aligned payload is used in place, with no copy");
+
+    // A partial word is refused rather than decoded as a message of defaults.
+    for (const std::size_t truncated : {std::size_t{0}, std::size_t{1}, bytes.size() - 1})
+    {
+        const pub_sub::WordAlignedPayload partial(
+            reinterpret_cast<const kj::byte*>(bytes.begin()), truncated);
+        expect(partial.empty() == (truncated % sizeof(capnp::word) != 0 || truncated == 0),
+               "a payload of " + std::to_string(truncated) + " bytes is refused");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -200,6 +264,7 @@ int main()
     testRawEncodingDoesNotResolve();
     testParseEdgeCases();
     testDynamicDecodeAgainstResolvedSchema();
+    testMisalignedPayloadDecodes();
 
     if (failures != 0)
     {

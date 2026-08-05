@@ -19,7 +19,25 @@ set(ZENOHCXX_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_INSTALL OFF CACHE BOOL "" FORCE)
 
-set(Z_FEATURE_UNSTABLE_API ON CACHE BOOL "" FORCE)
+# There used to be `set(Z_FEATURE_UNSTABLE_API ON CACHE BOOL "" FORCE)` here,
+# which did nothing: no project in this build reads that name. The compile line
+# for zenoh_pub_sub carried only -DZENOHCXX_ZENOHC, and the generated
+# zenoh_configure.h had no Z_FEATURE_UNSTABLE_API -- so we believed the unstable
+# API was on for two releases while `Bytes::get_contiguous_view()` and friends
+# were quietly #ifdef'd out. Same shape as the CAPNP_EXECUTABLE variables
+# described in capnproto.cmake: a setting that reads as enabled and is not.
+#
+# The knob that works is zenoh-c's, and it is a *build* option, not a define:
+#
+#     set(ZENOHC_BUILD_WITH_UNSTABLE_API ON CACHE BOOL "" FORCE)   # in zenoh-c.cmake
+#
+# which adds `--features=unstable` to the cargo invocation; the Rust build then
+# writes `#define Z_FEATURE_UNSTABLE_API` into zenoh_configure.h, where both
+# zenoh-c and zenoh-cpp pick it up. Left off deliberately: nothing here needs it
+# (MatchingStatus and declare_background_matching_listener are stable as of
+# zenoh-cpp 1.9), turning it on rebuilds the Rust library from scratch, and the
+# zero-copy payload access we would want it for is available from the stable
+# Bytes::slice_iter().
 FetchContent_MakeAvailable(zenoh-cpp)
 
 # Copy zenoh-cpp license
