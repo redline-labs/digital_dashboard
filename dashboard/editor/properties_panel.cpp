@@ -566,16 +566,24 @@ void PropertiesPanel::buildWindowPage()
     form->setVerticalSpacing(10);
 
 
+    // Named on the same rule as the per-widget form editors ("field:<path>"),
+    // so the window's properties are addressable by name rather than by their
+    // position in the layout -- which is what a test or the agent interface
+    // would otherwise have to depend on.
     winNameEdit_ = new QLineEdit(windowPage_);
-    
+    winNameEdit_->setObjectName("window:name");
+
     winWidthSpin_ = new QSpinBox(windowPage_);
     winWidthSpin_->setRange(100u, 10000u);
+    winWidthSpin_->setObjectName("window:width");
 
     winHeightSpin_ = new QSpinBox(windowPage_);
     winHeightSpin_->setRange(100u, 10000u);
+    winHeightSpin_->setObjectName("window:height");
 
     winBgColorEdit_ = new QLineEdit(windowPage_);
     winBgColorEdit_->setPlaceholderText("#RRGGBB");
+    winBgColorEdit_->setObjectName("window:background_color");
 
     form->addRow("Name", winNameEdit_);
     form->addRow("Width", winWidthSpin_);
@@ -587,6 +595,21 @@ void PropertiesPanel::buildWindowPage()
     connect(winWidthSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ applyWindowEdits(); });
     connect(winHeightSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ applyWindowEdits(); });
     connect(winBgColorEdit_, &QLineEdit::textEdited, this, [this]{ applyWindowEdits(); });
+
+    // Close the history entry when the field is done, not on every keystroke.
+    //
+    // applyWindowEdits() opens one on the first change and beginEdit() collapses
+    // the rest, so the pair is "one entry per edited field" rather than one per
+    // character. editingFinished covers both Enter and focus loss, which is what
+    // makes clicking away from the field commit it.
+    for (QLineEdit* edit : {winNameEdit_, winBgColorEdit_})
+    {
+        connect(edit, &QLineEdit::editingFinished, this, [this]{ commitWindowEdits(); });
+    }
+    for (QSpinBox* spin : {winWidthSpin_, winHeightSpin_})
+    {
+        connect(spin, &QAbstractSpinBox::editingFinished, this, [this]{ commitWindowEdits(); });
+    }
 }
 
 void PropertiesPanel::discardCurrentPage()
@@ -706,18 +729,52 @@ void PropertiesPanel::applyWindowEdits()
     if (isSyncing_) return; // avoid pushing during UI sync
     if (!canvas_) return;
 
+    // These are document edits like any other, and they were the one mutation
+    // path that never said so. The window's name, size and background changed
+    // the canvas without opening a history entry, so they could not be undone --
+    // and worse, the *next* edit's beginEdit() snapshotted the already-changed
+    // state, baking them in permanently. The dirty flag noticed (isDirty
+    // compares snapshots) but nothing emitted historyChanged, so the title bar
+    // kept its old text until some unrelated edit refreshed it.
+    //
+    // beginEdit() collapses repeated calls, so this is the *first* keystroke
+    // capturing the pre-edit state; commitWindowEdits() closes it. Tagged
+    // Window so that an edit from anywhere else closes it rather than merging
+    // with it -- editingFinished needs a focus change, and the agent interface
+    // never moves focus.
+    canvas_->beginEdit(Canvas::EditSource::Window);
+
     // The name is round-tripped through the canvas into the saved YAML. It used
     // to be collected here and never read, while save hardcoded its own.
     canvas_->setWindowName(winNameEdit_->text().toStdString());
 
-    if (!winBgColorEdit_->text().isEmpty())
+    // Only apply a colour that is actually a colour. Half-typed text arrives
+    // here on every keystroke -- "#ff00" on the way to "#ff0000" -- and an
+    // unparseable value silently becomes the fallback, so without this the
+    // preview flickered through black as you typed. Same check the loader
+    // applies (see validate_app_config), so the editor and the file agree on
+    // what a colour is.
+    const QString bg = winBgColorEdit_->text();
+    if (!bg.isEmpty() && helpers::Color::isValidFormat(bg.toStdString()))
     {
-        canvas_->setBackgroundColor(winBgColorEdit_->text());
+        canvas_->setBackgroundColor(bg);
     }
     if (winWidthSpin_->value() > 0 && winHeightSpin_->value() > 0) {
         // Resize the central canvas viewport for preview purposes
         canvas_->resize(winWidthSpin_->value(), winHeightSpin_->value());
     }
+}
+
+void PropertiesPanel::commitWindowEdits()
+{
+    if (isSyncing_ || !canvas_)
+    {
+        return;
+    }
+    // No-op when nothing is open, and commitEdit() itself discards an entry
+    // whose before and after match -- so tabbing through the fields without
+    // changing anything adds nothing to the history.
+    canvas_->commitEdit();
 }
 
 void PropertiesPanel::syncFromCanvas()

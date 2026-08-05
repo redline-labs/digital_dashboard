@@ -113,7 +113,7 @@ endif()
 # The YAML codec and the validator are plain logic over reflected structs, so
 # they are unit-testable without a display. Both link the widget libraries
 # because their coverage is driven by DASHBOARD_WIDGET_TABLE.
-foreach(config_test roundtrip validation)
+foreach(config_test roundtrip validation colors)
     add_executable(dashboard_test_config_${config_test} dashboard/test_config_${config_test}.cpp)
     target_include_directories(dashboard_test_config_${config_test} PRIVATE include)
     target_sources(dashboard_test_config_${config_test} PRIVATE dashboard/app_config.cpp)

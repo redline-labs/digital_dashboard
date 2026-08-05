@@ -52,7 +52,13 @@ private:
     void showPage(QWidget* page);
     void showUnsupported(const QString& name);
     void buildWindowPage();
+
+    // Pushes the window fields onto the canvas and opens a history entry.
+    // Called per keystroke; commitWindowEdits() closes the entry when the field
+    // is finished, so an edited field costs one undo step rather than one per
+    // character.
     void applyWindowEdits();
+    void commitWindowEdits();
 };
 
 #endif // DASHBOARD_EDITOR_PROPERTIES_PANEL_H

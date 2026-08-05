@@ -352,6 +352,229 @@ void testDirtyTracksTheLastSave()
     check(!canvas.isDirty(), "saving makes the current state the new baseline");
 }
 
+// ------------------------------------------------------- window properties
+//
+// The window's name, size and background were the one mutation path that never
+// opened a history entry. They changed the canvas, set the dirty flag (isDirty
+// compares snapshots, so it noticed) and could not be undone -- and because the
+// *next* edit's beginEdit() snapshotted the already-changed state, they were
+// baked in permanently. Nothing emitted historyChanged either, so the title bar
+// kept its old text until an unrelated edit refreshed it.
+
+// What typing into a QLineEdit and then leaving it produces. setText() alone is
+// silent on textEdited: Qt reserves that signal for user input.
+void typeInto(QLineEdit* edit, const QString& text)
+{
+    edit->setText(text);
+    emit edit->textEdited(text);
+    emit edit->editingFinished();
+}
+
+void testWindowPropertiesAreUndoable()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+    canvas.markSaved();
+
+    auto* bg = panel.findChild<QLineEdit*>("window:background_color");
+    if (bg == nullptr)
+    {
+        check(false, "the window page has an addressable background field");
+        return;
+    }
+
+    check(canvas.getBackgroundColorHex() == "#101010", "the loaded background is in place");
+
+    typeInto(bg, "#ff0000");
+    check(canvas.getBackgroundColorHex() == "#ff0000", "editing the field changes the background");
+    check(canvas.isDirty(), "a window edit makes the document dirty");
+    check(canvas.canUndo(), "a window edit is undoable");
+
+    check(canvas.undo(), "the window edit is undone");
+    check(canvas.getBackgroundColorHex() == "#101010",
+          "undo restores the background, got '" + canvas.getBackgroundColorHex().toStdString() + "'");
+    check(!canvas.isDirty(), "undoing back to the saved state is clean again");
+}
+
+void testWindowNameIsUndoable()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+
+    canvas.loadFromAppConfig(twoStaticTexts("before"));
+    canvas.clearHistory();
+
+    auto* name = panel.findChild<QLineEdit*>("window:name");
+    if (name == nullptr)
+    {
+        check(false, "the window page has an addressable name field");
+        return;
+    }
+
+    typeInto(name, "after");
+    check(canvas.windowName() == "after", "editing the field renames the window");
+    check(canvas.undo(), "the rename is undoable");
+    check(canvas.windowName() == "before",
+          "undo restores the window name, got '" + canvas.windowName() + "'");
+}
+
+// One entry per edited field, not one per character. beginEdit() collapses the
+// keystrokes; editingFinished closes the entry.
+void testTypingAWindowFieldIsOneHistoryEntry()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    auto* bg = panel.findChild<QLineEdit*>("window:background_color");
+    if (bg == nullptr)
+    {
+        check(false, "the window page has an addressable background field");
+        return;
+    }
+
+    // Every prefix a real typist produces, including the half-formed ones.
+    for (const char* prefix : {"#", "#a", "#aa", "#aab", "#aabb", "#aabbc", "#aabbcc"})
+    {
+        bg->setText(prefix);
+        emit bg->textEdited(prefix);
+    }
+    emit bg->editingFinished();
+
+    check(canvas.getBackgroundColorHex() == "#aabbcc", "the finished value is applied");
+    check(canvas.undo(), "the typing is undoable");
+    check(canvas.getBackgroundColorHex() == "#101010",
+          "a single undo goes back past the whole word, not one character, got '" +
+              canvas.getBackgroundColorHex().toStdString() + "'");
+    check(!canvas.canUndo(), "typing one field left exactly one history entry");
+}
+
+// An open window edit must not swallow the next unrelated one.
+//
+// The window fields close their entry on editingFinished, which needs a focus
+// change -- and the agent control interface never touches focus. So a colour
+// typed over the control socket stayed open, and the next editor.move joined it:
+// two edits, one undo step, and undoing the move silently reverted the colour
+// too. Caught by driving the real sequence through the agent path.
+void testAnOpenWindowEditDoesNotSwallowTheNextEdit()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    auto* bg = panel.findChild<QLineEdit*>("window:background_color");
+    const auto frames = canvas.frames();
+    if (bg == nullptr || frames.empty())
+    {
+        check(false, "expected a background field and at least one frame");
+        return;
+    }
+
+    // Typed, but never finished -- no Enter, no focus change.
+    bg->setText("#00ff00");
+    emit bg->textEdited("#00ff00");
+    check(canvas.getBackgroundColorHex() == "#00ff00", "the colour is applied while still open");
+
+    // Now an unrelated edit, as editor.move would make it.
+    const QString moved_name = frames[0]->objectName();
+    const QPoint origin = frames[0]->pos();
+    canvas.beginEdit();
+    frames[0]->move(origin + QPoint(40, 40));
+    canvas.commitEdit();
+
+    check(canvas.undo(), "the move is undone");
+
+    // Re-resolve by name rather than reusing the pointer: restore() rebuilds
+    // every widget, so anything held across an undo is a dead object.
+    const auto after = canvas.frames();
+    const auto it = std::find_if(after.begin(), after.end(),
+                                 [&](SelectionFrame* f) { return f->objectName() == moved_name; });
+    check(it != after.end() && (*it)->pos() == origin, "undo puts the widget back");
+    check(canvas.getBackgroundColorHex() == "#00ff00",
+          "undoing the move leaves the colour alone, got '" +
+              canvas.getBackgroundColorHex().toStdString() + "'");
+
+    check(canvas.undo(), "the colour is a separate entry, still undoable");
+    check(canvas.getBackgroundColorHex() == "#101010",
+          "the second undo reverts the colour, got '" +
+              canvas.getBackgroundColorHex().toStdString() + "'");
+}
+
+// Half-typed text arrives on every keystroke, and an unparseable value silently
+// becomes the fallback colour -- so applying it made the preview flicker through
+// black on the way to the real value.
+//
+// Note "#123" is a colour, not a prefix: every six-digit value passes through a
+// legitimate three-digit one while being typed, and applying that is correct.
+// What must never happen is a *malformed* prefix reaching the canvas.
+void testHalfTypedColoursAreNotApplied()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+
+    auto* bg = panel.findChild<QLineEdit*>("window:background_color");
+    if (bg == nullptr)
+    {
+        check(false, "the window page has an addressable background field");
+        return;
+    }
+
+    // Typing "#123456", one character at a time, with what the canvas should be
+    // showing after each. It only moves on the two prefixes that are colours.
+    const std::vector<std::pair<const char*, const char*>> typing = {
+        {"#", "#101010"},      {"#1", "#101010"},      {"#12", "#101010"},
+        {"#123", "#123"},      {"#1234", "#123"},      {"#12345", "#123"},
+        {"#123456", "#123456"},
+    };
+
+    for (const auto& [typed, expected] : typing)
+    {
+        bg->setText(typed);
+        emit bg->textEdited(typed);
+        check(canvas.getBackgroundColorHex() == QString(expected),
+              std::string("after typing '") + typed + "' the background is '" + expected +
+                  "', got '" + canvas.getBackgroundColorHex().toStdString() + "'");
+    }
+}
+
+// The background used to live only in the Canvas's QPalette, read back out with
+// QColor::name(). That is lossy twice over: Qt reads "#RRGGBBAA" as "#AARRGGBB",
+// and name() drops alpha. "#112233ff" came back "#2233ff" and was saved over the
+// original.
+void testBackgroundSurvivesTheCanvas()
+{
+    Canvas canvas;
+    for (const char* colour : {"#112233ff", "#abc", "#AABBCC", "#11223300"})
+    {
+        canvas.setBackgroundColor(colour);
+        check(canvas.getBackgroundColorHex() == QString(colour),
+              std::string(colour) + " survives the canvas verbatim, got '" +
+                  canvas.getBackgroundColorHex().toStdString() + "'");
+    }
+
+    // And through a whole load -> export cycle.
+    app_config_t cfg = twoStaticTexts("w");
+    cfg.background_color = helpers::Color("#0a0b0cff");
+    canvas.loadFromAppConfig(cfg);
+    check(canvas.exportAppConfig().background_color == helpers::Color("#0a0b0cff"),
+          "an 8-digit background survives load -> export, got '" +
+              canvas.exportAppConfig().background_color.value() + "'");
+}
+
 // A drag carrying text that is not a widget type used to reach a throwing
 // lookup inside a Qt event handler and terminate the editor.
 void testUnknownDropPayloadIsRefused()
@@ -389,6 +612,12 @@ int main(int argc, char** argv)
     testNamesSurviveAnUndo();
     testNoOpEditsAreNotRecorded();
     testDirtyTracksTheLastSave();
+    testWindowPropertiesAreUndoable();
+    testWindowNameIsUndoable();
+    testTypingAWindowFieldIsOneHistoryEntry();
+    testAnOpenWindowEditDoesNotSwallowTheNextEdit();
+    testHalfTypedColoursAreNotApplied();
+    testBackgroundSurvivesTheCanvas();
     testUnknownDropPayloadIsRefused();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);

@@ -55,7 +55,22 @@ public:
     // result against the snapshot and records nothing if they match, so a drag
     // that ends where it started, or an Apply that changes no field, does not
     // fill the history with no-ops.
-    void beginEdit();
+
+    // Where an edit came from. An entry stays open across repeated beginEdit()
+    // calls from the SAME source -- that is what collapses a drag's stream of
+    // mouse-moves, or a field's stream of keystrokes, into one undo step -- but a
+    // beginEdit() from a DIFFERENT source closes the open one first.
+    //
+    // Without that, an edit that is still open swallows the next unrelated one.
+    // The window fields are the case that forced this: they commit on
+    // editingFinished, which needs a focus change, and the agent interface never
+    // touches focus -- so a background colour typed over the control socket
+    // stayed open and merged with whatever was edited next. Two edits, one undo
+    // step. Deliberately not solved with a timer: this way the boundary is
+    // exact rather than a race.
+    enum class EditSource { Widget, Window };
+
+    void beginEdit(EditSource source = EditSource::Widget);
     void commitEdit();
 
     // Drops the history. Called after a load: undoing past it would restore the
@@ -109,6 +124,10 @@ private:
 
     std::string windowName_;
 
+    // The configured background, verbatim. Authoritative -- the widget's palette
+    // is derived from it and never read back. See setBackgroundColor().
+    helpers::Color backgroundColor_;
+
     // QPointer, not a raw pointer: this used to rely on every deletion path
     // remembering to null it. They all did, but the next one added would not
     // have, and the failure is a dangling dereference on the next click.
@@ -152,6 +171,7 @@ private:
     std::vector<Snapshot> undo_stack_;
     std::vector<Snapshot> redo_stack_;
     std::optional<Snapshot> pending_edit_;
+    EditSource pending_source_ = EditSource::Widget;
     Snapshot saved_snapshot_;
 
     // Bounded so a long editing session cannot grow without limit.

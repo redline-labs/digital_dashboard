@@ -2,6 +2,7 @@
 #include "editor/editor_constants.h"
 #include "editor/selection_frame.h"
 
+#include "dashboard/widget_colors.h"
 #include "dashboard/widget_identity.h"
 
 #include <QDragEnterEvent>
@@ -196,13 +197,23 @@ void Canvas::restore(const Snapshot& state)
     emit historyChanged();
 }
 
-void Canvas::beginEdit()
+void Canvas::beginEdit(EditSource source)
 {
+    // An edit already open from somewhere else is closed, not joined. Otherwise
+    // it absorbs this one and the two come back as a single undo step -- see
+    // EditSource. Committing first also means the entry it records ends at the
+    // right place rather than trailing into whatever follows.
+    if (pending_edit_ && pending_source_ != source)
+    {
+        commitEdit();
+    }
+
     // Nested or repeated begins collapse into the outermost one, so a drag that
     // arrives as press/move/move/release records a single entry.
     if (!pending_edit_)
     {
         pending_edit_ = snapshot();
+        pending_source_ = source;
     }
 }
 
@@ -335,8 +346,18 @@ void Canvas::setEditorMode(bool enabled)
 
 void Canvas::setBackgroundColor(const QString& hexColor)
 {
+    // Keep the configured string, and derive the palette from it. The palette
+    // used to be the only copy, with getBackgroundColorHex() reading it back
+    // through QColor::name() -- which is lossy in both directions. "#112233ff"
+    // came back as "#2233ff": the wrong colour, saved over the right one, on any
+    // load-then-save. QColor::name() also drops alpha entirely (it defaults to
+    // HexRgb), so even a correctly parsed 8-digit colour could not survive the
+    // trip. The palette is now write-only -- nothing reads a colour back out of
+    // Qt.
+    backgroundColor_ = hexColor.toStdString();
+
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(hexColor));
+    pal.setColor(QPalette::Window, dashboard::toQColor(backgroundColor_));
     setPalette(pal);
 
     update();
@@ -690,7 +711,7 @@ void Canvas::keyPressEvent(QKeyEvent* event)
 
 QString Canvas::getBackgroundColorHex() const
 {
-    return palette().color(QPalette::Window).name();
+    return QString::fromStdString(backgroundColor_.value());
 }
 
 #include "editor/moc_canvas.cpp"
