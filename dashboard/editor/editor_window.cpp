@@ -116,16 +116,17 @@ void EditorWindow::buildMenuBar()
 
     auto* editMenu = menuBar()->addMenu("Edit");
 
+    // Neither of these touches the properties panel any more. Undo used to
+    // rebuild every widget, so the panel's form always pointed at a frame that
+    // no longer existed and had to be blanked. It now keeps the widgets it can
+    // and re-emits selectionChanged itself -- with the surviving frame when the
+    // selection is still there, with nullptr when it is not -- so blanking here
+    // as well would throw away a form the canvas had just refreshed.
     undoAction_ = new QAction("Undo", this);
     undoAction_->setShortcut(QKeySequence::Undo);
     connect(undoAction_, &QAction::triggered, this, [this]
     {
-        if (canvas_ && canvas_->undo())
-        {
-            // The canvas rebuilt its widgets, so the panel's form points at a
-            // frame that no longer exists.
-            if (auto* props = propertiesPanel_) props->setSelectedWidget(nullptr);
-        }
+        if (canvas_) canvas_->undo();
     });
     editMenu->addAction(undoAction_);
 
@@ -133,10 +134,7 @@ void EditorWindow::buildMenuBar()
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, [this]
     {
-        if (canvas_ && canvas_->redo())
-        {
-            if (auto* props = propertiesPanel_) props->setSelectedWidget(nullptr);
-        }
+        if (canvas_) canvas_->redo();
     });
     editMenu->addAction(redoAction_);
 

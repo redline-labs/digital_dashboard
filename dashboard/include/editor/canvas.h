@@ -183,24 +183,29 @@ private:
     // than accepted and then discarded.
     static std::optional<widget_type_t> droppedWidgetType(const QString& mimeText);
 
-    // The canvas serialised, used as the unit of history and as the dirty
-    // comparison. YAML rather than an app_config_t because comparing two configs
-    // would mean an operator== on every widget config struct, and the YAML is
-    // what actually gets saved anyway.
+    // The canvas as a document, used as the unit of history and as the dirty
+    // comparison.
     //
-    // The object names ride alongside because they are NOT in the YAML: a widget
-    // with no explicit `id:` gets a name derived from its position in the config,
-    // so restoring through loadFromAppConfig would renumber it. A widget that
-    // silently changes name when you undo breaks every selector pointing at it,
-    // which is exactly what the agent verbs are used through.
+    // This was the emitted YAML, because comparing two app_config_t values would
+    // have meant an operator== on every widget config struct. Reflection supplies
+    // those now (see app_config.h), so the document is kept as itself: no
+    // serialising on every drag release and every title-bar update, and -- the
+    // reason it matters -- restore() can compare widget against widget and touch
+    // only what differs.
+    //
+    // The object names ride alongside because they are NOT part of the config: a
+    // widget with no explicit `id:` gets a name derived from its position, so
+    // rebuilding from the config alone would renumber it. A widget that silently
+    // changes name when you undo breaks every selector pointing at it, which is
+    // exactly what the agent verbs are used through.
     struct Snapshot
     {
-        std::string yaml;
+        app_config_t doc;
         std::vector<QString> names;
 
-        // Only the YAML decides whether anything changed. Names follow the
+        // Only the document decides whether anything changed. Names follow the
         // widgets, so comparing them too would be comparing the same fact twice.
-        bool operator==(const Snapshot& other) const { return yaml == other.yaml; }
+        bool operator==(const Snapshot& other) const { return doc == other.doc; }
     };
 
     Snapshot snapshot() const;

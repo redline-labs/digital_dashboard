@@ -67,6 +67,19 @@ public:
     // draw while still saving exactly what was asked for.
     const widget_config_variant_t& config() const { return config_; }
 
+    // Replaces the stored configuration and rebuilds the preview from it.
+    //
+    // The variant form of applyConfig(), for the one caller that already holds a
+    // widget_config_variant_t rather than a concrete config type: restoring a
+    // history entry, which has just decided this frame's configuration actually
+    // differs and so has to be rebuilt. A type mismatch between the variant's
+    // alternative and this frame's type is caught and logged by widget_factory.
+    void applyStoredConfig(const widget_config_variant_t& config)
+    {
+        config_ = config;
+        rebuildChild();
+    }
+
     // Returns false if `cfg` is not for this frame's type. Callers must check:
     // the agent's set_config used to report `applied` unconditionally, so a
     // rejected config came back as a success.

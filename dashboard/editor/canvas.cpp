@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QApplication>
 #include <QKeyEvent>
+#include <map>
 #include <variant>
 
 namespace {
@@ -148,10 +149,7 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 Canvas::Snapshot Canvas::snapshot() const
 {
     Snapshot state;
-
-    YAML::Emitter out;
-    out << YAML::convert<app_config_t>::encode(exportAppConfig());
-    state.yaml = out.c_str();
+    state.doc = exportAppConfig();
 
     state.names.reserve(items_.size());
     for (const auto& frame : items_)
@@ -167,33 +165,129 @@ Canvas::Snapshot Canvas::snapshot() const
 
 void Canvas::restore(const Snapshot& state)
 {
-    // loadFromAppConfig resets the naming counter, which would let a restored
-    // state hand out a name a later widget already has. Keep the counter moving
-    // forward across an undo.
-    const std::size_t names_before = nextNameIndex_;
-    loadFromAppConfig(YAML::Load(state.yaml).as<app_config_t>());
-    nextNameIndex_ = std::max(nextNameIndex_, names_before);
+    // Restoring used to be loadFromAppConfig(): destroy every widget, build every
+    // widget. Correct, and brutal. Undoing a nudge of one static_text tore down
+    // and rebuilt the CarPlay widget sitting next to it -- three zenoh
+    // subscriptions, an H.264 decoder and an audio sink, gone and re-established,
+    // with a visible glitch on screen and a stream that has to re-sync on the
+    // next keyframe. It also invalidated every pointer anyone held across an
+    // undo, and it is what made the zenoh/GUI-thread deadlock reachable at all.
+    //
+    // So diff instead. Widgets are matched by the object names carried in the
+    // snapshot, which are stable across a restore precisely because they are
+    // carried; a matched widget keeps its live object unless its configuration
+    // actually differs, and a move is then just a move.
 
-    // Put the names back. loadFromAppConfig derives them from config position,
-    // so without this a widget created as static_text#4 would come back from an
-    // undo as static_text#3 -- silently invalidating any selector held on it.
-    if (state.names.size() == items_.size())
+    windowName_ = state.doc.name;
+    resize(state.doc.width, state.doc.height);
+    setBackgroundColor(QString::fromStdString(state.doc.background_color));
+
+    // Names are the identity. A snapshot with a name per widget is the normal
+    // case; the mismatched one can only arise from a snapshot taken before the
+    // names were recorded, and is handled by falling back to a full rebuild
+    // rather than by guessing at a pairing.
+    if (state.names.size() != state.doc.widgets.size())
     {
-        for (std::size_t i = 0; i < items_.size(); ++i)
+        SPDLOG_WARN("Snapshot has {} widgets but {} names; rebuilding rather than diffing.",
+                    state.doc.widgets.size(), state.names.size());
+        const std::size_t names_before = nextNameIndex_;
+        loadFromAppConfig(state.doc);
+        nextNameIndex_ = std::max(nextNameIndex_, names_before);
+        emit selectionChanged(nullptr);
+        emit historyChanged();
+        return;
+    }
+
+    // What is on the canvas now, by name.
+    std::map<QString, SelectionFrame*> live;
+    for (const auto& frame : items_)
+    {
+        if (frame)
         {
-            if (items_[i])
+            live.emplace(frame->objectName(), frame.data());
+        }
+    }
+
+    std::vector<QPointer<SelectionFrame>> rebuilt;
+    rebuilt.reserve(state.doc.widgets.size());
+    bool selection_survived = false;
+
+    for (std::size_t i = 0; i < state.doc.widgets.size(); ++i)
+    {
+        const widget_config_t& wcfg = state.doc.widgets[i];
+        const QString& name = state.names[i];
+
+        SelectionFrame* frame = nullptr;
+        if (const auto it = live.find(name); it != live.end() && it->second->type() == wcfg.type)
+        {
+            frame = it->second;
+            live.erase(it);
+
+            // Only rebuild the child when the configuration actually changed.
+            // This is the whole point: a drag, a resize or a move leaves the
+            // config alone, so the widget -- and whatever it is connected to --
+            // is left running.
+            if (!(frame->config() == wcfg.config))
             {
-                items_[i]->setObjectName(state.names[i]);
+                frame->applyStoredConfig(wcfg.config);
             }
         }
+        else
+        {
+            frame = new SelectionFrame(wcfg.type, this);
+            frame->applyStoredConfig(wcfg.config);
+            frame->ensureChild();
+            frame->show();
+        }
+
+        frame->setId(wcfg.id);
+        frame->setObjectName(name);
+
+        const QRect target(wcfg.x, wcfg.y, wcfg.width, wcfg.height);
+        if (widgetRect(frame) != target)
+        {
+            frame->move(target.topLeft());
+            frame->resize(target.size());
+        }
+        frame->setEditorModeCapture(editorMode_);
+
+        if (frame == selected_)
+        {
+            selection_survived = true;
+        }
+        rebuilt.push_back(frame);
+    }
+
+    // Anything left in `live` is not in the restored document.
+    for (const auto& [name, frame] : live)
+    {
+        frame->deleteLater();
+    }
+
+    items_ = std::move(rebuilt);
+
+    // Keep the naming counter ahead of anything the restored document uses, so a
+    // widget added next cannot collide with one that came back from an undo.
+    nextNameIndex_ = std::max(nextNameIndex_, state.doc.widgets.size());
+
+    // The selection only has to be dropped if the widget holding it is gone.
+    // Otherwise it is re-emitted rather than cleared, so the properties panel
+    // rebuilds its form from the restored configuration and goes on showing the
+    // widget the user was working on. Undo used to blank the panel every time,
+    // because every widget really had been destroyed.
+    dragMode_ = DragMode::None;
+    if (selection_survived)
+    {
+        selectedRect_ = widgetRect(selected_);
+        emit selectionChanged(selected_);
     }
     else
     {
-        SPDLOG_WARN("Restored {} widgets but had {} names; leaving the derived ones.",
-                    items_.size(), state.names.size());
+        selected_ = nullptr;
+        emit selectionChanged(nullptr);
     }
 
-    emit selectionChanged(nullptr);
+    update();
     emit historyChanged();
 }
 
@@ -474,15 +568,21 @@ bool Canvas::removeFrame(SelectionFrame* frame)
         return false;
     }
 
-    const auto it = std::remove_if(items_.begin(), items_.end(),
-                                   [frame](const QPointer<SelectionFrame>& f) { return f == frame; });
+    // find + erase, not remove_if + erase. remove_if shuffles the vector before
+    // anything opens a transaction, so the snapshot the transaction takes is
+    // already of the post-removal state and commitEdit() then discards the entry
+    // as a no-op -- a delete that could not be undone. That went unnoticed while
+    // items_ held raw pointers, because moving one leaves the source unchanged
+    // and the shuffled tail still looked like a live widget; QPointer nulls
+    // itself on move, which is what exposed it.
+    const auto it = std::find(items_.begin(), items_.end(), frame);
     if (it == items_.end())
     {
         return false;
     }
 
     const auto tx = edit();
-    items_.erase(it, items_.end());
+    items_.erase(it);
 
     if (selected_ == frame)
     {

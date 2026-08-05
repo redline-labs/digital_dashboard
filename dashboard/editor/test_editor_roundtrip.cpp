@@ -588,6 +588,109 @@ void testBackgroundSurvivesTheCanvas()
               canvas.exportAppConfig().background_color.value() + "'");
 }
 
+// ------------------------------------------------------ undo keeps its widgets
+//
+// Restoring a history entry used to reload the whole document: destroy every
+// widget, rebuild every widget. Undoing a nudge of one static_text therefore tore
+// down and rebuilt the CarPlay widget sitting next to it -- three zenoh
+// subscriptions, a decoder and an audio sink -- with a visible glitch and a
+// stream that has to re-sync.
+//
+// Pointer identity is the assertion, because it is the thing that was not true
+// before and needs no instrumentation to check.
+void testUndoingAMoveDoesNotRebuildWidgets()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    auto frames = canvas.frames();
+    if (frames.size() != 2)
+    {
+        check(false, "expected two frames");
+        return;
+    }
+    SelectionFrame* const moved = frames[0];
+    SelectionFrame* const untouched = frames[1];
+    QWidget* const moved_child = moved->child();
+    QWidget* const untouched_child = untouched->child();
+    const QPoint origin = moved->pos();
+
+    {
+        const auto tx = canvas.edit();
+        moved->move(origin + QPoint(40, 40));
+    }
+    check(canvas.undo(), "the move is undone");
+
+    frames = canvas.frames();
+    check(frames.size() == 2, "both frames are still there");
+    check(frames.size() == 2 && frames[0] == moved && frames[1] == untouched,
+          "undo kept the frames themselves, in order");
+    check(moved->child() == moved_child,
+          "the moved widget was not rebuilt -- a move changes no configuration");
+    check(untouched->child() == untouched_child, "the widget that was not touched was not rebuilt");
+    check(moved->pos() == origin, "and the move was still undone");
+}
+
+// A config change does have to rebuild -- that is the one case where the live
+// widget genuinely cannot be reused -- but only the widget that changed.
+void testUndoingAConfigChangeRebuildsOnlyThatWidget()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    auto frames = canvas.frames();
+    if (frames.size() != 2)
+    {
+        check(false, "expected two frames");
+        return;
+    }
+    SelectionFrame* const changed = frames[0];
+    SelectionFrame* const untouched = frames[1];
+    QWidget* const changed_child = changed->child();
+    QWidget* const untouched_child = untouched->child();
+
+    {
+        const auto tx = canvas.edit();
+        StaticTextConfig_t sc = std::get<StaticTextConfig_t>(changed->config());
+        sc.text = "edited";
+        check(changed->applyConfig(sc), "the config is applied");
+    }
+    check(canvas.undo(), "the config change is undone");
+
+    check(std::get<StaticTextConfig_t>(changed->config()).text == "first",
+          "the configuration is back, got '" +
+              std::get<StaticTextConfig_t>(changed->config()).text + "'");
+    check(changed->child() != changed_child, "the widget whose config changed was rebuilt");
+    check(untouched->child() == untouched_child, "the other widget was left alone");
+}
+
+// Adds and deletes still have to work through the same diff.
+void testUndoRestoresAddedAndDeletedWidgets()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("w"));
+    canvas.clearHistory();
+
+    SelectionFrame* const survivor = canvas.frames()[1];
+    QWidget* const survivor_child = survivor->child();
+
+    canvas.addWidget(widget_type_t::value_readout, QPoint(300, 300));
+    check(canvas.frames().size() == 3, "the widget was added");
+    check(canvas.undo(), "the add is undone");
+    check(canvas.frames().size() == 2, "undoing the add removed it");
+    check(canvas.frames()[1] == survivor && survivor->child() == survivor_child,
+          "undoing an add left the other widgets alone");
+
+    check(canvas.removeFrame(canvas.frames()[0]), "the first widget is deleted");
+    check(canvas.frames().size() == 1, "the delete took effect");
+    check(canvas.undo(), "the delete is undone");
+    check(canvas.frames().size() == 2, "undoing the delete brought it back");
+    check(std::get<StaticTextConfig_t>(canvas.frames()[0]->config()).text == "first",
+          "the restored widget came back with its configuration");
+}
+
 // --------------------------------------------------- clamped preview, exact save
 //
 // widget_factory clamps a config into something drawable before the widget is
@@ -785,6 +888,9 @@ int main(int argc, char** argv)
     testAnOpenWindowEditDoesNotSwallowTheNextEdit();
     testHalfTypedColoursAreNotApplied();
     testBackgroundSurvivesTheCanvas();
+    testUndoingAMoveDoesNotRebuildWidgets();
+    testUndoingAConfigChangeRebuildsOnlyThatWidget();
+    testUndoRestoresAddedAndDeletedWidgets();
     testThePreviewIsClampedButTheSaveIsNot();
     testReflectedStructsCompareByValue();
     testShippedConfigsSurviveTheEditorUnchanged();
