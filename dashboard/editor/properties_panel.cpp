@@ -503,50 +503,39 @@ namespace
             SelectionFrame* frame = qobject_cast<SelectionFrame*>(w);
             if (!frame) return; // editor always wraps in SelectionFrame
 
-            const widget_type_t type = frame->type();
             bool applied = false;
 
-            // One history entry per Apply. commitEdit() discards it if every
-            // field came back the same, so pressing Apply without changing
-            // anything does not add an undo step that appears to do nothing.
-            Canvas* canvas = that->canvas();
-            if (canvas)
-            {
-                canvas->beginEdit();
-            }
+            // One history entry per Apply, closed when this handler returns. The
+            // transaction discards itself if every field came back the same, so
+            // pressing Apply without changing anything does not add an undo step
+            // that appears to do nothing.
+            const Canvas::EditTransaction tx(that->canvas(), Canvas::EditSource::Widget);
 
-            // Use the widget table to generate switch cases. qobject_cast, not
-            // static_cast: if the frame's declared type and its actual child
-            // ever disagree, a static_cast here is undefined behaviour, and the
-            // seed below would read a config out of the wrong object.
-            switch (type)
-            {
-#define APPLY_CONFIG_CASE(enum_name, widget_class) \
-                case widget_class::kWidgetType: \
-                    if (auto* typed = qobject_cast<widget_class*>(frame->child())) \
-                    { \
-                        applied = frame->applyConfig( \
-                            readIntoConfig<widget_class::config_t>(page, typed->getConfig())); \
-                    } \
-                    break;
-
-                DASHBOARD_WIDGET_TABLE(APPLY_CONFIG_CASE)
-#undef APPLY_CONFIG_CASE
-
-                case widget_type_t::unknown:
-                default:
-                    break;
-            }
+            // Visit the stored config rather than switching on the type and
+            // casting the live widget back to it. The variant already knows
+            // which alternative it holds, so there is no cast to get wrong --
+            // the previous version needed qobject_cast specifically because a
+            // static_cast would have been undefined behaviour if the frame's
+            // declared type and its actual child ever disagreed.
+            //
+            // It also reads the seed from the frame's own config, which is the
+            // configured value; the live widget's is the clamped one, so seeding
+            // from there would have written the clamp back on every Apply.
+            std::visit(
+                [&](const auto& current)
+                {
+                    using cfg_t = std::decay_t<decltype(current)>;
+                    if constexpr (!std::is_same_v<cfg_t, std::monostate>)
+                    {
+                        applied = frame->applyConfig(readIntoConfig<cfg_t>(page, current));
+                    }
+                },
+                frame->config());
 
             if (!applied)
             {
-                SPDLOG_ERROR("Apply did nothing for '{}': the form and the widget disagree about its type.",
+                SPDLOG_ERROR("Apply did nothing for '{}': the frame holds no configuration.",
                              frame->objectName().toStdString());
-            }
-
-            if (canvas)
-            {
-                canvas->commitEdit();
             }
         });
         return page;
@@ -684,31 +673,23 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
         return;
     }
 
-    // Map widget instance to type; in editor we always have SelectionFrame
-    const widget_type_t type = [w]()
-    {
-        if (auto* f = qobject_cast<SelectionFrame*>(w)) return f->type();
-        return widget_type_t::unknown;
-    }();
-    
-    // Use the widget table to generate switch cases
+    // Build the form from the frame's stored config, not from the live widget's.
+    // They differ: the widget holds the clamped copy widget_factory built it
+    // from, so a field the clamp moved would be shown as the clamped value and
+    // then written back on Apply, quietly editing the user's config for them.
     QWidget* page = nullptr;
-    switch (type)
+    if (auto* frame = qobject_cast<SelectionFrame*>(w))
     {
-#define BUILD_FORM_CASE(enum_name, widget_class) \
-        case widget_class::kWidgetType: \
-            if (auto* typed = qobject_cast<widget_class*>(uiWidget)) \
-            { \
-                page = buildFormFromConfig<widget_class::config_t>(this, typed->getConfig()); \
-            } \
-            break;
-        
-        DASHBOARD_WIDGET_TABLE(BUILD_FORM_CASE)
-#undef BUILD_FORM_CASE
-        
-        case widget_type_t::unknown:
-        default:
-            break;
+        std::visit(
+            [&](const auto& cfg)
+            {
+                using cfg_t = std::decay_t<decltype(cfg)>;
+                if constexpr (!std::is_same_v<cfg_t, std::monostate>)
+                {
+                    page = buildFormFromConfig<cfg_t>(this, cfg);
+                }
+            },
+            frame->config());
     }
 
     if (page)

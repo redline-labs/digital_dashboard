@@ -1,6 +1,8 @@
 #include "editor/selection_frame.h"
 #include "editor/widget_registry.h"
 
+#include "dashboard/widget_factory.h"
+
 #include <QPainter>
 #include <QEvent>
 
@@ -65,10 +67,32 @@ void SelectionFrame::setId(std::string id)
 
 void SelectionFrame::ensureChild()
 {
-    if (child_ == nullptr)
+    if (child_ != nullptr)
     {
-        setChild(widget_registry::instantiateWidget(type_, nullptr));
+        return;
     }
+
+    // No config was applied, so this frame takes the widget's own defaults --
+    // and has to remember them, because config() is what gets exported. Reading
+    // them back off the widget would export whatever the clamp produced instead.
+    config_ = default_widget_config(type_);
+    rebuildChild();
+}
+
+void SelectionFrame::rebuildChild()
+{
+    // Through widget_factory, not `new widget_t(cfg)`, so the preview is clamped
+    // exactly as the dashboard clamps it. The editor used to skip this entirely
+    // -- createWidgetFromConfig was called only by MainWindow -- so a config with
+    // an out-of-range field previewed one way here and drew another way there,
+    // with the editor being the optimistic one.
+    //
+    // config_ itself is left alone. The clamp applies to the copy the widget is
+    // built from, so what gets saved is still what was configured.
+    widget_config_t wc;
+    wc.type = type_;
+    wc.config = config_;
+    setChild(widget_factory::createWidgetFromConfig(wc, nullptr));
 }
 
 void SelectionFrame::setChild(QWidget* newChild)

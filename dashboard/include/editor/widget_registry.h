@@ -84,31 +84,14 @@ template <typename Config> struct config_traits;
 DASHBOARD_WIDGET_TABLE(WIDGET_TRAITS_SPECIALIZATION)
 #undef WIDGET_TRAITS_SPECIALIZATION
 
-// Generate instantiateWidget function from the widget table
-// This is to actually construct a dashboard widget from a widget_config_t enum
-// at runtime.
-inline QWidget* instantiateWidget(widget_type_t type, QWidget* parent)
-{
-	QWidget* w = nullptr;
-	switch (type)
-	{
-#define INSTANTIATE_CASE(enum_name, widget_class) \
-		case widget_class::kWidgetType: { \
-			widget_class::config_t cfg; \
-			w = new widget_class(cfg, parent); \
-			break; \
-		}
-		
-		DASHBOARD_WIDGET_TABLE(INSTANTIATE_CASE)
-#undef INSTANTIATE_CASE
-		
-		case widget_type_t::unknown:
-		default:
-			w = nullptr;
-			break;
-	}
-	return w;
-}
+// There is no instantiateWidget() here any more.
+//
+// It built a widget straight from a default-constructed config, which meant the
+// editor had a second construction path that skipped the range checking in
+// widget_factory::createWidgetFromConfig -- so a config the dashboard clamped
+// was previewed unclamped, and the editor was the optimistic one. Both apps now
+// go through widget_factory. To build a widget of a given type with its own
+// defaults, ask for default_widget_config(type) and hand that to the factory.
 
 } // namespace widget_registry
 

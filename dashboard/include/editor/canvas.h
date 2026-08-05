@@ -73,6 +73,42 @@ public:
     void beginEdit(EditSource source = EditSource::Widget);
     void commitEdit();
 
+    // Scoped form of the pair above, for the common case where an edit begins and
+    // ends in one function.
+    //
+    // The manual pair is still there for the cases that genuinely span calls -- a
+    // drag opens on mousePress and closes on mouseRelease, a window field opens on
+    // a keystroke and closes on editingFinished -- but everything else was
+    // matching them up by hand across six call sites, with the boundary landing
+    // in a different place each time: addWidget and removeFrame wrapped
+    // themselves, editor.move and editor.resize wrapped from outside, and the
+    // window fields did not wrap at all until they were found not to.
+    class [[nodiscard]] EditTransaction
+    {
+      public:
+        EditTransaction(Canvas* canvas, EditSource source) : canvas_(canvas)
+        {
+            if (canvas_) canvas_->beginEdit(source);
+        }
+        ~EditTransaction()
+        {
+            if (canvas_) canvas_->commitEdit();
+        }
+
+        EditTransaction(const EditTransaction&) = delete;
+        EditTransaction& operator=(const EditTransaction&) = delete;
+        EditTransaction(EditTransaction&&) = delete;
+        EditTransaction& operator=(EditTransaction&&) = delete;
+
+      private:
+        QPointer<Canvas> canvas_;
+    };
+
+    EditTransaction edit(EditSource source = EditSource::Widget)
+    {
+        return EditTransaction(this, source);
+    }
+
     // Drops the history. Called after a load: undoing past it would restore the
     // previous document, which is not what anyone means by undo.
     void clearHistory();
@@ -105,18 +141,20 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
-    // Just the frame. There were two more fields here -- a cached `type` and a
-    // `position` -- and both were dead weight that had already gone stale:
-    // `position` was written when the widget was created and never updated by a
-    // drag, editor.move or editor.resize, and nothing read it (widgetRect() asks
-    // the widget). `type` duplicated SelectionFrame::type_, which every reader
-    // used instead. A second copy of state that nobody maintains is where the
-    // next bug comes from.
-    struct Item {
-        QWidget* widget;
-    };
-
-    std::vector<Item> items_;
+    // The frames on this canvas, in document order.
+    //
+    // This was a vector of a one-member `struct Item { QWidget* widget; }`, left
+    // over after a cached `type` and `position` were removed from it. Both had
+    // gone stale before they were deleted: `position` was written when the widget
+    // was created and never updated by a drag, editor.move or editor.resize, and
+    // `type` duplicated SelectionFrame::type_. That history is the reason
+    // geometry still lives on the widget and nowhere else -- a second copy of
+    // state that nobody maintains is where the next bug comes from.
+    //
+    // QPointer rather than a raw pointer for the same reason selected_ is one:
+    // frames are removed with deleteLater(), so a raw pointer is briefly valid
+    // and then not.
+    std::vector<QPointer<SelectionFrame>> items_;
 
     // Monotonic source of derived widget names. Never reset by a deletion, so a
     // name is not handed out twice within one editing session.

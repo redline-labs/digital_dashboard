@@ -56,6 +56,17 @@ public:
     // Hit-test using canvas coordinates (parent space)
     Handle hitTestCanvasPos(const QPoint& canvasPos) const;
 
+    // The configuration this frame was given, verbatim.
+    //
+    // Authoritative, and deliberately not read back off the live widget. The
+    // preview is built through widget_factory, which clamps a config into
+    // something drawable before the widget sees it, so getConfig() returns the
+    // clamped value rather than the configured one -- exporting from there would
+    // rewrite the user's file with whatever the clamp produced. Keeping the
+    // original here means the editor previews exactly what the dashboard will
+    // draw while still saving exactly what was asked for.
+    const widget_config_variant_t& config() const { return config_; }
+
     // Returns false if `cfg` is not for this frame's type. Callers must check:
     // the agent's set_config used to report `applied` unconditionally, so a
     // rejected config came back as a success.
@@ -73,12 +84,22 @@ public:
             return false;
         }
 
-        // Rebuild child
-        setChild(new widget_t(cfg, nullptr));
+        config_ = cfg;
+        rebuildChild();
         return true;
     }
 
-    // Convert the contained widget back into a widget_config_t for saving
+    // The frame as a config entry, for saving.
+    //
+    // Geometry comes from the caller because the widget owns it: Qt moves and
+    // resizes the frame directly during a drag, and a second copy here would be
+    // one more thing to keep in step. A cached `position` field lived on
+    // Canvas::Item once and had already gone stale by the time it was removed --
+    // written on creation, never updated by a drag, editor.move or
+    // editor.resize. Not worth re-introducing.
+    //
+    // The configuration, by contrast, comes from this frame rather than from the
+    // live widget. See config().
     widget_config_t toWidgetConfig(const QRect& frameRect) const
     {
         widget_config_t wc;
@@ -88,28 +109,7 @@ public:
         wc.y = static_cast<int16_t>(frameRect.y());
         wc.width = static_cast<uint16_t>(frameRect.width());
         wc.height = static_cast<uint16_t>(frameRect.height());
-
-        if (!child_)
-        {
-            return wc;
-        }
-
-        // Use the widget table to generate switch cases
-        switch (type_)
-        {
-#define GET_CONFIG_CASE(enum_name, widget_class) \
-            case widget_class::kWidgetType: \
-                wc.config = static_cast<widget_class*>(child_)->getConfig(); \
-                break;
-            
-            DASHBOARD_WIDGET_TABLE(GET_CONFIG_CASE)
-#undef GET_CONFIG_CASE
-            
-            case widget_type_t::unknown:
-            default:
-                break;
-        }
-
+        wc.config = config_;
         return wc;
     }
 
@@ -121,10 +121,15 @@ protected:
 private:
     widget_type_t type_;
     std::string id_;
+    widget_config_variant_t config_{std::monostate{}};
     QWidget* child_ = nullptr;
     bool selected_ = false;
     bool editorMode_ = true;
     QWidget* overlay_ = nullptr; // draws selection chrome above child
+
+    // Builds the preview widget from config_ and swaps it in. Goes through
+    // widget_factory so the editor clamps exactly as the dashboard does.
+    void rebuildChild();
 
     void setChild(QWidget* newChild);
 };

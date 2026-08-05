@@ -17,6 +17,44 @@
 #include <yaml-cpp/yaml.h>
 #include <spdlog/spdlog.h>
 
+// A widget's configuration, whichever kind it is. Alternatives are derived from
+// the widget registry; std::monostate is the "unknown widget type" state (and
+// absorbs the trailing comma from the macro).
+//
+// Named rather than declared inline inside widget_config_t because the editor
+// stores one: a SelectionFrame holds the configuration it was given, so that
+// exporting a document does not have to read it back out of the live widget.
+#define WIDGET_CONFIG_ALT(enum_name, widget_class) widget_class::config_t,
+using widget_config_variant_t =
+    std::variant<DASHBOARD_WIDGET_TABLE(WIDGET_CONFIG_ALT) std::monostate>;
+#undef WIDGET_CONFIG_ALT
+
+// The variant holding a default-constructed config of the right kind for `type`,
+// or monostate if the type is unknown.
+//
+// Sits here rather than beside instantiateWidget() in widget_registry.h only
+// because widget_config_variant_t is declared here and app_config.h is the one
+// that includes the registry, not the other way round.
+inline widget_config_variant_t default_widget_config(widget_type_t type)
+{
+    widget_config_variant_t config{std::monostate{}};
+    switch (type)
+    {
+#define WIDGET_DEFAULT_CONFIG_CASE(enum_name, widget_class) \
+        case widget_class::kWidgetType: \
+            config = typename widget_class::config_t{}; \
+            break;
+
+        DASHBOARD_WIDGET_TABLE(WIDGET_DEFAULT_CONFIG_CASE)
+#undef WIDGET_DEFAULT_CONFIG_CASE
+
+        case widget_type_t::unknown:
+        default:
+            break;
+    }
+    return config;
+}
+
 struct widget_config_t {
     widget_config_t() :
         type{widget_type_t::unknown},
@@ -40,11 +78,7 @@ struct widget_config_t {
     uint16_t width;
     uint16_t height;
 
-    // Alternatives are derived from the widget registry; std::monostate is the
-    // "unknown" state (and absorbs the trailing comma from the macro).
-#define WIDGET_CONFIG_ALT(enum_name, widget_class) widget_class::config_t,
-    std::variant<DASHBOARD_WIDGET_TABLE(WIDGET_CONFIG_ALT) std::monostate> config;
-#undef WIDGET_CONFIG_ALT
+    widget_config_variant_t config;
 };
 
 REFLECT_STRUCT(app_config_t,
@@ -54,6 +88,51 @@ REFLECT_STRUCT(app_config_t,
     (helpers::Color, background_color, "#000000"),
     (std::vector<widget_config_t>, widgets, {})
 )
+
+// Equality for anything declared with REFLECT_STRUCT, derived from the fields
+// the same way the YAML conversion below is.
+//
+// The editor needs this to answer "did anything change?" without serialising the
+// whole document to YAML and comparing strings -- which is what it used to do on
+// every drag release and every title-bar update. It is also what lets an undo
+// work out which widgets actually differ, so it can put one back where it was
+// instead of rebuilding all of them.
+//
+// Writing these by hand was rejected once, reasonably: an operator== per widget
+// config struct is a list that rots. Generated from the reflection data it
+// cannot, and std::variant picks its own up for free once every alternative has
+// one -- which is what makes widget_config_t below a three-line comparison
+// rather than a switch over the widget table.
+namespace dashboard::config::detail
+{
+// Compares field-by-field through the member pointers reflection already holds,
+// rather than by walking both objects with visit_fields and matching names --
+// which would be quadratic and would need the field types proved equal at each
+// step. The fold short-circuits, so an early difference costs one comparison.
+template <typename T, std::size_t... I>
+bool fieldsEqual(const T& lhs, const T& rhs, std::index_sequence<I...>)
+{
+    const auto fields = T::reflection_fields();
+    return (... && (lhs.*(std::get<I>(fields).member_ptr) ==
+                    rhs.*(std::get<I>(fields).member_ptr)));
+}
+}  // namespace dashboard::config::detail
+
+template <typename T>
+    requires reflection::is_reflected_struct_v<T>
+bool operator==(const T& lhs, const T& rhs)
+{
+    constexpr std::size_t kFieldCount =
+        std::tuple_size_v<decltype(T::reflection_fields())>;
+    return dashboard::config::detail::fieldsEqual(lhs, rhs,
+                                                  std::make_index_sequence<kFieldCount>{});
+}
+
+inline bool operator==(const widget_config_t& lhs, const widget_config_t& rhs)
+{
+    return lhs.type == rhs.type && lhs.id == rhs.id && lhs.x == rhs.x && lhs.y == rhs.y &&
+           lhs.width == rhs.width && lhs.height == rhs.height && lhs.config == rhs.config;
+}
 
 
 // Convert from a YAML Node to a native config_t.

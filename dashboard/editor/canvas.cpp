@@ -45,11 +45,11 @@ void Canvas::clearAll()
     if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
     selected_ = nullptr;
     // Delete widgets
-    for (auto& item : items_)
+    for (auto& frame : items_)
     {
-        if (item.widget)
+        if (frame)
         {
-            item.widget->deleteLater();
+            frame->deleteLater();
         }
     }
     items_.clear();
@@ -130,7 +130,7 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
         // Apply editor mode mouse transparency
         frame->setEditorModeCapture(editorMode_);
 
-        items_.push_back(Item{frame});
+        items_.push_back(frame);
     }
 
     // Continue naming past whatever the file used, so a widget added right after
@@ -154,11 +154,11 @@ Canvas::Snapshot Canvas::snapshot() const
     state.yaml = out.c_str();
 
     state.names.reserve(items_.size());
-    for (const auto& item : items_)
+    for (const auto& frame : items_)
     {
-        if (item.widget)
+        if (frame)
         {
-            state.names.push_back(item.widget->objectName());
+            state.names.push_back(frame->objectName());
         }
     }
 
@@ -181,9 +181,9 @@ void Canvas::restore(const Snapshot& state)
     {
         for (std::size_t i = 0; i < items_.size(); ++i)
         {
-            if (items_[i].widget)
+            if (items_[i])
             {
-                items_[i].widget->setObjectName(state.names[i]);
+                items_[i]->setObjectName(state.names[i]);
             }
         }
     }
@@ -302,14 +302,10 @@ app_config_t Canvas::exportAppConfig() const
     cfg.height = static_cast<uint16_t>(height());
     cfg.background_color = getBackgroundColorHex().toStdString();
 
-    for (const auto& item : items_)
+    for (const auto& frame : items_)
     {
-        if (!item.widget) continue;
-        const QRect rect = widgetRect(item.widget);
-        if (auto* frame = qobject_cast<SelectionFrame*>(item.widget))
-        {
-            cfg.widgets.push_back(frame->toWidgetConfig(rect));
-        }
+        if (!frame) continue;
+        cfg.widgets.push_back(frame->toWidgetConfig(widgetRect(frame)));
     }
 
     return cfg;
@@ -403,7 +399,7 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
         return nullptr;
     }
 
-    beginEdit();
+    const auto tx = edit();
 
     SelectionFrame* frame = new SelectionFrame(type, this);
     if (!frame)
@@ -448,10 +444,12 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
     // Apply current editor mode to the new widget subtree
     frame->setEditorModeCapture(editorMode_);
 
-    items_.push_back(Item{frame});
+    items_.push_back(frame);
     update();
-    commitEdit();
 
+    // The transaction closes when this returns, after the selection is set.
+    // Selection is not part of the document, so it makes no difference to what
+    // gets recorded.
     selectFrame(frame);
     return frame;
 }
@@ -477,13 +475,13 @@ bool Canvas::removeFrame(SelectionFrame* frame)
     }
 
     const auto it = std::remove_if(items_.begin(), items_.end(),
-                                   [frame](const Item& item) { return item.widget == frame; });
+                                   [frame](const QPointer<SelectionFrame>& f) { return f == frame; });
     if (it == items_.end())
     {
         return false;
     }
 
-    beginEdit();
+    const auto tx = edit();
     items_.erase(it, items_.end());
 
     if (selected_ == frame)
@@ -494,9 +492,8 @@ bool Canvas::removeFrame(SelectionFrame* frame)
     update();
 
     // deleteLater leaves the frame in the child list until the event loop runs,
-    // but items_ is what exportAppConfig walks, so the snapshot is already
-    // correct.
-    commitEdit();
+    // but items_ is what exportAppConfig walks, so the snapshot the transaction
+    // takes on the way out is already correct.
     return true;
 }
 
@@ -504,9 +501,9 @@ std::vector<SelectionFrame*> Canvas::frames() const
 {
     std::vector<SelectionFrame*> out;
     out.reserve(items_.size());
-    for (const Item& item : items_)
+    for (const auto& frame : items_)
     {
-        if (auto* frame = qobject_cast<SelectionFrame*>(item.widget))
+        if (frame)
         {
             out.push_back(frame);
         }
@@ -566,7 +563,7 @@ QWidget* Canvas::topLevelWidgetAt(const QPoint& pos) const
     // Iterate items_ in reverse so the most recently added (topmost) gets priority
     for (auto it = items_.rbegin(); it != items_.rend(); ++it)
     {
-        QWidget* w = it->widget;
+        QWidget* w = *it;
         if (!w || w->isHidden()) continue;
         if (widgetRect(w).contains(pos)) return w;
     }

@@ -221,12 +221,13 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
                 return std::unexpected(badParams("'x' and 'y' are required integers."));
             }
             // Through the canvas's history, so an agent-driven move is undoable
-            // in the same stack as a dragged one. add_widget and delete get this
-            // from Canvas itself; move and resize touch the frame directly.
+            // in the same stack as a dragged one. add_widget and delete open
+            // their own transaction inside Canvas; move and resize touch the
+            // frame directly, so they open one here.
             auto canvas = canvasOf();
-            if (canvas.has_value()) canvas.value()->beginEdit();
+            const Canvas::EditTransaction tx(canvas.value_or(nullptr),
+                                             Canvas::EditSource::Widget);
             frame.value()->move(params["x"].get<int>(), params["y"].get<int>());
-            if (canvas.has_value()) canvas.value()->commitEdit();
 
             return describeFrame(frame.value());
         },
@@ -254,13 +255,13 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
                 return std::unexpected(badParams("'width' and 'height' must be positive."));
             }
             auto canvas = canvasOf();
-            if (canvas.has_value()) canvas.value()->beginEdit();
+            const Canvas::EditTransaction tx(canvas.value_or(nullptr),
+                                             Canvas::EditSource::Widget);
             if (frame.value()->child())
             {
                 frame.value()->child()->resize(size);
             }
             frame.value()->resize(size);
-            if (canvas.has_value()) canvas.value()->commitEdit();
 
             return describeFrame(frame.value());
         },

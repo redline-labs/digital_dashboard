@@ -178,11 +178,7 @@ int main(int argc, char** argv)
 
                 // Through the canvas's history: a config applied by an agent is
                 // as undoable as one applied from the properties panel.
-                Canvas* canvas = w.canvas();
-                if (canvas != nullptr)
-                {
-                    canvas->beginEdit();
-                }
+                const Canvas::EditTransaction tx(w.canvas(), Canvas::EditSource::Widget);
 
                 bool applied = false;
                 std::visit(
@@ -200,10 +196,6 @@ int main(int argc, char** argv)
                     },
                     cfg.config);
 
-                if (canvas != nullptr)
-                {
-                    canvas->commitEdit();
-                }
                 return applied;
             });
 

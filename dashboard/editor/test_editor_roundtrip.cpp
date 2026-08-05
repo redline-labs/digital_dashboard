@@ -588,6 +588,100 @@ void testBackgroundSurvivesTheCanvas()
               canvas.exportAppConfig().background_color.value() + "'");
 }
 
+// --------------------------------------------------- clamped preview, exact save
+//
+// widget_factory clamps a config into something drawable before the widget is
+// built. The editor used to skip that entirely -- createWidgetFromConfig was
+// called only by MainWindow -- so an out-of-range field previewed one way in the
+// editor and drew another way in the dashboard, with the editor being the
+// optimistic one.
+//
+// It now goes through the same factory, which raises the opposite risk: if the
+// export read the config back off the live widget, saving would write the
+// clamped value over whatever the user actually put in the file. The frame keeps
+// the configured value for exactly this reason.
+void testThePreviewIsClampedButTheSaveIsNot()
+{
+    // redline_rpm clamps into [0, max_rpm]; 20000 against a 9000 max is out of
+    // range by a mile and will be pulled down.
+    MotecC125TachometerConfig_t cfg;
+    cfg.max_rpm = 9000;
+    cfg.redline_rpm = 20000;
+
+    app_config_t app;
+    app.name = "clamping";
+    app.width = 640;
+    app.height = 480;
+    widget_config_t wc;
+    wc.type = MotecC125Tachometer::kWidgetType;
+    wc.id = "tach";
+    wc.width = 200;
+    wc.height = 200;
+    wc.config = cfg;
+    app.widgets.push_back(wc);
+
+    Canvas canvas;
+    canvas.loadFromAppConfig(app);
+
+    const auto frames = canvas.frames();
+    if (frames.size() != 1 || frames[0]->child() == nullptr)
+    {
+        check(false, "expected one frame with a preview widget");
+        return;
+    }
+
+    auto* widget = qobject_cast<MotecC125Tachometer*>(frames[0]->child());
+    if (widget == nullptr)
+    {
+        check(false, "the preview is a MotecC125Tachometer");
+        return;
+    }
+
+    check(widget->getConfig().redline_rpm <= widget->getConfig().max_rpm,
+          "the preview widget was built from a clamped config, got redline " +
+              std::to_string(widget->getConfig().redline_rpm) + " against max " +
+              std::to_string(widget->getConfig().max_rpm));
+
+    const app_config_t out = canvas.exportAppConfig();
+    if (out.widgets.size() != 1)
+    {
+        check(false, "expected one widget back");
+        return;
+    }
+    check(std::get<MotecC125TachometerConfig_t>(out.widgets[0].config).redline_rpm == 20000,
+          "the export keeps the configured value, not the clamped one, got " +
+              std::to_string(
+                  std::get<MotecC125TachometerConfig_t>(out.widgets[0].config).redline_rpm));
+}
+
+// ------------------------------------------------------- generated equality
+
+void testReflectedStructsCompareByValue()
+{
+    app_config_t a = twoStaticTexts("w");
+    app_config_t b = twoStaticTexts("w");
+    check(a == b, "two identically built configs compare equal");
+
+    b.name = "different";
+    check(!(a == b), "a differing window name compares unequal");
+
+    b = twoStaticTexts("w");
+    b.widgets[1].x = 999;
+    check(!(a == b), "a differing widget position compares unequal");
+
+    b = twoStaticTexts("w");
+    StaticTextConfig_t sc = std::get<StaticTextConfig_t>(b.widgets[0].config);
+    sc.text = "changed";
+    b.widgets[0].config = sc;
+    check(!(a == b), "a differing nested widget config compares unequal");
+
+    // The variant's own comparison has to notice a change of alternative, not
+    // just a change of value inside one.
+    b = twoStaticTexts("w");
+    b.widgets[0].config = std::monostate{};
+    check(!(a == b), "a differing config alternative compares unequal");
+}
+
 // ------------------------------------------------------------ byte stability
 //
 // Every config we ship, opened in the editor and exported again, has to come
@@ -691,6 +785,8 @@ int main(int argc, char** argv)
     testAnOpenWindowEditDoesNotSwallowTheNextEdit();
     testHalfTypedColoursAreNotApplied();
     testBackgroundSurvivesTheCanvas();
+    testThePreviewIsClampedButTheSaveIsNot();
+    testReflectedStructsCompareByValue();
     testShippedConfigsSurviveTheEditorUnchanged();
     testUnknownDropPayloadIsRefused();
 
