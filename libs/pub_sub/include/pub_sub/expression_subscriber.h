@@ -1,16 +1,14 @@
 #ifndef PUB_SUB_EXPRESSION_SUBSCRIBER_H_
 #define PUB_SUB_EXPRESSION_SUBSCRIBER_H_
 
+#include "pub_sub/expression_evaluator.h"
 #include "pub_sub/schema_registry.h"
 
-#include <cmath>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -25,15 +23,15 @@ namespace pub_sub
 //                                "vehicle/engine/rpm");
 //   sub.setResultCallback<float>([](float krpm) { ... });
 //
-// Variables in the expression are field names of the schema, validated against it
-// at construction, so a typo is a startup error rather than a gauge that reads
+// Variables in the expression are field names of the schema, validated against
+// it at construction, so a typo is a startup error rather than a gauge that reads
 // zero forever.
 //
-// Everything this needs -- zenoh, exprtk, capnp's dynamic API -- is behind Impl.
-// That is not tidiness: this header is included, directly or through
-// dashboard/expression_subscription.h, by 32 translation units, and inlining
-// exprtk's symbol table and parser into it cost every one of them 135,000
-// preprocessed lines of a library they never name.
+// This is now a thin join of two pieces: an ExpressionEvaluator, which is all
+// the decoding and arithmetic, and a subscription that feeds it bytes. The
+// evaluator is separately usable, which is what lets a consumer subscribe once
+// per key and evaluate several expressions per sample, and what lets a
+// recorded-data source reuse the decode path with no bus at all.
 class ZenohExpressionSubscriber
 {
   public:
@@ -107,52 +105,25 @@ class ZenohExpressionSubscriber
     template <typename T>
     std::optional<T> evaluate(const std::vector<std::uint8_t>& payload)
     {
-        // Everything that needs capnp or exprtk happens in here, out of line.
-        // What is left is the conversion to T, which is plain arithmetic and the
-        // only part that has to be a template.
-        const std::optional<double> result = evaluateToDouble(payload);
-        if (!result)
-        {
-            return std::nullopt;
-        }
-
-        if constexpr (std::is_same_v<T, bool>)
-        {
-            // Anything non-zero is true.
-            return static_cast<T>(*result != 0.0);
-        }
-        else if constexpr (std::is_integral_v<T>)
-        {
-            // Round first, then check the value actually fits: casting a double
-            // outside the destination's range is undefined, not saturating.
-            const double rounded = std::round(*result);
-            if (rounded < static_cast<double>(std::numeric_limits<T>::lowest()) ||
-                rounded > static_cast<double>(std::numeric_limits<T>::max()))
-            {
-                warnOutOfRange(rounded);
-                return std::nullopt;
-            }
-            return static_cast<T>(rounded);
-        }
-        else
-        {
-            return static_cast<T>(*result);
-        }
+        return evaluator_->evaluate<T>(payload);
     }
 
   private:
-    // The decode-and-evaluate half, out of line because it is what drags in
-    // capnp's dynamic API and exprtk. Returns nullopt for an unusable sample,
-    // having already logged whatever needed logging (latched, so a malformed
-    // publisher does not churn the log at the sample rate).
-    std::optional<double> evaluateToDouble(const std::vector<std::uint8_t>& payload);
-
-    // Latched, and needs the key and expression for its message, so it cannot be
-    // in the template above.
-    void warnOutOfRange(double value);
     void reportCallbackThrew();
 
     void setRawCallback(std::function<void(const std::vector<std::uint8_t>&)> handler);
+
+    // Declared BEFORE impl_, so it is destroyed AFTER it. impl_ owns the
+    // subscription, whose destructor joins in-flight callbacks, and those
+    // callbacks reach into the evaluator -- so the evaluator has to still be
+    // alive while they drain. Reversing these two is a use-after-free on every
+    // teardown, which is the same lesson that fixed the member order inside the
+    // old Impl. Do not move it.
+    //
+    // A unique_ptr rather than a value member because ExpressionEvaluator is
+    // neither copyable nor movable: exprtk binds to the addresses of its field
+    // slots.
+    std::unique_ptr<ExpressionEvaluator> evaluator_;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
