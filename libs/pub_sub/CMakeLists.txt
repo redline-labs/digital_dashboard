@@ -30,6 +30,10 @@ add_library(zenoh_pub_sub STATIC
     # about what is on the bus.
     capnp_json.cpp
     topic_discovery.cpp
+
+    # Topic key charset rules and the mangling that packs a key into a
+    # liveliness token's key expression. Pure string logic, no zenoh.
+    topic_key.cpp
 )
 
 target_include_directories(zenoh_pub_sub PUBLIC
@@ -123,3 +127,20 @@ target_link_libraries(pub_sub_test_publisher_reuse PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_publisher_reuse LABELS pub_sub net)
+
+# Topic key validation and mangling. Pure logic, so `unit`. The round trip over
+# every key in configs/ is the part that would catch a real regression: it
+# asserts the assumption the advertisement scheme rests on against the actual
+# corpus rather than against examples chosen to pass.
+add_executable(pub_sub_test_topic_key
+    test_topic_key.cpp
+)
+
+target_compile_definitions(pub_sub_test_topic_key PRIVATE
+    REDLINE_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs")
+
+target_link_libraries(pub_sub_test_topic_key PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_topic_key LABELS pub_sub unit)
