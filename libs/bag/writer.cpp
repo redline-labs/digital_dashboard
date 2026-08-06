@@ -1,5 +1,7 @@
 #include "bag/writer.h"
 
+#include "bag/validate.h"
+
 #include "pub_sub/schema_registry.h"
 
 #include <mcap/writer.hpp>
@@ -184,7 +186,13 @@ struct BagWriter::Impl
         part.message_count = part_messages;
         part.t_begin_ns = part_t_begin;
         part.t_end_ns = part_t_end;
-        part.complete = true;
+
+        // Verified rather than assumed. close() having returned is not proof
+        // the file landed on disk intact -- a full disk, a failing device or an
+        // I/O error partway through the footer all produce a part that looks
+        // closed from in here. Reading the trailing magic back costs 8 bytes and
+        // makes `complete` mean what a reader thinks it means.
+        part.complete = hasCompleteEnding(part_path);
 
         std::error_code error;
         part.bytes = std::filesystem::file_size(part_path, error);

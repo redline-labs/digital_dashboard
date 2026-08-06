@@ -346,6 +346,138 @@ void testChunkCrcMismatchIsCaught()
     expect(mentions(report, "CRC"), "and the complaint says so");
 }
 
+// Offset of the CONTENT of the first record with opcode `op`, or 0.
+std::size_t findRecordContent(const std::vector<std::uint8_t>& bytes, std::uint8_t op)
+{
+    const auto readU64 = [&bytes](std::size_t at)
+    {
+        std::uint64_t value = 0;
+        for (int i = 0; i < 8; ++i)
+        {
+            value |= static_cast<std::uint64_t>(bytes[at + static_cast<std::size_t>(i)])
+                     << (8u * static_cast<unsigned>(i));
+        }
+        return value;
+    };
+
+    std::size_t offset = 8;
+    while (offset + 9 < bytes.size())
+    {
+        const std::uint8_t here = bytes[offset];
+        const std::uint64_t length = readU64(offset + 1);
+        if (here == op)
+        {
+            return offset + 9;
+        }
+        if (length == 0 || offset + 9 + length > bytes.size())
+        {
+            return 0;
+        }
+        offset += 9 + static_cast<std::size_t>(length);
+    }
+    return 0;
+}
+
+void poke64(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint64_t value)
+{
+    for (int i = 0; i < 8; ++i)
+    {
+        bytes[at + static_cast<std::size_t>(i)] =
+            static_cast<std::uint8_t>((value >> (8u * static_cast<unsigned>(i))) & 0xFFu);
+    }
+}
+
+// A ChunkIndex pointing somewhere there is no chunk.
+//
+// This is the class of corruption nothing else can see: no message is damaged,
+// every record still tiles, every CRC still matches. The file is structurally
+// perfect and seeking into it lands in the wrong place -- or in the middle of a
+// message payload, which a reader will then try to parse as a record.
+void testBadChunkIndexOffsetIsCaught()
+{
+    const TempDir dir("chunkindex");
+    writeBag(dir, "none", 200);
+
+    const auto part = dir.path() / "f_0000.mcap";
+    std::vector<std::uint8_t> bytes = readFile(part);
+
+    const std::size_t content = findRecordContent(bytes, 0x08);  // ChunkIndex
+    expect(content > 0, "the file has a ChunkIndex to corrupt");
+    if (content == 0)
+    {
+        return;
+    }
+
+    // chunk_start_offset is at content + 8 + 8 (after the two timestamps).
+    poke64(bytes, content + 16, 999999);
+    writeFile(part, bytes);
+
+    const bag::ValidationReport report = bag::validateMcapFile(part.string());
+    expect(!report.ok(), "a ChunkIndex pointing at nothing is caught");
+    expect(mentions(report, "no Chunk record"), "and the complaint says what is wrong");
+}
+
+// A ChunkIndex whose length disagrees with the chunk it points at. A reader
+// trusting it reads too few bytes (a truncated chunk) or too many (into the
+// next record).
+void testBadChunkIndexLengthIsCaught()
+{
+    const TempDir dir("chunklen");
+    writeBag(dir, "none", 200);
+
+    const auto part = dir.path() / "f_0000.mcap";
+    std::vector<std::uint8_t> bytes = readFile(part);
+
+    const std::size_t content = findRecordContent(bytes, 0x08);
+    if (content == 0)
+    {
+        expect(false, "the file has a ChunkIndex to corrupt");
+        return;
+    }
+
+    // chunk_length is at content + 24.
+    poke64(bytes, content + 24, 12345);
+    writeFile(part, bytes);
+
+    const bag::ValidationReport report = bag::validateMcapFile(part.string());
+    expect(!report.ok(), "a ChunkIndex with the wrong chunk length is caught");
+    expect(mentions(report, "bytes; it is"), "and both lengths are reported");
+}
+
+// A MessageIndex offset in a ChunkIndex's map pointing at something that is not
+// a MessageIndex. Seeking to a specific channel would land on arbitrary bytes.
+void testBadMessageIndexOffsetIsCaught()
+{
+    const TempDir dir("msgindex");
+    writeBag(dir, "none", 200);
+
+    const auto part = dir.path() / "f_0000.mcap";
+    std::vector<std::uint8_t> bytes = readFile(part);
+
+    const std::size_t content = findRecordContent(bytes, 0x08);
+    if (content == 0)
+    {
+        expect(false, "the file has a ChunkIndex to corrupt");
+        return;
+    }
+
+    // message_index_offsets is a Map<uint16,uint64> at content + 32: a uint32
+    // byte length, then 10-byte (channel, offset) pairs. Corrupt the first
+    // pair's offset, which sits at +4 (past the length) +2 (past the channel).
+    const std::size_t first_offset = content + 32 + 4 + 2;
+    if (first_offset + 8 >= bytes.size())
+    {
+        expect(false, "the ChunkIndex has a message index map");
+        return;
+    }
+    poke64(bytes, first_offset, 4242);
+    writeFile(part, bytes);
+
+    const bag::ValidationReport report = bag::validateMcapFile(part.string());
+    expect(!report.ok(), "a ChunkIndex pointing a channel at a non-MessageIndex is caught");
+    expect(mentions(report, "MessageIndex"), "and the complaint names it");
+}
+
 // A part on disk the index does not list. `bag reindex` would pick it up; until
 // then it is data no reader will ever return.
 void testUnlistedPartIsCaught()
@@ -469,6 +601,9 @@ int main()
     testTruncationIsCaught();
     testCorruptedMagicIsCaught();
     testChunkCrcMismatchIsCaught();
+    testBadChunkIndexOffsetIsCaught();
+    testBadChunkIndexLengthIsCaught();
+    testBadMessageIndexOffsetIsCaught();
     testUnlistedPartIsCaught();
     testIndexDisagreementIsCaught();
     testEmptyRecordingIsValid();

@@ -210,6 +210,40 @@ struct Observed
     std::uint32_t statistics_chunks = 0;
 
     std::string compression;
+
+    // Byte offsets, from the start of the file, of every record of a kind an
+    // index is allowed to point at -- and how long each one is.
+    //
+    // The indexes are what make seeking work, and they are pure redundancy: an
+    // offset that is wrong does not corrupt any message, it just sends a reader
+    // somewhere else. Nothing detects that except comparing the two, which is
+    // what these exist for.
+    std::map<std::uint64_t, std::uint64_t> chunk_offsets;          // offset -> total length
+    std::map<std::uint64_t, std::uint16_t> message_index_offsets;  // offset -> channel id
+
+    // Whatever the ChunkIndex records claim, checked once the walk has seen the
+    // whole file -- the summary comes after the data, so the claims arrive
+    // after the things they point at.
+    struct ChunkClaim
+    {
+        std::uint64_t chunk_start_offset = 0;
+        std::uint64_t chunk_length = 0;
+        std::uint64_t message_index_length = 0;
+        std::map<std::uint16_t, std::uint64_t> message_index_offsets;
+    };
+    std::vector<ChunkClaim> chunk_claims;
+
+    // SummaryOffset groups: opcode -> (start, length).
+    struct GroupClaim
+    {
+        std::uint8_t opcode = 0;
+        std::uint64_t start = 0;
+        std::uint64_t length = 0;
+    };
+    std::vector<GroupClaim> group_claims;
+
+    std::uint64_t data_end_offset = 0;
+    std::uint64_t footer_offset = 0;
 };
 
 std::vector<std::uint8_t> decompress(const std::string& codec,
@@ -285,7 +319,12 @@ class Validator
 
     // Walks a record stream. `in_summary` selects which side of the
     // data/summary divide the records land on.
-    void walkRecords(const std::uint8_t* data, std::size_t size, bool inside_chunk)
+    // `base` is the file offset of `data[0]`, so records inside the top-level
+    // walk can record where they actually live. Records inside a chunk get a
+    // base of zero -- their offsets are relative to the decompressed stream and
+    // are not file offsets at all.
+    void walkRecords(const std::uint8_t* data, std::size_t size, bool inside_chunk,
+                     std::uint64_t base = 0)
     {
         std::size_t offset = 0;
         while (offset < size)
@@ -308,7 +347,8 @@ class Validator
                 return;
             }
 
-            handleRecord(op, data + offset + 9, length, inside_chunk);
+            handleRecord(op, data + offset + 9, length, inside_chunk,
+                         base + static_cast<std::uint64_t>(offset), 9 + length);
             offset += 9 + static_cast<std::size_t>(length);
         }
     }
@@ -323,7 +363,8 @@ class Validator
     }
 
     void handleRecord(std::uint8_t op, const std::uint8_t* content, std::uint64_t length,
-                      bool inside_chunk)
+                      bool inside_chunk, std::uint64_t record_offset,
+                      std::uint64_t record_total_length)
     {
         Cursor cursor(content, static_cast<std::size_t>(length));
 
@@ -335,10 +376,12 @@ class Validator
 
             case kDataEnd:
                 observed_.saw_data_end = true;
+                observed_.data_end_offset = record_offset;
                 break;
 
             case kFooter:
                 observed_.saw_footer = true;
+                observed_.footer_offset = record_offset;
                 break;
 
             case kSchema:
@@ -397,6 +440,13 @@ class Validator
             case kChunk:
             {
                 ++observed_.chunks;
+
+                // Where this chunk actually is, so a ChunkIndex claiming to
+                // point at one can be checked against reality.
+                if (!inside_chunk)
+                {
+                    observed_.chunk_offsets[record_offset] = record_total_length;
+                }
 
                 (void)cursor.u64();  // message_start_time
                 (void)cursor.u64();  // message_end_time
@@ -466,12 +516,82 @@ class Validator
             }
 
             case kMessageIndex:
+            {
+                const std::uint16_t channel_id = cursor.u16();
+                const std::uint32_t records_length = cursor.u32();
+
+                // Array<Tuple<Timestamp, uint64>> -- 16 bytes per entry, so a
+                // length that is not a multiple of 16 cannot be what it claims.
+                if (records_length % 16u != 0u)
+                {
+                    error("a MessageIndex record's array is " +
+                          std::to_string(records_length) +
+                          " bytes, which is not a whole number of 16-byte entries");
+                }
+                cursor.skip(records_length);
+
+                if (!inside_chunk)
+                {
+                    observed_.message_index_offsets[record_offset] = channel_id;
+                }
+                break;
+            }
+
             case kChunkIndex:
+            {
+                Observed::ChunkClaim claim;
+                (void)cursor.u64();  // message_start_time
+                (void)cursor.u64();  // message_end_time
+                claim.chunk_start_offset = cursor.u64();
+                claim.chunk_length = cursor.u64();
+
+                // Map<uint16, uint64>: a uint32 byte length, then 10-byte pairs.
+                const std::uint32_t map_length = cursor.u32();
+                if (map_length % 10u != 0u)
+                {
+                    error("a ChunkIndex record's message_index_offsets map is " +
+                          std::to_string(map_length) +
+                          " bytes, which is not a whole number of 10-byte entries");
+                    cursor.skip(map_length);
+                }
+                else
+                {
+                    for (std::uint32_t consumed = 0; consumed < map_length; consumed += 10u)
+                    {
+                        const std::uint16_t channel_id = cursor.u16();
+                        claim.message_index_offsets[channel_id] = cursor.u64();
+                    }
+                }
+
+                claim.message_index_length = cursor.u64();
+                (void)cursor.str();  // compression
+                (void)cursor.u64();  // compressed_size
+                (void)cursor.u64();  // uncompressed_size
+
+                if (!cursor.overrun())
+                {
+                    observed_.chunk_claims.push_back(std::move(claim));
+                }
+                break;
+            }
+
+            case kSummaryOffset:
+            {
+                Observed::GroupClaim claim;
+                claim.opcode = cursor.u8();
+                claim.start = cursor.u64();
+                claim.length = cursor.u64();
+                if (!cursor.overrun())
+                {
+                    observed_.group_claims.push_back(claim);
+                }
+                break;
+            }
+
             case kAttachment:
             case kAttachmentIndex:
             case kMetadata:
             case kMetadataIndex:
-            case kSummaryOffset:
                 break;
 
             default:
@@ -501,6 +621,32 @@ class Validator
 };
 
 }  // namespace
+
+bool hasCompleteEnding(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+    {
+        return false;
+    }
+
+    const std::streamoff size = file.tellg();
+    if (size < static_cast<std::streamoff>(kMagic.size()))
+    {
+        return false;
+    }
+
+    file.seekg(size - static_cast<std::streamoff>(kMagic.size()));
+
+    std::array<std::uint8_t, kMagic.size()> tail{};
+    file.read(reinterpret_cast<char*>(tail.data()), static_cast<std::streamsize>(tail.size()));
+    if (!file)
+    {
+        return false;
+    }
+
+    return std::equal(kMagic.begin(), kMagic.end(), tail.begin());
+}
 
 ValidationReport validateMcapFile(const std::string& path)
 {
@@ -545,7 +691,7 @@ ValidationReport validateMcapFile(const std::string& path)
     const std::size_t body_end =
         trailing_magic_ok ? bytes.size() - kMagic.size() : bytes.size();
     validator.walkRecords(bytes.data() + kMagic.size(), body_end - kMagic.size(),
-                          /*inside_chunk=*/false);
+                          /*inside_chunk=*/false, /*base=*/kMagic.size());
 
     const Observed& observed = validator.observed();
 
@@ -611,6 +757,81 @@ ValidationReport validateMcapFile(const std::string& path)
         {
             validator.error("a Message references Channel " + std::to_string(channel_id) +
                             ", which the file does not contain");
+        }
+    }
+
+    // ---------------------------------------------------------- the indexes
+    //
+    // These are what make `bag play --start-offset` a seek and `bag info`
+    // instant. They are also PURE REDUNDANCY: an offset that points at the
+    // wrong place corrupts no message and fails no structural check -- it just
+    // sends a reader somewhere else. Comparing the claims against where the
+    // records actually turned out to be is the only thing that detects it.
+    for (const Observed::ChunkClaim& claim : observed.chunk_claims)
+    {
+        const auto found = observed.chunk_offsets.find(claim.chunk_start_offset);
+        if (found == observed.chunk_offsets.end())
+        {
+            validator.error("a ChunkIndex points at offset " +
+                            std::to_string(claim.chunk_start_offset) +
+                            ", where there is no Chunk record");
+            continue;
+        }
+
+        if (claim.chunk_length != found->second)
+        {
+            validator.error("a ChunkIndex says the chunk at offset " +
+                            std::to_string(claim.chunk_start_offset) + " is " +
+                            std::to_string(claim.chunk_length) + " bytes; it is " +
+                            std::to_string(found->second));
+        }
+
+        for (const auto& [channel_id, offset] : claim.message_index_offsets)
+        {
+            const auto index = observed.message_index_offsets.find(offset);
+            if (index == observed.message_index_offsets.end())
+            {
+                validator.error("a ChunkIndex points channel " + std::to_string(channel_id) +
+                                " at offset " + std::to_string(offset) +
+                                ", where there is no MessageIndex record");
+            }
+            else if (index->second != channel_id)
+            {
+                validator.error("a ChunkIndex points channel " + std::to_string(channel_id) +
+                                " at a MessageIndex for channel " +
+                                std::to_string(index->second));
+            }
+        }
+    }
+
+    // Every chunk should be indexed, or seeking silently degrades to a scan
+    // over the part of the file nothing points into.
+    if (!observed.chunk_claims.empty() &&
+        observed.chunk_claims.size() != observed.chunk_offsets.size())
+    {
+        validator.error("the file has " + std::to_string(observed.chunk_offsets.size()) +
+                        " Chunk records but " + std::to_string(observed.chunk_claims.size()) +
+                        " ChunkIndex records -- some chunks are unreachable by a seek");
+    }
+
+    // SummaryOffset groups have to land inside the summary section, between
+    // DataEnd and the Footer. A group pointing outside it sends a reader that
+    // trusts it into the message data.
+    for (const Observed::GroupClaim& claim : observed.group_claims)
+    {
+        if (observed.data_end_offset == 0 || observed.footer_offset == 0)
+        {
+            break;
+        }
+        if (claim.start < observed.data_end_offset ||
+            claim.start + claim.length > observed.footer_offset)
+        {
+            validator.error("a SummaryOffset for opcode 0x" +
+                            std::string(1, "0123456789ABCDEF"[claim.opcode >> 4u]) +
+                            std::string(1, "0123456789ABCDEF"[claim.opcode & 0x0Fu]) +
+                            " spans [" + std::to_string(claim.start) + ", " +
+                            std::to_string(claim.start + claim.length) +
+                            "), which is outside the summary section");
         }
     }
 

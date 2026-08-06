@@ -1,5 +1,6 @@
 #include "bag_tool/verbs.h"
 
+#include "bag/playback.h"
 #include "bag/reader.h"
 
 #include "cli/interrupt.h"
@@ -25,27 +26,6 @@
 namespace bag_tool
 {
 
-namespace
-{
-
-// old=new, repeatable.
-std::map<std::string, std::string> parseRemaps(const std::vector<std::string>& raw)
-{
-    std::map<std::string, std::string> remaps;
-    for (const std::string& entry : raw)
-    {
-        const std::size_t equals = entry.find('=');
-        if (equals == std::string::npos)
-        {
-            SPDLOG_ERROR("--remap wants old=new, got '{}'.", entry);
-            continue;
-        }
-        remaps.emplace(entry.substr(0, equals), entry.substr(equals + 1));
-    }
-    return remaps;
-}
-
-}  // namespace
 
 void addPlayOptions(cxxopts::Options& options)
 {
@@ -103,9 +83,23 @@ int runPlay(cli::Context& context)
     }
 
     const std::string prefix = context.stringOr("prefix", "");
-    const std::map<std::string, std::string> remaps =
-        parseRemaps(context.has("remap") ? context.args()["remap"].as<std::vector<std::string>>()
-                                         : std::vector<std::string>{});
+
+    std::vector<std::string> remap_problems;
+    const std::map<std::string, std::string> remaps = bag::parseRemaps(
+        context.has("remap") ? context.args()["remap"].as<std::vector<std::string>>()
+                             : std::vector<std::string>{},
+        remap_problems);
+
+    if (!remap_problems.empty())
+    {
+        for (const std::string& problem : remap_problems)
+        {
+            SPDLOG_ERROR("{}", problem);
+        }
+        // A remap that was not understood means messages going somewhere other
+        // than intended, which is worse than refusing to start.
+        return cli::kUsage;
+    }
 
     std::vector<std::string> only_keys;
     if (context.has("key"))
@@ -132,20 +126,6 @@ int runPlay(cli::Context& context)
     // advertised nothing would be invisible to every discovery-based tool, which
     // is most of them now.
     std::map<std::string, std::unique_ptr<pub_sub::detail::BytePublisher>> publishers;
-
-    const auto resolveKey = [&](std::string_view key) -> std::string
-    {
-        std::string out(key);
-        if (const auto found = remaps.find(out); found != remaps.end())
-        {
-            out = found->second;
-        }
-        if (!prefix.empty())
-        {
-            out = prefix + "/" + out;
-        }
-        return out;
-    };
 
     cli::installInterruptHandler();
 
@@ -199,7 +179,7 @@ int runPlay(cli::Context& context)
                     }
                 }
 
-                const std::string key = resolveKey(message.key);
+                const std::string key = bag::resolvePlaybackKey(message.key, remaps, prefix);
 
                 auto found = publishers.find(key);
                 if (found == publishers.end())

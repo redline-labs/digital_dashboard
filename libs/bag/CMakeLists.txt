@@ -17,6 +17,12 @@ add_library(bag STATIC
     # Foxglove's Go CLI being installed -- see the header.
     validate.cpp
 
+    # Rebuilding an index from the parts, and the playback key rules. Both were
+    # inside nodes/bag verbs, where neither could be tested -- and both fail
+    # silently when wrong.
+    rebuild.cpp
+    playback.cpp
+
     # mcap is header-only; this is the single TU that defines
     # MCAP_IMPLEMENTATION. See the file.
     mcap_impl.cpp
@@ -119,3 +125,39 @@ target_link_libraries(bag_test_decode PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET bag_test_decode LABELS bag unit)
+
+# Rebuilding an index from the parts -- the recovery path for a recording whose
+# recorder was killed, which decides whether a crashed run is readable at all.
+add_executable(bag_test_rebuild
+    test_rebuild.cpp
+)
+target_link_libraries(bag_test_rebuild PRIVATE
+    bag
+    spdlog::spdlog
+)
+add_project_test(TARGET bag_test_rebuild LABELS bag unit)
+
+# The playback key rules. Pure logic, and every way of getting it wrong silently
+# drops messages from a replay.
+add_executable(bag_test_playback
+    test_playback.cpp
+)
+target_link_libraries(bag_test_playback PRIVATE
+    bag
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET bag_test_playback LABELS bag unit)
+
+# The boundaries: empty and oversized payloads, many topics, duration-based
+# rolling, write-after-close, an unwritable directory, backwards ranges, and
+# reader reuse. Reachable from `bag record` with the wrong arguments or a full
+# disk, and most of them fail quietly if unhandled.
+add_executable(bag_test_edges
+    test_edges.cpp
+)
+target_link_libraries(bag_test_edges PRIVATE
+    bag
+    spdlog::spdlog
+)
+add_project_test(TARGET bag_test_edges LABELS bag unit)

@@ -75,6 +75,20 @@ struct ValidationReport
     }
 };
 
+// True when the file ends with the MCAP magic bytes -- i.e. its writer closed
+// it properly.
+//
+// Cheap: reads the last 8 bytes. Worth having as its own function because the
+// obvious alternative is WRONG in a way that is easy to miss:
+// McapReader::readSummary() returns SUCCESS on a truncated file. It scans the
+// data section, produces perfectly good ChunkIndex records from what is there,
+// and reports ok -- so a `part.complete = summary.ok()` says every torn part is
+// complete. (The same trap cost the reader its LogTimeOrder path; see
+// reader.cpp.)
+//
+// The trailing magic is the only thing a killed writer cannot have written.
+bool hasCompleteEnding(const std::string& path);
+
 // One .mcap file.
 ValidationReport validateMcapFile(const std::string& path);
 

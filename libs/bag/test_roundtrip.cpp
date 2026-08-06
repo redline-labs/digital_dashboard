@@ -21,9 +21,8 @@
 // No zenoh anywhere: this is file I/O against a temporary directory.
 
 #include "bag/reader.h"
+#include "bag/validate.h"
 #include "bag/writer.h"
-
-#include <mcap/reader.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -378,55 +377,35 @@ void testRolledPartsAreSelfConsistent()
             continue;
         }
 
-        const std::string path = (std::filesystem::path(dir.str()) / part.path).string();
+        // Through the spec validator rather than mcap's reader.
+        //
+        // This case originally opened each part with mcap::McapReader and
+        // compared its channel table by hand -- which was both weaker (it only
+        // looked at channels and schemas) and circular (it asked the same
+        // library that wrote the file whether the file was right).
+        // bag::validateMcapFile walks the raw bytes against the spec and checks
+        // everything, so this is now a strictly stronger assertion with one
+        // fewer dependency.
+        const bag::ValidationReport report =
+            bag::validateMcapFile((std::filesystem::path(dir.str()) / part.path).string());
 
-        mcap::McapReader mcap_reader;
-        if (!mcap_reader.open(path).ok())
+        if (!report.ok())
         {
-            expect(false, "part '" + part.path + "' opens");
-            all_consistent = false;
-            continue;
-        }
-
-        const mcap::Status summary =
-            mcap_reader.readSummary(mcap::ReadSummaryMethod::NoFallbackScan);
-        if (!summary.ok())
-        {
-            expect(false, "part '" + part.path + "' has a readable summary");
-            all_consistent = false;
-            mcap_reader.close();
-            continue;
-        }
-
-        // Exactly the two things `mcap doctor` complained about.
-        const auto& channels = mcap_reader.channels();
-        const auto& schemas = mcap_reader.schemas();
-
-        if (channels.size() != 3)
-        {
-            std::fprintf(stderr,
-                         "  '%s' declares %zu channels for 3 topics -- the channel table was "
-                         "carried over from the previous part\n",
-                         part.path.c_str(), channels.size());
-            all_consistent = false;
-        }
-
-        for (const auto& [id, channel] : channels)
-        {
-            if (channel->schemaId != 0 && schemas.find(channel->schemaId) == schemas.end())
+            for (const bag::Finding& finding : report.findings)
             {
-                std::fprintf(stderr, "  '%s' channel %u references absent schema %u\n",
-                             part.path.c_str(), static_cast<unsigned>(id),
-                             static_cast<unsigned>(channel->schemaId));
-                all_consistent = false;
+                if (finding.severity == bag::Finding::Severity::Error)
+                {
+                    std::fprintf(stderr, "  %s: %s\n", part.path.c_str(),
+                                 finding.message.c_str());
+                }
             }
+            all_consistent = false;
         }
-
-        mcap_reader.close();
     }
 
     expect(all_consistent,
-           "every rolled part's summary describes only records its own data section contains");
+           "every rolled part is valid MCAP in its own right -- summary and data agree, and "
+           "the indexes point where they claim");
 }
 
 // -------------------------------------------------------------------- seeking
