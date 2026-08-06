@@ -34,6 +34,10 @@ add_library(zenoh_pub_sub STATIC
     # Topic key charset rules and the mangling that packs a key into a
     # liveliness token's key expression. Pure string logic, no zenoh.
     topic_key.cpp
+
+    # Discovery via zenoh liveliness: topics appear the moment a node starts,
+    # without waiting for it to publish anything.
+    topic_directory.cpp
 )
 
 target_include_directories(zenoh_pub_sub PUBLIC
@@ -144,3 +148,16 @@ target_link_libraries(pub_sub_test_topic_key PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_topic_key LABELS pub_sub unit)
+
+# Discovery via liveliness, end to end. The claim it exists to pin: a topic
+# appears from the publisher alone, with no sample ever published -- which is
+# exactly what traffic-observing discovery cannot do. Needs a session: `net`.
+add_executable(pub_sub_test_topic_directory
+    test_topic_directory.cpp
+)
+
+target_link_libraries(pub_sub_test_topic_directory PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_topic_directory LABELS pub_sub net)

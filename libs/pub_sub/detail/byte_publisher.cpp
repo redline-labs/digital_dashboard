@@ -2,6 +2,7 @@
 
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/session_manager.h"
+#include "pub_sub/topic_key.h"
 
 #include <zenoh.hxx>
 
@@ -9,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -26,6 +28,22 @@ struct BytePublisher::Impl
     // no longer promises to keep. The schema name is read on every put().
     std::string keyexpr;
     std::string schema_name;
+
+    // Advertises this topic to discovery for as long as the publisher lives.
+    //
+    // A liveliness token is not a publication: nothing is ever sent on its key,
+    // and there is no periodic traffic. It is a key that exists while this
+    // process does. Subscribers watching the advertisement space see a PUT when
+    // it is declared and a DELETE when it is undeclared, when this process
+    // exits, or when they lose connectivity to it -- so a crashed node's topics
+    // disappear from a picker with no shutdown handling on our side.
+    //
+    // Declared here rather than in each node because keyexpr and schema_name
+    // are already both present at this one point, which is what makes the
+    // advertisement free of per-node code AND impossible to disagree with the
+    // encoding stamped on every sample: they are derived from the same two
+    // arguments.
+    std::optional<zenoh::LivelinessToken> advertisement;
 };
 
 BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_name) :
@@ -33,6 +51,19 @@ BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_n
 {
     impl_->keyexpr = std::string(keyexpr);
     impl_->schema_name = std::string(schema_name);
+
+    // Checked here, at the point a key enters the system, rather than assumed.
+    // Refusing outright is deliberate: every way a bad key can be wrong is a
+    // silent failure downstream. A '@' makes the topic invisible to every
+    // wildcard subscription including discovery; a '%' cannot be recovered from
+    // an advertisement; the characters zenoh rejects make declare_publisher()
+    // throw, which the catch below would swallow into a publisher that looks
+    // constructed and never sends anything. Better to say so once, loudly.
+    if (const std::string problem = topicKeyProblem(impl_->keyexpr); !problem.empty())
+    {
+        SPDLOG_CRITICAL("Refusing to publish on '{}': {}.", impl_->keyexpr, problem);
+        return;
+    }
 
     impl_->session = SessionManager::getOrCreate();
     if (!impl_->session)
@@ -47,6 +78,14 @@ BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_n
             impl_->session->declare_publisher(impl_->keyexpr));
         SPDLOG_DEBUG("Publisher active on '{}' for schema '{}'", impl_->keyexpr,
                      impl_->schema_name);
+
+        // Advertise only once the publisher itself is up. A token for a topic
+        // nothing can publish on would put an entry in every picker that can
+        // never produce a sample, which is worse than being absent.
+        const std::string advertised = advertiseKey(impl_->keyexpr, impl_->schema_name);
+        impl_->advertisement.emplace(
+            impl_->session->liveliness_declare_token(zenoh::KeyExpr(advertised)));
+        SPDLOG_DEBUG("Advertised '{}' as '{}'", impl_->keyexpr, advertised);
     }
     catch (const std::exception& e)
     {

@@ -1,6 +1,7 @@
 #include "pub_sub/detail/byte_subscriber.h"
 
 #include "pub_sub/session_manager.h"
+#include "pub_sub/topic_key.h"
 
 #include <zenoh.hxx>
 
@@ -55,9 +56,17 @@ ByteSubscriber::ByteSubscriber(const std::string& keyexpr, Handler on_sample) :
     impl_->keyexpr = keyexpr;
     impl_->handler = std::move(on_sample);
 
-    if (impl_->keyexpr.empty())
+    // Weaker than the publisher's rule, and deliberately so: a subscriber may
+    // wildcard, and topic discovery subscribes to "**", which is not a valid
+    // topic key. What this still catches is a key expression zenoh would reject
+    // outright -- without it, KeyExpr's constructor throws below and the catch
+    // reports "subscribe failed" without saying that the key itself was the
+    // problem.
+    if (!isValidSubscribeExpr(impl_->keyexpr))
     {
-        SPDLOG_ERROR("Refusing to subscribe to an empty key expression");
+        SPDLOG_CRITICAL("Refusing to subscribe to '{}': not a usable key expression. Segments may "
+                        "contain letters, digits, '_', '-', or be '*' or '**'.",
+                        impl_->keyexpr);
         return;
     }
 
