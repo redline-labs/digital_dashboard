@@ -66,6 +66,22 @@ class BagReader
     // which is exactly when the data matters most.
     const std::vector<std::string>& problems() const;
 
+    // The schema definition stored in the recording, for `schema_name` as the
+    // registry knows it ("EngineRpm").
+    //
+    // A serialized capnp CodeGeneratorRequest, loadable with
+    // capnp::SchemaLoader. This is what makes a bag self-describing: it is the
+    // schema as DATA, so a message can be decoded by something that does not
+    // link the generated headers this build was compiled with -- including a
+    // future build of ours whose schemas have moved on.
+    //
+    // Empty when the recording does not carry one, which is a real case: a
+    // message recorded from a publisher whose schema this build did not know is
+    // stored verbatim, with the bytes but no definition.
+    //
+    // Reads from the parts on first use.
+    std::span<const std::uint8_t> descriptorFor(std::string_view schema_name) const;
+
     // Visit every message with `start_ns <= log_time <= end_ns`, in log_time
     // order.
     //

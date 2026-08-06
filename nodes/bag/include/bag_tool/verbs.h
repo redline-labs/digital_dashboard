@@ -23,6 +23,11 @@ int runInfo(cli::Context& context);
 void addPlayOptions(cxxopts::Options& options);
 int runPlay(cli::Context& context);
 
+// Check that a recording is structurally valid MCAP, against the spec and
+// without mcap's own reader. This is `mcap doctor` with no dependency.
+void addVerifyOptions(cxxopts::Options& options);
+int runVerify(cli::Context& context);
+
 // Rebuild metadata.yaml from the parts on disk, for a recording whose recorder
 // was killed.
 void addReindexOptions(cxxopts::Options& options);

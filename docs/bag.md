@@ -44,7 +44,16 @@ split is invisible to anything reading a bag.
   `Statistics`. That is what makes `bag info` instant on a recording of any size
   and `bag play --start-offset` a seek rather than a scan.
 
-Files are ordinary MCAP and validate against Foxglove's own tooling:
+Files are ordinary MCAP. `bag verify` checks that without needing anything
+installed:
+
+```bash
+bag verify drives/2026-08-06                  # the whole directory
+bag verify drives/2026-08-06/..._0000.mcap    # or one part
+```
+
+They also open in Foxglove's own tooling, which is a useful cross-check but not
+something the build depends on:
 
 ```bash
 mcap info   drives/2026-08-06/2026-08-06_0000.mcap
@@ -170,6 +179,29 @@ inspect hz -k 'vehicle/**'   # twice their recorded rate
 
 Use `--prefix replay` to run a replay alongside live nodes without both
 publishing the same key.
+
+### `bag verify <dir|file>`
+
+Structural validation against the MCAP spec: magic, record framing, section
+ordering, chunk CRCs, and whether the summary describes records the data section
+actually contains. For a directory it also cross-checks metadata.yaml against
+the files -- a part on disk the index does not list, or a count that disagrees.
+
+Exit code 0 when clean, 1 otherwise, so it is usable from a script and from CI.
+
+**It deliberately re-implements an MCAP parser** (`libs/bag/validate.cpp`),
+walking the raw bytes with no reference to mcap's own code. That independence is
+the whole point: our reader is a thin layer over mcap's, which is lenient, so the
+two can agree with each other about a malformed file. They did --
+
+    Rolling a part emitted a summary listing schema and channel ids the data
+    section never contained. The round-trip, splitting and seeking tests all
+    passed, and `bag info` reported correct counts. The only thing that noticed
+    was `mcap doctor`, a Go binary that is not installed, not in CI, and not run
+    by habit.
+
+`bag verify` now catches that same file, with the same diagnosis, as part of
+`ctest -L bag`.
 
 ### `bag reindex <dir>`
 

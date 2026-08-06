@@ -10,6 +10,7 @@ add_executable(bag_tool
     record.cpp
     info.cpp
     play.cpp
+    verify.cpp
     reindex.cpp
 )
 

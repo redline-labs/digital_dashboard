@@ -12,6 +12,11 @@ add_library(bag STATIC
     writer.cpp
     reader.cpp
 
+    # An MCAP structural validator written from the spec, using no mcap code.
+    # It exists so this tree can check its own output without depending on
+    # Foxglove's Go CLI being installed -- see the header.
+    validate.cpp
+
     # mcap is header-only; this is the single TU that defines
     # MCAP_IMPLEMENTATION. See the file.
     mcap_impl.cpp
@@ -29,6 +34,10 @@ target_link_libraries(bag
     PRIVATE
         spdlog::spdlog
         config_codec
+        # validate.cpp decompresses chunks itself rather than going through
+        # mcap's reader, so it links the codecs directly.
+        zstd::libzstd
+        lz4::lz4
         # For pub_sub::schema_descriptor(): the schema as data, embedded in each
         # recording so a foreign consumer can decode it.
         schemas
@@ -82,3 +91,31 @@ target_link_libraries(bag_test_queue PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET bag_test_queue LABELS bag unit)
+
+# That what we write is structurally valid MCAP, checked against the spec rather
+# than through our own reader -- which is lenient enough to have round-tripped a
+# malformed file cleanly. Also the only coverage lz4 has.
+add_executable(bag_test_format
+    test_format.cpp
+)
+target_link_libraries(bag_test_format PRIVATE
+    bag
+    spdlog::spdlog
+)
+add_project_test(TARGET bag_test_format LABELS bag unit)
+
+# That a recorded message is DECODABLE from the recording alone -- the claim the
+# format was chosen for. Goes through capnp::SchemaLoader on the descriptor
+# stored in the file, deliberately not through the generated headers, which
+# would pass even if the recording carried no schema at all.
+add_executable(bag_test_decode
+    test_decode.cpp
+)
+target_link_libraries(bag_test_decode PRIVATE
+    bag
+    schemas
+    capnp
+    kj
+    spdlog::spdlog
+)
+add_project_test(TARGET bag_test_decode LABELS bag unit)

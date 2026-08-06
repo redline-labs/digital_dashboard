@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
+#include <map>
 #include <system_error>
 
 namespace bag
@@ -16,6 +17,77 @@ struct BagReader::Impl
     bag_metadata_t metadata;
     std::vector<std::string> problems;
     bool valid = false;
+
+    // Registry schema name -> the descriptor bytes stored in the recording.
+    // Filled on first use rather than in the constructor, so opening a bag to
+    // read its index does not pay for opening every part.
+    mutable std::map<std::string, std::vector<std::uint8_t>> descriptors;
+    mutable bool descriptors_loaded = false;
+
+    void loadDescriptors() const
+    {
+        if (descriptors_loaded)
+        {
+            return;
+        }
+        descriptors_loaded = true;
+
+        for (const bag_part_t& part : metadata.parts)
+        {
+            const std::string path =
+                (std::filesystem::path(directory) / part.path).string();
+
+            std::error_code error;
+            if (!std::filesystem::exists(path, error))
+            {
+                continue;
+            }
+
+            mcap::McapReader reader;
+            if (!reader.open(path).ok())
+            {
+                continue;
+            }
+
+            // AllowFallbackScan so a torn part still yields its schemas -- the
+            // definitions live in the data section, so a missing summary is no
+            // reason to lose them.
+            (void)reader.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan,
+                                     [](const mcap::Status&) {});
+
+            // Channels carry our registry name; the Schema record carries
+            // capnp's qualified one. Going through the channel is what lets a
+            // caller ask by the name the rest of the tree uses.
+            for (const auto& [channel_id, channel] : reader.channels())
+            {
+                const auto named = channel->metadata.find("redline/schema");
+                if (named == channel->metadata.end() || channel->schemaId == 0)
+                {
+                    continue;
+                }
+                if (descriptors.count(named->second) != 0)
+                {
+                    continue;
+                }
+
+                const auto& schemas = reader.schemas();
+                const auto found = schemas.find(channel->schemaId);
+                if (found == schemas.end() || found->second->data.empty())
+                {
+                    continue;
+                }
+
+                const auto& data = found->second->data;
+                descriptors.emplace(named->second,
+                                    std::vector<std::uint8_t>(
+                                        reinterpret_cast<const std::uint8_t*>(data.data()),
+                                        reinterpret_cast<const std::uint8_t*>(data.data() +
+                                                                              data.size())));
+            }
+
+            reader.close();
+        }
+    }
 };
 
 BagReader::BagReader(std::string directory) : impl_(std::make_unique<Impl>())
@@ -78,6 +150,18 @@ const bag_metadata_t& BagReader::metadata() const
 const std::vector<std::string>& BagReader::problems() const
 {
     return impl_->problems;
+}
+
+std::span<const std::uint8_t> BagReader::descriptorFor(std::string_view schema_name) const
+{
+    impl_->loadDescriptors();
+
+    const auto found = impl_->descriptors.find(std::string(schema_name));
+    if (found == impl_->descriptors.end())
+    {
+        return {};
+    }
+    return found->second;
 }
 
 bool BagReader::forEach(std::uint64_t start_ns, std::uint64_t end_ns,
