@@ -167,6 +167,21 @@ void testAProducerAndConsumerOnDifferentThreadsLoseNothing()
 
     while (received < kTotal)
     {
+        // Read BEFORE draining, and this ordering is the whole correctness of
+        // the loop. Checking it afterwards makes the exit condition a
+        // time-of-check race against the producer: the drain can come back
+        // empty, the producer can then push its last batch and set the flag,
+        // and the stale "was empty" combines with the fresh "is done" to
+        // declare samples lost that are sitting in the ring. That is a flaky
+        // failure roughly one run in fifty, and it was a bug in this test
+        // rather than in StagingRing.
+        //
+        // Read first and a `true` is a real guarantee: the producer had
+        // finished every push before this drain began, so the drain observed
+        // all of them (its acquire on head_ pairs with the producer's release).
+        // Coming up short after that is genuine loss.
+        const bool producer_finished = producer_done.load(std::memory_order_acquire);
+
         out.clear();
         ring.drain(out);
         for (const scope::Sample& sample : out)
@@ -178,10 +193,9 @@ void testAProducerAndConsumerOnDifferentThreadsLoseNothing()
             expected_next += 1.0;
             ++received;
         }
-        if (out.empty() && producer_done.load(std::memory_order_acquire) && received < kTotal)
+
+        if (producer_finished && received < kTotal && out.empty())
         {
-            // Producer finished and the ring is empty but we are short: samples
-            // went missing, which is the failure this test exists to catch.
             break;
         }
     }
