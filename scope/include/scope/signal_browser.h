@@ -3,9 +3,14 @@
 
 #include "scope/panel.h"
 
+#include "pub_sub/topic_directory.h"
+
 #include <QString>
+#include <QTimer>
 #include <QWidget>
 
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -29,16 +34,30 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out);
 
 // What is on the bus, as a topic -> field tree you can drag out of.
 //
-// DISCOVERY IS OBSERVATION, NOT QUERY, and the UI has to say so. zenoh has no
-// retained messages, so the only way to know a topic exists is to see a sample
-// of it: pub_sub::observeTopics subscribes for a window and reports what
-// arrived. An empty result therefore means "nothing published in the last N
-// seconds", never "nothing exists", and a browser that renders those the same
-// way tells the user the bus is dead when it is merely idle.
+// TWO SOURCES, UNIONED, and the difference matters.
 //
-// For the same reason a rescan MERGES into the tree rather than replacing it.
-// A topic published every ten seconds would otherwise flicker in and out of the
-// list depending on whether its sample happened to land inside the window.
+// The primary one is pub_sub::TopicDirectory: every publisher declares a
+// liveliness token when it is constructed, so a topic appears here the moment
+// its node starts, whether or not it has ever published. No rescan, no polling,
+// no waiting for traffic. That is what makes topics "just appear".
+//
+// The secondary one is pub_sub::observeTopics, which listens for a window and
+// reports what arrived. It cannot see a topic that has said nothing -- a silent
+// topic is indistinguishable from an absent one -- so it can never replace the
+// directory. It is kept for two things the directory cannot give: publishers
+// that bypass BytePublisher and so advertise nothing, and the live sample rate.
+//
+// Rows are therefore in one of three states, and the tree says which:
+//
+//   advertised + seen   a node is up and data is flowing
+//   advertised          a node is up but has published nothing yet, or has
+//                       stopped -- the unplugged-CAN-adapter case
+//   seen                traffic from something that does not advertise
+//
+// NOTHING IS EVER EVICTED, only greyed. A row the user may have bound must not
+// vanish underneath them, and a liveliness DELETE means "unreachable from here"
+// rather than "gone" -- a network partition and a crash are indistinguishable,
+// so removing the row would claim more than zenoh actually told us.
 class SignalBrowser : public QWidget
 {
     Q_OBJECT
@@ -47,9 +66,10 @@ class SignalBrowser : public QWidget
     explicit SignalBrowser(DataSource& source, QWidget* parent = nullptr);
     ~SignalBrowser() override;
 
-    // Subscribe for `window_ms` and merge what arrives into the tree. Blocks
-    // for that long, so it is called from a button or a timer, never from a
-    // paint.
+    // Subscribe for `window_ms` and merge observed traffic into the tree.
+    // Blocks for that long, so it is called from a button, never from a paint.
+    // Only needed for rates and for publishers that do not advertise; the
+    // directory populates the tree on its own.
     void rescan(int window_ms = 1200);
 
     // Everything currently known, flattened: one entry per topic plus one per
@@ -73,7 +93,16 @@ class SignalBrowser : public QWidget
 
   private:
     void applyFilter();
-    void addTopic(const QString& key, const QString& schema, double hz);
+
+    // Drains the directory into the tree. Called on a timer, and cheap when
+    // nothing has changed because the directory's revision has not moved.
+    void syncFromDirectory();
+    void updateStatus();
+
+    // `hz < 0` means "not observed", which is how an advertised-but-silent
+    // topic is added.
+    void addTopic(const QString& key, const QString& schema, double hz, bool advertised);
+    void updateRowText(QTreeWidgetItem* topic);
     void onItemActivated(QTreeWidgetItem* item, int column);
 
     DataSource& source_;
@@ -82,6 +111,12 @@ class SignalBrowser : public QWidget
     QPushButton* rescan_button_ = nullptr;
     QTreeWidget* tree_ = nullptr;
     QLabel* status_ = nullptr;
+
+    // Watches the advertisement space for this browser's lifetime. Declared
+    // before the tree it writes into so it is destroyed after it.
+    std::unique_ptr<pub_sub::TopicDirectory> directory_;
+    QTimer* directory_timer_ = nullptr;
+    std::uint64_t last_directory_revision_ = 0;
 
     bool ever_scanned_ = false;
 };

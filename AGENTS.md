@@ -114,6 +114,16 @@ discovery seeing only live traffic, and what `accepted: false` and
   `application/capnp;<SchemaName>`. Do not add an out-of-band registry: zenoh has
   no retained messages, so self-description per sample is what lets a
   late-joining tool identify a stream from the first message it sees.
+- **Topics also advertise themselves** via a zenoh liveliness token declared in
+  `detail::BytePublisher`, so a picker can list a topic before it has published
+  anything. That is additive, not a replacement: the per-sample encoding stays
+  authoritative, and both are derived from the same constructor arguments so
+  they cannot disagree. See `docs/scope.md`.
+- **Zenoh keys are `[A-Za-z0-9_-/]`, enforced.** `%` is the mangling separator,
+  `@` makes a segment verbatim and therefore invisible to every wildcard
+  subscription, and `* $ ? #` are rejected by zenoh outright. Each fails
+  silently, so the charset is checked in the editor, at config load, and in the
+  publisher. Use `pub_sub::topicKeyProblem()` rather than writing another check.
 - **Decoding against the wrong capnp schema is silent** — field offsets just land
   on different bytes and you get a plausible wrong number, not an exception.
   That is why publishers stamp the schema and subscribers check it.

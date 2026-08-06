@@ -193,4 +193,81 @@ bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::str
     return isValidTopicKey(topic);
 }
 
+namespace
+{
+
+bool namesATopicKey(const std::string& field)
+{
+    return field == "zenoh_key" || (field.size() > 10 && field.ends_with("_zenoh_key"));
+}
+
+// Depth-first, building the dotted/indexed path as it goes so a report can name
+// exactly which field to fix.
+void collectBadKeys(const YAML::Node& node,
+                    const std::string& path,
+                    std::vector<TopicKeyIssue>& out)
+{
+    if (node.IsMap())
+    {
+        for (const auto& entry : node)
+        {
+            std::string name;
+            try
+            {
+                name = entry.first.as<std::string>();
+            }
+            catch (const YAML::Exception&)
+            {
+                continue;  // A non-scalar key. Not ours to complain about.
+            }
+
+            const std::string child_path = path.empty() ? name : path + "." + name;
+
+            if (namesATopicKey(name) && entry.second.IsScalar())
+            {
+                std::string value;
+                try
+                {
+                    value = entry.second.as<std::string>();
+                }
+                catch (const YAML::Exception&)
+                {
+                    continue;  // Reported by the type check in the generic validator.
+                }
+
+                // Empty is how an unbound widget is spelled, and several
+                // shipped configs have one.
+                if (!value.empty())
+                {
+                    if (const std::string problem = topicKeyProblem(value); !problem.empty())
+                    {
+                        out.push_back({child_path, value, problem});
+                    }
+                }
+                continue;
+            }
+
+            collectBadKeys(entry.second, child_path, out);
+        }
+        return;
+    }
+
+    if (node.IsSequence())
+    {
+        for (std::size_t i = 0; i < node.size(); ++i)
+        {
+            collectBadKeys(node[i], path + "[" + std::to_string(i) + "]", out);
+        }
+    }
+}
+
+}  // namespace
+
+std::vector<TopicKeyIssue> findBadTopicKeys(const YAML::Node& root)
+{
+    std::vector<TopicKeyIssue> out;
+    collectBadKeys(root, "", out);
+    return out;
+}
+
 }  // namespace pub_sub

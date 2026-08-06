@@ -117,19 +117,81 @@ caches would be the grid, and with autoscale on — the default — the vertical
 range changes whenever the visible data does, so the cache would be invalid
 almost every frame. The reasoning is in the panel header so nobody adds it back.
 
-## Discovery is observation, not query
+## Discovery: advertised, with observation on top
 
-zenoh has no retained messages, so the only way to know a topic exists is to see
-a sample of it. `pub_sub::observeTopics` subscribes for a window and reports what
-arrived.
+Topics appear in the picker **as soon as a node starts**, whether or not it has
+ever published. No rescan button, no polling for traffic.
 
-Everything downstream has to respect that. An empty browser means "nothing
-published in the last N seconds", never "no topics" — and the UI says exactly
-that. A rescan **merges** rather than replacing, or a topic published every ten
-seconds would flicker in and out of the list depending on whether its sample
-landed inside the window. `scope.browser` repeats the caveat in every reply.
+Every publisher declares a zenoh **liveliness token** when it is constructed
+(`detail::BytePublisher`). A token carries no payload -- the key expression is
+the whole message -- and nothing is ever sent on it, so this adds no periodic
+traffic. It is a key that exists while its process does. `pub_sub::TopicDirectory`
+watches that space with `history = true`, which replays tokens declared before it
+subscribed, so a browser opened after the nodes still sees all of them.
 
-If a signal seems missing, try a longer window before concluding anything.
+It goes in `BytePublisher` rather than in each node because the key and the
+schema are already both present at that one constructor. Every publisher in the
+tree therefore advertises with no node changes, and the advertisement cannot
+drift from the `application/capnp;<Schema>` encoding stamped on each sample --
+both derive from the same two arguments. The per-sample encoding stays
+authoritative; this is not a second source of truth.
+
+**Advertisement cannot replace observation, and does not.** A liveliness token
+says a publisher exists, not that data is flowing -- a CAN bridge with an
+unplugged adapter still advertises. And a publisher that bypasses `BytePublisher`
+advertises nothing at all. So `pub_sub::observeTopics` is still there, and the
+browser unions the two:
+
+| row shows | meaning |
+|---|---|
+| `27.5 Hz` | advertised, and traffic measured |
+| `advertised` | a node is up but has published nothing yet |
+| `27.5 Hz (last seen)`, greyed | the advertiser went away, or never advertised; the rate is historical |
+| `unreachable`, greyed | was advertised, now is not |
+
+**Rows are never evicted, only greyed.** A row the user may have bound must not
+vanish, and a liveliness DELETE means *unreachable from here* rather than *gone*
+-- a network partition and a crash are indistinguishable. Reachability decides
+the colour and a measured rate never overrides it; the reverse left a dead topic
+reading "27.5 Hz" in normal colour, a stale number presented as a live one.
+
+## Topic key rules
+
+The advertisement key is `@redline/adv/<schema>/<mangled topic>`, and both of
+those choices are load-bearing.
+
+The **leading `@`** is what keeps advertisements out of the `**` subscriptions
+that topic observation uses. Zenoh treats a segment beginning with `@` as
+*verbatim*: no wildcard, not even `**`, will match it. Without it every `**`
+subscriber in the tree would receive our own advertisements and report them as
+topics. Zenoh's admin space (`@/...`) and ROS 2's liveliness space
+(`@ros2_lv/...`) rely on the same property.
+
+The **mangling** replaces `/` with `%`, following ROS 2's `rmw_zenoh`, so a topic
+name occupies exactly one key segment. Without it, a name spread across several
+segments and neither field could be wildcarded.
+
+That only works while `%` cannot appear in a topic name, so the charset is
+**enforced** rather than assumed -- `[A-Za-z0-9_-/]`, no leading or trailing `/`,
+no empty segments. Four characters are called out individually because each
+fails *quietly*:
+
+| character | what would happen |
+|---|---|
+| `%` | demangles into a different topic name; the picker offers a signal that can never bind |
+| `@` | the topic becomes invisible to every wildcard subscription, including discovery |
+| `* $ ? #` | zenoh rejects the key, so the publisher never declares and silently sends nothing |
+
+The rule is checked at all three points a key enters the system:
+
+- the **editor's properties panel** refuses it as you type -- field turns red,
+  the reason appears under the form, Apply is disabled;
+- **config load** (dashboard and scope) reports it as an error with the field
+  path, e.g. `widgets[0].config.zenoh_key`, and refuses to load;
+- **`BytePublisher`** refuses to come up at all.
+
+Subscribers get a weaker rule, since they may wildcard and discovery itself
+subscribes to `**`.
 
 ## Workspaces
 

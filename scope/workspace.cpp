@@ -1,6 +1,7 @@
 #include "scope/workspace.h"
 
 #include "config_codec/config_validation.h"
+#include "pub_sub/topic_key.h"
 
 #include <spdlog/spdlog.h>
 
@@ -85,6 +86,18 @@ std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root)
                               "A panel with no 'id' cannot be matched to the saved dock "
                               "arrangement, so it will be placed by default."});
         }
+    }
+
+    // Refused outright rather than warned about. Every way a key can be wrong
+    // is a silent failure downstream -- '@' makes the topic invisible to every
+    // wildcard subscription including discovery, '%' cannot be recovered from
+    // an advertisement, and the characters zenoh rejects make the publisher
+    // fail to declare and then quietly send nothing. A config that names one
+    // does not do what it says, so it does not load.
+    for (const pub_sub::TopicKeyIssue& bad : pub_sub::findBadTopicKeys(root))
+    {
+        issues.push_back({config_codec::Issue::Severity::error, bad.path,
+                          "'" + bad.key + "' is not a usable zenoh key: " + bad.problem});
     }
 
     return issues;

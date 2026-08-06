@@ -3,6 +3,9 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include <yaml-cpp/yaml.h>
 
 namespace pub_sub
 {
@@ -106,6 +109,29 @@ std::string advertiseKey(std::string_view topic, std::string_view schema);
 // does not recognise -- a newer build may advertise a longer form, and skipping
 // it is better than guessing.
 bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::string& schema);
+
+// One bad key found in a config tree: where it is, and what is wrong with it.
+struct TopicKeyIssue
+{
+    std::string path;     // e.g. "widgets[3].config.zenoh_key"
+    std::string key;      // the offending value
+    std::string problem;  // from topicKeyProblem()
+};
+
+// Walks a parsed YAML tree and reports every zenoh key that would be refused.
+//
+// Lives here rather than in config_codec's validator because that one is
+// deliberately free of any dependency beyond reflection and yaml -- it should
+// not learn what a zenoh key is. Each application converts these into its own
+// Issue type, so a bad key is reported with a field path alongside every other
+// config problem rather than surfacing much later as a publisher that silently
+// refused to start.
+//
+// Keys are recognised by field name, the same convention the editor's
+// properties panel uses: `zenoh_key`, or a prefixed variant such as
+// `odometer_zenoh_key` where a widget binds two streams. An empty value is
+// skipped -- that is how an unbound widget is spelled.
+std::vector<TopicKeyIssue> findBadTopicKeys(const YAML::Node& root);
 
 }  // namespace pub_sub
 
