@@ -22,6 +22,9 @@ add_library(scope_core STATIC
     sample_ring.cpp
     decimate.cpp
     live_zenoh_source.cpp
+    recorded_source.cpp
+    capture_buffer.cpp
+    scope_recorder.cpp
     time_base.cpp
     panel_registry.cpp
     signal_browser.cpp
@@ -64,6 +67,13 @@ target_link_libraries(scope_core PUBLIC
 
     agent_control
     zenoh_pub_sub
+
+    # Reading a recording. The DataSource seam was designed for this: scope
+    # links the library rather than shelling out to the `bag` binary, so a
+    # recorded source is a DataSource implementation and nothing above it
+    # changes.
+    bag
+
     config_codec
     qt_helpers
     reflection
@@ -133,6 +143,44 @@ target_link_libraries(scope_test_workspace PRIVATE
 )
 
 add_project_test(TARGET scope_test_workspace LABELS scope unit)
+
+# Scrubbing a recording, over a stub provider with synthetic messages.
+#
+# The load-bearing case is the BACKWARDS seek: SampleHistory::lowerBound() is a
+# binary search that assumes non-decreasing time and cannot detect when it is
+# wrong, so a buffer left holding samples from two scrub positions produces a
+# plausible wrong index and every reading taken from it is silently off.
+# No Qt widgets and no zenoh, so this is a plain unit test.
+add_executable(scope_test_recorded_source
+    tests/test_recorded_source.cpp
+)
+
+target_link_libraries(scope_test_recorded_source PRIVATE
+    scope_core
+    # A real capnp payload, so the evaluator decodes it for real -- a
+    # hand-rolled buffer would exercise the plumbing and none of the decoding.
+    schemas
+    capnp
+    kj
+)
+
+add_project_test(TARGET scope_test_recorded_source LABELS scope unit)
+
+# The in-memory capture's bounds and its eviction accounting.
+#
+# Both bounds matter and for different workloads: a video-carrying bus is
+# OOM-killed within minutes under a time-only cap, and a telemetry-only one
+# grows without limit under a byte-only cap. A buffer that honoured whichever
+# bound its author expected would fail on the other, silently, in production.
+add_executable(scope_test_capture_buffer
+    tests/test_capture_buffer.cpp
+)
+
+target_link_libraries(scope_test_capture_buffer PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_capture_buffer LABELS scope unit)
 
 # The window and panel layer against a real widget tree, so `gui` and offscreen.
 # Uses a stub DataSource rather than the live zenoh one: everything here is

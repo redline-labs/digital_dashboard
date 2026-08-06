@@ -317,6 +317,93 @@ void testSplitting()
     expect(contents_match, "no message is altered or duplicated at a seam");
 }
 
+// An in-progress recording is readable, because the index is written on every
+// roll rather than only at close().
+//
+// The whole reason parts are rolled is that a recorder gets killed -- and until
+// this held, a recording that had not been closed cleanly had no metadata.yaml
+// at all. BagReader reports such a directory invalid, so the parts that closed
+// perfectly were unreadable too, and `bag info` on a running recording said the
+// bag did not exist. Both `metadata.h` and `rebuild.h` already documented the
+// behaviour asserted here; only the code disagreed.
+//
+// Mutation-check: delete the saveMetadata() call from Impl::roll() and this
+// fails while nothing else does -- which is exactly how it got in.
+void testIndexIsWrittenOnRoll()
+{
+    const TempDir dir("inprogress");
+    constexpr int kCount = 400;
+
+    bag::WriterOptions options;
+    options.name = "inprogress";
+    options.compression = "none";
+    options.chunk_bytes = 4 * 1024;
+    options.max_part_bytes = 64 * 1024;
+
+    // NOT scoped: the writer stays open for the whole test, which is the case
+    // being tested. Nothing here calls close().
+    bag::BagWriter writer(dir.str(), options);
+    expect(writer.isValid(), "the writer opens");
+
+    for (int i = 0; i < kCount; ++i)
+    {
+        writer.write("vehicle/engine/rpm", "EngineRpm", payloadFor(i, 1024),
+                     kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+    }
+
+    bag::BagReader reader(dir.str());
+    expect(reader.isValid(), "a recording still being written reads back");
+    if (!reader.isValid())
+    {
+        return;
+    }
+
+    expect(!reader.metadata().parts.empty(), "the index names the parts that have closed");
+    expect(!reader.metadata().topics.empty(),
+           "and the topics, so `bag info` on a running recording says what is in it");
+
+    // Every part the index names is finished, so every one has a summary. The
+    // part currently being written is deliberately absent: it has no summary
+    // yet and nothing should be told otherwise.
+    std::uint64_t indexed = 0;
+    for (const bag::bag_part_t& part : reader.metadata().parts)
+    {
+        expect(part.complete, "part '" + part.path + "' is complete");
+        indexed += part.message_count;
+    }
+
+    expect(indexed > 0 && indexed < kCount,
+           "the index covers the closed parts and not the one still open (" +
+               std::to_string(indexed) + " of " + std::to_string(kCount) + ")");
+
+    std::uint64_t seen = 0;
+    bool ordered = true;
+    std::uint64_t last = 0;
+    reader.forEach(
+        [&](const bag::BagMessage& message)
+        {
+            if (message.log_time_ns < last)
+            {
+                ordered = false;
+            }
+            last = message.log_time_ns;
+            ++seen;
+            return true;
+        });
+
+    expect(seen == indexed, "and every message in them can be read (" + std::to_string(seen) +
+                                " of " + std::to_string(indexed) + ")");
+    expect(ordered, "in order");
+
+    // Closing afterwards still produces a complete index rather than one that
+    // stopped at the last roll.
+    expect(writer.close(), "the writer still closes cleanly");
+
+    bag::BagReader after(dir.str());
+    expect(after.isValid() && after.metadata().message_count == kCount,
+           "and the finished recording counts every message");
+}
+
 // THE REGRESSION. A rolled part must be a self-consistent MCAP file.
 //
 // mcap::McapWriter deliberately RETAINS its schemas and channels across
@@ -575,6 +662,7 @@ int main()
     testRoundTrip();
     testUnstampedAreCounted();
     testSplitting();
+    testIndexIsWrittenOnRoll();
     testRolledPartsAreSelfConsistent();
     testSeeking();
     testSilentTopicsAreRecorded();

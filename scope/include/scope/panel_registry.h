@@ -110,8 +110,14 @@ class DataSource;
 // Runs the ADL-found validate() hook before construction, exactly as
 // dashboard's widget_factory does, so a panel never sees a config the loader
 // would have clamped.
+//
+// `history_seconds` is the workspace's retention, passed at construction rather
+// than set afterwards because a panel builds its buffers while binding and
+// changing it later throws away whatever they had already collected.
 std::unique_ptr<Panel> createPanel(const panel_config_variant_t& config,
                                    DataSource& source,
+                                   double history_seconds =
+                                       TimeSeriesPanel::kDefaultHistorySeconds,
                                    QWidget* parent = nullptr);
 
 // The panel type a config variant holds, for saving a workspace back out.

@@ -4,6 +4,8 @@
 #include "scope/data_source.h"
 #include "scope/live_zenoh_source.h"
 #include "scope/panel.h"
+#include "scope/recorded_source.h"
+#include "scope/scope_recorder.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -11,6 +13,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QDateTime>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -19,7 +24,9 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMimeData>
+#include <QSlider>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -27,6 +34,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace scope
 {
@@ -130,6 +138,16 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
     source_ = std::make_unique<LiveZenohSource>();
     time_base_ = std::make_unique<TimeBase>(*source_);
 
+    // Capture starts with the window and runs for its whole life. Everything on
+    // the bus, with no exclusions: the point is that a signal nobody thought to
+    // plot can still be added afterwards, and a filter taken from the panels
+    // would only ever record what was already on screen.
+    const scope_workspace_t defaults;
+    capture_max_bytes_ = defaults.max_capture_bytes;
+    capture_max_seconds_ = defaults.max_capture_seconds;
+    recorder_ = std::make_unique<ScopeRecorder>(static_cast<std::size_t>(capture_max_bytes_),
+                                                capture_max_seconds_);
+
     empty_hint_ = new QLabel(
         tr("No panels yet.\n\nAdd one from Panels ▸ Add, or press Ctrl+N."), this);
     empty_hint_->setObjectName("empty_hint");
@@ -163,8 +181,19 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
                 statusBar()->showMessage(tr("No panel accepted that signal."), 3000);
             });
 
+    // The window length and the render rate are both saved in the workspace, so
+    // changing either means the file on disk no longer describes the window.
+    connect(time_base_.get(), &TimeBase::changed, this, [this]() { markDirty(); });
+
     buildMenuBar();
     buildTransportBar();
+    updateWindowTitle();
+
+    // An empty window is not dirty: there is nothing in it worth keeping, and
+    // prompting on the way out of one would train the user to dismiss the
+    // prompt that matters.
+    markClean();
+
     statusBar()->showMessage(tr("Ready"));
 }
 
@@ -184,6 +213,39 @@ ScopeWindow::~ScopeWindow()
 DataSource& ScopeWindow::source()
 {
     return *source_;
+}
+
+void ScopeWindow::setSource(std::unique_ptr<DataSource> next)
+{
+    if (!next || next.get() == source_.get())
+    {
+        return;
+    }
+
+    DataSource& to = *next;
+
+    // ORDER IS THE WHOLE THING HERE.
+    //
+    // Panels first, while the OLD source is still alive: rebindTo() releases
+    // every handle against it before repointing, and a handle means nothing to
+    // a source that did not issue it. Moving the unique_ptr first would destroy
+    // the old source with its subscriptions still registered -- and for the
+    // live source that means zenoh callbacks still running against buffers
+    // nobody will drain.
+    for (PanelEntry& entry : panels_)
+    {
+        entry.panel->rebindTo(to);
+    }
+
+    browser_->setSource(to);
+    time_base_->setSource(to);
+
+    // Only now. This is where the old source is destroyed, and by here nothing
+    // holds a handle on it.
+    source_ = std::move(next);
+
+    applySourceCaps();
+    emit sourceChanged();
 }
 
 // ---------------------------------------------------------------------- panels
@@ -214,7 +276,7 @@ QString ScopeWindow::addPanel(panel_type_t type, const QString& id)
 
 QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, const QString& id)
 {
-    std::unique_ptr<Panel> panel = createPanel(config, *source_, nullptr);
+    std::unique_ptr<Panel> panel = createPanel(config, *source_, history_seconds_, nullptr);
     if (!panel)
     {
         SPDLOG_WARN("Refusing to add a panel of unknown type.");
@@ -255,8 +317,14 @@ QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, co
     connect(entry.panel, &QWidget::customContextMenuRequested, this,
             [this, panel_id](const QPoint& at) { showPanelMenu(panel_id, at); });
 
+    // Anything that changes what a workspace would save makes it dirty. The
+    // panel says so itself rather than the window guessing from the several
+    // routes in -- a drop, the context menu, the agent interface, the dialog.
+    connect(entry.panel, &Panel::configChanged, this, [this]() { markDirty(); });
+
     panels_.push_back(entry);
     updateEmptyHint();
+    markDirty();
     return panel_id;
 }
 
@@ -274,6 +342,7 @@ bool ScopeWindow::removePanel(const QString& id)
     delete found->dock;
     panels_.erase(found);
     updateEmptyHint();
+    markDirty();
     return true;
 }
 
@@ -378,7 +447,14 @@ bool ScopeWindow::restoreDockState(const QByteArray& state)
 scope_workspace_t ScopeWindow::toWorkspace() const
 {
     scope_workspace_t workspace;
-    workspace.name = windowTitle().toStdString();
+
+    // The stored name, not windowTitle(): the title carries the dirty marker,
+    // so reading it back would make "my workspace *" the saved name after one
+    // edit and "my workspace * *" after the next.
+    workspace.name = workspace_name_.toStdString();
+    workspace.history_seconds = history_seconds_;
+    workspace.max_capture_bytes = capture_max_bytes_;
+    workspace.max_capture_seconds = capture_max_seconds_;
     workspace.window_seconds = time_base_->windowSeconds();
     workspace.render_rate_hz = static_cast<uint16_t>(time_base_->renderRateHz());
 
@@ -407,6 +483,7 @@ bool ScopeWindow::saveWorkspace(const QString& path)
         return false;
     }
     workspace_path_ = path;
+    markClean();
     statusBar()->showMessage(tr("Saved %1").arg(path), 3000);
     return true;
 }
@@ -424,6 +501,21 @@ bool ScopeWindow::loadWorkspace(const QString& path)
     while (!panels_.empty())
     {
         removePanel(panels_.front().id);
+    }
+
+    // BEFORE the panels, because a panel builds its buffers while binding and
+    // retention cannot be changed afterwards without discarding them.
+    setHistorySeconds(workspace->history_seconds);
+
+    // In place on the existing buffer, not by rebuilding the recorder: capture
+    // started with the window, so a rebuild would discard everything recorded
+    // before the workspace was opened.
+    capture_max_bytes_ = workspace->max_capture_bytes;
+    capture_max_seconds_ = workspace->max_capture_seconds;
+    if (recorder_)
+    {
+        recorder_->buffer().setBounds(static_cast<std::size_t>(capture_max_bytes_),
+                                      capture_max_seconds_);
     }
 
     time_base_->setWindowSeconds(workspace->window_seconds);
@@ -460,10 +552,358 @@ bool ScopeWindow::loadWorkspace(const QString& path)
     }
 
     workspace_path_ = path;
-    setWindowTitle(workspace->name.empty() ? QStringLiteral("Redline Scope")
-                                           : QString::fromStdString(workspace->name));
+    workspace_name_ = QString::fromStdString(workspace->name);
+
+    // A freshly loaded workspace is clean, whatever the adds above marked. Same
+    // rule as the editor's loadConfigFrom(): the window now matches the file.
+    markClean();
+
     statusBar()->showMessage(tr("Loaded %1").arg(path), 3000);
     return true;
+}
+
+// ------------------------------------------------------------------- recordings
+
+bool ScopeWindow::isReviewing() const
+{
+    return !source_->caps().live;
+}
+
+bool ScopeWindow::openRecording(const QString& directory)
+{
+    auto provider = std::make_unique<BagFileProvider>(directory.toStdString());
+
+    // Checked BEFORE anything is swapped. A failed open that had already
+    // replaced the source would drop the window into a review of nothing, which
+    // looks exactly like a recording that turned out to be empty.
+    if (!provider->isValid())
+    {
+        SPDLOG_ERROR("'{}' is not a readable bag directory.", directory.toStdString());
+        statusBar()->showMessage(
+            tr("%1 is not a readable recording. `bag reindex` can rebuild a missing index.")
+                .arg(directory),
+            8000);
+        return false;
+    }
+
+    // Reported, not swallowed. A torn part or a non-zero drop count changes how
+    // the data should be read: a gap in a trace means something quite different
+    // when the recorder is known to have dropped messages, and it is already
+    // computed by the time the bag is open.
+    const std::vector<std::string> problems = provider->problems();
+
+    const auto [t_begin, t_end] = provider->spanNanos();
+    const double duration = t_end > t_begin ? static_cast<double>(t_end - t_begin) / 1e9 : 0.0;
+
+    setSource(std::make_unique<RecordedSource>(std::move(provider)));
+
+    // How many of the workspace's signals this recording does not contain.
+    // Surfaced rather than left as empty traces: an unbound signal and a signal
+    // that was recorded but never published draw identically, and only one of
+    // them is worth chasing.
+    std::size_t unbound = 0;
+    std::size_t total = 0;
+    for (const PanelEntry& entry : panels_)
+    {
+        if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
+        {
+            for (const TimeSeriesPanel::SignalStats& stats : plot->stats())
+            {
+                ++total;
+                if (!stats.bound)
+                {
+                    ++unbound;
+                }
+            }
+        }
+    }
+
+    QString summary = tr("Reviewing %1 (%2 s)").arg(directory).arg(duration, 0, 'f', 1);
+    if (unbound > 0)
+    {
+        summary += tr(" -- %1 of %2 signals are not in this recording")
+                       .arg(unbound)
+                       .arg(total);
+    }
+    if (!problems.empty())
+    {
+        summary += tr(" -- %n problem(s) with the recording", nullptr,
+                      static_cast<int>(problems.size()));
+        for (const std::string& problem : problems)
+        {
+            SPDLOG_WARN("{}: {}", directory.toStdString(), problem);
+        }
+    }
+
+    // The status BAR, not the transport label: that one is owned by
+    // updateTransport() and rewritten every frame with the capture's state.
+    statusBar()->showMessage(summary, 0);
+
+    SPDLOG_INFO("Reviewing '{}': {:.1f}s, {} problem(s).", directory.toStdString(), duration,
+                problems.size());
+    return true;
+}
+
+bool ScopeWindow::reviewCapture()
+{
+    if (!recorder_)
+    {
+        return false;
+    }
+
+    const CaptureBuffer& buffer = recorder_->buffer();
+    if (buffer.size() == 0)
+    {
+        SPDLOG_WARN("Nothing has been captured yet.");
+        statusBar()->showMessage(
+            tr("Nothing captured yet -- no publisher has sent anything since scope started."),
+            5000);
+        return false;
+    }
+
+    // Capture KEEPS RUNNING. Entering review does not stop it: deciding to look
+    // at something must not cost you everything that happens while you look.
+    // The consequence is that the provider's span moves under the scrubber,
+    // which is why updateTransport() re-reads the range every frame and why the
+    // retained span and evicted count are on screen.
+    setSource(std::make_unique<RecordedSource>(std::make_unique<CaptureProvider>(buffer)));
+
+    statusBar()->showMessage(tr("Reviewing the capture (%1 messages, %2 s retained)")
+                                 .arg(buffer.size())
+                                 .arg(buffer.retainedSpanSeconds(), 0, 'f', 1),
+                             0);
+    return true;
+}
+
+bool ScopeWindow::saveCaptureTo(const QString& directory)
+{
+    if (!recorder_ || directory.isEmpty())
+    {
+        return false;
+    }
+
+    if (!recorder_->saveTo(directory.toStdString()))
+    {
+        SPDLOG_ERROR("Failed to save the capture to '{}'.", directory.toStdString());
+        statusBar()->showMessage(tr("Could not save the capture to %1").arg(directory), 8000);
+        return false;
+    }
+
+    capture_saved_ = true;
+    statusBar()->showMessage(tr("Saved the capture to %1").arg(directory), 5000);
+    SPDLOG_INFO("Saved {} captured message(s) to '{}'.", recorder_->buffer().size(),
+                directory.toStdString());
+    return true;
+}
+
+bool ScopeWindow::saveCaptureDialog()
+{
+    if (headless_)
+    {
+        SPDLOG_WARN("Refusing to raise a Save Recording dialog headlessly. Use "
+                    "scope.save_recording with a path.");
+        return false;
+    }
+
+    // A directory, because a bag is one.
+    const QString path = QFileDialog::getExistingDirectory(this, tr("Save Recording"));
+    return path.isEmpty() ? false : saveCaptureTo(path);
+}
+
+bool ScopeWindow::openRecordingDialog()
+{
+    if (headless_)
+    {
+        SPDLOG_WARN("Refusing to raise an Open Recording dialog headlessly. Use "
+                    "scope.open_recording with a path.");
+        return false;
+    }
+
+    // A directory, not a file. A bag is a directory -- metadata.yaml plus the
+    // rolled parts -- and a file picker pointed at one .mcap would offer the
+    // user a part rather than the recording.
+    const QString path = QFileDialog::getExistingDirectory(this, tr("Open Recording"));
+    return path.isEmpty() ? false : openRecording(path);
+}
+
+void ScopeWindow::goLive()
+{
+    if (!isReviewing())
+    {
+        return;
+    }
+
+    setSource(std::make_unique<LiveZenohSource>());
+    statusBar()->showMessage(tr("Live"), 3000);
+}
+
+// ------------------------------------------------------ dialogs and dirty state
+//
+// Three layers, copied from the editor because the same trap is here: a modal
+// dialog raised in a headless run has nobody to dismiss it and hangs the
+// process with no diagnostic at all. So the work is dialog-free
+// (loadWorkspace/saveWorkspace), the dialogs are thin wrappers that only pick a
+// path, and confirmDiscardChanges() answers for itself when there is no one at
+// the screen.
+
+bool ScopeWindow::openWorkspaceDialog()
+{
+    if (headless_)
+    {
+        SPDLOG_WARN("Refusing to raise an Open dialog headlessly. Use scope.load with a path.");
+        return false;
+    }
+
+    if (!confirmDiscardChanges(tr("opening another workspace")))
+    {
+        return false;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(this, tr("Open Workspace"), QString(),
+                                                      tr("Workspaces (*.yaml *.yml)"));
+    return path.isEmpty() ? false : loadWorkspace(path);
+}
+
+bool ScopeWindow::saveWorkspaceDialog()
+{
+    QString path = workspace_path_;
+    if (path.isEmpty())
+    {
+        if (headless_)
+        {
+            SPDLOG_WARN("No workspace path to save to, and a Save dialog cannot be raised "
+                        "headlessly. Use scope.save with a path.");
+            return false;
+        }
+        path = QFileDialog::getSaveFileName(this, tr("Save Workspace"), QString(),
+                                            tr("Workspaces (*.yaml *.yml)"));
+    }
+    return path.isEmpty() ? false : saveWorkspace(path);
+}
+
+void ScopeWindow::markDirty()
+{
+    if (dirty_)
+    {
+        return;
+    }
+    dirty_ = true;
+    updateWindowTitle();
+}
+
+void ScopeWindow::markClean()
+{
+    if (!dirty_)
+    {
+        return;
+    }
+    dirty_ = false;
+    updateWindowTitle();
+}
+
+void ScopeWindow::updateWindowTitle()
+{
+    const QString name =
+        workspace_name_.isEmpty() ? QStringLiteral("Redline Scope") : workspace_name_;
+    setWindowTitle(dirty_ ? name + QStringLiteral(" *") : name);
+}
+
+bool ScopeWindow::confirmDiscardChanges(const QString& action)
+{
+    // An unsaved CAPTURE is the more serious of the two, and is asked about
+    // first. A workspace can be rebuilt by hand in a couple of minutes; a
+    // capture of what the vehicle was doing cannot be rebuilt at all.
+    const bool unsaved_capture =
+        recorder_ != nullptr && !capture_saved_ && recorder_->buffer().size() > 0;
+
+    if (!dirty_ && !unsaved_capture)
+    {
+        return true;
+    }
+
+    if (headless_)
+    {
+        SPDLOG_WARN("Discarding unsaved {}{}{} on {} (headless: nobody to ask).",
+                    unsaved_capture ? "capture" : "", unsaved_capture && dirty_ ? " and " : "",
+                    dirty_ ? "workspace changes" : "", action.toStdString());
+        return true;
+    }
+
+    if (unsaved_capture)
+    {
+        const auto choice = QMessageBox::warning(
+            this, tr("Unsaved capture"),
+            tr("%1 captured message(s) have not been saved and cannot be recovered "
+               "afterwards.\n\nSave the recording before %2?")
+                .arg(recorder_->buffer().size())
+                .arg(action),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+
+        if (choice == QMessageBox::Cancel)
+        {
+            return false;
+        }
+        if (choice == QMessageBox::Save && !saveCaptureDialog())
+        {
+            // A failed or cancelled save must not fall through into discarding.
+            return false;
+        }
+    }
+
+    if (!dirty_)
+    {
+        return true;
+    }
+
+    const auto choice = QMessageBox::warning(
+        this, tr("Unsaved changes"),
+        tr("This workspace has unsaved changes.\n\nSave before %1?").arg(action),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+
+    if (choice == QMessageBox::Cancel)
+    {
+        return false;
+    }
+    if (choice == QMessageBox::Save)
+    {
+        saveWorkspaceDialog();
+        return !dirty_;
+    }
+    return true;
+}
+
+void ScopeWindow::closeEvent(QCloseEvent* event)
+{
+    if (!confirmDiscardChanges(tr("closing")))
+    {
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
+}
+
+void ScopeWindow::setHistorySeconds(double seconds)
+{
+    // Clamped rather than refused: the caller is a workspace file, and declining
+    // to load one over a silly number is worse than loading it with a sane one
+    // and saying so. The floor is a second because anything less is not history;
+    // the ceiling is a day, matching the time base's own window clamp.
+    const double clamped = std::clamp(seconds, 1.0, 24.0 * 60.0 * 60.0);
+    if (clamped != seconds)
+    {
+        SPDLOG_WARN("Retention of {}s is outside [1, 86400]; using {}s.", seconds, clamped);
+    }
+    if (clamped == history_seconds_)
+    {
+        return;
+    }
+    history_seconds_ = clamped;
+
+    for (PanelEntry& entry : panels_)
+    {
+        entry.panel->setHistorySeconds(history_seconds_);
+    }
+    markDirty();
 }
 
 // ----------------------------------------------------------------------- chrome
@@ -476,37 +916,47 @@ void ScopeWindow::buildMenuBar()
     QAction* open = file_menu->addAction(tr("&Open Workspace…"));
     open->setObjectName("action_open");
     open->setShortcut(QKeySequence::Open);
-    connect(open, &QAction::triggered, this, [this]() {
-        const QString path = QFileDialog::getOpenFileName(
-            this, tr("Open Workspace"), QString(), tr("Workspaces (*.yaml *.yml)"));
-        if (!path.isEmpty())
-        {
-            loadWorkspace(path);
-        }
-    });
+    connect(open, &QAction::triggered, this, [this]() { (void)openWorkspaceDialog(); });
 
     QAction* save = file_menu->addAction(tr("&Save Workspace"));
     save->setObjectName("action_save");
     save->setShortcut(QKeySequence::Save);
-    connect(save, &QAction::triggered, this, [this]() {
-        QString path = workspace_path_;
-        if (path.isEmpty())
-        {
-            path = QFileDialog::getSaveFileName(this, tr("Save Workspace"), QString(),
-                                                tr("Workspaces (*.yaml *.yml)"));
-        }
-        if (!path.isEmpty())
-        {
-            saveWorkspace(path);
-        }
-    });
+    connect(save, &QAction::triggered, this, [this]() { (void)saveWorkspaceDialog(); });
+
+    file_menu->addSeparator();
+
+    QAction* open_recording = file_menu->addAction(tr("Open &Recording…"));
+    open_recording->setObjectName("action_open_recording");
+    connect(open_recording, &QAction::triggered, this,
+            [this]() { (void)openRecordingDialog(); });
+
+    QAction* review = file_menu->addAction(tr("Stop and Re&view Capture"));
+    review->setObjectName("action_review_capture");
+    connect(review, &QAction::triggered, this, [this]() { (void)reviewCapture(); });
+
+    QAction* save_recording = file_menu->addAction(tr("Save &Recording…"));
+    save_recording->setObjectName("action_save_recording");
+    connect(save_recording, &QAction::triggered, this, [this]() { (void)saveCaptureDialog(); });
+
+    QAction* live = file_menu->addAction(tr("Go &Live"));
+    live->setObjectName("action_go_live");
+    connect(live, &QAction::triggered, this, [this]() { goLive(); });
+
+    // Enabled only when there is something to go back from, so the menu says
+    // which mode the window is in without anyone having to read the toolbar.
+    live->setEnabled(false);
+    connect(this, &ScopeWindow::sourceChanged, live,
+            [this, live]() { live->setEnabled(isReviewing()); });
 
     file_menu->addSeparator();
 
     QAction* quit = file_menu->addAction(tr("&Quit"));
     quit->setObjectName("action_quit");
     quit->setShortcut(QKeySequence::Quit);
-    connect(quit, &QAction::triggered, qApp, &QApplication::quit);
+    // close() rather than QApplication::quit(), so the unsaved-changes prompt in
+    // closeEvent() is on this path too. Quitting straight out of the menu used
+    // to be the one way past it.
+    connect(quit, &QAction::triggered, this, [this]() { close(); });
 
     QMenu* panels_menu = menuBar()->addMenu(tr("&Panels"));
     panels_menu->setObjectName("menu_panels");
@@ -542,12 +992,53 @@ void ScopeWindow::buildMenuBar()
     view_menu->addAction(show_browser);
 }
 
+namespace
+{
+
+// The playback rates the combo offers. Both ends earn their place: 0.1x to
+// study a transient you have already found, 20x to find one.
+constexpr double kRates[] = {0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0};
+
+// The scrubber's unit. Milliseconds rather than a fixed number of steps,
+// because a fixed 1000 steps over a four-hour recording is fourteen seconds per
+// notch -- unusable for finding anything. int32 milliseconds is 24 days, which
+// is longer than any recording this will see.
+constexpr double kScrubberTicksPerSecond = 1000.0;
+
+int toTicks(double seconds)
+{
+    const double ticks = seconds * kScrubberTicksPerSecond;
+    return static_cast<int>(std::clamp(ticks, 0.0,
+                                       static_cast<double>(std::numeric_limits<int>::max())));
+}
+
+QString formatWallClock(std::uint64_t unix_nanos)
+{
+    if (unix_nanos == 0)
+    {
+        return {};
+    }
+    const QDateTime when =
+        QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(unix_nanos / 1'000'000ull));
+    return when.toString(QStringLiteral("HH:mm:ss"));
+}
+
+}  // namespace
+
+// Both control sets, built once and shown or hidden from caps().
+//
+// Built once rather than rebuilt per source on purpose: the agent interface
+// addresses these by objectName, and widgets recreated on every swap would
+// either lose their names or accumulate duplicates of them. Visibility is the
+// only thing that changes.
 void ScopeWindow::buildTransportBar()
 {
     auto* bar = new QToolBar(tr("Transport"), this);
     bar->setObjectName("transport_bar");
     bar->setMovable(false);
     addToolBar(Qt::BottomToolBarArea, bar);
+
+    // ------------------------------------------------------------------ live
 
     pause_button_ = new QToolButton(bar);
     pause_button_->setObjectName("transport_pause");
@@ -557,12 +1048,83 @@ void ScopeWindow::buildTransportBar()
         time_base_->setMode(paused ? TimeBase::Mode::Paused : TimeBase::Mode::Live);
         pause_button_->setText(paused ? tr("Live") : tr("Pause"));
     });
-    bar->addWidget(pause_button_);
+    live_controls_.push_back(bar->addWidget(pause_button_));
+
+    // ---------------------------------------------------------------- review
+
+    const auto add_button = [&](const char* name, const QString& text, const QString& tip,
+                                bool checkable, auto&& on_click) {
+        auto* button = new QToolButton(bar);
+        button->setObjectName(name);
+        button->setText(text);
+        button->setToolTip(tip);
+        button->setCheckable(checkable);
+        if (checkable)
+        {
+            connect(button, &QToolButton::toggled, this, on_click);
+        }
+        else
+        {
+            connect(button, &QToolButton::clicked, this, on_click);
+        }
+        review_controls_.push_back(bar->addWidget(button));
+        return button;
+    };
+
+    add_button("transport_to_start", tr("|◀"), tr("Jump to the start of the recording"), false,
+               [this]() { time_base_->seek(time_base_->source().caps().t_begin); });
+
+    add_button("transport_step_back", tr("◀"), tr("Back one second"), false,
+               [this]() { time_base_->seek(time_base_->source().now() - 1.0); });
+
+    play_button_ = add_button("transport_play", tr("▶"), tr("Play"), true,
+                              [this](bool playing) { time_base_->setPlaying(playing); });
+
+    add_button("transport_step_forward", tr("▶"), tr("Forward one second"), false,
+               [this]() { time_base_->seek(time_base_->source().now() + 1.0); });
+
+    add_button("transport_to_end", tr("▶|"), tr("Jump to the end of the recording"), false,
+               [this]() { time_base_->seek(time_base_->source().caps().t_end); });
+
+    rate_combo_ = new QComboBox(bar);
+    rate_combo_->setObjectName("transport_rate");
+    for (const double rate : kRates)
+    {
+        rate_combo_->addItem(QStringLiteral("%1x").arg(rate), rate);
+    }
+    rate_combo_->setCurrentIndex(3);  // 1x
+    connect(rate_combo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index >= 0)
+        {
+            time_base_->setRate(rate_combo_->itemData(index).toDouble());
+        }
+    });
+    review_controls_.push_back(bar->addWidget(rate_combo_));
+
+    scrubber_ = new QSlider(Qt::Horizontal, bar);
+    scrubber_->setObjectName("transport_scrubber");
+    scrubber_->setMinimumWidth(220);
+    connect(scrubber_, &QSlider::valueChanged, this, [this](int ticks) {
+        // Ignored while the bar is being refreshed FROM the time base.
+        // Otherwise every frame of playback would set the slider, the slider
+        // would seek to where playback already was, and the two would fight at
+        // the render rate -- which reads as a scrubber that will not move.
+        if (updating_transport_)
+        {
+            return;
+        }
+        time_base_->seek(static_cast<double>(ticks) / kScrubberTicksPerSecond);
+    });
+    review_controls_.push_back(bar->addWidget(scrubber_));
+
+    // --------------------------------------------------------------- shared
 
     bar->addSeparator();
     auto* window_label = new QLabel(tr("  Window "), bar);
     bar->addWidget(window_label);
 
+    // Shared, not live-only. What span the plot shows matters at least as much
+    // when reviewing a recording as when tailing the bus.
     window_spin_ = new QDoubleSpinBox(bar);
     window_spin_->setObjectName("transport_window_seconds");
     window_spin_->setRange(0.1, 3600.0);
@@ -570,29 +1132,144 @@ void ScopeWindow::buildTransportBar()
     window_spin_->setSingleStep(5.0);
     window_spin_->setSuffix(tr(" s"));
     window_spin_->setValue(time_base_->windowSeconds());
-    connect(window_spin_, &QDoubleSpinBox::valueChanged, this,
-            [this](double seconds) { time_base_->setWindowSeconds(seconds); });
+    connect(window_spin_, &QDoubleSpinBox::valueChanged, this, [this](double seconds) {
+        if (!updating_transport_)
+        {
+            time_base_->setWindowSeconds(seconds);
+        }
+    });
     bar->addWidget(window_spin_);
 
     bar->addSeparator();
     cursor_label_ = new QLabel(bar);
     cursor_label_->setObjectName("transport_cursor");
-    cursor_label_->setMinimumWidth(160);
+    cursor_label_->setMinimumWidth(200);
     bar->addWidget(cursor_label_);
 
-    connect(time_base_.get(), &TimeBase::cursorMoved, this, [this]() {
-        const auto& cursor = time_base_->cursor();
-        cursor_label_->setText(cursor ? tr("  t = %1 s").arg(*cursor, 0, 'f', 3)
-                                      : QString());
-    });
+    transport_status_ = new QLabel(bar);
+    transport_status_->setObjectName("transport_status");
+    transport_status_->setStyleSheet("color: palette(mid); font-size: 11px;");
+    bar->addWidget(transport_status_);
 
-    // A seekable source -- recorded data -- would put a scrubber and a rate
-    // control here instead of the Pause button. Reading caps() rather than
-    // assuming live is what makes that a change in one place.
-    if (!source_->caps().live)
+    connect(time_base_.get(), &TimeBase::cursorMoved, this, [this]() { updateTransport(); });
+    connect(time_base_.get(), &TimeBase::changed, this, [this]() { updateTransport(); });
+
+    // The one render timer drives the readout too. A second timer for the
+    // transport bar would tick against the panels' and make the position
+    // readout disagree with the line beside it.
+    connect(time_base_.get(), &TimeBase::frame, this, [this]() { updateTransport(); });
+
+    applySourceCaps();
+}
+
+void ScopeWindow::applySourceCaps()
+{
+    const SourceCaps caps = source_->caps();
+
+    for (QAction* action : live_controls_)
     {
-        pause_button_->setEnabled(false);
+        action->setVisible(caps.live);
     }
+    for (QAction* action : review_controls_)
+    {
+        action->setVisible(caps.seekable);
+    }
+
+    if (caps.seekable && scrubber_ != nullptr)
+    {
+        const bool was_updating = updating_transport_;
+        updating_transport_ = true;
+        scrubber_->setRange(toTicks(caps.t_begin), toTicks(caps.t_end));
+        updating_transport_ = was_updating;
+    }
+
+    if (play_button_ != nullptr)
+    {
+        play_button_->setChecked(false);
+    }
+
+    updateTransport();
+}
+
+void ScopeWindow::updateTransport()
+{
+    if (cursor_label_ == nullptr)
+    {
+        return;
+    }
+
+    const SourceCaps caps = source_->caps();
+    const double position = source_->now();
+
+    const bool was_updating = updating_transport_;
+    updating_transport_ = true;
+
+    if (caps.seekable && scrubber_ != nullptr)
+    {
+        // The range as well as the value: a capture being reviewed while it is
+        // still recording grows underneath the scrubber, and a slider whose
+        // maximum is stale silently refuses to seek into the newest data.
+        scrubber_->setRange(toTicks(caps.t_begin), toTicks(caps.t_end));
+        if (!scrubber_->isSliderDown())
+        {
+            scrubber_->setValue(toTicks(position));
+        }
+    }
+
+    if (window_spin_ != nullptr && window_spin_->value() != time_base_->windowSeconds())
+    {
+        window_spin_->setValue(time_base_->windowSeconds());
+    }
+
+    if (play_button_ != nullptr && play_button_->isChecked() != time_base_->playing())
+    {
+        // Playback stops itself at the end of the recording, and the button has
+        // to follow or it claims to still be playing.
+        play_button_->setChecked(time_base_->playing());
+    }
+
+    // The cursor if there is one, the playback head otherwise. A recording also
+    // has a wall clock, which is the one thing a bag genuinely knows and the
+    // live source does not -- so it goes here rather than on the axis, whose
+    // relative labels ("-10 s") are what someone reading a trace wants.
+    const std::optional<double>& cursor = time_base_->cursor();
+    const double t = cursor ? *cursor : position;
+
+    QString text = tr("  t = %1 s").arg(t, 0, 'f', 3);
+    if (!caps.live)
+    {
+        if (const auto* recorded = dynamic_cast<const RecordedSource*>(source_.get()))
+        {
+            const QString wall = formatWallClock(recorded->wallClockNanosAt(t));
+            if (!wall.isEmpty())
+            {
+                text += QStringLiteral("  (%1)").arg(wall);
+            }
+        }
+    }
+    cursor_label_->setText(text);
+
+    // The capture's state, always visible while it is running. A capture whose
+    // head is being evicted is the same class of thing as a recorder dropping
+    // samples: the part of the session you can still review has a boundary, and
+    // it moves. Saying so is what stops someone scrubbing back into a gap and
+    // reading it as a publisher that had not started.
+    if (transport_status_ != nullptr && recorder_ != nullptr)
+    {
+        const CaptureBuffer& capture = recorder_->buffer();
+        QString state = tr("  ⏺ %1 s captured").arg(capture.retainedSpanSeconds(), 0, 'f', 0);
+        if (const std::uint64_t evicted = capture.evicted(); evicted > 0)
+        {
+            state += tr(", %1 evicted").arg(evicted);
+        }
+        if (!capture_saved_ && capture.size() > 0)
+        {
+            state += tr(" (unsaved)");
+        }
+        transport_status_->setText(state);
+    }
+
+    updating_transport_ = was_updating;
 }
 
 }  // namespace scope

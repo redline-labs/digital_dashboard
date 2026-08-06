@@ -38,9 +38,20 @@ class TimeBase : public QObject
         Paused,
     };
 
-    // `source` must outlive this object.
+    // `source` must outlive this object, or be replaced before it dies.
     explicit TimeBase(DataSource& source, QObject* parent = nullptr);
     ~TimeBase() override;
+
+    // Point at a different source -- going into review over a recording, or
+    // back to live.
+    //
+    // Clears `paused_at_` and `cursor_`. Both are values on the OLD source's
+    // epoch and mean nothing on the new one: a live source counts seconds since
+    // it was constructed, a recorded one seconds since the recording started.
+    // Carried over, a frozen right edge would sit somewhere arbitrary in the
+    // recording and the shared cursor would read out a time that does not exist
+    // -- silently, because both are just doubles.
+    void setSource(DataSource& source);
 
     // Seconds of history the window shows.
     double windowSeconds() const { return window_seconds_; }
@@ -62,12 +73,33 @@ class TimeBase : public QObject
     const std::optional<double>& cursor() const { return cursor_; }
     void setCursor(std::optional<double> t);
 
-    DataSource& source() { return source_; }
-    const DataSource& source() const { return source_; }
+    DataSource& source() { return *source_; }
+    const DataSource& source() const { return *source_; }
+
+    // -------------------------------------------------------------- playback
+    //
+    // No-ops on a source that is not seekable, so a caller that did not check
+    // caps() first gets nothing rather than an error.
+
+    // Move the playback position. Panels' buffers are refilled by the source;
+    // the view follows because viewEnd() is the source's clock.
+    void seek(double t);
+
+    // Playback speed, as a multiplier on real time. Zero is not allowed -- that
+    // is what setPlaying(false) means -- and the clamp is wide because both ends
+    // are useful: 0.1x to study a transient, 20x to find one.
+    double rate() const { return rate_; }
+    void setRate(double rate);
+
+    bool playing() const { return playing_; }
+    void setPlaying(bool playing);
 
   signals:
     // The window, the mode or the rate changed: panels should rescale.
     void changed();
+
+    // The source was replaced. The transport bar re-reads caps() from it.
+    void sourceChanged();
 
     // One tick of the render timer. Panels drain their buffers and repaint.
     void frame();
@@ -78,7 +110,9 @@ class TimeBase : public QObject
   private:
     void restartTimer();
 
-    DataSource& source_;
+    // A pointer, not a reference, because it is reseated: entering review over
+    // a recording swaps the whole source out from under the window.
+    DataSource* source_;
     QTimer timer_;
 
     double window_seconds_ = 30.0;
@@ -90,6 +124,9 @@ class TimeBase : public QObject
     std::optional<double> paused_at_;
 
     std::optional<double> cursor_;
+
+    double rate_ = 1.0;
+    bool playing_ = false;
 };
 
 }  // namespace scope

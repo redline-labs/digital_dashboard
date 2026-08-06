@@ -76,6 +76,13 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
 
     scope::ScopeWindow window;
+
+    // From the same flag that chose the offscreen platform. A modal dialog in a
+    // headless run has nobody to dismiss it, so the window has to know not to
+    // raise one -- otherwise an unsaved-changes prompt on the way out is a hang
+    // with no diagnostic at all.
+    window.setHeadless(agent_mode);
+
     if (!args->workspace_path.empty())
     {
         if (!window.loadWorkspace(QString::fromStdString(args->workspace_path)))
@@ -84,6 +91,20 @@ int main(int argc, char** argv)
             return -1;
         }
     }
+
+    // AFTER the workspace, so `--config w.yaml --bag drives/today` opens the
+    // recording with the workspace's panels already there and binds them to it.
+    // The other order would bind them to the live bus and then throw the
+    // bindings away.
+    if (!args->bag_path.empty())
+    {
+        if (!window.openRecording(QString::fromStdString(args->bag_path)))
+        {
+            SPDLOG_CRITICAL("Failed to open recording '{}'.", args->bag_path);
+            return -1;
+        }
+    }
+
     window.show();
 
     std::unique_ptr<agent_control::AgentServer> agent;

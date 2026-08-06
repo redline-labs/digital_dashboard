@@ -72,6 +72,14 @@ shows a line; that says what the line is made of -- sample counts, drops, and
 the min/max actually received -- which is a far stronger statement and the one
 a test can assert. `docs/scope.md` has the rest.
 
+Scope can also be driven over a **recording** rather than the bus, which is the
+faster loop when the data matters more than the timing: `bag record` a few
+seconds, `scope.open_recording`, then seek to an exact instant and assert on
+`scope_sample_stats`. Seeking **backwards** is the case worth checking -- a
+buffer that kept the position it came from stays perfectly ordered and is
+completely wrong, so the assertion is that `t_last` moved back, not that the
+samples are in order.
+
 GUI code that is *not* about pixels — selector parsing, message framing, a config
 codec — still gets a plain unit test. `libs/agent_control/`'s own suites are the
 model: pure logic under the `unit` label, widget-tree behaviour under `gui`.
@@ -84,6 +92,19 @@ discovery seeing only live traffic, and what `accepted: false` and
 
 ## Conventions
 
+- **Where samples come from is one interface.** `scope::DataSource` has two
+  implementations -- the live bus and a recording -- and nothing above it knows
+  which it has. Swapping between them (`ScopeWindow::setSource()`) has ONE
+  ordering rule: panels release their handles against the OLD source before the
+  pointer moves, because a handle means nothing to a source that did not issue
+  it. The window destroys the old source only after that, precisely so the
+  releases have somewhere to go.
+- **A plotted buffer's times must be non-decreasing.**
+  `SampleHistory::lowerBound()` is a binary search that assumes it and cannot
+  detect otherwise -- it returns a plausible wrong index, and the autoscale, the
+  decimation and the cursor readout all compute from the wrong samples with
+  nothing logged. Scrubbing backwards is the operation that breaks it, which is
+  why a seek clears before it refills.
 - **Adding a scope panel** is a 3-step registration documented at the top of
   `scope/include/scope/panel_registry.h`, and works the same way: one line in
   `SCOPE_PANEL_TABLE` and everything else follows. Panels decide for themselves

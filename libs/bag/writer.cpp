@@ -204,10 +204,43 @@ struct BagWriter::Impl
         metadata.parts.push_back(std::move(part));
     }
 
+    // metadata.topics, rebuilt from the accumulated per-topic state. Cheap, and
+    // done on every roll as well as at close so an index written mid-recording
+    // describes the topics too rather than just the parts.
+    void syncTopics()
+    {
+        metadata.topics.clear();
+        for (const auto& [key, state] : topics)
+        {
+            bag_topic_t topic;
+            topic.key = key;
+            topic.schema = state.schema;
+            topic.message_count = state.count;
+            topic.origin_zid = state.origin_conflict ? "(mixed)" : state.origin_zid;
+            topic.advertised_only = !state.ever_published;
+            metadata.topics.push_back(std::move(topic));
+        }
+    }
+
     bool roll()
     {
         finishPart();
         ++part_index;
+
+        // WRITTEN HERE, not only at close(). A recorder gets killed -- that is
+        // the entire reason parts are rolled in the first place -- and until
+        // this ran, a recording that had not been closed cleanly had no
+        // metadata.yaml at all. BagReader reports such a directory invalid, so
+        // an in-progress recording was unreadable and a killed one needed
+        // `bag reindex` before anything could look at it, including the parts
+        // that closed perfectly.
+        //
+        // The index names only the parts that are finished, which is exactly
+        // right: the part being written has no summary yet and nothing should
+        // be told otherwise.
+        syncTopics();
+        (void)saveMetadata(metadata, directory);
+
         return openPart();
     }
 
@@ -477,18 +510,7 @@ bool BagWriter::close()
     }
 
     impl_->finishPart();
-
-    impl_->metadata.topics.clear();
-    for (const auto& [key, state] : impl_->topics)
-    {
-        bag_topic_t topic;
-        topic.key = key;
-        topic.schema = state.schema;
-        topic.message_count = state.count;
-        topic.origin_zid = state.origin_conflict ? "(mixed)" : state.origin_zid;
-        topic.advertised_only = !state.ever_published;
-        impl_->metadata.topics.push_back(std::move(topic));
-    }
+    impl_->syncTopics();
 
     return saveMetadata(impl_->metadata, impl_->directory);
 }

@@ -23,6 +23,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -406,6 +407,187 @@ void testTimeBaseClampsSillyValues()
     expect(time_base.renderRateHz() >= 1, "a zero render rate is clamped away from a 0 ms timer");
 }
 
+// --------------------------------------------------------- swapping sources
+
+// A panel moved onto a different source must RELEASE against the old one first.
+//
+// A handle means nothing to a source that did not issue it, and the window
+// destroys the old source only after the panels have rebound -- which is what
+// makes the release legal and is the entire ordering rule. Repointing first
+// leaves every subscription on the old source alive, and for the live one that
+// means zenoh callbacks still decoding samples into buffers nobody will drain.
+//
+// Mutation-check: move `source_ = &source;` above `releaseAll();` in
+// TimeSeriesPanel::rebindTo() and this fails -- the release lands on the new
+// source, which has never heard of the handle.
+void testRebindingReleasesAgainstTheOldSource()
+{
+    StubSource first;
+    StubSource second;
+
+    TimeSeriesPanelConfig_t config;
+    scope::TimeSeriesPanel plot(config, first);
+    plot.addBinding(numericField());
+
+    expect(first.bound.size() == 1, "the signal is bound on the first source");
+    expect(second.bound.empty(), "and not on the second");
+
+    const scope::SignalHandle issued = first.bound.empty() ? scope::kInvalidSignal : 1;
+
+    plot.rebindTo(second);
+
+    expect(first.released.size() == 1,
+           "the binding was released against the source that ISSUED it (" +
+               std::to_string(first.released.size()) + ")");
+    expect(!first.released.empty() && first.released[0] == issued,
+           "and it is the handle that source handed out");
+    expect(second.released.empty(),
+           "nothing was released against the new source, which never issued anything");
+
+    expect(second.bound.size() == 1, "and the trace is rebound on the new source");
+    if (!second.bound.empty())
+    {
+        expect(second.bound[0].zenoh_key == "vehicle/engine/rpm",
+               "on the same topic -- the workspace is untouched by a source swap");
+    }
+    expect(plot.getConfig().traces.size() == 1, "the config still describes one trace");
+
+    plot.rebindTo(second);
+    expect(second.bound.size() == 1, "rebinding to the source it is already on does nothing");
+}
+
+// ------------------------------------------------------------- retention
+
+// `history_seconds` round-trips through the WINDOW, not just through the YAML.
+//
+// The codec always carried this field and scope_test_workspace always asserted
+// it survived a save and a load -- while toWorkspace() never wrote it and
+// loadWorkspace() never read it, so retention came from a constant in
+// time_series_panel.cpp and the setting did nothing at all. A field that
+// round-trips perfectly and is ignored at both ends is the worst kind of dead
+// config: every test passes and the knob is not connected to anything.
+//
+// Mutation-check: drop either the `workspace.history_seconds = ...` in
+// toWorkspace() or the setHistorySeconds() call in loadWorkspace(), and one of
+// these fails.
+void testHistorySecondsReachesThePanels()
+{
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "redline_scope_history_test.yaml";
+    std::filesystem::remove(path);
+
+    {
+        scope::ScopeWindow window;
+        window.setHistorySeconds(45.0);
+        window.addPanel(scope::panel_type_t::time_series, "plot");
+
+        const scope::ScopeWindow::PanelEntry* entry = window.findPanel("plot");
+        expect(entry != nullptr, "the panel exists");
+        if (entry != nullptr)
+        {
+            auto* plot = qobject_cast<scope::TimeSeriesPanel*>(entry->panel);
+            expect(plot != nullptr && plot->historySeconds() == 45.0,
+                   "a panel is built with the window's retention, not a constant");
+        }
+
+        expect(window.toWorkspace().history_seconds == 45.0,
+               "and toWorkspace() writes it out");
+        expect(window.saveWorkspace(QString::fromStdString(path.string())),
+               "the workspace saves");
+    }
+
+    {
+        scope::ScopeWindow window;
+        expect(window.loadWorkspace(QString::fromStdString(path.string())),
+               "the workspace loads back");
+        expect(window.historySeconds() == 45.0, "loadWorkspace() reads the retention");
+
+        const scope::ScopeWindow::PanelEntry* entry = window.findPanel("plot");
+        expect(entry != nullptr, "the panel came back");
+        if (entry != nullptr)
+        {
+            auto* plot = qobject_cast<scope::TimeSeriesPanel*>(entry->panel);
+            expect(plot != nullptr && plot->historySeconds() == 45.0,
+                   "and its panels are built with it -- retention applies BEFORE binding, "
+                   "because a buffer cannot grow a past it never recorded");
+        }
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testRetentionIsClampedNotRefused()
+{
+    scope::ScopeWindow window;
+
+    window.setHistorySeconds(-1.0);
+    expect(window.historySeconds() >= 1.0, "a negative retention is clamped, not accepted");
+
+    window.setHistorySeconds(1e9);
+    expect(window.historySeconds() <= 24.0 * 60.0 * 60.0, "an absurd retention is clamped");
+}
+
+// ------------------------------------------------------------- dirty state
+
+void testDirtyTracking()
+{
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "redline_scope_dirty_test.yaml";
+    std::filesystem::remove(path);
+
+    scope::ScopeWindow window;
+    expect(!window.isDirty(),
+           "an empty window is not dirty -- prompting on the way out of one would train the "
+           "user to dismiss the prompt that matters");
+
+    window.addPanel(scope::panel_type_t::time_series, "plot");
+    expect(window.isDirty(), "adding a panel makes the workspace dirty");
+    expect(window.windowTitle().endsWith(" *"), "and the title says so");
+
+    expect(window.saveWorkspace(QString::fromStdString(path.string())), "it saves");
+    expect(!window.isDirty(), "saving makes it clean again");
+    expect(!window.windowTitle().endsWith(" *"), "and the marker goes away");
+
+    scope::ScopeWindow::PanelEntry* entry = window.findPanel("plot");
+    if (entry != nullptr)
+    {
+        auto* plot = qobject_cast<scope::TimeSeriesPanel*>(entry->panel);
+        expect(plot != nullptr && plot->addBinding(numericField()), "a signal is added");
+        expect(window.isDirty(),
+               "a panel's own config change reaches the window -- the panel says so rather "
+               "than the window guessing from the several routes in");
+    }
+
+    window.removePanel("plot");
+    expect(window.isDirty(), "removing a panel makes it dirty");
+
+    expect(window.loadWorkspace(QString::fromStdString(path.string())),
+           "the saved workspace loads");
+    expect(!window.isDirty(), "a freshly loaded workspace is clean");
+
+    std::filesystem::remove(path);
+}
+
+void testHeadlessNeverBlocksOnADialog()
+{
+    // THE reason setHeadless() exists. Under --mcp there is nobody to dismiss a
+    // modal dialog, so one raised here does not fail -- it hangs the process,
+    // with no log line and no error, which is the hardest kind of bug to find
+    // from the other side of a socket.
+    scope::ScopeWindow window;
+    window.setHeadless(true);
+    window.addPanel(scope::panel_type_t::time_series, "plot");
+    expect(window.isDirty(), "there are unsaved changes to prompt about");
+
+    // Returns rather than hanging: that is the assertion. A test that reached a
+    // QMessageBox here would time out instead of failing.
+    expect(window.confirmDiscardChanges("closing"),
+           "a headless window discards with a warning rather than raising a prompt");
+
+    expect(!window.saveWorkspaceDialog(),
+           "and the Save dialog refuses headlessly instead of opening a file picker");
+}
+
 // ------------------------------------------------------------------- the drag
 
 void testCandidateEncodingRoundTrips()
@@ -470,6 +652,12 @@ int main(int argc, char** argv)
     testGarbageDockStateIsRejectedNotFatal();
     testTheTimeBaseIsShared();
     testTimeBaseClampsSillyValues();
+
+    testRebindingReleasesAgainstTheOldSource();
+    testHistorySecondsReachesThePanels();
+    testRetentionIsClampedNotRefused();
+    testDirtyTracking();
+    testHeadlessNeverBlocksOnADialog();
 
     testCandidateEncodingRoundTrips();
     testGarbageDropDataIsRejectedNotThrown();

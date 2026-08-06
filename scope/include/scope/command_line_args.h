@@ -14,6 +14,12 @@ struct CommandLineArgs
     // you add panels and pick signals live.
     std::string workspace_path;
 
+    // A bag DIRECTORY to review instead of tailing the bus. Empty means live.
+    //
+    // Applied after the workspace, so `--config w.yaml --bag drives/today`
+    // opens the recording with the workspace's panels already bound to it.
+    std::string bag_path;
+
     bool debug_enabled = false;
 
     // Set only when --mcp was given; always a concrete path by then.

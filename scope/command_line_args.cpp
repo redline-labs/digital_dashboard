@@ -28,6 +28,12 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
         options.add_options("optional")
             ("c,config", "Path to a YAML workspace file. Omit to start empty.",
                 cxxopts::value<std::string>())
+            // DECLARED, not sniffed out of the leftovers. parseCommandLineArgs
+            // rejects unmatched arguments -- see the check below -- so an
+            // undeclared option would abort the whole startup rather than being
+            // ignored.
+            ("b,bag", "Path to a bag DIRECTORY to review instead of tailing the bus.",
+                cxxopts::value<std::string>())
             ("debug", "Enable debug logging.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("mcp", "Enable the agent control interface on a unix socket, and run headless "
@@ -67,6 +73,11 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
         if (result.count("config") != 0)
         {
             parsed.workspace_path = result["config"].as<std::string>();
+        }
+
+        if (result.count("bag") != 0)
+        {
+            parsed.bag_path = result["bag"].as<std::string>();
         }
 
         if (result.count("mcp") != 0)

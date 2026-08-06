@@ -11,6 +11,7 @@
 namespace scope
 {
 
+class DataSource;
 class TimeBase;
 
 // One thing the signal browser can offer a panel: either a whole topic, or one
@@ -84,8 +85,35 @@ class Panel : public QWidget
     // read viewBegin()/viewEnd()/cursor() from it. Must outlive the panel.
     virtual void setTimeBase(TimeBase* time_base) = 0;
 
+    // Move every binding onto a different source: the window has entered review
+    // over a recording, or gone back to live.
+    //
+    // THE ORDERING RULE, and it is not optional. An implementation must release
+    // its handles against the OLD source before it repoints, because a handle
+    // means nothing to a source that did not issue it -- and the window only
+    // destroys the old source after this returns, precisely so that release has
+    // somewhere to go. Repointing first leaks every subscription on the old
+    // source, which for the live one means it keeps decoding samples nothing
+    // will ever draw.
+    virtual void rebindTo(DataSource& source) = 0;
+
+    // Seconds of samples each of this panel's signals retains. A workspace-level
+    // setting rather than a per-panel one: two panels plotting the same signal
+    // should not disagree about how far back it goes.
+    //
+    // Rebinds, which discards the history already collected. That is the honest
+    // outcome -- a buffer cannot grow a past it never recorded -- and it is why
+    // the window applies this before adding panels rather than after.
+    virtual void setHistorySeconds(double seconds) = 0;
+
     // Human-readable, shown on the dock's title bar.
     virtual QString title() const = 0;
+
+  signals:
+    // The panel's configuration changed: a trace added or removed, a config
+    // applied. The window listens so it knows the workspace no longer matches
+    // what is on disk.
+    void configChanged();
 };
 
 }  // namespace scope

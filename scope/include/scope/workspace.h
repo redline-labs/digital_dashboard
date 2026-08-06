@@ -45,6 +45,17 @@ REFLECT_STRUCT(scope_workspace_t,
         "Window (s)", "Seconds of history shown at once"),
     (uint16_t, render_rate_hz, 30,
         "Render Rate (Hz)", "How often panels redraw"),
+
+    // The in-memory capture's bounds. BOTH apply, and whichever binds first
+    // wins: with CarPlay streaming the bus runs about 1.5 GB/hour, so an
+    // unbounded capture is OOM-killed in minutes; telemetry alone is around
+    // 11 MB/hour, where the byte cap would never bite and the time one is the
+    // only thing keeping the session finite.
+    (uint64_t, max_capture_bytes, 1073741824,
+        "Capture Limit (bytes)", "In-memory capture cap; 0 disables the byte bound"),
+    (double, max_capture_seconds, 1800.0,
+        "Capture Limit (s)", "In-memory capture cap; 0 disables the time bound"),
+
     (std::vector<panel_entry_t>, panels, {},
         "Panels", "The panels this workspace contains"),
     (std::string, dock_state, "",

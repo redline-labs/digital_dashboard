@@ -209,6 +209,11 @@ Rebuilds `metadata.yaml` from the `.mcap` files on disk, for a recording whose
 recorder was killed before it could write one. `--dry-run` reports without
 writing.
 
+Needed less often than it was: the index is now written on every **roll** as
+well as at close, so an in-progress recording has one describing every part
+that has finished, and a recorder killed after its first roll leaves a readable
+bag. Reindex is still the answer for one killed before that.
+
 It preserves the drop count from any existing index — a rebuild that reset it to
 zero would silently claim a lossy recording was complete.
 
@@ -239,11 +244,39 @@ tests exist: round trip, splitting, seeking, torn parts, missing parts, garbage
 parts, the index, and the drop-counting queue — every one a failure that is
 silent in production.
 
+## Reading one in scope
+
+`scope` links this library rather than shelling out to the binary, so a
+recording is a `scope::DataSource` and every panel scrubs it without knowing
+what is behind them:
+
+```bash
+./build/scope/scope --bag drives/2026-08-06
+```
+
+Two things about that path are worth knowing from here.
+
+**`BagReader::forEach` is not a per-frame call.** It constructs and opens an
+`mcap::McapReader` per part per call, and on a part with no summary it falls
+back to scanning the whole data section. Scope therefore decodes each signal
+**once**, on a background thread, into a flat sample vector, and scrubbing is a
+slice out of that. Driving `forEach` from a slider would re-open files thirty
+times a second and re-scan a torn recording every one of them.
+
+**`BagMessage::schema` is the registry name**, not an encoding string, so it
+does not go to `ExpressionEvaluator::checkPublishedSchema()` — that takes
+`application/capnp;EngineRpm` and would match neither of its branches, silently
+checking nothing. Compare it against
+`enum_traits<schema_type_t>::to_string()` instead.
+
+Scope also **writes** bags: it captures the whole bus into memory while live,
+and File ▸ Save Recording drains that through `BagWriter`. The result is an
+ordinary bag — `bag info`, `bag verify`, `bag play` and `mcap doctor` all
+accept it — and the capture's eviction count is recorded as
+`dropped_messages`, because from the file's point of view that is exactly what
+an evicted message is. See `docs/scope.md`.
+
 ## What is not here yet
 
-`scope::DataSource` (`scope/include/scope/data_source.h`) was designed for a
-recorded source — `SourceCaps{seekable, t_begin, t_end}`, `seek()`,
-`setPlaying()` are all present and all no-ops on the live source. A
-`RecordedSource` over `libs/bag` would let scope scrub a recording directly
-rather than replaying it onto the bus. The library exists in the shape that
-makes that a small change.
+Trimming or exporting a sub-range of a recording, and spilling a scope capture
+to disk when it outgrows its memory cap.

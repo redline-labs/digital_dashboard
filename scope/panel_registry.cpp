@@ -37,6 +37,7 @@ void applyLimits(Cfg& cfg, std::string_view panel_type)
 
 std::unique_ptr<Panel> createPanel(const panel_config_variant_t& config,
                                    DataSource& source,
+                                   double history_seconds,
                                    QWidget* parent)
 {
     std::unique_ptr<Panel> panel;
@@ -61,7 +62,7 @@ std::unique_ptr<Panel> createPanel(const panel_config_variant_t& config,
         cfg_t checked = cfg;                                                             \
         applyLimits(checked, reflection::enum_traits<panel_type_t>::to_string(           \
                                  panel_class::kPanelType));                              \
-        panel = std::make_unique<panel_class>(checked, source, parent);                  \
+        panel = std::make_unique<panel_class>(checked, source, history_seconds, parent);  \
     }
 
                 SCOPE_PANEL_TABLE(SCOPE_PANEL_CONSTRUCT)

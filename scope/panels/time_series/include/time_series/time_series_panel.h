@@ -49,15 +49,26 @@ class TimeSeriesPanel : public Panel
     static constexpr panel_type_t kPanelType = panel_type_t::time_series;
     static constexpr std::string_view kFriendlyName = "Time Series";
 
+    // Retention, when the window does not say otherwise. Generous on time
+    // because scrolling back is the point of a scope; the workspace's
+    // `history_seconds` overrides it.
+    static constexpr double kDefaultHistorySeconds = 300.0;
+
     // `source` must outlive the panel: it owns the subscriptions this binds.
-    TimeSeriesPanel(const config_t& cfg, DataSource& source, QWidget* parent = nullptr);
+    TimeSeriesPanel(const config_t& cfg, DataSource& source,
+                    double history_seconds = kDefaultHistorySeconds,
+                    QWidget* parent = nullptr);
     ~TimeSeriesPanel() override;
 
     panel_type_t panelType() const override { return kPanelType; }
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
     void setTimeBase(TimeBase* time_base) override;
+    void setHistorySeconds(double seconds) override;
+    void rebindTo(DataSource& source) override;
     QString title() const override;
+
+    double historySeconds() const { return history_seconds_; }
 
     const config_t& getConfig() const { return cfg_; }
 
@@ -111,8 +122,13 @@ class TimeSeriesPanel : public Panel
     void paintCursor(QPainter& painter, const QRectF& area);
 
     config_t cfg_;
-    DataSource& source_;
+
+    // A pointer, not a reference: rebindTo() moves every trace onto a different
+    // source when the window enters review over a recording.
+    DataSource* source_;
+
     TimeBase* time_base_ = nullptr;
+    double history_seconds_ = kDefaultHistorySeconds;
 
     std::vector<std::unique_ptr<Trace>> traces_;
 

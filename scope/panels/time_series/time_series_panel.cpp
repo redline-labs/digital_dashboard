@@ -24,10 +24,9 @@ namespace scope
 namespace
 {
 
-// Retention. Generous on time because scrolling back is the point of a scope,
-// bounded on points so a fast publisher cannot grow a session without bound.
-// 5 minutes at 1 kHz is 300k points, well inside the cap.
-constexpr double kHistorySeconds = 300.0;
+// Bounded on points so a fast publisher cannot grow a session without bound.
+// The time bound is the workspace's `history_seconds`, which arrives through the
+// constructor; 5 minutes at 1 kHz is 300k points, well inside this cap.
 constexpr std::size_t kMaxPointsPerSignal = 600000;
 
 // One GUI tick at 30 Hz is 33 ms; 4096 slots is over a second of headroom at
@@ -115,8 +114,9 @@ struct TimeSeriesPanel::Trace
     }
 };
 
-TimeSeriesPanel::TimeSeriesPanel(const config_t& cfg, DataSource& source, QWidget* parent) :
-    Panel(parent), cfg_(cfg), source_(source)
+TimeSeriesPanel::TimeSeriesPanel(const config_t& cfg, DataSource& source, double history_seconds,
+                                 QWidget* parent) :
+    Panel(parent), cfg_(cfg), source_(&source), history_seconds_(history_seconds)
 {
     setMouseTracking(true);  // For the hover cursor, which needs no button held.
     setMinimumSize(160, 90);
@@ -137,7 +137,7 @@ void TimeSeriesPanel::releaseAll()
     {
         if (trace->handle != kInvalidSignal)
         {
-            source_.release(trace->handle);
+            source_->release(trace->handle);
         }
     }
     traces_.clear();
@@ -152,7 +152,7 @@ void TimeSeriesPanel::rebindAll()
         auto trace = std::make_unique<Trace>();
         trace->binding = binding;
         trace->color = qt_helpers::toQColor(binding.color, QColor("#4FC3F7"));
-        trace->buffer = std::make_shared<SignalBuffer>(kHistorySeconds, kMaxPointsPerSignal,
+        trace->buffer = std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal,
                                                        kStagingCapacity);
 
         SignalKey key;
@@ -160,7 +160,7 @@ void TimeSeriesPanel::rebindAll()
         key.schema_type = binding.schema_type;
         key.value_expression = binding.value_expression;
 
-        trace->handle = source_.bind(key, trace->buffer);
+        trace->handle = source_->bind(key, trace->buffer);
         trace->bound = trace->handle != kInvalidSignal;
 
         if (!trace->bound)
@@ -184,6 +184,40 @@ void TimeSeriesPanel::applyConfig(const config_t& cfg)
     // need a diff by binding identity; worth doing if it ever proves annoying,
     // but a plot that restarts when you recolour it is a smaller problem than a
     // stale binding that keeps feeding a trace you renamed.
+    rebindAll();
+    emit configChanged();
+}
+
+void TimeSeriesPanel::rebindTo(DataSource& source)
+{
+    if (&source == source_)
+    {
+        return;
+    }
+
+    // AGAINST THE OLD SOURCE, before the pointer moves. A handle means nothing
+    // to a source that did not issue it, and repointing first would leave every
+    // subscription on the old one alive -- decoding samples nothing will ever
+    // draw. The window destroys the old source only after this returns, which
+    // is what makes the release below legal.
+    releaseAll();
+
+    source_ = &source;
+    rebindAll();
+}
+
+void TimeSeriesPanel::setHistorySeconds(double seconds)
+{
+    if (seconds == history_seconds_)
+    {
+        return;
+    }
+    history_seconds_ = seconds;
+
+    // The buffers carry their retention at construction, so this has to rebuild
+    // them -- and that discards whatever they had collected. Honest rather than
+    // convenient: a buffer cannot grow a past it never recorded, and pretending
+    // a shortened window kept its data would be worse than losing it.
     rebindAll();
 }
 
@@ -251,6 +285,7 @@ bool TimeSeriesPanel::addBinding(const BindingCandidate& candidate)
 
     cfg_.traces.push_back(binding);
     rebindAll();
+    emit configChanged();
     return true;
 }
 
@@ -262,6 +297,7 @@ bool TimeSeriesPanel::removeSignal(std::size_t index)
     }
     cfg_.traces.erase(cfg_.traces.begin() + static_cast<std::ptrdiff_t>(index));
     rebindAll();
+    emit configChanged();
     return true;
 }
 

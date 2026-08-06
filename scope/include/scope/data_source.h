@@ -122,8 +122,29 @@ class DataSource
 
     // Seekable sources only; a no-op elsewhere, so a caller that does not check
     // caps() first gets nothing rather than an error.
+    //
+    // seek() moves the playback position and refills every bound buffer with
+    // the window ending there. It is the one operation that may move time
+    // BACKWARDS, which is why SignalBuffer's refill clears before it fills:
+    // SampleHistory::lowerBound() is a binary search that assumes
+    // non-decreasing time, and a buffer holding samples from two scrub
+    // positions at once would violate that silently, returning a plausible
+    // wrong index rather than failing.
     virtual void seek(double /*t*/) {}
     virtual void setPlaying(bool /*playing*/) {}
+
+    // Playback speed as a multiplier on real time. Set independently of
+    // setPlaying() so a rate chosen while stopped is in force when play starts.
+    virtual void setRate(double /*rate*/) {}
+
+    // One render tick, called by TimeBase before it emits frame().
+    //
+    // A playing recorded source advances its position and refills its buffers
+    // here. It does NOT own a timer: the window already has exactly one, and a
+    // second would put the playback head and the repaint on different clocks --
+    // which is how the dashboard's sparklines ended up drifting against each
+    // other, every instance scheduling its own repaint at its own rate.
+    virtual void tick() {}
 };
 
 }  // namespace scope

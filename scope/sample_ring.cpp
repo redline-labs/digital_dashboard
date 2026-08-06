@@ -155,4 +155,32 @@ void SignalBuffer::drain(double now)
     }
 }
 
+void SignalBuffer::clear()
+{
+    // The staging ring goes too. Anything left in it was produced before the
+    // seek and would land in the history on the next drain, one sample at a
+    // time, out of order with the window that was just loaded -- which is
+    // precisely the non-decreasing-time violation lowerBound() cannot survive.
+    scratch_.clear();
+    (void)staging_.drain(scratch_);
+    scratch_.clear();
+
+    history_.clear();
+}
+
+void SignalBuffer::replaceHistory(std::span<const Sample> samples)
+{
+    clear();
+    append(samples);
+}
+
+void SignalBuffer::append(std::span<const Sample> samples)
+{
+    for (const Sample& sample : samples)
+    {
+        history_.append(sample);
+    }
+    received_ += samples.size();
+}
+
 }  // namespace scope

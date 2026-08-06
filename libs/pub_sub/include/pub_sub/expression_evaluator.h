@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -93,7 +94,7 @@ class ExpressionEvaluator
     // oil-pressure or coolant gauge, reading zero because a packet was damaged
     // is the worst available failure.
     template <typename T>
-    std::optional<T> evaluate(const std::vector<std::uint8_t>& payload)
+    std::optional<T> evaluate(std::span<const std::uint8_t> payload)
     {
         // Everything that needs capnp or exprtk happens in here, out of line.
         // What is left is the conversion to T, which is plain arithmetic and the
@@ -135,7 +136,14 @@ class ExpressionEvaluator
     //
     // Public because a consumer that only ever wants a double has no reason to
     // go through the template.
-    std::optional<double> evaluateToDouble(const std::vector<std::uint8_t>& payload);
+    //
+    // A SPAN, not a vector. A live subscriber does hand over a fresh
+    // std::vector from zenoh's as_vector(), but a recorded source does not: a
+    // bag::BagMessage's payload is a view into a decompressed chunk the reader
+    // owns. Taking a vector forced a copy of every payload on the replay path
+    // -- per message, per bound signal -- for no reason at all, since
+    // WordAlignedPayload has taken (pointer, size) all along.
+    std::optional<double> evaluateToDouble(std::span<const std::uint8_t> payload);
 
   private:
     // Latched, and needs the context and expression for its message, so it

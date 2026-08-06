@@ -51,6 +51,15 @@ class SignalBrowser : public QWidget
     explicit SignalBrowser(DataSource& source, QWidget* parent = nullptr);
     ~SignalBrowser() override;
 
+    // Ask a different source instead -- a recording rather than the bus.
+    //
+    // The tree is rebuilt from scratch, which is the one place the
+    // "nothing is ever evicted" rule below does not apply: the rows described
+    // what the OLD source offered, and a topic that is not in the recording is
+    // not stale, it is absent. Keeping it greyed would suggest it might come
+    // back.
+    void setSource(DataSource& source);
+
     // Everything currently known, flattened: one entry per topic plus one per
     // field. This is what the agent interface's `scope.browser` reports, and it
     // is deliberately the same data the tree renders rather than a second
@@ -82,7 +91,9 @@ class SignalBrowser : public QWidget
     void updateRowText(QTreeWidgetItem* topic);
     void onItemActivated(QTreeWidgetItem* item, int column);
 
-    DataSource& source_;
+    // A pointer, not a reference: the window swaps the source out when it
+    // enters review over a recording.
+    DataSource* source_;
 
     QLineEdit* filter_ = nullptr;
     QTreeWidget* tree_ = nullptr;

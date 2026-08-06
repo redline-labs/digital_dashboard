@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace scope
@@ -151,6 +152,37 @@ class SignalBuffer
     // here so that a paused or seeking view does not silently discard the data
     // it is looking at.
     void drain(double now);
+
+    // GUI thread. Drops everything, staged and retained.
+    //
+    // `received()` and `dropped()` are NOT reset: they are lifetime counters,
+    // and a scrub that silently zeroed them would make "this signal has
+    // produced nothing" and "this signal was just reloaded" look identical in
+    // sample_stats -- which is the one place a test can tell them apart.
+    void clear();
+
+    // GUI thread. THE SEEK PATH: replaces the retained history wholesale.
+    //
+    // `samples` must be non-decreasing in t, because that is SampleHistory's
+    // precondition for lowerBound() and a backwards seek is exactly where it
+    // would otherwise be violated. Clearing first is what keeps it true: the
+    // buffer never holds samples from two different scrub positions at once.
+    //
+    // Bypasses the staging ring deliberately. Staging is sized for one GUI tick
+    // of a live publisher -- 4096 slots -- and a seek refills a whole retention
+    // window, which at 1 kHz over five minutes is 300k samples. Pushed through
+    // staging, all but the last 4096 would be counted as drops and thrown away.
+    void replaceHistory(std::span<const Sample> samples);
+
+    // GUI thread. Appends without clearing, for the same reason and with the
+    // same precondition as replaceHistory.
+    //
+    // This is playback moving FORWARD. Rebuilding the whole window every render
+    // tick would be correct and wasteful in proportion to the retention: a
+    // five-minute window of a 1 kHz signal is 300k samples, and copying that
+    // 30 times a second per trace is 144 MB/s to redraw data that has not
+    // changed. Only the newly-reached tail has.
+    void append(std::span<const Sample> samples);
 
     const SampleHistory& history() const { return history_; }
 

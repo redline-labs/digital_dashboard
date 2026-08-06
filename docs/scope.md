@@ -7,6 +7,7 @@ what it has been *doing*.
 cmake --build build --target scope
 ./build/scope/scope                                    # empty, pick signals live
 ./build/scope/scope -c configs/scope/engine_demo.yaml   # a saved workspace
+./build/scope/scope --bag drives/2026-08-06             # review a recording
 ./build/scope/scope --mcp                               # headless, agent-driven
 ```
 
@@ -31,7 +32,14 @@ There is nothing to see without traffic on the bus. For a car-free bring-up:
                     ▼
                DataSource        ← the seam
                     │
-            LiveZenohSource      (a RecordedSource would sit here too)
+       ┌────────────┴────────────┐
+       ▼                         ▼
+ LiveZenohSource           RecordedSource
+                                 │
+                        ┌────────┴────────┐
+                        ▼                 ▼
+                 BagFileProvider    CaptureProvider
+                 (a bag on disk)    (the in-memory capture)
 ```
 
 **DataSource is the seam that matters.** Live and recorded data are the same
@@ -39,7 +47,15 @@ shape — the same zenoh messages, the same capnp schemas, the same expressions
 over their fields — and differ only in where the bytes and the timestamps come
 from and whether you can seek. `caps()` reports that; the transport bar renders
 from it; no panel ever learns which kind is behind it. Reading recorded data is
-a new implementation of one interface, not a change to every panel.
+a new implementation of one interface, not a change to every panel — which is
+what the tree claimed for a year before anything tested the claim, and it held.
+
+**The source is reseatable.** `ScopeWindow::setSource()` swaps the whole thing:
+into review over a recording, or back to live. The sequence is the substance —
+panels rebind FIRST, while the old source is still alive and can honour their
+releases; the browser and the time base follow; only then is the old source
+destroyed. A handle means nothing to a source that did not issue it, so
+repointing before releasing leaks every subscription on the old one.
 
 **Panels are registered in one place.** `scope/include/scope/panel_table.h` is
 the list; the enum, the config variant, the Panels menu, the YAML decoder and
@@ -103,6 +119,91 @@ gauge and fatal for a plot, because the samples it throws away are the line.
 
 `scope_sample_stats` reports `dropped`. Anything above zero means the trace is
 lying about the data.
+
+**Seeking bypasses both stages.** `SignalBuffer::replaceHistory()` clears and
+refills the history directly, because a seek loads a whole retention window —
+five minutes of a 1 kHz signal is 300k samples — and the staging ring holds
+4096. Pushed through staging, all but the last 4096 would be counted as drops.
+
+The clear is not optional either. `SampleHistory::lowerBound()` is a binary
+search that **assumes non-decreasing time** and has no way to notice when that
+is false: it returns a plausible wrong index, and the autoscale, the decimation
+and the cursor readout all quietly compute from the wrong samples. Scrubbing
+backwards is the one operation that can break it, so the buffer never holds
+samples from two scrub positions at once. `scope_test_recorded_source` pins
+both halves of that.
+
+## Capture, and reviewing it
+
+Scope records **the whole bus** into memory from the moment it starts — `**`,
+no exclusions. That is the point: a signal nobody thought to plot can still be
+added afterwards, and a filter taken from the panels would only ever capture
+what was already on screen.
+
+The capture is bounded by **bytes and time, whichever binds first**, evicting
+oldest. Both bounds are needed and for different workloads:
+
+| workload | rate | which bound bites |
+|---|---|---|
+| CarPlay streaming (H.264 + raw PCM) | ~1.5 GB/hour | **bytes** — a time-only cap is OOM-killed in minutes |
+| telemetry alone | ~11 MB/hour | **time** — a byte-only cap never bites at all |
+
+Defaults are 1 GiB / 30 minutes, both in the workspace
+(`max_capture_bytes`, `max_capture_seconds`; `0` disables either).
+
+Eviction is **counted and shown**, next to the retained span in the transport
+bar. A capture silently dropping its head is the same class of lie as a
+recorder dropping samples: the start of a trace reads as a publisher that had
+not started yet. `bag record` already treats it that way, and a saved capture
+records the eviction count as the bag's `dropped_messages`, because from the
+file's point of view that is exactly what it is.
+
+**Capture keeps running while you review it.** Deciding to look at something
+must not cost you everything that happens while you look. The consequence is
+that the provider's span moves under the scrubber — so the transport bar
+re-reads the range every frame, and the retained span is on screen.
+
+Saving goes through `bag::BagWriter`, so the result is an ordinary bag: `bag
+info`, `bag verify`, `bag play` and Foxglove all work on it, with the schema
+descriptors the writer already knows how to embed.
+
+## Reviewing a recording
+
+**Decode once per signal, not once per scrub tick.** This is the load-bearing
+decision. `bind()` starts one pass over the whole recording on a background
+thread, decoding that signal into a flat `std::vector<Sample>`; seeking is then
+a slice out of it. Four hours of a 25 Hz signal is 360k samples, under 6 MB.
+
+The alternative is not merely slower. `BagReader::forEach` constructs and opens
+an `mcap::McapReader` **per part, per call**, and on a part with no summary it
+falls back to scanning the entire data section — driven from a slider that is
+re-opening files thirty times a second and re-scanning a torn recording every
+one of them.
+
+The pass is asynchronous, so `bind()` returns a usable handle before any data
+exists. A trace is empty until its decode finishes, which is the same state a
+live signal is in before its publisher says anything. `scope.source` reports
+`decodes_pending`; anything reading `sample_stats` or screenshotting before
+that is zero is looking at an unfinished picture, not a broken one.
+
+**Time is seconds since the recording started**, matching the live source's
+"seconds since construction" shape, so `viewEnd()`, `viewBegin()` and the
+panels' relative axis labels work unchanged. The wall clock a recording
+genuinely has — and the live source does not — appears in the cursor readout.
+
+`log_time` is what is plotted, not `publish_time`: the recorder's clock is
+monotone, the publisher's is a wall clock that can step backwards under NTP or
+be plainly wrong on a unit that booted with a dead RTC. That would not just
+mislabel the axis, it would violate `lowerBound()`'s precondition outright.
+
+A message recorded under a different schema than the binding expects is
+**skipped, not decoded**. capnp reads whatever bytes it is handed against
+whatever schema it is given — field offsets simply land elsewhere — so the
+result would be a plausible wrong number rather than an error.
+`ExpressionEvaluator::checkPublishedSchema()` is deliberately not used here: it
+takes a full encoding string (`application/capnp;EngineRpm`) and
+`BagMessage::schema` is the bare registry name, so passing it through would
+silently check nothing.
 
 ## Drawing
 
@@ -241,9 +342,13 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 | `scope.add_signal` / `scope.remove_signal` | bind and unbind |
 | `scope.browser` | the topic→field tree, optionally rescanning first |
 | `scope.browser_drag` | drive the drop path itself |
-| `scope.time_base` | window length, pause, cursor, and the source's caps |
+| `scope.time_base` | window length, pause, cursor, caps — plus `seek` / `playing` / `rate` |
 | `scope.panel_get_config` / `_set_config` / `_describe_config` | reflected config |
 | `scope.save` / `scope.load` | workspaces |
+| `scope.source` | which kind of source is behind the panels, and `decodes_pending` |
+| `scope.open_recording` / `scope.go_live` | review a bag directory, or return to the bus |
+| `scope.capture` | messages, bytes, retained span, **evicted** |
+| `scope.review_capture` / `scope.save_recording` | review the capture; write it out as a bag |
 | `scope.sample_stats` | what each signal actually received |
 
 The loop that closes fastest:
@@ -256,6 +361,22 @@ scope_add_signal(panel="plot1", zenoh_key="vehicle/engine/rpm", field="rpm")
 scope_sample_stats()          # count, drops, min/max — is the data there at all?
 ui_screenshot()               # and then actually look
 ```
+
+And the one that proves scrubbing works, which a screenshot cannot:
+
+```
+app_call("scope.open_recording", {"path": "/tmp/demo"})
+app_call("scope.time_base", {})        # caps.live=false, seekable=true, t_begin/t_end
+app_call("scope.add_signal", {...})
+app_call("scope.time_base", {"seek": 5.0})
+scope_sample_stats(...)                # t_first/t_last bracket the sought window
+app_call("scope.time_base", {"seek": 1.0})   # BACKWARDS
+scope_sample_stats(...)                # retained SHRINKS, t_last moves back with it
+```
+
+The backwards seek is the one to check. A buffer that kept the position it came
+from stays perfectly ordered and is completely wrong, so "still ordered" is not
+the assertion — `t_last` moving back is.
 
 **`scope.sample_stats` is the one to reach for first.** A screenshot shows a
 line; this says what the line is made of. `received` climbing with `dropped` at
@@ -282,7 +403,38 @@ ctest --test-dir build -R scope --output-on-failure
   rather than like a bug.
 - `scope_test_workspace` (unit) — the codec, weighted towards hand-edited files
   that are wrong in the usual ways.
+- `scope_test_recorded_source` (unit) — scrubbing, over a stub provider with
+  synthetic messages so "seek to 5 s and you get exactly the samples in
+  `[5 - history, 5]`" is an exact assertion. The load-bearing case is the
+  **backwards** seek, and it is checked two ways because the two failures look
+  different: without the clear, times go backwards mid-buffer; without the
+  rebuild, the window is stale and perfectly ordered.
+- `scope_test_capture_buffer` (unit) — eviction by bytes, by time, and the case
+  a buffer honouring only one bound would get wrong on the other workload. Plus
+  the accounting invariant: every pushed message is either retained or counted
+  as evicted, checked under real threads.
+- `scope_test_workspace` (unit) — the codec, weighted towards hand-edited files
+  that are wrong in the usual ways.
 - `scope_test_panels` (gui) — the window and panel layer against a real widget
   tree, using a stub `DataSource` so it needs no bus. This one caught a live
   crash: `{"zenoh_key": 42}` in dropped data threw a `json::type_error` out of a
-  Qt drop handler, which terminates the app.
+  Qt drop handler, which terminates the app. It also pins the source-swap
+  ordering rule, and that `history_seconds` reaches the panels — it round-tripped
+  through the YAML perfectly for a year while both ends ignored it.
+
+## Headless
+
+`--mcp` sets `setHeadless(true)`, and that is not only about the Qt platform.
+There is nobody to dismiss a modal dialog in a headless run, so one raised there
+does not fail — it **hangs the process, with no log line and no error**, which
+is the hardest kind of bug to find from the other side of a socket.
+
+So the File menu's work is split three ways, copied from the editor:
+dialog-free `loadWorkspace()` / `saveWorkspace()` / `openRecording()` /
+`saveCaptureTo()` that everything except a menu item calls; thin dialog
+wrappers that only pick a path; and `confirmDiscardChanges()`, which
+early-returns `true` with a warning under `headless_`.
+
+Quitting prompts about an unsaved **capture** before an unsaved workspace. A
+workspace can be rebuilt by hand in a couple of minutes; a capture of what the
+vehicle was doing cannot be rebuilt at all.

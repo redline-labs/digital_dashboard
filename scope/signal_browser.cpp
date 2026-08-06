@@ -123,7 +123,7 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out)
 }
 
 SignalBrowser::SignalBrowser(DataSource& source, QWidget* parent) :
-    QWidget(parent), source_(source)
+    QWidget(parent), source_(&source)
 {
     setObjectName("signal_browser");
 
@@ -170,16 +170,40 @@ SignalBrowser::SignalBrowser(DataSource& source, QWidget* parent) :
     updateStatus();
 }
 
+void SignalBrowser::setSource(DataSource& source)
+{
+    if (&source == source_)
+    {
+        return;
+    }
+    source_ = &source;
+
+    // Cleared, not merged. Every row here described what the OLD source
+    // offered, and the usual "never evict, only grey" rule does not apply
+    // across a swap: a topic missing from a recording is not unreachable and
+    // will not come back, so leaving it greyed would invite someone to bind it
+    // and wait for data that cannot arrive.
+    tree_->clear();
+
+    // Zero rather than the new source's revision, so the first sync always
+    // rebuilds. A fresh source starting at revision 0 would otherwise match
+    // whatever the old one happened to be on and the tree would stay empty.
+    last_directory_revision_ = 0;
+
+    syncFromDirectory();
+    updateStatus();
+}
+
 void SignalBrowser::syncFromDirectory()
 {
-    const std::uint64_t revision = source_.topicsRevision();
+    const std::uint64_t revision = source_->topicsRevision();
     if (revision == last_directory_revision_)
     {
         return;  // Nothing has come or gone; do not rebuild rows for nothing.
     }
     last_directory_revision_ = revision;
 
-    for (const TopicInfo& topic : source_.topics())
+    for (const TopicInfo& topic : source_->topics())
     {
         addTopic(QString::fromStdString(topic.key), QString::fromStdString(topic.schema),
                  topic.reachable);

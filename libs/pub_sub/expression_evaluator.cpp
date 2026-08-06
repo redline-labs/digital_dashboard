@@ -365,7 +365,7 @@ void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding)
 }
 
 std::optional<double> ExpressionEvaluator::evaluateToDouble(
-    const std::vector<std::uint8_t>& payload)
+    std::span<const std::uint8_t> payload)
 {
     if (!impl_->is_valid)
     {
@@ -377,7 +377,8 @@ std::optional<double> ExpressionEvaluator::evaluateToDouble(
     // sizeof(word) used to be silently truncated, and anything under one word
     // decoded as an empty message -- every field its default, no warning, a gauge
     // reading zero. Say so instead.
-    const WordAlignedPayload aligned(payload);
+    const WordAlignedPayload aligned(reinterpret_cast<const kj::byte*>(payload.data()),
+                                     payload.size());
     if (aligned.empty())
     {
         if (!impl_->payload_size_warned)

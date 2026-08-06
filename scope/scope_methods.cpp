@@ -2,6 +2,8 @@
 
 #include "scope/data_source.h"
 #include "scope/panel_registry.h"
+#include "scope/recorded_source.h"
+#include "scope/scope_recorder.h"
 #include "scope/scope_window.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
@@ -423,6 +425,34 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 time_base.setRenderRateHz(rate->get<int>());
             }
 
+            // Playback. All three are no-ops on a live source, which has
+            // nothing to seek to -- so a caller that did not read caps() first
+            // gets an unchanged reply rather than an error, and the reply says
+            // why.
+            if (const auto rate = params.find("rate"); rate != params.end() && rate->is_number())
+            {
+                time_base.setRate(rate->get<double>());
+            }
+
+            // BEFORE the seek, so {"playing": true, "seek": 0} starts from the
+            // sought position rather than from wherever the head already was.
+            if (const auto playing = params.find("playing");
+                playing != params.end() && playing->is_boolean())
+            {
+                time_base.setPlaying(playing->get<bool>());
+            }
+
+            if (const auto seek = params.find("seek"); seek != params.end() && seek->is_number())
+            {
+                if (!time_base.source().caps().seekable)
+                {
+                    return std::unexpected(badParams(
+                        "This source is not seekable. Open a recording with "
+                        "scope.open_recording first."));
+                }
+                time_base.seek(seek->get<double>());
+            }
+
             if (const auto cursor = params.find("cursor"); cursor != params.end())
             {
                 if (cursor->is_null())
@@ -456,8 +486,152 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             {
                 out["cursor"] = nullptr;
             }
-            out["caps"] = json{{"live", caps.live}, {"seekable", caps.seekable}};
+            out["playing"] = time_base.playing();
+            out["rate"] = time_base.rate();
+
+            // t_begin/t_end are only meaningful when seekable, and are reported
+            // regardless so a caller can see the extent it is allowed to seek
+            // within rather than discovering it by being clamped.
+            out["caps"] = json{{"live", caps.live},
+                               {"seekable", caps.seekable},
+                               {"t_begin", caps.t_begin},
+                               {"t_end", caps.t_end}};
             return out;
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    // ------------------------------------------------------------------ source
+
+    server.registerMethod("scope.source", [win](const json& /*params*/) -> MethodResult {
+        const SourceCaps caps = win->source().caps();
+
+        json out;
+        out["kind"] = caps.live ? "live" : "recorded";
+        out["caps"] = json{{"live", caps.live},
+                           {"seekable", caps.seekable},
+                           {"t_begin", caps.t_begin},
+                           {"t_end", caps.t_end}};
+        out["now"] = win->source().now();
+
+        // A recording is decoded once per signal, on a background thread, when
+        // the signal is bound. Until this is zero a trace may legitimately be
+        // empty -- so a caller that screenshots or reads sample_stats before
+        // then is looking at an unfinished picture, not a broken one.
+        if (const auto* recorded = dynamic_cast<const RecordedSource*>(&win->source()))
+        {
+            out["decodes_pending"] = recorded->decodesPending();
+            out["wall_clock_ns"] = recorded->wallClockNanosAt(win->source().now());
+        }
+
+        json topics = json::array();
+        for (const TopicInfo& topic : win->source().topics())
+        {
+            topics.push_back(json{{"key", topic.key},
+                                  {"schema", topic.schema},
+                                  {"reachable", topic.reachable}});
+        }
+        out["topics"] = std::move(topics);
+        return out;
+    });
+
+    server.registerMethod(
+        "scope.open_recording",
+        [win](const json& params) -> MethodResult {
+            const auto path = params.find("path");
+            if (path == params.end() || !path->is_string())
+            {
+                return std::unexpected(
+                    badParams("'path' (string) is required -- a bag DIRECTORY, not an .mcap "
+                              "file."));
+            }
+
+            if (!win->openRecording(QString::fromStdString(path->get<std::string>())))
+            {
+                return std::unexpected(badParams(
+                    "Could not open '" + path->get<std::string>() +
+                    "' as a recording. See app.logs; `bag reindex` can rebuild a missing "
+                    "index."));
+            }
+
+            const SourceCaps caps = win->source().caps();
+            return json{{"opened", true},
+                        {"path", path->get<std::string>()},
+                        {"caps", json{{"live", caps.live},
+                                      {"seekable", caps.seekable},
+                                      {"t_begin", caps.t_begin},
+                                      {"t_end", caps.t_end}}}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    server.registerMethod(
+        "scope.go_live",
+        [win](const json& /*params*/) -> MethodResult {
+            win->goLive();
+            return json{{"live", !win->isReviewing()}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    // ----------------------------------------------------------------- capture
+
+    server.registerMethod("scope.capture", [win](const json& /*params*/) -> MethodResult {
+        ScopeRecorder* const recorder = win->recorder();
+        if (recorder == nullptr)
+        {
+            return std::unexpected(internalError("This window has no capture."));
+        }
+
+        const CaptureBuffer& buffer = recorder->buffer();
+        return json{
+            {"running", recorder->isValid()},
+            {"messages", buffer.size()},
+            {"bytes", buffer.bytes()},
+            {"received", recorder->received()},
+            {"retained_span_seconds", buffer.retainedSpanSeconds()},
+            // Not cosmetic. A capture silently dropping its head makes the
+            // start of a trace look like a publisher that had not started yet
+            // -- the same class of lie a recorder dropping samples tells.
+            {"evicted", buffer.evicted()},
+            {"evicted_bytes", buffer.evictedBytes()}};
+    });
+
+    server.registerMethod(
+        "scope.review_capture",
+        [win](const json& /*params*/) -> MethodResult {
+            if (!win->reviewCapture())
+            {
+                return std::unexpected(badParams(
+                    "Nothing has been captured yet -- no publisher has sent anything since "
+                    "scope started."));
+            }
+            const SourceCaps caps = win->source().caps();
+            return json{{"reviewing", true},
+                        {"caps", json{{"live", caps.live},
+                                      {"seekable", caps.seekable},
+                                      {"t_begin", caps.t_begin},
+                                      {"t_end", caps.t_end}}}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    server.registerMethod(
+        "scope.save_recording",
+        [win](const json& params) -> MethodResult {
+            const auto path = params.find("path");
+            if (path == params.end() || !path->is_string())
+            {
+                return std::unexpected(
+                    badParams("'path' (string) is required -- the bag DIRECTORY to write."));
+            }
+
+            if (!win->saveCaptureTo(QString::fromStdString(path->get<std::string>())))
+            {
+                return std::unexpected(internalError(
+                    "Failed to write the capture to '" + path->get<std::string>() + "'."));
+            }
+
+            ScopeRecorder* const recorder = win->recorder();
+            return json{{"saved", true},
+                        {"path", path->get<std::string>()},
+                        {"messages", recorder != nullptr ? recorder->buffer().size() : 0}};
         },
         agent_control::AgentServer::MethodKind::kMutating);
 

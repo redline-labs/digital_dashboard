@@ -141,6 +141,8 @@ scope::scope_workspace_t sampleWorkspace()
     workspace.history_seconds = 120.0;
     workspace.window_seconds = 15.0;
     workspace.render_rate_hz = 24;
+    workspace.max_capture_bytes = 268435456;
+    workspace.max_capture_seconds = 600.0;
 
     TimeSeriesPanelConfig_t plot;
     plot.title = "Engine";
@@ -185,6 +187,10 @@ void testEveryFieldSurvivesARoundTrip()
     expect(loaded->history_seconds == original.history_seconds, "history_seconds survives");
     expect(loaded->window_seconds == original.window_seconds, "window_seconds survives");
     expect(loaded->render_rate_hz == original.render_rate_hz, "render_rate_hz survives");
+    expect(loaded->max_capture_bytes == original.max_capture_bytes,
+           "max_capture_bytes survives");
+    expect(loaded->max_capture_seconds == original.max_capture_seconds,
+           "max_capture_seconds survives");
     expect(loaded->dock_state == original.dock_state, "the dock state blob survives verbatim");
     expect(loaded->panels.size() == 1, "the panel survives");
 
