@@ -23,6 +23,7 @@
 
 #include <limits>
 
+#include "pub_sub/topic_key.h"
 #include "reflection/reflection.h"
 #include "helpers/color.h"
 #include "spdlog/spdlog.h"
@@ -111,6 +112,72 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
 
 namespace
 {
+    // Marks a QLineEdit that holds a zenoh key, so the page can validate it
+    // after the form is built without the form knowing anything about zenoh.
+    constexpr const char* kZenohKeyProperty = "redlineZenohKey";
+
+    // Which string fields are zenoh keys.
+    //
+    // Matched on the field name rather than declared, because the name is
+    // already the convention: every one is `zenoh_key` or a prefixed variant
+    // like `odometer_zenoh_key` where a widget binds two streams. A field that
+    // is a key but not named like one would go unchecked here -- it would still
+    // be refused by the publisher and by config validation, so the cost is a
+    // late error rather than a wrong one.
+    bool isZenohKeyField(const QString& path)
+    {
+        // Only the last component: `traces[0].zenoh_key` is a key, but a nested
+        // struct that merely lives under one is not.
+        const qsizetype dot = path.lastIndexOf('.');
+        const QString leaf = dot < 0 ? path : path.mid(dot + 1);
+        return leaf == QLatin1String("zenoh_key") || leaf.endsWith(QLatin1String("_zenoh_key"));
+    }
+
+    // Validates every tagged field on a page, marks the bad ones, and reports
+    // what is wrong.
+    //
+    // Live-and-blocking rather than refusing keystrokes: a QValidator that
+    // rejected '@' outright would silently swallow the key and leave someone
+    // wondering why their keyboard was broken. Here the character goes in, the
+    // field turns red, the reason is visible while they are still looking at
+    // it, and Apply is unavailable until it is fixed -- so nothing invalid can
+    // reach a config, but nothing is mysterious either.
+    QStringList validateZenohKeyFields(QWidget* page)
+    {
+        QStringList problems;
+
+        for (QLineEdit* line : page->findChildren<QLineEdit*>())
+        {
+            if (!line->property(kZenohKeyProperty).toBool())
+            {
+                continue;
+            }
+
+            const std::string key = line->text().toStdString();
+
+            // An empty key is not an error here. It is how an unbound widget is
+            // spelled, and half the shipped configs have one; refusing it would
+            // make the panel unusable for any widget you have not wired up yet.
+            const std::string problem = key.empty() ? std::string() : pub_sub::topicKeyProblem(key);
+
+            if (problem.empty())
+            {
+                line->setStyleSheet(QString());
+                line->setToolTip(QString());
+                continue;
+            }
+
+            line->setStyleSheet("border: 1px solid #C0392B; background: #2B1A18;");
+            line->setToolTip(QString::fromStdString(problem));
+
+            QString name = line->objectName();
+            name.remove(0, QString("field:").size());
+            problems << QString("%1: %2").arg(name, QString::fromStdString(problem));
+        }
+
+        return problems;
+    }
+
     // Stops one editor from setting the width of the whole panel.
     //
     // Qt sizes a spin box's minimum to fit its widest possible value, and the
@@ -147,6 +214,19 @@ namespace
             line->setText(QString::fromUtf8(value.data(), static_cast<int>(value.size())));
             line->setObjectName(QString("field:%1").arg(path));
             constrainEditorWidth(line);
+
+            // Tagged rather than wrapped. Wrapping the line edit in a container
+            // with a message label underneath would be the obvious way to show
+            // a per-field error, but readLeafFromWidget() finds a string field
+            // by qobject_cast<QLineEdit*> on the editor itself -- so wrapping
+            // would silently stop every string field being read back. The tag
+            // lets the page find these afterwards and validate them without
+            // changing the form's shape.
+            if (isZenohKeyField(path))
+            {
+                line->setProperty(kZenohKeyProperty, true);
+            }
+
             return line;
         }
         else if constexpr (std::is_same_v<FieldType, helpers::Color>)
@@ -699,7 +779,21 @@ namespace
         scrollContent->setLayout(form);
         scroll->setWidget(scrollContent);
         vbox->addWidget(scroll, 1); // let the scroll area take all remaining space
+        // Why Apply is unavailable, said next to Apply. A per-field message
+        // under each row would be closer to the offending field, but it would
+        // mean wrapping the editors -- which readLeafFromWidget cannot tolerate
+        // -- and it would push the button off-screen on a panel this narrow.
+        // The field itself turns red and carries the reason as a tooltip; this
+        // is the aggregate, so the disabled button always explains itself.
+        auto* problemsLabel = new QLabel(page);
+        problemsLabel->setObjectName("field_problems");
+        problemsLabel->setWordWrap(true);
+        problemsLabel->setStyleSheet("color: #E74C3C; font-size: 11px;");
+        problemsLabel->hide();
+        vbox->addWidget(problemsLabel, 0);
+
         auto* applyBtn = new QPushButton("Apply", page);
+        applyBtn->setObjectName("apply_button");
         applyBtn->setMinimumHeight(28);
         applyBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         auto* bottom = new QHBoxLayout();
@@ -707,6 +801,31 @@ namespace
         bottom->addWidget(applyBtn);
         bottom->setSizeConstraint(QLayout::SetMinimumSize);
         vbox->addLayout(bottom, 0); // persistent bottom bar
+
+        const auto revalidate = [page, problemsLabel, applyBtn]()
+        {
+            const QStringList problems = validateZenohKeyFields(page);
+            problemsLabel->setVisible(!problems.isEmpty());
+            problemsLabel->setText(problems.join('\n'));
+            applyBtn->setEnabled(problems.isEmpty());
+            applyBtn->setToolTip(problems.isEmpty()
+                                     ? QString()
+                                     : QString("Fix the highlighted field(s) first."));
+        };
+
+        for (QLineEdit* line : page->findChildren<QLineEdit*>())
+        {
+            if (line->property(kZenohKeyProperty).toBool())
+            {
+                QObject::connect(line, &QLineEdit::textChanged, page,
+                                 [revalidate](const QString&) { revalidate(); });
+            }
+        }
+
+        // Run once for the config as loaded. A file edited by hand can already
+        // hold a bad key, and the panel should say so on selection rather than
+        // waiting for someone to type in the field.
+        revalidate();
         page->setLayout(vbox);
 
         PropertiesPanel* that = qobject_cast<PropertiesPanel*>(parent);
