@@ -6,6 +6,7 @@
 #include <vector>
 #include <array>
 
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "can_frame.capnp.h"
 
@@ -30,6 +31,11 @@ int main(int argc, char** argv)
 
     const std::string key = result["key"].as<std::string>();
     SPDLOG_INFO("Publishing simulated TC8 CAN frames to '{}'", key);
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("mock_racegrade_tc8");
 
     pub_sub::ZenohPublisher<CanFrame> pub(key);
 

@@ -24,6 +24,19 @@ class SessionManager
     // Get or create the shared Zenoh session (thread-safe)
     static std::shared_ptr<zenoh::Session> getOrCreate();
 
+    // This process's zenoh session id, as hex.
+    //
+    // The join key for everything that has to say *who*: it appears in the
+    // advertisement key of every topic we publish, in the node and service
+    // spaces, and on every sample zenoh stamps (as the timestamp's id). Two of
+    // those come from liveliness and one from the data path, and they agreeing
+    // is what confirms a topic is being published by the node that claims it.
+    //
+    // Empty when no session could be opened -- callers must handle that rather
+    // than embedding an empty segment in a key. Opens the session if one is not
+    // already up, because a zid without a session does not exist.
+    static std::string zid();
+
     // Close and reset the shared session (useful for tests/shutdown)
     static void shutdown();
 

@@ -31,6 +31,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <capnp/message.h>
 #include <capnp/schema.capnp.h>
 #include <capnp/serialize.h>
 
@@ -40,6 +41,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,17 @@ struct Entry
     // capnp::Schema::from<::CanFrame>() so that a schema sharing a name with
     // something in namespace pub_sub still resolves to the capnp type.
     std::string cxx_name;
+
+    // capnp's own id and display name for this node, e.g.
+    // "can_frame.capnp:CanFrame".
+    //
+    // Needed for the schema DESCRIPTOR -- the serialized CodeGeneratorRequest
+    // emitted alongside each entry so that a consumer outside this build (an
+    // MCAP reader, Foxglove Studio) can decode a recorded message without our
+    // generated C++ headers. The display name is what such a consumer resolves
+    // the root node by; the id is where the transitive closure starts.
+    uint64_t node_id = 0;
+    std::string display_name;
 };
 
 struct SourceFile
@@ -213,7 +226,9 @@ private:
                            "schemas/*.capnp -- rename one of them.";
                 }
                 claimed_names_.emplace(registry_name, filename);
-                entries_.push_back(Entry{registry_name, cxx_name});
+                entries_.push_back(
+                    Entry{registry_name, cxx_name, node.getId(),
+                          toStd(node.getDisplayName())});
 
                 if (at_file_scope)
                 {
@@ -232,6 +247,180 @@ private:
             }
         }
         return std::nullopt;
+    }
+
+
+    // ------------------------------------------------------ schema descriptors
+    //
+    // A serialized capnp CodeGeneratorRequest per schema, so that a consumer
+    // OUTSIDE this build can decode one of our messages.
+    //
+    // Why this belongs here and nowhere else: a CodeGeneratorRequest is exactly
+    // what a capnp plugin is handed, and this is the only place in the tree that
+    // has one. Reconstructing an equivalent at runtime from capnp::Schema would
+    // mean rebuilding the node graph field by field -- a second implementation of
+    // something capnp already gave us, with its own bugs.
+    //
+    // It is PRUNED to the transitive closure of each schema rather than emitted
+    // whole. The full request for schemas/*.capnp is on the order of a hundred
+    // kilobytes; a bag file writes one descriptor per schema it records, so
+    // emitting the whole thing each time would put tens of megabytes of
+    // duplicated node graph into every recording.
+
+    // Every node id reachable from `root`, plus the scope chain up to the file
+    // node.
+    //
+    // A consumer loads these into a capnp::SchemaLoader, which resolves a field's
+    // type by id -- so a type reachable from a field and NOT in this set makes
+    // that field undecodable. The failure is not an error at load time; it
+    // surfaces later as a missing type, which is why the closure is computed
+    // rather than approximated.
+    void addClosure(uint64_t id, std::set<uint64_t>& out) const
+    {
+        if (id == 0 || out.count(id) != 0)
+        {
+            return;
+        }
+        const auto found = nodes_.find(id);
+        if (found == nodes_.end())
+        {
+            // A node from an import we were not asked to generate. Nothing to
+            // add, and nothing we could add.
+            return;
+        }
+        out.insert(id);
+
+        const capnp::schema::Node::Reader node = found->second;
+
+        // Upwards: the enclosing scope, ending at the file node. A node whose
+        // scope is absent still loads, but its displayNamePrefixLength refers to
+        // a scope nothing can look up, so a consumer printing qualified names
+        // gets them wrong.
+        addClosure(node.getScopeId(), out);
+
+        if (node.isStruct())
+        {
+            for (auto field : node.getStruct().getFields())
+            {
+                if (field.isGroup())
+                {
+                    // A group is a node in its own right, reached only through
+                    // the field -- never through nestedNodes.
+                    addClosure(field.getGroup().getTypeId(), out);
+                }
+                else if (field.isSlot())
+                {
+                    addTypeClosure(field.getSlot().getType(), out);
+                }
+            }
+        }
+    }
+
+    void addTypeClosure(capnp::schema::Type::Reader type, std::set<uint64_t>& out) const
+    {
+        switch (type.which())
+        {
+            case capnp::schema::Type::STRUCT:
+                addClosure(type.getStruct().getTypeId(), out);
+                break;
+            case capnp::schema::Type::ENUM:
+                addClosure(type.getEnum().getTypeId(), out);
+                break;
+            case capnp::schema::Type::INTERFACE:
+                addClosure(type.getInterface().getTypeId(), out);
+                break;
+            case capnp::schema::Type::LIST:
+                // List<List<Foo>> is legal, so this recurses rather than
+                // inspecting one level.
+                addTypeClosure(type.getList().getElementType(), out);
+                break;
+
+            // Everything else is a primitive with no node behind it. Spelled out
+            // rather than defaulted so that a capnp release adding a type kind
+            // fails this build instead of silently omitting it from the closure
+            // -- which would produce a descriptor that loads and then cannot
+            // decode one field.
+            case capnp::schema::Type::VOID:
+            case capnp::schema::Type::BOOL:
+            case capnp::schema::Type::INT8:
+            case capnp::schema::Type::INT16:
+            case capnp::schema::Type::INT32:
+            case capnp::schema::Type::INT64:
+            case capnp::schema::Type::UINT8:
+            case capnp::schema::Type::UINT16:
+            case capnp::schema::Type::UINT32:
+            case capnp::schema::Type::UINT64:
+            case capnp::schema::Type::FLOAT32:
+            case capnp::schema::Type::FLOAT64:
+            case capnp::schema::Type::TEXT:
+            case capnp::schema::Type::DATA:
+            case capnp::schema::Type::ANY_POINTER:
+                break;
+        }
+    }
+
+    // The pruned request for one entry, serialized.
+    kj::Array<capnp::word> descriptorFor(const Entry& entry) const
+    {
+        std::set<uint64_t> closure;
+        addClosure(entry.node_id, closure);
+
+        capnp::MallocMessageBuilder message;
+        auto request = message.initRoot<capnp::schema::CodeGeneratorRequest>();
+
+        auto nodes = request.initNodes(static_cast<unsigned>(closure.size()));
+        unsigned index = 0;
+        uint64_t file_id = 0;
+        for (const uint64_t id : closure)
+        {
+            const auto found = nodes_.find(id);
+            nodes.setWithCaveats(index++, found->second);
+            if (found->second.isFile())
+            {
+                file_id = id;
+            }
+        }
+
+        // requestedFiles is what tells a consumer which file this descriptor is
+        // "about". Foxglove and capnp's own tooling both read it.
+        if (file_id != 0)
+        {
+            auto files = request.initRequestedFiles(1);
+            files[0].setId(file_id);
+            files[0].setFilename(nodes_.at(file_id).getDisplayName());
+        }
+
+        return capnp::messageToFlatArray(message);
+    }
+
+    // The descriptors as C++ byte-array literals.
+    std::string descriptorTable() const
+    {
+        std::string out =
+            "// Serialized capnp CodeGeneratorRequests, pruned to each schema's transitive\n"
+            "// closure. See the generator for why these exist and why they are pruned.\n"
+            "namespace\n"
+            "{\n";
+
+        for (const auto& entry : entries_)
+        {
+            const kj::Array<capnp::word> words = descriptorFor(entry);
+            const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+
+            out += "\nconstexpr std::uint8_t kDescriptor_" + entry.registry_name + "[] = {";
+            for (size_t i = 0; i < bytes.size(); ++i)
+            {
+                if (i % 16 == 0)
+                {
+                    out += "\n    ";
+                }
+                out += std::to_string(static_cast<unsigned>(bytes[i])) + ",";
+            }
+            out += "\n};\n";
+        }
+
+        out += "\n}  // namespace\n\n";
+        return out;
     }
 
     static std::string cxxNamespaceOf(capnp::schema::Node::Reader file)
@@ -265,6 +454,8 @@ private:
             "#define PUB_SUB_SCHEMA_REGISTRY_H_\n"
             "\n"
             "#include <array>\n"
+            "#include <cstdint>\n"
+            "#include <span>\n"
             "#include <optional>\n"
             "#include <string_view>\n"
             "\n"
@@ -359,6 +550,27 @@ private:
             "std::optional<capnp::Schema> get_schema(schema_type_t schema_type);\n"
             "std::optional<capnp::Schema> get_schema(std::string_view schema_name);\n"
             "\n"
+            "// The schema as a serialized capnp CodeGeneratorRequest, pruned to its\n"
+            "// transitive closure.\n"
+            "//\n"
+            "// This is what lets something OUTSIDE this build decode one of our messages:\n"
+            "// capnp::Schema above is a handle into code the compiler generated for us, and\n"
+            "// is meaningless to anyone who does not link it. A descriptor is the schema as\n"
+            "// DATA -- loadable by capnp::SchemaLoader, embeddable in a recording, and the\n"
+            "// exact form MCAP registers for schema_encoding \"capnproto\".\n"
+            "//\n"
+            "// Empty when the name is unknown. The bytes have static storage duration and\n"
+            "// live for the life of the process.\n"
+            "std::span<const std::uint8_t> schema_descriptor(schema_type_t schema_type);\n"
+            "std::span<const std::uint8_t> schema_descriptor(std::string_view schema_name);\n"
+            "\n"
+            "// capnp's own qualified name, e.g. \"can_frame.capnp:CanFrame\".\n"
+            "//\n"
+            "// NOT the registry name. A consumer reading a descriptor resolves the root node\n"
+            "// by this, because it is what capnp records in the node graph -- the registry\n"
+            "// name is ours alone and appears nowhere in the descriptor.\n"
+            "std::string_view schema_display_name(schema_type_t schema_type);\n"
+            "\n"
             "// Specialized only for registered schemas, so publishing an unregistered type\n"
             "// is a compile error rather than a message nothing can decode.\n"
             "template <typename Schema>\n"
@@ -386,8 +598,9 @@ private:
         {
             out += "#include \"" + file.filename + ".h\"\n";
         }
+        out += "\n";
+        out += descriptorTable();
         out +=
-            "\n"
             "namespace pub_sub\n"
             "{\n"
             "\n"
@@ -421,6 +634,49 @@ private:
             "    }\n"
             "\n"
             "    return std::nullopt;\n"
+            "}\n"
+            "\n"
+            "// Same switch shape as get_schema, and for the same reason: -Wswitch-enum\n"
+            "// fails the build if the enum and the cases drift apart.\n"
+            "std::span<const std::uint8_t> schema_descriptor(schema_type_t schema_type)\n"
+            "{\n"
+            "    switch (schema_type)\n"
+            "    {\n";
+        for (const auto& entry : entries_)
+        {
+            out += "        case schema_type_t::" + entry.registry_name +
+                   ": return kDescriptor_" + entry.registry_name + ";\n";
+        }
+        out +=
+            "    }\n"
+            "\n"
+            "    return {};\n"
+            "}\n"
+            "\n"
+            "std::span<const std::uint8_t> schema_descriptor(std::string_view schema_name)\n"
+            "{\n"
+            "    if (const auto schema_type = "
+            "reflection::enum_traits<schema_type_t>::try_from_string(schema_name))\n"
+            "    {\n"
+            "        return schema_descriptor(*schema_type);\n"
+            "    }\n"
+            "\n"
+            "    return {};\n"
+            "}\n"
+            "\n"
+            "std::string_view schema_display_name(schema_type_t schema_type)\n"
+            "{\n"
+            "    switch (schema_type)\n"
+            "    {\n";
+        for (const auto& entry : entries_)
+        {
+            out += "        case schema_type_t::" + entry.registry_name + ": return \"" +
+                   entry.display_name + "\";\n";
+        }
+        out +=
+            "    }\n"
+            "\n"
+            "    return {};\n"
             "}\n"
             "\n"
             "}  // namespace pub_sub\n";

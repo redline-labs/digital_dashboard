@@ -1,6 +1,7 @@
 #include "pub_sub/detail/byte_subscriber.h"
 
 #include "pub_sub/session_manager.h"
+#include "pub_sub/timestamp.h"
 #include "pub_sub/topic_key.h"
 
 #include <zenoh.hxx>
@@ -19,13 +20,39 @@ namespace
 {
 
 // SampleMeta over a live zenoh::Sample. Constructed on the stack per sample,
-// which costs nothing; encoding() is what would cost, and only runs if asked.
+// which costs nothing; the accessors are what would cost, and only run if asked.
 class ZenohSampleMeta final : public SampleMeta
 {
   public:
     explicit ZenohSampleMeta(const zenoh::Sample& sample) : sample_(sample) {}
 
     std::string encoding() const override { return sample_.get_encoding().as_string(); }
+
+    std::string_view keyexpr() const override { return sample_.get_keyexpr().as_string_view(); }
+
+    std::optional<std::uint64_t> publishTimeNanos() const override
+    {
+        const std::optional<zenoh::Timestamp> stamp = sample_.get_timestamp();
+        if (!stamp)
+        {
+            return std::nullopt;
+        }
+        return ntp64ToUnixNanos(stamp->get_time());
+    }
+
+    std::string originZid() const override
+    {
+        const std::optional<zenoh::Timestamp> stamp = sample_.get_timestamp();
+        if (!stamp)
+        {
+            return {};
+        }
+        // The id on the timestamp is the session that STAMPED the sample, which
+        // is the publisher's -- zenoh stamps at the source when timestamping is
+        // enabled there, and a router only fills in for samples that arrive
+        // without one.
+        return stamp->get_id().to_string();
+    }
 
   private:
     const zenoh::Sample& sample_;

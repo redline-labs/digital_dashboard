@@ -14,6 +14,7 @@
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_payload.h"
+#include "pub_sub/topic_key.h"
 
 #include "spdlog/spdlog.h"
 
@@ -90,6 +91,33 @@ class ZenohService
         );
 
         SPDLOG_DEBUG("Service active on '{}' for schemas '{}'->'{}'", mKeyExpr, schema_traits<RequestT>::name, schema_traits<ResponseT>::name);
+
+        // Announce the service, for the same reason a publisher announces its
+        // topic: a queryable is otherwise undiscoverable. Zenoh will route a
+        // request to it, but nothing on the bus says it exists, what key to send
+        // to, or what a request should contain -- you had to read the source of
+        // whichever node offers it. The two schema names are exactly what a
+        // caller needs, and they are already available here as template
+        // parameters.
+        //
+        // Declared after the queryable, so a token never names a service that
+        // cannot answer.
+        try
+        {
+            const std::string advertised = serviceKey(
+                mKeyExpr, schema_traits<RequestT>::name, schema_traits<ResponseT>::name,
+                mSession->get_zid().to_string());
+            mAdvertisement.emplace(
+                mSession->liveliness_declare_token(zenoh::KeyExpr(advertised)));
+            SPDLOG_DEBUG("Advertised service '{}' as '{}'", mKeyExpr, advertised);
+        }
+        catch (const std::exception& e)
+        {
+            // Not fatal: an unannounced service still answers anyone who knows
+            // its key, which is every caller that exists today.
+            SPDLOG_WARN("Service on '{}' is running but could not be advertised: {}", mKeyExpr,
+                        e.what());
+        }
     }
 
     ~ZenohService()
@@ -111,6 +139,10 @@ private:
     Handler mHandler;
     std::optional<zenoh::Queryable<void>> mQueryable;
     std::shared_ptr<zenoh::Session> mSession;
+
+    // The liveliness token that makes this service discoverable. See the
+    // constructor; empty when it could not be declared, which is not fatal.
+    std::optional<zenoh::LivelinessToken> mAdvertisement;
 };
 
 } // namespace pub_sub

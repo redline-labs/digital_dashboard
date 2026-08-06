@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,17 +14,50 @@ namespace pub_sub::detail
 
 // What a sample carries besides its bytes.
 //
-// Only the encoding, and only because a subscriber checks once that the schema it
-// was configured for is the one actually being published. Getting that string out
-// of zenoh copies it, and paying for a copy on every sample to serve a check that
-// runs on the first one would be silly -- so it is a virtual the handler calls
-// when it wants it, implemented over the live zenoh::Sample.
+// Every accessor here is a virtual the handler calls only when it wants the
+// answer, rather than a field filled in for every sample. That shape is not
+// stylistic: encoding() and originZid() each copy a string out of zenoh, and a
+// subscriber typically checks the encoding once (on the first sample, to confirm
+// the schema is the one it was configured for) and never looks again. Paying for
+// those copies on every sample to serve a check that runs once would be silly.
+//
+// Implemented over the live zenoh::Sample, so the object is only valid for the
+// duration of the handler call.
 class SampleMeta
 {
   public:
     // The whole encoding string, e.g. "application/capnp;CanFrame". Use
     // schemaNameFromEncoding() to get the schema half.
     virtual std::string encoding() const = 0;
+
+    // The key this sample was actually published on.
+    //
+    // NOT the same as the subscription's key expression whenever that contains a
+    // wildcard: a subscriber on "**" gets one callback per key and has no other
+    // way to tell them apart. The view borrows from the live sample, so copy it
+    // to keep it.
+    virtual std::string_view keyexpr() const = 0;
+
+    // When the publisher's session stamped this sample, in nanoseconds since the
+    // UNIX epoch -- or nullopt when it arrived unstamped.
+    //
+    // Unstamped is a real case, not a defensive one: sessions only stamp because
+    // SessionManager turns timestamping on, so anything publishing through a
+    // differently configured session (or an older build) has no time at all. A
+    // consumer that needs a time for every sample must supply its own for these
+    // and say how many it had to.
+    //
+    // See pub_sub/timestamp.h for what this clock does and does not promise --
+    // in particular that it is the publisher's wall clock, so it can be wrong.
+    virtual std::optional<std::uint64_t> publishTimeNanos() const = 0;
+
+    // The zenoh session id that stamped the sample: who actually sent it, as
+    // opposed to who advertises the topic. Empty when the sample is unstamped.
+    //
+    // Copies, like encoding(). This is the data-path counterpart to the zid an
+    // advertisement carries, and the two agreeing is what confirms a topic is
+    // being published by the node that claims it.
+    virtual std::string originZid() const = 0;
 
   protected:
     ~SampleMeta() = default;

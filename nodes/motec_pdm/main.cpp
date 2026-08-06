@@ -9,6 +9,7 @@
 #include <chrono>
 #include <algorithm>
 
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
@@ -66,6 +67,11 @@ int main(int argc, char** argv)
 
     const std::string can_key = result["source"].as<std::string>();
     const std::string prefix  = result["prefix"].as<std::string>();
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("motec_pdm");
 
     SPDLOG_INFO("Subscribing to CAN frames on key '{}'", can_key);
 

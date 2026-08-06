@@ -1,4 +1,5 @@
 #include "pub_sub/zenoh_service.h"
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "racegrade_tc8_configure.capnp.h"
 #include "racegrade_tc8_signals.capnp.h"
@@ -7,6 +8,7 @@
 #include "can_frame.capnp.h"
 
 #include <span>
+#include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 #include "core/core.h"
 #include <zenoh.hxx>
@@ -73,7 +75,42 @@ static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t&
 
 int main(int argc, char** argv)
 {
-    core::init_core(argc, argv);
+    // This used to be core::init_core(argc, argv), which parsed the command line
+    // as well as setting up logging -- under a hardcoded
+    // cxxopts::Options("dashboard", "Vehicle instrument cluster."), so
+    // `racegrade_tc8 --help` printed the dashboard's usage. The parse belongs to
+    // the program that owns the options.
+    cxxopts::Options options("racegrade_tc8", "RaceGrade TC8 node");
+    options.add_options()
+        ("debug", "Enable debug logging.",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("h,help", "Print usage");
+
+    cxxopts::ParseResult args;
+    try
+    {
+        args = options.parse(argc, argv);
+    }
+    catch (const std::exception& e)
+    {
+        core::setupLogging(false);
+        SPDLOG_CRITICAL("{}", e.what());
+        SPDLOG_INFO("{}", options.help());
+        return 1;
+    }
+
+    core::setupLogging(args["debug"].as<bool>());
+
+    if (args.count("help") != 0)
+    {
+        SPDLOG_INFO("{}", options.help());
+        return 0;
+    }
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("racegrade_tc8");
 
     // Create the publishers for the Inputs and Diagnostics messages
     pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");

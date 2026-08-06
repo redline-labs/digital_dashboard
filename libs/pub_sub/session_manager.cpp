@@ -31,6 +31,22 @@ zenoh::Config SessionManager::buildConfig()
     // caller had set through insertConfig().
     config.insert_json5("mode", "\"peer\"");
 
+    // Stamp every sample we publish.
+    //
+    // Zenoh's default is `enabled: { router: true, peer: false, client: false }`
+    // and every session here is a peer, so without this nothing on the bus
+    // carries a time at all -- there is no publish time to record, no way to
+    // measure transport latency, and a recorder or a plot can only use the
+    // moment it happened to receive something.
+    //
+    // drop_future_timestamp stays false (the zenoh default): a sample stamped
+    // ahead of local time is re-stamped rather than discarded. Dropping would be
+    // worse here -- a unit whose RTC has not synced yet would vanish from the
+    // bus entirely instead of arriving with a suspect time -- but it does mean
+    // the time can be quietly wrong, which is why consumers record their own
+    // arrival time alongside it. See pub_sub/timestamp.h.
+    config.insert_json5("timestamping", "{\"enabled\": true, \"drop_future_timestamp\": false}");
+
     for (const auto& [key, value] : config_overrides_)
     {
         try
@@ -72,6 +88,30 @@ std::shared_ptr<zenoh::Session> SessionManager::getOrCreate()
     catch (const std::exception& e)
     {
         SPDLOG_ERROR("Failed to open zenoh session: {}", e.what());
+        return {};
+    }
+}
+
+std::string SessionManager::zid()
+{
+    // Not cached. A zid belongs to a session, and shutdown() plus a later
+    // getOrCreate() produces a different one -- caching would hand out the dead
+    // session's id and attribute every topic to a node that no longer exists.
+    // The call is a hex format of 16 bytes, so there is nothing here worth
+    // caching anyway.
+    const auto session = getOrCreate();
+    if (!session)
+    {
+        return {};
+    }
+
+    try
+    {
+        return session->get_zid().to_string();
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("Failed to read the zenoh session id: {}", e.what());
         return {};
     }
 }

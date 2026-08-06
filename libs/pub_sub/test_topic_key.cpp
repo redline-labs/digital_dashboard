@@ -193,14 +193,196 @@ void testMalformedAdvertisementsAreRejected()
     expect(!pub_sub::parseAdvertiseKey("", topic, schema), "an empty key is rejected");
     expect(!pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm", topic, schema),
            "a key missing the topic segment is rejected");
-    expect(!pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm/topic/extra", topic, schema),
-           "a longer form -- a newer build's -- is skipped rather than misparsed");
     expect(!pub_sub::parseAdvertiseKey("@other/adv/EngineRpm/topic", topic, schema),
            "another application's advertisement space is rejected");
     expect(!pub_sub::parseAdvertiseKey("vehicle/engine/rpm", topic, schema),
            "an ordinary topic key is not an advertisement");
     expect(!pub_sub::parseAdvertiseKey("@redline/adv//topic", topic, schema),
            "an empty schema segment is rejected");
+}
+
+// The extensibility rule, and the reason it is a test rather than a convention.
+//
+// parseAdvertiseKey used to require EXACTLY four segments. TopicDirectory drops
+// every key it rejects, so the first build to append a fifth would have emptied
+// the topic picker of every build that predates it -- silently, because a picker
+// that parses no advertisements looks exactly like a bus with no publishers.
+//
+// Mutation-check: change kMinimumSegments back to an equality test in
+// topic_key.cpp and testExtraSegmentsAreTolerated must fail.
+void testExtraSegmentsAreTolerated()
+{
+    std::string topic;
+    std::string schema;
+
+    expect(pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm/vehicle%engine%rpm/abc123", topic,
+                                      schema),
+           "a five-segment advertisement -- a newer build's -- still parses");
+    expect(topic == "vehicle/engine/rpm" && schema == "EngineRpm",
+           "and the segments this build understands are read correctly");
+
+    expect(pub_sub::parseAdvertiseKey(
+               "@redline/adv/EngineRpm/vehicle%engine%rpm/abc123/something/else", topic, schema),
+           "segments beyond the fifth are ignored rather than fatal");
+    expect(topic == "vehicle/engine/rpm" && schema == "EngineRpm",
+           "and the known segments are still read correctly");
+}
+
+// The zid overload. Empty means "this advertiser did not say", which is what an
+// older publisher looks like -- and is never to be reported as "no owner".
+void testZidOverload()
+{
+    std::string topic;
+    std::string schema;
+    std::string zid;
+
+    expect(pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm/vehicle%engine%rpm/abc123", topic,
+                                      schema, zid),
+           "a five-segment advertisement parses through the zid overload");
+    expect(zid == "abc123", "the fifth segment is the publisher's session id");
+
+    // Set to empty, not left alone: a caller reusing the string across calls
+    // would otherwise attribute one publisher's topic to a previous publisher.
+    zid = "stale";
+    expect(pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm/vehicle%engine%rpm", topic, schema,
+                                      zid),
+           "a four-segment advertisement still parses");
+    expect(zid.empty(), "a missing zid is CLEARED, not left holding a previous call's value");
+
+    // The two-argument form is the same parse, so an existing caller sees no
+    // change whether or not the advertiser carries a zid.
+    expect(pub_sub::parseAdvertiseKey("@redline/adv/EngineRpm/vehicle%engine%rpm/abc123", topic,
+                                      schema),
+           "the three-argument form accepts a five-segment key too");
+    expect(topic == "vehicle/engine/rpm", "and reads the same topic out of it");
+}
+
+// ------------------------------------------------- the node and service spaces
+
+// Both new spaces have to stay out of the way of every '**' subscriber in the
+// tree. That is what the leading '@' does -- zenoh treats a segment beginning
+// with '@' as verbatim, so no wildcard matches it. Without that property these
+// would show up as topics in topic discovery, in `inspect list`, and in a bag
+// recording subscribed to '**'.
+void testNewSpacesAreInTheVerbatimSpace()
+{
+    expect(pub_sub::kNodePrefix.front() == '@',
+           "the node space starts with '@', so '**' cannot match it");
+    expect(pub_sub::kServicePrefix.front() == '@',
+           "the service space starts with '@', so '**' cannot match it");
+
+    expect(pub_sub::nodeKey("abc123", "carplay").front() == '@',
+           "a built node key is in the verbatim space");
+    expect(pub_sub::serviceKey("vehicle/can/set_bitrate", "Req", "Resp", "abc123").front() == '@',
+           "a built service key is in the verbatim space");
+}
+
+void testNodeKeyRoundTrips()
+{
+    const std::string key = pub_sub::nodeKey("a1b2c3d4", "carplay");
+    expect(key == "@redline/node/a1b2c3d4/carplay", "the node key has the documented shape");
+
+    std::string zid;
+    std::string name;
+    expect(pub_sub::parseNodeKey(key, zid, name), "it parses back");
+    expect(zid == "a1b2c3d4", "the zid survives");
+    expect(name == "carplay", "the name survives");
+}
+
+void testMalformedNodeKeysAreRejected()
+{
+    std::string zid;
+    std::string name;
+
+    expect(!pub_sub::parseNodeKey("", zid, name), "an empty key is rejected");
+    expect(!pub_sub::parseNodeKey("@redline/node/abc", zid, name),
+           "a key missing the name segment is rejected");
+    expect(!pub_sub::parseNodeKey("@redline/adv/abc/name", zid, name),
+           "an advertisement is not a node key");
+    expect(!pub_sub::parseNodeKey("@redline/node//name", zid, name),
+           "an empty zid segment is rejected");
+    expect(!pub_sub::parseNodeKey("@redline/node/abc/", zid, name),
+           "an empty name segment is rejected");
+
+    // Append-only, from the first version: a future field must not blank out
+    // every node for every build that predates it.
+    expect(pub_sub::parseNodeKey("@redline/node/abc/carplay/pid/1234", zid, name),
+           "extra segments are ignored rather than fatal");
+    expect(zid == "abc" && name == "carplay", "and the known segments are read correctly");
+}
+
+void testServiceKeyRoundTrips()
+{
+    const std::string key = pub_sub::serviceKey("vehicle/can/set_bitrate",
+                                                "CanBridgeSetBitrateRequest",
+                                                "CanBridgeSetBitrateResponse", "a1b2c3d4");
+    expect(key == "@redline/svc/a1b2c3d4/CanBridgeSetBitrateRequest/"
+                  "CanBridgeSetBitrateResponse/vehicle%can%set_bitrate",
+           "the service key has the documented shape, with the key mangled");
+
+    std::string keyexpr;
+    std::string request;
+    std::string response;
+    std::string zid;
+    expect(pub_sub::parseServiceKey(key, keyexpr, request, response, zid), "it parses back");
+    expect(keyexpr == "vehicle/can/set_bitrate", "the service key expression demangles");
+    expect(request == "CanBridgeSetBitrateRequest", "the request schema survives");
+    expect(response == "CanBridgeSetBitrateResponse", "the response schema survives");
+    expect(zid == "a1b2c3d4", "the owner zid survives");
+}
+
+void testMalformedServiceKeysAreRejected()
+{
+    std::string keyexpr;
+    std::string request;
+    std::string response;
+    std::string zid;
+
+    expect(!pub_sub::parseServiceKey("", keyexpr, request, response, zid),
+           "an empty key is rejected");
+    expect(!pub_sub::parseServiceKey("@redline/svc/zid/Req/Resp", keyexpr, request, response, zid),
+           "a key missing the service key segment is rejected");
+    expect(!pub_sub::parseServiceKey("@redline/adv/Schema/topic", keyexpr, request, response, zid),
+           "a topic advertisement is not a service key");
+    expect(!pub_sub::parseServiceKey("@redline/svc/zid//Resp/key", keyexpr, request, response, zid),
+           "an empty request schema is rejected");
+
+    // A service key segment that does not demangle into something callable
+    // means the advertiser broke the contract; offering it would produce a
+    // request that can never be routed.
+    expect(!pub_sub::parseServiceKey("@redline/svc/zid/Req/Resp/%leading", keyexpr, request,
+                                     response, zid),
+           "a key that demangles into an invalid topic key is rejected");
+
+    expect(pub_sub::parseServiceKey("@redline/svc/zid/Req/Resp/a%b/extra", keyexpr, request,
+                                    response, zid),
+           "extra segments are ignored rather than fatal");
+    expect(keyexpr == "a/b", "and the known segments are read correctly");
+}
+
+// The three spaces must not be confusable with each other. Each parser has to
+// reject the other two, or a node would be listed as a topic and a service as a
+// node -- all of which look like plausible entries rather than errors.
+void testTheThreeSpacesDoNotOverlap()
+{
+    const std::string advertisement = pub_sub::advertiseKey("vehicle/engine/rpm", "EngineRpm", "z1");
+    const std::string node = pub_sub::nodeKey("z1", "carplay");
+    const std::string service = pub_sub::serviceKey("vehicle/svc", "Req", "Resp", "z1");
+
+    std::string a;
+    std::string b;
+    std::string c;
+    std::string d;
+
+    expect(!pub_sub::parseNodeKey(advertisement, a, b), "an advertisement is not a node");
+    expect(!pub_sub::parseServiceKey(advertisement, a, b, c, d),
+           "an advertisement is not a service");
+
+    expect(!pub_sub::parseAdvertiseKey(node, a, b), "a node is not an advertisement");
+    expect(!pub_sub::parseServiceKey(node, a, b, c, d), "a node is not a service");
+
+    expect(!pub_sub::parseAdvertiseKey(service, a, b), "a service is not an advertisement");
+    expect(!pub_sub::parseNodeKey(service, a, b), "a service is not a node");
 }
 
 // --------------------------------------------------- against the real corpus
@@ -275,6 +457,14 @@ int main()
 
     testAdvertiseKeyRoundTrips();
     testAdvertiseKeyIsInTheVerbatimSpace();
+    testExtraSegmentsAreTolerated();
+    testZidOverload();
+    testNewSpacesAreInTheVerbatimSpace();
+    testNodeKeyRoundTrips();
+    testMalformedNodeKeysAreRejected();
+    testServiceKeyRoundTrips();
+    testMalformedServiceKeysAreRejected();
+    testTheThreeSpacesDoNotOverlap();
     testMalformedAdvertisementsAreRejected();
 
     testEveryShippedKeyRoundTrips();

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "pcan_trc_parser/pcan_trc_parser.h"
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "can_frame.capnp.h"
 
@@ -51,6 +52,11 @@ int main(int argc, char** argv)
     const bool do_loop = result["loop"].as<bool>();
 
     SPDLOG_INFO("Replaying '{}' to '{}' (loop: {})", filepath, key, do_loop);
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("can_replay");
 
     // Publisher for raw CAN frames
     pub_sub::ZenohPublisher<CanFrame> pub(key);

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,7 +40,52 @@ class RawSubscriber
     using Handler = std::function<void(const std::vector<std::uint8_t>& payload,
                                        std::string_view schema_name)>;
 
+    // Everything about a sample except its bytes, resolved eagerly.
+    //
+    // The reason this exists alongside Handler: a subscriber on a wildcard gets
+    // one callback per key and the plain Handler does not say which. Scope binds
+    // one concrete key per subscription so it never needed to know; a bag
+    // recorder subscribing to "**", or `inspect watch` tabulating the whole bus,
+    // cannot work without it.
+    //
+    // Every field is a view or a scalar over storage owned for the duration of
+    // the call. Copy anything you keep.
+    struct SampleInfo
+    {
+        // The key this sample was published on -- the concrete one, never a
+        // wildcard.
+        std::string_view keyexpr;
+
+        // The half after the ';' of "application/capnp;EngineRpm". Empty when
+        // the publisher named no schema.
+        std::string_view schema_name;
+
+        // When the publisher's session stamped it, nanoseconds since the UNIX
+        // epoch. Empty when the sample arrived unstamped, which a consumer must
+        // handle rather than assume away -- see detail::SampleMeta.
+        std::optional<std::uint64_t> publish_time_nanos;
+
+        // The session that stamped it. Empty when unstamped.
+        //
+        // Resolved eagerly like the rest, which costs a string copy per sample.
+        // That is the one deliberate cost in this struct, and it is here because
+        // the consumers that want SampleInfo at all -- a recorder, a bus monitor
+        // -- all want the origin, so making it lazy would just move the copy.
+        std::string_view origin_zid;
+    };
+
+    using InfoHandler =
+        std::function<void(const std::vector<std::uint8_t>& payload, const SampleInfo& info)>;
+
     RawSubscriber(const std::string& keyexpr, Handler on_sample);
+
+    // The same subscription, with the fuller per-sample information above.
+    //
+    // Not a default argument or a flag on the first constructor: the two take
+    // different callbacks, and which one a caller passes is exactly how it says
+    // what it needs. A caller that only wants the schema name should not pay for
+    // the origin zid.
+    RawSubscriber(const std::string& keyexpr, InfoHandler on_sample);
 
     // Undeclares the subscription, which joins any in-flight callback -- so once
     // this returns, `on_sample` is guaranteed not to be running. Everything the

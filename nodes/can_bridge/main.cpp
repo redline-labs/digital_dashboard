@@ -26,6 +26,7 @@
 #include "can_bridge.capnp.h"
 #include "can_frame.capnp.h"
 #include "pub_sub/zenoh_client.h"
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/zenoh_subscriber.h"
@@ -457,6 +458,11 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("[node] refusing to start with an unusable --config");
         return 1;
     }
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("can_bridge");
 
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);

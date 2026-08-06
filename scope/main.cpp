@@ -1,3 +1,4 @@
+#include "pub_sub/node_identity.h"
 #include "scope/command_line_args.h"
 #include "scope/scope_methods.h"
 #include "scope/scope_window.h"
@@ -65,6 +66,12 @@ int main(int argc, char** argv)
     }
 
     spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. This
+    // app subscribes but never publishes, so without it the process is
+    // invisible on the bus entirely. See pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("scope");
 
     QApplication app(argc, argv);
 

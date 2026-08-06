@@ -1,88 +1,43 @@
-#include <spdlog/spdlog.h>
-#include <cxxopts.hpp>
-#include <string>
-#include <vector>
+#include "inspect/verbs.h"
 
-#include "inspect/dump.h"
-#include "inspect/info.h"
-#include "inspect/list.h"
-#include "inspect/nodes.h"
-#include "inspect/hz.h"
+#include "cli/program.h"
+
+#include <array>
+
+namespace
+{
+
+// THE verb table. Adding a verb is one row here; see inspect/verbs.h.
+//
+// Ordered by how often they are reached for rather than alphabetically, because
+// this is also the order the verb list prints in.
+constexpr std::array<cli::Verb, 12> kInspectVerbs{{
+    {"list", "What is on the bus, whether or not it has published yet", inspect::addListOptions,
+     inspect::runList},
+    {"info", "Everything known about one key: schema, fields, owner", inspect::addInfoOptions,
+     inspect::runInfo},
+    {"echo", "Print messages as they arrive, decoded", inspect::addEchoOptions, inspect::runEcho},
+    {"watch", "Live table of the whole bus: rate, bandwidth, owner", inspect::addWatchOptions,
+     inspect::runWatch},
+    {"hz", "Message rate, with the distribution of the gaps", inspect::addHzOptions,
+     inspect::runHz},
+    {"bw", "Bandwidth per key", inspect::addBwOptions, inspect::runBw},
+    {"latency", "Transport delay: arrival minus the publisher's stamp", inspect::addLatencyOptions,
+     inspect::runLatency},
+    {"nodes", "Our processes, by name", inspect::addNodesOptions, inspect::runNodes},
+    {"services", "Callable services and their request/response schemas",
+     inspect::addServicesOptions, inspect::runServices},
+    {"call", "Call a service with a JSON request", inspect::addCallOptions, inspect::runCall},
+    {"schema", "The schema registry -- needs no bus", inspect::addSchemaOptions,
+     inspect::runSchema},
+    {"publish", "Publish a message built from JSON", inspect::addPublishOptions,
+     inspect::runPublish},
+}};
+
+}  // namespace
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
-    // Parse only the verb here; allow unrecognised options so per-verb flags can be parsed by handlers.
-    cxxopts::Options options("inspect", "Zenoh inspector");
-    options.allow_unrecognised_options();
-    options.add_options()
-        ("h,help", "Print usage")
-        ("verb", "Verb to execute", cxxopts::value<std::string>())
-        ("debug", "Enable debug logging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
-
-    options.parse_positional({"verb"});
-
-    cxxopts::ParseResult parsed;
-    try
-    {
-        parsed = options.parse(argc, argv);
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("{}", e.what());
-        SPDLOG_INFO("Usage: inspect <verb> [options]\n  Verbs:\n    dump   Subscribe and print payloads\n    info   Show schema and publisher info");
-        return 1;
-    }
-
-    if (parsed["debug"].as<bool>())
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
-
-    if (parsed.count("help") && parsed.count("verb") == 0)
-    {
-        SPDLOG_INFO(
-            "Usage: inspect <verb> [options]\n"
-            "\n"
-            " --debug  Enable debug logging\n"
-            "\n"
-            "  Verbs:\n"
-            "    dump   Subscribe and print payloads\n"
-            "    info   Show schema and publisher info\n"
-            "    list   List available keys (optional -k filter, default **)\n"
-            "    nodes  List peers and routers in the system\n"
-            "    hz     Print per-second message rate for a key"
-        );
-        return 0;
-    }
-
-    const std::string verb = parsed["verb"].as<std::string>();
-
-    if (verb == "dump")
-    {
-        return run_dump(argc, argv);
-    }
-    if (verb == "info")
-    {
-        return run_info(argc, argv);
-    }
-    if (verb == "list")
-    {
-        return run_list(argc, argv);
-    }
-    if (verb == "nodes")
-    {
-        return run_nodes(argc, argv);
-    }
-    if (verb == "hz")
-    {
-        return run_hz(argc, argv);
-    }
-
-    SPDLOG_ERROR("Unknown verb: '{}'", verb);
-    SPDLOG_INFO("Available verbs: dump, info");
-    return 1;
+    const cli::Program program("inspect", "Inspect the zenoh bus", kInspectVerbs);
+    return program.run(argc, argv);
 }
-
-

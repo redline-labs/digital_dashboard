@@ -1,5 +1,6 @@
 #include "dbc_motec_m1_rev3_parser.h"
 
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
@@ -424,6 +425,11 @@ int main(int argc, char** argv)
         SPDLOG_INFO("{}", options.help());
         return 0;
     }
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("motec_m1");
 
     pub_sub::ZenohPublisher<MotecM1EngineAir> pubEngineAir("nodes/motec_m1/engine_air");
     pub_sub::ZenohPublisher<MotecM1FuelStatus> pubFuelStatus("nodes/motec_m1/fuel_status");

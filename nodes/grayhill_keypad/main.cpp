@@ -33,6 +33,7 @@
 #include "canopen_grayhill_node.h"
 
 #include "grayhill_keypad.capnp.h"
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
 
@@ -143,6 +144,11 @@ int main(int argc, char** argv)
     // responses, heartbeats, emergencies -- is picked up by the subscribers
     // that NmtMaster and SdoClient installed on the bus.
     bus.subscribe([&device](const helpers::CanFrame& frame) { (void)device.handle_frame(frame); });
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("grayhill_keypad");
 
     // --- what we publish ----------------------------------------------------
     pub_sub::ZenohPublisher<GrayhillButtons> buttonsPublisher(config.topicPrefix + "/buttons");

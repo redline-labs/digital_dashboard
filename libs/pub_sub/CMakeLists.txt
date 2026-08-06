@@ -18,6 +18,12 @@ add_library(zenoh_pub_sub STATIC
     # that decodes them itself.
     raw_subscriber.cpp
 
+    # One liveliness token per process, mapping this session's zid to a name a
+    # person recognises. The other half of the zid an advertisement carries, and
+    # the only way a process that subscribes but never publishes is visible at
+    # all.
+    node_identity.cpp
+
     # The zenoh boundary. ZenohPublisher/ZenohTypedSubscriber are templated on a
     # capnp schema and so must be defined in headers; these hold the parts that
     # are not templated, so <zenoh.hxx> is compiled once here instead of in every
@@ -70,6 +76,35 @@ target_link_libraries(pub_sub_test_capnp_encoding PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_capnp_encoding LABELS pub_sub unit)
+
+# NTP64 conversion. Pure arithmetic over a header, so `unit` -- and it has to be
+# a test rather than a careful reading, because every way of getting the
+# conversion wrong yields a plausible number instead of an error. A timestamp off
+# by 2^32 looks exactly like a timestamp until someone plots it.
+add_executable(pub_sub_test_timestamp
+    test_timestamp.cpp
+)
+
+target_link_libraries(pub_sub_test_timestamp PRIVATE
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_timestamp LABELS pub_sub unit)
+
+# That timestamping is actually enabled, which only a real bus can say. The
+# arithmetic above is testable in isolation; "does zenoh stamp our samples" is
+# not, and it is the half that fails silently -- a peer session with the default
+# config stamps nothing and reports nothing. `net`, self-skipping.
+add_executable(pub_sub_test_sample_metadata
+    test_sample_metadata.cpp
+)
+
+target_link_libraries(pub_sub_test_sample_metadata PRIVATE
+    zenoh_pub_sub
+    schemas
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_sample_metadata LABELS pub_sub net)
 
 # SessionManager lifecycle. Unlike the encoding test this one does open real
 # zenoh sessions -- releasing one and opening another is the whole point -- so

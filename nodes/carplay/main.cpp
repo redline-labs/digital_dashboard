@@ -10,6 +10,7 @@
 // USB pipeline is verified on a Linux host, --simulate exercises the whole
 // dashboard side without any hardware.
 
+#include "pub_sub/node_identity.h"
 #include "zenoh_bridge.h"
 #include "node_config.h"
 #include "simulate.h"
@@ -111,6 +112,11 @@ int main(int argc, char** argv)
     SPDLOG_INFO("[node] loaded config from {}", config_path);
 
     const std::string prefix = args["key-prefix"].as<std::string>();
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("carplay");
+
     carplay::ZenohBridge bridge(prefix);
 
     // Input arrives from the dashboard widget on <prefix>/input.

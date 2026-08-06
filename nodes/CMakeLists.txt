@@ -1,5 +1,7 @@
 add_subdirectory(racegrade_tc8)
 add_subdirectory(inspect)
+# Record and replay the bus. A thin CLI over libs/bag.
+add_subdirectory(bag)
 add_subdirectory(msel_master_relay)
 add_subdirectory(megasquirt)
 add_subdirectory(motec_ltc)

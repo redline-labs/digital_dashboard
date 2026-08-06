@@ -10,6 +10,11 @@ add_subdirectory(qt_helpers)
 add_subdirectory(agent_control)
 add_subdirectory(dbc_parser)
 add_subdirectory(core)
+# Builds on core for the log pattern, and on pub_sub for --connect/--mode.
+add_subdirectory(cli)
+# Recording and replay (MCAP). After config_codec (reflected YAML) and schemas
+# (the schema descriptors it embeds).
+add_subdirectory(bag)
 add_subdirectory(pcan_trc_parser)
 add_subdirectory(canopen)
 add_subdirectory(can)

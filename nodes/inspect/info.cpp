@@ -1,113 +1,170 @@
-#include "inspect/info.h"
+#include "inspect/verbs.h"
 
+#include "inspect/traffic.h"
+
+#include "inspect/describe.h"
+
+#include "cli/output.h"
+
+#include "pub_sub/capnp_json.h"
+#include "pub_sub/schema_registry.h"
+#include "pub_sub/topic_directory.h"
+
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-#include <cxxopts.hpp>
 
-#include <zenoh.hxx>
-
-#include <atomic>
 #include <chrono>
-#include <csignal>
-#include <optional>
 #include <string>
 #include <thread>
 
-#include "pub_sub/session_manager.h"
-#include "pub_sub/capnp_encoding.h"
-
-namespace {
-static std::atomic<bool> g_running_info{true};
-static void handle_sigint_info(int /*signum*/) { g_running_info = false; }
-}
-
-int run_info(int argc, char** argv)
+namespace inspect
 {
-    cxxopts::Options options("inspect info", "Display information about a zenoh key");
+
+void addInfoOptions(cxxopts::Options& options)
+{
     options.add_options()
-        ("k,key", "Zenoh key-expression to inspect", cxxopts::value<std::string>())
-        ("h,help", "Print usage");
+        ("k,key", "The topic to describe.", cxxopts::value<std::string>())
+        ("o,observe", "ALSO listen for this many milliseconds and report traffic.",
+            cxxopts::value<std::uint64_t>());
 
-    cxxopts::ParseResult result;
-    try {
-        result = options.parse(argc, argv);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("{}", e.what());
-        SPDLOG_INFO("{}", options.help());
-        return 1;
-    }
-
-    if (result.count("help") || !result.count("key")) {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-
-    const std::string keyexpr = result["key"].as<std::string>();
-    SPDLOG_INFO("Inspecting key '{}'", keyexpr);
-
-    std::signal(SIGINT, handle_sigint_info);
-
-    try {
-        auto session = pub_sub::SessionManager::getOrCreate();
-        if (!session) {
-            SPDLOG_ERROR("Failed to obtain zenoh session");
-            return 1;
-        }
-
-        // Strategy:
-        // - Try a one-shot subscriber to capture one sample and read encoding schema
-        //   and any available source info (if built with unstable API).
-        std::optional<std::string> encoding_name;
-        std::optional<std::string> schema_name;
-        std::optional<std::string> publisher_id;
-
-        auto handler = [&](const zenoh::Sample& sample) {
-            try {
-                // Report both: as_string() is the whole encoding
-                // ("application/capnp;CanFrame"), and the label below says
-                // "schema", which is only the half after the ';'.
-                encoding_name = sample.get_encoding().as_string();
-                schema_name = std::string(pub_sub::schemaNameFromEncoding(*encoding_name));
-#if defined(ZENOHCXX) && defined(Z_FEATURE_UNSTABLE_API)
-                // Source info unstable API (zenoh-c only)
-                auto si = sample.get_source_info();
-                publisher_id = si.id().id().to_string();
-#endif
-            } catch (const std::exception& e) {
-                SPDLOG_WARN("Error processing sample: {}", e.what());
-            }
-            g_running_info = false; // we only need one sample
-        };
-
-        zenoh::Subscriber<void> sub = session->declare_subscriber(zenoh::KeyExpr(keyexpr), handler, zenoh::closures::none);
-
-        // Wait briefly for a message to arrive
-        auto start = std::chrono::steady_clock::now();
-        while (g_running_info && (std::chrono::steady_clock::now() - start) < std::chrono::seconds(2)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-
-        if (schema_name.has_value()) {
-            SPDLOG_INFO("schema: {}", *schema_name);
-            SPDLOG_INFO("encoding: {}", *encoding_name);
-        } else {
-            SPDLOG_INFO("schema: (unknown - no sample received)");
-        }
-
-#if defined(Z_FEATURE_UNSTABLE_API)
-        if (publisher_id.has_value()) {
-            SPDLOG_INFO("publisher: {}", *publisher_id);
-        } else {
-            SPDLOG_INFO("publisher: (unknown)");
-        }
-#else
-        SPDLOG_INFO("publisher info: (unavailable - zenoh source info requires unstable API)");
-#endif
-
-        return 0;
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Error inspecting key: {}", e.what());
-        return 1;
-    }
+    options.parse_positional({"key"});
 }
 
+int runInfo(cli::Context& context)
+{
+    const auto key = context.requireString("key");
+    if (!key)
+    {
+        return cli::kUsage;
+    }
 
+    // FROM THE ADVERTISEMENT, not from a sample.
+    //
+    // This verb used to declare a subscriber and wait up to two seconds for a
+    // message, purely to read the schema name off its encoding. That meant it
+    // took two seconds to say "unknown" about any topic publishing more slowly
+    // than that -- and said "unknown" about a topic that was perfectly well
+    // advertised and simply idle. The advertisement carries the schema, so this
+    // is both instant and correct for an idle topic.
+    pub_sub::TopicDirectory directory;
+    pub_sub::NodeDirectory nodes;
+
+    if (!directory.isValid())
+    {
+        SPDLOG_ERROR("Could not watch the advertisement space; is a zenoh session available?");
+        return cli::kFailure;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    const auto entries = directory.snapshot();
+    const auto found = std::find_if(entries.begin(), entries.end(),
+                                    [&](const pub_sub::DirectoryEntry& e) { return e.key == *key; });
+
+    if (found == entries.end())
+    {
+        SPDLOG_ERROR("'{}' is not advertised. No publisher for it is running.", *key);
+        // Not kFailure: the command worked, the answer is "nothing there". A
+        // script distinguishing "the tool broke" from "the topic is absent"
+        // needs those to differ, and absence is the answer to a question about
+        // a topic that may legitimately not be up.
+        return cli::kOk;
+    }
+
+    std::optional<KeyStats> traffic;
+    if (context.has("observe"))
+    {
+        const std::uint64_t window_ms = context.uintOr("observe", 1000);
+        TrafficMonitor monitor(*key);
+        if (monitor.isValid())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(window_ms));
+            for (KeyStats& stats : monitor.cumulative())
+            {
+                if (stats.key == *key)
+                {
+                    traffic = std::move(stats);
+                }
+            }
+        }
+    }
+
+    const std::string owner_name = nodes.nameFor(found->owner_zid);
+    const auto schema = pub_sub::get_schema(found->schema);
+
+    if (context.json())
+    {
+        nlohmann::json out;
+        out["key"] = found->key;
+        out["schema"] = found->schema;
+        out["reachable"] = found->reachable;
+        out["appearances"] = found->appearances;
+        out["disappearances"] = found->disappearances;
+        out["owner_zid"] = found->owner_zid;
+        out["owner"] = owner_name;
+        if (schema)
+        {
+            out["fields"] = pub_sub::describeSchema(*schema);
+        }
+        if (traffic)
+        {
+            out["hz"] = traffic->hz;
+            out["messages"] = traffic->messages;
+            out["bytes_per_second"] = traffic->bytes_per_second;
+        }
+        cli::out("{}", out.dump(2));
+        return cli::kOk;
+    }
+
+    cli::out("key        {}", found->key);
+    cli::out("schema     {}", found->schema.empty() ? "(none advertised)" : found->schema);
+    cli::out("reachable  {}", found->reachable ? "yes" : "no");
+
+    if (found->owner_zid.empty())
+    {
+        cli::out("owner      (not advertised -- publisher predates the owner segment)");
+    }
+    else if (owner_name.empty())
+    {
+        cli::out("owner      {} (no node name declared)", found->owner_zid);
+    }
+    else
+    {
+        cli::out("owner      {} ({})", owner_name, found->owner_zid);
+    }
+
+    if (found->disappearances > 0)
+    {
+        cli::out("history    up {} time(s), gone {} time(s)", found->appearances,
+                 found->disappearances);
+    }
+
+    if (traffic)
+    {
+        if (traffic->messages == 0)
+        {
+            cli::out("traffic    nothing during the observation window");
+        }
+        else
+        {
+            cli::out("traffic    {} msgs, {:.1f} Hz, {:.0f} B/s", traffic->messages, traffic->hz,
+                     traffic->bytes_per_second);
+        }
+    }
+
+    if (!schema)
+    {
+        cli::out("");
+        cli::out("Schema '{}' is not in this build's registry, so its fields are unknown.",
+                 found->schema);
+        return cli::kOk;
+    }
+
+    cli::out("");
+    cli::out("fields");
+    printSchemaFields(pub_sub::describeSchema(*schema), "  ");
+
+    return cli::kOk;
+}
+
+}  // namespace inspect

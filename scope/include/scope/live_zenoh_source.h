@@ -21,11 +21,18 @@ namespace scope
 // ExpressionEvaluator exist for.
 //
 // TIMESTAMPS. Samples are stamped with std::chrono::steady_clock on arrival,
-// as seconds since this object was constructed. Neither alternative works:
+// as seconds since this object was constructed.
 //
-//   - zenoh's own timestamping is off. SessionManager::buildConfig() never sets
-//     timestamping.enabled, and detail::SampleMeta exposes only the encoding,
-//     so there is nothing to read even if it were on.
+// There are now two other clocks available, and this still uses neither:
+//
+//   - zenoh's publish timestamp. SessionManager::buildConfig() enables
+//     timestamping, so every sample carries one and SampleMeta exposes it. It
+//     is the publisher's *wall* clock, which is exactly the problem for a
+//     scrolling plot: it can step when NTP disciplines it, it can be plainly
+//     wrong on a unit that booted with a dead RTC, and zenoh re-stamps rather
+//     than rejects a time too far in the future, so the error arrives looking
+//     ordinary. An axis that jumps backwards mid-trace is worse than an axis
+//     measured from the wrong origin.
 //   - payload timestamps exist on exactly five schemas -- the mock and legacy
 //     ones (EngineRpm, EngineTemperature, VehicleSpeed, VehicleOdometer,
 //     VehicleWarnings). Every real telemetry schema has none: MotecM1 across
@@ -36,7 +43,9 @@ namespace scope
 // So a payload-timestamp fast path would be right for five schemas and wrong
 // for the rest, and mixing two clocks on one axis is worse than one honest
 // arrival clock. Stamping is the *source's* job precisely so that a recorded
-// source can supply recorded times instead, without any panel knowing.
+// source can supply recorded times instead, without any panel knowing -- and a
+// recorded source is where the publish timestamp earns its keep, because a bag
+// stores both and can say which one it is showing.
 class LiveZenohSource : public DataSource
 {
   public:

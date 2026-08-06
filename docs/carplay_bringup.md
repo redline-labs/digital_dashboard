@@ -1366,8 +1366,8 @@ Independently confirm the zenoh contract before blaming the widget:
 
 ```bash
 ./build/nodes/inspect/inspect hz   nodes/carplay/video    # expect ~30-60 Hz
-./build/nodes/inspect/inspect dump nodes/carplay/session
-./build/nodes/inspect/inspect dump nodes/carplay/input    # then touch the widget
+./build/nodes/inspect/inspect echo nodes/carplay/session
+./build/nodes/inspect/inspect echo nodes/carplay/input    # then touch the widget
 ```
 
 **Expect:** the CarPlay UI renders and responds to touch. Kill and restart the
@@ -1467,7 +1467,7 @@ unit rather than feeding it to the decoder alone — parameter sets by themselve
 are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
 - Frames stall after a while → zenoh backpressure on large keyframes; measure
   before switching to shared memory.
-- Touch does nothing → verify `nodes/carplay/input` carries events (`inspect dump`),
+- Touch does nothing → verify `nodes/carplay/input` carries events (`inspect echo`),
   then check the 0..10000 → 0..1 rescale and HID report.
 
 ### How touch reaches the phone, and why it is rate limited
@@ -1672,9 +1672,9 @@ from the driver.
 ## 10. Metadata, mic, and supplemental widgets
 
 ```bash
-./build/nodes/inspect/inspect dump nodes/carplay/nowplaying   # play music
-./build/nodes/inspect/inspect dump nodes/carplay/nav          # start navigation
-./build/nodes/inspect/inspect dump nodes/carplay/call         # place a call
+./build/nodes/inspect/inspect echo nodes/carplay/nowplaying   # play music
+./build/nodes/inspect/inspect echo nodes/carplay/nav          # start navigation
+./build/nodes/inspect/inspect echo nodes/carplay/call         # place a call
 ```
 
 **Now-playing is wired and verified (2026-07-22).** Metadata comes over the
@@ -1754,7 +1754,7 @@ Two field-mapping details that hardware settled:
   omits it.
 
 To re-check, run the driver (`--max-stage 5`+), start turn-by-turn in Maps and
-place/receive a call, then `inspect dump -k nodes/carplay/nav` /
+place/receive a call, then `inspect echo -k nodes/carplay/nav` /
 `.../call`, and watch the `[iap2] navigation:` / `[iap2] call:` log lines.
 
 **AAC-LC entertainment audio (type 102) is implemented; not yet hardware-tested
@@ -2451,7 +2451,7 @@ matching status on `nodes/carplay/video`:
 **The poll is still needed, and this is the reason.** zenoh reports a *boolean* --
 "is anything subscribed" -- so the notification fires on the first subscriber
 arriving and the last one leaving, and **not** when a second joins alongside a
-first. Running `inspect dump -k nodes/carplay/video` while the dashboard is
+first. Running `inspect echo -k nodes/carplay/video` while the dashboard is
 already up produces no event, so that renderer syncs via the poll. Verified
 against zenoh 1.9.0, cross-process:
 
@@ -2467,7 +2467,7 @@ To watch it on a bench, run the driver and attach and detach a subscriber:
 
 ```bash
 ./build/nodes/carplay/carplay --verbose        # terminal 1
-./build/nodes/inspect/inspect dump -k nodes/carplay/video   # terminal 2, then Ctrl-C
+./build/nodes/inspect/inspect echo -k nodes/carplay/video   # terminal 2, then Ctrl-C
 ```
 
 Terminal 1 logs `[node] video topic has subscriber(s)` and then

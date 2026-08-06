@@ -151,23 +151,148 @@ std::string demangleTopicKey(std::string_view mangled)
 
 std::string advertiseKey(std::string_view topic, std::string_view schema)
 {
+    return advertiseKey(topic, schema, std::string_view{});
+}
+
+std::string advertiseKey(std::string_view topic, std::string_view schema, std::string_view zid)
+{
     std::string out(kAdvertisePrefix);
     out += '/';
     out += schema;
     out += '/';
     out += mangleTopicKey(topic);
+
+    // Omitted rather than emitted empty. An empty trailing segment would make
+    // the key five segments with nothing in the fifth, which parses back as a
+    // zid of "" -- the same answer, reached by a key that is harder to read and
+    // that a wildcard like '@redline/adv/*/*/*' would match differently.
+    if (!zid.empty())
+    {
+        out += '/';
+        out += zid;
+    }
+
     return out;
+}
+
+std::string nodeKey(std::string_view zid, std::string_view node_name)
+{
+    std::string out(kNodePrefix);
+    out += '/';
+    out += zid;
+    out += '/';
+    out += node_name;
+    return out;
+}
+
+bool parseNodeKey(std::string_view advertised, std::string& zid, std::string& node_name)
+{
+    const std::vector<std::string_view> parts = segments(advertised);
+
+    // "@redline" / "node" / <zid> / <name>, extras ignored.
+    constexpr std::size_t kMinimumSegments = 4;
+    if (parts.size() < kMinimumSegments)
+    {
+        return false;
+    }
+
+    const std::vector<std::string_view> prefix = segments(kNodePrefix);
+    if (parts[0] != prefix[0] || parts[1] != prefix[1])
+    {
+        return false;
+    }
+
+    if (parts[2].empty() || parts[3].empty())
+    {
+        return false;
+    }
+
+    zid = std::string(parts[2]);
+    node_name = std::string(parts[3]);
+    return true;
+}
+
+std::string serviceKey(std::string_view keyexpr, std::string_view request_schema,
+                       std::string_view response_schema, std::string_view zid)
+{
+    std::string out(kServicePrefix);
+    out += '/';
+    out += zid;
+    out += '/';
+    out += request_schema;
+    out += '/';
+    out += response_schema;
+    out += '/';
+    out += mangleTopicKey(keyexpr);
+    return out;
+}
+
+bool parseServiceKey(std::string_view advertised, std::string& keyexpr,
+                     std::string& request_schema, std::string& response_schema, std::string& zid)
+{
+    const std::vector<std::string_view> parts = segments(advertised);
+
+    // "@redline" / "svc" / <zid> / <request> / <response> / <mangled key>,
+    // extras ignored.
+    constexpr std::size_t kMinimumSegments = 6;
+    if (parts.size() < kMinimumSegments)
+    {
+        return false;
+    }
+
+    const std::vector<std::string_view> prefix = segments(kServicePrefix);
+    if (parts[0] != prefix[0] || parts[1] != prefix[1])
+    {
+        return false;
+    }
+
+    if (parts[2].empty() || parts[3].empty() || parts[4].empty() || parts[5].empty())
+    {
+        return false;
+    }
+
+    zid = std::string(parts[2]);
+    request_schema = std::string(parts[3]);
+    response_schema = std::string(parts[4]);
+    keyexpr = demangleTopicKey(parts[5]);
+
+    // Same reasoning as the advertisement space: a key that does not demangle
+    // into something callable means the advertiser broke the contract, and
+    // offering it to a caller would produce a request that can never be routed.
+    return isValidTopicKey(keyexpr);
 }
 
 bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::string& schema)
 {
+    std::string ignored_zid;
+    return parseAdvertiseKey(advertised, topic, schema, ignored_zid);
+}
+
+bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::string& schema,
+                       std::string& zid)
+{
     const std::vector<std::string_view> parts = segments(advertised);
 
-    // "@redline" / "adv" / <schema> / <mangled topic>. Anything longer is a
-    // form this build does not know; skipping it beats guessing which segment
-    // means what.
-    constexpr std::size_t kExpectedSegments = 4;
-    if (parts.size() != kExpectedSegments)
+    // "@redline" / "adv" / <schema> / <mangled topic> [ / <zid> [ / ... ] ]
+    //
+    // AT LEAST four, and extras ignored. This used to require EXACTLY four and
+    // return false otherwise, with the reasoning that a longer form is one this
+    // build does not understand and skipping beats guessing.
+    //
+    // That reasoning was backwards, and the cost of finding out would have been
+    // high. TopicDirectory drops every key this rejects -- so the first build to
+    // append a segment would have made every *older* build's topic picker go
+    // completely empty, with no error anywhere, because a scope that can parse
+    // no advertisements looks exactly like a bus with no publishers. "Ignore
+    // what you do not recognise" is the rule that makes a key space extensible;
+    // "reject what you do not recognise" makes the first extension a breaking
+    // change for everything already deployed.
+    //
+    // The trailing segments are positional and append-only for the same reason:
+    // a reader that wants segment 5 must tolerate its absence (an older
+    // publisher), and a reader that does not want it must tolerate its presence.
+    constexpr std::size_t kMinimumSegments = 4;
+    if (parts.size() < kMinimumSegments)
     {
         return false;
     }
@@ -185,6 +310,10 @@ bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::str
 
     schema = std::string(parts[2]);
     topic = demangleTopicKey(parts[3]);
+
+    // Empty when the advertiser is an older build that did not carry one. A
+    // caller must treat that as "unknown", never as "no owner".
+    zid = parts.size() > kMinimumSegments ? std::string(parts[kMinimumSegments]) : std::string();
 
     // A mangled segment cannot contain '/', so anything demangling into a key
     // that fails validation means the advertiser broke the contract. Refusing

@@ -119,6 +119,35 @@ discovery seeing only live traffic, and what `accepted: false` and
   anything. That is additive, not a replacement: the per-sample encoding stays
   authoritative, and both are derived from the same constructor arguments so
   they cannot disagree. See `docs/scope.md`.
+- **Three liveliness key spaces**, all under a leading `@` segment so zenoh
+  treats them as verbatim and no `**` subscriber ever sees them as topics:
+  `@redline/adv/<Schema>/<topic>/<zid>` (per publisher),
+  `@redline/node/<zid>/<name>` (per process, from `pub_sub::NodeIdentity` —
+  declare one in every `main()`), and
+  `@redline/svc/<zid>/<Req>/<Resp>/<key>` (per `ZenohService`). They join on the
+  zid. **Every parser accepts extra trailing segments and ignores them.** That
+  rule is not optional: a directory drops what it cannot parse, so a reader that
+  rejected an unknown longer form would make the first added field a silent,
+  total outage for every build that predates it — an empty picker looks exactly
+  like a bus with no publishers.
+- **Samples carry a publish timestamp**, because `SessionManager::buildConfig()`
+  enables `timestamping` (zenoh only stamps in router mode by default, and every
+  session here is a peer). `SampleMeta` exposes it plus the origin zid — the
+  session that actually sent the bytes. Convert with
+  `pub_sub::ntp64ToUnixNanos()`; NTP64 is seconds<<32 | fraction, so a naive read
+  is off by 2^32 and yields a *plausible* wrong time. It is the publisher's wall
+  clock and can be quietly wrong — see `pub_sub/timestamp.h` before relying on it.
+- **CLI tools are `cli::Program`** (`libs/cli/`): a table of verbs, one row each.
+  Adding a verb is that row plus a file. Global options (`--debug`, `--json`,
+  `--connect`, `--mode`) are declared once and work before or after the verb.
+  Exit codes are 0 / 1 (failure) / **2 (usage)** — a missing required option must
+  not report success.
+- **Tool *results* go to stdout via `cli::out()`**, not through spdlog. The
+  "never `std::cout`" rule below is about *logging*; routing an answer through
+  spdlog stamps it with a timestamp and a source location and makes
+  `--json | jq` impossible. Diagnostics stay `SPDLOG_*` on stderr, so
+  `inspect list --json > topics.json` still shows its warnings and still produces
+  a parseable file.
 - **Zenoh keys are `[A-Za-z0-9_-/]`, enforced.** `%` is the mangling separator,
   `@` makes a segment verbatim and therefore invisible to every wildcard
   subscription, and `* $ ? #` are rejected by zenoh outright. Each fails
@@ -132,7 +161,8 @@ discovery seeing only live traffic, and what `accepted: false` and
   `QMetaObject::invokeMethod(obj, lambda, Qt::QueuedConnection)`. See
   `dashboard/include/dashboard/expression_subscription.h` for the established
   shape.
-- Logging is `SPDLOG_*`, never `std::cout`. CLI parsing is cxxopts.
+- Logging is `SPDLOG_*`, never `std::cout` -- see the stdout carve-out above for
+  tool *results*. CLI parsing is cxxopts, through `libs/cli` for multi-verb tools.
 - Comments in this codebase explain *why*, especially where a past bug informed
   the shape of the code. Keep that up; it is the most valuable thing in the tree.
 
@@ -146,8 +176,10 @@ scope/              the time-series visualizer app
   panels/<name>/    one panel type per directory, each with its own config.h
 libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
-                    canopen, dbc_parser
-nodes/              single-purpose executables that bridge hardware to zenoh
+                    canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay)
+nodes/              single-purpose executables that bridge hardware to zenoh,
+                    plus the two tools: inspect (look at the bus) and bag
+                    (record and replay it -- see docs/bag.md)
 schemas/            .capnp definitions; add one line to its CMakeLists to register
 configs/dashboard/  runtime YAML layouts
 configs/scope/      runtime YAML workspaces

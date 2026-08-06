@@ -15,6 +15,7 @@
 #include <capnp/serialize.h>
 #include <kj/io.h>
 #include <optional>
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "vehicle_speed.capnp.h"
 #include "vehicle_odometer.capnp.h"
@@ -285,6 +286,11 @@ int main(int /*argc*/, char* /*argv*/[])
     // Set up logging
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("test_data_publisher");
 
     SPDLOG_INFO("Press Ctrl+C to stop...");
     

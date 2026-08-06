@@ -1,5 +1,6 @@
 #include "dbc_megasquirt_dash_data_parser.h"
 
+#include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
@@ -75,6 +76,11 @@ int main(int argc, char** argv)
         SPDLOG_INFO("{}", options.help());
         return 0;
     }
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. See
+    // pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("megasquirt");
 
     pub_sub::ZenohPublisher<MegasquirtDash> dash_pub("nodes/megasquirt/dash");
 

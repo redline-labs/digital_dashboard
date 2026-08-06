@@ -1,3 +1,4 @@
+#include "pub_sub/node_identity.h"
 #include "dashboard/app_config.h"
 #include "dashboard/command_line_args.h"
 #include "dashboard/main_window.h"
@@ -80,6 +81,12 @@ int main(int argc, char** argv)
         SPDLOG_CRITICAL("Failed to load configuration file '{}'.", args->config_file_path);
         return -1;
     }
+
+    // Announce this process so tools can put a name to the session id that
+    // appears on every topic it advertises and every sample it stamps. This
+    // app subscribes but never publishes, so without it the process is
+    // invisible on the bus entirely. See pub_sub/node_identity.h.
+    pub_sub::NodeIdentity node_identity("dashboard");
 
     QApplication app(argc, argv);
 

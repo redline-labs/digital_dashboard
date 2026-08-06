@@ -18,5 +18,11 @@ include(capnproto.cmake)
 include(exprtk.cmake)
 include(lexy.cmake)
 
+# The bag format and its compression codecs. mcap.cmake links the two codec
+# targets, so they have to be defined first.
+include(zstd.cmake)
+include(lz4.cmake)
+include(mcap.cmake)
+
 # LGPL Compliance: Create source code availability notice
 file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)

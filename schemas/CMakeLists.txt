@@ -116,3 +116,22 @@ target_compile_definitions(schemas_test_registry_plugin PRIVATE
 
 add_dependencies(schemas_test_registry_plugin capnp_tool capnpc_schema_registry)
 add_project_test(TARGET schemas_test_registry_plugin LABELS schemas unit)
+
+# The serialized schema descriptors -- the schema as DATA, which is what a bag
+# file embeds so a foreign consumer can decode a recording.
+#
+# Loaded through capnp::SchemaLoader exactly as such a consumer would, then
+# compared against capnp::Schema::from<> in-process. Two independent routes to
+# the same answer, because a descriptor that is subtly wrong still LOADS -- it
+# just cannot decode the affected field, long after the recording was made.
+add_executable(schemas_test_schema_descriptor
+    test_schema_descriptor.cpp
+)
+
+target_link_libraries(schemas_test_schema_descriptor PRIVATE
+    schemas
+    capnp
+    kj
+)
+
+add_project_test(TARGET schemas_test_schema_descriptor LABELS schemas unit)

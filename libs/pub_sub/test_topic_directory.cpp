@@ -11,12 +11,15 @@
 // Needs a session, so `net`, and it skips itself when one cannot be opened,
 // the same way the SessionManager test does.
 
+#include "pub_sub/node_identity.h"
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/session_manager.h"
 #include "pub_sub/topic_directory.h"
 #include "pub_sub/topic_key.h"
 #include "pub_sub/zenoh_publisher.h"
+#include "pub_sub/zenoh_service.h"
 
+#include "can_bridge.capnp.h"
 #include "engine_rpm.capnp.h"
 #include "vehicle_speed.capnp.h"
 
@@ -182,6 +185,152 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         expect(!find(directory, "test/directory/bad@key").has_value(),
                "a refused publisher advertises nothing");
+    }
+
+    // --------------------------------------------------------- topic ownership
+
+    // The fifth segment: an advertisement now says WHO offers the topic, not
+    // just what it is. Without it a tool can list every topic on the bus and
+    // still only print opaque session ids beside them.
+    {
+        const std::string owned_key = "test/directory/owned";
+        pub_sub::ZenohPublisher<EngineRpm> publisher(owned_key);
+
+        expect(waitFor([&] { return find(directory, owned_key).has_value(); }),
+               "an owned topic appears");
+
+        const auto entry = find(directory, owned_key);
+        expect(entry && !entry->owner_zid.empty(),
+               "the advertisement carries the publisher's session id");
+        expect(entry && entry->owner_zid == pub_sub::SessionManager::zid(),
+               "and it is OUR session id -- the same value SessionManager reports, which is "
+               "what makes the join against the node directory work");
+    }
+
+    // ------------------------------------------------------ the node directory
+
+    {
+        pub_sub::NodeDirectory nodes;
+        if (!nodes.isValid())
+        {
+            std::fprintf(stderr, "WARNING: could not watch the node space; skipping node cases.\n");
+        }
+        else
+        {
+            const std::string zid = pub_sub::SessionManager::zid();
+
+            // Nothing is announced for this process until it says so. A short
+            // window on purpose: the claim is "no node appears promptly", and
+            // waiting the full five seconds to assert an absence only makes the
+            // suite slow without making the statement stronger.
+            expect(!waitFor([&] { return !nodes.nameFor(zid).empty(); },
+                            std::chrono::milliseconds(300)),
+                   "no node is announced until one declares a NodeIdentity");
+
+            {
+                pub_sub::NodeIdentity identity("test_directory_node");
+                expect(identity.isValid(), "the identity token is declared");
+                expect(identity.zid() == zid,
+                       "the identity reports the same session id as SessionManager");
+
+                expect(waitFor([&] { return nodes.nameFor(zid) == "test_directory_node"; }),
+                       "the node appears in the directory under its declared name");
+
+                // The join that is the whole point: a topic's owner_zid resolves
+                // to a readable name.
+                const auto entry = find(directory, "test/directory/owned");
+                expect(entry && nodes.nameFor(entry->owner_zid) == "test_directory_node",
+                       "a topic's owner zid resolves to a node name -- the join the two "
+                       "spaces exist to make possible");
+            }
+
+            // Same rule as topics: marked unreachable, never removed, so
+            // "carplay was here and went away" stays visible.
+            expect(waitFor([&] {
+                       for (const pub_sub::NodeEntry& entry : nodes.snapshot())
+                       {
+                           if (entry.zid == zid && !entry.reachable)
+                           {
+                               return true;
+                           }
+                       }
+                       return false;
+                   }),
+                   "a node that goes away is marked unreachable rather than dropped");
+
+            expect(!nodes.nameFor(zid).empty(),
+                   "and its name is still resolvable afterwards, so an old topic's owner "
+                   "does not become anonymous when the node exits");
+        }
+    }
+
+    // --------------------------------------------------- the service directory
+
+    // Services were previously undiscoverable: zenoh would route a request to a
+    // queryable, but nothing on the bus said it existed, what key to send to, or
+    // what a request should contain. You had to read the source of whichever
+    // node offers it.
+    {
+        pub_sub::ServiceDirectory services;
+        if (!services.isValid())
+        {
+            std::fprintf(stderr,
+                         "WARNING: could not watch the service space; skipping service cases.\n");
+        }
+        else
+        {
+            const std::string service_key = "test/directory/set_bitrate";
+
+            const auto findService = [&services](const std::string& key)
+                -> std::optional<pub_sub::ServiceEntry>
+            {
+                for (const pub_sub::ServiceEntry& entry : services.snapshot())
+                {
+                    if (entry.key == key)
+                    {
+                        return entry;
+                    }
+                }
+                return std::nullopt;
+            };
+
+            {
+                pub_sub::ZenohService<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse>
+                    service(service_key,
+                            [](const CanBridgeSetBitrateRequest::Reader&,
+                               CanBridgeSetBitrateResponse::Builder& response)
+                            { response.setOk(true); });
+
+                expect(waitFor([&] { return findService(service_key).has_value(); }),
+                       "a declared service advertises itself");
+
+                const auto entry = findService(service_key);
+                expect(entry && entry->request_schema == "CanBridgeSetBitrateRequest",
+                       "the advertisement names the request schema, so a caller can build one");
+                expect(entry && entry->response_schema == "CanBridgeSetBitrateResponse",
+                       "and the response schema, so a caller can read the reply");
+                expect(entry && entry->owner_zid == pub_sub::SessionManager::zid(),
+                       "and the session offering it");
+                expect(entry && entry->reachable, "and it is reachable while it is up");
+            }
+
+            expect(waitFor([&] {
+                       const auto entry = findService(service_key);
+                       return entry && !entry->reachable;
+                   }),
+                   "a service that goes away is marked unreachable rather than dropped");
+        }
+    }
+
+    // A name that is not a usable key segment must be refused loudly rather than
+    // producing a key every reader silently skips.
+    {
+        pub_sub::NodeIdentity bad("has/slash");
+        expect(!bad.isValid(), "a node name containing '/' is refused");
+    }
+    {
+        pub_sub::NodeIdentity bad("has@at");
+        expect(!bad.isValid(), "a node name containing '@' is refused");
     }
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);

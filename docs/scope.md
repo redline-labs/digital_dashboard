@@ -58,9 +58,13 @@ would do the reverse. Neither the browser nor the drag plumbing changes.
 Samples are stamped **on arrival**, by the source, with `steady_clock`. Neither
 alternative works:
 
-- **zenoh's own timestamps are off.** `SessionManager::buildConfig()` never sets
-  `timestamping.enabled`, and `detail::SampleMeta` exposes only the encoding, so
-  there is nothing to read even if it were on.
+- **zenoh's publish timestamp is the publisher's WALL clock.** It exists now --
+  `SessionManager::buildConfig()` enables `timestamping` and `detail::SampleMeta`
+  exposes it -- and it is still the wrong clock for a scrolling plot. It steps
+  when NTP disciplines it, it is plainly wrong on a unit that booted with a dead
+  RTC, and zenoh re-stamps rather than rejects a time too far in the future, so
+  the error arrives looking ordinary. An axis that jumps backwards mid-trace is
+  worse than one measured from the wrong origin. See `pub_sub/timestamp.h`.
 - **payload timestamps exist on five schemas.** `EngineRpm`,
   `EngineTemperature`, `VehicleSpeed`, `VehicleOdometer`, `VehicleWarnings` —
   the mock and legacy ones. Every real telemetry schema has none: `MotecM1`
@@ -71,7 +75,9 @@ alternative works:
 A payload-timestamp fast path would be right for five schemas and wrong for the
 rest, and mixing two clocks on one axis is worse than one honest arrival clock.
 Stamping is the *source's* job precisely so a recorded source can supply
-recorded times instead.
+recorded times instead -- and a recorded source is where the publish timestamp
+earns its keep, because a bag stores both and can say which one it is showing.
+See `docs/bag.md`.
 
 One consequence worth knowing: every signal carried by the same message gets the
 same stamp, read once per callback. That is what makes two fields of one topic
@@ -165,7 +171,7 @@ are indistinguishable.
 
 ## Topic key rules
 
-The advertisement key is `@redline/adv/<schema>/<mangled topic>`, and both of
+The advertisement key is `@redline/adv/<schema>/<mangled topic>/<zid>`, and both of
 those choices are load-bearing.
 
 The **leading `@`** is what keeps advertisements out of the `**` subscriptions

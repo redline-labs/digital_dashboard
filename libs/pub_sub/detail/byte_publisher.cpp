@@ -82,7 +82,13 @@ BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_n
         // Advertise only once the publisher itself is up. A token for a topic
         // nothing can publish on would put an entry in every picker that can
         // never produce a sample, which is worse than being absent.
-        const std::string advertised = advertiseKey(impl_->keyexpr, impl_->schema_name);
+        //
+        // The zid goes on the key so the advertisement says who offers the topic
+        // as well as what it is. Read off the session we already hold rather
+        // than through SessionManager::zid(), which would take the manager's
+        // mutex again for an answer this object is already holding.
+        const std::string zid = impl_->session->get_zid().to_string();
+        const std::string advertised = advertiseKey(impl_->keyexpr, impl_->schema_name, zid);
         impl_->advertisement.emplace(
             impl_->session->liveliness_declare_token(zenoh::KeyExpr(advertised)));
         SPDLOG_DEBUG("Advertised '{}' as '{}'", impl_->keyexpr, advertised);
