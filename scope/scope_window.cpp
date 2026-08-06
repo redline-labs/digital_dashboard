@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QLabel>
@@ -372,12 +373,135 @@ bool ScopeWindow::restoreDockState(const QByteArray& state)
     return restoreState(state);
 }
 
+// ------------------------------------------------------------------- workspace
+
+scope_workspace_t ScopeWindow::toWorkspace() const
+{
+    scope_workspace_t workspace;
+    workspace.name = windowTitle().toStdString();
+    workspace.window_seconds = time_base_->windowSeconds();
+    workspace.render_rate_hz = static_cast<uint16_t>(time_base_->renderRateHz());
+
+    for (const PanelEntry& entry : panels_)
+    {
+        panel_entry_t saved;
+        saved.id = entry.id.toStdString();
+        saved.type = entry.panel->panelType();
+
+        if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
+        {
+            saved.config = plot->getConfig();
+        }
+
+        workspace.panels.push_back(std::move(saved));
+    }
+
+    workspace.dock_state = saveState().toBase64().toStdString();
+    return workspace;
+}
+
+bool ScopeWindow::saveWorkspace(const QString& path)
+{
+    if (!save_workspace(toWorkspace(), path.toStdString()))
+    {
+        return false;
+    }
+    workspace_path_ = path;
+    statusBar()->showMessage(tr("Saved %1").arg(path), 3000);
+    return true;
+}
+
+bool ScopeWindow::loadWorkspace(const QString& path)
+{
+    const std::optional<scope_workspace_t> workspace = load_workspace(path.toStdString());
+    if (!workspace)
+    {
+        return false;
+    }
+
+    // Everything goes, including panels that were never saved. A load that
+    // merged would leave the window in a state no file describes.
+    while (!panels_.empty())
+    {
+        removePanel(panels_.front().id);
+    }
+
+    time_base_->setWindowSeconds(workspace->window_seconds);
+    time_base_->setRenderRateHz(workspace->render_rate_hz);
+
+    for (const panel_entry_t& entry : workspace->panels)
+    {
+        if (entry.type == panel_type_t::unknown)
+        {
+            // Already reported with its path by validate_workspace. Skipping is
+            // the right outcome -- a workspace one panel short beats one that
+            // silently grew a panel it does not name.
+            continue;
+        }
+        addPanelFromConfig(entry.config, QString::fromStdString(entry.id));
+    }
+
+    // Panels must exist before restoreState(), which matches docks by
+    // objectName and drops any it cannot find.
+    if (!workspace->dock_state.empty())
+    {
+        const QByteArray state =
+            QByteArray::fromBase64(QByteArray::fromStdString(workspace->dock_state));
+        if (!restoreDockState(state))
+        {
+            // Not an error. The blob is Qt-versioned and opaque; everything that
+            // matters is in the YAML, so a failed restore costs an arrangement,
+            // not data.
+            SPDLOG_WARN("Could not restore the dock arrangement from '{}' -- it was probably "
+                        "written by a different Qt version. The panels are all here, arranged "
+                        "by default.",
+                        path.toStdString());
+        }
+    }
+
+    workspace_path_ = path;
+    setWindowTitle(workspace->name.empty() ? QStringLiteral("Redline Scope")
+                                           : QString::fromStdString(workspace->name));
+    statusBar()->showMessage(tr("Loaded %1").arg(path), 3000);
+    return true;
+}
+
 // ----------------------------------------------------------------------- chrome
 
 void ScopeWindow::buildMenuBar()
 {
     QMenu* file_menu = menuBar()->addMenu(tr("&File"));
     file_menu->setObjectName("menu_file");
+
+    QAction* open = file_menu->addAction(tr("&Open Workspace…"));
+    open->setObjectName("action_open");
+    open->setShortcut(QKeySequence::Open);
+    connect(open, &QAction::triggered, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Open Workspace"), QString(), tr("Workspaces (*.yaml *.yml)"));
+        if (!path.isEmpty())
+        {
+            loadWorkspace(path);
+        }
+    });
+
+    QAction* save = file_menu->addAction(tr("&Save Workspace"));
+    save->setObjectName("action_save");
+    save->setShortcut(QKeySequence::Save);
+    connect(save, &QAction::triggered, this, [this]() {
+        QString path = workspace_path_;
+        if (path.isEmpty())
+        {
+            path = QFileDialog::getSaveFileName(this, tr("Save Workspace"), QString(),
+                                                tr("Workspaces (*.yaml *.yml)"));
+        }
+        if (!path.isEmpty())
+        {
+            saveWorkspace(path);
+        }
+    });
+
+    file_menu->addSeparator();
 
     QAction* quit = file_menu->addAction(tr("&Quit"));
     quit->setObjectName("action_quit");

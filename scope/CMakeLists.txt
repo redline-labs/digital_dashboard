@@ -27,6 +27,7 @@ add_library(scope_core STATIC
     signal_browser.cpp
     add_signal_dialog.cpp
     scope_window.cpp
+    workspace.cpp
     scope_methods.cpp
     command_line_args.cpp
 
@@ -113,3 +114,22 @@ target_link_libraries(scope_test_decimate PRIVATE
 )
 
 add_project_test(TARGET scope_test_decimate LABELS scope unit)
+
+# The workspace codec, including a byte-stability round trip over every shipped
+# workspace. A codec that round-trips semantically but reorders keys turns every
+# save into a diff, which makes a workspace impossible to keep in version
+# control -- and that is exactly what someone will want to do with one.
+add_executable(scope_test_workspace
+    tests/test_workspace.cpp
+)
+
+# The shipped workspaces are the corpus, so the test has to find them wherever
+# ctest happens to be run from. Same trick as editor_test_roundtrip.
+target_compile_definitions(scope_test_workspace PRIVATE
+    SCOPE_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/scope")
+
+target_link_libraries(scope_test_workspace PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_workspace LABELS scope unit)

@@ -71,10 +71,11 @@ int main(int argc, char** argv)
     scope::ScopeWindow window;
     if (!args->workspace_path.empty())
     {
-        // Loading lands in M5; until then the path is recorded so app.info
-        // reports what was asked for rather than claiming nothing was.
-        window.setWorkspacePath(QString::fromStdString(args->workspace_path));
-        SPDLOG_INFO("Workspace '{}' requested.", args->workspace_path);
+        if (!window.loadWorkspace(QString::fromStdString(args->workspace_path)))
+        {
+            SPDLOG_CRITICAL("Failed to load workspace '{}'.", args->workspace_path);
+            return -1;
+        }
     }
     window.show();
 

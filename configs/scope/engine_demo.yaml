@@ -1,0 +1,58 @@
+name: Engine Demo
+history_seconds: 300
+window_seconds: 30
+render_rate_hz: 30
+panels:
+  - id: engine
+    type: time_series
+    config:
+      title: Engine
+      follow_time_base: true
+      window_seconds: 30
+      autoscale_y: true
+      y_min: 0
+      y_max: 100
+      show_grid: true
+      show_legend: true
+      traces:
+        - zenoh_key: vehicle/engine/rpm
+          schema_type: EngineRpm
+          value_expression: rpm
+          label: rpm
+          color: "#4FC3F7"
+          units: rpm
+          right_axis: false
+        - zenoh_key: vehicle/engine/rpm
+          schema_type: EngineRpm
+          value_expression: oilPressurePsi
+          label: oil pressure
+          color: "#FFB74D"
+          units: psi
+          right_axis: true
+  - id: chassis
+    type: time_series
+    config:
+      title: Chassis
+      follow_time_base: true
+      window_seconds: 30
+      autoscale_y: true
+      y_min: 0
+      y_max: 100
+      show_grid: true
+      show_legend: true
+      traces:
+        - zenoh_key: vehicle/speed_mps
+          schema_type: VehicleSpeed
+          value_expression: mps_to_mph(speedMps)
+          label: speed
+          color: "#81C784"
+          units: mph
+          right_axis: false
+        - zenoh_key: vehicle/engine/temperature_celsius
+          schema_type: EngineTemperature
+          value_expression: temperatureCelsius
+          label: coolant
+          color: "#E57373"
+          units: C
+          right_axis: true
+dock_state: ""

@@ -3,6 +3,7 @@
 
 #include "scope/panel_registry.h"
 #include "scope/panel_types.h"
+#include "scope/workspace.h"
 
 #include <QMainWindow>
 #include <QString>
@@ -72,11 +73,23 @@ class ScopeWindow : public QMainWindow
     const QString& workspacePath() const { return workspace_path_; }
     void setWorkspacePath(QString path) { workspace_path_ = std::move(path); }
 
-    // Dock arrangement as an opaque, Qt-versioned blob. See the comment in
-    // workspace.cpp for why this is stored alongside the readable YAML rather
-    // than instead of it.
+    // Dock arrangement as an opaque, Qt-versioned blob.
+    //
+    // Stored ALONGSIDE the readable YAML, never instead of it. Everything that
+    // matters semantically -- which panels exist, what each plots, how it is
+    // styled -- is in the YAML and is editable by hand. This carries only the
+    // arrangement, so losing it to a Qt upgrade costs a re-drag, not data. That
+    // is why restore failure is a warning and a default layout rather than an
+    // error.
     QByteArray dockState() const;
     bool restoreDockState(const QByteArray& state);
+
+    // Replaces everything: panels, time base, arrangement.
+    bool loadWorkspace(const QString& path);
+    bool saveWorkspace(const QString& path);
+
+    // The current state as a workspace, without writing it anywhere.
+    scope_workspace_t toWorkspace() const;
 
   private:
     void buildMenuBar();

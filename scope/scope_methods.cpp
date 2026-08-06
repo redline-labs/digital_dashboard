@@ -548,6 +548,53 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
+    // --------------------------------------------------------------- workspace
+
+    server.registerMethod(
+        "scope.save",
+        [win](const json& params) -> MethodResult {
+            const auto path = params.find("path");
+            if (path == params.end() || !path->is_string())
+            {
+                return std::unexpected(badParams("'path' (string) is required."));
+            }
+
+            const QString target = QString::fromStdString(path->get<std::string>());
+            if (!win->saveWorkspace(target))
+            {
+                return std::unexpected(
+                    internalError("Failed to write '" + path->get<std::string>() + "'."));
+            }
+            return json{{"saved", true}, {"path", path->get<std::string>()}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    server.registerMethod(
+        "scope.load",
+        [win](const json& params) -> MethodResult {
+            const auto path = params.find("path");
+            if (path == params.end() || !path->is_string())
+            {
+                return std::unexpected(badParams("'path' (string) is required."));
+            }
+
+            if (!win->loadWorkspace(QString::fromStdString(path->get<std::string>())))
+            {
+                return std::unexpected(badParams("Could not load '" + path->get<std::string>() +
+                                                 "'. See app.logs for the reason."));
+            }
+
+            json panels = json::array();
+            for (const ScopeWindow::PanelEntry& entry : win->panels())
+            {
+                panels.push_back(describePanel(entry));
+            }
+            return json{{"loaded", true},
+                        {"path", path->get<std::string>()},
+                        {"panels", std::move(panels)}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
     // ------------------------------------------------------------------- stats
 
     // The verb that makes this app testable without eyeballing pixels: it is
