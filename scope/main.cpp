@@ -1,4 +1,5 @@
 #include "scope/command_line_args.h"
+#include "scope/scope_methods.h"
 #include "scope/scope_window.h"
 
 #include "agent_control/log_sink.h"
@@ -91,6 +92,8 @@ int main(int argc, char** argv)
         // is the fastest way to check a rendering change, so the zenoh verbs
         // are as load-bearing here as they are in the dashboard.
         agent_control::registerZenohMethods(*agent);
+
+        scope::registerScopeMethods(*agent, window);
 
         if (!agent->start(*args->mcp_socket_path))
         {

@@ -20,9 +20,14 @@ qt_standard_project_setup()
 # that (a -DTESTING switch, a weak symbol) are worse than a library.
 add_library(scope_core STATIC
     sample_ring.cpp
+    decimate.cpp
     live_zenoh_source.cpp
     time_base.cpp
+    panel_registry.cpp
+    signal_browser.cpp
+    add_signal_dialog.cpp
     scope_window.cpp
+    scope_methods.cpp
     command_line_args.cpp
 
     # Headers carrying Q_OBJECT have to be listed as sources, because AUTOMOC
@@ -32,12 +37,23 @@ add_library(scope_core STATIC
     # worse, as a missing staticMetaObject at link time.
     include/scope/scope_window.h
     include/scope/time_base.h
+    include/scope/panel.h
+    include/scope/signal_browser.h
+    include/scope/add_signal_dialog.h
+
+    # Panels. One directory per type, mirroring dashboard/widgets/ -- but built
+    # into scope_core rather than into a library each, because there is no
+    # equivalent of the widget palette's dynamic registration to serve and the
+    # panel table is resolved at compile time anyway.
+    panels/time_series/time_series_panel.cpp
+    panels/time_series/include/time_series/time_series_panel.h
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
 
 target_include_directories(scope_core PUBLIC
     include
+    panels/time_series/include
 )
 
 target_link_libraries(scope_core PUBLIC
@@ -45,6 +61,7 @@ target_link_libraries(scope_core PUBLIC
     Qt6::Gui
     Qt6::Widgets
 
+    agent_control
     zenoh_pub_sub
     config_codec
     qt_helpers
@@ -83,3 +100,16 @@ target_link_libraries(scope_test_ring PRIVATE
 )
 
 add_project_test(TARGET scope_test_ring LABELS scope unit)
+
+# Per-column min/max reduction, against a brute-force reference over random
+# data. Runs on every signal on every frame, and every way it can be wrong looks
+# like data rather than like a bug.
+add_executable(scope_test_decimate
+    tests/test_decimate.cpp
+)
+
+target_link_libraries(scope_test_decimate PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_decimate LABELS scope unit)
