@@ -47,7 +47,8 @@ class LiveZenohSource : public DataSource
     LiveZenohSource& operator=(const LiveZenohSource&) = delete;
 
     SourceCaps caps() const override;
-    std::vector<TopicInfo> rescan(int window_ms) override;
+    std::vector<TopicInfo> topics() const override;
+    std::uint64_t topicsRevision() const override;
     SignalHandle bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into) override;
     void release(SignalHandle handle) override;
     double now() const override;

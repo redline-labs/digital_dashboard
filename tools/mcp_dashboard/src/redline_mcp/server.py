@@ -1040,30 +1040,19 @@ def scope_remove_panel(panel: Annotated[str, Field(description="Panel id.")]) ->
 
 
 @mcp.tool()
-def scope_browser(
-    rescan: Annotated[
-        bool, Field(default=True, description="Listen to the bus first, then report.")
-    ] = True,
-    window_ms: Annotated[
-        int, Field(default=1200, description="How long to listen when rescanning.")
-    ] = 1200,
-) -> str:
+def scope_browser() -> str:
     """List the topics and fields the scope can plot.
 
-    Discovery is observation, not query: zenoh has no retained messages, so this
-    reports only what published during the scan window. An empty list means
-    nothing was published then, NOT that nothing exists. Try a longer window_ms
-    before concluding a signal is missing.
+    Topics are listed from advertisements: every publisher declares a zenoh
+    liveliness token when it starts, so a topic appears here whether or not it
+    has ever published anything. There is nothing to rescan and no window to
+    wait for -- an empty list means no publisher is running.
+
+    A topic whose publisher has gone away stays listed and is marked
+    unreachable, so a binding is never silently lost.
     """
     try:
-        return json.dumps(
-            _call(
-                SCOPE_APP,
-                "scope.browser",
-                {"rescan": rescan, "window_ms": window_ms, "_timeout_ms": window_ms + 5000},
-            ),
-            indent=2,
-        )
+        return json.dumps(_call(SCOPE_APP, "scope.browser"), indent=2)
     except (AgentError, LaunchError, OSError) as exc:
         return _fail(exc)
 

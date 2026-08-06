@@ -36,10 +36,9 @@ constexpr int kRoleSchema = Qt::UserRole + 2;
 constexpr int kRoleField = Qt::UserRole + 3;
 constexpr int kRoleCategory = Qt::UserRole + 4;
 
-// Row state, kept on the item so updateRowText() can render it without
-// consulting either source again.
+// Reachability, kept on the item so updateRowText() can render without asking
+// the source again.
 constexpr int kRoleAdvertised = Qt::UserRole + 5;
-constexpr int kRoleHz = Qt::UserRole + 6;  // < 0 means never observed.
 
 BindingCandidate candidateOf(const QTreeWidgetItem* item)
 {
@@ -152,31 +151,16 @@ SignalBrowser::SignalBrowser(DataSource& source, QWidget* parent) :
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, &SignalBrowser::onItemActivated);
     layout->addWidget(tree_, 1);
 
-    rescan_button_ = new QPushButton(tr("Rescan"), this);
-    rescan_button_->setObjectName("browser_rescan");
-    connect(rescan_button_, &QPushButton::clicked, this, [this]() { rescan(); });
-    layout->addWidget(rescan_button_);
-
     status_ = new QLabel(this);
     status_->setObjectName("browser_status");
     status_->setWordWrap(true);
     status_->setStyleSheet("color: palette(mid); font-size: 11px;");
     layout->addWidget(status_);
 
-    // The advertisement watcher. Populated with history, so topics from nodes
-    // that were already running when this window opened arrive immediately --
-    // there is no initial query to forget and no window in between where a
-    // node starting up could be missed.
-    directory_ = std::make_unique<pub_sub::TopicDirectory>();
-    if (!directory_->isValid())
-    {
-        SPDLOG_WARN("[browser] could not watch advertisements; falling back to observation only");
-    }
-
-    // Polled rather than pushed. The directory is updated from a zenoh RX
-    // thread, which may not touch a QTreeWidget; draining it on a GUI timer is
-    // the same discipline the sample path uses. It is cheap because the
-    // revision counter makes an idle tick a single atomic load.
+    // Polled rather than pushed. The source learns about topics on a zenoh RX
+    // thread, which may not touch a QTreeWidget; draining on a GUI timer is the
+    // same discipline the sample path uses. An idle tick costs one atomic load,
+    // because the revision is compared before anything is rebuilt.
     directory_timer_ = new QTimer(this);
     directory_timer_->setObjectName("browser_directory_timer");
     connect(directory_timer_, &QTimer::timeout, this, &SignalBrowser::syncFromDirectory);
@@ -188,78 +172,40 @@ SignalBrowser::SignalBrowser(DataSource& source, QWidget* parent) :
 
 void SignalBrowser::syncFromDirectory()
 {
-    if (!directory_)
-    {
-        return;
-    }
-
-    const std::uint64_t revision = directory_->revision();
+    const std::uint64_t revision = source_.topicsRevision();
     if (revision == last_directory_revision_)
     {
         return;  // Nothing has come or gone; do not rebuild rows for nothing.
     }
     last_directory_revision_ = revision;
 
-    for (const pub_sub::DirectoryEntry& entry : directory_->snapshot())
+    for (const TopicInfo& topic : source_.topics())
     {
-        // -1 preserves whatever rate observation may already have recorded;
-        // the directory knows nothing about traffic.
-        addTopic(QString::fromStdString(entry.key), QString::fromStdString(entry.schema),
-                 /*hz=*/-1.0, entry.reachable);
+        addTopic(QString::fromStdString(topic.key), QString::fromStdString(topic.schema),
+                 topic.reachable);
     }
 
     applyFilter();
     updateStatus();
 }
 
-// One line that is honest about both sources, because "no topics" would be a
-// claim neither can support: the directory only knows who advertises, and
-// observation only knows what published during a window.
+// The empty state is a statement about advertisements, not about the bus.
 void SignalBrowser::updateStatus()
 {
     const int count = tree_->topLevelItemCount();
-
-    if (count == 0)
-    {
-        status_->setText(ever_scanned_
-                             ? tr("Nothing advertised, and nothing published during the scan. "
-                                  "Topics appear here as soon as a node starts.")
-                             : tr("Nothing advertised yet. Topics appear here as soon as a node "
-                                  "starts -- no rescan needed. Rescan also picks up publishers "
-                                  "that do not advertise, and measures rates."));
-        return;
-    }
-
-    status_->setText(tr("%n topic(s). Drag a field onto a panel, or double-click it. "
-                        "Rescan measures rates and finds publishers that do not advertise.",
-                        nullptr, count));
+    status_->setText(count == 0
+                         ? tr("No topics yet. They appear here as soon as a publisher starts -- "
+                              "nothing needs to be published first.")
+                         : tr("%n topic(s). Drag a field onto a panel, or double-click it.",
+                              nullptr, count));
 }
 
 SignalBrowser::~SignalBrowser() = default;
 
-void SignalBrowser::rescan(int window_ms)
+void SignalBrowser::addTopic(const QString& key, const QString& schema, bool reachable)
 {
-    const std::vector<TopicInfo> topics = source_.rescan(window_ms);
-    ever_scanned_ = true;
-
-    for (const TopicInfo& topic : topics)
-    {
-        addTopic(QString::fromStdString(topic.key), QString::fromStdString(topic.schema), topic.hz,
-                 /*advertised=*/false);
-    }
-
-    // Rescan no longer decides the empty-state wording on its own -- the
-    // directory may have populated the tree without any traffic at all.
-    updateStatus();
-    applyFilter();
-}
-
-void SignalBrowser::addTopic(const QString& key, const QString& schema, double hz,
-                             bool advertised)
-{
-    // Merge, never replace. A topic is added by whichever source saw it first
-    // and then updated in place, so an advertised topic that later carries
-    // traffic keeps its row and simply gains a rate.
+    // Merge, never replace. A topic already listed is updated in place, so a
+    // publisher restarting refreshes its row rather than duplicating it.
     QTreeWidgetItem* topic_item = nullptr;
     for (int i = 0; i < tree_->topLevelItemCount(); ++i)
     {
@@ -277,16 +223,11 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, double h
         topic_item->setData(0, kRoleKey, key);
         topic_item->setData(0, kRoleField, QString());
         topic_item->setData(0, kRoleCategory, QString());
-        topic_item->setData(0, kRoleHz, -1.0);
     }
 
     topic_item->setText(0, key);
     topic_item->setData(0, kRoleSchema, schema);
-    topic_item->setData(0, kRoleAdvertised, advertised);
-    if (hz >= 0.0)
-    {
-        topic_item->setData(0, kRoleHz, hz);
-    }
+    topic_item->setData(0, kRoleAdvertised, reachable);
     updateRowText(topic_item);
 
     if (!is_new)
@@ -338,43 +279,23 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, double h
     topic_item->setExpanded(true);
 }
 
-// Renders a topic row's second column and its colour from the two states.
+// Renders a topic row's state.
 //
-// Greyed means "advertised but not reachable, or never seen" -- the row stays
-// so a binding is never taken away, but it must not look live either. A list
-// that silently claims a dead topic is producing is the actual failure mode.
+// Greyed means the publisher is no longer reachable. The row STAYS -- a binding
+// the user may already have made must not vanish underneath them, and a
+// liveliness DELETE means "unreachable from here" rather than "gone", since a
+// network partition and a crash are indistinguishable.
 void SignalBrowser::updateRowText(QTreeWidgetItem* topic)
 {
-    const bool advertised = topic->data(0, kRoleAdvertised).toBool();
-    const double hz = topic->data(0, kRoleHz).toDouble();
+    const bool reachable = topic->data(0, kRoleAdvertised).toBool();
     const QString schema = topic->data(0, kRoleSchema).toString();
 
-    // Reachability decides first, and a measured rate does NOT override it.
-    // Getting this backwards left a dead topic reading "27.5 Hz" in normal
-    // colour after its publisher exited, because the last measurement was still
-    // sitting on the row -- a stale number presented as a live one, which is
-    // precisely the failure this column exists to prevent.
-    QString state;
-    if (advertised)
-    {
-        state = hz > 0.0 ? QStringLiteral("%1 Hz").arg(hz, 0, 'f', 1) : tr("advertised");
-    }
-    else if (hz > 0.0)
-    {
-        // Either the advertiser went away or it never advertised. Both mean the
-        // rate is a historical measurement, so it is labelled as one.
-        state = tr("%1 Hz (last seen)").arg(hz, 0, 'f', 1);
-    }
-    else
-    {
-        state = tr("unreachable");
-    }
-
-    topic->setText(1, state);
-    topic->setForeground(0, advertised ? QBrush() : QBrush(QColor("#808890")));
-    topic->setToolTip(0, advertised ? tr("Advertised by a live publisher.")
-                                    : tr("Seen on the bus, but not advertised -- the publisher "
-                                         "may have stopped, or may not advertise at all."));
+    topic->setText(1, reachable ? schema : tr("unreachable"));
+    topic->setForeground(0, reachable ? QBrush() : QBrush(QColor("#808890")));
+    topic->setToolTip(0, reachable
+                             ? tr("Advertised by a live publisher.")
+                             : tr("The publisher is no longer reachable. The topic stays listed "
+                                  "so an existing binding is not lost."));
 }
 
 void SignalBrowser::applyFilter()

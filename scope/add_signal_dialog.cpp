@@ -48,10 +48,8 @@ AddSignalDialog::AddSignalDialog(DataSource& source, const Panel& target, QWidge
                 }
             });
 
-    // Scan on open. The dialog is explicitly a "show me what is out there"
-    // gesture, so waiting for the user to press Rescan first would be a step
-    // that exists for no reason.
-    browser_->rescan();
+    // Nothing to kick off: the browser is populated from advertisements the
+    // moment it is constructed, and stays current on its own.
 }
 
 AddSignalDialog::~AddSignalDialog() = default;

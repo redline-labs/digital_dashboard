@@ -117,17 +117,19 @@ caches would be the grid, and with autoscale on — the default — the vertical
 range changes whenever the visible data does, so the cache would be invalid
 almost every frame. The reasoning is in the panel header so nobody adds it back.
 
-## Discovery: advertised, with observation on top
+## Discovery
 
 Topics appear in the picker **as soon as a node starts**, whether or not it has
-ever published. No rescan button, no polling for traffic.
+ever published. There is no rescan, no polling for traffic, and no window to
+wait for.
 
 Every publisher declares a zenoh **liveliness token** when it is constructed
 (`detail::BytePublisher`). A token carries no payload -- the key expression is
 the whole message -- and nothing is ever sent on it, so this adds no periodic
-traffic. It is a key that exists while its process does. `pub_sub::TopicDirectory`
-watches that space with `history = true`, which replays tokens declared before it
-subscribed, so a browser opened after the nodes still sees all of them.
+traffic. It is a key that exists while its process does.
+`pub_sub::TopicDirectory` watches that space with `history = true`, which
+replays tokens declared before it subscribed, so a browser opened after the
+nodes still sees all of them.
 
 It goes in `BytePublisher` rather than in each node because the key and the
 schema are already both present at that one constructor. Every publisher in the
@@ -136,24 +138,30 @@ drift from the `application/capnp;<Schema>` encoding stamped on each sample --
 both derive from the same two arguments. The per-sample encoding stays
 authoritative; this is not a second source of truth.
 
-**Advertisement cannot replace observation, and does not.** A liveliness token
-says a publisher exists, not that data is flowing -- a CAN bridge with an
-unplugged adapter still advertises. And a publisher that bypasses `BytePublisher`
-advertises nothing at all. So `pub_sub::observeTopics` is still there, and the
-browser unions the two:
+**The browser asks the source, not the bus.** `DataSource::topics()` is cheap
+and non-blocking, and the browser polls it on a timer, comparing
+`topicsRevision()` first so an idle tick costs one atomic load. "Which topics
+exist" is a property of where the data comes from, so a recorded source will
+answer the same question from its file index with nothing above it changing.
+That is also why the method takes no window: an interface saying "listen for N
+milliseconds" would describe one implementation's mechanism rather than the
+question being asked.
 
-| row shows | meaning |
-|---|---|
-| `27.5 Hz` | advertised, and traffic measured |
-| `advertised` | a node is up but has published nothing yet |
-| `27.5 Hz (last seen)`, greyed | the advertiser went away, or never advertised; the rate is historical |
-| `unreachable`, greyed | was advertised, now is not |
+A topic whose publisher goes away is **greyed, never evicted**. A row the user
+may have bound must not vanish underneath them, and a liveliness DELETE means
+*unreachable from here* rather than *gone* -- a network partition and a crash
+are indistinguishable.
 
-**Rows are never evicted, only greyed.** A row the user may have bound must not
-vanish, and a liveliness DELETE means *unreachable from here* rather than *gone*
--- a network partition and a crash are indistinguishable. Reachability decides
-the colour and a measured rate never overrides it; the reverse left a dead topic
-reading "27.5 Hz" in normal colour, a stale number presented as a live one.
+> **What this deliberately does not tell you:** that data is flowing. A token is
+> up while its process is, so a CAN bridge with an unplugged adapter still
+> advertises its topics. That is the right answer for a picker -- the topic
+> exists and is bindable -- and `scope_sample_stats` is where you find out
+> whether anything is actually arriving.
+>
+> `pub_sub::observeTopics` still exists for the tools whose job *is* to report
+> traffic (`nodes/inspect list`, `zenoh_list`). Scope no longer uses it: it
+> blocks for its whole window, which froze the UI on every press of the button
+> it served.
 
 ## Topic key rules
 

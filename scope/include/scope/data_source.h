@@ -38,13 +38,16 @@ struct SignalKey
     }
 };
 
-// A topic seen on the bus, with what was observed about it.
+// A topic this source can offer.
 struct TopicInfo
 {
     std::string key;
-    std::string schema;  // From the sample's encoding; empty if not capnp-tagged.
-    std::uint64_t count = 0;
-    double hz = 0.0;
+    std::string schema;
+
+    // False once whoever offers it became unreachable. Such a topic is still
+    // listed -- a picker must not evict a row the user may have bound -- but it
+    // is shown as stale.
+    bool reachable = true;
 };
 
 // What a source can do, which is what the transport bar renders from.
@@ -79,10 +82,21 @@ class DataSource
 
     virtual SourceCaps caps() const = 0;
 
-    // What is available to plot. For a live source this means "subscribe for a
-    // while and report what arrived", so it takes a window and an empty result
-    // means "nothing published during it" rather than "nothing exists".
-    virtual std::vector<TopicInfo> rescan(int window_ms) = 0;
+    // What is available to plot, right now. Cheap and non-blocking: a caller
+    // polls it.
+    //
+    // A live source answers from advertisements, so a topic is listed as soon
+    // as its publisher exists -- it does not have to have published anything.
+    // A recorded source would answer from its index. Neither needs a window,
+    // which is why this does not take one: an interface that said "listen for
+    // N milliseconds" would be describing one implementation's mechanism
+    // rather than the question being asked.
+    virtual std::vector<TopicInfo> topics() const = 0;
+
+    // Bumped whenever topics() would return something different. A consumer
+    // polling on a timer compares this first and does nothing when it has not
+    // moved.
+    virtual std::uint64_t topicsRevision() const = 0;
 
     // Start delivering this signal's samples into `into`.
     //

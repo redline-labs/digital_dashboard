@@ -57,7 +57,8 @@ class StubSource : public scope::DataSource
         return caps;
     }
 
-    std::vector<scope::TopicInfo> rescan(int /*window_ms*/) override { return topics; }
+    std::vector<scope::TopicInfo> topics() const override { return available; }
+    std::uint64_t topicsRevision() const override { return revision; }
 
     scope::SignalHandle bind(const scope::SignalKey& key,
                              std::shared_ptr<scope::SignalBuffer> into) override
@@ -71,7 +72,8 @@ class StubSource : public scope::DataSource
 
     double now() const override { return 100.0; }
 
-    std::vector<scope::TopicInfo> topics;
+    std::vector<scope::TopicInfo> available;
+    std::uint64_t revision = 0;
     std::vector<scope::SignalKey> bound;
     std::vector<std::shared_ptr<scope::SignalBuffer>> buffers;
     std::vector<scope::SignalHandle> released;

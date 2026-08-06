@@ -205,21 +205,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     server.registerMethod(
         "scope.browser",
-        [win](const json& params) -> MethodResult {
-            // Rescanning blocks for the observation window, so it is opt-in:
-            // a caller that just wants to know what is already known should not
-            // have to wait a second for it.
-            if (const auto rescan = params.find("rescan");
-                rescan != params.end() && rescan->is_boolean() && rescan->get<bool>())
-            {
-                int window_ms = 1200;
-                if (const auto ms = params.find("window_ms"); ms != params.end() && ms->is_number())
-                {
-                    window_ms = ms->get<int>();
-                }
-                win->browser()->rescan(window_ms);
-            }
-
+        [win](const json& /*params*/) -> MethodResult {
             json candidates = json::array();
             for (const BindingCandidate& candidate : win->browser()->candidates())
             {
@@ -232,11 +218,10 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 // bus is empty and a caller that assumes otherwise will report
                 // a dead system that is merely idle.
                 {"note",
-                 "Discovery is observation, not query: zenoh has no retained messages, so this "
-                 "lists only topics that carried traffic during a scan window. An empty list "
-                 "means nothing was published then, not that nothing exists."}};
-        },
-        agent_control::AgentServer::MethodKind::kMutating);
+                 "Topics are listed from advertisements: a publisher declares a zenoh "
+                 "liveliness token when it starts, so a topic appears here whether or not it "
+                 "has ever published. An empty list means no publisher is running."}};
+        });
 
     server.registerMethod(
         "scope.add_signal",
@@ -270,8 +255,8 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                     AgentError error = badParams(
                         "The browser has not seen field '" + field->get<std::string>() +
                         "' on '" + key->get<std::string>() +
-                        "'. Call scope.browser with rescan=true first, or pass 'schema' and "
-                        "'type_category' explicitly.");
+                        "'. Pass 'schema' and 'type_category' explicitly, or check "
+                        "scope.browser for what is advertised.");
                     return std::unexpected(std::move(error));
                 }
             }
@@ -374,7 +359,8 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                                                candidate))
             {
                 return std::unexpected(badParams(
-                    "The browser has not seen that field. Call scope.browser with rescan=true."));
+                    "The browser has not seen that field; check scope.browser for what is "
+                    "advertised."));
             }
 
             QMimeData mime;

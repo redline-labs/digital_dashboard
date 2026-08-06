@@ -2,7 +2,7 @@
 
 #include "pub_sub/expression_evaluator.h"
 #include "pub_sub/raw_subscriber.h"
-#include "pub_sub/topic_discovery.h"
+#include "pub_sub/topic_directory.h"
 
 #include <reflection/reflection.h>
 #include <spdlog/spdlog.h>
@@ -80,6 +80,13 @@ struct LiveZenohSource::Impl
 {
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
 
+    // What is advertised on the bus. Owned by the source rather than by
+    // whatever draws a picker: "which topics exist" is a property of where the
+    // data comes from, and putting it here is what lets a recorded source
+    // answer the same question from a file index with nothing above it
+    // changing.
+    pub_sub::TopicDirectory directory;
+
     // Key -> its one subscription. std::map rather than unordered_map because
     // node addresses have to stay put: the sample callback captures a pointer
     // to the KeySubscription, and rehashing would not move the node but a
@@ -111,27 +118,26 @@ SourceCaps LiveZenohSource::caps() const
     return caps;
 }
 
-std::vector<TopicInfo> LiveZenohSource::rescan(int window_ms)
+std::vector<TopicInfo> LiveZenohSource::topics() const
 {
-    std::vector<TopicInfo> topics;
-
-    // The only discovery mechanism there is: subscribe for a window and report
-    // what arrived. zenoh has no retained messages, so an empty result means
-    // "nothing published during the window", not "nothing exists" -- and the
-    // caller has to say so, or it will report an empty bus that is merely idle.
-    for (const auto& observed : pub_sub::observeTopics("**", window_ms))
+    // Straight from the advertisements. No listening, no window, no blocking --
+    // a topic is here because its publisher exists, not because it happened to
+    // send something while someone was watching.
+    std::vector<TopicInfo> out;
+    for (const pub_sub::DirectoryEntry& entry : impl_->directory.snapshot())
     {
         TopicInfo info;
-        info.key = observed.key;
-        info.schema = observed.schema;
-        info.count = observed.count;
-        info.hz = observed.hz;
-        topics.push_back(std::move(info));
+        info.key = entry.key;
+        info.schema = entry.schema;
+        info.reachable = entry.reachable;
+        out.push_back(std::move(info));
     }
+    return out;
+}
 
-    std::sort(topics.begin(), topics.end(),
-              [](const TopicInfo& lhs, const TopicInfo& rhs) { return lhs.key < rhs.key; });
-    return topics;
+std::uint64_t LiveZenohSource::topicsRevision() const
+{
+    return impl_->directory.revision();
 }
 
 SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into)
