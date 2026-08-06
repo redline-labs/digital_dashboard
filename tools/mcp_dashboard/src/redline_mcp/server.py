@@ -987,6 +987,295 @@ def zenoh_describe_schema(
         return _fail(exc)
 
 
+# ----------------------------------------------------------------------- scope
+
+# These are ergonomics, not capability. Every scope.* method is reachable
+# through app_call from the moment the C++ side registers it; a typed wrapper
+# buys a schema the model can see without asking, which is worth having for the
+# verbs used constantly and not worth writing for the rest.
+
+SCOPE_APP: AppName = "scope"
+
+
+@mcp.tool()
+def scope_panels() -> str:
+    """List the scope's panels, what each plots, and the panel types available."""
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.panels"), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_add_panel(
+    type: Annotated[
+        str, Field(default="time_series", description="Panel type; see scope_panels.")
+    ] = "time_series",
+    id: Annotated[
+        str | None,
+        Field(default=None, description="Stable id for the panel. Generated when omitted."),
+    ] = None,
+) -> str:
+    """Add a panel to the scope window.
+
+    New panels tab onto the last one rather than splitting the window, because a
+    fifth panel in a four-way split is unreadable. Drag the tab to split.
+    """
+    params: dict[str, Any] = {"type": type}
+    if id:
+        params["id"] = id
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.add_panel", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_remove_panel(panel: Annotated[str, Field(description="Panel id.")]) -> str:
+    """Remove a panel and release the signals it was subscribed to."""
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.remove_panel", {"panel": panel}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_browser(
+    rescan: Annotated[
+        bool, Field(default=True, description="Listen to the bus first, then report.")
+    ] = True,
+    window_ms: Annotated[
+        int, Field(default=1200, description="How long to listen when rescanning.")
+    ] = 1200,
+) -> str:
+    """List the topics and fields the scope can plot.
+
+    Discovery is observation, not query: zenoh has no retained messages, so this
+    reports only what published during the scan window. An empty list means
+    nothing was published then, NOT that nothing exists. Try a longer window_ms
+    before concluding a signal is missing.
+    """
+    try:
+        return json.dumps(
+            _call(
+                SCOPE_APP,
+                "scope.browser",
+                {"rescan": rescan, "window_ms": window_ms, "_timeout_ms": window_ms + 5000},
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_add_signal(
+    panel: Annotated[str, Field(description="Panel id to add the signal to.")],
+    zenoh_key: Annotated[str, Field(description="Topic, e.g. 'vehicle/engine/rpm'.")],
+    field: Annotated[
+        str | None,
+        Field(default=None, description="Field name, e.g. 'rpm'. Resolved through the browser."),
+    ] = None,
+    schema: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Schema name, e.g. 'EngineRpm'. Only needed when the browser has not seen "
+                "the topic -- pass it to skip a scan."
+            ),
+        ),
+    ] = None,
+    type_category: Annotated[
+        str | None,
+        Field(default=None, description="capnp category ('float', 'uint', ...) when passing schema."),
+    ] = None,
+) -> str:
+    """Plot a signal on a panel.
+
+    The usual form names a topic and a field and lets the browser supply the
+    rest, which needs a scan to have happened. Passing schema explicitly works
+    before any scan.
+
+    A panel refuses what it cannot show -- a time-series plot declines
+    non-numeric fields and whole topics -- and the refusal names the candidate.
+    """
+    params: dict[str, Any] = {"panel": panel, "zenoh_key": zenoh_key}
+    if field is not None:
+        params["field"] = field
+    if schema is not None:
+        params["schema"] = schema
+    if type_category is not None:
+        params["type_category"] = type_category
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.add_signal", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_remove_signal(
+    panel: Annotated[str, Field(description="Panel id.")],
+    index: Annotated[int, Field(description="Zero-based index into the panel's traces.")],
+) -> str:
+    """Stop plotting one of a panel's signals."""
+    try:
+        return json.dumps(
+            _call(SCOPE_APP, "scope.remove_signal", {"panel": panel, "index": index}), indent=2
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_browser_drag(
+    panel: Annotated[str, Field(description="Panel id to drop onto.")],
+    zenoh_key: Annotated[str, Field(description="Topic of the field to drag.")],
+    field: Annotated[str, Field(description="Field name to drag.")],
+) -> str:
+    """Drag a signal from the browser onto a panel, exercising the drop path.
+
+    Use scope_add_signal to just add a signal. Use this when the drag-and-drop
+    behaviour itself is what you want to check: it drives the drop TARGET
+    directly, because QDrag::exec() runs a nested loop over real platform events
+    that synthesized ones cannot advance. Covers accept/reject and the drop
+    handler; only the few lines inside exec() are left out.
+    """
+    try:
+        return json.dumps(
+            _call(
+                SCOPE_APP,
+                "scope.browser_drag",
+                {"panel": panel, "zenoh_key": zenoh_key, "field": field},
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_time_base(
+    window_seconds: Annotated[
+        float | None, Field(default=None, description="Seconds of history shown at once.")
+    ] = None,
+    mode: Annotated[
+        str | None, Field(default=None, description="'live' or 'paused'.")
+    ] = None,
+    render_rate_hz: Annotated[
+        int | None, Field(default=None, description="Redraw rate, 1-120.")
+    ] = None,
+    cursor: Annotated[
+        float | None,
+        Field(default=None, description="Shared cursor time. Pass with clear_cursor to unset."),
+    ] = None,
+    clear_cursor: Annotated[
+        bool, Field(default=False, description="Remove the shared cursor.")
+    ] = False,
+) -> str:
+    """Read or change the shared time base, and report what the source can do.
+
+    Pausing freezes the view, not the data: buffers keep filling, so unpausing
+    shows what arrived meanwhile rather than a gap. The cursor is shared across
+    panels, so every panel reads out the same instant.
+
+    Called with no arguments this just reports the current state.
+    """
+    params: dict[str, Any] = {}
+    if window_seconds is not None:
+        params["window_seconds"] = window_seconds
+    if mode is not None:
+        params["mode"] = mode
+    if render_rate_hz is not None:
+        params["render_rate_hz"] = render_rate_hz
+    if clear_cursor:
+        params["cursor"] = None
+    elif cursor is not None:
+        params["cursor"] = cursor
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.time_base", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_sample_stats(
+    panel: Annotated[
+        str | None, Field(default=None, description="Limit to one panel. All panels when omitted.")
+    ] = None,
+) -> str:
+    """Report what each plotted signal has actually received.
+
+    Counts, drops, the retained time span, and min/max/last. This is how you
+    check a plot without looking at it: a screenshot shows a line, this says
+    what the line is made of. `dropped` above zero means samples were discarded
+    before reaching the plot, which makes the trace a lie about the data.
+    """
+    params: dict[str, Any] = {}
+    if panel:
+        params["panel"] = panel
+    try:
+        return json.dumps(_call(SCOPE_APP, "scope.sample_stats", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_panel_config(
+    panel: Annotated[str, Field(description="Panel id.")],
+    config: Annotated[
+        dict[str, Any] | None,
+        Field(
+            default=None,
+            description="Fields to change. Omit to read the current config instead.",
+        ),
+    ] = None,
+    describe: Annotated[
+        bool, Field(default=False, description="Return the config's field schema instead.")
+    ] = False,
+) -> str:
+    """Read, describe or change a panel's configuration.
+
+    Setting is partial but all-or-nothing: only the fields you name are touched,
+    and an unknown field name is an error rather than a silent no-op. Changing
+    the traces list rebinds the panel's signals.
+    """
+    try:
+        if describe:
+            return json.dumps(
+                _call(SCOPE_APP, "scope.panel_describe_config", {"panel": panel}), indent=2
+            )
+        if config is None:
+            return json.dumps(
+                _call(SCOPE_APP, "scope.panel_get_config", {"panel": panel}), indent=2
+            )
+        return json.dumps(
+            _call(SCOPE_APP, "scope.panel_set_config", {"panel": panel, "config": config}),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_workspace(
+    path: Annotated[str, Field(description="Path to a workspace YAML file.")],
+    save: Annotated[
+        bool, Field(default=False, description="Save to the path instead of loading from it.")
+    ] = False,
+) -> str:
+    """Load or save a scope workspace.
+
+    A workspace is the panels, what each plots, the time base and the dock
+    arrangement. Loading replaces everything currently open.
+    """
+    try:
+        method = "scope.save" if save else "scope.load"
+        return json.dumps(_call(SCOPE_APP, method, {"path": path}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
 # ------------------------------------------------------------------ escape hatch
 
 

@@ -98,10 +98,21 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out)
         return false;
     }
 
-    out.zenoh_key = payload.value("zenoh_key", std::string{});
-    out.schema_name = payload.value("schema_name", std::string{});
-    out.field_name = payload.value("field_name", std::string{});
-    out.type_category = payload.value("type_category", std::string{});
+    // Every field read through is_string() first, NOT through value(). value()
+    // throws a type_error when the key is present but the wrong type -- so
+    // {"zenoh_key": 42} would throw out of a Qt drop handler and terminate the
+    // app, which is the exact failure this function exists to prevent and which
+    // parse-with-allow_exceptions alone does not cover.
+    const auto text = [&payload](const char* name) -> std::string {
+        const auto found = payload.find(name);
+        return found != payload.end() && found->is_string() ? found->get<std::string>()
+                                                            : std::string{};
+    };
+
+    out.zenoh_key = text("zenoh_key");
+    out.schema_name = text("schema_name");
+    out.field_name = text("field_name");
+    out.type_category = text("type_category");
     return !out.zenoh_key.empty();
 }
 

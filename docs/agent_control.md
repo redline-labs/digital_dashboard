@@ -1,8 +1,8 @@
 # Agent control interface (`--mcp`)
 
-The `dashboard` and `editor` both ship with a control endpoint that lets an agent
-run them headless, look at them, and drive them. It is always compiled in and
-only listens when `--mcp` is supplied.
+The `dashboard`, `editor` and `scope` all ship with a control endpoint that lets
+an agent run them headless, look at them, and drive them. It is always compiled
+in and only listens when `--mcp` is supplied.
 
 ```
 Claude Code
@@ -12,6 +12,7 @@ tools/mcp_dashboard/            Python, uv. Lifecycle + tool schemas + PNG encod
     |  newline-delimited JSON-RPC 2.0 over an AF_UNIX socket
     +--> dashboard --mcp=/path/a.sock -c configs/dashboard/...
     +--> editor    --mcp=/path/b.sock [-c ...]
+    +--> scope     --mcp=/path/c.sock [-c configs/scope/...]
 ```
 
 The C++ side (`libs/agent_control`) deliberately does not speak MCP. It exposes
@@ -261,9 +262,10 @@ Everything in the plan is implemented:
 | Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
 | Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
 | Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load` |
+| Scope | `scope.panels`, `scope.add_panel`, `scope.remove_panel`, `scope.add_signal`, `scope.remove_signal`, `scope.browser`, `scope.browser_drag`, `scope.time_base`, `scope.panel_get_config`, `scope.panel_set_config`, `scope.panel_describe_config`, `scope.save`, `scope.load`, `scope.sample_stats` (see `docs/scope.md`) |
 | Meta | `rpc.methods` |
 
-Known limits, all deliberate: one instance per app type; `QDrag::exec()` is not
+Known limits, all deliberate: one instance per app type (`scope` included); `QDrag::exec()` is not
 driven; `Data` fields are reported as a byte count rather than inlined (they are
 H.264 access units and PCM audio); and screenshots depend on rendering going
 through Qt's backing store.

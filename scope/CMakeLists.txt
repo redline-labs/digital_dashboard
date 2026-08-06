@@ -133,3 +133,17 @@ target_link_libraries(scope_test_workspace PRIVATE
 )
 
 add_project_test(TARGET scope_test_workspace LABELS scope unit)
+
+# The window and panel layer against a real widget tree, so `gui` and offscreen.
+# Uses a stub DataSource rather than the live zenoh one: everything here is
+# widget behaviour, and needing a bus would make it a `net` test that skips
+# itself on a machine without one.
+qt_add_executable(scope_test_panels
+    tests/test_panels.cpp
+)
+
+target_link_libraries(scope_test_panels PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_panels LABELS scope gui)

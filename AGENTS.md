@@ -1,8 +1,8 @@
 # Working in this repository
 
 Redline Labs digital dash: a Qt6 Widgets C++23 instrument cluster, a layout
-editor for it, and a set of single-purpose nodes that put vehicle data on a
-zenoh bus as Cap'n Proto messages.
+editor for it, a live time-series visualizer, and a set of single-purpose nodes
+that put vehicle data on a zenoh bus as Cap'n Proto messages.
 
 ## Build and test
 
@@ -49,7 +49,7 @@ because it makes the bug look covered.
 
 ### The GUI apps — drive them and look
 
-`dashboard` and `editor` are the two GUI applications, and they are what the
+`dashboard`, `editor` and `scope` are the GUI applications, and they are what the
 agent control interface exists for. A widget change is not done when it builds;
 it is done when you have looked at it.
 
@@ -67,6 +67,11 @@ For layout work the editor closes the loop the whole way: build a layout with
 `app_launch` the dashboard on that file and screenshot the result. If the two
 disagree, that is a real bug.
 
+For `scope`, reach for `scope_sample_stats` before the screenshot. A picture
+shows a line; that says what the line is made of -- sample counts, drops, and
+the min/max actually received -- which is a far stronger statement and the one
+a test can assert. `docs/scope.md` has the rest.
+
 GUI code that is *not* about pixels — selector parsing, message framing, a config
 codec — still gets a plain unit test. `libs/agent_control/`'s own suites are the
 model: pure logic under the `unit` label, widget-tree behaviour under `gui`.
@@ -79,6 +84,11 @@ discovery seeing only live traffic, and what `accepted: false` and
 
 ## Conventions
 
+- **Adding a scope panel** is a 3-step registration documented at the top of
+  `scope/include/scope/panel_registry.h`, and works the same way: one line in
+  `SCOPE_PANEL_TABLE` and everything else follows. Panels decide for themselves
+  what they will plot via `acceptsBinding()`, so the signal browser and the drag
+  need no knowledge of panel types.
 - **Adding a widget** is a 5-step registration documented at the top of
   `dashboard/include/editor/widget_registry.h`. Follow it exactly; several
   generated things (the config variant, the palette, the YAML decoder) derive
