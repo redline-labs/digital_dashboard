@@ -5,6 +5,8 @@
 
 #include "qt_helpers/widget_colors.h"
 
+#include "pub_sub/capnp_json.h"
+
 #include <QApplication>
 #include <QEvent>
 #include <QFontMetrics>
@@ -90,6 +92,145 @@ QString formatValue(double value)
     return QString::number(value, 'g', 3);
 }
 
+// Height of one state lane, and the gap between the plot and the first of them.
+constexpr double kLaneHeight = 20.0;
+constexpr double kLaneGap = 6.0;
+
+// Colours for state bands, indexed by ordinal. Distinct rather than a ramp:
+// these are labels, not quantities, so a gradient would imply an ordering that
+// an enum does not have. Wraps for an enum with more enumerants than this, which
+// is why the band also carries its NAME.
+const QColor& stateColor(std::size_t ordinal)
+{
+    static const std::vector<QColor> palette = {
+        QColor("#2E5A6E"), QColor("#4FC3F7"), QColor("#7E57C2"), QColor("#66BB6A"),
+        QColor("#FFA726"), QColor("#EF5350"), QColor("#26A69A"), QColor("#AB47BC"),
+    };
+    return palette[ordinal % palette.size()];
+}
+
+// What the states of this binding are called, if it has any.
+//
+// Resolved from the SCHEMA rather than carried on the BindingCandidate, because
+// a workspace loaded from disk never saw a candidate -- and a trace that got its
+// names only when dragged would lose them on the next reload, which is the sort
+// of difference nobody notices until the labels are missing.
+//
+// Only a bare field (`phase`) or one list element (`values[7]`) resolves. An
+// expression doing arithmetic has left the enum's domain: `phase * 2` is a
+// number, not a state, and labelling it would be a lie.
+struct StateNames
+{
+    bool is_state = false;
+    std::vector<QString> names;
+};
+
+StateNames resolveStateNames(pub_sub::schema_type_t schema_type, const std::string& expression)
+{
+    StateNames out;
+
+    // `name` or `name[<digits>]`, and nothing else. Written out rather than with
+    // a regex because <regex> costs more to compile than this does to read.
+    std::string field;
+    bool indexed = false;
+    {
+        std::size_t i = 0;
+        while (i < expression.size() && std::isspace(static_cast<unsigned char>(expression[i])))
+        {
+            ++i;
+        }
+        const std::size_t start = i;
+        while (i < expression.size() &&
+               (std::isalnum(static_cast<unsigned char>(expression[i])) || expression[i] == '_'))
+        {
+            ++i;
+        }
+        field = expression.substr(start, i - start);
+        if (field.empty())
+        {
+            return out;
+        }
+
+        if (i < expression.size() && expression[i] == '[')
+        {
+            indexed = true;
+            ++i;
+            const std::size_t digits = i;
+            while (i < expression.size() && std::isdigit(static_cast<unsigned char>(expression[i])))
+            {
+                ++i;
+            }
+            if (i == digits || i >= expression.size() || expression[i] != ']')
+            {
+                return out;
+            }
+            ++i;
+        }
+
+        while (i < expression.size() && std::isspace(static_cast<unsigned char>(expression[i])))
+        {
+            ++i;
+        }
+        if (i != expression.size())
+        {
+            return out;  // Arithmetic, another variable, anything else.
+        }
+    }
+
+    const auto schema = pub_sub::get_schema(schema_type);
+    if (!schema)
+    {
+        return out;
+    }
+
+    const nlohmann::json described = pub_sub::describeSchema(*schema);
+    const auto fields = described.find("fields");
+    if (fields == described.end() || !fields->is_object())
+    {
+        return out;
+    }
+    const auto entry = fields->find(field);
+    if (entry == fields->end())
+    {
+        return out;
+    }
+
+    const std::string type = entry->value("type", std::string{});
+    const std::string element = entry->value("element_type", std::string{});
+    const std::string effective = (type == "list") ? element : type;
+
+    // A list has to be indexed to be a state; a scalar must not be.
+    if ((type == "list") != indexed)
+    {
+        return out;
+    }
+
+    if (effective == "bool")
+    {
+        out.is_state = true;
+        out.names = {QStringLiteral("false"), QStringLiteral("true")};
+        return out;
+    }
+
+    if (effective != "enum")
+    {
+        return out;
+    }
+
+    out.is_state = true;
+    const auto values = entry->find("values");
+    if (values != entry->end() && values->is_array())
+    {
+        // Declaration order, so index N is the name of ordinal N -- which is
+        // exactly what the evaluator hands back.
+        for (const auto& name : *values)
+        {
+            out.names.push_back(QString::fromStdString(name.get<std::string>()));
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 // One plotted signal: its configuration, where its samples land, and the handle
@@ -100,6 +241,26 @@ struct TimeSeriesPanel::Trace
     std::shared_ptr<SignalBuffer> buffer;
     SignalHandle handle = kInvalidSignal;
     QColor color;
+
+    // Drawn as a state lane rather than as a line. Resolved at bind time from
+    // the config's `display` and, when that is `automatic`, from what the field
+    // turned out to be.
+    bool lane = false;
+
+    // Enumerant names in ordinal order, empty for a state channel whose numbers
+    // have no names (a forced lane over a plain integer). A band with no name
+    // still shows its number, which is strictly better than a sloping line.
+    std::vector<QString> state_names;
+
+    QString stateLabel(double value) const
+    {
+        const auto ordinal = static_cast<long long>(std::llround(value));
+        if (ordinal >= 0 && static_cast<std::size_t>(ordinal) < state_names.size())
+        {
+            return state_names[static_cast<std::size_t>(ordinal)];
+        }
+        return QString::number(value, 'g', 4);
+    }
 
     // False when binding failed -- a bad expression, a non-numeric field, a
     // subscription that would not declare. The legend says so rather than
@@ -164,6 +325,25 @@ void TimeSeriesPanel::rebindAll()
 
         trace->handle = source_->bind(key, trace->buffer);
         trace->bound = trace->handle != kInvalidSignal;
+
+        // Resolved here rather than at paint time: it reads the schema registry
+        // and builds a JSON description, which is fine once per binding and
+        // absurd at 30 Hz.
+        const StateNames states =
+            resolveStateNames(binding.schema_type, binding.value_expression);
+        switch (binding.display)
+        {
+            case trace_display_t::automatic:
+                trace->lane = states.is_state;
+                break;
+            case trace_display_t::line:
+                trace->lane = false;
+                break;
+            case trace_display_t::lane:
+                trace->lane = true;
+                break;
+        }
+        trace->state_names = states.names;
 
         if (!trace->bound)
         {
@@ -357,6 +537,7 @@ TimeSeriesPanel::stats_t TimeSeriesPanel::stats() const
         trace_stats_t stats;
         stats.label = trace->displayLabel().toStdString();
         stats.bound = trace->bound;
+        stats.lane = trace->lane;
         stats.received = trace->buffer->received();
         stats.dropped = trace->buffer->dropped();
 
@@ -398,7 +579,8 @@ QRectF TimeSeriesPanel::plotRect() const
                                          { return binding.right_axis; });
     const double right = needs_right ? kRightAxisGutter : kRightGutter;
 
-    QRectF area(kLeftGutter, kTopGutter, w - kLeftGutter - right, h - kTopGutter - kBottomGutter);
+    QRectF area(kLeftGutter, kTopGutter, w - kLeftGutter - right,
+                h - kTopGutter - kBottomGutter - lanesHeight());
     if (area.width() < 1.0 || area.height() < 1.0)
     {
         // A layout pass can hand us a widget too small for the gutters. Return
@@ -407,6 +589,124 @@ QRectF TimeSeriesPanel::plotRect() const
         return QRectF(kLeftGutter, kTopGutter, 1.0, 1.0);
     }
     return area;
+}
+
+int TimeSeriesPanel::laneCount() const
+{
+    return static_cast<int>(std::count_if(traces_.begin(), traces_.end(),
+                                          [](const std::unique_ptr<Trace>& trace)
+                                          { return trace->lane; }));
+}
+
+double TimeSeriesPanel::lanesHeight() const
+{
+    const int lanes = laneCount();
+    return lanes == 0 ? 0.0 : (kLaneGap + lanes * kLaneHeight);
+}
+
+QRectF TimeSeriesPanel::lanesRect() const
+{
+    const int lanes = laneCount();
+    if (lanes == 0)
+    {
+        return QRectF();
+    }
+    const QRectF area = plotRect();
+    return QRectF(area.left(), area.bottom() + kLaneGap, area.width(), lanes * kLaneHeight);
+}
+
+void TimeSeriesPanel::paintLanes(QPainter& painter, const QRectF& lanes)
+{
+    if (!lanes.isValid() || lanes.height() < 1.0)
+    {
+        return;
+    }
+
+    const TimeAxis axis = timeAxis();
+    const QFontMetricsF metrics(painter.font());
+
+    double top = lanes.top();
+    for (const std::unique_ptr<Trace>& trace : traces_)
+    {
+        if (!trace->lane)
+        {
+            continue;
+        }
+
+        const QRectF row(lanes.left(), top, lanes.width(), kLaneHeight);
+        top += kLaneHeight;
+
+        painter.fillRect(row, QColor("#181B20"));
+
+        const SampleHistory& history = trace->buffer->history();
+        if (history.empty())
+        {
+            continue;
+        }
+
+        // Start one sample BEFORE the window. A state that changed before the
+        // left edge is still in force at the left edge, and beginning at the
+        // first sample inside the window would leave a gap that reads as "no
+        // data" rather than as "unchanged for a while".
+        std::size_t index = history.lowerBound(drawn_begin_);
+        if (index > 0)
+        {
+            --index;
+        }
+
+        // Runs of equal value, drawn as one band each. A per-sample rectangle
+        // would be one draw call per sample per frame, and at 30 Hz over a
+        // window holding thousands of them that is the whole frame budget --
+        // for a channel that by its nature changes a handful of times.
+        while (index < history.size() && history[index].t <= drawn_end_)
+        {
+            const double value = history[index].v;
+            const double run_begin = history[index].t;
+
+            std::size_t next = index + 1;
+            while (next < history.size() && history[next].v == value)
+            {
+                ++next;
+            }
+
+            // Zero-order hold: the state runs until the sample that changed it,
+            // or to the right edge if nothing did.
+            const double run_end =
+                (next < history.size()) ? history[next].t : std::max(drawn_end_, run_begin);
+
+            const double x0 = axis.toClampedX(std::max(run_begin, drawn_begin_));
+            const double x1 = axis.toClampedX(std::min(run_end, drawn_end_));
+            index = next;
+
+            if (x1 <= x0)
+            {
+                continue;
+            }
+
+            const QRectF band(x0, row.top() + 1.0, x1 - x0, row.height() - 2.0);
+            const auto ordinal = static_cast<long long>(std::llround(value));
+            painter.fillRect(band, stateColor(ordinal < 0 ? 0 : static_cast<std::size_t>(ordinal)));
+
+            // The name, when the band is wide enough to hold it. A band too
+            // narrow to label is still a visible colour change, which is the
+            // thing you are looking for when you scan a lane.
+            const QString label = trace->stateLabel(value);
+            if (band.width() > metrics.horizontalAdvance(label) + 8.0)
+            {
+                painter.setPen(QColor("#0B0D10"));
+                painter.drawText(band, Qt::AlignCenter, label);
+            }
+        }
+
+        // The channel's own name, over the band rather than in the left gutter:
+        // the gutter belongs to the value axis, and a lane has no value axis.
+        painter.setPen(QColor("#E0E4EA"));
+        painter.drawText(row.adjusted(6.0, 0.0, 0.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft,
+                         trace->displayLabel());
+
+        painter.setPen(QPen(QColor("#3A4048"), 1.0));
+        painter.drawRect(row);
+    }
 }
 
 TimeAxis TimeSeriesPanel::timeAxis() const
@@ -435,6 +735,15 @@ void TimeSeriesPanel::computeYRange(double& y_min, double& y_max, bool right_axi
     for (const std::unique_ptr<Trace>& trace : traces_)
     {
         if (trace->binding.right_axis != right_axis)
+        {
+            continue;
+        }
+
+        // A lane is not on the value axis and must not stretch it. An enum
+        // whose ordinals run 0..7 sitting in the same autoscale as rpm would
+        // flatten the rpm trace against the top of the plot -- the state
+        // channel would be invisible AND it would ruin the trace beside it.
+        if (trace->lane)
         {
             continue;
         }
@@ -530,6 +839,7 @@ void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
     painter.drawRect(area);
 
     paintTraces(painter, area);
+    paintLanes(painter, lanesRect());
     paintCursor(painter, area);
 
     // The rubber band, drawn rather than made a QRubberBand: that is a
@@ -614,8 +924,13 @@ void TimeSeriesPanel::paintGrid(QPainter& painter, const QRectF& area, double y_
         painter.setPen(label_pen);
         const QString text = back == 0.0 ? QStringLiteral("0")
                                          : QStringLiteral("-%1").arg(formatValue(back));
+        // BELOW THE LANES, not below the plot. The plot's bottom edge used to be
+        // the bottom of the widget's content, so a label just under it landed in
+        // the gutter; with lanes present that same spot is the first lane, and
+        // the label was drawn there and then painted over -- half a tick label
+        // peeking out from behind a state band.
         painter.drawText(QPointF(x - metrics.horizontalAdvance(text) / 2.0,
-                                 area.bottom() + metrics.height()),
+                                 area.bottom() + lanesHeight() + metrics.height()),
                          text);
     }
 }
@@ -635,7 +950,7 @@ void TimeSeriesPanel::paintTraces(QPainter& painter, const QRectF& area)
 
     for (const std::unique_ptr<Trace>& trace : traces_)
     {
-        if (!trace->bound)
+        if (!trace->bound || trace->lane)
         {
             continue;
         }

@@ -120,7 +120,26 @@ class TimeSeriesPanel : public Panel
     void onFrame();
 
     // The rectangle the traces live in: the widget minus the axis gutters.
+    // The value axis's drawing area, which SHRINKS to make room for the state
+    // lanes below it. Everything that draws against the value axis -- the grid,
+    // the traces, the cursor, the gestures that convert pixels back to values --
+    // goes through here, so the lanes cost one function rather than a special
+    // case in each of them.
     QRectF plotRect() const;
+
+    // The strip between the plot and the time-axis labels. Empty when nothing is
+    // drawn as a lane.
+    QRectF lanesRect() const;
+
+    // How many traces are drawn as lanes rather than as lines. Resolved per
+    // trace, because `automatic` depends on what the field turned out to be.
+    int laneCount() const;
+    double lanesHeight() const;
+
+    // The state bands. Zero-order hold: a state runs from its own sample to the
+    // next one, because that is what a state DOES -- it holds until something
+    // changes it. Interpolating would draw a transition that never happened.
+    void paintLanes(QPainter& painter, const QRectF& lanes);
 
     // The time-to-pixel map for what was drawn LAST FRAME, which is what every
     // gesture converts against. Built from drawn_begin_/drawn_end_ rather than

@@ -9,6 +9,32 @@
 #include <string>
 #include <vector>
 
+// How a trace is drawn.
+//
+// A LINE IS THE WRONG SHAPE FOR A STATE. An enum's ordinals are labels, not
+// quantities: the gap between `iap2` (3) and `ncmUp` (4) is not one unit of
+// anything, and a line sloping between them draws a transition that did not
+// happen -- the value was one, then it was the other. The same is true of a
+// bool, which a line renders as a signal spending half its time at 0.5.
+//
+// So those get a LANE: a band per state, at full width, with the state's name
+// written in it. That is what a logic analyser does and what every motorsport
+// tool calls a "digital" channel, and it composes with numeric traces rather
+// than competing for the value axis -- gear and a PDM trip state can sit under
+// an rpm trace without either of them needing a scale.
+REFLECT_ENUM(trace_display_t,
+    // Lane for an enum or a bool, line for anything else. What a drop produces.
+    automatic,
+
+    // Force a line. An enum plotted against rpm on the value axis is a
+    // legitimate thing to want, and `automatic` would take it away.
+    line,
+
+    // Force a lane. Useful for a small integer that is really a state -- a gear
+    // number, a mode -- which nothing in the schema marks as one.
+    lane
+)
+
 // One plotted signal.
 //
 // The first three fields are the tree's existing binding form -- the same
@@ -32,7 +58,9 @@ REFLECT_STRUCT(signal_binding_t,
     (std::string, units, "",
         "Units", "Units suffix shown in the legend, e.g. 'rpm' or 'C'"),
     (bool, right_axis, false,
-        "Right Axis", "Scale against the right-hand axis instead of the left")
+        "Right Axis", "Scale against the right-hand axis instead of the left"),
+    (trace_display_t, display, trace_display_t::automatic,
+        "Display", "Draw as a line, as a state lane, or pick from the field's type")
 )
 
 REFLECT_STRUCT(TimeSeriesPanelConfig_t,

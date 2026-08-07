@@ -118,6 +118,47 @@ would need a type `Panel` cannot see.
 > which the YAML encoder omits entirely, so the panel came back
 > default-constructed with nothing logged. `scope_test_panels` pins it now.
 
+## States, and why they are not lines
+
+An enum's ordinals are **labels, not quantities**. The gap between `iap2` (3) and
+`ncmUp` (4) is not one unit of anything, so a line sloping between them draws a
+transition that did not happen — the value was one, then it was the other. A bool
+is worse: as a line it reads as a signal spending half its time at 0.5.
+
+So an enum or a bool trace is drawn as a **lane** — a band per state, full width,
+with the state's *name* written in it and zero-order-hold transitions. That is
+what a logic analyser does and what every motorsport tool calls a digital
+channel, and it composes with numeric traces instead of competing for the value
+axis: gear and a PDM trip state sit under an rpm trace without either needing a
+scale.
+
+```
+   rpm  ────╱╲───╱───────╲──────
+        ┌──────────────┬────────────────┐
+  phase │  airplayHandshake  │ recording │
+        ├──────────────┴────────────────┤
+  micActive │  false  │  true  │  false  │
+        └───────────────────────────────┘
+        -30       -20       -10        0
+```
+
+`display` on a trace is `automatic` (lane for an enum or a bool, line otherwise),
+`line`, or `lane`. The override matters both ways: plotting gear against rpm on
+the value axis is legitimate, and so is forcing a lane onto a small integer that
+is really a state but which nothing in the schema marks as one.
+
+**A lane is not on the value axis and must not stretch it.** An enum whose
+ordinals run 0..7 sharing an autoscale with rpm flattens the rpm trace against
+the top of the plot — so getting this wrong ruins the trace *beside* it, not just
+the state channel. `scope.stats` reports `lane` per trace so which way a trace
+went is checkable without a screenshot.
+
+Names come from the **schema**, not from the drag: a workspace loaded from disk
+never saw a `BindingCandidate`, and a trace that got its labels only when dragged
+would lose them on the next reload. Only a bare field (`phase`) or one list
+element (`values[7]`) resolves — `phase * 2` has left the enum's domain and is a
+number, so it stays a line.
+
 ## Navigating time
 
 **One window, shared by every panel.** `TimeBase` owns `[viewBegin, viewEnd]`,

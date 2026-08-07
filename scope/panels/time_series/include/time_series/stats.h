@@ -34,6 +34,9 @@ REFLECT_STRUCT(trace_stats_t,
     (uint64_t, dropped, 0,
         "Dropped", "Samples the staging ring lost because the GUI did not drain it in "
                    "time. Anything above zero means the trace is lying about the data"),
+    (bool, lane, false,
+        "Lane", "Drawn as a state lane rather than as a line. True for an enum or a bool "
+                "unless the trace overrides it"),
     (bool, has_data, false,
         "Has Data", "False when nothing has arrived yet, which makes the four fields "
                     "below meaningless rather than zero"),

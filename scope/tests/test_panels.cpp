@@ -509,6 +509,89 @@ void testAListIsAcceptedOnItsElementType()
            "a scalar field's default expression is unchanged");
 }
 
+// An enum or a bool is drawn as a state lane, not as a line, and a line's
+// autoscale must not see it.
+//
+// Both halves matter. A bool rendered as a line is a signal that appears to
+// spend half its time at 0.5; an enum's ordinals are labels rather than
+// quantities, so a line sloping between two of them draws a transition that
+// never happened. And an enum whose ordinals run 0..7 sharing an autoscale with
+// rpm flattens the rpm trace against the top of the plot -- so getting this
+// wrong ruins the trace BESIDE it, not just the state channel.
+void testEnumsAndBoolsBecomeLanes()
+{
+    StubSource source;
+
+    TimeSeriesPanelConfig_t cfg;
+
+    signal_binding_t enum_trace;
+    enum_trace.zenoh_key = "nodes/carplay/session";
+    enum_trace.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    enum_trace.value_expression = "phase";
+    cfg.traces.push_back(enum_trace);
+
+    signal_binding_t bool_trace = enum_trace;
+    bool_trace.value_expression = "micActive";
+    cfg.traces.push_back(bool_trace);
+
+    signal_binding_t numeric_trace = enum_trace;
+    numeric_trace.value_expression = "mainWidthPx";
+    cfg.traces.push_back(numeric_trace);
+
+    // An enum with arithmetic done to it is a NUMBER, not a state. Labelling it
+    // with enumerant names would be a lie, so it stays a line.
+    signal_binding_t derived = enum_trace;
+    derived.value_expression = "phase * 2";
+    cfg.traces.push_back(derived);
+
+    scope::TimeSeriesPanel plot(cfg, source);
+    const std::vector<trace_stats_t> stats = plot.stats().traces;
+    expect(stats.size() == 4, "all four traces bound");
+    if (stats.size() != 4)
+    {
+        return;
+    }
+
+    expect(stats[0].lane, "an enum field is drawn as a lane");
+    expect(stats[1].lane, "a bool field is drawn as a lane");
+    expect(!stats[2].lane, "a numeric field stays a line");
+    expect(!stats[3].lane, "an enum with arithmetic applied is a number, so it stays a line");
+}
+
+// The override, both ways. `automatic` is a default, not a decree: plotting gear
+// against rpm on the value axis is a legitimate thing to want, and so is forcing
+// a lane onto a small integer that is really a state but which nothing in the
+// schema marks as one.
+void testTheDisplayOverrideWinsBothWays()
+{
+    StubSource source;
+
+    TimeSeriesPanelConfig_t cfg;
+
+    signal_binding_t forced_line;
+    forced_line.zenoh_key = "nodes/carplay/session";
+    forced_line.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    forced_line.value_expression = "phase";
+    forced_line.display = trace_display_t::line;
+    cfg.traces.push_back(forced_line);
+
+    signal_binding_t forced_lane = forced_line;
+    forced_lane.value_expression = "mainWidthPx";
+    forced_lane.display = trace_display_t::lane;
+    cfg.traces.push_back(forced_lane);
+
+    scope::TimeSeriesPanel plot(cfg, source);
+    const std::vector<trace_stats_t> stats = plot.stats().traces;
+    expect(stats.size() == 2, "both traces bound");
+    if (stats.size() != 2)
+    {
+        return;
+    }
+
+    expect(!stats[0].lane, "display: line forces an enum onto the value axis");
+    expect(stats[1].lane, "display: lane forces a plain integer into a lane");
+}
+
 void testAddingTheSameSignalTwiceIsDeclined()
 {
     StubSource source;
@@ -1524,6 +1607,8 @@ int main(int argc, char** argv)
     testAPlotAcceptsOnlyNumericFields();
     testAddingASignalBindsIt();
     testAListIsAcceptedOnItsElementType();
+    testEnumsAndBoolsBecomeLanes();
+    testTheDisplayOverrideWinsBothWays();
     testAddingTheSameSignalTwiceIsDeclined();
     testTracesGetDistinctColours();
     testRemovingASignal();
