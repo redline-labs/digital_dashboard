@@ -487,7 +487,8 @@ void testAListIsAcceptedOnItsElementType()
     numeric_list.field_name = "values";
     numeric_list.type_category = "list";
     numeric_list.element_category = "float";
-    expect(plot.acceptsBinding(numeric_list), "a List(Float32) is accepted");
+    numeric_list.has_fixed_length = true;
+    expect(plot.acceptsBinding(numeric_list), "a List(Float32) of declared length is accepted");
     expect(numeric_list.defaultExpression() == "values[0]",
            "and a drop produces an INDEXED expression, not the bare list name");
 
@@ -503,6 +504,15 @@ void testAListIsAcceptedOnItsElementType()
     untyped_list.element_category = "";
     expect(!plot.acceptsBinding(untyped_list),
            "a list whose element type is unknown is declined rather than guessed at");
+
+    // AND THE LENGTH HAS TO BE DECLARED. Without it the evaluator refuses the
+    // binding, so accepting the drop here would mean a panel that says yes and
+    // then shows nothing -- which reads as a broken app rather than as a field
+    // that cannot be plotted.
+    scope::BindingCandidate variable_list = numeric_list;
+    variable_list.has_fixed_length = false;
+    expect(!plot.acceptsBinding(variable_list),
+           "a list with no declared length is declined");
 
     // A scalar's default expression is still the bare field name.
     scope::BindingCandidate scalar = numericField();

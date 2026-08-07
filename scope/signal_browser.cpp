@@ -47,6 +47,9 @@ constexpr int kRoleElementCategory = Qt::UserRole + 6;
 // Which element of a list a row names, or -1 for the list itself.
 constexpr int kRoleElementIndex = Qt::UserRole + 7;
 
+// Whether a list's length is declared by the schema.
+constexpr int kRoleFixedLength = Qt::UserRole + 8;
+
 BindingCandidate candidateOf(const QTreeWidgetItem* item)
 {
     BindingCandidate candidate;
@@ -60,6 +63,7 @@ BindingCandidate candidateOf(const QTreeWidgetItem* item)
         const QVariant index = item->data(0, kRoleElementIndex);
         candidate.element_index = index.isValid() ? index.toInt() : -1;
     }
+    candidate.has_fixed_length = item->data(0, kRoleFixedLength).toBool();
     return candidate;
 }
 
@@ -102,6 +106,7 @@ QByteArray encodeCandidate(const BindingCandidate& candidate)
     payload["type_category"] = candidate.type_category;
     payload["element_category"] = candidate.element_category;
     payload["element_index"] = candidate.element_index;
+    payload["has_fixed_length"] = candidate.has_fixed_length;
     const std::string text = payload.dump();
     return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
 }
@@ -142,6 +147,10 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out)
         const auto found = payload.find("element_index");
         out.element_index =
             found != payload.end() && found->is_number_integer() ? found->get<int>() : -1;
+
+        const auto fixed = payload.find("has_fixed_length");
+        out.has_fixed_length = fixed != payload.end() && fixed->is_boolean() &&
+                               fixed->get<bool>();
     }
     return !out.zenoh_key.empty();
 }
@@ -332,6 +341,7 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
             const auto length = info.find("fixed_length");
             if (length != info.end() && length->is_number_unsigned())
             {
+                field_item->setData(0, kRoleFixedLength, true);
                 const unsigned count = length->get<unsigned>();
                 field_item->setText(1, QString("list[%1] of %2")
                                            .arg(count)
@@ -351,10 +361,12 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
                     element->setData(0, kRoleElementCategory,
                                      QString::fromStdString(element_category));
                     element->setData(0, kRoleElementIndex, static_cast<int>(i));
+                    element->setData(0, kRoleFixedLength, true);
 
                     BindingCandidate element_probe;
                     element_probe.type_category = category;
                     element_probe.element_category = element_category;
+                    element_probe.has_fixed_length = true;
                     if (!element_probe.isNumeric())
                     {
                         element->setForeground(0, QColor("#808890"));
@@ -370,8 +382,15 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
             {
                 // Honest about not knowing, rather than silently offering no
                 // elements as though the list were empty.
-                field_item->setText(1, QString("list of %1 (length not declared)")
+                // Not plottable, and the row says why. The evaluator has
+                // nothing to compile an index against, so offering it would
+                // mean a drop the panel accepts and the binding then fails.
+                field_item->setText(1, QString("list of %1 (no declared length)")
                                            .arg(QString::fromStdString(element_category)));
+                field_item->setToolTip(0,
+                    QObject::tr("This list does not declare how many elements it has, so an "
+                                "element cannot be plotted. Annotate the field with "
+                                "$fixedLength(N) if its count is fixed."));
             }
         }
 
@@ -381,6 +400,7 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
         BindingCandidate probe;
         probe.type_category = category;
         probe.element_category = element_category;
+        probe.has_fixed_length = field_item->data(0, kRoleFixedLength).toBool();
         if (!probe.isNumeric())
         {
             field_item->setForeground(0, QColor("#808890"));

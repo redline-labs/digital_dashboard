@@ -15,6 +15,9 @@
 
 #include "config_codec/config_json.h"
 
+#include "pub_sub/capnp_json.h"
+#include "pub_sub/schema_registry.h"
+
 #include <QApplication>
 #include <QDockWidget>
 #include <QDragEnterEvent>
@@ -335,6 +338,22 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                     field != params.end() && field->is_string() ? field->get<std::string>() : "";
                 candidate.type_category = params.value("type_category", std::string{"float"});
                 candidate.element_category = params.value("element_category", std::string{});
+
+                // Whether the list declares a length is a fact about the SCHEMA,
+                // so it is read from the schema rather than taken from the
+                // caller. A caller that could assert it would be able to talk a
+                // panel into accepting a binding the evaluator then refuses.
+                if (const auto found = pub_sub::get_schema(candidate.schema_name))
+                {
+                    for (auto schema_field : found->asStruct().getFields())
+                    {
+                        if (candidate.field_name == schema_field.getProto().getName().cStr())
+                        {
+                            candidate.has_fixed_length =
+                                pub_sub::fixedListLength(schema_field).has_value();
+                        }
+                    }
+                }
             }
 
             // WHICH ELEMENT, for a list. Honoured whether the candidate came

@@ -189,8 +189,19 @@ table to keep in sync. `describeSchema` reports it as `fixed_length`, and the
 browser expands the list into one draggable row per element, collapsed by
 default. Dragging `values[7]` binds `values[7]`, with no hand editing.
 
-A list whose length is not declared still works — its row says so, and a drop
-falls back to `values[0]`.
+**A list without the annotation is not plottable element by element**, and the
+browser says so rather than offering a row that binds and then fails. That is a
+deliberate limit. The alternative was discovering the length from the first
+message and recompiling whenever it changed — which works, and costs a recompile
+*per message* for a list that genuinely varies. `CanFrame.data` is `List(UInt8)`
+of 1–64 bytes on the highest-rate topic in the tree, so that cost lands exactly
+where it can least be afforded.
+
+With the length settled at construction the expression compiles **once**, exprtk
+range-checks every literal index against the real count, and `sum()`/`avg()`
+divide by the right number by construction. A message that contradicts the
+annotation is skipped and reported once — the declared length is a claim about
+the schema, not a guarantee about every publisher.
 
 ## Navigating time
 

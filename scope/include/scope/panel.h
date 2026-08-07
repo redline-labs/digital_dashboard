@@ -69,11 +69,20 @@ struct BindingCandidate
                category == "bool" || category == "enum";
     }
 
+    // A list whose length the schema declares. False for a genuinely variable
+    // one -- CanFrame.data is 1..64 bytes -- and for anything that is not a list.
+    bool has_fixed_length = false;
+
     bool isNumeric() const
     {
         if (type_category == "list")
         {
-            return isNumericCategory(element_category);
+            // AND THE LENGTH MUST BE DECLARED. Without it the evaluator has
+            // nothing to compile an index against and refuses the binding, so
+            // offering the row would mean a drop that is accepted by the panel
+            // and then fails -- which reads as a broken app rather than as an
+            // unplottable field.
+            return has_fixed_length && isNumericCategory(element_category);
         }
         return isNumericCategory(type_category);
     }

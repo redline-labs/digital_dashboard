@@ -135,18 +135,14 @@ struct ExpressionEvaluator::Impl
     // syntax and `sum(values)`, `max(values)`, `avg(values)` come for free --
     // and total PDM current really is `sum(values)` over its 32 outputs.
     //
-    // THE AWKWARD PART: exprtk fixes a vector's length when it is registered and
-    // range-checks every literal index against it AT COMPILE TIME, while a capnp
-    // list's length is a property of each message and is unknown until one
-    // arrives. So the length is discovered from the first sample and the
-    // expression is recompiled against it -- see resizeVectors().
+    // THE LENGTH COMES FROM THE SCHEMA, via $fixedLength. exprtk fixes a
+    // vector's length when it is registered and range-checks every literal
+    // index against it at compile time, and capnp declares no length at all --
+    // so without the annotation there is nothing to compile against. Requiring
+    // it means the expression is compiled exactly once, every index is checked
+    // against the real count before any message arrives, and sum()/avg() divide
+    // by the right number by construction.
     //
-    // The alternative was to register some generous capacity and zero-fill the
-    // tail. It is simpler and it is wrong in two ways at once: an index past the
-    // real end reads a confident permanent zero, which is the exact failure this
-    // evaluator already refuses to make for a non-numeric field, and `avg()`
-    // divides by the capacity rather than by the length, so the answer is quietly
-    // scaled by 32/64 with nothing to say so.
     struct ListCache
     {
         capnp::StructSchema::Field field;
@@ -161,10 +157,6 @@ struct ExpressionEvaluator::Impl
         // data(), so this is re-registered whenever the vector is resized.
         std::vector<double>* data;
 
-        // What the schema says the length always is, when it says. A message
-        // that contradicts it is a PUBLISHER bug rather than something to work
-        // around silently, so it is reported once.
-        std::optional<std::uint32_t> declared_length;
     };
 
     schema_type_t schema_type;
@@ -191,14 +183,7 @@ struct ExpressionEvaluator::Impl
     std::map<std::string, std::vector<double>> vectors;
     std::vector<ListCache> list_cache;
 
-    bool list_index_warned = false;
     bool length_mismatch_warned = false;
-
-    // What a vector is registered with before any message has been seen. Large
-    // enough that a plausible index compiles (the PDM has 32 outputs, CAN FD
-    // carries 64 bytes) and never used to READ anything: the first sample
-    // replaces it with the true length.
-    static constexpr std::size_t kProvisionalListLength = 64;
 
     // schema_type comes from config -- it is what this consumer *expects* on this
     // key, not what is actually being published there. The publisher stamps the
@@ -213,76 +198,18 @@ struct ExpressionEvaluator::Impl
     bool non_finite_warned = false;
     bool range_warned = false;
 
-    // Point exprtk at vectors of the lengths this message actually carries, and
-    // recompile against them.
-    //
-    // Called only when a length CHANGES, which in practice is once: the first
-    // sample. A publisher whose list length varies per message pays a recompile
-    // each time it changes, which is the honest cost of an expression whose valid
-    // indices vary per message.
-    //
-    // False means the expression cannot be evaluated against these lengths --
-    // an index the real stream does not reach. That is reported once and then
-    // every sample is dropped, rather than answering with a zero.
-    bool resizeVectors(const std::vector<std::size_t>& lengths)
+    void reportLengthMismatch(const std::string& name, std::size_t declared, std::size_t actual)
     {
-        // RELEASE THE COMPILED TREE FIRST, before the buffers it points into are
-        // touched. exprtk's compiled expression holds the vector's data pointer
-        // and length, and std::vector::assign to a different size is free to
-        // reallocate -- so mutating the vectors while the old tree is still alive
-        // leaves it holding a dangling pointer, and destroying it afterwards is a
-        // use-after-free. It presented as an INTERMITTENT segfault in the
-        // evaluator's own test, roughly one run in three, because whether the
-        // buffer actually moved depended on the allocator.
-        compiled_expression = exprtk::expression<double>();
-
-        for (std::size_t i = 0; i < list_cache.size(); ++i)
-        {
-            const ListCache& cached = list_cache[i];
-            symbol_table.remove_vector(cached.name);
-            cached.data->assign(lengths[i], 0.0);
-
-            // A zero-length list cannot be registered with exprtk and cannot
-            // satisfy any index, so it is the same answer as an out-of-range one.
-            if (cached.data->empty() ||
-                !symbol_table.add_vector(cached.name, cached.data->data(), cached.data->size()))
-            {
-                reportListProblem(cached.name, lengths[i]);
-                return false;
-            }
-        }
-
-        compiled_expression.register_symbol_table(symbol_table);
-
-        if (!parser.compile(expression, compiled_expression))
-        {
-            // The index is out of range for the length the stream really carries.
-            // exprtk's own message names the vector and both numbers.
-            if (!list_index_warned)
-            {
-                list_index_warned = true;
-                SPDLOG_ERROR("Key '{}': expression '{}' cannot be evaluated against the list "
-                             "lengths this stream actually carries: {}. Samples are being "
-                             "dropped (further occurrences not logged).",
-                             log_context, expression, parser.error());
-            }
-            return false;
-        }
-
-        return true;
-    }
-
-    void reportListProblem(const std::string& name, std::size_t length)
-    {
-        if (list_index_warned)
+        if (length_mismatch_warned)
         {
             return;
         }
-        list_index_warned = true;
-        SPDLOG_ERROR("Key '{}': list '{}' arrived with {} element(s), which expression '{}' "
-                     "cannot be evaluated against. Samples are being dropped (further "
+        length_mismatch_warned = true;
+        SPDLOG_ERROR("Key '{}': list '{}' is declared as {} element(s) but this message carries "
+                     "{}. Skipping these samples -- the expression was compiled against the "
+                     "declared length and the indices in it may not exist here (further "
                      "occurrences not logged).",
-                     log_context, name, length, expression);
+                     log_context, name, declared, actual);
     }
 
     // False when this sample cannot be turned into values, which the caller
@@ -299,50 +226,25 @@ struct ExpressionEvaluator::Impl
             return true;
         }
 
-        // Resize before reading, and only when something moved: the compare is
-        // one integer per list per sample, against a recompile that essentially
-        // never happens after the first message.
-        // "Has it changed" alone, with no separate first-sample flag: the vectors
-        // start at kProvisionalListLength, so the first message differs from it
-        // unless it happens to carry exactly that many elements -- in which case
-        // the provisional registration was already correct and there is nothing
-        // to do. A `lists_sized` flag alongside this looked like it was carrying
-        // the first-sample case and was carrying nothing; removing it is the
-        // honest version, and the tests do not notice, which is the proof.
-        std::vector<std::size_t> lengths;
-        lengths.reserve(list_cache.size());
-        bool changed = false;
-        for (const ListCache& cached : list_cache)
-        {
-            const std::size_t length = reader.get(cached.field).as<capnp::DynamicList>().size();
-
-            // The schema made a claim; this message either honours it or does
-            // not. Saying so once beats either trusting the annotation over the
-            // wire or quietly preferring the wire over the annotation.
-            if (cached.declared_length && *cached.declared_length != length &&
-                !length_mismatch_warned)
-            {
-                length_mismatch_warned = true;
-                SPDLOG_WARN("Key '{}': list '{}' is declared as {} element(s) but this message "
-                            "carries {}. Using what arrived (further occurrences not logged).",
-                            log_context, cached.name, *cached.declared_length, length);
-            }
-
-            lengths.push_back(length);
-            changed = changed || (length != cached.data->size());
-        }
-
-        if (changed)
-        {
-            if (!resizeVectors(lengths))
-            {
-                return false;
-            }
-        }
-
         for (const ListCache& cached : list_cache)
         {
             auto list = reader.get(cached.field).as<capnp::DynamicList>();
+
+            // THE LENGTH IS SETTLED AT CONSTRUCTION, so this is a check rather
+            // than a resize. The expression was compiled against the declared
+            // length and every literal index in it was range-checked against
+            // that -- a message carrying a different count may simply not have
+            // the elements the expression names, so the honest answer is no
+            // reading rather than a number read from somewhere else.
+            //
+            // This is also what keeps a variable-length list from recompiling
+            // the expression per message. Nothing here allocates or compiles.
+            if (list.size() != cached.data->size())
+            {
+                reportLengthMismatch(cached.name, cached.data->size(), list.size());
+                return false;
+            }
+
             for (std::size_t i = 0; i < cached.data->size(); ++i)
             {
                 (*cached.data)[i] = numericFrom(list[static_cast<unsigned>(i)],
@@ -427,21 +329,37 @@ struct ExpressionEvaluator::Impl
 
                 list_names.push_back(var_name);
 
-                // REGISTERED AT THE DECLARED LENGTH WHEN THE SCHEMA GIVES ONE,
-                // because exprtk range-checks every literal index against the
-                // registered size AT COMPILE TIME. So `values[40]` against a
-                // thirty-two output PDM stops being a binding that succeeds and
-                // then drops every sample, and becomes a construction error --
-                // which is where this evaluator refuses everything else it can
-                // know up front.
+                // A LIST MUST DECLARE ITS LENGTH TO BE BINDABLE.
                 //
-                // Without an annotation there is nothing to check against until
-                // a message arrives, so it falls back to the provisional length
-                // and the first sample sizes it. See schemas/annotations.capnp.
+                // capnp gives no length, so without the annotation there is
+                // nothing to compile an index against and nothing a picker can
+                // offer. The alternative -- discover the length from the first
+                // message and recompile whenever it changes -- worked, and its
+                // cost was a recompile per message for a list that genuinely
+                // varies. CanFrame.data is List(UInt8) of 1..64 bytes on the
+                // highest-rate topic in the tree, so that cost lands exactly
+                // where it can least be afforded.
+                //
+                // Requiring the annotation makes the length a fact known at
+                // construction: the expression compiles once, exprtk
+                // range-checks every literal index against the real count, and
+                // sum()/avg() are correct by construction. See
+                // schemas/annotations.capnp.
                 const auto declared = fixedListLength(field);
-                vectors[var_name].assign(declared.value_or(kProvisionalListLength), 0.0);
-                list_cache.push_back(
-                    {field, element_type, var_name, &vectors.at(var_name), declared});
+                if (!declared)
+                {
+                    SPDLOG_ERROR("Field '{}' of schema '{}' is a list with no declared length, so "
+                                 "expression '{}' cannot be compiled against it. Annotate the "
+                                 "field with $fixedLength(N) if its count is fixed; a genuinely "
+                                 "variable list is not plottable element by element.",
+                                 var_name, reflection::enum_to_string(schema_type), expression);
+                    is_valid = false;
+                    continue;
+                }
+
+                list_names.push_back(var_name);
+                vectors[var_name].assign(*declared, 0.0);
+                list_cache.push_back({field, element_type, var_name, &vectors.at(var_name)});
                 continue;
             }
 
@@ -525,10 +443,10 @@ ExpressionEvaluator::ExpressionEvaluator(schema_type_t schema_type,
             impl_->symbol_table.add_variable(var, value);
         }
 
-        // Provisionally sized -- see Impl::kProvisionalListLength. Compiling
-        // against it proves the expression PARSES and catches an index no
-        // plausible stream could satisfy; whether the real stream reaches that
-        // index is not knowable until a message arrives, and is reported then.
+        // Sized from the schema, so this compile is the only one: exprtk
+        // range-checks every literal index against the declared count, and an
+        // index the stream cannot reach is a construction error rather than a
+        // binding that quietly drops every sample.
         for (auto& [var, data] : impl_->vectors)
         {
             impl_->symbol_table.add_vector(var, data.data(), data.size());

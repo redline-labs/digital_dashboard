@@ -314,24 +314,50 @@ void testAListOfEnumsIsIndexable()
            "and a different state reads differently");
 }
 
-void testAListLengthChangeIsFollowed()
+void testALengthThatContradictsTheSchemaSkipsTheFrame()
 {
-    // exprtk fixes a vector's length when it is registered, and capnp does not
-    // declare one. So the length comes from the message -- and if the publisher
-    // changes it, the binding has to follow rather than read a stale tail.
+    // The declared length is a claim about the SCHEMA, not a guarantee about
+    // every publisher. A message carrying a different count may simply not have
+    // the elements the expression names, and the expression was compiled against
+    // the declared length -- so the honest answer is no reading rather than a
+    // number read from somewhere else.
+    //
+    // Skipping rather than resizing is also what keeps a variable-length list
+    // from recompiling the expression per message.
     pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent,
                                       "sum(values)", "test/pdm/current");
+    expect(eval.isValid(), "the expression compiles against the declared length");
 
-    const auto four = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f, 3.0f, 4.0f}));
-    expect(four.has_value() && std::abs(*four - 10.0) < 1e-6, "a four-element message sums to 10");
+    std::vector<float> full(32, 1.0f);
+    const auto ok = eval.evaluate<double>(pdmCurrentPayload(full));
+    expect(ok.has_value() && std::abs(*ok - 32.0) < 1e-6,
+           "a message of the declared length evaluates");
 
-    const auto two = eval.evaluate<double>(pdmCurrentPayload({5.0f, 6.0f}));
-    expect(two.has_value() && std::abs(*two - 11.0) < 1e-6,
-           "a SHORTER message sums to 11, with no stale tail left over from the longer one");
+    const auto short_message = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f}));
+    expect(!short_message.has_value(), "a message with FEWER elements is skipped");
 
-    const auto six =
-        eval.evaluate<double>(pdmCurrentPayload({1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}));
-    expect(six.has_value() && std::abs(*six - 6.0) < 1e-6, "and a longer one grows to fit");
+    const auto long_message = eval.evaluate<double>(pdmCurrentPayload(std::vector<float>(40, 1.0f)));
+    expect(!long_message.has_value(), "and so is one with more");
+
+    // And it recovers: a conforming message after a bad one still evaluates.
+    const auto again = eval.evaluate<double>(pdmCurrentPayload(full));
+    expect(again.has_value() && std::abs(*again - 32.0) < 1e-6,
+           "a conforming message after a bad one still evaluates");
+}
+
+void testAListWithNoDeclaredLengthIsRejected()
+{
+    // CanFrame.data is List(UInt8) of 1..64 bytes -- genuinely variable, so it
+    // carries no annotation and must not. Without a declared length there is
+    // nothing to compile an index against.
+    //
+    // This is a deliberate capability limit rather than an oversight: the
+    // alternative was discovering the length per message and recompiling
+    // whenever it changed, which on a CAN topic means a recompile per frame.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::CanFrame, "data[3]",
+                                      "test/can/frame");
+    expect(!eval.isValid(),
+           "a list with no declared length is refused at construction, by name");
 }
 
 void testAnIndexPastTheDeclaredLengthIsRejectedAtConstruction()
@@ -352,26 +378,10 @@ void testAnIndexPastTheDeclaredLengthIsRejectedAtConstruction()
     expect(last.isValid(), "and the last declared element is still accepted");
 }
 
-void testAnIndexPastTheRealLengthProducesNoValue()
-{
-    // THE CASE THAT MUST NOT RETURN ZERO. `values[20]` is within the declared 32
-    // so it compiles, and only a real message can say this PUBLISHER is sending
-    // fewer. A confident permanent zero here is indistinguishable from an output
-    // genuinely drawing no current.
-    //
-    // The declared length is a claim about the schema, not a guarantee about
-    // every publisher -- which is exactly why the runtime check stays.
-    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[20]",
-                                      "test/pdm/current");
-    expect(eval.isValid(), "an index within the declared length compiles");
-
-    const auto value = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f, 3.0f}));
-    expect(!value.has_value(),
-           "but a message that carries fewer produces NO reading, not a zero");
-}
-
 void testAnEmptyListProducesNoValue()
 {
+    // Zero elements contradicts the declared 32, so it is skipped like any other
+    // mismatch rather than reading a zero.
     pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[0]",
                                       "test/pdm/current");
     const auto value = eval.evaluate<double>(pdmCurrentPayload({}));
@@ -657,9 +667,9 @@ int main()
     testAListElementIsIndexable();
     testListAggregatesWorkOverTheRealLength();
     testAListOfEnumsIsIndexable();
-    testAListLengthChangeIsFollowed();
+    testALengthThatContradictsTheSchemaSkipsTheFrame();
+    testAListWithNoDeclaredLengthIsRejected();
     testAnIndexPastTheDeclaredLengthIsRejectedAtConstruction();
-    testAnIndexPastTheRealLengthProducesNoValue();
     testAnEmptyListProducesNoValue();
     testAListOfTextWouldBeRejected();
     testListNamesAreReported();
