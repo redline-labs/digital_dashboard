@@ -43,13 +43,56 @@ struct BindingCandidate
     // here would mean translating it back twice.
     std::string type_category;
 
-    // The four capnp categories an expression can turn into a number. Anything
-    // else is a config error the evaluator would reject at construction, so the
-    // browser marks them and a plot declines them.
+    // For a list, what its ELEMENTS are -- the same vocabulary as
+    // `type_category`. Empty for anything that is not a list.
+    //
+    // "list" alone says nothing about whether a consumer can use it: a
+    // List(Float32) is 32 plottable channels and a List(Text) is not plottable
+    // at all. Straight from describeSchema()'s `element_type`.
+    std::string element_category;
+
+    // The categories an expression can turn into a number. Anything else is a
+    // config error the evaluator would reject at construction, so the browser
+    // marks them and a plot declines them.
+    //
+    // ENUM COUNTS, and reads as its ordinal. It did not used to, which made
+    // every enum on this bus unbindable by anything -- CarPlay's session phase,
+    // the PDM's per-output status. The field a topic is most often watched for
+    // was the one field nothing could read.
+    //
+    // A LIST COUNTS when its elements do, because `values[7]` is an ordinary
+    // expression. The list itself is not a number, which is what
+    // needsElementIndex() below is for.
+    static bool isNumericCategory(const std::string& category)
+    {
+        return category == "int" || category == "uint" || category == "float" ||
+               category == "bool" || category == "enum";
+    }
+
     bool isNumeric() const
     {
-        return type_category == "int" || type_category == "uint" || type_category == "float" ||
-               type_category == "bool";
+        if (type_category == "list")
+        {
+            return isNumericCategory(element_category);
+        }
+        return isNumericCategory(type_category);
+    }
+
+    // A list cannot be read whole -- an expression has to name an element. So
+    // the degenerate "just plot this field" expression is `field[0]` rather than
+    // `field`, and a panel that used the bare name would bind something that
+    // cannot compile.
+    bool needsElementIndex() const { return type_category == "list"; }
+
+    // The expression that means "just show me this", which is what a drag
+    // produces before anyone edits it.
+    //
+    // Here rather than in each panel: a plot and any later panel have to agree
+    // about what dropping a field means, and the list case is exactly the sort
+    // of thing the second implementation forgets.
+    std::string defaultExpression() const
+    {
+        return needsElementIndex() ? field_name + "[0]" : field_name;
     }
 
     bool isTopicLevel() const { return field_name.empty(); }

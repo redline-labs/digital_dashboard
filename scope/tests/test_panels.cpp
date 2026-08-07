@@ -430,7 +430,10 @@ void testAPlotAcceptsOnlyNumericFields()
     no_key.zenoh_key.clear();
     expect(!plot.acceptsBinding(no_key), "a candidate with no topic is declined");
 
-    for (const char* category : {"int", "uint", "float", "bool"})
+    // ENUM belongs here now. It reads as its ordinal, which is what makes a
+    // state channel plottable at all -- and until it did, every enum on this bus
+    // was unbindable by anything.
+    for (const char* category : {"int", "uint", "float", "bool", "enum"})
     {
         scope::BindingCandidate numeric = numericField();
         numeric.type_category = category;
@@ -438,7 +441,9 @@ void testAPlotAcceptsOnlyNumericFields()
                std::string("a '") + category + "' field is accepted");
     }
 
-    for (const char* category : {"data", "list", "struct", "enum", "void", "other", ""})
+    // "list" is absent: whether a list is plottable depends on its ELEMENTS, so
+    // it is covered separately below rather than being flatly declined.
+    for (const char* category : {"data", "struct", "void", "other", ""})
     {
         scope::BindingCandidate other = numericField();
         other.type_category = category;
@@ -463,6 +468,45 @@ void testAddingASignalBindsIt()
         expect(source.bound[0].value_expression == "rpm",
                "the degenerate expression is the bare field name");
     }
+}
+
+// A list is plottable exactly when its ELEMENTS are, and the expression a drop
+// produces has to name an element -- `values` alone is a vector, which cannot
+// compile. Getting either half wrong binds something that never produces a
+// sample, which on screen is a flat empty trace: indistinguishable from a
+// publisher that has not started.
+void testAListIsAcceptedOnItsElementType()
+{
+    StubSource source;
+    scope::TimeSeriesPanel plot(TimeSeriesPanelConfig_t{}, source);
+
+    scope::BindingCandidate numeric_list;
+    numeric_list.zenoh_key = "nodes/motec/pdm_output_current";
+    numeric_list.schema_name = "MotecPdmOutputCurrent";
+    numeric_list.field_name = "values";
+    numeric_list.type_category = "list";
+    numeric_list.element_category = "float";
+    expect(plot.acceptsBinding(numeric_list), "a List(Float32) is accepted");
+    expect(numeric_list.defaultExpression() == "values[0]",
+           "and a drop produces an INDEXED expression, not the bare list name");
+
+    scope::BindingCandidate enum_list = numeric_list;
+    enum_list.element_category = "enum";
+    expect(plot.acceptsBinding(enum_list), "a List(SomeEnum) is accepted");
+
+    scope::BindingCandidate text_list = numeric_list;
+    text_list.element_category = "text";
+    expect(!plot.acceptsBinding(text_list), "a List(Text) is declined");
+
+    scope::BindingCandidate untyped_list = numeric_list;
+    untyped_list.element_category = "";
+    expect(!plot.acceptsBinding(untyped_list),
+           "a list whose element type is unknown is declined rather than guessed at");
+
+    // A scalar's default expression is still the bare field name.
+    scope::BindingCandidate scalar = numericField();
+    expect(scalar.defaultExpression() == "rpm",
+           "a scalar field's default expression is unchanged");
 }
 
 void testAddingTheSameSignalTwiceIsDeclined()
@@ -1479,6 +1523,7 @@ int main(int argc, char** argv)
 
     testAPlotAcceptsOnlyNumericFields();
     testAddingASignalBindsIt();
+    testAListIsAcceptedOnItsElementType();
     testAddingTheSameSignalTwiceIsDeclined();
     testTracesGetDistinctColours();
     testRemovingASignal();

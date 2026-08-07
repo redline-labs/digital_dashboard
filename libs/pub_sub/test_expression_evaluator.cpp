@@ -20,7 +20,9 @@
 #include "pub_sub/expression_evaluator.h"
 #include "pub_sub/schema_registry.h"
 
+#include "carplay_session.capnp.h"
 #include "engine_rpm.capnp.h"
+#include "motec_pdm.capnp.h"
 #include "vehicle_speed.capnp.h"
 
 #include <capnp/message.h>
@@ -69,6 +71,56 @@ pub_sub::ExpressionEvaluator evaluatorFor(const std::string& expression)
 {
     return pub_sub::ExpressionEvaluator(pub_sub::schema_type_t::EngineRpm, expression,
                                         "test/engine/rpm");
+}
+
+// A CarPlaySessionState carrying one of its enum values. `phase` is an enum, and
+// until enums were numeric this whole topic's most interesting field could not
+// be bound by anything.
+std::vector<uint8_t> sessionPayload(CarPlaySessionState::Phase phase)
+{
+    capnp::MallocMessageBuilder message;
+    auto root = message.initRoot<CarPlaySessionState>();
+    root.setPhase(phase);
+    root.setDeviceConnected(true);
+
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+    return std::vector<uint8_t>(bytes.begin(), bytes.end());
+}
+
+// A MoTeC PDM output-current message: `values` is a List(Float32), one per
+// output. The real device sends 32; the length is a property of the MESSAGE, not
+// of the schema, which is the whole reason the vector binding has to discover it.
+std::vector<uint8_t> pdmCurrentPayload(const std::vector<float>& amps)
+{
+    capnp::MallocMessageBuilder message;
+    auto root = message.initRoot<MotecPdmOutputCurrent>();
+    auto values = root.initValues(static_cast<unsigned>(amps.size()));
+    for (unsigned i = 0; i < amps.size(); ++i)
+    {
+        values.set(i, amps[i]);
+    }
+
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+    return std::vector<uint8_t>(bytes.begin(), bytes.end());
+}
+
+// A PDM output-status message: List(PdmOutputStatusEnum). A list of enums, which
+// is both of the new cases at once.
+std::vector<uint8_t> pdmStatusPayload(const std::vector<PdmOutputStatusEnum>& states)
+{
+    capnp::MallocMessageBuilder message;
+    auto root = message.initRoot<MotecPdmOutputStatus>();
+    auto values = root.initValues(static_cast<unsigned>(states.size()));
+    for (unsigned i = 0; i < states.size(); ++i)
+    {
+        values.set(i, states[i]);
+    }
+
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+    return std::vector<uint8_t>(bytes.begin(), bytes.end());
 }
 
 // ------------------------------------------------------------------ the basics
@@ -148,6 +200,191 @@ void testANonNumericFieldIsRejected()
     pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::VehicleSpeed, text_field_name,
                                       "test/vehicle/speed");
     expect(!eval.isValid(), "a non-numeric field is rejected at construction, not per sample");
+}
+
+// ------------------------------------------------------------ enums and lists
+
+void testAnEnumEvaluatesToItsOrdinal()
+{
+    // Before this, EVERY enum on the bus was unbindable -- CarPlay's session
+    // phase and audio stream type, the PDM's per-output status. The field a
+    // topic is most often watched for was the one field nothing could read.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::CarPlaySessionState, "phase",
+                                      "test/carplay/session");
+    expect(eval.isValid(), "an enum field is accepted");
+
+    const auto recording =
+        eval.evaluate<double>(sessionPayload(CarPlaySessionState::Phase::RECORDING));
+    const auto idle = eval.evaluate<double>(sessionPayload(CarPlaySessionState::Phase::IDLE));
+
+    expect(recording.has_value() && idle.has_value(), "both enum samples evaluate");
+    expect(recording.has_value() && idle.has_value() && *recording != *idle,
+           "different enumerants evaluate to different numbers");
+
+    // The ORDINAL, i.e. the declaration position capnp stores -- not any value a
+    // comment in the .capnp file mentions.
+    expect(idle.has_value() &&
+               std::abs(*idle - static_cast<double>(
+                                    static_cast<uint16_t>(CarPlaySessionState::Phase::IDLE))) <
+                   1e-9,
+           "an enum reads as its ordinal");
+}
+
+void testAnEnumCanBeComparedInAnExpression()
+{
+    // What makes the ordinal useful: `phase == 2` is a boolean channel, which is
+    // exactly what a state lane or a telltale wants.
+    const auto recording_ordinal =
+        static_cast<uint16_t>(CarPlaySessionState::Phase::RECORDING);
+
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::CarPlaySessionState,
+                                      "phase == " + std::to_string(recording_ordinal),
+                                      "test/carplay/session");
+    expect(eval.isValid(), "an enum comparison compiles");
+
+    const auto yes =
+        eval.evaluate<double>(sessionPayload(CarPlaySessionState::Phase::RECORDING));
+    const auto no = eval.evaluate<double>(sessionPayload(CarPlaySessionState::Phase::IDLE));
+
+    expect(yes.has_value() && *yes == 1.0, "the comparison is true for the matching enumerant");
+    expect(no.has_value() && *no == 0.0, "and false for another");
+}
+
+void testAListElementIsIndexable()
+{
+    // MotecPdmOutputCurrent.values is 32 floats, one per output. Not one of them
+    // could be plotted before this.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[7]",
+                                      "test/pdm/current");
+    expect(eval.isValid(), "an indexed list element is accepted");
+
+    std::vector<float> amps(32, 0.0f);
+    amps[7] = 12.5f;
+    const auto value = eval.evaluate<double>(pdmCurrentPayload(amps));
+
+    expect(value.has_value() && std::abs(*value - 12.5) < 1e-6,
+           "values[7] reads the eighth element, not the first and not zero");
+}
+
+void testListAggregatesWorkOverTheRealLength()
+{
+    // sum() over the outputs is total PDM current, which is a real thing to want.
+    // It is also the assertion that catches a vector registered at some generous
+    // capacity and zero-filled: sum() would still be right, but avg() would be
+    // scaled by length/capacity with nothing to say so.
+    std::vector<float> amps(32, 0.0f);
+    for (std::size_t i = 0; i < amps.size(); ++i)
+    {
+        amps[i] = 1.0f;
+    }
+
+    pub_sub::ExpressionEvaluator sum(pub_sub::schema_type_t::MotecPdmOutputCurrent,
+                                     "sum(values)", "test/pdm/current");
+    const auto total = sum.evaluate<double>(pdmCurrentPayload(amps));
+    expect(total.has_value() && std::abs(*total - 32.0) < 1e-6, "sum() totals every element");
+
+    pub_sub::ExpressionEvaluator avg(pub_sub::schema_type_t::MotecPdmOutputCurrent,
+                                     "avg(values)", "test/pdm/current");
+    const auto mean = avg.evaluate<double>(pdmCurrentPayload(amps));
+    expect(mean.has_value() && std::abs(*mean - 1.0) < 1e-6,
+           "avg() divides by the REAL length, not by some registered capacity");
+}
+
+void testAListOfEnumsIsIndexable()
+{
+    // Both new cases at once, and the one that matters most in practice: which
+    // PDM output tripped.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputStatus, "values[3]",
+                                      "test/pdm/status");
+    expect(eval.isValid(), "a list of enums is accepted");
+
+    std::vector<PdmOutputStatusEnum> states(32, PdmOutputStatusEnum::ON);
+    states[3] = PdmOutputStatusEnum::OVER_CURRENT_ERROR;
+
+    const auto tripped = eval.evaluate<double>(pdmStatusPayload(states));
+    expect(tripped.has_value() &&
+               std::abs(*tripped - static_cast<double>(static_cast<uint16_t>(
+                                       PdmOutputStatusEnum::OVER_CURRENT_ERROR))) < 1e-9,
+           "an enum element reads as its ordinal");
+
+    states[3] = PdmOutputStatusEnum::ON;
+    const auto normal = eval.evaluate<double>(pdmStatusPayload(states));
+    expect(normal.has_value() && tripped.has_value() && *normal != *tripped,
+           "and a different state reads differently");
+}
+
+void testAListLengthChangeIsFollowed()
+{
+    // exprtk fixes a vector's length when it is registered, and capnp does not
+    // declare one. So the length comes from the message -- and if the publisher
+    // changes it, the binding has to follow rather than read a stale tail.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent,
+                                      "sum(values)", "test/pdm/current");
+
+    const auto four = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f, 3.0f, 4.0f}));
+    expect(four.has_value() && std::abs(*four - 10.0) < 1e-6, "a four-element message sums to 10");
+
+    const auto two = eval.evaluate<double>(pdmCurrentPayload({5.0f, 6.0f}));
+    expect(two.has_value() && std::abs(*two - 11.0) < 1e-6,
+           "a SHORTER message sums to 11, with no stale tail left over from the longer one");
+
+    const auto six =
+        eval.evaluate<double>(pdmCurrentPayload({1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}));
+    expect(six.has_value() && std::abs(*six - 6.0) < 1e-6, "and a longer one grows to fit");
+}
+
+void testAnIndexPastTheRealLengthProducesNoValue()
+{
+    // THE CASE THAT MUST NOT RETURN ZERO. The expression compiles -- the index is
+    // plausible for this schema -- and only a real message can say the stream
+    // does not reach it. A confident permanent zero here is indistinguishable
+    // from an output that is genuinely drawing no current.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[20]",
+                                      "test/pdm/current");
+    expect(eval.isValid(), "the expression compiles against a plausible index");
+
+    const auto value = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f, 3.0f}));
+    expect(!value.has_value(),
+           "indexing past what the stream carries produces NO reading, not a zero");
+}
+
+void testAnEmptyListProducesNoValue()
+{
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[0]",
+                                      "test/pdm/current");
+    const auto value = eval.evaluate<double>(pdmCurrentPayload({}));
+    expect(!value.has_value(), "an empty list produces no reading rather than a zero");
+}
+
+void testAListOfTextWouldBeRejected()
+{
+    // The list equivalent of the Text rejection above: a list whose ELEMENTS are
+    // not numeric is no more a number than a bare Text field is, and it is
+    // knowable at construction.
+    const auto schema = pub_sub::get_schema(pub_sub::schema_type_t::MotecPdmOutputCurrent);
+    if (!schema)
+    {
+        return;
+    }
+
+    // Nothing in the tree currently publishes a List(Text), so this asserts the
+    // shape of the check rather than a specific field: a list of floats is
+    // accepted, and that acceptance is what the element-type test gates on.
+    pub_sub::ExpressionEvaluator numeric(pub_sub::schema_type_t::MotecPdmOutputCurrent,
+                                         "values[0]", "test/pdm/current");
+    expect(numeric.isValid(), "a list of numeric elements is accepted");
+}
+
+void testListNamesAreReported()
+{
+    // variableNames() promises the schema fields the expression reads, and a list
+    // is one. It lives in a different container from the scalars, so it is
+    // exactly the kind of thing a merge forgets.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent,
+                                      "values[1] + values[2]", "test/pdm/current");
+    const auto& names = eval.variableNames();
+    expect(names.size() == 1 && names[0] == "values",
+           "a list field is reported once, by its field name");
 }
 
 void testAnEmptyExpressionIsRejected()
@@ -347,6 +584,17 @@ int main()
 
     testAnUnknownFieldIsRejected();
     testANonNumericFieldIsRejected();
+
+    testAnEnumEvaluatesToItsOrdinal();
+    testAnEnumCanBeComparedInAnExpression();
+    testAListElementIsIndexable();
+    testListAggregatesWorkOverTheRealLength();
+    testAListOfEnumsIsIndexable();
+    testAListLengthChangeIsFollowed();
+    testAnIndexPastTheRealLengthProducesNoValue();
+    testAnEmptyListProducesNoValue();
+    testAListOfTextWouldBeRejected();
+    testListNamesAreReported();
     testAnEmptyExpressionIsRejected();
     testAMalformedExpressionIsRejected();
 

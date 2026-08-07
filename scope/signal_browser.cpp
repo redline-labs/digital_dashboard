@@ -40,6 +40,10 @@ constexpr int kRoleCategory = Qt::UserRole + 4;
 // the source again.
 constexpr int kRoleAdvertised = Qt::UserRole + 5;
 
+// A list's element category. Separate from kRoleCategory because "list" alone
+// does not say whether anything can be done with it.
+constexpr int kRoleElementCategory = Qt::UserRole + 6;
+
 BindingCandidate candidateOf(const QTreeWidgetItem* item)
 {
     BindingCandidate candidate;
@@ -47,6 +51,8 @@ BindingCandidate candidateOf(const QTreeWidgetItem* item)
     candidate.schema_name = item->data(0, kRoleSchema).toString().toStdString();
     candidate.field_name = item->data(0, kRoleField).toString().toStdString();
     candidate.type_category = item->data(0, kRoleCategory).toString().toStdString();
+    candidate.element_category =
+        item->data(0, kRoleElementCategory).toString().toStdString();
     return candidate;
 }
 
@@ -87,6 +93,7 @@ QByteArray encodeCandidate(const BindingCandidate& candidate)
     payload["schema_name"] = candidate.schema_name;
     payload["field_name"] = candidate.field_name;
     payload["type_category"] = candidate.type_category;
+    payload["element_category"] = candidate.element_category;
     const std::string text = payload.dump();
     return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
 }
@@ -119,6 +126,7 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out)
     out.schema_name = text("schema_name");
     out.field_name = text("field_name");
     out.type_category = text("type_category");
+    out.element_category = text("element_category");
     return !out.zenoh_key.empty();
 }
 
@@ -287,6 +295,8 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
         field_item->setData(0, kRoleSchema, schema);
         field_item->setData(0, kRoleField, QString::fromStdString(name));
         field_item->setData(0, kRoleCategory, QString::fromStdString(category));
+        field_item->setData(0, kRoleElementCategory,
+                            QString::fromStdString(info.value("element_type", std::string{})));
 
         // Non-numeric fields stay visible and draggable rather than being
         // hidden: a plot will decline them, but a future panel type may not,

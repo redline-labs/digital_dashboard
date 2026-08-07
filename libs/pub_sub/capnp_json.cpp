@@ -338,6 +338,58 @@ bool jsonToCapnp(const json& value, capnp::DynamicStruct::Builder builder,
     return errors.size() == before;
 }
 
+namespace
+{
+
+// The one place a capnp type becomes the category string every picker in the
+// tree reasons about. Shared by a field and by a list's ELEMENTS, so the two can
+// never disagree about what "float" means.
+//
+// A nested list reports "list" and stops there. Nothing in this tree publishes
+// one, and an expression could not index it anyway -- exprtk vectors are flat.
+std::string typeCategory(const capnp::Type& type)
+{
+    switch (type.which())
+    {
+        case capnp::schema::Type::BOOL:    return "bool";
+        case capnp::schema::Type::INT8:
+        case capnp::schema::Type::INT16:
+        case capnp::schema::Type::INT32:
+        case capnp::schema::Type::INT64:   return "int";
+        case capnp::schema::Type::UINT8:
+        case capnp::schema::Type::UINT16:
+        case capnp::schema::Type::UINT32:
+        case capnp::schema::Type::UINT64:  return "uint";
+        case capnp::schema::Type::FLOAT32:
+        case capnp::schema::Type::FLOAT64: return "float";
+        case capnp::schema::Type::TEXT:    return "text";
+        case capnp::schema::Type::DATA:    return "data";
+        case capnp::schema::Type::LIST:    return "list";
+        case capnp::schema::Type::STRUCT:  return "struct";
+        case capnp::schema::Type::VOID:    return "void";
+        case capnp::schema::Type::ENUM:    return "enum";
+        case capnp::schema::Type::INTERFACE:
+        case capnp::schema::Type::ANY_POINTER:
+        default:                           return "other";
+    }
+}
+
+// The enumerant names, in declaration order -- so index N is the name of the
+// value an expression reading that field evaluates to. That correspondence is
+// the whole contract: the evaluator hands out the ordinal, and this is what
+// turns it back into something readable on an axis.
+json enumerantNames(const capnp::EnumSchema& schema)
+{
+    json values = json::array();
+    for (auto enumerant : schema.getEnumerants())
+    {
+        values.push_back(std::string(enumerant.getProto().getName().cStr()));
+    }
+    return values;
+}
+
+}  // namespace
+
 json describeSchema(capnp::Schema schema)
 {
     json fields = json::object();
@@ -346,40 +398,27 @@ json describeSchema(capnp::Schema schema)
         json entry = json::object();
         const auto type = field.getType();
 
-        switch (type.which())
+        entry["type"] = typeCategory(type);
+
+        if (type.isList())
         {
-            case capnp::schema::Type::BOOL:    entry["type"] = "bool";   break;
-            case capnp::schema::Type::INT8:
-            case capnp::schema::Type::INT16:
-            case capnp::schema::Type::INT32:
-            case capnp::schema::Type::INT64:   entry["type"] = "int";    break;
-            case capnp::schema::Type::UINT8:
-            case capnp::schema::Type::UINT16:
-            case capnp::schema::Type::UINT32:
-            case capnp::schema::Type::UINT64:  entry["type"] = "uint";   break;
-            case capnp::schema::Type::FLOAT32:
-            case capnp::schema::Type::FLOAT64: entry["type"] = "float";  break;
-            case capnp::schema::Type::TEXT:    entry["type"] = "text";   break;
-            case capnp::schema::Type::DATA:    entry["type"] = "data";   break;
-            case capnp::schema::Type::LIST:    entry["type"] = "list";   break;
-            case capnp::schema::Type::STRUCT:  entry["type"] = "struct"; break;
-            case capnp::schema::Type::VOID:    entry["type"] = "void";   break;
-            case capnp::schema::Type::ENUM:
+            // WHAT THE ELEMENTS ARE, because "list" on its own does not say
+            // whether a consumer can do anything with it. A List(Float32) is 32
+            // plottable channels; a List(Text) is not plottable at all, and a
+            // picker that cannot tell them apart either offers both or neither.
+            // `values[7]` is an ordinary expression, so this is the only thing
+            // standing between the PDM's per-output data and a plot.
+            const auto element = type.asList().getElementType();
+            entry["element_type"] = typeCategory(element);
+
+            if (element.isEnum())
             {
-                entry["type"] = "enum";
-                json values = json::array();
-                for (auto enumerant : type.asEnum().getEnumerants())
-                {
-                    values.push_back(std::string(enumerant.getProto().getName().cStr()));
-                }
-                entry["values"] = std::move(values);
-                break;
+                entry["values"] = enumerantNames(element.asEnum());
             }
-            case capnp::schema::Type::INTERFACE:
-            case capnp::schema::Type::ANY_POINTER:
-            default:
-                entry["type"] = "other";
-                break;
+        }
+        else if (type.isEnum())
+        {
+            entry["values"] = enumerantNames(type.asEnum());
         }
 
         fields[field.getProto().getName().cStr()] = std::move(entry);

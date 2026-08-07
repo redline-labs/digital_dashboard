@@ -260,7 +260,7 @@ bool TimeSeriesPanel::addBinding(const BindingCandidate& candidate)
     binding.zenoh_key = candidate.zenoh_key;
     binding.schema_type = *schema;
     // The degenerate expression: just read the field. Editable afterwards.
-    binding.value_expression = candidate.field_name;
+    binding.value_expression = candidate.defaultExpression();
     binding.label = candidate.field_name;
 
     // Already plotted? Adding it twice draws the same line on top of itself and
