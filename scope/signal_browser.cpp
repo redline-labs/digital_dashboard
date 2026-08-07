@@ -44,6 +44,9 @@ constexpr int kRoleAdvertised = Qt::UserRole + 5;
 // does not say whether anything can be done with it.
 constexpr int kRoleElementCategory = Qt::UserRole + 6;
 
+// Which element of a list a row names, or -1 for the list itself.
+constexpr int kRoleElementIndex = Qt::UserRole + 7;
+
 BindingCandidate candidateOf(const QTreeWidgetItem* item)
 {
     BindingCandidate candidate;
@@ -53,6 +56,10 @@ BindingCandidate candidateOf(const QTreeWidgetItem* item)
     candidate.type_category = item->data(0, kRoleCategory).toString().toStdString();
     candidate.element_category =
         item->data(0, kRoleElementCategory).toString().toStdString();
+    {
+        const QVariant index = item->data(0, kRoleElementIndex);
+        candidate.element_index = index.isValid() ? index.toInt() : -1;
+    }
     return candidate;
 }
 
@@ -94,6 +101,7 @@ QByteArray encodeCandidate(const BindingCandidate& candidate)
     payload["field_name"] = candidate.field_name;
     payload["type_category"] = candidate.type_category;
     payload["element_category"] = candidate.element_category;
+    payload["element_index"] = candidate.element_index;
     const std::string text = payload.dump();
     return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
 }
@@ -127,6 +135,14 @@ bool decodeCandidate(const QByteArray& data, BindingCandidate& out)
     out.field_name = text("field_name");
     out.type_category = text("type_category");
     out.element_category = text("element_category");
+    {
+        // Read through is_number_integer() for the same reason every string
+        // above goes through is_string(): value() throws on a present-but-wrong
+        // type, and that exception would come out of a Qt drop handler.
+        const auto found = payload.find("element_index");
+        out.element_index =
+            found != payload.end() && found->is_number_integer() ? found->get<int>() : -1;
+    }
     return !out.zenoh_key.empty();
 }
 
@@ -298,11 +314,73 @@ void SignalBrowser::addTopic(const QString& key, const QString& schema, bool rea
         field_item->setData(0, kRoleElementCategory,
                             QString::fromStdString(info.value("element_type", std::string{})));
 
+        field_item->setData(0, kRoleElementIndex, -1);
+
+        // A LIST EXPANDS INTO ONE ROW PER ELEMENT, but only when the schema says
+        // how many there are.
+        //
+        // capnp declares no length -- the count is a property of each message --
+        // so the alternatives were to guess one (offering rows that do not
+        // exist, which bind and then produce nothing, looking exactly like a
+        // dead publisher) or to peek at live traffic (a browser that shows
+        // different things depending on whether anything happened to be
+        // flowing). A $fixedLength annotation makes it a fact about the schema,
+        // which is where it belongs. See schemas/annotations.capnp.
+        const std::string element_category = info.value("element_type", std::string{});
+        if (category == "list")
+        {
+            const auto length = info.find("fixed_length");
+            if (length != info.end() && length->is_number_unsigned())
+            {
+                const unsigned count = length->get<unsigned>();
+                field_item->setText(1, QString("list[%1] of %2")
+                                           .arg(count)
+                                           .arg(QString::fromStdString(element_category)));
+
+                for (unsigned i = 0; i < count; ++i)
+                {
+                    auto* element = new QTreeWidgetItem(field_item);
+                    element->setText(0, QString("%1[%2]")
+                                            .arg(QString::fromStdString(name))
+                                            .arg(i));
+                    element->setText(1, QString::fromStdString(element_category));
+                    element->setData(0, kRoleKey, key);
+                    element->setData(0, kRoleSchema, schema);
+                    element->setData(0, kRoleField, QString::fromStdString(name));
+                    element->setData(0, kRoleCategory, QString::fromStdString(category));
+                    element->setData(0, kRoleElementCategory,
+                                     QString::fromStdString(element_category));
+                    element->setData(0, kRoleElementIndex, static_cast<int>(i));
+
+                    BindingCandidate element_probe;
+                    element_probe.type_category = category;
+                    element_probe.element_category = element_category;
+                    if (!element_probe.isNumeric())
+                    {
+                        element->setForeground(0, QColor("#808890"));
+                    }
+                }
+
+                // Collapsed. Thirty-two rows per list, several lists per PDM
+                // topic: expanded by default they would bury every other topic
+                // in the tree.
+                field_item->setExpanded(false);
+            }
+            else
+            {
+                // Honest about not knowing, rather than silently offering no
+                // elements as though the list were empty.
+                field_item->setText(1, QString("list of %1 (length not declared)")
+                                           .arg(QString::fromStdString(element_category)));
+            }
+        }
+
         // Non-numeric fields stay visible and draggable rather than being
         // hidden: a plot will decline them, but a future panel type may not,
         // and the browser should not have to learn about panel types to say so.
         BindingCandidate probe;
         probe.type_category = category;
+        probe.element_category = element_category;
         if (!probe.isNumeric())
         {
             field_item->setForeground(0, QColor("#808890"));
@@ -381,7 +459,20 @@ std::vector<BindingCandidate> SignalBrowser::candidates() const
         all.push_back(candidateOf(topic));
         for (int j = 0; j < topic->childCount(); ++j)
         {
-            all.push_back(candidateOf(topic->child(j)));
+            const QTreeWidgetItem* field = topic->child(j);
+            all.push_back(candidateOf(field));
+
+            // AND THE ELEMENT ROWS UNDER A LIST. This used to stop at the
+            // field level, which was right while the tree was two deep. A list
+            // whose length the schema declares expands into a row per element,
+            // and those rows are the whole point -- missing them here would
+            // leave them draggable in the UI but invisible to `scope.browser`
+            // and unreachable by `scope.add_signal`, so the feature would work
+            // only for a human with a mouse.
+            for (int k = 0; k < field->childCount(); ++k)
+            {
+                all.push_back(candidateOf(field->child(k)));
+            }
         }
     }
     return all;

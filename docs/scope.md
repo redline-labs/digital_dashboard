@@ -159,6 +159,39 @@ would lose them on the next reload. Only a bare field (`phase`) or one list
 element (`values[7]`) resolves — `phase * 2` has left the enum's domain and is a
 number, so it stays a line.
 
+## Lists, and how many elements they have
+
+The PDM keeps everything in lists: 32 output currents, 32 loads, 32 voltages, 32
+statuses, 23 input states. `values[7]` is an ordinary expression, so each of
+those is a plottable channel — but a capnp list **declares no length**. The count
+is a property of each message, so a picker has nothing to expand.
+
+Both ways round that are wrong. Guessing a count offers rows that do not exist,
+and binding one produces no reading — on screen a flat empty trace,
+indistinguishable from a dead publisher. Peeking at a live message makes the
+browser show different things depending on whether traffic happened to be
+flowing.
+
+So the schema says it, with an annotation:
+
+```capnp
+using Annotations = import "annotations.capnp";
+
+struct MotecPdmOutputCurrent {
+  values @0 : List(Float32) $Annotations.fixedLength(32);
+}
+```
+
+Annotations change **nothing** about the wire format — a message encoded before
+one was added decodes identically after — and they travel inside the schema
+node, so `pub_sub::fixedListLength()` reads them back at runtime with no side
+table to keep in sync. `describeSchema` reports it as `fixed_length`, and the
+browser expands the list into one draggable row per element, collapsed by
+default. Dragging `values[7]` binds `values[7]`, with no hand editing.
+
+A list whose length is not declared still works — its row says so, and a drop
+falls back to `values[0]`.
+
 ## Navigating time
 
 **One window, shared by every panel.** `TimeBase` owns `[viewBegin, viewEnd]`,

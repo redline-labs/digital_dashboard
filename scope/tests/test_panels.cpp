@@ -24,6 +24,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
+#include <QTreeWidget>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QToolButton>
@@ -590,6 +591,69 @@ void testTheDisplayOverrideWinsBothWays()
 
     expect(!stats[0].lane, "display: line forces an enum onto the value axis");
     expect(stats[1].lane, "display: lane forces a plain integer into a lane");
+}
+
+// A list with a declared length expands into one draggable candidate per
+// element.
+//
+// The alternative designs both lie. Guessing a count offers rows that do not
+// exist, and binding one produces no reading -- on screen a flat empty trace,
+// indistinguishable from a dead publisher. Peeking at a live message makes the
+// browser show different things depending on whether traffic happened to be
+// flowing. The $fixedLength annotation makes it a fact about the schema.
+//
+// Checked through candidates(), which is both what the tree renders and what
+// `scope.browser` reports -- so the agent interface gets the element rows too,
+// rather than a second discovery path that could disagree.
+void testAListWithADeclaredLengthExpands()
+{
+    StubSource source;
+    source.available.push_back(
+        scope::TopicInfo{"nodes/motec/pdm_output_current", "MotecPdmOutputCurrent", true});
+
+    // Non-zero, so the first sync actually rebuilds: syncFromDirectory skips
+    // when the revision has not moved, and a stub sitting at 0 never moves.
+    source.revision = 1;
+
+    scope::SignalBrowser browser(source);
+
+    const std::vector<scope::BindingCandidate> candidates = browser.candidates();
+
+    int elements = 0;
+    bool saw_seventh = false;
+    bool saw_bare_list = false;
+    for (const scope::BindingCandidate& candidate : candidates)
+    {
+        if (candidate.field_name != "values")
+        {
+            continue;
+        }
+        if (candidate.element_index >= 0)
+        {
+            ++elements;
+            if (candidate.element_index == 7)
+            {
+                saw_seventh = true;
+                expect(candidate.defaultExpression() == "values[7]",
+                       "a drop on the eighth element produces values[7], with no hand editing");
+                expect(candidate.isNumeric(), "and a float element is plottable");
+                expect(candidate.type_category == "list" &&
+                           candidate.element_category == "float",
+                       "carrying both the list and element categories");
+            }
+        }
+        else
+        {
+            saw_bare_list = true;
+            expect(candidate.defaultExpression() == "values[0]",
+                   "the list row itself still falls back to element 0");
+        }
+    }
+
+    // 32, from the annotation -- not a guess and not a peek.
+    expect(elements == 32, "the list expanded into one candidate per element");
+    expect(saw_seventh, "the eighth element is among them");
+    expect(saw_bare_list, "and the list field itself is still offered");
 }
 
 void testAddingTheSameSignalTwiceIsDeclined()
@@ -1607,6 +1671,7 @@ int main(int argc, char** argv)
     testAPlotAcceptsOnlyNumericFields();
     testAddingASignalBindsIt();
     testAListIsAcceptedOnItsElementType();
+    testAListWithADeclaredLengthExpands();
     testEnumsAndBoolsBecomeLanes();
     testTheDisplayOverrideWinsBothWays();
     testAddingTheSameSignalTwiceIsDeclined();

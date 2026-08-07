@@ -390,6 +390,18 @@ json enumerantNames(const capnp::EnumSchema& schema)
 
 }  // namespace
 
+std::optional<std::uint32_t> fixedListLength(const capnp::StructSchema::Field& field)
+{
+    for (auto annotation : field.getProto().getAnnotations())
+    {
+        if (annotation.getId() == kFixedLengthAnnotationId && annotation.getValue().isUint32())
+        {
+            return annotation.getValue().getUint32();
+        }
+    }
+    return std::nullopt;
+}
+
 json describeSchema(capnp::Schema schema)
 {
     json fields = json::object();
@@ -410,6 +422,14 @@ json describeSchema(capnp::Schema schema)
             // standing between the PDM's per-output data and a plot.
             const auto element = type.asList().getElementType();
             entry["element_type"] = typeCategory(element);
+
+            // How many elements, when the schema says. A picker can then offer
+            // each one as its own bindable channel instead of guessing a count
+            // or peeking at live traffic -- see schemas/annotations.capnp.
+            if (const auto length = fixedListLength(field))
+            {
+                entry["fixed_length"] = *length;
+            }
 
             if (element.isEnum())
             {

@@ -194,6 +194,19 @@ private:
             const capnp::schema::Node::Reader node = found->second;
             const std::string name = toStd(nested.getName());
 
+            // An ANNOTATION is not a type. capnp spells annotations in
+            // lowerCamelCase by convention -- `fixedLength` -- and capnpc-c++
+            // generates no C++ type for one, so the uppercase rule below does
+            // not apply and enforcing it would make it impossible to declare an
+            // annotation anywhere in this tree.
+            //
+            // Skipped entirely rather than merely exempted from the name check:
+            // there is no struct or enum here to put in the registry either.
+            if (node.isAnnotation())
+            {
+                continue;
+            }
+
             // capnp requires type names to start with a capital letter and every
             // C++ keyword is lowercase, so the keyword mangling capnpc-c++ does
             // (appending '_') cannot trigger here. Check the invariant rather

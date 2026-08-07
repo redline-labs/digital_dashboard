@@ -78,6 +78,15 @@ struct BindingCandidate
         return isNumericCategory(type_category);
     }
 
+    // Which element of a list this candidate names, when the browser has
+    // expanded the list into per-element rows. -1 means the list itself.
+    //
+    // The browser can only offer those rows when the schema DECLARES the length
+    // -- see schemas/annotations.capnp -- because a capnp list carries its count
+    // per message. Without the declaration this stays -1 and the drop falls back
+    // to element 0 for the user to edit.
+    int element_index = -1;
+
     // A list cannot be read whole -- an expression has to name an element. So
     // the degenerate "just plot this field" expression is `field[0]` rather than
     // `field`, and a panel that used the bare name would bind something that
@@ -92,7 +101,11 @@ struct BindingCandidate
     // of thing the second implementation forgets.
     std::string defaultExpression() const
     {
-        return needsElementIndex() ? field_name + "[0]" : field_name;
+        if (!needsElementIndex())
+        {
+            return field_name;
+        }
+        return field_name + "[" + std::to_string(element_index < 0 ? 0 : element_index) + "]";
     }
 
     bool isTopicLevel() const { return field_name.empty(); }

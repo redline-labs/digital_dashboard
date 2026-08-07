@@ -1,5 +1,7 @@
 @0xa2b3c4d5e6f70123;
 
+using Annotations = import "annotations.capnp";
+
 # MoTeC PDM Generic Output schema (derived from PDM_Generic_Output.dbc)
 
 enum PdmOutputStatusEnum {
@@ -17,7 +19,7 @@ struct MotecPdmInputState {
   globalErrorFlag @3 : UInt8;             # PDM_Global_Error_Flag
   batteryVolts @4 : Float32;              # PDM_Battery_Voltage (V)
   internalTempC @5 : Float32;             # PDM_Internal_Temperature (C)
-  inputs @6 : List(Bool);                 # PDM_Input_1..23
+  inputs @6 : List(Bool) $Annotations.fixedLength(23);  # PDM_Input_1..23
 }
 
 struct MotecPdmInfo {
@@ -29,23 +31,23 @@ struct MotecPdmInfo {
 }
 
 struct MotecPdmOutputCurrent {
-  values @0 : List(Float32);              # 32 outputs (A)
+  values @0 : List(Float32) $Annotations.fixedLength(32);  # 32 outputs (A)
 }
 
 struct MotecPdmOutputLoad {
-  values @0 : List(Float32);              # 32 outputs (%)
+  values @0 : List(Float32) $Annotations.fixedLength(32);  # 32 outputs (%)
 }
 
 struct MotecPdmOutputVoltage {
-  values @0 : List(Float32);              # 32 outputs (V)
+  values @0 : List(Float32) $Annotations.fixedLength(32);  # 32 outputs (V)
 }
 
 struct MotecPdmOutputStatus {
-  values @0 : List(PdmOutputStatusEnum);  # 32 outputs
+  values @0 : List(PdmOutputStatusEnum) $Annotations.fixedLength(32);  # 32 outputs
 }
 
 struct MotecPdmInputVoltage {
-  values @0 : List(Float32);              # up to 23 inputs (V)
+  values @0 : List(Float32) $Annotations.fixedLength(23);  # up to 23 inputs (V)
 }
 
 

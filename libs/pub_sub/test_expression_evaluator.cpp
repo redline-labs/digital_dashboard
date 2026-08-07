@@ -18,6 +18,7 @@
 // and looked exactly like a genuine zero.
 
 #include "pub_sub/expression_evaluator.h"
+#include "pub_sub/capnp_json.h"
 #include "pub_sub/schema_registry.h"
 
 #include "carplay_session.capnp.h"
@@ -387,6 +388,51 @@ void testListNamesAreReported()
            "a list field is reported once, by its field name");
 }
 
+// The schema now DECLARES how many elements the PDM's lists carry, via the
+// $fixedLength annotation. That is what lets a picker offer each output as its
+// own channel without guessing a count or peeking at live traffic.
+//
+// This also pins the annotation id in capnp_json.h against the one in
+// schemas/annotations.capnp. They are two hand-written copies of the same
+// number, and a mismatch would not fail to build -- fixedListLength() would
+// simply never match, every list would silently lose its declared length, and
+// the browser would quietly stop offering element rows.
+void testFixedLengthIsDeclaredInTheSchema()
+{
+    const auto schema = pub_sub::get_schema(pub_sub::schema_type_t::MotecPdmOutputCurrent);
+    expect(schema.has_value(), "the PDM output-current schema is in the registry");
+    if (!schema)
+    {
+        return;
+    }
+
+    bool found = false;
+    for (auto field : schema->asStruct().getFields())
+    {
+        if (std::string(field.getProto().getName().cStr()) != "values")
+        {
+            continue;
+        }
+        found = true;
+        const auto length = pub_sub::fixedListLength(field);
+        expect(length.has_value(), "the annotation survives into the runtime schema");
+        expect(length.has_value() && *length == 32,
+               "and says 32, which is how many outputs a PDM has");
+    }
+    expect(found, "the field is still called 'values'");
+
+    // A field with no annotation must report nothing rather than a default.
+    const auto rpm = pub_sub::get_schema(pub_sub::schema_type_t::EngineRpm);
+    if (rpm)
+    {
+        for (auto field : rpm->asStruct().getFields())
+        {
+            expect(!pub_sub::fixedListLength(field).has_value(),
+                   "an unannotated field declares no length");
+        }
+    }
+}
+
 void testAnEmptyExpressionIsRejected()
 {
     auto eval = evaluatorFor("");
@@ -595,6 +641,7 @@ int main()
     testAnEmptyListProducesNoValue();
     testAListOfTextWouldBeRejected();
     testListNamesAreReported();
+    testFixedLengthIsDeclaredInTheSchema();
     testAnEmptyExpressionIsRejected();
     testAMalformedExpressionIsRejected();
 
