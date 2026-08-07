@@ -27,6 +27,10 @@ Registry make_default_registry(const DefaultRegistryOptions& options)
     {
         registry.add(make_virtual_backend());
     }
+    if (options.includeTrc)
+    {
+        registry.add(trc::make_trc_backend(options.trc));
+    }
 
     return registry;
 }

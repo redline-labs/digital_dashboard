@@ -15,11 +15,13 @@ add_subdirectory(cli)
 # Recording and replay (MCAP). After config_codec (reflected YAML) and schemas
 # (the schema descriptors it embeds).
 add_subdirectory(bag)
-add_subdirectory(pcan_trc_parser)
 add_subdirectory(canopen)
 add_subdirectory(can)
 add_subdirectory(can_pcan)
 add_subdirectory(can_socketcan)
+# Reads and writes PCAN .trc traces, and turns one into a replay channel. After
+# `can`: it uses can::dlc_to_length and implements can::Backend.
+add_subdirectory(can_trc)
 add_subdirectory(can_backends)
 
 # Wired CarPlay stack (ported from LIVI, GPL-3.0-or-later).

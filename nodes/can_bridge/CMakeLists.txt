@@ -5,12 +5,14 @@ project(can_bridge)
 add_executable(can_bridge
     main.cpp
     node_config.cpp
+    trc_recorder.cpp
 )
 
 target_link_libraries(can_bridge
     PRIVATE
         can
         can_backends
+        can_trc
         zenoh_pub_sub
         spdlog::spdlog
         cxxopts::cxxopts
@@ -35,3 +37,22 @@ target_link_libraries(can_bridge_test_config
 )
 
 add_project_test(TARGET can_bridge_test_config LABELS can unit)
+
+# The recording tap. What is pinned here is that both directions land in the
+# file with the right direction and in the recorded order, that a full queue
+# drops and counts rather than blocking the thread that feeds it, and that
+# hardware timestamps -- whose epoch differs per backend -- still produce
+# sensible offsets.
+add_executable(can_bridge_test_recorder
+    test_trc_recorder.cpp
+    trc_recorder.cpp
+)
+
+target_link_libraries(can_bridge_test_recorder
+    PRIVATE
+        can_trc
+        helpers
+        spdlog::spdlog
+)
+
+add_project_test(TARGET can_bridge_test_recorder LABELS can_bridge unit)

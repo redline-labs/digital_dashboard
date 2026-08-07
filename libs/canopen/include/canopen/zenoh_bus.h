@@ -3,15 +3,14 @@
 // A canopen::Bus over zenoh: frames out on `vehicle/can0/tx`, frames in on
 // `vehicle/can0/rx`.
 //
-// Nothing in this repository terminates the tx key yet. Every CAN node here is
-// receive-only, fed by `can_replay` from logs, and a bridge that puts frames on
-// a real bus -- most likely a MoTeC UTC gateway node -- is still to be written.
-// This class is the half that does not depend on which bridge that turns out to
-// be: it is what the reconfiguration tool selects with `--transport zenoh`, and
-// on the day the bridge exists it should work without changes here.
+// `nodes/can_bridge` is what terminates the tx key: it opens a real adapter --
+// or a recorded trace, via `trc:` -- and puts whatever arrives on that topic
+// onto the bus. This class is the half that does not depend on which adapter
+// that turns out to be: it is what the reconfiguration tool selects with
+// `--transport zenoh`.
 //
-// Until then, treat it as untested against hardware. The stub transport is the
-// one with tests behind it.
+// Still untested against hardware. The stub transport is the one with tests
+// behind it.
 //
 // Threading: zenoh delivers on its own thread, and the CANopen protocol code is
 // single-threaded and synchronous. Received frames are therefore queued and

@@ -83,6 +83,24 @@ void read_string(const YAML::Node& parent, const char* key, std::string& out)
     }
 }
 
+void read_double(const YAML::Node& parent, const char* key, double& out, Context& context,
+                 const std::string& where)
+{
+    const YAML::Node node = parent[key];
+    if (!node)
+    {
+        return;
+    }
+    try
+    {
+        out = node.as<double>();
+    }
+    catch (const YAML::Exception&)
+    {
+        context.fail(fmt::format("{}.{}: '{}' is not a number", where, key, node.Scalar()));
+    }
+}
+
 // An unrecognised key is almost always a typo, and a typo that is ignored looks
 // exactly like a setting that does not work.
 void reject_unknown_keys(const YAML::Node& node, const std::vector<std::string>& known,
@@ -125,8 +143,10 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         return false;
     }
 
-    reject_unknown_keys(root, { "channels", "status_key", "set_bitrate_key", "status_interval_ms",
-                                "pcan_detach_kernel_driver", "continue_on_channel_error" },
+    reject_unknown_keys(root,
+                        { "channels", "status_key", "set_bitrate_key", "status_interval_ms",
+                          "pcan_detach_kernel_driver", "continue_on_channel_error",
+                          "trc_replay_speed", "trc_replay_paced", "trc_replay_loop" },
                         context, "(top level)");
 
     read_string(root, "status_key", out.statusKey);
@@ -136,6 +156,16 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
               "(top level)");
     read_bool(root, "continue_on_channel_error", out.continueOnChannelError, context,
               "(top level)");
+    read_double(root, "trc_replay_speed", out.trcReplaySpeed, context, "(top level)");
+    read_bool(root, "trc_replay_paced", out.trcReplayPaced, context, "(top level)");
+    read_bool(root, "trc_replay_loop", out.trcReplayLoop, context, "(top level)");
+    if (out.trcReplaySpeed <= 0.0)
+    {
+        context.fail(fmt::format(
+            "(top level).trc_replay_speed is {}; a replay rate has to be positive. Use "
+            "trc_replay_paced: false to read as fast as the file allows",
+            out.trcReplaySpeed));
+    }
 
     const YAML::Node channels = root["channels"];
     if (!channels)
@@ -152,6 +182,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     std::set<std::string> names;
     std::set<std::string> devices;
     std::set<std::string> rxKeys;
+    std::set<std::string> recordPaths;
 
     for (size_t i = 0; i < channels.size(); ++i)
     {
@@ -167,7 +198,8 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         reject_unknown_keys(node,
                             { "name", "device", "bitrate", "data_bitrate", "sample_point_permille",
                               "data_sample_point_permille", "listen_only", "rx_key", "tx_key",
-                              "rx_queue_depth", "publish_rx", "accept_tx" },
+                              "rx_queue_depth", "publish_rx", "accept_tx", "record_trc",
+                              "record_trc_bus" },
                             context, where);
 
         ChannelConfig channel;
@@ -184,6 +216,21 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         read_uint(node, "rx_queue_depth", channel.rxQueueDepth, context, where);
         read_bool(node, "publish_rx", channel.publishRx, context, where);
         read_bool(node, "accept_tx", channel.acceptTx, context, where);
+        read_string(node, "record_trc", channel.recordTrcPath);
+        {
+            uint32_t recordBus = channel.recordTrcBus;
+            read_uint(node, "record_trc_bus", recordBus, context, where);
+            if (recordBus < 1 || recordBus > 16)
+            {
+                context.fail(fmt::format(
+                    "{}.record_trc_bus is {}; a trace's Bus column holds 1 to 16", where,
+                    recordBus));
+            }
+            else
+            {
+                channel.recordTrcBus = static_cast<uint8_t>(recordBus);
+            }
+        }
 
         if (channel.name.empty())
         {
@@ -245,6 +292,15 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         {
             context.fail(fmt::format("{}.rx_key '{}' is published by more than one channel", where,
                                      channel.rxKey));
+        }
+        // Two recorders on one path would interleave their records into a file
+        // whose offsets no longer describe either bus. Recording two buses into
+        // one trace is a thing the format supports -- via the Bus column -- but
+        // it needs one writer, not two.
+        if (!channel.recordTrcPath.empty() && !recordPaths.insert(channel.recordTrcPath).second)
+        {
+            context.fail(fmt::format("{}.record_trc '{}' is written by more than one channel",
+                                     where, channel.recordTrcPath));
         }
 
         out.channels.push_back(std::move(channel));

@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Replaying a recorded PCAN trace onto the bus, with no hardware.
+#
+#     ./build/nodes/can_bridge/can_bridge --config configs/can_bridge/replay.yaml
+#
+# This replaces the `can_replay` node. A trace is just another kind of channel:
+# `trc:<path>` opens one and hands out the frames it recorded, spaced the way
+# they were recorded, and everything downstream -- the topics, the status
+# service, the decoder nodes -- sees a bus.
+#
+# Pacing, looping and the speed multiplier are at the bottom of this file
+# rather than on the channel. They belong to the backend: one TRC backend
+# serves every trc: channel in the process, the same way one set of PCAN
+# options serves every PCAN channel.
+
+channels:
+  - name: can0
+
+    # The trace to replay. A relative path is relative to where the node was
+    # started. Both of these ship in the repository:
+    #
+    #   trc:mock_data/data/pdm32_log.trc      a MoTeC PDM32, 24156 frames
+    #   trc:mock_data/data/racegrade_tc8.trc  a Racegrade TC8, 6600 frames
+    #
+    # A trace with several buses in it splits by its Bus column, one channel
+    # each, exactly the way a two-channel dongle does:
+    #
+    #   device: "trc:/logs/vehicle.trc/1"
+    #   device: "trc:/logs/vehicle.trc/2"
+    #
+    # The suffix is only read as a bus number when it is entirely digits, so a
+    # path keeps its slashes and needs no escaping.
+    device: "trc:mock_data/data/pdm32_log.trc"
+
+    # A file has no bit rate. This is required anyway -- a channel without one
+    # is almost always a mistake -- and the value is remembered so that a
+    # recorder downstream can put it in the header it writes.
+    bitrate: 500000
+
+    # Nothing can be transmitted to a file, so there is no reason to subscribe
+    # to a tx topic. Frames published there would be counted as dropped.
+    accept_tx: false
+
+    # Frames land on vehicle/can0/rx, which is where every decoder node in this
+    # tree already looks.
+    # rx_key: "vehicle/can0/rx"
+
+status_key: "vehicle/can/status"
+set_bitrate_key: "vehicle/can/set_bitrate"
+status_interval_ms: 1000
+
+# How every trc: channel replays.
+#
+# Multiplies the recorded rate: 2.0 is twice as fast, 0.5 is half.
+trc_replay_speed: 1.0
+
+# Off replays as fast as the file can be read, ignoring the recorded gaps
+# entirely. That is what an import wants, and what a test wants; it is not what
+# watching a dashboard wants, because every frame arrives at once.
+trc_replay_paced: true
+
+# Start again at the end rather than going quiet. Timestamps keep increasing
+# across the seam, so a consumer that assumes time moves forwards -- and
+# several in this tree do -- is not caught out by the wrap.
+trc_replay_loop: false

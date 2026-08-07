@@ -197,7 +197,8 @@ scope/              the time-series visualizer app
   panels/<name>/    one panel type per directory, each with its own config.h
 libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
-                    canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay)
+                    canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),
+                    can + can_pcan/can_socketcan/can_trc/can_backends (CAN channels)
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus the two tools: inspect (look at the bus) and bag
                     (record and replay it -- see docs/bag.md)

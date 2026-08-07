@@ -85,6 +85,17 @@ struct CanBridgeChannelStatus {
   busOffCount @15 :UInt64;
   rxErrorCounter @16 :UInt8;
   txErrorCounter @17 :UInt8;
+
+  # Where this channel is being written as a PCAN .trc trace, empty when it is
+  # not being recorded.
+  recordPath @18 :Text;
+
+  # Records written to that file, and records the recorder had to drop because
+  # its queue filled -- a disk that cannot keep up with the bus. Same reasoning
+  # as rxDropped above: a trace with a hole is worth having as long as you know
+  # the hole is there, and worthless if you do not.
+  recordedFrames @19 :UInt64;
+  recordDropped @20 :UInt64;
 }
 
 # What every configured channel is doing. Published on a change and on a timer,

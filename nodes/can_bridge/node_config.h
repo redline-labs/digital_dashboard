@@ -67,6 +67,19 @@ struct ChannelConfig
     // Accept frames from `txKey` and put them on the bus. Off is a stronger
     // statement than listenOnly: nothing can even ask.
     bool acceptTx { true };
+
+    // Write everything seen on this channel -- received and transmitted -- to a
+    // PCAN .trc file at this path, readable by PCAN-Explorer and PCAN-View.
+    // Empty records nothing.
+    //
+    // This is a tap on the channel rather than a `trc:` device because a
+    // send() only ever sees what this process transmits, and a trace is worth
+    // keeping precisely because it has both directions in it.
+    std::string recordTrcPath;
+
+    // What goes in the trace's Bus column, so several channels recorded from
+    // one bridge stay distinguishable in the files they produce.
+    uint8_t recordTrcBus { 1 };
 };
 
 struct NodeConfig
@@ -89,6 +102,22 @@ struct NodeConfig
     // Carry on when a channel cannot be opened. On by default: with two buses
     // configured, one unplugged adapter should not take the other down.
     bool continueOnChannelError { true };
+
+    // How `trc:` channels replay a recorded trace.
+    //
+    // Node-level rather than per-channel because the backend is: one TRC
+    // backend serves every trc: channel in the process, the same way one
+    // PcanOptions serves every PCAN channel. Two traces at two different
+    // speeds would need the backend split, and nothing has wanted that.
+
+    // Multiplies the recorded rate. 2.0 is twice as fast, 0.5 is half.
+    double trcReplaySpeed { 1.0 };
+    // Play frames at the intervals they were recorded at. Off replays as fast
+    // as the file can be read, which is what an import wants and what a test
+    // wants; it is not what watching a dashboard wants.
+    bool trcReplayPaced { true };
+    // Start again at the end rather than going quiet.
+    bool trcReplayLoop { false };
 };
 
 // Reads the file. Returns false and logs every problem it found rather than

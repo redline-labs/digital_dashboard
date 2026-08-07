@@ -206,6 +206,81 @@ channels:
 )",
                  config),
           "unless neither of them publishes");
+
+    // Two recorders on one path would interleave their records into a file
+    // whose offsets describe neither bus. Recording two buses into one trace is
+    // something the format supports, via its Bus column, but it needs one
+    // writer rather than two.
+    config = {};
+    check(!parses(R"(
+channels:
+  - name: a
+    device: "virtual:a"
+    record_trc: "/tmp/shared.trc"
+  - name: b
+    device: "virtual:b"
+    record_trc: "/tmp/shared.trc"
+)",
+                  config),
+          "two channels recording to the same trace file are refused");
+}
+
+void test_trc_options()
+{
+    can_bridge::NodeConfig config;
+
+    check(parses(R"(
+channels:
+  - name: can0
+    device: "trc:/logs/run.trc"
+    accept_tx: false
+)",
+                 config),
+          "a recorded trace is a device like any other");
+    check(config.channels.size() == 1 && config.channels[0].device == "trc:/logs/run.trc",
+          "and the path keeps its slashes");
+    check(config.channels.size() == 1 && config.channels[0].recordTrcPath.empty(),
+          "recording is off unless asked for");
+    check(config.channels.size() == 1 && config.channels[0].recordTrcBus == 1,
+          "and defaults to bus 1 when it is");
+
+    config = {};
+    check(parses(R"(
+channels:
+  - name: can0
+    device: "virtual:bench"
+    record_trc: "/tmp/can0.trc"
+    record_trc_bus: 4
+)",
+                 config),
+          "record_trc and record_trc_bus parse");
+    check(config.channels.size() == 1 && config.channels[0].recordTrcPath == "/tmp/can0.trc"
+              && config.channels[0].recordTrcBus == 4,
+          "and land on the channel");
+
+    // The Bus column holds 1 to 16. A 0 or a 17 would be written into a file
+    // no PCAN tool would read back the same way.
+    config = {};
+    check(!parses(R"(
+channels:
+  - name: can0
+    device: "virtual:bench"
+    record_trc: "/tmp/can0.trc"
+    record_trc_bus: 0
+)",
+                  config),
+          "record_trc_bus 0 is refused; a trace's Bus column starts at 1");
+
+    config = {};
+    check(!parses(R"(
+channels:
+  - name: can0
+    device: "virtual:bench"
+    record_trc: "/tmp/can0.trc"
+    record_trc_bus: 17
+)",
+                  config),
+          "and 17 is past the end of it");
 }
 
 void test_bad_values()
@@ -308,6 +383,7 @@ int main()
     test_fd_config();
     test_channels_are_required();
     test_duplicate_detection();
+    test_trc_options();
     test_bad_values();
     test_top_level_settings();
 

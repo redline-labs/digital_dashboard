@@ -26,8 +26,11 @@ channels:
     #   pcan:0/1           that same adapter, channel 1
     #   pcan:LSN00123/1    the adapter with that serial, channel 1
     #   virtual:bench      an in-process loopback bus, no hardware
+    #   trc:/logs/run.trc  a recorded PCAN trace, replayed at its own timing
     #
-    # `--list` prints the ids of everything attached, in this exact form.
+    # `--list` prints the ids of everything attached, in this exact form --
+    # except virtual: and trc:, which exist only once something names one.
+    # See configs/can_bridge/replay.yaml for the trace case.
     device: "virtual:bench"
 
     # Arbitration-phase bit rate. Every node on a bus must agree on this.
@@ -68,6 +71,29 @@ channels:
     # nothing can even ask this node to transmit.
     # publish_rx: true
     # accept_tx: true
+
+    # Write everything this channel sees -- received *and* transmitted -- to a
+    # PCAN .trc file, which PCAN-Explorer and PCAN-View open directly. The file
+    # is truncated at startup, so move the old one first if you want to keep it.
+    #
+    # Both directions is the point, and is why this is a key here rather than a
+    # `trc:` device: a device only ever sees what this node transmits, and a
+    # trace of a bus you are observing has to contain what you observed.
+    #
+    # The writer runs on its own thread, so neither the receive loop nor a zenoh
+    # callback ever waits on the disk. If it cannot keep up it drops frames and
+    # counts them on the status topic under `recordDropped` -- a trace with a
+    # hole is worth having as long as you know the hole is there.
+    #
+    # record_trc: "/tmp/can0.trc"
+
+    # What goes in the trace's Bus column, so two channels recorded from one
+    # bridge stay apart in the files they produce. 1 to 16.
+    # record_trc_bus: 1
+
+    # Recording a bus you are only listening to is the common case, and works
+    # with listen_only: true above -- nothing about recording puts a frame on
+    # the wire.
 
   # Two channels on one dongle. Note both entries name the same adapter and
   # differ only in the channel suffix; the node opens the USB handle once and

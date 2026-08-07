@@ -1,9 +1,13 @@
 # bag — recording and replaying the bus
 
 `bag` captures everything on the zenoh bus into a seekable, compressed file and
-plays it back later with its original timing. It is the counterpart to
-`nodes/can_replay`, which could only ever replay a PCAN text file it had no way
-of producing.
+plays it back later with its original timing.
+
+It records the *bus*, which is the difference between it and `can_bridge`'s
+`record_trc:`. A bag holds every topic in whatever schema each carries; a PCAN
+`.trc` holds the frames of one CAN channel, in a text format PCAN-Explorer and
+PCAN-View can open. Reach for a bag to replay a session into the dashboard, and
+for a trace to hand a bus to someone else's tooling.
 
 ```bash
 bag record drives/2026-08-06          # Ctrl-C to stop

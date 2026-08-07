@@ -11,6 +11,7 @@
 
 #include "can/backend.h"
 #include "can_pcan/pcan_backend.h"
+#include "can_trc/trc_backend.h"
 
 namespace can
 {
@@ -18,11 +19,13 @@ namespace can
 struct DefaultRegistryOptions
 {
     pcan::PcanOptions pcan;
+    trc::ReplayOptions trc;
     // Leave a backend out entirely. Useful for a test that wants deterministic
     // behaviour on a machine that happens to have a dongle plugged in.
     bool includePcan { true };
     bool includeSocketCan { true };
     bool includeVirtual { true };
+    bool includeTrc { true };
 };
 
 Registry make_default_registry(const DefaultRegistryOptions& options = {});

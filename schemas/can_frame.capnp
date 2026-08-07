@@ -4,8 +4,8 @@
 #
 # Fields 3 and up were added when real adapters arrived. Cap'n Proto field
 # additions are backward compatible in both directions, so a publisher that
-# predates them (can_replay, the CANopen nodes) leaves them at their defaults
-# and a subscriber that predates them ignores them. Nothing else had to change.
+# predates them (the CANopen nodes) leaves them at their defaults and a
+# subscriber that predates them ignores them. Nothing else had to change.
 #
 # What they are for: without `extended` an 11-bit identifier 0x123 and a 29-bit
 # identifier 0x123 are the same message here and different messages on the bus,

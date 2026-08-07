@@ -3,10 +3,16 @@
 // can_bridge -- CAN hardware on one side, zenoh topics on the other.
 //
 // This is the node the repository did not have: every other CAN node here is
-// receive-only and fed by `can_replay` from a log file, and nothing terminated
-// `vehicle/can0/tx` at all. With this running, anything that publishes to a tx
-// key reaches the wire, which is what the CANopen reconfiguration tool and
-// anything else that has to talk rather than listen has been waiting for.
+// receive-only, and nothing terminated `vehicle/can0/tx` at all. With this
+// running, anything that publishes to a tx key reaches the wire, which is what
+// the CANopen reconfiguration tool and anything else that has to talk rather
+// than listen has been waiting for.
+//
+// A log file is a bus here too. `device: "trc:run.trc"` opens a recorded PCAN
+// trace as a channel and replays it at its recorded timing, which is what the
+// separate `can_replay` node used to do -- badly, since its parser discarded
+// every timestamp it read. `record_trc:` on any channel is the same thing in
+// reverse, writing a trace PCAN-Explorer can open.
 //
 // Shape: one thread per channel doing a blocking receive and publishing what it
 // gets; zenoh subscriber callbacks calling send() directly. That is why
@@ -18,6 +24,7 @@
 // that exits on the first problem is a bridge that has to be babysat.
 
 #include "node_config.h"
+#include "trc_recorder.h"
 
 #include "can/backend.h"
 #include "can/channel.h"
@@ -77,6 +84,33 @@ public:
         {
             rxPublisher_ = std::make_unique<pub_sub::ZenohPublisher<::CanFrame>>(config_.rxKey);
         }
+
+        if (!config_.recordTrcPath.empty())
+        {
+            can::trc::BusInfo busInfo;
+            busInfo.bus = config_.recordTrcBus;
+            busInfo.name = config_.name;
+            busInfo.connection = config_.device;
+            busInfo.bitrateBps = config_.bitrateBps;
+            busInfo.dataBitrateBps = config_.dataBitrateBps;
+
+            auto recorder = can_bridge::TrcRecorder::create(config_.recordTrcPath, config_.recordTrcBus,
+                                                busInfo);
+            if (!recorder.has_value())
+            {
+                // Not fatal. A bridge that refused to carry traffic because a
+                // log file could not be opened would be a bridge taken down by
+                // a full disk.
+                SPDLOG_ERROR("[{}] cannot record to '{}': {}", config_.name,
+                             config_.recordTrcPath, recorder.error().message);
+            }
+            else
+            {
+                recorder_ = std::move(*recorder);
+                SPDLOG_INFO("[{}] recording to '{}' as bus {}", config_.name,
+                            config_.recordTrcPath, config_.recordTrcBus);
+            }
+        }
     }
 
     ~BridgedChannel() { stop(); }
@@ -95,7 +129,11 @@ public:
                 config_.txKey, [this](::CanFrame::Reader message) { transmit(message); });
         }
 
-        if (config_.publishRx)
+        // Recording needs the receive loop just as much as publishing does, so
+        // a channel with publish_rx off still pumps when it is being recorded.
+        // Without this a `publish_rx: false` channel would produce a trace
+        // containing only the frames the node transmitted.
+        if (config_.publishRx || recorder_)
         {
             pumping_ = true;
             pump_ = std::thread([this] { pump(); });
@@ -110,6 +148,10 @@ public:
             pump_.join();
         }
         txSubscriber_.reset();
+        // After both producers are gone, so the recorder's destructor drains a
+        // queue nothing is still pushing to and the trace ends where the
+        // traffic did.
+        recorder_.reset();
     }
 
     // What this channel is doing, for the status topic.
@@ -136,6 +178,13 @@ public:
         builder.setBusOffCount(statistics.busOffCount);
         builder.setRxErrorCounter(statistics.rxErrorCounter);
         builder.setTxErrorCounter(statistics.txErrorCounter);
+
+        if (recorder_)
+        {
+            builder.setRecordPath(recorder_->path());
+            builder.setRecordedFrames(recorder_->recorded());
+            builder.setRecordDropped(recorder_->dropped());
+        }
 
         std::lock_guard<std::mutex> lock(errorMutex_);
         builder.setError(lastError_);
@@ -165,6 +214,13 @@ private:
         frame.len = static_cast<uint8_t>(n);
 
         auto result = channel_->send(frame);
+        if (result.has_value() && recorder_)
+        {
+            // Only what actually reached the bus. Recording a frame the
+            // adapter refused would put a message in the trace that was never
+            // on the wire, which is the one thing a trace must not do.
+            recorder_->record_tx(frame);
+        }
         if (!result.has_value())
         {
             note_error(can::to_string(result.error()));
@@ -195,7 +251,17 @@ private:
 
             for (size_t i = 0; i < *count; ++i)
             {
-                publish(batch[i]);
+                // Recorded before published, so the offset written to the trace
+                // is as close to the wire as this process can make it -- a
+                // zenoh put is not slow, but it is not free either.
+                if (recorder_)
+                {
+                    recorder_->record_rx(batch[i]);
+                }
+                if (rxPublisher_)
+                {
+                    publish(batch[i]);
+                }
             }
         }
     }
@@ -235,6 +301,7 @@ private:
 
     std::unique_ptr<pub_sub::ZenohPublisher<::CanFrame>> rxPublisher_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<::CanFrame>> txSubscriber_;
+    std::unique_ptr<can_bridge::TrcRecorder> recorder_;
 
     std::thread pump_;
     std::atomic<bool> pumping_ { false };
@@ -355,14 +422,24 @@ bool call_set_bitrate(const std::string& key, const BitrateRequest& request)
     return answered && ok;
 }
 
+// Two backends never appear here, and cannot: `virtual:` and `trc:` exist only
+// once something names one, so there is nothing to enumerate. Saying so is more
+// useful than an empty list, which reads as "this machine cannot do CAN".
+void print_no_hardware_options()
+{
+    SPDLOG_INFO("a virtual bus is always available as 'virtual:<name>' -- it needs no "
+                "hardware and is how this node is exercised without an adapter");
+    SPDLOG_INFO("so is a recorded trace, as 'trc:<path.trc>[/<bus>]' -- it replays a PCAN "
+                ".trc file at its recorded timing; see configs/can_bridge/replay.yaml");
+}
+
 void print_channel_list(const can::Registry& registry)
 {
     auto found = registry.enumerate();
     if (found.empty())
     {
         SPDLOG_INFO("no CAN channels found");
-        SPDLOG_INFO("a virtual bus is always available as 'virtual:<name>' -- it needs no "
-                    "hardware and is how this node is exercised without an adapter");
+        print_no_hardware_options();
         return;
     }
 
@@ -380,6 +457,7 @@ void print_channel_list(const can::Registry& registry)
                         info.unavailableReason);
         }
     }
+    print_no_hardware_options();
 }
 
 } // namespace
@@ -469,6 +547,9 @@ int main(int argc, char** argv)
 
     can::DefaultRegistryOptions registryOptions;
     registryOptions.pcan.detachKernelDriver = config.pcanDetachKernelDriver;
+    registryOptions.trc.speed = config.trcReplaySpeed;
+    registryOptions.trc.paced = config.trcReplayPaced;
+    registryOptions.trc.loop = config.trcReplayLoop;
     auto registry = can::make_default_registry(registryOptions);
 
     // --- open what was asked for --------------------------------------------
