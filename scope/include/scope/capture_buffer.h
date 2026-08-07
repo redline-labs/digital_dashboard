@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 namespace scope
 {
@@ -67,6 +68,22 @@ class CaptureBuffer
     // [first, last] log_time of what is retained, in nanoseconds since the UNIX
     // epoch. {0, 0} when empty.
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const;
+
+    // How many retained messages fall in each of `buckets` equal slices of
+    // [t0_ns, t1_ns]. `out` is resized and fully overwritten, so a caller can
+    // keep one vector across frames.
+    //
+    // NOT PER FRAME. It is O(retained) under the same mutex the zenoh RX thread
+    // needs to push -- half an hour of a busy bus is millions of entries, and
+    // holding that lock at the render rate would stall the producer rather than
+    // just cost the consumer. The overview strip recomputes on a throttle and
+    // draws the last answer in between.
+    //
+    // Bucket i covers [t0 + i*dt, t0 + (i+1)*dt), with the last closed at the
+    // top -- the same convention decimateMinMax uses, so the strip and the plot
+    // never disagree about which side of a boundary a message fell on.
+    void density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                 std::vector<std::uint32_t>& out) const;
 
     // Bumped on every push and every eviction, so a reader can tell whether the
     // window it is showing still describes what is here.

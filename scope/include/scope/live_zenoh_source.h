@@ -67,6 +67,19 @@ class LiveZenohSource : public DataSource
     // test that cannot see it cannot check that.
     std::size_t subscriptionCount() const;
 
+    // The wall clock at construction, in nanoseconds since the UNIX epoch,
+    // sampled from the same instant as the steady epoch that now() counts from.
+    //
+    // This is the ONLY thing that can put the capture's log_times -- which are
+    // UNIX nanoseconds -- onto this source's axis, and it is what lets the
+    // overview strip draw a live histogram at all.
+    //
+    // Sampled ONCE and never recomputed, deliberately. Re-reading the wall
+    // clock later would slide the strip's background under a plot whose samples
+    // never moved the first time NTP disciplined the machine -- cosmetic, but it
+    // would read as data drifting, which is the worst kind of cosmetic bug.
+    std::uint64_t epochWallNanos() const;
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

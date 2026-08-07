@@ -21,8 +21,10 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -115,6 +117,116 @@ void testRangeQuery()
     buffer.forEach(kBase + 1'000'000'000ull, std::numeric_limits<std::uint64_t>::max(),
                    [&past_end](const bag::QueuedMessage&) { ++past_end; });
     expect(past_end == 0, "a range past the end returns nothing, not everything");
+}
+
+// ------------------------------------------------------------------- density
+//
+// Checked against a brute-force reference over random data, for the same reason
+// scope_test_decimate is: every way a histogram can be wrong looks like DATA. A
+// bucket that collects its neighbour's messages draws a plausible shape, and the
+// only symptom is that the busy part of a recording is in the wrong place --
+// which is exactly what someone is using the strip to find.
+
+void testDensityAgainstBruteForce()
+{
+    scope::CaptureBuffer buffer(0, 0.0);
+
+    std::mt19937 rng(20260807);
+    std::uniform_int_distribution<std::uint64_t> offset(0, 9'999'999'999ull);
+
+    std::vector<std::uint64_t> times;
+    for (int i = 0; i < 500; ++i)
+    {
+        times.push_back(kBase + offset(rng));
+    }
+    // The buffer assumes arrival order, and so does the early exit it shares
+    // with forEach().
+    std::sort(times.begin(), times.end());
+    for (std::size_t i = 0; i < times.size(); ++i)
+    {
+        buffer.push(message(static_cast<int>(i), 16, times[i]));
+    }
+
+    for (const std::size_t buckets : {1u, 7u, 64u, 1000u})
+    {
+        const std::uint64_t t0 = kBase;
+        const std::uint64_t t1 = kBase + 10'000'000'000ull;
+
+        std::vector<std::uint32_t> got;
+        buffer.density(t0, t1, buckets, got);
+        expect(got.size() == buckets, "density fills exactly `buckets` entries");
+
+        std::vector<std::uint32_t> want(buckets, 0);
+        for (const std::uint64_t t : times)
+        {
+            if (t < t0 || t > t1)
+            {
+                continue;
+            }
+            std::size_t b = static_cast<std::size_t>(((t - t0) * buckets) / (t1 - t0));
+            b = std::min(b, buckets - 1);
+            ++want[b];
+        }
+        expect(got == want,
+               "density matches a brute-force count over " + std::to_string(buckets) + " buckets");
+
+        std::uint64_t total = 0;
+        for (const std::uint32_t c : got)
+        {
+            total += c;
+        }
+        expect(total == times.size(), "and every message landed in exactly one bucket");
+    }
+}
+
+void testDensityBoundaryConvention()
+{
+    scope::CaptureBuffer buffer(0, 0.0);
+
+    // One message exactly on each edge, and one exactly on an internal boundary.
+    buffer.push(message(0, 16, kBase));
+    buffer.push(message(1, 16, kBase + 5'000'000ull));
+    buffer.push(message(2, 16, kBase + 10'000'000ull));
+
+    std::vector<std::uint32_t> got;
+    buffer.density(kBase, kBase + 10'000'000ull, 2, got);
+
+    // Bucket i covers [t0 + i*dt, t0 + (i+1)*dt), with the LAST closed at the
+    // top -- the same convention decimateMinMax uses, so the strip and the plot
+    // never disagree about which side of a boundary a message fell on.
+    // Bucket 0 gets only t0; bucket 1 gets the message ON the boundary and the
+    // one on t1.
+    expect(got.size() == 2 && got[0] == 1 && got[1] == 2,
+           "an internal boundary belongs to the later bucket, and t1 to the last one");
+}
+
+void testDensityDegenerateArguments()
+{
+    scope::CaptureBuffer buffer(0, 0.0);
+    buffer.push(message(0, 16, kBase));
+
+    std::vector<std::uint32_t> got{1, 2, 3};
+
+    buffer.density(kBase, kBase, 4, got);
+    expect(got.size() == 4 && got[0] == 0,
+           "a zero-width range answers zeroes rather than dividing by it");
+
+    buffer.density(kBase + 100, kBase, 4, got);
+    expect(got.size() == 4, "an inverted range is survivable");
+
+    buffer.density(kBase, kBase + 1000, 0, got);
+    expect(got.empty(), "zero buckets asks for nothing and gets nothing");
+}
+
+void testDensityOnAnEmptyBuffer()
+{
+    scope::CaptureBuffer buffer(0, 0.0);
+    std::vector<std::uint32_t> got;
+    buffer.density(kBase, kBase + 1'000'000ull, 8, got);
+
+    expect(got.size() == 8, "an empty buffer still fills the bucket vector");
+    expect(std::all_of(got.begin(), got.end(), [](std::uint32_t c) { return c == 0; }),
+           "with zeroes, so the strip draws a flat band rather than nothing at all");
 }
 
 // -------------------------------------------------------------- byte eviction
@@ -365,6 +477,11 @@ int main()
 
     testRetainsInOrder();
     testRangeQuery();
+
+    testDensityAgainstBruteForce();
+    testDensityBoundaryConvention();
+    testDensityDegenerateArguments();
+    testDensityOnAnEmptyBuffer();
 
     testEvictsByBytes();
     testAnOversizedMessageIsSurvivable();

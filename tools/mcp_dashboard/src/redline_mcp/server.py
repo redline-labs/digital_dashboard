@@ -1161,12 +1161,57 @@ def scope_time_base(
     clear_cursor: Annotated[
         bool, Field(default=False, description="Remove the shared cursor.")
     ] = False,
+    view: Annotated[
+        list[float] | None,
+        Field(default=None, description="[begin, end]: place the window outright."),
+    ] = None,
+    pan: Annotated[
+        float | None, Field(default=None, description="Slide the window by this many seconds.")
+    ] = None,
+    zoom: Annotated[
+        float | None,
+        Field(default=None, description="Multiply the span. Below 1 zooms in."),
+    ] = None,
+    zoom_anchor: Annotated[
+        float | None,
+        Field(default=None, description="Instant to hold fixed while zooming. Centre by default."),
+    ] = None,
+    fit: Annotated[
+        bool, Field(default=False, description="Show everything available.")
+    ] = False,
+    following: Annotated[
+        bool | None,
+        Field(default=None, description="Whether the right edge tracks the source."),
+    ] = None,
+    seek: Annotated[
+        float | None,
+        Field(default=None, description="Move the playhead. Seekable sources only."),
+    ] = None,
+    playing: Annotated[
+        bool | None, Field(default=None, description="Start/stop playback. Seekable only.")
+    ] = None,
+    rate: Annotated[
+        float | None, Field(default=None, description="Playback speed multiplier, 0.05-50.")
+    ] = None,
 ) -> str:
     """Read or change the shared time base, and report what the source can do.
 
     Pausing freezes the view, not the data: buffers keep filling, so unpausing
     shows what arrived meanwhile rather than a gap. The cursor is shared across
     panels, so every panel reads out the same instant.
+
+    NAME ONLY ONE of view/pan/zoom/fit/seek per call. They all move the window,
+    so composing two produces a result that cannot be read back from the
+    request; the call is rejected rather than guessed at.
+
+    Any of them turns `following` off -- you cannot hold a span still while it
+    is pinned to now -- and on a seekable source stops playback. Pass
+    `following=True` in the same call to put it back, or `fit=True`, which on a
+    live source lands against the live edge and resumes following by itself.
+
+    On a recorded source THE VIEW'S RIGHT EDGE IS THE PLAYHEAD: moving the view
+    seeks, which is what refills the panels' buffers. `sample_stats` is how you
+    check that actually happened.
 
     Called with no arguments this just reports the current state.
     """
@@ -1181,8 +1226,95 @@ def scope_time_base(
         params["cursor"] = None
     elif cursor is not None:
         params["cursor"] = cursor
+    if view is not None:
+        params["view"] = view
+    if pan is not None:
+        params["pan"] = pan
+    if zoom is not None:
+        params["zoom"] = (
+            {"factor": zoom, "anchor": zoom_anchor} if zoom_anchor is not None else zoom
+        )
+    if fit:
+        params["fit"] = True
+    if following is not None:
+        params["following"] = following
+    if seek is not None:
+        params["seek"] = seek
+    if playing is not None:
+        params["playing"] = playing
+    if rate is not None:
+        params["rate"] = rate
     try:
         return json.dumps(_call(SCOPE_APP, "scope.time_base", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_density(
+    buckets: Annotated[
+        int, Field(default=200, description="How many time slices to count over, 1-4096.")
+    ] = 200,
+) -> str:
+    """Count messages per time slice across everything the view can reach.
+
+    This is what the overview strip draws behind the window handle, as numbers.
+    A screenshot cannot tell you whether that background is the real shape of
+    the recording or an artefact -- the same reason `scope_sample_stats` beats a
+    picture. The bucket sum against `scope.capture`'s `messages` is the
+    assertion worth making.
+
+    `exact` is False when the source declined to answer cheaply rather than
+    slowly: a bag counts from its part index, which knows how many messages a
+    part holds but not where inside it they fell, so a single-part recording is
+    one flat block and says so.
+    """
+    try:
+        return json.dumps(
+            _call(SCOPE_APP, "scope.density", {"buckets": buckets}), indent=2
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def scope_source(
+    path: Annotated[
+        str | None, Field(default=None, description="Bag DIRECTORY to review.")
+    ] = None,
+    go_live: Annotated[
+        bool, Field(default=False, description="Return to the live bus.")
+    ] = False,
+    review_capture: Annotated[
+        bool, Field(default=False, description="Review what has been captured since startup.")
+    ] = False,
+    save_to: Annotated[
+        str | None, Field(default=None, description="Write the capture out as a bag directory.")
+    ] = None,
+) -> str:
+    """Report or change what is behind the panels: the bus, a bag, or the capture.
+
+    Scope records the WHOLE BUS into memory from the moment it starts, so
+    `review_capture` reaches signals nobody thought to plot at the time. Capture
+    keeps running while you review it -- deciding to look at something must not
+    cost you everything that happens while you look.
+
+    With no arguments this reports the current source, including
+    `decodes_pending`: a recorded source decodes each signal once on a
+    background thread, so anything reading `sample_stats` or taking a screenshot
+    before that reaches zero is looking at an unfinished picture rather than a
+    broken one.
+    """
+    try:
+        if path is not None:
+            _call(SCOPE_APP, "scope.open_recording", {"path": path})
+        elif review_capture:
+            _call(SCOPE_APP, "scope.review_capture", {})
+        elif go_live:
+            _call(SCOPE_APP, "scope.go_live", {})
+        if save_to is not None:
+            _call(SCOPE_APP, "scope.save_recording", {"path": save_to})
+        return json.dumps(_call(SCOPE_APP, "scope.source", {}), indent=2)
     except (AgentError, LaunchError, OSError) as exc:
         return _fail(exc)
 

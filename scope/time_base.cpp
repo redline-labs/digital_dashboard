@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace scope
 {
@@ -30,12 +31,23 @@ constexpr int kMaxRenderRateHz = 120;
 constexpr double kMinRate = 0.05;
 constexpr double kMaxRate = 50.0;
 
+// How far the view's right edge has to be from the source's position before
+// moving it counts as a seek. A microsecond is far below anything a recording
+// resolves and far above the rounding in a span subtraction, so it separates
+// "the user moved the window" from "the window is riding the playhead".
+constexpr double kSeekEpsilon = 1e-6;
+
 }  // namespace
 
 TimeBase::TimeBase(DataSource& source, QObject* parent) : QObject(parent), source_(&source)
 {
     timer_.setObjectName("scope_render_timer");
     connect(&timer_, &QTimer::timeout, this, [this]() {
+        // Whatever the drag in progress asked for, once, before the source is
+        // ticked -- so a frame is drawn from buffers that already hold the
+        // position the view is claiming. See setInteracting().
+        flushSeek();
+
         // The source first: a playing recorded source advances its position and
         // refills the bound buffers here, and the panels drain them on frame().
         // The other order would draw each tick one frame behind the head.
@@ -76,7 +88,6 @@ void TimeBase::setSource(DataSource& source)
     // frozen right edge would land somewhere arbitrary in the new source and
     // the shared cursor would read out an instant that does not exist -- and
     // neither would look wrong, because both are just doubles.
-    paused_at_.reset();
     cursor_.reset();
 
     // A new source starts stopped. Dropping into a recording that immediately
@@ -84,10 +95,13 @@ void TimeBase::setSource(DataSource& source)
     playing_ = false;
     source_->setPlaying(false);
 
-    // A live source has no Paused state to inherit either: its Pause button is
-    // replaced by the transport controls, and leaving mode_ on Paused would
-    // freeze viewEnd() at a value that was just reset.
-    mode_ = Mode::Live;
+    // Following, so the right edge is whatever the new source's clock says and
+    // no value from the old epoch survives. The SPAN does, because it is a
+    // preference rather than a position: someone reviewing at a 5-second window
+    // wants one in the next recording too.
+    follow_ = true;
+    view_end_ = source_->now();
+    pending_seek_.reset();
 
     emit sourceChanged();
     emit changed();
@@ -102,34 +116,19 @@ void TimeBase::setWindowSeconds(double seconds)
         SPDLOG_WARN("Window of {}s is outside [{}, {}]; using {}s.", seconds, kMinWindowSeconds,
                     kMaxWindowSeconds, clamped);
     }
-    if (clamped == window_seconds_)
+
+    // Zoom about the RIGHT edge. "Show me the last N seconds" is what this
+    // control has always meant, and it is the one zoom that should NOT stop a
+    // live view from following -- widening the window while tailing the bus is
+    // not the same gesture as grabbing it and dragging.
+    const double end = viewEnd();
+    if (follow_)
     {
+        applyView(end - clamped, end);
+        emit changed();
         return;
     }
-    window_seconds_ = clamped;
-    emit changed();
-}
-
-void TimeBase::setMode(Mode mode)
-{
-    if (mode == mode_)
-    {
-        return;
-    }
-    mode_ = mode;
-
-    if (mode_ == Mode::Paused)
-    {
-        // The source keeps advancing while paused, so the frozen right edge has
-        // to be captured now. Recomputing it later would un-freeze the view.
-        paused_at_ = source_->now();
-    }
-    else
-    {
-        paused_at_.reset();
-    }
-
-    emit changed();
+    setView(end - clamped, end);
 }
 
 void TimeBase::setRenderRateHz(int hz)
@@ -149,11 +148,240 @@ void TimeBase::setRenderRateHz(int hz)
     emit changed();
 }
 
-double TimeBase::viewEnd() const
+// ----------------------------------------------------------------- the view
+
+std::pair<double, double> TimeBase::availableRange() const
 {
-    // Paused freezes the *view*, not the data: buffers keep filling, so
-    // unpausing shows what arrived meanwhile rather than a gap.
-    return paused_at_ ? *paused_at_ : source_->now();
+    const SourceCaps caps = source_->caps();
+    if (caps.seekable)
+    {
+        // A recording that is a single instant, or one still being written and
+        // not yet containing two messages, would otherwise give a zero-width
+        // range that every clamp below divides by.
+        if (caps.t_end > caps.t_begin)
+        {
+            return {caps.t_begin, caps.t_end};
+        }
+        return {caps.t_begin, caps.t_begin + kMinWindowSeconds};
+    }
+
+    // A bus has no beginning, so caps() has no meaningful t_begin. What bounds
+    // a live view is what the panels' buffers still hold: scrolling back past
+    // that shows emptiness indistinguishable from a publisher that had not
+    // started yet.
+    //
+    // Floored at zero because a live source's clock STARTS at zero -- there is
+    // nothing before the moment it was constructed. Without the floor, fitting a
+    // session thirty seconds old produces a five-minute window that is four and
+    // a half minutes of blank, and the overview strip (which does clamp) ends up
+    // describing a different range than the view it is drawing.
+    const double now = source_->now();
+    return {std::max(now - retention_seconds_, 0.0), std::max(now, kMinWindowSeconds)};
+}
+
+void TimeBase::applyView(double begin, double end)
+{
+    // NaN in, and every panel's axis is poisoned for the rest of the session --
+    // the arithmetic below propagates it, the clamps do not reject it, and
+    // painting silently draws nothing. A degenerate widget asking for a zoom
+    // about a zero-width rect is the way in, so it is refused here rather than
+    // at each of the callers.
+    if (!std::isfinite(begin) || !std::isfinite(end))
+    {
+        SPDLOG_WARN("Ignoring a non-finite view window [{}, {}].", begin, end);
+        return;
+    }
+
+    double span = std::clamp(end - begin, kMinWindowSeconds, kMaxWindowSeconds);
+
+    const auto [low, high] = availableRange();
+    const double available = high - low;
+
+    // Narrow only when the range itself is narrower. Otherwise the window keeps
+    // the width it was asked for and SLIDES into range -- squashing it instead
+    // would make a pan near the edge silently change the zoom level.
+    if (span > available)
+    {
+        span = std::max(available, kMinWindowSeconds);
+    }
+
+    double new_end = end;
+    if (new_end > high)
+    {
+        new_end = high;
+    }
+    if (new_end - span < low)
+    {
+        new_end = low + span;
+    }
+
+    if (span == window_seconds_ && new_end == view_end_)
+    {
+        return;
+    }
+
+    window_seconds_ = span;
+    view_end_ = new_end;
+
+    // The right edge IS the playhead on a seekable source -- see the seek()
+    // comment in the header. Moving the view without telling the source would
+    // leave the buffers holding a different stretch of the recording than the
+    // one being drawn.
+    //
+    // ONLY WHEN THE VIEW HAS MOVED AWAY FROM WHERE THE SOURCE ALREADY IS. While
+    // playback is running, the follow branch of the render tick sets the right
+    // edge to exactly source_->now() every frame; seeking to that would command
+    // the source back to the position it just advanced from, thirty times a
+    // second, and playback would stall while looking like it was running.
+    if (source_->caps().seekable && std::abs(view_end_ - source_->now()) > kSeekEpsilon)
+    {
+        pending_seek_ = view_end_;
+        if (!interacting_)
+        {
+            flushSeek();
+        }
+    }
+}
+
+void TimeBase::flushSeek()
+{
+    if (!pending_seek_)
+    {
+        return;
+    }
+    const double t = *pending_seek_;
+    pending_seek_.reset();
+
+    if (source_->caps().seekable)
+    {
+        source_->seek(t);
+    }
+}
+
+void TimeBase::setInteracting(bool on)
+{
+    if (on == interacting_)
+    {
+        return;
+    }
+    interacting_ = on;
+
+    // Ending an interaction applies whatever the last frame of the drag left
+    // outstanding. Without this, a drag that finished between two render ticks
+    // would leave the buffers one position behind where the view says it is.
+    if (!interacting_)
+    {
+        flushSeek();
+    }
+}
+
+void TimeBase::setView(double begin, double end)
+{
+    // A deliberate move by the user, so the window stops being driven for them.
+    // Both halves matter: a live view pinned to now cannot be held still, and
+    // playback would drag a recorded view off the span just chosen, at the
+    // render rate.
+    //
+    // The capture BEFORE clearing follow_ is what freezes the view where it is:
+    // view_end_ is stale while following, so dropping the flag first would snap
+    // the window back to wherever it was last parked.
+    view_end_ = viewEnd();
+    follow_ = false;
+    if (playing_)
+    {
+        setPlaying(false);
+    }
+
+    applyView(begin, end);
+
+    // RE-ARM AT THE WALL. Panning right on a live source clamps the right edge
+    // to now() -- and with following off, the next tick does not move it, so
+    // the plot freezes at the one position where it should obviously still be
+    // scrolling. It reads as a hang, and it is the state a user lands in by
+    // dragging further than there is data.
+    //
+    // Where the clamp put the edge exactly at now(), the followed and unfollowed
+    // states are indistinguishable in every respect except that one of them is
+    // dead, so this picks the live one. Any view that did NOT end up against the
+    // wall stays put, which is the whole point of panning.
+    if (!source_->caps().seekable && std::abs(view_end_ - source_->now()) <= kSeekEpsilon)
+    {
+        follow_ = true;
+    }
+
+    emit changed();
+}
+
+void TimeBase::zoomAt(double anchor_t, double factor)
+{
+    if (!std::isfinite(anchor_t) || !std::isfinite(factor) || factor <= 0.0)
+    {
+        return;
+    }
+
+    const double span = window_seconds_;
+    if (span <= 0.0)
+    {
+        return;
+    }
+
+    // Where the anchor sits in the window, as a fraction. Holding that fraction
+    // fixed is what keeps the sample under the mouse under the mouse -- the
+    // property that makes wheel-zoom feel like a map rather than like a slider.
+    // Clamped because a drag can carry the pointer off the plot, and an anchor
+    // outside the window would push it somewhere nobody asked for.
+    const double at = std::clamp((anchor_t - viewBegin()) / span, 0.0, 1.0);
+    const double new_span = std::clamp(span * factor, kMinWindowSeconds, kMaxWindowSeconds);
+
+    setView(anchor_t - at * new_span, anchor_t + (1.0 - at) * new_span);
+}
+
+void TimeBase::panBy(double dt)
+{
+    if (!std::isfinite(dt) || dt == 0.0)
+    {
+        return;
+    }
+    setView(viewBegin() + dt, viewEnd() + dt);
+}
+
+void TimeBase::fitAll()
+{
+    const auto [low, high] = availableRange();
+    setView(low, high);
+}
+
+void TimeBase::setRetentionSeconds(double seconds)
+{
+    if (seconds <= 0.0 || retention_seconds_ == seconds)
+    {
+        return;
+    }
+    retention_seconds_ = seconds;
+
+    // Re-clamp: shrinking retention can leave the current view partly outside
+    // what the buffers still answer for.
+    applyView(viewBegin(), viewEnd());
+    emit changed();
+}
+
+void TimeBase::setFollowing(bool on)
+{
+    if (on == follow_)
+    {
+        return;
+    }
+
+    // Stopping: capture where the derived edge had got to, or the view jumps
+    // back to whatever view_end_ was last left holding. Starting: nothing to
+    // compute, because viewEnd() begins deriving from the source again.
+    if (!on)
+    {
+        view_end_ = viewEnd();
+    }
+    follow_ = on;
+
+    emit changed();
 }
 
 // ------------------------------------------------------------------- playback
@@ -165,20 +393,11 @@ void TimeBase::seek(double t)
         return;
     }
 
-    // Clamped to what the source actually has. A slider can be dragged past the
-    // end of a recording that is still growing, and a seek beyond the data would
-    // show an empty window that looks exactly like a publisher that stopped.
-    const SourceCaps caps = source_->caps();
-    const double clamped = std::clamp(t, caps.t_begin, caps.t_end);
-
-    source_->seek(clamped);
-
-    // Seeking un-freezes the view: paused_at_ is a right edge captured before
-    // the move and would keep the window where it was while the data underneath
-    // it changed.
-    paused_at_.reset();
-
-    emit changed();
+    // Move the WINDOW so its right edge lands on `t`, keeping the span, and let
+    // applyView() do the clamping and the source_->seek(). Seeking the source
+    // directly here and leaving the view alone was the old shape and is now
+    // wrong: the two would describe different stretches of the recording.
+    setView(t - window_seconds_, t);
 }
 
 void TimeBase::setRate(double rate)
@@ -209,6 +428,16 @@ void TimeBase::setPlaying(bool playing)
         return;
     }
     playing_ = playing;
+
+    // Playing is what "something other than the user drives the right edge"
+    // means on a recorded source, so it turns following back on -- otherwise
+    // pressing Play after a pan would advance the playhead underneath a window
+    // that stayed put, and the trace would sit still while the position readout
+    // climbed. Stopping leaves the window exactly where playback left it.
+    if (playing_)
+    {
+        follow_ = true;
+    }
 
     // The rate goes with it: a source that was told to play needs to know how
     // fast, and setRate() before the first play would otherwise be lost.

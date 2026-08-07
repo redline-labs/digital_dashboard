@@ -84,6 +84,12 @@ class CaptureProvider : public RecordedProvider
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const override;
     std::uint64_t revision() const override;
 
+    // Exact, unlike the bag's part-index approximation: the buffer holds every
+    // message and can count them. Still not per frame -- it walks the deque
+    // under the mutex the RX thread needs to push. See CaptureBuffer::density().
+    bool density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                 std::vector<std::uint32_t>& out) override;
+
   private:
     const CaptureBuffer* buffer_;
 };

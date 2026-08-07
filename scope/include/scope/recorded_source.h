@@ -51,6 +51,21 @@ class RecordedProvider
     // for a file, which cannot grow; a live capture moves it as the head
     // advances.
     virtual std::uint64_t revision() const { return 1; }
+
+    // Message counts per uniform bucket over [t0_ns, t1_ns], for the overview
+    // strip's background. Same "cheap or decline" contract as
+    // DataSource::density(), and for the same reason as the forEach() warning
+    // above: this is reached from a widget, and a widget must never drive a
+    // scan of the data section.
+    //
+    // False leaves `out` empty and the strip draws a plain band, which is the
+    // right answer for a provider that would have to read to know.
+    virtual bool density(std::uint64_t /*t0_ns*/, std::uint64_t /*t1_ns*/,
+                         std::size_t /*buckets*/, std::vector<std::uint32_t>& out)
+    {
+        out.clear();
+        return false;
+    }
 };
 
 // A recording on disk, through bag::BagReader.
@@ -77,6 +92,20 @@ class BagFileProvider : public RecordedProvider
                  const std::function<void(const bag::BagMessage&)>& visit) override;
     std::vector<TopicInfo> topics() const override;
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const override;
+
+    // From the PART INDEX in metadata.yaml, opening no file at all. Each part
+    // carries a message_count and a [t_begin, t_end], so its count is spread
+    // uniformly across the buckets its own span overlaps.
+    //
+    // APPROXIMATE, and it reports so: "how many" is indexed and "where within a
+    // part" is not, so a single-part recording draws as one flat block. Parts
+    // roll at a size or duration limit, so a recording big enough to want an
+    // overview has many of them and the shape is real.
+    //
+    // The alternative -- counting through forEach -- is precisely what the
+    // warning on that method forbids, and it would be driven from a widget.
+    bool density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                 std::vector<std::uint32_t>& out) override;
 
   private:
     std::unique_ptr<bag::BagReader> reader_;
@@ -119,6 +148,13 @@ class RecordedSource : public DataSource
     SignalHandle bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into) override;
     void release(SignalHandle handle) override;
     double now() const override;
+
+    // Converts the source's clock to the provider's UNIX nanoseconds and hands
+    // the question on. That conversion is the whole reason it is overridden
+    // here: nothing above this speaks the recording's epoch.
+    bool density(double t0, double t1, std::size_t buckets,
+                 std::vector<std::uint32_t>& out) override;
+
     void seek(double t) override;
     void setPlaying(bool playing) override;
     void setRate(double rate) override;

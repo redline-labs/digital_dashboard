@@ -11,9 +11,17 @@
 //          using config_t = <Name>PanelConfig_t;
 //          static constexpr panel_type_t kPanelType = panel_type_t::<enum_name>;
 //          static constexpr std::string_view kFriendlyName = "...";
+//          static constexpr std::string_view kToolbarGlyph = "...";
 //          const config_t& getConfig() const;
 //      and derive from scope::Panel, whose acceptsBinding() is what decides
 //      which browser candidates it will take.
+//
+//      kToolbarGlyph is one or two characters shown on the toolbar's Add
+//      button. A glyph rather than an icon because there is no icon pipeline in
+//      this tree at all -- no .qrc scope links against, no QIcon anywhere --
+//      and inventing one is a larger change than any panel. Swapping glyphs for
+//      QIcons later is a change to this field and to the toolbar, and to
+//      nothing else.
 //
 //   2. Add one line to SCOPE_PANEL_TABLE in scope/panel_table.h.
 //
@@ -84,6 +92,9 @@ struct PanelTypeInfo
     panel_type_t type;
     std::string_view name;
     std::string_view friendly_name;
+
+    // What the toolbar's Add button shows. See the recipe above.
+    std::string_view toolbar_glyph;
 };
 
 inline std::vector<PanelTypeInfo> availablePanelTypes()
@@ -93,7 +104,8 @@ inline std::vector<PanelTypeInfo> availablePanelTypes()
     PanelTypeInfo{panel_class::kPanelType,                                        \
                   reflection::enum_traits<panel_type_t>::to_string(               \
                       panel_class::kPanelType),                                   \
-                  panel_class::kFriendlyName},
+                  panel_class::kFriendlyName,                                     \
+                  panel_class::kToolbarGlyph},
 
         SCOPE_PANEL_TABLE(SCOPE_PANEL_INFO)
 #undef SCOPE_PANEL_INFO

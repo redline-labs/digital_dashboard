@@ -5,9 +5,11 @@
 #include "scope/panel.h"
 #include "scope/panel_types.h"
 #include "scope/sample_ring.h"
+#include "scope/time_axis.h"
 #include "time_series/config.h"
 
 #include <QColor>
+#include <QPoint>
 #include <QRectF>
 #include <QString>
 
@@ -48,6 +50,11 @@ class TimeSeriesPanel : public Panel
     using config_t = TimeSeriesPanelConfig_t;
     static constexpr panel_type_t kPanelType = panel_type_t::time_series;
     static constexpr std::string_view kFriendlyName = "Time Series";
+    // U+223F SINE WAVE. Picked over the more obvious chart glyphs because it is
+    // in the default font on every platform this runs on -- U+2382 and the
+    // emoji chart symbols are not, and a missing glyph renders as a blank box
+    // that looks like a broken button rather than a plain one.
+    static constexpr std::string_view kToolbarGlyph = "∿";
 
     // Retention, when the window does not say otherwise. Generous on time
     // because scrolling back is the point of a scope; the workspace's
@@ -103,6 +110,18 @@ class TimeSeriesPanel : public Panel
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
+    // Navigation. Every one of these moves the SHARED TimeBase rather than
+    // anything of this panel's own, which is what makes the other panels follow
+    // -- a plot is a view onto one window, not a window of its own.
+    //
+    // The Y gestures are the exception and are deliberately per-panel: two
+    // signals three orders of magnitude apart share a time axis and cannot share
+    // a value axis, which is the same reason `right_axis` exists.
+    void wheelEvent(QWheelEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+
   private:
     struct Trace;
 
@@ -112,6 +131,22 @@ class TimeSeriesPanel : public Panel
 
     // The rectangle the traces live in: the widget minus the axis gutters.
     QRectF plotRect() const;
+
+    // The time-to-pixel map for what was drawn LAST FRAME, which is what every
+    // gesture converts against. Built from drawn_begin_/drawn_end_ rather than
+    // from the time base, so the instant under the pointer is the one the user
+    // can actually see -- during live scrolling those differ by a frame, which
+    // is enough to put a click on the wrong sample at a tight zoom.
+    TimeAxis timeAxis() const;
+
+    // Zoom the value axis about a pixel, turning autoscale off. Per-panel, and
+    // it writes the config, so the workspace is genuinely dirty afterwards.
+    void zoomValueAxis(double at_y, double factor);
+
+    // A drag has to travel this far before it becomes a pan, or every click
+    // would nudge the shared window. Below the threshold press-and-release does
+    // nothing at all, which is what lets a click-to-focus stay harmless.
+    bool dragExceededThreshold(const QPoint& pos) const;
 
     // Vertical extent to draw against, from the config or from the data.
     void computeYRange(double& y_min, double& y_max, bool right_axis) const;
@@ -149,6 +184,36 @@ class TimeSeriesPanel : public Panel
     double drawn_y2_min_ = 0.0;
     double drawn_y2_max_ = 1.0;
     bool has_right_axis_ = false;
+
+    // ------------------------------------------------------------- gestures
+
+    enum class Drag
+    {
+        None,
+
+        // The button is down but has not travelled far enough to mean anything
+        // yet. A click that never becomes a drag leaves the view untouched.
+        Pending,
+
+        // Sliding the shared window.
+        Pan,
+
+        // Rubber-banding a time range to zoom to.
+        Band,
+    };
+
+    Drag drag_ = Drag::None;
+    QPoint drag_origin_;
+
+    // The pointer's position at the last move, in pixels. A pan is applied from
+    // the DELTA rather than from the origin because the window moves underneath
+    // as we go: measuring against the origin would apply the same offset again
+    // every frame and the plot would accelerate away.
+    QPoint drag_last_;
+
+    // The band's edges while one is being dragged, on the panel's clock.
+    double band_begin_ = 0.0;
+    double band_end_ = 0.0;
 };
 
 }  // namespace scope

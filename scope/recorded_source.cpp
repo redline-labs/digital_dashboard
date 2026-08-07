@@ -99,6 +99,56 @@ std::pair<std::uint64_t, std::uint64_t> BagFileProvider::spanNanos() const
     return {reader_->metadata().t_begin_ns, reader_->metadata().t_end_ns};
 }
 
+bool BagFileProvider::density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                              std::vector<std::uint32_t>& out)
+{
+    out.assign(buckets, 0);
+    if (!reader_->isValid() || buckets == 0 || t1_ns <= t0_ns)
+    {
+        out.clear();
+        return false;
+    }
+
+    const double span = static_cast<double>(t1_ns - t0_ns);
+    bool any = false;
+
+    for (const bag::bag_part_t& part : reader_->metadata().parts)
+    {
+        if (part.message_count == 0 || part.t_end_ns < t0_ns || part.t_begin_ns > t1_ns)
+        {
+            continue;
+        }
+
+        // Clip to the requested window before spreading, or a part hanging off
+        // an edge donates its whole count to the buckets that ARE in range and
+        // draws a spike where the recording merely continues.
+        const std::uint64_t lo = std::max(part.t_begin_ns, t0_ns);
+        const std::uint64_t hi = std::min(part.t_end_ns, t1_ns);
+
+        const double first = static_cast<double>(lo - t0_ns) / span * static_cast<double>(buckets);
+        const double last = static_cast<double>(hi - t0_ns) / span * static_cast<double>(buckets);
+
+        auto lo_bucket = static_cast<std::size_t>(first);
+        auto hi_bucket = static_cast<std::size_t>(last);
+        lo_bucket = std::min(lo_bucket, buckets - 1);
+        hi_bucket = std::min(hi_bucket, buckets - 1);
+
+        // A part whose whole span lands inside one bucket, including the
+        // degenerate single-message part where t_begin == t_end.
+        const std::size_t covered = hi_bucket - lo_bucket + 1;
+        const auto share = static_cast<std::uint32_t>(part.message_count / covered);
+        for (std::size_t i = lo_bucket; i <= hi_bucket; ++i)
+        {
+            out[i] += share;
+        }
+        any = true;
+    }
+
+    // No overlapping part is a real answer -- an empty stretch of the
+    // recording -- and is different from "cannot answer".
+    return any || reader_->metadata().parts.empty();
+}
+
 // ------------------------------------------------------------- RecordedSource
 
 namespace
@@ -458,6 +508,28 @@ void RecordedSource::release(SignalHandle handle)
 double RecordedSource::now() const
 {
     return impl_->position;
+}
+
+bool RecordedSource::density(double t0, double t1, std::size_t buckets,
+                             std::vector<std::uint32_t>& out)
+{
+    out.clear();
+    if (impl_->provider == nullptr || t1 <= t0)
+    {
+        return false;
+    }
+
+    // Seconds-since-the-recording-started, out to the provider's UNIX
+    // nanoseconds and no further. This conversion is the only reason the method
+    // is here rather than being called on the provider directly: everything
+    // above RecordedSource speaks the source's clock and must not learn about
+    // the recording's epoch to draw a histogram.
+    const auto to_nanos = [this](double t) {
+        return impl_->t_begin_ns +
+               static_cast<std::uint64_t>(std::max(t, 0.0) * kNanosPerSecond);
+    };
+
+    return impl_->provider->density(to_nanos(t0), to_nanos(t1), buckets, out);
 }
 
 void RecordedSource::seek(double t)

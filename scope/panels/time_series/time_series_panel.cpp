@@ -5,12 +5,14 @@
 
 #include "qt_helpers/widget_colors.h"
 
+#include <QApplication>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
+#include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
 
@@ -407,6 +409,17 @@ QRectF TimeSeriesPanel::plotRect() const
     return area;
 }
 
+TimeAxis TimeSeriesPanel::timeAxis() const
+{
+    const QRectF area = plotRect();
+    TimeAxis axis;
+    axis.t0 = drawn_begin_;
+    axis.t1 = drawn_end_;
+    axis.x0 = area.left();
+    axis.x1 = area.right();
+    return axis;
+}
+
 void TimeSeriesPanel::computeYRange(double& y_min, double& y_max, bool right_axis) const
 {
     if (!cfg_.autoscale_y)
@@ -518,6 +531,22 @@ void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
 
     paintTraces(painter, area);
     paintCursor(painter, area);
+
+    // The rubber band, drawn rather than made a QRubberBand: that is a
+    // near-top-level widget, which the offscreen platform handles badly, and
+    // everything else here is already painted.
+    if (drag_ == Drag::Band)
+    {
+        const TimeAxis axis = timeAxis();
+        const double x0 = axis.toClampedX(std::min(band_begin_, band_end_));
+        const double x1 = axis.toClampedX(std::max(band_begin_, band_end_));
+        const QRectF band(x0, area.top(), x1 - x0, area.height());
+
+        painter.fillRect(band, QColor(224, 228, 234, 40));
+        painter.setPen(QPen(QColor("#E0E4EA"), 1.0));
+        painter.drawLine(QPointF(x0, area.top()), QPointF(x0, area.bottom()));
+        painter.drawLine(QPointF(x1, area.top()), QPointF(x1, area.bottom()));
+    }
 
     if (cfg_.show_legend)
     {
@@ -773,7 +802,7 @@ void TimeSeriesPanel::paintLegend(QPainter& painter)
     }
 }
 
-// ------------------------------------------------------------------ hover
+// -------------------------------------------------------- hover and gestures
 
 void TimeSeriesPanel::mouseMoveEvent(QMouseEvent* event)
 {
@@ -783,17 +812,59 @@ void TimeSeriesPanel::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
-    const QRectF area = plotRect();
+    const TimeAxis axis = timeAxis();
+
+    // A drag in progress owns the pointer: it does NOT also move the shared
+    // cursor. Letting it would drag every other panel's readout along with the
+    // window and make the legend flicker through values nobody asked to see.
+    if (drag_ != Drag::None)
+    {
+        if (drag_ == Drag::Pending && dragExceededThreshold(event->pos()))
+        {
+            drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Band : Drag::Pan;
+            if (drag_ == Drag::Pan)
+            {
+                // Coalesce the seeks this generates. On a recording every view
+                // change refills a whole retention window per signal, and a
+                // drag emits one of these per pass of the event loop.
+                time_base_->setInteracting(true);
+                setCursor(Qt::ClosedHandCursor);
+            }
+            else
+            {
+                band_begin_ = axis.toT(drag_origin_.x());
+                band_end_ = band_begin_;
+            }
+        }
+
+        if (drag_ == Drag::Pan)
+        {
+            // From the DELTA since the last move, not from the origin: the
+            // window slides underneath as we go, so measuring against the origin
+            // would re-apply the whole offset every frame.
+            const double dx = static_cast<double>(event->pos().x() - drag_last_.x());
+            time_base_->panBy(-dx * axis.secondsPerPixel());
+            drag_last_ = event->pos();
+        }
+        else if (drag_ == Drag::Band)
+        {
+            band_end_ = axis.toT(event->position().x());
+            update();
+        }
+
+        Panel::mouseMoveEvent(event);
+        return;
+    }
+
     const double x = event->position().x();
-    if (x < area.left() || x > area.right())
+    if (x < axis.x0 || x > axis.x1)
     {
         time_base_->setCursor(std::nullopt);
         Panel::mouseMoveEvent(event);
         return;
     }
 
-    const double span = drawn_end_ - drawn_begin_;
-    time_base_->setCursor(drawn_begin_ + (x - area.left()) / area.width() * span);
+    time_base_->setCursor(axis.toT(x));
     Panel::mouseMoveEvent(event);
 }
 
@@ -804,6 +875,159 @@ void TimeSeriesPanel::leaveEvent(QEvent* event)
         time_base_->setCursor(std::nullopt);
     }
     Panel::leaveEvent(event);
+}
+
+bool TimeSeriesPanel::dragExceededThreshold(const QPoint& pos) const
+{
+    return (pos - drag_origin_).manhattanLength() >= QApplication::startDragDistance();
+}
+
+void TimeSeriesPanel::mousePressEvent(QMouseEvent* event)
+{
+    if (time_base_ == nullptr || event->button() != Qt::LeftButton || !timeAxis().usable())
+    {
+        Panel::mousePressEvent(event);
+        return;
+    }
+
+    // Pending, not Pan: a press that never travels is a click, and a click must
+    // not move a window every other panel is looking at.
+    drag_ = Drag::Pending;
+    drag_origin_ = event->pos();
+    drag_last_ = event->pos();
+    Panel::mousePressEvent(event);
+}
+
+void TimeSeriesPanel::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (drag_ == Drag::None)
+    {
+        Panel::mouseReleaseEvent(event);
+        return;
+    }
+
+    const Drag was = drag_;
+    drag_ = Drag::None;
+    unsetCursor();
+
+    if (time_base_ != nullptr)
+    {
+        // Applies whatever the drag left outstanding, so the buffers match the
+        // window before the next frame rather than one tick later.
+        time_base_->setInteracting(false);
+
+        if (was == Drag::Band)
+        {
+            const double lo = std::min(band_begin_, band_end_);
+            const double hi = std::max(band_begin_, band_end_);
+
+            // A band narrower than a couple of pixels is a shift-click, not a
+            // range. Zooming to it would drop the view to the minimum span for
+            // what the user experienced as a mis-click.
+            if (hi - lo > timeAxis().secondsPerPixel() * 2.0)
+            {
+                time_base_->setView(lo, hi);
+            }
+            update();
+        }
+    }
+
+    Panel::mouseReleaseEvent(event);
+}
+
+void TimeSeriesPanel::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (time_base_ == nullptr)
+    {
+        Panel::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    // "Show me everything" on a recording; "catch up with the bus" on a live
+    // source. fitAll() means both -- a live source's available range ends at
+    // now(), so fitting it lands against the live edge and re-arms following.
+    time_base_->fitAll();
+
+    // The vertical half of the same gesture. Shift+wheel turns autoscale off,
+    // and this is the one-gesture way back -- without it a stray scroll leaves
+    // a panel pinned to a range the user has to find in a config dialog.
+    if (!cfg_.autoscale_y)
+    {
+        cfg_.autoscale_y = true;
+        emit configChanged();
+    }
+
+    update();
+    Panel::mouseDoubleClickEvent(event);
+}
+
+void TimeSeriesPanel::wheelEvent(QWheelEvent* event)
+{
+    const TimeAxis axis = timeAxis();
+    if (time_base_ == nullptr || !axis.usable())
+    {
+        Panel::wheelEvent(event);
+        return;
+    }
+
+    const double delta = static_cast<double>(event->angleDelta().y());
+    if (delta == 0.0)
+    {
+        Panel::wheelEvent(event);
+        return;
+    }
+
+    // A tuned exponential rather than a fixed step, so a slow scroll is precise
+    // and a fast one still covers ground. The sign is inverted because a wheel
+    // pushed away is positive and means "closer", i.e. a SMALLER span.
+    const double factor = std::pow(1.0015, -delta);
+
+    if (event->modifiers() & Qt::ShiftModifier)
+    {
+        zoomValueAxis(event->position().y(), factor);
+    }
+    else
+    {
+        // About the pointer, so the sample under it stays under it. That one
+        // property is what makes a wheel feel like a map rather than a slider.
+        time_base_->zoomAt(axis.toT(event->position().x()), factor);
+    }
+
+    event->accept();
+}
+
+void TimeSeriesPanel::zoomValueAxis(double at_y, double factor)
+{
+    const QRectF area = plotRect();
+    if (area.height() < 1.0)
+    {
+        return;
+    }
+
+    // Read the range off what was DRAWN, not off the config: with autoscale on
+    // the config's y_min/y_max are stale defaults, and zooming from them would
+    // jump the axis somewhere unrelated on the first scroll.
+    const double lo = drawn_y_min_;
+    const double hi = drawn_y_max_;
+    const double span = hi - lo;
+    if (span <= 0.0 || !std::isfinite(span))
+    {
+        return;
+    }
+
+    // Same pivot rule as the time axis, but the pixel axis runs downwards.
+    const double at = std::clamp((area.bottom() - at_y) / area.height(), 0.0, 1.0);
+    const double value = lo + at * span;
+    const double new_span = span * factor;
+
+    cfg_.autoscale_y = false;
+    cfg_.y_min = value - at * new_span;
+    cfg_.y_max = value + (1.0 - at) * new_span;
+
+    // A navigation gesture that genuinely changes the saved configuration, so
+    // the workspace really is dirty. Double-click is the way back.
+    emit configChanged();
+    update();
 }
 
 }  // namespace scope

@@ -9,6 +9,7 @@
 // which is exactly the coverage you lose first and miss most.
 
 #include "scope/data_source.h"
+#include "scope/overview_strip.h"
 #include "scope/panel_registry.h"
 #include "scope/scope_window.h"
 #include "scope/signal_browser.h"
@@ -16,13 +17,20 @@
 
 #include "time_series/time_series_panel.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QDockWidget>
+#include <QMouseEvent>
+#include <QPixmap>
+#include <QToolButton>
+#include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -79,6 +87,22 @@ class StubSource : public scope::DataSource
     std::vector<std::shared_ptr<scope::SignalBuffer>> buffers;
     std::vector<scope::SignalHandle> released;
     scope::SignalHandle next_handle = 1;
+};
+
+// A stub that reports itself as a recording, for the parts of the window that
+// render from caps() rather than from what the source actually contains.
+class SeekableStub : public StubSource
+{
+  public:
+    scope::SourceCaps caps() const override
+    {
+        scope::SourceCaps caps;
+        caps.live = false;
+        caps.seekable = true;
+        caps.t_begin = 0.0;
+        caps.t_end = 120.0;
+        return caps;
+    }
 };
 
 scope::BindingCandidate numericField()
@@ -390,6 +414,489 @@ void testTheTimeBaseIsShared()
     expect(time_base.mode() == scope::TimeBase::Mode::Live, "it goes back to live");
 }
 
+// ------------------------------------------------------------------ gestures
+//
+// These need a real widget tree -- a gesture converts pixels against what the
+// panel actually drew -- which is why they live here rather than in
+// scope_test_time_base. Synthesised events are delivered fine offscreen; it is
+// only QDrag::exec() that cannot run there.
+
+namespace
+{
+
+// A panel big enough to have a usable plot rect. Below the gutters plotRect()
+// returns its 1x1 degenerate guard and every gesture is correctly a no-op --
+// which would make these tests pass while proving nothing.
+// paintEvent is what fills drawn_begin_/drawn_end_, and every gesture maps
+// against those rather than against the time base -- deliberately, so a click
+// lands on the instant the user can see. The consequence for a test is that
+// moving the view and then sending a gesture without a repaint in between
+// converts against the PREVIOUS window. Rendering into a pixmap is the only way
+// to force a paint with no compositor.
+void forcePaint(QWidget* panel)
+{
+    QPixmap scratch(panel->size());
+    panel->render(&scratch);
+}
+
+scope::TimeSeriesPanel* readyPanel(scope::ScopeWindow& window, const QString& id)
+{
+    window.addPanel(scope::panel_type_t::time_series, id);
+    auto* panel = static_cast<scope::TimeSeriesPanel*>(window.findPanel(id)->panel);
+    panel->resize(600, 400);
+    forcePaint(panel);
+    return panel;
+}
+
+// The plot rect's horizontal extent, from the gutter constants. Duplicated from
+// the panel rather than exposed, because a test that read the panel's own
+// arithmetic back would agree with it however wrong it was.
+constexpr double kPlotLeft = 56.0;
+constexpr double kPlotRight = 600.0 - 12.0;
+
+void wheel(QWidget* target, QPointF at, int delta, Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QWheelEvent event(at, target->mapToGlobal(at), QPoint(), QPoint(0, delta), Qt::NoButton, mods,
+                      Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(target, &event);
+}
+
+void mouse(QWidget* target, QEvent::Type type, QPointF at, Qt::MouseButton button,
+           Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QMouseEvent event(type, at, target->mapToGlobal(at), button, buttons, mods);
+    QCoreApplication::sendEvent(target, &event);
+}
+
+}  // namespace
+
+void testWheelZoomHoldsTheInstantUnderThePointer()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+
+    forcePaint(panel);
+
+    const double before = time_base.windowSeconds();
+
+    // Middle of the plot, so the pivot is nowhere near a clamp.
+    const QPointF at(300.0, 200.0);
+    const double under_pointer =
+        time_base.viewBegin() + (at.x() - kPlotLeft) / (kPlotRight - kPlotLeft) * before;
+
+    wheel(panel, at, 240);
+
+    expect(time_base.windowSeconds() < before, "a wheel forward zooms in");
+
+    // The property that matters. Everything else about wheel zoom is chrome.
+    expect(under_pointer >= time_base.viewBegin() - 1e-6 &&
+               under_pointer <= time_base.viewEnd() + 1e-6,
+           "the instant under the pointer is still in the window after a zoom");
+}
+
+void testAZoomOnOnePanelMovesTheOther()
+{
+    // The whole requirement: a plot is a view onto ONE window. If this fails the
+    // panels have quietly grown independent axes and the shared cursor lines up
+    // with nothing.
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* a = readyPanel(window, "a");
+    scope::TimeSeriesPanel* b = readyPanel(window, "b");
+    (void)b;
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+    forcePaint(a);
+
+    const double before = time_base.windowSeconds();
+    wheel(a, QPointF(300.0, 200.0), 240);
+
+    expect(time_base.windowSeconds() < before,
+           "zooming panel a changed the window both panels draw");
+}
+
+void testHoveringDoesNotPan()
+{
+    // Regression guard. mouseMoveEvent handles both the shared cursor and the
+    // pan, and an early version of the drag branch swallowed the hover.
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+    forcePaint(panel);
+
+    const double begin = time_base.viewBegin();
+
+    mouse(panel, QEvent::MouseMove, QPointF(300.0, 200.0), Qt::NoButton, Qt::NoButton);
+
+    expect(time_base.viewBegin() == begin, "hovering leaves the window alone");
+    expect(time_base.cursor().has_value(), "and does set the shared cursor");
+}
+
+void testAClickThatDoesNotTravelIsNotAPan()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+    forcePaint(panel);
+
+    const double begin = time_base.viewBegin();
+
+    mouse(panel, QEvent::MouseButtonPress, QPointF(300.0, 200.0), Qt::LeftButton, Qt::LeftButton);
+    mouse(panel, QEvent::MouseMove, QPointF(301.0, 200.0), Qt::NoButton, Qt::LeftButton);
+    mouse(panel, QEvent::MouseButtonRelease, QPointF(301.0, 200.0), Qt::LeftButton, Qt::NoButton);
+
+    expect(time_base.viewBegin() == begin,
+           "a press and release that never travels leaves the window alone");
+}
+
+void testDraggingPansTheSharedWindow()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+    forcePaint(panel);
+
+    const double begin = time_base.viewBegin();
+    const double span = time_base.windowSeconds();
+
+    mouse(panel, QEvent::MouseButtonPress, QPointF(300.0, 200.0), Qt::LeftButton, Qt::LeftButton);
+    mouse(panel, QEvent::MouseMove, QPointF(200.0, 200.0), Qt::NoButton, Qt::LeftButton);
+    mouse(panel, QEvent::MouseButtonRelease, QPointF(200.0, 200.0), Qt::LeftButton, Qt::NoButton);
+
+    // Dragging LEFT moves the window forward in time: the content follows the
+    // hand, which is the direction every map and every document uses.
+    expect(time_base.viewBegin() > begin, "dragging left moves the window forwards");
+    expect(std::abs(time_base.windowSeconds() - span) < 1e-9, "and does not change the zoom");
+}
+
+void testShiftDragZoomsToTheBand()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+    forcePaint(panel);
+
+    const double span = time_base.windowSeconds();
+
+    mouse(panel, QEvent::MouseButtonPress, QPointF(200.0, 200.0), Qt::LeftButton, Qt::LeftButton,
+          Qt::ShiftModifier);
+    mouse(panel, QEvent::MouseMove, QPointF(300.0, 200.0), Qt::NoButton, Qt::LeftButton,
+          Qt::ShiftModifier);
+    mouse(panel, QEvent::MouseButtonRelease, QPointF(300.0, 200.0), Qt::LeftButton, Qt::NoButton,
+          Qt::ShiftModifier);
+
+    expect(time_base.windowSeconds() < span, "shift-dragging a band zooms into it");
+}
+
+void testShiftWheelTurnsOffAutoscale()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    expect(panel->getConfig().autoscale_y, "autoscale starts on");
+
+    wheel(panel, QPointF(300.0, 200.0), 240, Qt::ShiftModifier);
+    expect(!panel->getConfig().autoscale_y, "a shift-wheel takes manual control of the Y axis");
+
+    // The one-gesture way back. Without it a stray scroll strands the panel on a
+    // range the user has to go into a config dialog to undo.
+    mouse(panel, QEvent::MouseButtonDblClick, QPointF(300.0, 200.0), Qt::LeftButton,
+          Qt::LeftButton);
+    expect(panel->getConfig().autoscale_y, "a double-click gives it back");
+}
+
+void testDoubleClickResumesFollowing()
+{
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    expect(!time_base.following(), "paused, so not following");
+
+    mouse(panel, QEvent::MouseButtonDblClick, QPointF(300.0, 200.0), Qt::LeftButton,
+          Qt::LeftButton);
+
+    expect(time_base.following(), "double-clicking a live panel catches back up with the bus");
+}
+
+// ------------------------------------------------------------------- toolbar
+
+void testTheToolbarReusesTheMenusActions()
+{
+    // The discipline that keeps a toolbar honest: ONE QAction per thing, living
+    // in both places. Two copies would have two objectNames, two handlers and
+    // two enabled-states, and the first guard added to one would silently not
+    // apply to the other.
+    scope::ScopeWindow window;
+
+    for (const char* name : {"action_add_time_series", "action_open", "action_save",
+                             "action_open_recording", "action_view_browser", "action_zoom_in",
+                             "action_zoom_out", "action_zoom_fit"})
+    {
+        expect(window.findChildren<QAction*>(name).size() == 1,
+               std::string("exactly one QAction named ") + name);
+    }
+}
+
+void testTheToolbarOffersEveryPanelType()
+{
+    // Generated from the panel table, so a new panel type reaches the toolbar
+    // with no UI change. If this ever needs editing to add a panel, the
+    // generation has been undone.
+    scope::ScopeWindow window;
+    for (const scope::PanelTypeInfo& info : scope::availablePanelTypes())
+    {
+        const QString name =
+            QStringLiteral("action_add_%1")
+                .arg(QString::fromUtf8(info.name.data(), static_cast<qsizetype>(info.name.size())));
+        expect(window.findChild<QAction*>(name) != nullptr,
+               std::string("the toolbar can add a ") + std::string(info.friendly_name));
+        expect(!info.toolbar_glyph.empty(),
+               std::string("and has a glyph for it: ") + std::string(info.name));
+    }
+}
+
+void testTheModeButtonsFollowTheSourceNotTheClick()
+{
+    scope::ScopeWindow window;
+
+    auto* live = window.findChild<QToolButton*>("mode_live");
+    auto* review = window.findChild<QToolButton*>("mode_review");
+    expect(live != nullptr && review != nullptr, "the mode control exists");
+    if (live == nullptr || review == nullptr)
+    {
+        return;
+    }
+
+    expect(live->isChecked(), "a fresh window is live");
+    expect(!review->isChecked(), "and not reviewing");
+
+    // Swapped WITHOUT going near the buttons, which is what --bag at startup and
+    // the agent interface both do. A pair of buttons tracking only their own
+    // clicks would still be claiming Live here.
+    auto seekable = std::make_unique<SeekableStub>();
+    window.setSource(std::move(seekable));
+
+    expect(!live->isChecked(), "a source swapped from elsewhere unchecks Live");
+    expect(review->isChecked(), "and checks Review");
+}
+
+void testPauseFollowsAPanRatherThanOnlyItsOwnClicks()
+{
+    // A pan turns following off without touching the button. Left to its own
+    // toggled() the button sits there saying "Pause" over a plot that has
+    // stopped scrolling, which is the most confusing state in the window.
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "a");
+    (void)panel;
+
+    auto* pause = window.findChild<QToolButton*>("transport_pause");
+    expect(pause != nullptr, "the pause button exists");
+    if (pause == nullptr)
+    {
+        return;
+    }
+    expect(!pause->isChecked(), "not paused to begin with");
+
+    window.timeBase().setRetentionSeconds(1000.0);
+    window.timeBase().panBy(-50.0);
+
+    expect(pause->isChecked(), "panning away from the live edge shows as paused");
+}
+
+void testNavigationActionsMoveTheSharedWindow()
+{
+    scope::ScopeWindow window;
+    scope::TimeBase& time_base = window.timeBase();
+    time_base.setRetentionSeconds(100000.0);
+    time_base.setMode(scope::TimeBase::Mode::Paused);
+    time_base.setView(-500.0, -440.0);
+
+    const double span = time_base.windowSeconds();
+
+    window.findChild<QAction*>("action_zoom_in")->trigger();
+    expect(time_base.windowSeconds() < span, "the zoom-in action narrows the window");
+
+    window.findChild<QAction*>("action_zoom_out")->trigger();
+    expect(std::abs(time_base.windowSeconds() - span) < 1e-9,
+           "and zoom-out is its exact inverse");
+
+    const double begin = time_base.viewBegin();
+    window.findChild<QAction*>("action_pan_back")->trigger();
+    expect(time_base.viewBegin() < begin, "the pan-back action moves the window earlier");
+
+    window.findChild<QAction*>("action_zoom_fit")->trigger();
+    expect(time_base.windowSeconds() > span, "fit widens to everything available");
+}
+
+// ------------------------------------------------------------ overview strip
+
+namespace
+{
+
+// The strip is a dumb painter: ScopeWindow pushes numbers in and connects to
+// what comes out. That is what makes it testable with four setters and a
+// synthesised drag, with no source and no bus anywhere.
+scope::OverviewStrip* readyStrip()
+{
+    auto* strip = new scope::OverviewStrip();
+    strip->resize(1000, 48);
+    strip->setExtent(0.0, 100.0);
+    strip->setView(40.0, 60.0);
+    return strip;
+}
+
+}  // namespace
+
+void testTheStripHitTestsEdgesBeforeTheBody()
+{
+    // The edges are the ZOOM handles and the body is the PAN handle. Testing the
+    // body first makes the edges unreachable on any view wider than the grab
+    // margin -- which is almost all of them -- so a user aiming at an edge pans
+    // instead, silently and in the wrong dimension.
+    std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
+
+    double begin = 0.0;
+    double end = 0.0;
+    QObject::connect(strip.get(), &scope::OverviewStrip::viewRequested,
+                     [&](double b, double e) {
+                         begin = b;
+                         end = e;
+                     });
+
+    // The view is [40, 60] over [0, 100] on a 1000px widget, so its edges are at
+    // x = 400 and x = 600. Grab the left edge and drag it to x = 300.
+    mouse(strip.get(), QEvent::MouseButtonPress, QPointF(400.0, 20.0), Qt::LeftButton,
+          Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseMove, QPointF(300.0, 20.0), Qt::NoButton, Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseButtonRelease, QPointF(300.0, 20.0), Qt::LeftButton,
+          Qt::NoButton);
+
+    expect(std::abs(begin - 30.0) < 0.5, "dragging the left edge moves only that edge");
+    expect(std::abs(end - 60.0) < 0.5, "and leaves the right one alone -- that is a zoom");
+}
+
+void testTheStripBodyDragPansWithoutZooming()
+{
+    std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
+
+    double begin = 0.0;
+    double end = 0.0;
+    QObject::connect(strip.get(), &scope::OverviewStrip::viewRequested,
+                     [&](double b, double e) {
+                         begin = b;
+                         end = e;
+                     });
+
+    // Grab the middle of the region and drag right by 100px = 10s.
+    mouse(strip.get(), QEvent::MouseButtonPress, QPointF(500.0, 20.0), Qt::LeftButton,
+          Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseMove, QPointF(600.0, 20.0), Qt::NoButton, Qt::LeftButton);
+
+    expect(std::abs((end - begin) - 20.0) < 0.5, "a body drag keeps the span");
+    expect(std::abs(begin - 50.0) < 0.5, "and moves it by the drag distance");
+}
+
+void testTheStripKeepsTheGrabOffset()
+{
+    // Held so the region moves WITH the pointer rather than centring on it.
+    // Centring makes the window jump on the first pixel of every drag, which
+    // reads as the strip snatching the view away from where it was.
+    std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
+
+    double begin = -1.0;
+    QObject::connect(strip.get(), &scope::OverviewStrip::viewRequested,
+                     [&](double b, double) { begin = b; });
+
+    // Press near the LEFT of the region, then move by one pixel.
+    mouse(strip.get(), QEvent::MouseButtonPress, QPointF(420.0, 20.0), Qt::LeftButton,
+          Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseMove, QPointF(421.0, 20.0), Qt::NoButton, Qt::LeftButton);
+
+    expect(std::abs(begin - 40.1) < 0.2,
+           "a one-pixel drag moves the window one pixel, not to the pointer");
+}
+
+void testClickingOutsideTheRegionCentresTheView()
+{
+    std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
+
+    double begin = 0.0;
+    double end = 0.0;
+    QObject::connect(strip.get(), &scope::OverviewStrip::viewRequested,
+                     [&](double b, double e) {
+                         begin = b;
+                         end = e;
+                     });
+
+    // Jumping to a place you pointed at is the one thing the QSlider this
+    // replaced did well, and losing it would make the strip worse at the coarse
+    // case it is best at.
+    mouse(strip.get(), QEvent::MouseButtonPress, QPointF(800.0, 20.0), Qt::LeftButton,
+          Qt::LeftButton);
+
+    expect(std::abs(((begin + end) / 2.0) - 80.0) < 0.5, "a click outside centres the view on it");
+    expect(std::abs((end - begin) - 20.0) < 0.5, "keeping the span");
+}
+
+void testTheStripBracketsItsDragForCoalescing()
+{
+    // The window uses this to hold TimeBase::setInteracting() for the drag, so
+    // the seeks a drag generates coalesce to one per frame. Without the pair,
+    // every mouse-move refills a whole retention window per bound signal.
+    std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
+
+    std::vector<bool> interactions;
+    QObject::connect(strip.get(), &scope::OverviewStrip::interactionChanged,
+                     [&](bool active) { interactions.push_back(active); });
+
+    mouse(strip.get(), QEvent::MouseButtonPress, QPointF(500.0, 20.0), Qt::LeftButton,
+          Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseMove, QPointF(520.0, 20.0), Qt::NoButton, Qt::LeftButton);
+    mouse(strip.get(), QEvent::MouseButtonRelease, QPointF(520.0, 20.0), Qt::LeftButton,
+          Qt::NoButton);
+
+    expect(interactions.size() == 2 && interactions[0] && !interactions[1],
+           "a drag brackets itself with exactly one true and one false");
+}
+
+void testTheStripReplacedTheScrubber()
+{
+    // The one objectName that could not survive. Its replacement is not a
+    // QSlider, so keeping the name would make an agent that clicks it and then
+    // sets a value fail in a way that looks like a broken app rather than a
+    // renamed widget.
+    scope::ScopeWindow window;
+    expect(window.findChild<QWidget*>("transport_scrubber") == nullptr,
+           "transport_scrubber is gone, not quietly re-pointed at something else");
+    expect(window.findChild<scope::OverviewStrip*>("overview_strip") != nullptr,
+           "and the overview strip is there instead");
+}
+
 void testTimeBaseClampsSillyValues()
 {
     scope::ScopeWindow window;
@@ -652,6 +1159,28 @@ int main(int argc, char** argv)
     testGarbageDockStateIsRejectedNotFatal();
     testTheTimeBaseIsShared();
     testTimeBaseClampsSillyValues();
+
+    testTheStripHitTestsEdgesBeforeTheBody();
+    testTheStripBodyDragPansWithoutZooming();
+    testTheStripKeepsTheGrabOffset();
+    testClickingOutsideTheRegionCentresTheView();
+    testTheStripBracketsItsDragForCoalescing();
+    testTheStripReplacedTheScrubber();
+
+    testTheToolbarReusesTheMenusActions();
+    testTheToolbarOffersEveryPanelType();
+    testTheModeButtonsFollowTheSourceNotTheClick();
+    testPauseFollowsAPanRatherThanOnlyItsOwnClicks();
+    testNavigationActionsMoveTheSharedWindow();
+
+    testWheelZoomHoldsTheInstantUnderThePointer();
+    testAZoomOnOnePanelMovesTheOther();
+    testHoveringDoesNotPan();
+    testAClickThatDoesNotTravelIsNotAPan();
+    testDraggingPansTheSharedWindow();
+    testShiftDragZoomsToTheBand();
+    testShiftWheelTurnsOffAutoscale();
+    testDoubleClickResumesFollowing();
 
     testRebindingReleasesAgainstTheOldSource();
     testHistorySecondsReachesThePanels();

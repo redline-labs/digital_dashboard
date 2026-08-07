@@ -137,6 +137,26 @@ class DataSource
     // setPlaying() so a rate chosen while stopped is in force when play starts.
     virtual void setRate(double /*rate*/) {}
 
+    // How many messages this source has in each of `buckets` equal slices of
+    // [t0, t1], on this source's own clock. For the overview strip's
+    // background: "where in this recording is anything happening".
+    //
+    // Returns false and leaves `out` empty when the source cannot answer
+    // CHEAPLY, which the strip draws as a plain band. That is the whole
+    // contract -- a source that would have to read its data to answer must
+    // decline rather than answer slowly, because the alternative is a UI widget
+    // driving a full scan of a torn recording.
+    //
+    // On the interface rather than on RecordedSource so the strip never has to
+    // ask what kind of source it has. A live source declines today and could
+    // answer from the capture later without the strip learning anything new.
+    virtual bool density(double /*t0*/, double /*t1*/, std::size_t /*buckets*/,
+                         std::vector<std::uint32_t>& out)
+    {
+        out.clear();
+        return false;
+    }
+
     // One render tick, called by TimeBase before it emits frame().
     //
     // A playing recorded source advances its position and refills its buffers

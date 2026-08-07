@@ -29,6 +29,7 @@ add_library(scope_core STATIC
     panel_registry.cpp
     signal_browser.cpp
     add_signal_dialog.cpp
+    overview_strip.cpp
     scope_window.cpp
     workspace.cpp
     scope_methods.cpp
@@ -44,6 +45,7 @@ add_library(scope_core STATIC
     include/scope/panel.h
     include/scope/signal_browser.h
     include/scope/add_signal_dialog.h
+    include/scope/overview_strip.h
 
     # Panels. One directory per type, mirroring dashboard/widgets/ -- but built
     # into scope_core rather than into a library each, because there is no
@@ -181,6 +183,25 @@ target_link_libraries(scope_test_capture_buffer PRIVATE
 )
 
 add_project_test(TARGET scope_test_capture_buffer LABELS scope unit)
+
+# The shared view window: zooming, panning, and what clamps it.
+#
+# Almost every way this can be wrong looks like data rather than like a bug -- a
+# zoom that does not hold its anchor, a pan that leaves the buffers behind, a
+# live view that clamps at the right edge and stops scrolling. None of them
+# raise anything; they draw a plausible wrong picture, which is the same reason
+# the decimation and scrubbing tests exist.
+#
+# QCoreApplication, no widgets and no bus, so a plain unit test.
+qt_add_executable(scope_test_time_base
+    tests/test_time_base.cpp
+)
+
+target_link_libraries(scope_test_time_base PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_time_base LABELS scope unit)
 
 # The window and panel layer against a real widget tree, so `gui` and offscreen.
 # Uses a stub DataSource rather than the live zenoh one: everything here is

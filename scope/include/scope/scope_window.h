@@ -8,6 +8,7 @@
 #include <QMainWindow>
 #include <QString>
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -17,7 +18,6 @@ class QComboBox;
 class QDockWidget;
 class QLabel;
 class QDoubleSpinBox;
-class QSlider;
 class QToolButton;
 
 namespace scope
@@ -25,6 +25,7 @@ namespace scope
 
 class DataSource;
 class LiveZenohSource;
+class OverviewStrip;
 class Panel;
 class ScopeRecorder;
 class SignalBrowser;
@@ -119,6 +120,22 @@ class ScopeWindow : public QMainWindow
 
     ScopeRecorder* recorder() { return recorder_.get(); }
 
+    // Messages per uniform bucket over [begin, end] on the source's clock.
+    //
+    // Goes through the window rather than straight to the source because a LIVE
+    // source cannot answer -- it keeps no history of its own -- and the honest
+    // answer comes from the recorder, which has been capturing the whole bus
+    // since startup. The window is the only thing holding both, and the two
+    // clocks need reconciling. Doing it here rather than at each caller is what
+    // keeps `scope.density` reporting the same numbers the overview strip is
+    // drawing; the RPC exists precisely to check the strip, so the two
+    // disagreeing would make it useless.
+    //
+    // False means nothing could answer cheaply, which the strip draws as a plain
+    // band. NOT per frame -- see CaptureBuffer::density().
+    bool densityFor(double begin, double end, std::size_t buckets,
+                    std::vector<std::uint32_t>& out);
+
   signals:
     // The source was replaced. The transport bar rebuilds from caps().
     void sourceChanged();
@@ -188,6 +205,22 @@ class ScopeWindow : public QMainWindow
     void showPanelMenu(const QString& panel_id, const QPoint& at);
     void buildTransportBar();
 
+    // The top bar: which mode the window is in, what it is made of, and the
+    // zoom actions. Everything about the TIME axis stays on the bottom bar with
+    // the time axis.
+    //
+    // It is built from the QAction objects the menus already own rather than
+    // from copies. One action means one objectName, one handler and one
+    // enabled-state, so the toolbar cannot drift out of step with the menu that
+    // does the same thing -- which is exactly what two copies would do the
+    // first time one of them grew a guard.
+    void buildMainToolBar();
+
+    // Window-level zoom/fit actions, shared by the toolbar buttons and the
+    // keyboard. A gesture and a key press must reach the same code or they will
+    // disagree about clamping the first time one is changed.
+    void buildNavigationActions();
+
     // Show the control set the current source's caps() call for, and hide the
     // other. Both are built once, at startup, because a toolbar rebuilt on
     // every source change would lose the object names the agent interface
@@ -195,8 +228,23 @@ class ScopeWindow : public QMainWindow
     // toolbar ends up with two Pause buttons.
     void applySourceCaps();
 
-    // Per-frame refresh of the scrubber and the position readout.
+    // Per-frame refresh of the overview strip and the position readout.
     void updateTransport();
+
+    // Push the strip's marks -- extent, view, cursor, playhead, retained band.
+    // Cheap, so it runs every frame. The histogram behind them does NOT; see
+    // refreshDensity().
+    void updateOverview();
+
+    // Recompute the strip's background histogram, at most every
+    // kDensityIntervalMs and only when something it depends on has moved.
+    //
+    // THE THROTTLE IS LOAD-BEARING, not a tuning knob. CaptureBuffer::revision()
+    // bumps on every push and every eviction -- thousands a second on a busy bus
+    // -- so a revision check alone would recompute every frame, walking millions
+    // of entries while holding the mutex the zenoh RX thread needs to push. That
+    // does not merely cost the consumer; it stalls the producer.
+    void refreshDensity();
 
     void updateEmptyHint();
     void updateWindowTitle();
@@ -233,6 +281,14 @@ class ScopeWindow : public QMainWindow
     QDoubleSpinBox* window_spin_ = nullptr;
     QLabel* cursor_label_ = nullptr;
 
+    // The mode control. Checked from the SOURCE in applySourceCaps(), never
+    // from the click that caused the change -- so a source swapped by the agent
+    // interface, by --bag at startup or by a failed open leaves the toolbar
+    // saying what is actually behind the panels.
+    QToolButton* mode_live_ = nullptr;
+    QToolButton* mode_review_ = nullptr;
+    QLabel* capture_chip_ = nullptr;
+
     // The two control sets. QToolBar::addWidget hands back the QAction that
     // owns the widget's place in the bar, and hiding that is what removes the
     // widget AND the separator space around it -- hiding the widget alone
@@ -242,8 +298,24 @@ class ScopeWindow : public QMainWindow
 
     QToolButton* play_button_ = nullptr;
     QComboBox* rate_combo_ = nullptr;
-    QSlider* scrubber_ = nullptr;
     QLabel* transport_status_ = nullptr;
+
+    // Replaced `transport_scrubber`, a QSlider. The name could not be kept: an
+    // agent that clicked it and then set a value would be driving a widget that
+    // is not a slider any more, and would fail in a way that looks like a
+    // broken app rather than a renamed one.
+    OverviewStrip* overview_ = nullptr;
+
+    // Reused across recomputations so a running strip allocates nothing.
+    std::vector<std::uint32_t> density_;
+
+    // What the cached histogram was computed from, so refreshDensity() can tell
+    // whether anything it depends on has actually moved.
+    std::uint64_t density_revision_ = 0;
+    int density_buckets_ = 0;
+    double density_begin_ = 0.0;
+    double density_end_ = 0.0;
+    std::int64_t density_computed_at_ms_ = 0;
 
     // Set while the transport bar is being updated FROM the time base, so the
     // widgets' own valueChanged signals do not turn a refresh into a seek. The

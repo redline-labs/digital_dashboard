@@ -80,6 +80,15 @@ struct LiveZenohSource::Impl
 {
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
 
+    // The same instant on the wall clock, read once, right beside the steady
+    // one. The pair is what converts the capture's UNIX log_times onto this
+    // source's axis -- see epochWallNanos(). Read once because re-reading it
+    // would move the mapping under a plot that never moved.
+    std::uint64_t epoch_wall_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
     // What is advertised on the bus. Owned by the source rather than by
     // whatever draws a picker: "which topics exist" is a property of where the
     // data comes from, and putting it here is what lets a recorded source
@@ -281,6 +290,11 @@ double LiveZenohSource::now() const
 std::size_t LiveZenohSource::subscriptionCount() const
 {
     return impl_->by_key.size();
+}
+
+std::uint64_t LiveZenohSource::epochWallNanos() const
+{
+    return impl_->epoch_wall_ns;
 }
 
 }  // namespace scope

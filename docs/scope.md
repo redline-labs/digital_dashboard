@@ -22,12 +22,12 @@ There is nothing to see without traffic on the bus. For a car-free bring-up:
 
 ```
                  TimeBase  ── one render timer for the whole window
-                    │         one clock, one cursor, one pause
-       ┌────────────┼────────────┐
-       ▼            ▼            ▼
-    Panel        Panel        Panel      QDockWidgets: dock, tab, split, float
-       │            │            │
-       └────────────┴────────────┘
+                    │         one clock, one cursor, ONE VIEW WINDOW
+       ┌────────────┼────────────┬──────────────┐
+       ▼            ▼            ▼              ▼
+    Panel        Panel        Panel      OverviewStrip
+       │            │            │       (the whole recording, and
+       └────────────┴────────────┘        the window drawn on it)
                     │  SignalBuffer per plotted signal
                     ▼
                DataSource        ← the seam
@@ -45,7 +45,7 @@ There is nothing to see without traffic on the bus. For a car-free bring-up:
 **DataSource is the seam that matters.** Live and recorded data are the same
 shape — the same zenoh messages, the same capnp schemas, the same expressions
 over their fields — and differ only in where the bytes and the timestamps come
-from and whether you can seek. `caps()` reports that; the transport bar renders
+from and whether you can seek. `caps()` reports that; the two bars render
 from it; no panel ever learns which kind is behind it. Reading recorded data is
 a new implementation of one interface, not a change to every panel — which is
 what the tree claimed for a year before anything tested the claim, and it held.
@@ -58,16 +58,157 @@ destroyed. A handle means nothing to a source that did not issue it, so
 repointing before releasing leaks every subscription on the old one.
 
 **Panels are registered in one place.** `scope/include/scope/panel_table.h` is
-the list; the enum, the config variant, the Panels menu, the YAML decoder and
-the agent interface's idea of what exists all derive from it. Adding a video or
-tabular panel is one line there plus a directory — the registration steps are
-written out at the top of `scope/include/scope/panel_registry.h`.
+the list; the enum, the config variant, the Panels menu, **the toolbar's Add
+buttons**, the YAML decoder and the agent interface's idea of what exists all
+derive from it. Adding a video or tabular panel is one line there plus a
+directory — the registration steps are written out at the top of
+`scope/include/scope/panel_registry.h`.
+
+## The two bars
+
+**The top bar is about mode and composition; the bottom bar is about time.**
+
+```
+[● Live][Review ▾]  ⏺ 41 s captured   ∿ Time Series   − + ⤢ Fit   Open Save   Signals
+```
+
+`Review` enters the in-memory capture in one click — "the last live session",
+which is the case worth making cheap — and its dropdown holds Open Recording…
+and Save Recording…. Both buttons are checked from **the source**, never from
+the click that changed it, so a swap made by `--bag` at startup, by the agent
+interface, or by an open that failed leaves the toolbar saying what is actually
+behind the panels.
+
+Everything on it is the **same `QAction`** the menus already own, not a copy.
+One action means one objectName, one handler and one enabled-state, so the
+toolbar cannot drift out of step with the menu item that does the same thing —
+which is exactly what two copies would do the first time one of them grew a
+guard. `scope_test_panels` pins that there is exactly one of each.
+
+**Glyphs, not icons.** There is no icon pipeline in this tree — no `QIcon`
+anywhere, and the one `.qrc` is dashboard widget artwork that scope does not
+link. A panel's button glyph is a `kToolbarGlyph` on the panel class, harvested
+into `PanelTypeInfo` exactly as `kFriendlyName` is. Swapping glyphs for `QIcon`s
+later is a change to that field and to the toolbar, and to nothing else. Pick
+one that is in the default font on every platform: a missing glyph renders as a
+blank box, which reads as a broken button rather than a plain one.
 
 **Picking a signal knows nothing about panel types.** The browser produces a
 `BindingCandidate`, the drag carries it, the dialog returns it, and every panel
 answers the same two questions: `acceptsBinding()` and `addBinding()`. A
 time-series plot takes numeric fields and declines whole topics; a video panel
 would do the reverse. Neither the browser nor the drag plumbing changes.
+
+## Navigating time
+
+**One window, shared by every panel.** `TimeBase` owns `[viewBegin, viewEnd]`,
+and every gesture in every panel moves *that* rather than anything of its own.
+That is what makes the shared cursor mean something: two panels always show the
+same span, so a value read off one lines up with a value read off the other.
+
+Stored as **(right edge, span)**, not as a pair, for three reasons. The span is
+what the workspace persists, what the spin box edits and what a panel with
+`follow_time_base: false` overrides. It gives `setWindowSeconds()` a defined
+answer to "which edge moves?" — the right one holds. And **a following right
+edge has to be derived**: stored, it is only correct until the source's clock
+advances, so anything reading it between two render ticks gets a window up to a
+frame stale, silently.
+
+| gesture | does |
+|---|---|
+| wheel | zoom about the pointer — the instant under it keeps its place |
+| shift + wheel | zoom the value axis; turns autoscale off (per panel) |
+| drag | pan |
+| shift + drag | rubber-band a range, zoom to it |
+| double-click | fit all, and give autoscale back |
+| `+` `-` `0` `←` `→` `space` | the same things from the keyboard, anywhere in the window |
+
+`following` is the one flag underneath `Mode{Live, Paused}`: it means *the right
+edge is being driven by something other than the user* — the source's clock on a
+live source, playback on a recording. Every pan and zoom clears it, because you
+cannot hold a span still while it is pinned to now.
+
+With one exception, and it exists because the alternative is a bug that reads as
+a hang: **a gesture that lands the right edge exactly at `now()` on a live
+source re-arms following.** Panning further right than there is data would
+otherwise pin the view at the live edge with following off, and the plot simply
+stops scrolling — which is indistinguishable from a dead publisher.
+
+**Zoom-out stops at what is retained.** `availableRange()` is the recording's
+extent on a seekable source, and `[now - history_seconds, now]` on a live one,
+floored at zero because a live source's clock starts when it does. The window
+*slides* into range rather than being squashed, so a pan near the edge never
+silently changes the zoom level.
+
+### The view's right edge IS the playhead
+
+On a recorded source, and it is a rule rather than a coincidence.
+`RecordedSource` loads `[t - history, t]` around **one** position on every seek
+(`SignalBuffer::replaceHistory()`), so a view sitting anywhere other than the
+playhead would be drawn from buffers holding a different stretch of the
+recording. It would look like data, not like a bug. `setView()` therefore seeks
+to its right edge, and `seek()` moves the whole window so its right edge lands
+where it was told.
+
+**Seeks coalesce during a drag.** A drag emits a mouse-move per pass of the
+event loop — 60 to 125 a second — and each seek refills a whole retention window
+per bound signal. Eight traces of a 1 kHz signal over the default 300 s
+retention is 2.4 million samples rebuilt per event, so the drag would stutter in
+proportion to how much history is retained, which is the opposite of what
+retaining more should cost. `TimeBase::setInteracting()` holds the seeks to one
+per render tick for the duration of the drag. Outside an interaction a seek
+applies immediately, so a caller that sets the view and then reads
+`sample_stats` sees the buffers it asked for — the same distinction
+`QSlider::isSliderDown()` draws.
+
+## The overview strip
+
+The bottom bar is the whole recording at a glance, with the view window drawn on
+it as a region you can grab. It replaced a `QSlider`, and the reason is worth
+stating: a slider positions one value in a range whose **contents you cannot
+see**, so finding an event in half an hour of capture meant dragging blind and
+watching the plot.
+
+Back to front it draws: the message-density histogram, the stretch the panels'
+buffers can actually reach, the eviction head, the view window with a grab
+handle on each edge, the playhead, and the shared cursor — the same cursor, on
+the same clock, that the panels draw.
+
+Drag the body to pan, drag an edge to zoom, click outside to jump, wheel to zoom
+about the pointer. The strip itself touches nothing: it emits `viewRequested`
+and the window decides what that means, so there is exactly one place where a
+view change turns into a seek.
+
+**The histogram is not free and is not drawn per frame.**
+`CaptureBuffer::density()` walks the retained deque under the same mutex the
+zenoh RX thread needs to push, so recomputing it at the render rate would stall
+the *producer*, not merely cost the consumer. `CaptureBuffer::revision()` is
+useless as a cache key here — it bumps on every push, thousands a second — so
+the 500 ms throttle is what bounds the work, and a resize or a source swap
+forces a recompute immediately because the cached counts then describe a range
+that is no longer on screen.
+
+Each backend answers differently, and each says which it is:
+
+| source | answers from | exact? |
+|---|---|---|
+| the in-memory capture | every retained message | yes |
+| a bag on disk | `metadata.yaml`'s **part index**, opening no file | no |
+| the live bus | the recorder's capture, via the epoch pair below | yes |
+
+A bag's answer is approximate because "how many" is indexed and "where inside a
+part" is not, so a single-part recording draws as one flat block. Counting
+through `forEach` instead is exactly what that method's warning forbids — it
+opens an `mcap::McapReader` per part per call and can fall back to scanning the
+whole data section — and it would be driven from a widget.
+
+A live source keeps no history of its own, so `DataSource::density()` declines
+and `ScopeWindow` asks the recorder instead. That needs the two clocks
+reconciled: the capture stamps UNIX nanoseconds and `LiveZenohSource` counts
+seconds from its own construction, so the source samples the wall clock **once**
+beside its steady epoch (`epochWallNanos()`). Once, because re-reading it would
+slide the strip's background under a plot whose samples never moved, the first
+time NTP disciplined the machine.
 
 ## Timestamps, and why they are what they are
 
@@ -160,8 +301,10 @@ file's point of view that is exactly what it is.
 
 **Capture keeps running while you review it.** Deciding to look at something
 must not cost you everything that happens while you look. The consequence is
-that the provider's span moves under the scrubber — so the transport bar
-re-reads the range every frame, and the retained span is on screen.
+that the provider's span **moves underneath the overview strip** — so the strip
+re-reads the extent every frame, and its cached histogram carries the range it
+was counted over so a stale one stays in the right place rather than smeared
+across a range it never described.
 
 Saving goes through `bag::BagWriter`, so the result is an ordinary bag: `bag
 info`, `bag verify`, `bag play` and Foxglove all work on it, with the schema
@@ -342,7 +485,8 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 | `scope.add_signal` / `scope.remove_signal` | bind and unbind |
 | `scope.browser` | the topic→field tree, optionally rescanning first |
 | `scope.browser_drag` | drive the drop path itself |
-| `scope.time_base` | window length, pause, cursor, caps — plus `seek` / `playing` / `rate` |
+| `scope.time_base` | the view window: `view` / `pan` / `zoom` / `fit` / `seek`, plus `following`, `window_seconds`, `playing`, `rate`, cursor and caps |
+| `scope.density` | what the overview strip draws behind everything else, as numbers |
 | `scope.panel_get_config` / `_set_config` / `_describe_config` | reflected config |
 | `scope.save` / `scope.load` | workspaces |
 | `scope.source` | which kind of source is behind the panels, and `decodes_pending` |
@@ -378,6 +522,42 @@ The backwards seek is the one to check. A buffer that kept the position it came
 from stays perfectly ordered and is completely wrong, so "still ordered" is not
 the assertion — `t_last` moving back is.
 
+**Panning is the same assertion.** On a recorded source the view's right edge is
+the playhead, so a pan must move the buffers too. This is what proves the rule
+holds through the gesture path rather than only through `seek`:
+
+```
+app_call("scope.time_base", {"window_seconds": 5})
+app_call("scope.time_base", {"pan": -10.0})
+scope_sample_stats(...)                # t_last moved back by ten seconds
+app_call("scope.time_base", {})        # following=false, playing=false
+```
+
+**Zoom is checkable without a screenshot too**, and the property to check is the
+anchor, not the span:
+
+```
+app_call("scope.time_base", {"zoom": {"factor": 0.5, "anchor": 12.0}})
+app_call("scope.time_base", {})   # span halved, and 12.0 sits at the same
+                                  # fraction of [view_begin, view_end] as before
+```
+
+Naming two movers in one call is refused rather than guessed at:
+`{"pan": -5, "zoom": 0.5}` is `BAD_PARAMS`. They all move the window, so
+composing two produces a result that cannot be read back from the request — and
+the caller is usually a model that will then reason from the wrong position.
+
+**And the strip's background, which really cannot be screenshotted usefully:**
+
+```
+app_call("scope.density", {"buckets": 10})   # buckets, t_begin/t_end, exact
+app_call("scope.capture", {})                # messages over the same span
+```
+
+The bucket sum against `capture`'s `messages` is the assertion worth making.
+`exact: false` means the source declined to answer cheaply rather than slowly —
+a bag counting from its part index — not that there is nothing there.
+
 **`scope.sample_stats` is the one to reach for first.** A screenshot shows a
 line; this says what the line is made of. `received` climbing with `dropped` at
 zero and a `min`/`max` bracketing what you published is a much stronger
@@ -398,6 +578,14 @@ ctest --test-dir build -R scope --output-on-failure
 
 - `scope_test_ring` (unit) — the lock-free hand-off, the retained history, and
   the retention limits, including a real two-thread run of 200k samples.
+- `scope_test_time_base` (unit) — the view window: zooming, panning, and what
+  clamps it. Almost every way this can be wrong **looks like data** rather than
+  like a bug — a zoom that does not hold its anchor drifts the trace under the
+  pointer, a pan that leaves the buffers behind draws the wrong stretch of a
+  recording, a live view that clamps at the right edge just stops scrolling.
+  None of them raise anything. The load-bearing cases are the anchor holding its
+  fraction of the window through a zoom, the live-edge re-arm, and that a drag
+  produces exactly one seek rather than one per event.
 - `scope_test_decimate` (unit) — column reduction against a brute-force
   reference over random windows. Every way this can be wrong looks like data
   rather than like a bug.
@@ -421,6 +609,26 @@ ctest --test-dir build -R scope --output-on-failure
   Qt drop handler, which terminates the app. It also pins the source-swap
   ordering rule, and that `history_seconds` reaches the panels — it round-tripped
   through the YAML perfectly for a year while both ends ignored it.
+
+  The gesture cases live here rather than in `scope_test_time_base` because a
+  gesture converts pixels against **what the panel actually drew**, so they need
+  a real widget. Synthesised `QWheelEvent`/`QMouseEvent` are delivered fine
+  offscreen; it is only `QDrag::exec()` that cannot run there. Note that moving
+  the view and then sending a gesture without a repaint in between converts
+  against the *previous* window — deliberately, so a click lands on the instant
+  the user can see, and a test has to force a paint.
+
+  The assertion that matters most: **a zoom on panel A moves panel B's window.**
+  That is the whole requirement; without it the panels have quietly grown
+  independent axes and the shared cursor lines up with nothing.
+
+> **One objectName did not survive.** `transport_scrubber` was a `QSlider` and
+> `overview_strip` is not one, so keeping the name would make an agent that
+> clicks it and then sets a value fail in a way that looks like a broken app
+> rather than a renamed widget. `scope_test_panels` pins that it is gone rather
+> than quietly re-pointed at something else. Everything else on the transport
+> bar kept its name, including `transport_status`, which moved to the top bar —
+> a stable name is worth more than a tidy prefix.
 
 ## Headless
 

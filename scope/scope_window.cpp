@@ -3,6 +3,7 @@
 #include "scope/add_signal_dialog.h"
 #include "scope/data_source.h"
 #include "scope/live_zenoh_source.h"
+#include "scope/overview_strip.h"
 #include "scope/panel.h"
 #include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
@@ -26,7 +27,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
-#include <QSlider>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -185,7 +185,9 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
     // changing either means the file on disk no longer describes the window.
     connect(time_base_.get(), &TimeBase::changed, this, [this]() { markDirty(); });
 
+    buildNavigationActions();
     buildMenuBar();
+    buildMainToolBar();
     buildTransportBar();
     updateWindowTitle();
 
@@ -903,10 +905,192 @@ void ScopeWindow::setHistorySeconds(double seconds)
     {
         entry.panel->setHistorySeconds(history_seconds_);
     }
+
+    // The time base clamps a live view to what is retained, so it needs the same
+    // number. A copy for the clamp, not a second source of truth -- this is the
+    // only place that writes it.
+    time_base_->setRetentionSeconds(history_seconds_);
+
     markDirty();
 }
 
 // ----------------------------------------------------------------------- chrome
+
+namespace
+{
+
+// How much one press of a zoom button or key changes the span. Wide enough that
+// a few presses cross an order of magnitude, narrow enough to land on something
+// deliberately.
+constexpr double kZoomStep = 1.6;
+
+}  // namespace
+
+void ScopeWindow::buildNavigationActions()
+{
+    // Actions on the WINDOW, not on a panel, so a key press works wherever the
+    // focus happens to be -- the browser, a dock title bar, an empty central
+    // area. A panel-level shortcut would work only while a plot had focus,
+    // which is a hard thing to notice and an annoying thing to live with.
+    const auto add = [this](const char* name, const QString& text, const QKeySequence& key,
+                            auto&& on_trigger) {
+        auto* action = new QAction(text, this);
+        action->setObjectName(name);
+        action->setShortcut(key);
+        action->setShortcutContext(Qt::WindowShortcut);
+        connect(action, &QAction::triggered, this, on_trigger);
+        addAction(action);
+        return action;
+    };
+
+    add("action_zoom_in", tr("Zoom &In"), QKeySequence::ZoomIn, [this]() {
+        // About the shared cursor when there is one, so zooming in on something
+        // you are pointing at keeps it in view; about the middle otherwise.
+        const std::optional<double>& cursor = time_base_->cursor();
+        time_base_->zoomAt(cursor ? *cursor
+                                  : (time_base_->viewBegin() + time_base_->viewEnd()) / 2.0,
+                           1.0 / kZoomStep);
+    });
+
+    add("action_zoom_out", tr("Zoom &Out"), QKeySequence::ZoomOut, [this]() {
+        const std::optional<double>& cursor = time_base_->cursor();
+        time_base_->zoomAt(cursor ? *cursor
+                                  : (time_base_->viewBegin() + time_base_->viewEnd()) / 2.0,
+                           kZoomStep);
+    });
+
+    add("action_zoom_fit", tr("&Fit All"), QKeySequence(Qt::CTRL | Qt::Key_0),
+        [this]() { time_base_->fitAll(); });
+
+    add("action_pan_back", tr("Pan &Back"), QKeySequence(Qt::Key_Left),
+        [this]() { time_base_->panBy(-time_base_->windowSeconds() * 0.1); });
+
+    add("action_pan_forward", tr("Pan &Forward"), QKeySequence(Qt::Key_Right),
+        [this]() { time_base_->panBy(time_base_->windowSeconds() * 0.1); });
+
+    // One key for "stop/start whatever is driving the right edge", whichever
+    // kind of source is behind the panels. On a live source that is following;
+    // on a recording it is playback, which turns following back on itself.
+    add("action_toggle_follow", tr("Follow / Play"), QKeySequence(Qt::Key_Space), [this]() {
+        if (source_->caps().seekable)
+        {
+            time_base_->setPlaying(!time_base_->playing());
+        }
+        else
+        {
+            time_base_->setFollowing(!time_base_->following());
+        }
+    });
+}
+
+void ScopeWindow::buildMainToolBar()
+{
+    auto* bar = new QToolBar(tr("Main"), this);
+
+    // Without an objectName QMainWindow::saveState() warns and drops the bar,
+    // the same reason transport_bar has one.
+    bar->setObjectName("main_toolbar");
+    bar->setMovable(false);
+    bar->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    addToolBar(Qt::TopToolBarArea, bar);
+
+    // ------------------------------------------------------------------ mode
+
+    mode_live_ = new QToolButton(bar);
+    mode_live_->setObjectName("mode_live");
+    mode_live_->setText(tr("● Live"));
+    mode_live_->setToolTip(tr("Show what is on the bus now"));
+    mode_live_->setCheckable(true);
+    connect(mode_live_, &QToolButton::clicked, this, [this]() { goLive(); });
+    bar->addWidget(mode_live_);
+
+    mode_review_ = new QToolButton(bar);
+    mode_review_->setObjectName("mode_review");
+    mode_review_->setText(tr("Review"));
+    mode_review_->setToolTip(tr("Review what has been captured since scope started"));
+    mode_review_->setCheckable(true);
+    mode_review_->setPopupMode(QToolButton::MenuButtonPopup);
+    // The button itself reviews the in-memory capture -- "the last live
+    // session", which is the case worth one click. Anything else is in the menu.
+    connect(mode_review_, &QToolButton::clicked, this, [this]() { (void)reviewCapture(); });
+
+    auto* review_menu = new QMenu(mode_review_);
+    review_menu->setObjectName("mode_review_menu");
+    // The SAME action the File menu owns, not a copy of it: one objectName, one
+    // handler, and the headless guard in openRecordingDialog() already applies.
+    if (QAction* open_recording = findChild<QAction*>("action_open_recording"))
+    {
+        review_menu->addAction(open_recording);
+    }
+    if (QAction* save_recording = findChild<QAction*>("action_save_recording"))
+    {
+        review_menu->addAction(save_recording);
+    }
+    mode_review_->setMenu(review_menu);
+    bar->addWidget(mode_review_);
+
+    capture_chip_ = new QLabel(bar);
+    capture_chip_->setObjectName("capture_chip");
+    capture_chip_->setStyleSheet("color: palette(mid); font-size: 11px; padding: 0 8px;");
+    bar->addWidget(capture_chip_);
+
+    // --------------------------------------------------------------- compose
+
+    bar->addSeparator();
+
+    // Generated from the panel table, so a new panel type appears here with no
+    // UI code -- the same property the Panels menu has, and from the same list.
+    for (const PanelTypeInfo& info : availablePanelTypes())
+    {
+        const QString type_name =
+            QString::fromUtf8(info.name.data(), static_cast<qsizetype>(info.name.size()));
+        QAction* action = findChild<QAction*>(QStringLiteral("action_add_%1").arg(type_name));
+        if (action == nullptr)
+        {
+            continue;
+        }
+
+        auto* button = new QToolButton(bar);
+        // setDefaultAction rather than a new action: the shortcut, the text and
+        // the handler all come from the one the menu already has.
+        button->setDefaultAction(action);
+        button->setText(QStringLiteral("%1 %2").arg(
+            QString::fromUtf8(info.toolbar_glyph.data(),
+                              static_cast<qsizetype>(info.toolbar_glyph.size())),
+            QString::fromUtf8(info.friendly_name.data(),
+                              static_cast<qsizetype>(info.friendly_name.size()))));
+        button->setToolTip(tr("Add a %1 panel").arg(button->text()));
+        bar->addWidget(button);
+    }
+
+    // ------------------------------------------------------------------ zoom
+
+    bar->addSeparator();
+    const auto add_action_button = [&](const char* action_name, const QString& text) {
+        QAction* action = findChild<QAction*>(action_name);
+        if (action == nullptr)
+        {
+            return;
+        }
+        auto* button = new QToolButton(bar);
+        button->setDefaultAction(action);
+        button->setText(text);
+        bar->addWidget(button);
+    };
+
+    add_action_button("action_zoom_out", tr("−"));
+    add_action_button("action_zoom_in", tr("+"));
+    add_action_button("action_zoom_fit", tr("⤢ Fit"));
+
+    // ------------------------------------------------------- workspace, view
+
+    bar->addSeparator();
+    add_action_button("action_open", tr("Open"));
+    add_action_button("action_save", tr("Save"));
+
+    bar->addSeparator();
+    add_action_button("action_view_browser", tr("Signals"));
+}
 
 void ScopeWindow::buildMenuBar()
 {
@@ -999,18 +1183,11 @@ namespace
 // study a transient you have already found, 20x to find one.
 constexpr double kRates[] = {0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0};
 
-// The scrubber's unit. Milliseconds rather than a fixed number of steps,
-// because a fixed 1000 steps over a four-hour recording is fourteen seconds per
-// notch -- unusable for finding anything. int32 milliseconds is 24 days, which
-// is longer than any recording this will see.
-constexpr double kScrubberTicksPerSecond = 1000.0;
-
-int toTicks(double seconds)
-{
-    const double ticks = seconds * kScrubberTicksPerSecond;
-    return static_cast<int>(std::clamp(ticks, 0.0,
-                                       static_cast<double>(std::numeric_limits<int>::max())));
-}
+// How often the overview's histogram may be recomputed. Fast enough that a
+// growing capture visibly grows, slow enough that walking millions of retained
+// messages under the capture's mutex does not stall the zenoh RX thread that
+// needs the same lock to push. See ScopeWindow::refreshDensity().
+constexpr std::int64_t kDensityIntervalMs = 500;
 
 QString formatWallClock(std::uint64_t unix_nanos)
 {
@@ -1033,6 +1210,34 @@ QString formatWallClock(std::uint64_t unix_nanos)
 // only thing that changes.
 void ScopeWindow::buildTransportBar()
 {
+    // The overview goes in a bar of its OWN, above the controls, so it gets the
+    // full width. Sharing a row with the buttons would leave it a few hundred
+    // pixels for a whole recording, which is the resolution the QSlider it
+    // replaced had and the reason that slider was useless for finding anything.
+    auto* overview_bar = new QToolBar(tr("Overview"), this);
+    overview_bar->setObjectName("overview_bar");
+    overview_bar->setMovable(false);
+    addToolBar(Qt::BottomToolBarArea, overview_bar);
+
+    overview_ = new OverviewStrip(overview_bar);
+    overview_bar->addWidget(overview_);
+    // Stretches to the bar's width rather than sitting at its natural size,
+    // which for a custom widget in a toolbar is the minimum.
+    overview_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    connect(overview_, &OverviewStrip::viewRequested, this, [this](double begin, double end) {
+        if (!updating_transport_)
+        {
+            time_base_->setView(begin, end);
+        }
+    });
+    connect(overview_, &OverviewStrip::interactionChanged, this,
+            [this](bool active) { time_base_->setInteracting(active); });
+    connect(overview_, &OverviewStrip::cursorRequested, this,
+            [this](std::optional<double> t) { time_base_->setCursor(t); });
+
+    addToolBarBreak(Qt::BottomToolBarArea);
+
     auto* bar = new QToolBar(tr("Transport"), this);
     bar->setObjectName("transport_bar");
     bar->setMovable(false);
@@ -1101,22 +1306,6 @@ void ScopeWindow::buildTransportBar()
     });
     review_controls_.push_back(bar->addWidget(rate_combo_));
 
-    scrubber_ = new QSlider(Qt::Horizontal, bar);
-    scrubber_->setObjectName("transport_scrubber");
-    scrubber_->setMinimumWidth(220);
-    connect(scrubber_, &QSlider::valueChanged, this, [this](int ticks) {
-        // Ignored while the bar is being refreshed FROM the time base.
-        // Otherwise every frame of playback would set the slider, the slider
-        // would seek to where playback already was, and the two would fight at
-        // the render rate -- which reads as a scrubber that will not move.
-        if (updating_transport_)
-        {
-            return;
-        }
-        time_base_->seek(static_cast<double>(ticks) / kScrubberTicksPerSecond);
-    });
-    review_controls_.push_back(bar->addWidget(scrubber_));
-
     // --------------------------------------------------------------- shared
 
     bar->addSeparator();
@@ -1175,17 +1364,29 @@ void ScopeWindow::applySourceCaps()
         action->setVisible(caps.seekable);
     }
 
-    if (caps.seekable && scrubber_ != nullptr)
-    {
-        const bool was_updating = updating_transport_;
-        updating_transport_ = true;
-        scrubber_->setRange(toTicks(caps.t_begin), toTicks(caps.t_end));
-        updating_transport_ = was_updating;
-    }
+    // The strip's cached histogram describes the OLD source. Forcing a
+    // recompute here rather than waiting for the throttle is what stops a bag's
+    // shape being drawn under a live view for half a second after Go Live.
+    density_computed_at_ms_ = 0;
 
     if (play_button_ != nullptr)
     {
         play_button_->setChecked(false);
+    }
+
+    // Driven from the SOURCE rather than from the click that changed it, so a
+    // swap made by the agent interface, by --bag at startup, or by a review
+    // that failed to open leaves the toolbar saying what is actually behind the
+    // panels. A pair of buttons that only tracked their own clicks would be
+    // wrong in exactly the cases where being right matters.
+    const bool reviewing = isReviewing();
+    if (mode_live_ != nullptr)
+    {
+        const bool was_updating = updating_transport_;
+        updating_transport_ = true;
+        mode_live_->setChecked(!reviewing);
+        mode_review_->setChecked(reviewing);
+        updating_transport_ = was_updating;
     }
 
     updateTransport();
@@ -1203,18 +1404,6 @@ void ScopeWindow::updateTransport()
 
     const bool was_updating = updating_transport_;
     updating_transport_ = true;
-
-    if (caps.seekable && scrubber_ != nullptr)
-    {
-        // The range as well as the value: a capture being reviewed while it is
-        // still recording grows underneath the scrubber, and a slider whose
-        // maximum is stale silently refuses to seek into the newest data.
-        scrubber_->setRange(toTicks(caps.t_begin), toTicks(caps.t_end));
-        if (!scrubber_->isSliderDown())
-        {
-            scrubber_->setValue(toTicks(position));
-        }
-    }
 
     if (window_spin_ != nullptr && window_spin_->value() != time_base_->windowSeconds())
     {
@@ -1254,7 +1443,7 @@ void ScopeWindow::updateTransport()
     // samples: the part of the session you can still review has a boundary, and
     // it moves. Saying so is what stops someone scrubbing back into a gap and
     // reading it as a publisher that had not started.
-    if (transport_status_ != nullptr && recorder_ != nullptr)
+    if (recorder_ != nullptr)
     {
         const CaptureBuffer& capture = recorder_->buffer();
         QString state = tr("  ⏺ %1 s captured").arg(capture.retainedSpanSeconds(), 0, 'f', 0);
@@ -1266,10 +1455,173 @@ void ScopeWindow::updateTransport()
         {
             state += tr(" (unsaved)");
         }
-        transport_status_->setText(state);
+        if (transport_status_ != nullptr)
+        {
+            transport_status_->setText(state);
+        }
+        // Also on the top bar, beside the mode control it argues for: the gap
+        // between what is captured and what a live plot can reach is the whole
+        // reason to press Review.
+        if (capture_chip_ != nullptr)
+        {
+            capture_chip_->setText(state);
+        }
     }
 
+    // A pan or a zoom turns following off without touching the button, so the
+    // button has to be read back from the time base rather than left to its own
+    // toggled() -- otherwise it sits there saying "Pause" over a frozen plot.
+    if (pause_button_ != nullptr && pause_button_->isChecked() == time_base_->following())
+    {
+        pause_button_->setChecked(!time_base_->following());
+        pause_button_->setText(time_base_->following() ? tr("Pause") : tr("Follow"));
+    }
+
+    updateOverview();
+
     updating_transport_ = was_updating;
+}
+
+void ScopeWindow::updateOverview()
+{
+    if (overview_ == nullptr)
+    {
+        return;
+    }
+
+    const SourceCaps caps = source_->caps();
+    const double now = source_->now();
+
+    // The extent, and the two source kinds answer it differently for a real
+    // reason. A recording has a beginning; a bus does not, so the honest bound
+    // for a live source is how far back the panels' buffers still reach.
+    double extent_begin = 0.0;
+    double extent_end = 0.0;
+    if (caps.seekable)
+    {
+        extent_begin = caps.t_begin;
+        extent_end = caps.t_end;
+    }
+    else
+    {
+        // Clamped at the source's own epoch: a live source's clock starts at
+        // zero and there is nothing before it. Without the clamp a freshly
+        // started session shows five minutes of strip for thirty seconds of
+        // data, and the histogram -- which can only be counted from the epoch
+        // forward -- ends up drawn against a range it was never counted over.
+        extent_begin = std::max(now - history_seconds_, 0.0);
+        extent_end = now;
+    }
+    overview_->setExtent(extent_begin, extent_end);
+
+    // What the panels can actually draw. On a recording it is the whole thing;
+    // on a live source it is the same as the extent today, and will narrow once
+    // the strip can show the capture behind it.
+    overview_->setRetained(std::max(extent_begin, now - history_seconds_), extent_end);
+
+    overview_->setView(time_base_->viewBegin(), time_base_->viewEnd());
+    overview_->setTimeCursor(time_base_->cursor());
+
+    // Only a seekable source has a position to mark. A live source's "now" is
+    // the right edge of the extent, where a playhead would be noise.
+    overview_->setPlayhead(caps.seekable ? std::optional<double>(now) : std::nullopt);
+
+    if (recorder_ != nullptr)
+    {
+        overview_->setEvicted(recorder_->buffer().evicted());
+    }
+
+    refreshDensity();
+}
+
+bool ScopeWindow::densityFor(double begin, double end, std::size_t buckets,
+                             std::vector<std::uint32_t>& out)
+{
+    if (source_->density(begin, end, buckets, out))
+    {
+        return true;
+    }
+
+    // A live source keeps no history of its own -- only the buffers the panels
+    // hold -- so it declines. The recorder has been capturing the whole bus
+    // since the window opened, and THAT is the honest picture of where the
+    // traffic is. The window is the only thing holding both, which is why the
+    // reconciliation lives here rather than behind the DataSource seam.
+    const auto* live = dynamic_cast<const LiveZenohSource*>(source_.get());
+    if (live == nullptr || recorder_ == nullptr)
+    {
+        out.clear();
+        return false;
+    }
+
+    // Seconds on the live source's steady clock -> UNIX nanoseconds, through
+    // the wall-clock instant sampled beside its steady epoch. Without that pair
+    // the two clocks have no common origin at all.
+    const std::uint64_t epoch = live->epochWallNanos();
+    const auto to_nanos = [epoch](double t) {
+        return epoch + static_cast<std::uint64_t>(std::max(t, 0.0) * 1e9);
+    };
+    recorder_->buffer().density(to_nanos(begin), to_nanos(end), buckets, out);
+    return true;
+}
+
+void ScopeWindow::refreshDensity()
+{
+    if (overview_ == nullptr)
+    {
+        return;
+    }
+
+    // One bucket per pixel of the strip. More would be invisible and cost a
+    // longer walk under the capture's mutex; fewer would throw away detail the
+    // widget has room to show.
+    const int buckets = std::max(overview_->width(), 1);
+
+    const SourceCaps caps = source_->caps();
+    const double now = source_->now();
+    const double begin = caps.seekable ? caps.t_begin : now - history_seconds_;
+    const double end = caps.seekable ? caps.t_end : now;
+
+    const std::int64_t now_ms = QDateTime::currentMSecsSinceEpoch();
+
+    // Two triggers, and each covers what the other cannot.
+    //
+    // `moved` catches a resize or a source swap, where the cached counts
+    // describe a range that is no longer on screen -- those must be redrawn at
+    // once, not up to half a second later.
+    //
+    // `due` covers a capture growing under the strip. The buffer's revision is
+    // useless as a cache key here (it bumps on every push, thousands a second),
+    // so the clock is what bounds the work. A bag recomputes on this tick too
+    // and costs nothing: its answer comes from a handful of part records.
+    const bool moved =
+        buckets != density_buckets_ || begin != density_begin_ || end != density_end_;
+    const bool due = now_ms - density_computed_at_ms_ >= kDensityIntervalMs;
+
+    if (!moved && !due)
+    {
+        return;
+    }
+
+    if (!densityFor(begin, end, static_cast<std::size_t>(buckets), density_))
+    {
+        // A source that cannot answer cheaply says so, and the strip draws a
+        // plain band. Clearing rather than keeping the last answer matters on a
+        // swap: a bag's histogram left behind a Go Live would describe a
+        // recording that is no longer on screen.
+        overview_->setDensity({}, begin, end);
+        density_buckets_ = buckets;
+        density_begin_ = begin;
+        density_end_ = end;
+        density_computed_at_ms_ = now_ms;
+        return;
+    }
+
+    overview_->setDensity(density_, begin, end);
+    density_buckets_ = buckets;
+    density_begin_ = begin;
+    density_end_ = end;
+    density_computed_at_ms_ = now_ms;
 }
 
 }  // namespace scope

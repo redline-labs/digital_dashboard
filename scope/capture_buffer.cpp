@@ -106,6 +106,52 @@ void CaptureBuffer::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
     }
 }
 
+void CaptureBuffer::density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                            std::vector<std::uint32_t>& out) const
+{
+    out.assign(buckets, 0);
+    if (buckets == 0 || t1_ns <= t0_ns)
+    {
+        return;
+    }
+
+    const std::uint64_t span = t1_ns - t0_ns;
+
+    const std::lock_guard<std::mutex> guard(mutex_);
+    for (const bag::QueuedMessage& message : messages_)
+    {
+        if (message.log_time_ns < t0_ns)
+        {
+            continue;
+        }
+        if (message.log_time_ns > t1_ns)
+        {
+            // Arrival order, so nothing later can be in range either -- the
+            // same early exit forEach() takes, and the reason this is O(range)
+            // rather than O(retained) for a narrow window.
+            break;
+        }
+
+        // In nanoseconds throughout, and the multiply comes FIRST. Computing a
+        // fraction in doubles first loses resolution at the far end of a long
+        // recording -- a double holds about 15 significant digits and a UNIX
+        // nanosecond timestamp already uses 19 -- so buckets near the end would
+        // quietly collect the wrong messages. The product overflows only past
+        // roughly 200 days of span at a thousand buckets, which no capture
+        // bounded by max_capture_seconds can reach.
+        const std::uint64_t offset = message.log_time_ns - t0_ns;
+        std::size_t bucket = static_cast<std::size_t>((offset * buckets) / span);
+
+        // The last bucket is closed at the top, so a message landing exactly on
+        // t1 belongs to it rather than to a bucket that does not exist.
+        if (bucket >= buckets)
+        {
+            bucket = buckets - 1;
+        }
+        ++out[bucket];
+    }
+}
+
 std::pair<std::uint64_t, std::uint64_t> CaptureBuffer::spanNanos() const
 {
     const std::lock_guard<std::mutex> guard(mutex_);

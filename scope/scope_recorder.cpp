@@ -207,4 +207,11 @@ std::uint64_t CaptureProvider::revision() const
     return buffer_->revision();
 }
 
+bool CaptureProvider::density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_t buckets,
+                              std::vector<std::uint32_t>& out)
+{
+    buffer_->density(t0_ns, t1_ns, buckets, out);
+    return true;
+}
+
 }  // namespace scope
