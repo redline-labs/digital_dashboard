@@ -2,6 +2,7 @@
 
 #include "helpers/unit_conversion.h"
 #include "pub_sub/capnp_encoding.h"
+#include "pub_sub/capnp_json.h"
 #include "pub_sub/capnp_payload.h"
 #include "reflection/reflection.h"
 
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -158,6 +160,11 @@ struct ExpressionEvaluator::Impl
         // argument FieldCache::slot relies on. add_vector() binds exprtk to
         // data(), so this is re-registered whenever the vector is resized.
         std::vector<double>* data;
+
+        // What the schema says the length always is, when it says. A message
+        // that contradicts it is a PUBLISHER bug rather than something to work
+        // around silently, so it is reported once.
+        std::optional<std::uint32_t> declared_length;
     };
 
     schema_type_t schema_type;
@@ -185,6 +192,7 @@ struct ExpressionEvaluator::Impl
     std::vector<ListCache> list_cache;
 
     bool list_index_warned = false;
+    bool length_mismatch_warned = false;
 
     // What a vector is registered with before any message has been seen. Large
     // enough that a plausible index compiles (the PDM has 32 outputs, CAN FD
@@ -307,6 +315,19 @@ struct ExpressionEvaluator::Impl
         for (const ListCache& cached : list_cache)
         {
             const std::size_t length = reader.get(cached.field).as<capnp::DynamicList>().size();
+
+            // The schema made a claim; this message either honours it or does
+            // not. Saying so once beats either trusting the annotation over the
+            // wire or quietly preferring the wire over the annotation.
+            if (cached.declared_length && *cached.declared_length != length &&
+                !length_mismatch_warned)
+            {
+                length_mismatch_warned = true;
+                SPDLOG_WARN("Key '{}': list '{}' is declared as {} element(s) but this message "
+                            "carries {}. Using what arrived (further occurrences not logged).",
+                            log_context, cached.name, *cached.declared_length, length);
+            }
+
             lengths.push_back(length);
             changed = changed || (length != cached.data->size());
         }
@@ -405,8 +426,22 @@ struct ExpressionEvaluator::Impl
                 }
 
                 list_names.push_back(var_name);
-                vectors[var_name].assign(kProvisionalListLength, 0.0);
-                list_cache.push_back({field, element_type, var_name, &vectors.at(var_name)});
+
+                // REGISTERED AT THE DECLARED LENGTH WHEN THE SCHEMA GIVES ONE,
+                // because exprtk range-checks every literal index against the
+                // registered size AT COMPILE TIME. So `values[40]` against a
+                // thirty-two output PDM stops being a binding that succeeds and
+                // then drops every sample, and becomes a construction error --
+                // which is where this evaluator refuses everything else it can
+                // know up front.
+                //
+                // Without an annotation there is nothing to check against until
+                // a message arrives, so it falls back to the provisional length
+                // and the first sample sizes it. See schemas/annotations.capnp.
+                const auto declared = fixedListLength(field);
+                vectors[var_name].assign(declared.value_or(kProvisionalListLength), 0.0);
+                list_cache.push_back(
+                    {field, element_type, var_name, &vectors.at(var_name), declared});
                 continue;
             }
 

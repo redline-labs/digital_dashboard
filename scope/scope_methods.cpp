@@ -159,6 +159,20 @@ json candidateToJson(const BindingCandidate& candidate)
     out["schema_name"] = candidate.schema_name;
     out["field_name"] = candidate.field_name;
     out["type_category"] = candidate.type_category;
+
+    // The element type and index, so the 32 rows a fixed-length list expands
+    // into are DISTINGUISHABLE. Without them every element of MotecPdm's
+    // `values` serialises identically and a caller can see 32 rows but not say
+    // which is which -- the rows exist and are useless.
+    if (!candidate.element_category.empty())
+    {
+        out["element_category"] = candidate.element_category;
+    }
+    if (candidate.element_index >= 0)
+    {
+        out["element_index"] = candidate.element_index;
+    }
+    out["expression"] = candidate.defaultExpression();
     out["numeric"] = candidate.isNumeric();
     out["topic_level"] = candidate.isTopicLevel();
     return out;
@@ -320,6 +334,32 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 candidate.field_name =
                     field != params.end() && field->is_string() ? field->get<std::string>() : "";
                 candidate.type_category = params.value("type_category", std::string{"float"});
+                candidate.element_category = params.value("element_category", std::string{});
+            }
+
+            // WHICH ELEMENT, for a list. Honoured whether the candidate came
+            // from the browser or was constructed above, because a caller
+            // naming `values` alone would otherwise always get element 0 -- and
+            // the 32 rows the browser offers would be visible through
+            // `scope.browser` and unreachable by this method.
+            //
+            // Naming an element of something that is not a list is a caller
+            // error rather than something to ignore: the expression it would
+            // produce is not the one asked for.
+            if (const auto element = params.find("element_index"); element != params.end())
+            {
+                if (!element->is_number_integer() || element->get<int>() < 0)
+                {
+                    return std::unexpected(
+                        badParams("'element_index', when given, must be a non-negative integer."));
+                }
+                if (!candidate.needsElementIndex())
+                {
+                    return std::unexpected(badParams(
+                        "'element_index' was given but '" + candidate.field_name +
+                        "' is not a list."));
+                }
+                candidate.element_index = element->get<int>();
             }
 
             Panel* const panel = entry.value()->panel;

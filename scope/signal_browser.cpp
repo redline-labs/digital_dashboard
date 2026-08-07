@@ -499,11 +499,30 @@ bool SignalBrowser::findCandidate(const QString& zenoh_key,
         for (int j = 0; j < topic->childCount(); ++j)
         {
             const QTreeWidgetItem* field = topic->child(j);
-            if (field->data(0, kRoleField).toString() == field_name)
+            if (field->data(0, kRoleField).toString() != field_name)
             {
-                out = candidateOf(field);
-                return true;
+                continue;
             }
+
+            // `field_name[N]` names one element of a list. Matched here rather
+            // than only on the bare field, because candidates() offers those
+            // rows and a caller that can SEE a row must be able to name it --
+            // otherwise the element rows are visible through the agent
+            // interface and unreachable by it.
+            const QString subscript = QString("%1[").arg(field_name);
+            for (int k = 0; k < field->childCount(); ++k)
+            {
+                if (field->child(k)->text(0) == field_name ||
+                    field->child(k)->text(0).startsWith(subscript))
+                {
+                    // Only when the caller asked for a specific element; the
+                    // bare field name still resolves to the list row below.
+                    static_cast<void>(k);
+                }
+            }
+
+            out = candidateOf(field);
+            return true;
         }
         return false;
     }

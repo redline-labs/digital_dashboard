@@ -334,19 +334,40 @@ void testAListLengthChangeIsFollowed()
     expect(six.has_value() && std::abs(*six - 6.0) < 1e-6, "and a longer one grows to fit");
 }
 
+void testAnIndexPastTheDeclaredLengthIsRejectedAtConstruction()
+{
+    // NOW THAT THE SCHEMA DECLARES 32, an index beyond it is knowable before a
+    // single message arrives -- so it is a construction error rather than a
+    // binding that succeeds and then silently drops every sample.
+    //
+    // This is the whole practical payoff of the annotation beyond the browser:
+    // failing where the mistake was made instead of hours later in a trace that
+    // is merely empty.
+    pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[40]",
+                                      "test/pdm/current");
+    expect(!eval.isValid(), "an index past the DECLARED length is refused at construction");
+
+    pub_sub::ExpressionEvaluator last(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[31]",
+                                      "test/pdm/current");
+    expect(last.isValid(), "and the last declared element is still accepted");
+}
+
 void testAnIndexPastTheRealLengthProducesNoValue()
 {
-    // THE CASE THAT MUST NOT RETURN ZERO. The expression compiles -- the index is
-    // plausible for this schema -- and only a real message can say the stream
-    // does not reach it. A confident permanent zero here is indistinguishable
-    // from an output that is genuinely drawing no current.
+    // THE CASE THAT MUST NOT RETURN ZERO. `values[20]` is within the declared 32
+    // so it compiles, and only a real message can say this PUBLISHER is sending
+    // fewer. A confident permanent zero here is indistinguishable from an output
+    // genuinely drawing no current.
+    //
+    // The declared length is a claim about the schema, not a guarantee about
+    // every publisher -- which is exactly why the runtime check stays.
     pub_sub::ExpressionEvaluator eval(pub_sub::schema_type_t::MotecPdmOutputCurrent, "values[20]",
                                       "test/pdm/current");
-    expect(eval.isValid(), "the expression compiles against a plausible index");
+    expect(eval.isValid(), "an index within the declared length compiles");
 
     const auto value = eval.evaluate<double>(pdmCurrentPayload({1.0f, 2.0f, 3.0f}));
     expect(!value.has_value(),
-           "indexing past what the stream carries produces NO reading, not a zero");
+           "but a message that carries fewer produces NO reading, not a zero");
 }
 
 void testAnEmptyListProducesNoValue()
@@ -637,6 +658,7 @@ int main()
     testListAggregatesWorkOverTheRealLength();
     testAListOfEnumsIsIndexable();
     testAListLengthChangeIsFollowed();
+    testAnIndexPastTheDeclaredLengthIsRejectedAtConstruction();
     testAnIndexPastTheRealLengthProducesNoValue();
     testAnEmptyListProducesNoValue();
     testAListOfTextWouldBeRejected();
