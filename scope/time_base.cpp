@@ -170,13 +170,18 @@ std::pair<double, double> TimeBase::availableRange() const
     // that shows emptiness indistinguishable from a publisher that had not
     // started yet.
     //
-    // Floored at zero because a live source's clock STARTS at zero -- there is
-    // nothing before the moment it was constructed. Without the floor, fitting a
-    // session thirty seconds old produces a five-minute window that is four and
-    // a half minutes of blank, and the overview strip (which does clamp) ends up
-    // describing a different range than the view it is drawing.
+    // NOT floored at the source's epoch, however tempting. A live source's
+    // clock starts at zero, so flooring here means that thirty seconds into a
+    // session no window wider than thirty seconds can exist -- setWindowSeconds
+    // silently clamps to the uptime, and the default 30 s view is unusable for
+    // the first half minute of every run. Empty space to the left of a young
+    // trace is the honest picture and always was.
+    //
+    // The strip's histogram does need a floor, because it can only be COUNTED
+    // from the epoch forward. That belongs at the point of counting, not here:
+    // see ScopeWindow::refreshDensity().
     const double now = source_->now();
-    return {std::max(now - retention_seconds_, 0.0), std::max(now, kMinWindowSeconds)};
+    return {now - retention_seconds_, now};
 }
 
 void TimeBase::applyView(double begin, double end)

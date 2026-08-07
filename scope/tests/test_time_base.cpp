@@ -461,6 +461,27 @@ void testFitOnARecording()
     expectNear(time_base.viewEnd(), 90.0, 1e-9, "and ends at it");
 }
 
+void testAYoungLiveSourceStillGetsAFullWindow()
+{
+    // REGRESSION. availableRange() was briefly floored at the source's epoch,
+    // which made this impossible: two seconds into a session no window wider
+    // than two seconds could exist, so the default 30 s view silently clamped
+    // to the uptime and stayed there for the first half minute of every run.
+    //
+    // Empty space to the left of a young trace is the honest picture. The
+    // histogram is the only thing that needs a floor, and that belongs where it
+    // is counted.
+    StubSource source(true, false);
+    source.setNow(2.0);
+    scope::TimeBase time_base(source);
+    time_base.setRetentionSeconds(300.0);
+
+    time_base.setWindowSeconds(30.0);
+    expectNear(time_base.windowSeconds(), 30.0, 1e-9,
+               "a 30 s window exists two seconds into a session");
+    expectNear(time_base.viewBegin(), -28.0, 1e-9, "and reaches back before the epoch");
+}
+
 void testFitOnALiveSourceIsTheRetainedWindow()
 {
     StubSource source(true, false);
@@ -548,6 +569,7 @@ int main(int argc, char** argv)
     testInteractionCoalescesSeeks();
     testASeekOutsideAnInteractionIsImmediate();
 
+    testAYoungLiveSourceStillGetsAFullWindow();
     testFitOnARecording();
     testFitOnALiveSourceIsTheRetainedWindow();
 

@@ -1579,7 +1579,13 @@ void ScopeWindow::refreshDensity()
 
     const SourceCaps caps = source_->caps();
     const double now = source_->now();
-    const double begin = caps.seekable ? caps.t_begin : now - history_seconds_;
+
+    // Floored at the source's epoch for a LIVE source, and only here: the
+    // capture can only be counted from the moment it started, so asking for
+    // counts before that would label the histogram with a range it was never
+    // counted over. The view itself is deliberately not floored -- see
+    // TimeBase::availableRange().
+    const double begin = caps.seekable ? caps.t_begin : std::max(now - history_seconds_, 0.0);
     const double end = caps.seekable ? caps.t_end : now;
 
     const std::int64_t now_ms = QDateTime::currentMSecsSinceEpoch();
