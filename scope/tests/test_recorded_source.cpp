@@ -30,6 +30,9 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <cmath>
+#include <functional>
+#include <span>
 #include <cstdio>
 #include <string>
 #include <thread>
@@ -134,6 +137,116 @@ scope::SignalKey rpmKey()
     key.schema_type = pub_sub::schema_type_t::EngineRpm;
     key.value_expression = "rpm";
     return key;
+}
+
+// ------------------------------------------------------- the raw / video path
+//
+// A recording shaped like an encoded video stream: repeating groups of
+// [parameter sets][keyframe][deltas...]. The payloads are not real H.264 -- the
+// decoding is VideoDecoder's problem and is covered by scope_test_video_decoder
+// -- but the STRUCTURE is exactly the phone's, because that structure is what
+// the windowing has to get right.
+//
+// Byte 0 carries the flags the classifier will report and byte 1 the message's
+// ordinal, so a loaded window can be checked message by message.
+constexpr std::size_t kGopLength = 10;  // one config + one keyframe + eight deltas
+
+class GopProvider : public scope::RecordedProvider
+{
+  public:
+    GopProvider(std::size_t gops, std::uint64_t step_ns) : step_ns_(step_ns)
+    {
+        for (std::size_t g = 0; g < gops; ++g)
+        {
+            for (std::size_t i = 0; i < kGopLength; ++i)
+            {
+                std::uint8_t flags = 0;
+                if (i == 0)
+                {
+                    flags = scope::RawMessage::kPreamble;   // parameter sets
+                }
+                else if (i == 1)
+                {
+                    flags = scope::RawMessage::kSeekPoint;  // the keyframe
+                }
+                payloads_.push_back({flags, static_cast<std::uint8_t>(payloads_.size())});
+            }
+        }
+    }
+
+    void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
+                 const std::function<void(const bag::BagMessage&)>& visit) override
+    {
+        ++passes;
+        for (std::size_t i = 0; i < payloads_.size(); ++i)
+        {
+            const std::uint64_t log_time = kBase + static_cast<std::uint64_t>(i) * step_ns_;
+            if (log_time < t0_ns || log_time > t1_ns)
+            {
+                continue;
+            }
+
+            bag::BagMessage message;
+            message.key = "nodes/carplay/video";
+            message.schema = "CarPlayVideo";
+            message.payload = payloads_[i];
+            message.log_time_ns = log_time;
+            message.publish_time_ns = log_time;
+            visit(message);
+        }
+    }
+
+    std::vector<scope::TopicInfo> topics() const override
+    {
+        return {scope::TopicInfo{"nodes/carplay/video", "CarPlayVideo", true}};
+    }
+
+    std::pair<std::uint64_t, std::uint64_t> spanNanos() const override
+    {
+        if (payloads_.empty())
+        {
+            return {0, 0};
+        }
+        return {kBase, kBase + static_cast<std::uint64_t>(payloads_.size() - 1) * step_ns_};
+    }
+
+    // How many whole-recording passes were made. The index pass is one; a window
+    // load is another, but a NARROW one -- which is the distinction this counter
+    // exists to let a test assert.
+    std::atomic<int> passes{0};
+
+  private:
+    std::uint64_t step_ns_;
+    std::vector<std::vector<std::uint8_t>> payloads_;
+};
+
+// What the panel's classifier does, minus the capnp: read the flags the producer
+// put in the payload. The SOURCE never interprets these -- that is the whole
+// point of the classifier seam -- so the test supplies them the same way the
+// panel does.
+std::uint32_t classifyGop(std::span<const std::uint8_t> payload)
+{
+    return payload.empty() ? 0u : static_cast<std::uint32_t>(payload[0]);
+}
+
+// Run render ticks until `done` is true or the budget runs out.
+//
+// A window load runs on the worker and is published by a later tick(), so a test
+// that read the buffer straight after seek() would be racing it. Ticking rather
+// than sleeping keeps this deterministic: the publish only ever happens inside
+// tick(), so a fixed number of them is a real bound rather than a hope.
+bool pump(scope::RecordedSource& source, const std::function<bool()>& done)
+{
+    for (int i = 0; i < 500; ++i)
+    {
+        source.tick();
+        if (done())
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
 }
 
 // Binding starts a decode on a background thread, so a test that read the
@@ -499,6 +612,170 @@ void testAMismatchedSchemaIsNotDecoded()
 
 }  // namespace
 
+// ------------------------------------------------------------- the raw path
+
+void testRawBindingIndexesWithoutHoldingPayloads()
+{
+    // Four GOPs at 100 ms. The index pass reads the whole recording; the
+    // payloads are NOT held, which is the entire reason the raw path exists --
+    // decoding a video topic the way bind() decodes a signal would be ~900 MB
+    // for half an hour.
+    auto provider = std::make_unique<GopProvider>(4, 100'000'000ull);
+    GopProvider* raw_provider = provider.get();
+    scope::RecordedSource source(std::move(provider));
+
+    auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
+    const scope::SignalHandle handle = source.bindRaw(
+        "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, buffer, classifyGop);
+
+    expect(handle != scope::kInvalidSignal, "raw: the binding was accepted");
+    expect(waitForDecode(source), "raw: the index pass finished");
+    expect(raw_provider->passes.load() >= 1, "raw: the index cost one pass over the recording");
+
+    // Nothing is in the buffer yet: the index holds no payloads at all.
+    expect(buffer->history().empty(),
+           "raw: indexing loaded NO payloads -- that is the whole point");
+}
+
+void testSeekLoadsExactlyOneGop()
+{
+    auto provider = std::make_unique<GopProvider>(4, 100'000'000ull);
+    GopProvider* raw_provider = provider.get();
+    scope::RecordedSource source(std::move(provider));
+
+    auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
+    source.bindRaw("nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, buffer,
+                   classifyGop);
+    expect(waitForDecode(source), "gop: the index pass finished");
+
+    const int passes_after_index = raw_provider->passes.load();
+
+    // Into the middle of the third GOP. Messages 20..29 are that GOP; message 20
+    // is its parameter sets and 21 its keyframe, at 2.0 s and 2.1 s.
+    source.seek(2.5);
+    expect(pump(source, [&]() { return !buffer->history().empty(); }),
+           "gop: a window arrived after the seek");
+
+    const scope::RawHistory& history = buffer->history();
+    expect(history.size() == kGopLength,
+           "gop: exactly ONE group was loaded, not the whole recording");
+    expect(std::abs(history.oldest().t - 2.0) < 1e-6,
+           "gop: the window STARTS at the parameter sets, not at the keyframe -- "
+           "a window starting one message later decodes to nothing at all");
+    expect((history.oldest().flags & scope::RawMessage::kPreamble) != 0,
+           "gop: and that first message really is the preamble");
+    expect(std::abs(history.newest().t - 2.9) < 1e-6,
+           "gop: and STOPS before the next group's preamble");
+
+    // The read was narrow. The index pass is a whole-recording scan and is paid
+    // once; a window load must not be another one.
+    expect(raw_provider->passes.load() == passes_after_index + 1,
+           "gop: the window cost exactly one further read");
+
+    // Scrubbing WITHIN the loaded group reads nothing at all.
+    const int passes_after_window = raw_provider->passes.load();
+    source.seek(2.7);
+    pump(source, [&]() { return false; });
+    expect(raw_provider->passes.load() == passes_after_window,
+           "gop: scrubbing inside the loaded group reads the file ZERO more times");
+}
+
+void testRawSeekingBackwardsMovesTheWindow()
+{
+    // THE BACKWARDS CASE, asserted the way the numeric one is: the check is that
+    // t_last MOVED BACK, not that the buffer is still ordered. A buffer that
+    // kept the group it came from stays perfectly ordered and is completely
+    // wrong -- and on screen it is a picture, so nothing looks broken.
+    auto provider = std::make_unique<GopProvider>(5, 100'000'000ull);
+    scope::RecordedSource source(std::move(provider));
+
+    auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
+    source.bindRaw("nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, buffer,
+                   classifyGop);
+    expect(waitForDecode(source), "backwards: the index pass finished");
+
+    // 4.5, not 4.0. At exactly 4.0 the newest message is the last group's
+    // PREAMBLE and its keyframe is still 100 ms in the future, so the correct
+    // answer there is the group before -- which is right, and makes a poor
+    // fixture for "seek somewhere late".
+    source.seek(4.5);
+    expect(pump(source, [&]() { return !buffer->history().empty(); }),
+           "backwards: the late window arrived");
+
+    const double late_first = buffer->history().oldest().t;
+    const double late_last = buffer->history().newest().t;
+    expect(std::abs(late_first - 4.0) < 1e-6,
+           "backwards: the late window is the group containing 4.5 s");
+
+    source.seek(0.5);
+    expect(pump(source,
+                [&]() {
+                    return !buffer->history().empty() &&
+                           buffer->history().newest().t < late_last;
+                }),
+           "backwards: an earlier window arrived");
+
+    const scope::RawHistory& history = buffer->history();
+    expect(history.oldest().t < late_first, "backwards: t_first moved BACK");
+    expect(history.newest().t < late_last, "backwards: t_last moved BACK");
+    expect(history.size() == kGopLength, "backwards: it is still exactly one group");
+
+    // And the precondition the wholesale replace exists to protect.
+    bool ordered = true;
+    for (std::size_t i = 1; i < history.size(); ++i)
+    {
+        ordered = ordered && history[i - 1].t <= history[i].t;
+    }
+    expect(ordered, "backwards: the window is internally ordered");
+    expect(std::abs(history.oldest().t - 0.0) < 1e-6,
+           "backwards: it is the FIRST group, which is the one containing 0.5 s");
+}
+
+void testRawSkipsAMismatchedSchema()
+{
+    // A message recorded under a different schema is skipped rather than handed
+    // over. Feeding a decoder another topic's bytes produces a plausible mess,
+    // not an error.
+    auto provider = std::make_unique<GopProvider>(3, 100'000'000ull);
+    scope::RecordedSource source(std::move(provider));
+
+    auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
+    source.bindRaw("nodes/carplay/video", pub_sub::schema_type_t::EngineRpm, buffer,
+                   classifyGop);
+    expect(waitForDecode(source), "schema: the index pass finished");
+
+    source.seek(1.5);
+    pump(source, [&]() { return false; });
+
+    expect(buffer->history().empty(),
+           "schema: a binding expecting another schema gets nothing, not garbage");
+}
+
+void testReleasingRawClearsThePendingCount()
+{
+    // decodesPending() is what a test and `scope.source` wait on to know the
+    // picture is finished. Releasing a binding before its pass started used to
+    // erase the job and leave the count, so the flag never came back to zero and
+    // anything waiting on it hung -- and rebinding every panel across a source
+    // swap is exactly the case that hits it.
+    auto provider = std::make_unique<GopProvider>(3, 100'000'000ull);
+    scope::RecordedSource source(std::move(provider));
+
+    auto first = std::make_shared<scope::RawBuffer>(0.0, 0);
+    auto second = std::make_shared<scope::RawBuffer>(0.0, 0);
+
+    const scope::SignalHandle a = source.bindRaw(
+        "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, first, classifyGop);
+    const scope::SignalHandle b = source.bindRaw(
+        "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, second, classifyGop);
+
+    source.releaseRaw(a);
+    source.releaseRaw(b);
+
+    expect(waitForDecode(source),
+           "release: decodesPending comes back to zero after releasing both bindings");
+}
+
 int main()
 {
     spdlog::set_level(spdlog::level::off);
@@ -520,6 +797,13 @@ int main()
     testReleaseIsIdempotent();
     testAMismatchedSchemaIsNotDecoded();
 
+    testRawBindingIndexesWithoutHoldingPayloads();
+    testSeekLoadsExactlyOneGop();
+    testRawSeekingBackwardsMovesTheWindow();
+    testRawSkipsAMismatchedSchema();
+    testReleasingRawClearsThePendingCount();
+
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
+

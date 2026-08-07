@@ -338,6 +338,89 @@ void testAMissingConfigBlockDefaultConstructs()
     std::filesystem::remove(path);
 }
 
+// A second panel type through the whole codec, because the codec is where a
+// second one first goes wrong: the decoder is an X-macro chain over the table,
+// and a type whose row was added without a matching alternative falls through
+// it to monostate -- which loads as "unknown panel type" and is dropped.
+void testAVideoPanelRoundTripsThroughTheCodec()
+{
+    const std::filesystem::path path = tempPath("scope_video.yaml");
+
+    scope::scope_workspace_t written;
+    written.name = "video";
+
+    scope::panel_entry_t entry;
+    entry.id = "cam";
+    entry.type = scope::panel_type_t::video;
+
+    VideoPanelConfig_t config;
+    config.title = "Dash cam";
+    config.zenoh_key = "nodes/carplay/video";
+    config.retention_seconds = 45.0;
+    config.max_buffer_bytes = 64ull * 1024 * 1024;
+    config.show_scrubber = false;
+    entry.config = config;
+    written.panels.push_back(entry);
+
+    expect(scope::save_workspace(written, path.string()), "a video workspace saves");
+
+    const auto loaded = scope::load_workspace(path.string());
+    expect(loaded.has_value(), "and loads back");
+    if (loaded && loaded->panels.size() == 1)
+    {
+        expect(loaded->panels[0].type == scope::panel_type_t::video,
+               "the panel type survived");
+
+        const auto* video = std::get_if<VideoPanelConfig_t>(&loaded->panels[0].config);
+        expect(video != nullptr, "and its config is the video alternative, not monostate");
+        if (video != nullptr)
+        {
+            expect(video->title == "Dash cam", "the title survived");
+            expect(video->zenoh_key == "nodes/carplay/video", "the bound key survived");
+            expect(video->retention_seconds == 45.0, "the retention survived");
+            expect(video->max_buffer_bytes == 64ull * 1024 * 1024, "the byte bound survived");
+            expect(!video->show_scrubber, "a non-default bool survived");
+        }
+    }
+
+    // Byte-stable, like the shipped ones. A codec that round-trips semantically
+    // but reorders keys turns every save into a diff.
+    const std::filesystem::path again = tempPath("scope_video_again.yaml");
+    expect(loaded.has_value() && scope::save_workspace(*loaded, again.string()),
+           "the reloaded workspace saves again");
+    expect(readFile(path) == readFile(again),
+           "saving a video workspace twice produces identical bytes");
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(again);
+}
+
+// The clamps in the video config's validate() hook, which panel_registry runs
+// BEFORE construction. Below one keyframe the buffer evicts what it was just
+// given on every push, so the panel shows nothing and reads as a dead publisher
+// rather than as a misconfigured limit.
+void testTheVideoConfigClampsUselessBounds()
+{
+    VideoPanelConfig_t config;
+    config.retention_seconds = 0.0;
+    config.max_buffer_bytes = 1024;
+
+    const std::vector<std::string> notes = validate(config);
+
+    expect(notes.size() == 2, "both useless bounds were reported");
+    expect(config.retention_seconds >= 1.0, "a zero retention is clamped");
+    expect(config.max_buffer_bytes >= 4ull * 1024 * 1024,
+           "a byte bound smaller than one keyframe is clamped");
+
+    // Zero means "disabled" for the byte bound, exactly as it does for the
+    // workspace's capture caps, so it must NOT be clamped up to the minimum.
+    VideoPanelConfig_t disabled;
+    disabled.max_buffer_bytes = 0;
+    const std::vector<std::string> none = validate(disabled);
+    expect(disabled.max_buffer_bytes == 0, "zero still means 'no byte bound'");
+    expect(none.empty(), "and is not reported as a problem");
+}
+
 void testAPanelWithNoIdLoadsWithAWarning()
 {
     const std::filesystem::path path = tempPath("scope_no_id.yaml");
@@ -397,6 +480,8 @@ int main()
     testPanelsMustBeASequence();
     testAnUnknownPanelTypeIsSkippedNotFatal();
     testAMissingConfigBlockDefaultConstructs();
+    testAVideoPanelRoundTripsThroughTheCodec();
+    testTheVideoConfigClampsUselessBounds();
     testAPanelWithNoIdLoadsWithAWarning();
     testAnEmptyWorkspaceIsValid();
 

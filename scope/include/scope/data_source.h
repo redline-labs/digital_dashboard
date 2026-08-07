@@ -1,6 +1,7 @@
 #ifndef SCOPE_DATA_SOURCE_H_
 #define SCOPE_DATA_SOURCE_H_
 
+#include "scope/raw_buffer.h"
 #include "scope/sample_ring.h"
 
 #include "pub_sub/schema_registry.h"
@@ -114,6 +115,46 @@ class DataSource
     virtual SignalHandle bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into) = 0;
 
     virtual void release(SignalHandle handle) = 0;
+
+    // Start delivering a whole topic's BYTES into `into`, undecoded.
+    //
+    // bind() above answers "what is this number doing", which is what a plot
+    // wants and what an expression can express. A stream that is not a number --
+    // an H.264 access unit, an image, a blob a future panel wants to hexdump --
+    // cannot travel through a SignalBuffer at all, and turning one into a double
+    // is not a lossy answer but a meaningless one.
+    //
+    // DELIBERATELY SCHEMA-AGNOSTIC. This hands over the payload exactly as it
+    // arrived and does not decode it, because the moment this interface knows
+    // what a CarPlayVideo is, one panel's schema is in the interface every panel
+    // shares. `schema` is carried only so the source can SKIP a message
+    // published under a different one -- capnp reads whatever bytes it is handed
+    // against whatever schema it is given, so a mismatch is a plausible wrong
+    // answer rather than an error.
+    //
+    // `classify` is how a consumer gets structure back without the source
+    // gaining any: the source calls it per message and stores the opaque result
+    // on RawMessage::flags. A recorded source needs that to build the keyframe
+    // index a seek requires. Empty means every message is tagged 0.
+    //
+    // Same ownership and lifetime contract as bind(), including the shared_ptr,
+    // for the same reason: release() cannot join an in-flight callback.
+    //
+    // Returns kInvalidSignal when the binding could not be made. The default
+    // declines, so a source that has no raw path -- a test stub -- says no
+    // rather than accepting a binding it will never feed.
+    virtual SignalHandle bindRaw(const std::string& /*zenoh_key*/,
+                                 pub_sub::schema_type_t /*schema*/,
+                                 std::shared_ptr<RawBuffer> /*into*/,
+                                 RawClassifier /*classify*/ = {})
+    {
+        return kInvalidSignal;
+    }
+
+    // Raw handles live in the same space as bind()'s, so THE ORDERING RULE ON
+    // Panel::rebindTo() applies to them identically: release against the source
+    // that issued the handle, before repointing.
+    virtual void releaseRaw(SignalHandle /*handle*/) {}
 
     // The source's current time, in seconds on its own epoch. For a live source
     // this is wall-clock-ish and always advancing; for a recorded one it is the

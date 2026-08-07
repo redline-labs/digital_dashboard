@@ -32,6 +32,30 @@ struct Binding
 
 using BindingList = std::vector<std::shared_ptr<Binding>>;
 
+// A whole topic bound as bytes: no expression, no decode, just the payload and
+// whatever the consumer's classifier makes of it.
+//
+// Shares the key's ONE subscription with the numeric bindings above, which is
+// the point of hanging it here rather than giving the panel its own
+// RawSubscriber: plotting a field of the video topic while a video panel renders
+// it should not double the wire traffic.
+struct RawBinding
+{
+    SignalHandle handle = kInvalidSignal;
+
+    // The registry name this binding expects, e.g. "CarPlayVideo". A message
+    // published under anything else is SKIPPED rather than delivered: capnp
+    // reads whatever bytes it is handed against whatever schema it is given, so
+    // handing a decoder the wrong stream produces a plausible mess rather than
+    // an error.
+    std::string schema_name;
+
+    RawClassifier classify;
+    std::shared_ptr<RawBuffer> buffer;
+};
+
+using RawBindingList = std::vector<std::shared_ptr<RawBinding>>;
+
 }  // namespace
 
 // One zenoh subscription, plus everything bound to its key.
@@ -66,6 +90,35 @@ struct KeySubscription
     {
         const std::lock_guard<std::mutex> guard(bindings_mutex);
         bindings = std::move(updated);
+    }
+
+    // The raw bindings on this key, kept the same copy-on-write way and for the
+    // same reason. A second list rather than a variant in one, because the two
+    // do genuinely different work per sample -- evaluate an expression, or copy
+    // the bytes -- and the numeric path is the hot one.
+    mutable std::mutex raw_mutex;
+    std::shared_ptr<const RawBindingList> raw_bindings;
+
+    std::shared_ptr<const RawBindingList> snapshotRaw() const
+    {
+        const std::lock_guard<std::mutex> guard(raw_mutex);
+        return raw_bindings;
+    }
+
+    void publishRaw(std::shared_ptr<const RawBindingList> updated)
+    {
+        const std::lock_guard<std::mutex> guard(raw_mutex);
+        raw_bindings = std::move(updated);
+    }
+
+    // Is anything still bound here? Both lists have to be empty before the
+    // subscription may be dropped -- releasing the last numeric signal while a
+    // video panel is still bound would take the stream out from under it.
+    bool unused() const
+    {
+        const std::shared_ptr<const BindingList> numeric = snapshot();
+        const std::shared_ptr<const RawBindingList> raw = snapshotRaw();
+        return (!numeric || numeric->empty()) && (!raw || raw->empty());
     }
 
     // Declared last so it is destroyed FIRST. zenoh's undeclare joins in-flight
@@ -111,6 +164,20 @@ struct LiveZenohSource::Impl
     {
         return std::chrono::duration<double>(when - t0).count();
     }
+
+    // The one subscription for this key, creating it if this is the first
+    // binding of either kind. Null when zenoh refused the key expression.
+    //
+    // Shared by bind() and bindRaw() rather than written twice, so the two
+    // cannot drift about which lists a fresh subscription starts with -- a
+    // subscription whose raw list was left null would take the
+    // `!raw_bindings` branch on every sample and silently feed no video.
+    KeySubscription* ensureSubscription(const std::string& key);
+
+    // Drop the subscription if nothing is bound to it any more. Erasing runs
+    // ~KeySubscription, which tears down the subscriber first and joins any
+    // callback still running.
+    void dropIfUnused(const std::string& key);
 };
 
 LiveZenohSource::LiveZenohSource() : impl_(std::make_unique<Impl>())
@@ -167,27 +234,90 @@ SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalB
         return kInvalidSignal;
     }
 
-    auto found = impl_->by_key.find(key.zenoh_key);
-    if (found == impl_->by_key.end())
+    KeySubscription* const subscription = impl_->ensureSubscription(key.zenoh_key);
+    if (subscription == nullptr)
+    {
+        return kInvalidSignal;
+    }
+
+    auto binding = std::make_shared<Binding>();
+    binding->handle = impl_->next_handle++;
+    binding->evaluator = std::move(evaluator);
+    binding->buffer = std::move(into);
+
+    auto updated = std::make_shared<BindingList>(*subscription->snapshot());
+    updated->push_back(binding);
+    subscription->publish(std::move(updated));
+
+    impl_->handle_keys.emplace(binding->handle, key.zenoh_key);
+
+    SPDLOG_DEBUG("Bound signal {} to '{}' ({}), expression '{}'.", binding->handle, key.zenoh_key,
+                 reflection::enum_to_string(key.schema_type), key.value_expression);
+    return binding->handle;
+}
+
+SignalHandle LiveZenohSource::bindRaw(const std::string& zenoh_key,
+                                      pub_sub::schema_type_t schema,
+                                      std::shared_ptr<RawBuffer> into,
+                                      RawClassifier classify)
+{
+    if (zenoh_key.empty() || !into)
+    {
+        SPDLOG_ERROR("Refusing to bind a raw stream with an empty key or buffer.");
+        return kInvalidSignal;
+    }
+
+    KeySubscription* const subscription = impl_->ensureSubscription(zenoh_key);
+    if (subscription == nullptr)
+    {
+        return kInvalidSignal;
+    }
+
+    auto binding = std::make_shared<RawBinding>();
+    binding->handle = impl_->next_handle++;
+    binding->schema_name = std::string(reflection::enum_to_string(schema));
+    binding->classify = std::move(classify);
+    binding->buffer = std::move(into);
+
+    auto updated = std::make_shared<RawBindingList>(*subscription->snapshotRaw());
+    updated->push_back(binding);
+    subscription->publishRaw(std::move(updated));
+
+    impl_->handle_keys.emplace(binding->handle, zenoh_key);
+
+    SPDLOG_DEBUG("Bound raw stream {} to '{}' ({}).", binding->handle, zenoh_key,
+                 binding->schema_name);
+    return binding->handle;
+}
+
+KeySubscription* LiveZenohSource::Impl::ensureSubscription(const std::string& key)
+{
+    auto found = by_key.find(key);
+    if (found == by_key.end())
     {
         auto subscription = std::make_unique<KeySubscription>();
         subscription->publish(std::make_shared<const BindingList>());
+        subscription->publishRaw(std::make_shared<const RawBindingList>());
 
         KeySubscription* const raw = subscription.get();
 
         // By value: a steady_clock::time_point is trivially copyable, so the
         // callback needs no pointer back into Impl and cannot outlive it.
-        const std::chrono::steady_clock::time_point t0 = impl_->t0;
+        const std::chrono::steady_clock::time_point t0_copy = t0;
 
         subscription->subscriber = std::make_unique<pub_sub::RawSubscriber>(
-            key.zenoh_key,
-            [raw, t0](const std::vector<std::uint8_t>& payload, std::string_view schema_name) {
+            key,
+            [raw, t0_copy](const std::vector<std::uint8_t>& payload, std::string_view schema_name) {
                 // One decode per bound signal rather than one per subscription,
                 // because each expression may read different fields. Still one
                 // *subscription* per key, which is the win: the wire traffic
                 // and the zenoh-side bookkeeping are paid once.
                 const std::shared_ptr<const BindingList> bindings = raw->snapshot();
-                if (!bindings || bindings->empty())
+                const std::shared_ptr<const RawBindingList> raw_bindings = raw->snapshotRaw();
+
+                const bool has_numeric = bindings && !bindings->empty();
+                const bool has_raw = raw_bindings && !raw_bindings->empty();
+                if (!has_numeric && !has_raw)
                 {
                     return;
                 }
@@ -197,8 +327,38 @@ SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalB
                 // separately would spread one sample across a few microseconds
                 // of the axis for no reason -- and would make two signals from
                 // the same message fail to line up under the shared cursor.
+                //
+                // The raw bindings share it too, which is what makes a video
+                // frame and a trace line up under the shared cursor rather than
+                // merely nearly.
                 const double t =
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0_copy)
+                        .count();
+
+                if (has_raw)
+                {
+                    for (const std::shared_ptr<RawBinding>& binding : *raw_bindings)
+                    {
+                        if (!binding->schema_name.empty() && binding->schema_name != schema_name)
+                        {
+                            continue;
+                        }
+
+                        RawMessage message;
+                        message.t = t;
+                        message.payload = payload;
+                        if (binding->classify)
+                        {
+                            message.flags = binding->classify(message.payload);
+                        }
+                        binding->buffer->push(std::move(message));
+                    }
+                }
+
+                if (!has_numeric)
+                {
+                    return;
+                }
 
                 for (const std::shared_ptr<Binding>& binding : *bindings)
                 {
@@ -222,28 +382,23 @@ SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalB
 
         if (!subscription->subscriber->isValid())
         {
-            SPDLOG_ERROR("Failed to subscribe to '{}'.", key.zenoh_key);
-            return kInvalidSignal;
+            SPDLOG_ERROR("Failed to subscribe to '{}'.", key);
+            return nullptr;
         }
 
-        found = impl_->by_key.emplace(key.zenoh_key, std::move(subscription)).first;
+        found = by_key.emplace(key, std::move(subscription)).first;
     }
 
-    auto binding = std::make_shared<Binding>();
-    binding->handle = impl_->next_handle++;
-    binding->evaluator = std::move(evaluator);
-    binding->buffer = std::move(into);
+    return found->second.get();
+}
 
-    KeySubscription* const subscription = found->second.get();
-    auto updated = std::make_shared<BindingList>(*subscription->snapshot());
-    updated->push_back(binding);
-    subscription->publish(std::move(updated));
-
-    impl_->handle_keys.emplace(binding->handle, key.zenoh_key);
-
-    SPDLOG_DEBUG("Bound signal {} to '{}' ({}), expression '{}'.", binding->handle, key.zenoh_key,
-                 reflection::enum_to_string(key.schema_type), key.value_expression);
-    return binding->handle;
+void LiveZenohSource::Impl::dropIfUnused(const std::string& key)
+{
+    const auto found = by_key.find(key);
+    if (found != by_key.end() && found->second->unused())
+    {
+        by_key.erase(found);
+    }
 }
 
 void LiveZenohSource::release(SignalHandle handle)
@@ -254,7 +409,9 @@ void LiveZenohSource::release(SignalHandle handle)
         return;
     }
 
-    const auto found = impl_->by_key.find(entry->second);
+    const std::string key = entry->second;
+
+    const auto found = impl_->by_key.find(key);
     if (found != impl_->by_key.end())
     {
         KeySubscription* const subscription = found->second.get();
@@ -264,19 +421,42 @@ void LiveZenohSource::release(SignalHandle handle)
                                       [handle](const std::shared_ptr<Binding>& binding)
                                       { return binding->handle == handle; }),
                        updated->end());
+        subscription->publish(std::move(updated));
 
-        if (updated->empty())
-        {
-            // Last signal on this key: drop the subscription rather than leave
-            // it decoding samples nothing looks at. Erasing runs
-            // ~KeySubscription, which tears down the subscriber first and joins
-            // any callback still running.
-            impl_->by_key.erase(found);
-        }
-        else
-        {
-            subscription->publish(std::move(updated));
-        }
+        // Only when NOTHING is bound here any more, raw included. This used to
+        // drop the subscription as soon as the numeric list emptied, which was
+        // right while numeric was the only kind -- releasing the last plotted
+        // signal on the video topic would now take the stream out from under a
+        // video panel that is still bound to it.
+        impl_->dropIfUnused(key);
+    }
+
+    impl_->handle_keys.erase(entry);
+}
+
+void LiveZenohSource::releaseRaw(SignalHandle handle)
+{
+    const auto entry = impl_->handle_keys.find(handle);
+    if (entry == impl_->handle_keys.end())
+    {
+        return;
+    }
+
+    const std::string key = entry->second;
+
+    const auto found = impl_->by_key.find(key);
+    if (found != impl_->by_key.end())
+    {
+        KeySubscription* const subscription = found->second.get();
+
+        auto updated = std::make_shared<RawBindingList>(*subscription->snapshotRaw());
+        updated->erase(std::remove_if(updated->begin(), updated->end(),
+                                      [handle](const std::shared_ptr<RawBinding>& binding)
+                                      { return binding->handle == handle; }),
+                       updated->end());
+        subscription->publishRaw(std::move(updated));
+
+        impl_->dropIfUnused(key);
     }
 
     impl_->handle_keys.erase(entry);

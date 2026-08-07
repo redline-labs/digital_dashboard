@@ -188,6 +188,68 @@ struct RecordedBinding
     bool filled = false;
 };
 
+// A whole topic bound as bytes, with the two-stage arrangement a scrub over
+// video forces.
+//
+// THE NUMERIC PATH'S STRATEGY DOES NOT TRANSFER, and that is the whole reason
+// this type exists rather than another RecordedBinding. RecordedBinding decodes
+// the entire recording into a flat vector at bind time, which is right when a
+// sample is sixteen bytes: four hours of a 25 Hz signal is under 6 MB. The same
+// move on a video topic is not a bigger version of the same thing -- half an
+// hour of CarPlay at 4 Mbit is about 900 MB, and it would be read and held to
+// show one frame.
+//
+// So: an index of everything, holding NO payloads, and one GOP of payloads at a
+// time.
+struct RecordedRawBinding
+{
+    SignalHandle handle = kInvalidSignal;
+    std::string zenoh_key;
+    std::string expected_schema;
+    RawClassifier classify;
+    std::shared_ptr<RawBuffer> buffer;
+
+    // One entry per message on this key. ~24 bytes each, so half an hour of
+    // 30 fps video is about 1.3 MB -- against the ~900 MB the payloads would be.
+    // This is what the scrubber draws its keyframe ticks from and what a seek
+    // binary-searches to find the GOP it must start decoding at.
+    struct IndexEntry
+    {
+        double t = 0.0;
+        std::uint32_t flags = 0;
+        std::uint32_t bytes = 0;
+    };
+    std::vector<IndexEntry> index;
+    bool ready = false;
+
+    // ------------------------------------------------ the window, and its request
+    //
+    // Loading runs on the WORKER, never on the GUI thread, because it is file
+    // I/O: RecordedProvider::forEach opens an mcap reader per part per call.
+    // Doing it inline would put exactly the widget-driven file read that
+    // method's warning forbids on the render tick.
+
+    // Index of the seek point the loaded (or wanted) window starts at. The
+    // identity of a window -- a scrub that stays inside one GOP leaves this
+    // alone and reads nothing at all.
+    std::size_t want_start = 0;
+    bool want_valid = false;
+    bool request_queued = false;
+
+    std::size_t loaded_start = 0;
+    bool loaded = false;
+
+    // Filled by the worker, moved into the buffer by the GUI thread on the next
+    // tick. Staged rather than pushed directly because RawBuffer's history half
+    // is GUI-owned, exactly as SignalBuffer's is.
+    std::vector<RawMessage> staged;
+    bool staged_ready = false;
+
+    // Bytes the last window load read, for the panel's stats. A window that is
+    // quietly enormous is worth being able to see.
+    std::uint64_t last_window_bytes = 0;
+};
+
 }  // namespace
 
 struct RecordedSource::Impl
@@ -212,14 +274,43 @@ struct RecordedSource::Impl
     mutable std::mutex mutex;
     std::map<SignalHandle, std::shared_ptr<RecordedBinding>> bindings;
 
+    std::map<SignalHandle, std::shared_ptr<RecordedRawBinding>> raw_bindings;
+
     // ONE worker thread, not one per bind. RecordedProvider is not thread-safe
     // -- BagFileProvider holds an mcap reader with its own decompression buffers
     // -- so decodes are serialized by construction rather than by a lock nobody
-    // would remember to take.
-    std::deque<std::shared_ptr<RecordedBinding>> queue;
+    // would remember to take. The raw work joins the same thread for the same
+    // reason: a second one would touch the same reader.
+    struct Job
+    {
+        enum class Kind
+        {
+            // Decode one signal's expression over the whole recording.
+            DecodeSignal,
+
+            // Build one raw stream's payload-free index over the whole recording.
+            IndexRaw,
+
+            // Load one GOP of payloads for one raw stream. Cheap and frequent,
+            // unlike the two above.
+            LoadWindow,
+        };
+
+        Kind kind = Kind::DecodeSignal;
+        std::shared_ptr<RecordedBinding> signal;
+        std::shared_ptr<RecordedRawBinding> raw;
+    };
+
+    std::deque<Job> queue;
     std::condition_variable work;
     bool stopping = false;
+
+    // Counts the two WHOLE-RECORDING passes only, which is what decodesPending()
+    // means and what a test waits on. A window load is a bounded read of one
+    // GOP and finishes in milliseconds; counting it would make the flag flicker
+    // during every scrub and turn "wait until zero" into a race.
     std::size_t pending = 0;
+
     std::thread worker;
 
     double duration() const
@@ -282,11 +373,219 @@ struct RecordedSource::Impl
         binding->filled_to = 0;
     }
 
+    // One pass over the recording building the payload-free index. Runs on the
+    // worker thread, exactly like decode() and for the same reason.
+    void indexRaw(const std::shared_ptr<RecordedRawBinding>& binding)
+    {
+        std::vector<RecordedRawBinding::IndexEntry> built;
+
+        provider->forEach(t_begin_ns, t_end_ns,
+                          [&](const bag::BagMessage& message)
+                          {
+                              if (message.key != binding->zenoh_key)
+                              {
+                                  return;
+                              }
+
+                              // Same rule as the numeric path: a message
+                              // recorded under a different schema is skipped
+                              // rather than handed over. A decoder fed the wrong
+                              // stream produces a plausible mess, not an error.
+                              if (!message.schema.empty() &&
+                                  message.schema != binding->expected_schema)
+                              {
+                                  return;
+                              }
+
+                              RecordedRawBinding::IndexEntry entry;
+                              entry.t = static_cast<double>(message.log_time_ns - t_begin_ns) /
+                                        kNanosPerSecond;
+                              entry.bytes = static_cast<std::uint32_t>(message.payload.size());
+                              if (binding->classify)
+                              {
+                                  entry.flags = binding->classify(message.payload);
+                              }
+                              built.push_back(entry);
+                          });
+
+        const std::lock_guard<std::mutex> guard(mutex);
+        binding->index = std::move(built);
+        binding->ready = true;
+
+        // The window that was loaded, if any, described an index that did not
+        // exist when it was recorded.
+        binding->loaded = false;
+        binding->staged_ready = false;
+    }
+
+    // Load the payloads for ONE GOP: from the seek point at `want_start` up to
+    // (but not including) the next one. Runs on the worker thread.
+    //
+    // A whole GOP rather than "up to the playhead", so that scrubbing within it
+    // and playing forward through it read the file exactly once. At a two-second
+    // GOP that is about sixty access units.
+    void loadWindow(const std::shared_ptr<RecordedRawBinding>& binding)
+    {
+        std::size_t start = 0;
+        std::uint64_t from_ns = 0;
+        std::uint64_t to_ns = 0;
+        std::string key;
+        std::string schema;
+        RawClassifier classify;
+
+        {
+            const std::lock_guard<std::mutex> guard(mutex);
+            binding->request_queued = false;
+            if (!binding->ready || !binding->want_valid || binding->index.empty())
+            {
+                return;
+            }
+
+            // The LATEST request, not the one that was queued. A drag makes many
+            // and only the last matters; servicing the stale one would load a
+            // window the user has already scrubbed away from.
+            start = binding->want_start;
+            if (start >= binding->index.size())
+            {
+                return;
+            }
+
+            // Up to the NEXT GOP's start, exclusive. One nanosecond short of
+            // it, because forEach's range is closed at both ends.
+            //
+            // `start` is the beginning of the current window, which may be a
+            // run of preamble messages sitting in front of this GOP's own seek
+            // point. So the scan has to step over that seek point first --
+            // stopping at it would make the window everything before this GOP's
+            // keyframe, which is a window with nothing decodable in it.
+            std::size_t own = start;
+            while (own < binding->index.size() &&
+                   (binding->index[own].flags & RawMessage::kSeekPoint) == 0)
+            {
+                ++own;
+            }
+
+            std::size_t next = (own < binding->index.size()) ? own + 1 : binding->index.size();
+            while (next < binding->index.size() &&
+                   (binding->index[next].flags & RawMessage::kSeekPoint) == 0)
+            {
+                ++next;
+            }
+
+            // And stop short of the NEXT GOP's preamble rather than swallowing
+            // it, so the following window still begins with its own parameter
+            // sets. gopStartFor() walks back over exactly the same run.
+            while (next > own + 1 &&
+                   (binding->index[next - 1].flags & RawMessage::kPreamble) != 0)
+            {
+                --next;
+            }
+
+            from_ns = t_begin_ns +
+                      static_cast<std::uint64_t>(binding->index[start].t * kNanosPerSecond);
+            to_ns = next < binding->index.size()
+                        ? t_begin_ns + static_cast<std::uint64_t>(binding->index[next].t *
+                                                                  kNanosPerSecond) -
+                              1
+                        : t_end_ns;
+
+            key = binding->zenoh_key;
+            schema = binding->expected_schema;
+            classify = binding->classify;
+        }
+
+        std::vector<RawMessage> loaded;
+        std::uint64_t bytes = 0;
+
+        provider->forEach(from_ns, to_ns,
+                          [&](const bag::BagMessage& message)
+                          {
+                              if (message.key != key)
+                              {
+                                  return;
+                              }
+                              if (!message.schema.empty() && message.schema != schema)
+                              {
+                                  return;
+                              }
+
+                              RawMessage out;
+                              out.t = static_cast<double>(message.log_time_ns - t_begin_ns) /
+                                      kNanosPerSecond;
+                              out.payload.assign(message.payload.begin(), message.payload.end());
+                              if (classify)
+                              {
+                                  out.flags = classify(out.payload);
+                              }
+                              bytes += out.payload.size();
+                              loaded.push_back(std::move(out));
+                          });
+
+        const std::lock_guard<std::mutex> guard(mutex);
+
+        // Dropped if the request moved on while this was reading. Publishing it
+        // anyway would put the buffer somewhere the caller has already left, and
+        // the newer request is already queued behind this one.
+        if (binding->want_valid && binding->want_start == start)
+        {
+            binding->staged = std::move(loaded);
+            binding->staged_ready = true;
+            binding->loaded_start = start;
+            binding->last_window_bytes = bytes;
+        }
+    }
+
+    // Drop every queued job matching `match`, returning how many were counted
+    // in `pending`. Called with the mutex held.
+    template <typename Match>
+    std::size_t eraseQueued(Match match)
+    {
+        std::size_t counted = 0;
+        for (const Job& job : queue)
+        {
+            if (match(job) && job.kind != Job::Kind::LoadWindow)
+            {
+                ++counted;
+            }
+        }
+        queue.erase(std::remove_if(queue.begin(), queue.end(), match), queue.end());
+        return counted;
+    }
+
+    // Drop every queued job for one raw binding, reporting the whole-recording
+    // passes and the window loads separately because only the first kind is
+    // counted in `pending`. Called with the mutex held.
+    std::pair<std::size_t, std::size_t> eraseQueuedRaw(
+        const std::shared_ptr<RecordedRawBinding>& binding)
+    {
+        std::size_t passes = 0;
+        std::size_t windows = 0;
+        for (const Job& job : queue)
+        {
+            if (job.raw != binding)
+            {
+                continue;
+            }
+            if (job.kind == Job::Kind::LoadWindow)
+            {
+                ++windows;
+            }
+            else
+            {
+                ++passes;
+            }
+        }
+        queue.erase(std::remove_if(queue.begin(), queue.end(),
+                                   [&binding](const Job& job) { return job.raw == binding; }),
+                    queue.end());
+        return {passes, windows};
+    }
+
     void run()
     {
         for (;;)
         {
-            std::shared_ptr<RecordedBinding> job;
+            Job job;
             {
                 std::unique_lock<std::mutex> lock(mutex);
                 work.wait(lock, [this]() { return stopping || !queue.empty(); });
@@ -298,8 +597,23 @@ struct RecordedSource::Impl
                 queue.pop_front();
             }
 
-            decode(job);
+            switch (job.kind)
+            {
+                case Job::Kind::DecodeSignal:
+                    decode(job.signal);
+                    break;
 
+                case Job::Kind::IndexRaw:
+                    indexRaw(job.raw);
+                    break;
+
+                case Job::Kind::LoadWindow:
+                    loadWindow(job.raw);
+                    break;
+            }
+
+            // Only the whole-recording passes are counted -- see `pending`.
+            if (job.kind != Job::Kind::LoadWindow)
             {
                 const std::lock_guard<std::mutex> guard(mutex);
                 --pending;
@@ -381,6 +695,161 @@ struct RecordedSource::Impl
         for (const std::shared_ptr<RecordedBinding>& binding : decoded)
         {
             refill(binding, force);
+        }
+    }
+
+    // The GOP that contains `position`, as an index into `entries`: the last
+    // seek point at or before it, extended backwards over the preamble messages
+    // immediately in front of it.
+    //
+    // The backwards extension is what carries H.264 parameter sets into the
+    // window. They are published just ahead of the keyframe they describe, and a
+    // window starting exactly at the keyframe would leave them one message
+    // behind -- which decodes to nothing at all until the NEXT keyframe.
+    // Only immediately-adjacent ones, so a producer that sends its preamble once
+    // an hour cannot turn a GOP-sized read into a whole-recording one.
+    static bool gopStartFor(const std::vector<RecordedRawBinding::IndexEntry>& entries,
+                            double position, std::size_t& start)
+    {
+        if (entries.empty())
+        {
+            return false;
+        }
+
+        // Last entry at or before `position`.
+        std::size_t at = entries.size();
+        {
+            std::size_t low = 0;
+            std::size_t high = entries.size();
+            while (low < high)
+            {
+                const std::size_t mid = low + (high - low) / 2;
+                if (entries[mid].t <= position)
+                {
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+            if (low == 0)
+            {
+                return false;
+            }
+            at = low - 1;
+        }
+
+        // Walk back to the seek point this message depends on.
+        std::size_t seek_point = at;
+        while ((entries[seek_point].flags & RawMessage::kSeekPoint) == 0)
+        {
+            if (seek_point == 0)
+            {
+                // Nothing decodable at or before here. A stream whose first
+                // seek point is later than this reads as empty, which is the
+                // honest answer -- it is the same state a live subscriber is in
+                // before its first keyframe arrives.
+                return false;
+            }
+            --seek_point;
+        }
+
+        while (seek_point > 0 && (entries[seek_point - 1].flags & RawMessage::kPreamble) != 0)
+        {
+            --seek_point;
+        }
+
+        start = seek_point;
+        return true;
+    }
+
+    // Publish anything the worker finished, then ask it for a different window
+    // if the position has moved out of the loaded one.
+    //
+    // `force` re-publishes the loaded window even when the GOP has not changed,
+    // which is what a BACKWARDS scrub inside one GOP needs: the buffer is
+    // correct but the consumer has to re-run its decode from the start of it.
+    void refillAllRaw(bool force)
+    {
+        std::vector<std::shared_ptr<RecordedRawBinding>> to_publish;
+        std::vector<std::shared_ptr<RecordedRawBinding>> to_request;
+
+        {
+            const std::lock_guard<std::mutex> guard(mutex);
+
+            for (const auto& [handle, binding] : raw_bindings)
+            {
+                if (!binding->buffer)
+                {
+                    continue;
+                }
+
+                if (binding->staged_ready)
+                {
+                    to_publish.push_back(binding);
+                    continue;
+                }
+
+                if (!binding->ready)
+                {
+                    continue;
+                }
+
+                std::size_t start = 0;
+                if (!gopStartFor(binding->index, position, start))
+                {
+                    binding->want_valid = false;
+                    continue;
+                }
+
+                const bool changed = !binding->loaded || binding->loaded_start != start;
+                if (!changed && !force)
+                {
+                    continue;
+                }
+
+                binding->want_start = start;
+                binding->want_valid = true;
+
+                // At most one queued request per binding. A drag makes one per
+                // render tick and the worker reads the LATEST want_start when it
+                // gets there, so queueing another would only make it do the same
+                // read twice.
+                if (!binding->request_queued && changed)
+                {
+                    binding->request_queued = true;
+                    to_request.push_back(binding);
+                }
+            }
+
+            for (const std::shared_ptr<RecordedRawBinding>& binding : to_request)
+            {
+                queue.push_back(Job{Job::Kind::LoadWindow, nullptr, binding});
+            }
+        }
+
+        if (!to_request.empty())
+        {
+            work.notify_one();
+        }
+
+        for (const std::shared_ptr<RecordedRawBinding>& binding : to_publish)
+        {
+            std::vector<RawMessage> staged;
+            {
+                const std::lock_guard<std::mutex> guard(mutex);
+                staged = std::move(binding->staged);
+                binding->staged = {};
+                binding->staged_ready = false;
+                binding->loaded = true;
+            }
+
+            // Wholesale, always. A window is one GOP and arrives whole, so there
+            // is no forward-append case to optimise -- and replaceHistory is
+            // what keeps RawHistory::lowerBound()'s non-decreasing precondition
+            // true across a backwards scrub.
+            binding->buffer->replaceHistory(std::move(staged));
         }
     }
 };
@@ -473,7 +942,7 @@ SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBu
         const std::lock_guard<std::mutex> guard(impl_->mutex);
         binding->handle = impl_->next_handle++;
         impl_->bindings.emplace(binding->handle, binding);
-        impl_->queue.push_back(binding);
+        impl_->queue.push_back(Impl::Job{Impl::Job::Kind::DecodeSignal, binding, nullptr});
         ++impl_->pending;
     }
     impl_->work.notify_one();
@@ -482,6 +951,61 @@ SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBu
                  binding->handle, key.zenoh_key, reflection::enum_to_string(key.schema_type),
                  key.value_expression);
     return binding->handle;
+}
+
+SignalHandle RecordedSource::bindRaw(const std::string& zenoh_key,
+                                     pub_sub::schema_type_t schema,
+                                     std::shared_ptr<RawBuffer> into,
+                                     RawClassifier classify)
+{
+    if (zenoh_key.empty() || !into)
+    {
+        SPDLOG_ERROR("Refusing to bind a raw stream with an empty key or buffer.");
+        return kInvalidSignal;
+    }
+
+    auto binding = std::make_shared<RecordedRawBinding>();
+    binding->zenoh_key = zenoh_key;
+    binding->expected_schema =
+        std::string(reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema));
+    binding->classify = std::move(classify);
+    binding->buffer = std::move(into);
+
+    {
+        const std::lock_guard<std::mutex> guard(impl_->mutex);
+        binding->handle = impl_->next_handle++;
+        impl_->raw_bindings.emplace(binding->handle, binding);
+        impl_->queue.push_back(Impl::Job{Impl::Job::Kind::IndexRaw, nullptr, binding});
+        ++impl_->pending;
+    }
+    impl_->work.notify_one();
+
+    SPDLOG_DEBUG("Bound recorded raw stream {} to '{}' ({}); indexing.", binding->handle,
+                 zenoh_key, binding->expected_schema);
+    return binding->handle;
+}
+
+void RecordedSource::releaseRaw(SignalHandle handle)
+{
+    const std::lock_guard<std::mutex> guard(impl_->mutex);
+
+    const auto found = impl_->raw_bindings.find(handle);
+    if (found == impl_->raw_bindings.end())
+    {
+        return;
+    }
+
+    // Same reasoning as release(): a pass already running finishes into a
+    // binding nothing reads, which is harmless. Only the not-yet-started jobs
+    // are worth dropping.
+    //
+    // A LoadWindow job does not count toward `pending`, so only the index pass
+    // may decrement it -- which is why eraseQueued reports the two separately.
+    const auto [erased_passes, erased_windows] = impl_->eraseQueuedRaw(found->second);
+    impl_->pending -= erased_passes;
+    static_cast<void>(erased_windows);
+
+    impl_->raw_bindings.erase(found);
 }
 
 void RecordedSource::release(SignalHandle handle)
@@ -499,8 +1023,14 @@ void RecordedSource::release(SignalHandle handle)
     // the file and is harmless -- the alternative is a cancellation flag checked
     // per message for a case that only happens when a signal is removed within
     // seconds of being added.
-    impl_->queue.erase(std::remove(impl_->queue.begin(), impl_->queue.end(), found->second),
-                       impl_->queue.end());
+    //
+    // AND `pending` COMES DOWN WITH THEM. This used to erase the jobs and leave
+    // the count, so releasing a signal before its decode started left
+    // decodesPending() permanently above zero -- and that number is exactly what
+    // a test, and `scope.source`, wait on to know the picture is finished.
+    // Rebinding every panel across a source swap is the case that hits it.
+    impl_->pending -= impl_->eraseQueued(
+        [&found](const Impl::Job& job) { return job.signal == found->second; });
 
     impl_->bindings.erase(found);
 }
@@ -540,6 +1070,12 @@ void RecordedSource::seek(double t)
     // would append older samples on top of newer ones -- which SampleHistory's
     // binary search cannot detect and would answer wrongly from then on.
     impl_->refillAll(/*force=*/true);
+
+    // Forced too, and for the analogous reason. A seek inside the loaded GOP
+    // reads no file -- the window is already right -- but the consumer must be
+    // told to run its decode again from the start of it, because a decoder
+    // cannot go backwards through the frames it has already consumed.
+    impl_->refillAllRaw(/*force=*/true);
 }
 
 void RecordedSource::setPlaying(bool playing)
@@ -578,8 +1114,11 @@ void RecordedSource::tick()
     }
 
     // Every tick, playing or not: a decode that finished since the last one has
-    // a buffer to fill, and it has no other way to say so.
+    // a buffer to fill, and it has no other way to say so. The same is true of a
+    // window load, which also completes on the worker with nothing to announce
+    // it.
     impl_->refillAll(/*force=*/false);
+    impl_->refillAllRaw(/*force=*/false);
 }
 
 std::uint64_t RecordedSource::wallClockNanosAt(double t) const

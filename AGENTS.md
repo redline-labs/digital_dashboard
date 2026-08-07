@@ -109,7 +109,18 @@ discovery seeing only live traffic, and what `accepted: false` and
   `scope/include/scope/panel_registry.h`, and works the same way: one line in
   `SCOPE_PANEL_TABLE` and everything else follows. Panels decide for themselves
   what they will plot via `acceptsBinding()`, so the signal browser and the drag
-  need no knowledge of panel types.
+  need no knowledge of panel types. A panel declares a reflected `config_t` AND
+  a reflected `stats_t`; the second is not optional, because `scope.stats` and
+  `scope.describe_stats` are served by visiting it and a panel without one would
+  answer `{}` — which looks exactly like a working panel that has received
+  nothing.
+- **Not every stream is a number.** `DataSource::bind()` turns a message into a
+  `double`; `bindRaw()` hands over the bytes. The raw path stays
+  schema-agnostic — the consumer supplies a `RawClassifier` and the source stores
+  its answer uninterpreted — because the moment that interface knows what a
+  `CarPlayVideo` is, one panel's schema is in the interface every panel shares.
+  Two flag bits are reserved: `kSeekPoint` ("you can start here") and `kPreamble`
+  ("replay me before the seek point after me"). See `docs/scope.md`.
 - **Adding a widget** is a 5-step registration documented at the top of
   `dashboard/include/editor/widget_registry.h`. Follow it exactly; several
   generated things (the config variant, the palette, the YAML decoder) derive
@@ -195,6 +206,7 @@ dashboard/          the dashboard app, the editor, and every widget
   widgets/<name>/   one static lib per widget, each with its own config.h
 scope/              the time-series visualizer app
   panels/<name>/    one panel type per directory, each with its own config.h
+                    and stats.h (time_series, video)
 libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
                     canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),

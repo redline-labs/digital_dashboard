@@ -25,10 +25,12 @@ There is nothing to see without traffic on the bus. For a car-free bring-up:
                     │         one clock, one cursor, ONE VIEW WINDOW
        ┌────────────┼────────────┬──────────────┐
        ▼            ▼            ▼              ▼
-    Panel        Panel        Panel      OverviewStrip
-       │            │            │       (the whole recording, and
-       └────────────┴────────────┘        the window drawn on it)
+  TimeSeries    TimeSeries      Video      OverviewStrip
+     Panel         Panel        Panel      (the whole recording, and
+       │            │            │          the window drawn on it)
+       └────────────┴────────────┘
                     │  SignalBuffer per plotted signal
+                    │  RawBuffer    per bound stream
                     ▼
                DataSource        ← the seam
                     │
@@ -58,11 +60,13 @@ destroyed. A handle means nothing to a source that did not issue it, so
 repointing before releasing leaks every subscription on the old one.
 
 **Panels are registered in one place.** `scope/include/scope/panel_table.h` is
-the list; the enum, the config variant, the Panels menu, **the toolbar's Add
-buttons**, the YAML decoder and the agent interface's idea of what exists all
-derive from it. Adding a video or tabular panel is one line there plus a
-directory — the registration steps are written out at the top of
-`scope/include/scope/panel_registry.h`.
+the list; the enum, the config variant, **the stats variant**, the Panels menu,
+**the toolbar's Add buttons**, the YAML decoder and the agent interface's idea of
+what exists all derive from it. Adding a tabular or XY panel is one line there
+plus a directory — the registration steps are written out at the top of
+`scope/include/scope/panel_registry.h`. The `video` panel was the first to go
+through that recipe end to end, and adding it needed **no change to
+`scope_methods.cpp` at all**.
 
 ## The two bars
 
@@ -96,8 +100,23 @@ blank box, which reads as a broken button rather than a plain one.
 **Picking a signal knows nothing about panel types.** The browser produces a
 `BindingCandidate`, the drag carries it, the dialog returns it, and every panel
 answers the same two questions: `acceptsBinding()` and `addBinding()`. A
-time-series plot takes numeric fields and declines whole topics; a video panel
-would do the reverse. Neither the browser nor the drag plumbing changes.
+time-series plot takes numeric fields and declines whole topics; the video panel
+does exactly the reverse. Neither the browser nor the drag plumbing changed when
+the second panel type arrived — which is what the seam was for.
+
+**Reading a panel knows nothing about panel types either.** `panelConfigOf()`,
+`applyPanelConfig()` and `panelStatsOf()` are generated from the same table
+(`scope/include/scope/panel_registry.h`), so the workspace codec and the four
+`scope.*` methods that serve config and stats never name a panel kind. They are
+free functions rather than virtuals on `Panel` because the variants are built
+*from* the panel classes and `Panel` sits below them — a virtual returning one
+would need a type `Panel` cannot see.
+
+> **This is the seam that used to be missing, and it lost data.**
+> `ScopeWindow::toWorkspace()` cast to `TimeSeriesPanel` with no `else`, so any
+> other panel type saved its `type:` with the config left on `std::monostate` —
+> which the YAML encoder omits entirely, so the panel came back
+> default-constructed with nothing logged. `scope_test_panels` pins it now.
 
 ## Navigating time
 
@@ -367,6 +386,111 @@ caches would be the grid, and with autoscale on — the default — the vertical
 range changes whenever the visible data does, so the cache would be invalid
 almost every frame. The reasoning is in the panel header so nobody adds it back.
 
+## The video panel
+
+The second panel type, and the one the seams above were designed for. It renders
+the CarPlay H.264 stream at the shared time base's position, so a value read off
+a plot under the shared cursor and the picture beside it are the same instant.
+
+```bash
+./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --simulate &
+./build/scope/scope
+# Panels ▸ Add ▸ Video, then drag the nodes/carplay/video TOPIC row onto it
+```
+
+It takes the **topic**, not a field of it. `acceptsBinding()` is the mirror of
+the plot's: topic-level only, schema `CarPlayVideo` (capital P — `panel.h`
+predicted this panel years early and misspelled it), and one stream per panel.
+
+### Raw payloads needed a new seam
+
+`DataSource::bind()` delivers `Sample{t, v}`. An H.264 access unit cannot travel
+through that, and turning one into a double is not a lossy answer but a
+meaningless one. `bindRaw()` hands over the bytes exactly as they arrived.
+
+It is **schema-agnostic on purpose**: the moment that interface knows what a
+`CarPlayVideo` is, one panel's schema is in the interface every panel shares. But
+a recorded source cannot seek a stream with dependencies between messages unless
+it knows where the independent ones are. So the consumer supplies a
+`RawClassifier`, the source calls it and stores the opaque result, and two bits
+of `RawMessage::flags` are reserved:
+
+| flag | means | video |
+|---|---|---|
+| `kSeekPoint` | a message a consumer can start from | a keyframe |
+| `kPreamble` | state that must be replayed before the seek point after it | SPS/PPS |
+
+A stream that sets `kSeekPoint` on everything is seekable everywhere; one that
+sets it on nothing is simply not seekable, which is the honest answer rather than
+a broken picture.
+
+### The recorded path is NOT "decode once per signal"
+
+That strategy is right for a sixteen-byte sample and wrong by three orders of
+magnitude for video: half an hour of CarPlay at 4 Mbit is ~900 MB of payload
+against the ~6 MB four hours of a 25 Hz signal costs. Two stages instead:
+
+1. **An index pass** at `bindRaw()`, holding `{t, size, flags}` and **no
+   payloads** — about 1.3 MB for that same half hour. It is what the scrubber
+   draws its ticks from and what a seek binary-searches. Counts toward
+   `decodes_pending`.
+2. **One seek-point-to-seek-point window** of payloads around the position,
+   loaded on the worker thread. At a two-second GOP that is ~60 access units,
+   about a megabyte. **Scrubbing inside the loaded window reads nothing at all.**
+
+> **The window starts at the preamble, not at the keyframe.** Parameter sets are
+> published just ahead of the keyframe they describe, and a window starting one
+> message later decodes to nothing until the *next* keyframe. The first version
+> marked config as both `kSeekPoint` and `kPreamble`, which made the config its
+> own one-message GOP: the panel held 128 bytes, decoded zero frames, and kept
+> displaying the picture from before the seek — a stale frame, which looks
+> exactly like a seek that worked.
+
+### Decoding is forward-only, which is the shape of the whole panel
+
+There is no such thing as decoding the frame at *t*; there is only decoding from
+the last seek point up to *t*. So a seek re-runs the decoder over a GOP, and
+doing that synchronously would block the event loop for as long as the GOP is —
+hence a **per-tick decode budget** of ~10 ms, spreading a catch-up over two or
+three frames rather than stalling the window.
+
+`scope/panels/video/video_decoder.{h,cpp}` is a **second** decoder, not a refactor
+of `CarPlayWidget`'s. That one is load-bearing on a screen someone is touching and
+its settings are measured against a real capture; pulling it out from under a
+working CarPlay path to serve a review tool is a bad trade. What was copied is the
+*knowledge* — the four subtleties are listed at the top of the header — plus one
+thing a live stream never needs: `reset()`.
+
+Two decisions there are worth knowing:
+
+- **`thread_count` stays at 1.** Frame threading withholds `thread_count - 1`
+  pictures before emitting the first. On a live stream that is latency; on a seek
+  the last frame of the catch-up is exactly the one being asked for, and it would
+  never come out.
+- **The source-clock time rides through libavcodec on the packet's `pts`.**
+  Stamping whatever comes out with the time of the last access unit submitted is
+  correct only while decode order is display order — true for CarPlay today, but
+  a fact about the phone's encoder rather than about this code. `frame_t` is the
+  field a seek asserts on, so a wrong one turns the check that could catch a bad
+  seek into one that agrees with it.
+
+### The panel's own scrubber
+
+A short strip along the bottom, so the panel is useful by itself — floated on a
+second monitor, or as the only panel in a workspace, without the main window's
+bottom bar in view. It is a dumb painter like `OverviewStrip`: it knows nothing
+about `TimeBase`, emits `seekRequested`/`interactionChanged`/`cursorRequested`,
+and the panel wires those to the shared clock.
+
+It drives the **shared** time base rather than a position of its own. On a
+recorded source the view's right edge *is* the playhead, so a video panel
+scrubbing independently would draw a frame from one instant beside traces from
+another — and it would look like data rather than like a bug. Tick marks show the
+seek points, which are the instants a scrub lands on exactly.
+
+Hidden when the source is not seekable. A seek bar that looks draggable and does
+nothing reads as a broken panel.
+
 ## Discovery
 
 Topics appear in the picker **as soon as a node starts**, whether or not it has
@@ -487,13 +611,15 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 | `scope.browser_drag` | drive the drop path itself |
 | `scope.time_base` | the view window: `view` / `pan` / `zoom` / `fit` / `seek`, plus `following`, `window_seconds`, `playing`, `rate`, cursor and caps |
 | `scope.density` | what the overview strip draws behind everything else, as numbers |
-| `scope.panel_get_config` / `_set_config` / `_describe_config` | reflected config |
+| `scope.panel_get_config` / `_set_config` / `_describe_config` | reflected config, for whichever kind of panel it is |
+| `scope.stats` | what each panel has RECEIVED, whatever kind it is |
+| `scope.describe_stats` | what fields `scope.stats` will return for that panel |
 | `scope.save` / `scope.load` | workspaces |
 | `scope.source` | which kind of source is behind the panels, and `decodes_pending` |
 | `scope.open_recording` / `scope.go_live` | review a bag directory, or return to the bus |
 | `scope.capture` | messages, bytes, retained span, **evicted** |
 | `scope.review_capture` / `scope.save_recording` | review the capture; write it out as a bag |
-| `scope.sample_stats` | what each signal actually received |
+| `scope.sample_stats` | the time-series half of `scope.stats`, under its historical name |
 
 The loop that closes fastest:
 
@@ -558,6 +684,41 @@ The bucket sum against `capture`'s `messages` is the assertion worth making.
 `exact: false` means the source declined to answer cheaply rather than slowly —
 a bag counting from its part index — not that there is nothing there.
 
+**And the video panel, where a screenshot is least useful of all.** Every reason
+a video panel is black looks the same on screen and they are not the same
+problem, so `scope.stats` separates them: nothing published (`received` 0), a
+schema this binding skips (`bound` but `received` 0), arriving but never syncing
+(`dropped_before_sync` climbing), syncing but failing to decode
+(`decode_errors`).
+
+```
+app_call("scope.describe_stats", {"panel": "cam"})   # what fields to expect
+app_call("scope.stats", {"panel": "cam"})            # and what they say
+```
+
+The proof a screenshot *can* make, and the reason `--simulate` is the right
+vehicle: its test pattern has a **sweeping box whose position is a pure function
+of the frame index**, so the picture is a readable clock.
+
+```
+app_call("scope.review_capture")
+app_call("scope.time_base", {"window_seconds": 5})
+app_call("scope.time_base", {"seek": 20})
+ui_screenshot(target="video_panel")            # note the hash
+app_call("scope.time_base", {"seek": 6})       # BACKWARDS
+ui_screenshot(target="video_panel")            # a different picture
+app_call("scope.time_base", {"seek": 20})      # and back
+ui_screenshot(target="video_panel", if_changed_from="<the first hash>")
+```
+
+The last call returning `unchanged: true` is the assertion. "There is a picture"
+proves nothing; "the same instant gives a pixel-identical picture, after a round
+trip through somewhere else" proves the seek.
+
+Note that `{"seek": 20}` with the default 30 s window lands the view at 30, not
+20: the window *slides* into the available range rather than being squashed.
+Narrow it first, as above, or seek somewhere further in than the span.
+
 **`scope.sample_stats` is the one to reach for first.** A screenshot shows a
 line; this says what the line is made of. `received` climbing with `dropped` at
 zero and a `min`/`max` bracketing what you published is a much stronger
@@ -601,6 +762,23 @@ ctest --test-dir build -R scope --output-on-failure
   a buffer honouring only one bound would get wrong on the other workload. Plus
   the accounting invariant: every pushed message is either retained or counted
   as evicted, checked under real threads.
+- `scope_test_raw_buffer` (unit) — the same two-bound argument one layer up, plus
+  the backwards seek: the assertion is that `t_last` **moved back**, not that the
+  buffer is still ordered, because a buffer that kept the window it came from
+  stays perfectly ordered and is completely wrong.
+- `scope_test_video_decoder` (unit) — the decoder, against a stream the test
+  **encodes itself** with the same settings `simulate.cpp` uses. No fixture in
+  the tree: a checked-in `.h264` cannot rot against the ffmpeg the build links,
+  and the pattern encodes its own frame index so a seek is checked on the pixels.
+
+  Worth reading for what the *simple* stream cannot prove. With
+  `max_b_frames = 0` every keyframe is an IDR and the decoder holds nothing back,
+  so `reset()` has no observable effect at all — removing
+  `avcodec_flush_buffers()` left the whole suite green, which is exactly the
+  "test that passes against the bug" this tree warns about. `testReorderedStream`
+  encodes a B-frame stream for that reason, and it fails if either the flush or
+  the packet-timestamp propagation is removed. Both were checked by reverting
+  them.
 - `scope_test_workspace` (unit) — the codec, weighted towards hand-edited files
   that are wrong in the usual ways.
 - `scope_test_panels` (gui) — the window and panel layer against a real widget
@@ -621,6 +799,14 @@ ctest --test-dir build -R scope --output-on-failure
   The assertion that matters most: **a zoom on panel A moves panel B's window.**
   That is the whole requirement; without it the panels have quietly grown
   independent axes and the shared cursor lines up with nothing.
+
+  It also carries the table-driven seam check: **every** entry in
+  `availablePanelTypes()` must yield a config and a stats variant whose active
+  alternative matches its `panel_type_t`, and both must survive the reflected
+  codec. That is what keeps the *next* panel honest — it fails the moment someone
+  adds a table row without a stats struct, and the failure it prevents is not a
+  crash but `scope.stats` answering `{}`, which looks exactly like a working
+  panel that has received nothing.
 
 > **One objectName did not survive.** `transport_scrubber` was a `QSlider` and
 > `overview_strip` is not one, so keeping the name would make an agent that

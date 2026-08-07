@@ -7,6 +7,7 @@
 #include "scope/sample_ring.h"
 #include "scope/time_axis.h"
 #include "time_series/config.h"
+#include "time_series/stats.h"
 
 #include <QColor>
 #include <QPoint>
@@ -48,6 +49,7 @@ class TimeSeriesPanel : public Panel
 
   public:
     using config_t = TimeSeriesPanelConfig_t;
+    using stats_t = TimeSeriesPanelStats_t;
     static constexpr panel_type_t kPanelType = panel_type_t::time_series;
     static constexpr std::string_view kFriendlyName = "Time Series";
     // U+223F SINE WAVE. Picked over the more obvious chart glyphs because it is
@@ -87,22 +89,10 @@ class TimeSeriesPanel : public Panel
 
     bool removeSignal(std::size_t index);
 
-    // Per-signal buffer state, for the agent interface's sample_stats.
-    struct SignalStats
-    {
-        std::string label;
-        std::size_t retained = 0;
-        std::uint64_t received = 0;
-        std::uint64_t dropped = 0;
-        bool bound = false;
-        double t_first = 0.0;
-        double t_last = 0.0;
-        double min = 0.0;
-        double max = 0.0;
-        double last = 0.0;
-        bool has_data = false;
-    };
-    std::vector<SignalStats> stats() const;
+    // What this panel actually received. Harvested generically by
+    // panelStatsOf() -- see panel_registry.h -- so the agent interface serves it
+    // without knowing this type exists.
+    stats_t stats() const;
 
   protected:
     void paintEvent(QPaintEvent* event) override;

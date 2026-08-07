@@ -60,6 +60,15 @@ class LiveZenohSource : public DataSource
     std::uint64_t topicsRevision() const override;
     SignalHandle bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into) override;
     void release(SignalHandle handle) override;
+
+    // Joins the SAME per-key subscription the numeric bindings use, so a video
+    // panel rendering a topic and a plot of one of its fields cost one
+    // subscription between them rather than two.
+    SignalHandle bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
+                         std::shared_ptr<RawBuffer> into,
+                         RawClassifier classify = {}) override;
+    void releaseRaw(SignalHandle handle) override;
+
     double now() const override;
 
     // How many distinct zenoh keys are currently subscribed. The point of the

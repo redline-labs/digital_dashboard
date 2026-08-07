@@ -147,6 +147,22 @@ class RecordedSource : public DataSource
     std::uint64_t topicsRevision() const override;
     SignalHandle bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into) override;
     void release(SignalHandle handle) override;
+
+    // Raw streams do NOT follow bind()'s decode-the-whole-recording strategy,
+    // and cannot: half an hour of CarPlay video is about 900 MB of payload
+    // against the 6 MB four hours of a 25 Hz signal costs.
+    //
+    // Instead, one pass builds a payload-free index -- time and the consumer's
+    // classifier flags per message, about 1.3 MB for that same half hour -- and
+    // a seek loads ONE seek-point-to-seek-point window of payloads around the
+    // position. Both run on the same worker thread, so a scrub never reads a
+    // file from the render tick. A scrub that stays inside the loaded window
+    // reads nothing at all.
+    SignalHandle bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
+                         std::shared_ptr<RawBuffer> into,
+                         RawClassifier classify = {}) override;
+    void releaseRaw(SignalHandle handle) override;
+
     double now() const override;
 
     // Converts the source's clock to the provider's UNIX nanoseconds and hands

@@ -20,6 +20,7 @@ qt_standard_project_setup()
 # that (a -DTESTING switch, a weak symbol) are worse than a library.
 add_library(scope_core STATIC
     sample_ring.cpp
+    raw_buffer.cpp
     decimate.cpp
     live_zenoh_source.cpp
     recorded_source.cpp
@@ -53,6 +54,12 @@ add_library(scope_core STATIC
     # panel table is resolved at compile time anyway.
     panels/time_series/time_series_panel.cpp
     panels/time_series/include/time_series/time_series_panel.h
+
+    panels/video/video_panel.cpp
+    panels/video/video_decoder.cpp
+    panels/video/video_scrubber.cpp
+    panels/video/include/video/video_panel.h
+    panels/video/include/video/video_scrubber.h
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
@@ -60,12 +67,34 @@ set_target_properties(scope_core PROPERTIES AUTOMOC ON)
 target_include_directories(scope_core PUBLIC
     include
     panels/time_series/include
+    panels/video/include
+)
+
+# libavcodec for software H.264/H.265 decode of the recorded or live video
+# stream, libavutil for the AVFrame/AVPacket allocators the decode loop calls
+# directly, and libswscale for the YUV420->BGRA conversion feeding QImage.
+#
+# The prefix is target-specific because PkgConfig::<prefix> is a GLOBAL name and
+# two other targets already declare their own ffmpeg dependency
+# (dashboard/widgets/carplay and nodes/carplay). Reusing one of theirs would make
+# the scope build depend on which of them CMake happened to configure first.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SCOPE_LIBAV REQUIRED IMPORTED_TARGET
+    libavcodec
+    libavutil
+    libswscale
 )
 
 target_link_libraries(scope_core PUBLIC
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+
+    # The video panel's decoder, plus the shared ffmpeg->spdlog log routing.
+    # Without the latter libavcodec and libswscale write straight to stderr,
+    # untimed and unfiltered.
+    PkgConfig::SCOPE_LIBAV
+    helpers_ffmpeg
 
     agent_control
     zenoh_pub_sub
@@ -113,6 +142,35 @@ target_link_libraries(scope_test_ring PRIVATE
 )
 
 add_project_test(TARGET scope_test_ring LABELS scope unit)
+
+# The raw-payload buffer, which is the same two-bound argument CaptureBuffer
+# makes applied one layer up -- plus the backwards-seek case, where a buffer that
+# kept the position it came from stays perfectly ordered and is completely wrong.
+add_executable(scope_test_raw_buffer
+    tests/test_raw_buffer.cpp
+)
+
+target_link_libraries(scope_test_raw_buffer PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_raw_buffer LABELS scope unit)
+
+# The video decoder, against a stream the test ENCODES ITSELF with the same
+# settings nodes/carplay/simulate.cpp uses. No fixture in the tree: a checked-in
+# .h264 blob cannot rot against the ffmpeg the build actually links, and the
+# pattern encodes its own frame index so a seek is checked on the pixels rather
+# than on the decoder's own bookkeeping.
+add_executable(scope_test_video_decoder
+    tests/test_video_decoder.cpp
+)
+
+target_link_libraries(scope_test_video_decoder PRIVATE
+    scope_core
+    PkgConfig::SCOPE_LIBAV
+)
+
+add_project_test(TARGET scope_test_video_decoder LABELS scope unit)
 
 # Per-column min/max reduction, against a brute-force reference over random
 # data. Runs on every signal on every frame, and every way it can be wrong looks

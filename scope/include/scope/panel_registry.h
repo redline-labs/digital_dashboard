@@ -7,14 +7,26 @@
 // description of them:
 //
 //   1. Write the panel under scope/panels/<name>/, with a config struct
-//      declared via REFLECT_STRUCT in its own config.h. The class must expose:
+//      declared via REFLECT_STRUCT in its own config.h AND a stats struct
+//      declared the same way in its own stats.h. The class must expose:
 //          using config_t = <Name>PanelConfig_t;
+//          using stats_t  = <Name>PanelStats_t;
 //          static constexpr panel_type_t kPanelType = panel_type_t::<enum_name>;
 //          static constexpr std::string_view kFriendlyName = "...";
 //          static constexpr std::string_view kToolbarGlyph = "...";
 //          const config_t& getConfig() const;
+//          void applyConfig(const config_t&);
+//          stats_t stats() const;
 //      and derive from scope::Panel, whose acceptsBinding() is what decides
 //      which browser candidates it will take.
+//
+//      THE STATS STRUCT IS NOT OPTIONAL, and it is what `scope.stats` and
+//      `scope.describe_stats` serve without either of them naming a panel type.
+//      Put in it what would tell you the panel is lying -- counts of what
+//      arrived and what was dropped -- rather than what a screenshot already
+//      shows. A panel with genuinely nothing to report declares an empty struct;
+//      omitting it is a compile error, by design, because the alternative is an
+//      RPC that answers `{}` and looks like a working panel with no data.
 //
 //      kToolbarGlyph is one or two characters shown on the toolbar's Add
 //      button. A glyph rather than an icon because there is no icon pipeline in
@@ -39,6 +51,7 @@
 #include "scope/panel_types.h"
 
 #include "time_series/time_series_panel.h"
+#include "video/video_panel.h"
 
 #include <memory>
 #include <string_view>
@@ -54,6 +67,20 @@ namespace scope
 using panel_config_variant_t =
     std::variant<SCOPE_PANEL_TABLE(SCOPE_PANEL_CONFIG_ALT) std::monostate>;
 #undef SCOPE_PANEL_CONFIG_ALT
+
+// The same trick for what a panel has RECEIVED, as opposed to what it was
+// configured to show. Read-only, and a distinct type from the config variant so
+// that applyPanelConfig() cannot be handed one.
+//
+// This exists so that reporting a panel's state is a property of the table
+// rather than a method on the agent interface. `scope.sample_stats` used to
+// qobject_cast to TimeSeriesPanel and skip anything else, which meant every new
+// panel kind needed its own RPC -- exactly the per-type list SCOPE_PANEL_TABLE
+// exists to prevent.
+#define SCOPE_PANEL_STATS_ALT(enum_name, panel_class) panel_class::stats_t,
+using panel_stats_variant_t =
+    std::variant<SCOPE_PANEL_TABLE(SCOPE_PANEL_STATS_ALT) std::monostate>;
+#undef SCOPE_PANEL_STATS_ALT
 
 // The enumerator count has to match the table plus `unknown`. Hand-adding an
 // enumerator without a table entry would compile and then quietly fail to
@@ -134,6 +161,82 @@ std::unique_ptr<Panel> createPanel(const panel_config_variant_t& config,
 
 // The panel type a config variant holds, for saving a workspace back out.
 panel_type_t panelTypeOf(const panel_config_variant_t& config);
+
+// ------------------------------------------------- reading a panel generically
+//
+// FREE FUNCTIONS RATHER THAN VIRTUALS ON Panel, and the reason is an include
+// cycle rather than a preference. The variants above are built from the panel
+// classes, so this header sits ABOVE them; Panel sits below, because every panel
+// header includes it. A `virtual panel_config_variant_t configVariant()` on
+// Panel would therefore need a type Panel cannot see.
+//
+// Dispatching here instead costs a qobject_cast chain -- generated from the same
+// table, so it stays exhaustive by construction -- and buys the property that
+// matters: a new panel is still ONE line in SCOPE_PANEL_TABLE. Nothing below
+// calls these per frame; they serve a workspace save and three RPCs.
+//
+// The macro expands `p->getConfig()`, `p->applyConfig()` and `p->stats()` for
+// every row, so a panel class that omits one fails to COMPILE rather than
+// silently reporting nothing. That is the whole enforcement a virtual would
+// have given.
+
+// A panel's live configuration, as the variant a workspace stores. monostate
+// only if the table and the panel disagree, which cannot compile.
+inline panel_config_variant_t panelConfigOf(const Panel& panel)
+{
+    panel_config_variant_t out{std::monostate{}};
+
+#define SCOPE_PANEL_CONFIG_OF(enum_name, panel_class)               \
+    if (const auto* p = qobject_cast<const panel_class*>(&panel))   \
+    {                                                               \
+        out = p->getConfig();                                       \
+    }
+
+    SCOPE_PANEL_TABLE(SCOPE_PANEL_CONFIG_OF)
+#undef SCOPE_PANEL_CONFIG_OF
+
+    return out;
+}
+
+// Push a configuration back into a panel. False when the variant's alternative
+// does not match the panel's kind -- a caller that mixed them up gets a definite
+// no rather than a panel that ignored it.
+inline bool applyPanelConfig(Panel& panel, const panel_config_variant_t& config)
+{
+    bool applied = false;
+
+#define SCOPE_PANEL_APPLY_CONFIG(enum_name, panel_class)                       \
+    if (auto* p = qobject_cast<panel_class*>(&panel))                          \
+    {                                                                          \
+        if (const auto* cfg = std::get_if<typename panel_class::config_t>(&config)) \
+        {                                                                      \
+            p->applyConfig(*cfg);                                              \
+            applied = true;                                                    \
+        }                                                                      \
+    }
+
+    SCOPE_PANEL_TABLE(SCOPE_PANEL_APPLY_CONFIG)
+#undef SCOPE_PANEL_APPLY_CONFIG
+
+    return applied;
+}
+
+// What a panel has received, as opposed to what it was told to show.
+inline panel_stats_variant_t panelStatsOf(const Panel& panel)
+{
+    panel_stats_variant_t out{std::monostate{}};
+
+#define SCOPE_PANEL_STATS_OF(enum_name, panel_class)                \
+    if (const auto* p = qobject_cast<const panel_class*>(&panel))   \
+    {                                                               \
+        out = p->stats();                                           \
+    }
+
+    SCOPE_PANEL_TABLE(SCOPE_PANEL_STATS_OF)
+#undef SCOPE_PANEL_STATS_OF
+
+    return out;
+}
 
 }  // namespace scope
 

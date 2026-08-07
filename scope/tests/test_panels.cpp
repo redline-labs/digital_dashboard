@@ -16,6 +16,10 @@
 #include "scope/time_base.h"
 
 #include "time_series/time_series_panel.h"
+#include "video/video_panel.h"
+#include "video/video_scrubber.h"
+
+#include "config_codec/config_json.h"
 
 #include <QAction>
 #include <QApplication>
@@ -79,6 +83,22 @@ class StubSource : public scope::DataSource
 
     void release(scope::SignalHandle handle) override { released.push_back(handle); }
 
+    // The raw seam, stubbed the same way and for the same reason. A video panel
+    // binding successfully is what the panel layer cares about; what arrives is
+    // the source's problem and is covered elsewhere.
+    scope::SignalHandle bindRaw(const std::string& zenoh_key,
+                                pub_sub::schema_type_t schema,
+                                std::shared_ptr<scope::RawBuffer> into,
+                                scope::RawClassifier classify) override
+    {
+        static_cast<void>(classify);
+        bound_raw.push_back({zenoh_key, schema});
+        raw_buffers.push_back(std::move(into));
+        return next_handle++;
+    }
+
+    void releaseRaw(scope::SignalHandle handle) override { released_raw.push_back(handle); }
+
     double now() const override { return 100.0; }
 
     std::vector<scope::TopicInfo> available;
@@ -86,6 +106,11 @@ class StubSource : public scope::DataSource
     std::vector<scope::SignalKey> bound;
     std::vector<std::shared_ptr<scope::SignalBuffer>> buffers;
     std::vector<scope::SignalHandle> released;
+
+    std::vector<std::pair<std::string, pub_sub::schema_type_t>> bound_raw;
+    std::vector<std::shared_ptr<scope::RawBuffer>> raw_buffers;
+    std::vector<scope::SignalHandle> released_raw;
+
     scope::SignalHandle next_handle = 1;
 };
 
@@ -115,6 +140,38 @@ scope::BindingCandidate numericField()
     return candidate;
 }
 
+// The whole video topic, which is what the browser produces for a topic row.
+// `field_name` empty is what makes it topic-level.
+scope::BindingCandidate videoTopic()
+{
+    scope::BindingCandidate candidate;
+    candidate.zenoh_key = "nodes/carplay/video";
+    candidate.schema_name = "CarPlayVideo";
+    return candidate;
+}
+
+// A field OF the video topic. A plot will take this; the video panel must not,
+// because a panel that accepted it would bind the topic and then render
+// whatever "isKeyframe" happened to mean as a picture.
+scope::BindingCandidate videoField()
+{
+    scope::BindingCandidate candidate;
+    candidate.zenoh_key = "nodes/carplay/video";
+    candidate.schema_name = "CarPlayVideo";
+    candidate.field_name = "widthPx";
+    candidate.type_category = "uint";
+    return candidate;
+}
+
+// A topic-level candidate for a schema the video panel knows nothing about.
+scope::BindingCandidate otherTopic()
+{
+    scope::BindingCandidate candidate;
+    candidate.zenoh_key = "vehicle/engine/rpm";
+    candidate.schema_name = "EngineRpm";
+    return candidate;
+}
+
 // ----------------------------------------------------------------- the registry
 
 void testThePanelTableDrivesEverything()
@@ -133,6 +190,171 @@ void testThePanelTableDrivesEverything()
         }
     }
     expect(found_time_series, "the time-series panel is in the registry");
+
+    bool found_video = false;
+    for (const scope::PanelTypeInfo& info : types)
+    {
+        if (info.type == scope::panel_type_t::video)
+        {
+            found_video = true;
+            expect(info.name == "video", "the video panel's enum name comes from the table");
+            expect(info.friendly_name == "Video", "its friendly name comes from the class");
+        }
+    }
+    expect(found_video, "the video panel is in the registry");
+
+    // Every type has a glyph, and no two share one -- a blank or duplicated
+    // toolbar button reads as a broken app rather than an unregistered panel.
+    for (const scope::PanelTypeInfo& info : types)
+    {
+        expect(!info.toolbar_glyph.empty(), "every panel type has a toolbar glyph");
+    }
+    for (std::size_t i = 0; i < types.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < types.size(); ++j)
+        {
+            expect(types[i].toolbar_glyph != types[j].toolbar_glyph,
+                   "no two panel types share a toolbar glyph");
+        }
+    }
+}
+
+// THE SEAM ITSELF, driven off the table rather than off a list of types written
+// here. This is what keeps the NEXT panel honest: it fails the moment someone
+// adds a table row whose class does not carry a stats struct, or whose variants
+// do not line up with its enumerator.
+//
+// The failure it exists to prevent is not a crash. `scope.stats` would answer
+// `{}` for the new panel, and an empty stats object looks exactly like a panel
+// that is working and has received nothing.
+void testEveryPanelTypeServesItsConfigAndStats()
+{
+    StubSource source;
+
+    for (const scope::PanelTypeInfo& info : scope::availablePanelTypes())
+    {
+        const std::string name(info.name);
+
+        const scope::panel_config_variant_t defaults = scope::default_panel_config(info.type);
+        expect(!std::holds_alternative<std::monostate>(defaults),
+               name + ": default_panel_config produces a real alternative");
+        expect(scope::panelTypeOf(defaults) == info.type,
+               name + ": the type round-trips through the config variant");
+
+        std::unique_ptr<scope::Panel> panel = scope::createPanel(defaults, source);
+        expect(panel != nullptr, name + ": the registry can construct one");
+        if (panel == nullptr)
+        {
+            continue;
+        }
+
+        expect(panel->panelType() == info.type, name + ": it reports its own type");
+
+        const scope::panel_config_variant_t live = scope::panelConfigOf(*panel);
+        expect(!std::holds_alternative<std::monostate>(live),
+               name + ": panelConfigOf returns the panel's own config, not monostate");
+        expect(scope::panelTypeOf(live) == info.type,
+               name + ": the config it returns is the right kind");
+        expect(scope::applyPanelConfig(*panel, live),
+               name + ": the config it returns is one it will accept back");
+
+        const scope::panel_stats_variant_t stats = scope::panelStatsOf(*panel);
+        expect(!std::holds_alternative<std::monostate>(stats),
+               name + ": panelStatsOf returns a real stats struct");
+
+        // And both survive the reflected codec the agent interface serves them
+        // through, which is where an unsupported field type would surface.
+        std::visit(
+            [&name](const auto& value) {
+                using value_t = std::decay_t<decltype(value)>;
+                if constexpr (!std::is_same_v<value_t, std::monostate>)
+                {
+                    expect(config_codec::toJson(value).is_object(),
+                           name + ": its stats serialise to a JSON object");
+                    expect(config_codec::describeType<value_t>().is_object(),
+                           name + ": its stats describe themselves");
+                }
+            },
+            stats);
+    }
+}
+
+// The two panels are mirror images at the binding seam, and neither the browser
+// nor the drag plumbing knows either exists. Every case below is one the drop
+// path has to get right without asking what kind of panel it is holding.
+void testBindingAcceptanceIsMirrored()
+{
+    StubSource source;
+
+    std::unique_ptr<scope::Panel> plot =
+        scope::createPanel(scope::default_panel_config(scope::panel_type_t::time_series), source);
+    std::unique_ptr<scope::Panel> video =
+        scope::createPanel(scope::default_panel_config(scope::panel_type_t::video), source);
+    expect(plot != nullptr && video != nullptr, "both panel kinds constructed");
+    if (plot == nullptr || video == nullptr)
+    {
+        return;
+    }
+
+    expect(plot->acceptsBinding(numericField()), "a plot takes a numeric field");
+    expect(!plot->acceptsBinding(videoTopic()), "a plot declines a whole topic");
+
+    expect(video->acceptsBinding(videoTopic()), "the video panel takes the video TOPIC");
+    expect(!video->acceptsBinding(videoField()),
+           "the video panel declines a FIELD of the video topic");
+    expect(!video->acceptsBinding(numericField()),
+           "the video panel declines a numeric field");
+    expect(!video->acceptsBinding(otherTopic()),
+           "the video panel declines a topic of another schema");
+
+    // One stream per panel: a second is declined rather than silently replacing
+    // what is bound.
+    expect(video->addBinding(videoTopic()), "the video panel takes its first stream");
+    expect(!video->acceptsBinding(videoTopic()),
+           "and declines a second rather than replacing the first");
+
+    expect(!source.bound_raw.empty(), "binding reached the source's raw seam");
+    if (!source.bound_raw.empty())
+    {
+        expect(source.bound_raw.front().first == "nodes/carplay/video",
+               "it bound the key it was given");
+        expect(source.bound_raw.front().second == pub_sub::schema_type_t::CarPlayVideo,
+               "under the CarPlayVideo schema -- note the capital P");
+    }
+}
+
+// The ordering rule, for raw handles. A handle means nothing to a source that
+// did not issue it, so a panel must release against the OLD source before it
+// repoints -- and the window destroys the old source only after this returns,
+// precisely so the release has somewhere to go.
+void testVideoPanelReleasesBeforeRepointing()
+{
+    StubSource first;
+    SeekableStub second;
+
+    std::unique_ptr<scope::Panel> video =
+        scope::createPanel(scope::default_panel_config(scope::panel_type_t::video), first);
+    expect(video != nullptr, "the video panel constructed");
+    if (video == nullptr)
+    {
+        return;
+    }
+
+    expect(video->addBinding(videoTopic()), "a stream is bound on the first source");
+    expect(first.bound_raw.size() == 1, "the first source issued a raw handle");
+    const scope::SignalHandle issued = first.next_handle - 1;
+
+    video->rebindTo(second);
+
+    expect(first.released_raw.size() == 1,
+           "the handle was released against the source that ISSUED it");
+    if (!first.released_raw.empty())
+    {
+        expect(first.released_raw.front() == issued, "and it was the right handle");
+    }
+    expect(second.released_raw.empty(),
+           "nothing was released against the source that never issued anything");
+    expect(second.bound_raw.size() == 1, "the stream was rebound on the new source");
 }
 
 void testDefaultConfigMatchesTheType()
@@ -305,7 +527,7 @@ void testStatsReportUnboundSignals()
     config.traces.push_back(binding);
 
     scope::TimeSeriesPanel plot(config, source);
-    const std::vector<scope::TimeSeriesPanel::SignalStats> stats = plot.stats();
+    const std::vector<trace_stats_t> stats = plot.stats().traces;
 
     expect(stats.size() == 1, "there is one signal to report on");
     if (!stats.empty())
@@ -884,6 +1106,112 @@ void testTheStripBracketsItsDragForCoalescing()
            "a drag brackets itself with exactly one true and one false");
 }
 
+void testTheScrubberBracketsItsDragForCoalescing()
+{
+    // The video panel's own seek bar, held to the same rule as the overview
+    // strip and for exactly the same reason: the panel uses this pair to hold
+    // TimeBase::setInteracting() for the drag, and without it every mouse-move
+    // is a separate seek -- 60 to 125 a second, each one a file read on a
+    // recorded source.
+    //
+    // The assertion is the COUNT, not merely that both were emitted. One `true`
+    // per move would still bracket the drag and would still stutter.
+    scope::VideoScrubber scrubber;
+    scrubber.resize(400, 18);
+    scrubber.setExtent(0.0, 100.0);
+    scrubber.setSeekable(true);
+
+    std::vector<bool> interactions;
+    std::vector<double> seeks;
+    QObject::connect(&scrubber, &scope::VideoScrubber::interactionChanged,
+                     [&](bool active) { interactions.push_back(active); });
+    QObject::connect(&scrubber, &scope::VideoScrubber::seekRequested,
+                     [&](double t) { seeks.push_back(t); });
+
+    mouse(&scrubber, QEvent::MouseButtonPress, QPointF(100.0, 9.0), Qt::LeftButton,
+          Qt::LeftButton);
+    for (int x = 110; x <= 200; x += 10)
+    {
+        mouse(&scrubber, QEvent::MouseMove, QPointF(x, 9.0), Qt::NoButton, Qt::LeftButton);
+    }
+    mouse(&scrubber, QEvent::MouseButtonRelease, QPointF(200.0, 9.0), Qt::LeftButton,
+          Qt::NoButton);
+
+    expect(interactions.size() == 2 && interactions[0] && !interactions[1],
+           "scrubber: a drag brackets itself with exactly one true and one false");
+    expect(seeks.size() > 2, "scrubber: the drag really did emit many seeks");
+    expect(!seeks.empty() && seeks.back() > seeks.front(),
+           "scrubber: dragging right moves the requested time forward");
+
+    // A scrubber over a live source has nothing to seek to, so it must not
+    // pretend. A bar that looks draggable and does nothing reads as broken.
+    scope::VideoScrubber live;
+    live.resize(400, 18);
+    live.setExtent(0.0, 100.0);
+    live.setSeekable(false);
+
+    int live_seeks = 0;
+    QObject::connect(&live, &scope::VideoScrubber::seekRequested,
+                     [&](double) { ++live_seeks; });
+    mouse(&live, QEvent::MouseButtonPress, QPointF(100.0, 9.0), Qt::LeftButton, Qt::LeftButton);
+    mouse(&live, QEvent::MouseButtonRelease, QPointF(100.0, 9.0), Qt::LeftButton, Qt::NoButton);
+    expect(live_seeks == 0, "scrubber: an unseekable source produces no seeks at all");
+}
+
+// THE BUG THIS WHOLE SEAM EXISTS FOR. toWorkspace() used to qobject_cast to
+// TimeSeriesPanel with no else, so any other panel type saved its `type:` with
+// its config left on monostate -- which the YAML encoder then omits entirely, so
+// the panel came back default-constructed. Every setting lost on every save,
+// with nothing logged.
+void testTheWorkspaceKeepsAVideoPanelsConfig()
+{
+    scope::ScopeWindow window;
+
+    const QString id = window.addPanel(scope::panel_type_t::video, "cam");
+    expect(id == "cam", "a video panel was added to a real window");
+
+    scope::ScopeWindow::PanelEntry* entry = window.findPanel("cam");
+    expect(entry != nullptr, "and can be found again");
+    if (entry == nullptr)
+    {
+        return;
+    }
+
+    VideoPanelConfig_t configured;
+    configured.title = "Dash cam";
+    configured.zenoh_key = "nodes/carplay/video";
+    configured.retention_seconds = 45.0;
+    configured.max_buffer_bytes = 64ull * 1024 * 1024;
+    configured.show_scrubber = false;
+    expect(scope::applyPanelConfig(*entry->panel, configured),
+           "the panel accepted a configuration");
+
+    const scope::scope_workspace_t saved = window.toWorkspace();
+    expect(saved.panels.size() == 1, "the workspace holds the panel");
+    if (saved.panels.empty())
+    {
+        return;
+    }
+
+    expect(saved.panels[0].type == scope::panel_type_t::video,
+           "it saved as a video panel");
+    expect(!std::holds_alternative<std::monostate>(saved.panels[0].config),
+           "AND ITS CONFIG IS NOT MONOSTATE -- the whole bug");
+
+    const auto* stored = std::get_if<VideoPanelConfig_t>(&saved.panels[0].config);
+    expect(stored != nullptr, "the config is the video kind");
+    if (stored == nullptr)
+    {
+        return;
+    }
+
+    expect(stored->title == "Dash cam", "the title survived the save");
+    expect(stored->zenoh_key == "nodes/carplay/video", "the bound key survived");
+    expect(stored->retention_seconds == 45.0, "the retention survived");
+    expect(stored->max_buffer_bytes == 64ull * 1024 * 1024, "the byte bound survived");
+    expect(!stored->show_scrubber, "a non-default bool survived");
+}
+
 void testTheStripReplacedTheScrubber()
 {
     // The one objectName that could not survive. Its replacement is not a
@@ -1143,6 +1471,11 @@ int main(int argc, char** argv)
     testDefaultConfigMatchesTheType();
     testCreatingAnUnknownPanelReturnsNull();
     testValidateClampsBeforeConstruction();
+    testEveryPanelTypeServesItsConfigAndStats();
+    testBindingAcceptanceIsMirrored();
+    testVideoPanelReleasesBeforeRepointing();
+    testTheScrubberBracketsItsDragForCoalescing();
+    testTheWorkspaceKeepsAVideoPanelsConfig();
 
     testAPlotAcceptsOnlyNumericFields();
     testAddingASignalBindsIt();

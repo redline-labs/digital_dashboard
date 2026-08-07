@@ -46,6 +46,51 @@ AgentError internalError(std::string message)
     return error;
 }
 
+// ------------------------------------------- serving a variant without naming it
+//
+// These three are why adding a panel type touches nothing in this file. Each
+// visits whichever alternative is live and hands it to the reflected codec, so
+// the JSON, the self-description and the type name all follow from the panel's
+// own struct. monostate cannot occur for a constructed panel -- the variants are
+// generated from the same table the panel classes are -- but it is answered
+// rather than asserted, because an RPC that aborts the process is worse than one
+// that says it has nothing.
+
+json variantToJson(const auto& variant)
+{
+    json out = json::object();
+    std::visit(
+        [&out](const auto& value) {
+            using value_t = std::decay_t<decltype(value)>;
+            if constexpr (!std::is_same_v<value_t, std::monostate>)
+            {
+                out = config_codec::toJson(value);
+            }
+        },
+        variant);
+    return out;
+}
+
+json describeVariant(const auto& variant)
+{
+    json out = json::object();
+    std::visit(
+        [&out](const auto& value) {
+            using value_t = std::decay_t<decltype(value)>;
+            if constexpr (!std::is_same_v<value_t, std::monostate>)
+            {
+                out = config_codec::describeType<value_t>();
+            }
+        },
+        variant);
+    return out;
+}
+
+std::string panelTypeName(const Panel& panel)
+{
+    return std::string(reflection::enum_traits<panel_type_t>::to_string(panel.panelType()));
+}
+
 // Every panel-addressed method needs this, and all of them should fail the same
 // way: naming a panel that is not there is a caller error, and the reply lists
 // what there is so the next call can be right.
@@ -797,13 +842,9 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             return std::unexpected(entry.error());
         }
 
-        auto* plot = qobject_cast<TimeSeriesPanel*>(entry.value()->panel);
-        if (plot == nullptr)
-        {
-            return std::unexpected(badParams("That panel type has no readable config."));
-        }
         return json{{"panel", entry.value()->id.toStdString()},
-                    {"config", config_codec::toJson(plot->getConfig())}};
+                    {"type", panelTypeName(*entry.value()->panel)},
+                    {"config", variantToJson(panelConfigOf(*entry.value()->panel))}};
     });
 
     server.registerMethod("scope.panel_describe_config",
@@ -813,10 +854,15 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                               {
                                   return std::unexpected(entry.error());
                               }
+                              // Describes THIS panel's config. It used to
+                              // hardcode describeType<TimeSeriesPanelConfig_t>()
+                              // without looking at the panel at all, so every
+                              // panel type would have been described as a plot.
                               return json{
                                   {"panel", entry.value()->id.toStdString()},
+                                  {"type", panelTypeName(*entry.value()->panel)},
                                   {"schema",
-                                   config_codec::describeType<TimeSeriesPanelConfig_t>()}};
+                                   describeVariant(panelConfigOf(*entry.value()->panel))}};
                           });
 
     server.registerMethod(
@@ -834,19 +880,33 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 return std::unexpected(badParams("'config' (object) is required."));
             }
 
-            auto* plot = qobject_cast<TimeSeriesPanel*>(entry.value()->panel);
-            if (plot == nullptr)
-            {
-                return std::unexpected(badParams("That panel type has no settable config."));
-            }
+            Panel& panel = *entry.value()->panel;
 
             // Partial but all-or-nothing: only the named fields are touched, and
             // an unknown name is an error rather than a silent no-op. A caller
             // that believes it changed something it did not is the worst
             // outcome here.
-            TimeSeriesPanelConfig_t updated = plot->getConfig();
+            //
+            // The patch is applied to whichever config kind this panel actually
+            // has, so a field name that belongs to a different panel type is
+            // rejected by name rather than quietly ignored.
+            panel_config_variant_t updated = panelConfigOf(panel);
             std::vector<std::string> errors;
-            config_codec::applyJson(*patch, updated, "", errors);
+
+            std::visit(
+                [&patch, &errors](auto& cfg) {
+                    using cfg_t = std::decay_t<decltype(cfg)>;
+                    if constexpr (std::is_same_v<cfg_t, std::monostate>)
+                    {
+                        errors.push_back("That panel type has no settable config.");
+                    }
+                    else
+                    {
+                        config_codec::applyJson(*patch, cfg, "", errors);
+                    }
+                },
+                updated);
+
             if (!errors.empty())
             {
                 AgentError error = badParams("Config patch rejected.");
@@ -854,10 +914,15 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 return std::unexpected(std::move(error));
             }
 
-            plot->applyConfig(updated);
-            entry.value()->dock->setWindowTitle(plot->title());
+            if (!applyPanelConfig(panel, updated))
+            {
+                return std::unexpected(internalError("Panel refused its own config kind."));
+            }
+
+            entry.value()->dock->setWindowTitle(panel.title());
             return json{{"applied", true},
-                        {"config", config_codec::toJson(plot->getConfig())}};
+                        {"type", panelTypeName(panel)},
+                        {"config", variantToJson(panelConfigOf(panel))}};
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
@@ -914,6 +979,65 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // what proves the buffers filled, the timestamps advanced and the values
     // are the published ones. A screenshot shows a line; this says what the
     // line is made of.
+    // ------------------------------------------------------------------- stats
+    //
+    // What a panel RECEIVED, as opposed to what it was told to show. A
+    // screenshot shows a line or a picture; this says what it is made of, and it
+    // is the assertion a test can actually make.
+    //
+    // Type-agnostic, deliberately. The obvious alternative -- one RPC per panel
+    // kind, `scope.sample_stats` then `scope.video_stats` then the next one --
+    // reintroduces exactly the per-type list SCOPE_PANEL_TABLE exists to
+    // prevent, in the one file that should never need to know how many panel
+    // kinds there are.
+
+    server.registerMethod("scope.stats", [win](const json& params) -> MethodResult {
+        const auto wanted = params.find("panel");
+        if (wanted != params.end() && !wanted->is_string())
+        {
+            return std::unexpected(badParams("'panel', when given, must be a string."));
+        }
+
+        json panels = json::array();
+        for (const ScopeWindow::PanelEntry& entry : win->panels())
+        {
+            if (wanted != params.end() && entry.id.toStdString() != wanted->get<std::string>())
+            {
+                continue;
+            }
+
+            panels.push_back(json{{"panel", entry.id.toStdString()},
+                                  {"type", panelTypeName(*entry.panel)},
+                                  {"stats", variantToJson(panelStatsOf(*entry.panel))}});
+        }
+
+        return json{{"panels", std::move(panels)}};
+    });
+
+    // What fields to expect from scope.stats, per panel. Without this a caller
+    // has to guess them from a sample that happens to be populated -- and a
+    // count that is legitimately absent looks identical to a field that does not
+    // exist.
+    server.registerMethod("scope.describe_stats", [win](const json& params) -> MethodResult {
+        const auto entry = panelFrom(*win, params);
+        if (!entry)
+        {
+            return std::unexpected(entry.error());
+        }
+        return json{{"panel", entry.value()->id.toStdString()},
+                    {"type", panelTypeName(*entry.value()->panel)},
+                    {"schema", describeVariant(panelStatsOf(*entry.value()->panel))}};
+    });
+
+    // The historical name for the time-series half of scope.stats, kept because
+    // docs/scope.md and AGENTS.md both point at it as the first thing to reach
+    // for and existing loops use it.
+    //
+    // Its OUTPUT IS UNCHANGED, including that t_first/t_last/min/max/last are
+    // omitted rather than zeroed when nothing has arrived. That is why this
+    // builds its JSON by hand instead of going through the reflected codec: the
+    // reflected form always emits every field, which is the better answer for a
+    // new caller and a silently different one for an old.
     server.registerMethod("scope.sample_stats", [win](const json& params) -> MethodResult {
         json panels = json::array();
 
@@ -934,7 +1058,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             // Not `signals`: Qt's moc defines that as a macro expanding to
             // `public:`, so even a local of that name is a syntax error.
             json signal_list = json::array();
-            for (const TimeSeriesPanel::SignalStats& stats : plot->stats())
+            for (const trace_stats_t& stats : plot->stats().traces)
             {
                 json out;
                 out["label"] = stats.label;

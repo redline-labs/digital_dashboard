@@ -347,14 +347,14 @@ void TimeSeriesPanel::onFrame()
     update();
 }
 
-std::vector<TimeSeriesPanel::SignalStats> TimeSeriesPanel::stats() const
+TimeSeriesPanel::stats_t TimeSeriesPanel::stats() const
 {
-    std::vector<SignalStats> all;
-    all.reserve(traces_.size());
+    stats_t all;
+    all.traces.reserve(traces_.size());
 
     for (const std::unique_ptr<Trace>& trace : traces_)
     {
-        SignalStats stats;
+        trace_stats_t stats;
         stats.label = trace->displayLabel().toStdString();
         stats.bound = trace->bound;
         stats.received = trace->buffer->received();
@@ -377,7 +377,7 @@ std::vector<TimeSeriesPanel::SignalStats> TimeSeriesPanel::stats() const
             }
         }
 
-        all.push_back(std::move(stats));
+        all.traces.push_back(std::move(stats));
     }
 
     return all;

@@ -466,10 +466,12 @@ scope_workspace_t ScopeWindow::toWorkspace() const
         saved.id = entry.id.toStdString();
         saved.type = entry.panel->panelType();
 
-        if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
-        {
-            saved.config = plot->getConfig();
-        }
+        // Through the table, never a cast to one panel kind. This used to be a
+        // qobject_cast<TimeSeriesPanel*> with no else, so any other panel type
+        // saved its `type:` with its config left on monostate -- which the YAML
+        // encoder then omits entirely, so the panel came back default
+        // constructed with nothing logged. Every setting lost on every save.
+        saved.config = panelConfigOf(*entry.panel);
 
         workspace.panels.push_back(std::move(saved));
     }
@@ -609,7 +611,7 @@ bool ScopeWindow::openRecording(const QString& directory)
     {
         if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
         {
-            for (const TimeSeriesPanel::SignalStats& stats : plot->stats())
+            for (const trace_stats_t& stats : plot->stats().traces)
             {
                 ++total;
                 if (!stats.bound)
