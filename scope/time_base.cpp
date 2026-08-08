@@ -217,7 +217,28 @@ void TimeBase::applyView(double begin, double end)
     }
     if (new_end - span < low)
     {
-        new_end = low + span;
+        // THE RIGHT EDGE IS THE PLAYHEAD ON A SEEKABLE SOURCE, so it has to be
+        // able to reach the beginning of the recording -- and it cannot if the
+        // whole window is required to fit inside the range.
+        //
+        // Sliding the window right instead makes the first `span` seconds
+        // unreachable: seek(t_begin) lands the head at t_begin + span, which on
+        // a 110 s recording at the default 30 s window parks it a quarter of the
+        // way in and reads as a scrub bar that rails a third from the left. The
+        // video panel makes it plainest -- the picture it shows IS the right
+        // edge, so the opening half-minute could not be looked at at all except
+        // by watching playback go past it.
+        //
+        // The window is therefore allowed to hang off the left of the recording,
+        // which draws as empty space before t_begin. That is the honest picture,
+        // and the same call availableRange() already makes for a live source
+        // younger than the window.
+        //
+        // A LIVE SOURCE STILL SLIDES. There `low` is now - retention rather than
+        // the start of anything, so a window hanging off it would show emptiness
+        // that is indistinguishable from a publisher which had not started --
+        // and nothing there is a playhead that has to reach a first frame.
+        new_end = source_->caps().seekable ? std::max(new_end, low) : low + span;
     }
 
     if (span == window_seconds_ && new_end == view_end_)

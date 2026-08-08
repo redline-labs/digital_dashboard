@@ -393,11 +393,23 @@ void testSeekingIsClampedToTheRecording()
     time_base.seek(1e9);
     expectNear(time_base.viewEnd(), 60.0, 1e-9, "cannot seek past the end");
 
+    // THE PLAYHEAD REACHES THE FIRST INSTANT OF THE RECORDING, and the window
+    // hangs off the left to let it.
+    //
+    // REGRESSION. This used to slide the whole window into the recording
+    // instead, which put the head at t_begin + span: the first `span` seconds
+    // could not be looked at at all, and the scrub bar railed a third of the way
+    // from the left on a recording a few times the window's width. The video
+    // panel made it obvious -- the picture it draws IS the right edge -- but the
+    // plots were lying about the same thing more quietly.
     time_base.seek(-1e9);
-    expectNear(time_base.viewBegin(), 10.0, 1e-9, "nor before the beginning");
+    expectNear(time_base.viewEnd(), 10.0, 1e-9, "the playhead reaches the start of the recording");
+    expectNear(time_base.viewBegin(), 5.0, 1e-9,
+               "and the window keeps its span, hanging off the left");
 
     // A window wider than the recording narrows to it rather than hanging off
     // an edge that has no data behind it.
+    time_base.seek(60.0);
     time_base.setWindowSeconds(3600.0);
     expectNear(time_base.viewBegin(), 10.0, 1e-9, "a too-wide window starts at the recording");
     expectNear(time_base.viewEnd(), 60.0, 1e-9, "and ends at it");
