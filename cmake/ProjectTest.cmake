@@ -14,8 +14,11 @@
 #
 #   unit   pure logic. No sockets, no clock, no hardware, no display.
 #          Deterministic and fast. This is the set to run on every build.
-#   net    opens a zenoh session, so it talks to the loopback network and can
-#          be perturbed by anything else running a session on the machine.
+#   net    opens a zenoh session, so it talks to the loopback network and pays
+#          the runtime's startup and teardown. It can no longer be perturbed by
+#          another session on the machine: every test runs with peer discovery
+#          off, so it neither finds nor is found by anything. See the
+#          PUB_SUB_NO_DISCOVERY note below.
 #   gui    constructs Qt widgets. Forced onto the offscreen platform here so it
 #          does not need a display.
 #   slow   takes more than a second, usually because it measures real elapsed
@@ -49,10 +52,31 @@ function(add_project_test)
     endif()
     set_tests_properties(${PT_TARGET} PROPERTIES TIMEOUT ${PT_TIMEOUT})
 
+    # ACCUMULATED, because set_tests_properties(ENVIRONMENT) REPLACES rather than
+    # appends -- setting it twice silently drops the first one.
+    set(PT_ENVIRONMENT "")
+
     # A Qt test must not need a display. The test binaries set this themselves
     # before constructing QApplication, but setting it here too means running
     # one by hand behaves the same way as running it under ctest.
     if("gui" IN_LIST PT_LABELS)
-        set_tests_properties(${PT_TARGET} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        list(APPEND PT_ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
+
+    # NO TEST JOINS THE MACHINE'S BUS, whether or not it is labelled `net`.
+    #
+    # Applied to every test rather than to the ones that look like they open a
+    # zenoh session, because the test this was found on -- scope_test_panels --
+    # is labelled `gui scope` and opens one anyway, through a window that builds
+    # a live source three layers down. A rule that depends on remembering to
+    # label a test correctly is a rule that fails exactly when someone forgets.
+    #
+    # Two sessions that find each other and then close together DEADLOCK in
+    # zenoh's teardown, which is what `ctest -j8` was doing: an intermittent
+    # 120 s timeout on whichever test happened to overlap another. They also
+    # share a bus, so one test's samples land in another's subscriber. See the
+    # note in pub_sub/session_manager.cpp.
+    list(APPEND PT_ENVIRONMENT "PUB_SUB_NO_DISCOVERY=1")
+
+    set_tests_properties(${PT_TARGET} PROPERTIES ENVIRONMENT "${PT_ENVIRONMENT}")
 endfunction()

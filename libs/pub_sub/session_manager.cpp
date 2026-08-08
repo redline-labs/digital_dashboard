@@ -1,6 +1,7 @@
 #include "pub_sub/session_manager.h"
 #include "spdlog/spdlog.h"
 #include <condition_variable>
+#include <cstdlib>
 #include <algorithm>
 #include <chrono>
 #include <mutex>
@@ -46,6 +47,32 @@ zenoh::Config SessionManager::buildConfig()
     // the time can be quietly wrong, which is why consumers record their own
     // arrival time alongside it. See pub_sub/timestamp.h.
     config.insert_json5("timestamping", "{\"enabled\": true, \"drop_future_timestamp\": false}");
+
+    // PUB_SUB_NO_DISCOVERY=1 keeps this session off the machine's bus.
+    //
+    // Set for every test by cmake/ProjectTest.cmake, and it fixes a hang rather
+    // than a preference. Two peers that have found each other and then close at
+    // the same moment deadlock in zenoh's session teardown: each blocks in
+    // z_session_drop waiting on the link to the other, which is itself blocked
+    // waiting on the link back. One test process on its own always passed; two
+    // of them started within a second of each other -- which is exactly what
+    // `ctest -j8` does -- both hung until the 120 s timeout, and which test drew
+    // the short straw varied by machine load. Reproduced at 4/4 processes hung,
+    // 0/4 with this set.
+    //
+    // The deadlock is the loud version of a quieter problem the `net` label
+    // already warns about: tests that find each other also SHARE A BUS, so one
+    // test's samples arrive in another's subscriber. Nothing in the tree wants
+    // that -- every test opens exactly one session through getOrCreate(), and
+    // none of them needs to talk to another process.
+    //
+    // Applied before the caller's overrides, so a test that genuinely wants to
+    // be found can still say so.
+    if (const char* isolated = std::getenv("PUB_SUB_NO_DISCOVERY");
+        isolated != nullptr && *isolated == '1')
+    {
+        config.insert_json5("scouting/multicast/enabled", "false");
+    }
 
     for (const auto& [key, value] : config_overrides_)
     {
