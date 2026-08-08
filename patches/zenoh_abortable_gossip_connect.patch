@@ -1,0 +1,82 @@
+Make the gossip peer-connect task abortable, so session close can finish.
+
+THE SYMPTOM. Two peer sessions that have discovered each other over multicast
+and then open and close repeatedly wedge forever inside session close:
+
+    z_session_drop
+      CloseBuilder::wait
+        ZRuntime::block_in_place
+          tokio block_on -> parked, never returns
+
+with every zenoh runtime worker idle and nothing runnable. One process alone
+never reproduces it; two do, usually within five cycles. The reproducer is a
+20-line program that does nothing but open and close a default-config session in
+a loop; it went upstream with the fix rather than living here.
+
+WHERE IT ACTUALLY HANGS, found by instrumenting the close path rather than by
+reading it: Runtime::close_inner, on its FIRST await.
+
+    self.task_controller.terminate_all_async().await;   <-- never returns
+    self.manager.close().await;                          <-- never reached
+
+terminate_all_async() is
+
+    self.tracker.close();
+    self.token.cancel();
+    self.tracker.wait().await
+
+and has no timeout, so it waits for every tracked task to finish. The gossip
+autoconnect handler spawns its peer-connect task with `spawn`, which is TRACKED
+BUT NOT ABORTABLE -- `token.cancel()` does nothing to it. The task is sitting in
+`connect_peer()` against a peer that is itself shutting down, so nothing ever
+finishes it and close waits for ever.
+
+`spawn_abortable` is the same facility one line up the file, and it exists for
+exactly this: it wires the task to the controller's cancellation token so
+terminate_all_async can actually terminate it. Aborting a peer-connect while the
+runtime is closing is the correct outcome -- we are not going to use the
+connection.
+
+WHY THIS IS NOT eclipse-zenoh/zenoh#2637. That open PR fixes a real deadlock of
+the same family -- `block_in_place` parking the routing `ctrl_lock` holder on a
+tokio Mutex, under peer churn, which is our workload -- and it was the obvious
+candidate. It was tried FIRST, in full, and measured: still hung 6 runs out of 8.
+Its two hunks are in `terminate_peer_connector_zid`'s callers; ours is a
+different task in the same file that never gets cancelled. Both are worth having
+upstream, but only this one closes our hang. Carrying #2637 as well was measured
+at 8/8 passing but slower to shut down (1-20 s against 1-4 s for this alone), so
+it is not carried here.
+
+MEASURED, two processes, 50 open/close cycles each:
+
+    unpatched                        HUNG 3 of 3 runs, by cycle 3-12
+    #2637 hunks only                 HUNG 6 of 8 runs, by cycle 3-9
+    this patch only                  8 of 8 passed, 1-4 s
+    this patch + #2637               8 of 8 passed, 1-20 s
+
+APPLIED WITH PLAIN `git apply`, which fails loudly if the context has moved
+rather than applying somewhere it should not, and third_party/zenoh-c.cmake
+verifies afterwards that the change is actually present -- a patch step that
+fails without stopping the configure would leave us silently building unpatched
+zenoh, which is exactly the sort of thing this patch exists to prevent.
+
+Drop this patch and set REDLINE_PATCH_ZENOH=OFF once an upstream release carries
+an equivalent fix.
+
+--- a/zenoh/src/net/protocol/gossip.rs
++++ b/zenoh/src/net/protocol/gossip.rs
+@@ -384,13 +384,13 @@
+ 
+             if self.autoconnect.should_autoconnect(zid, whatami) {
+                 // Connect discovered peers (only if locators are available)
+                 if let Some(locators) = locators {
+                     let runtime = strong_runtime.clone();
+                     let wait_declares = self.wait_declares;
+-                    strong_runtime.spawn(async move {
++                    strong_runtime.spawn_abortable(async move {
+                         if runtime
+                             .manager()
+                             .get_transport_unicast(&zid)
+                             .await
+                             .is_none()
+                         {
