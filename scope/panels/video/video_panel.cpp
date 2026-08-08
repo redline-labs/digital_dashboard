@@ -26,14 +26,18 @@ namespace scope
 namespace
 {
 
-// How long onFrame() may spend decoding before giving the event loop a turn.
+// THERE IS NO DECODE BUDGET HERE ANY MORE, and its absence is the point.
 //
-// A GOP catch-up after a seek is around sixty access units at roughly a
-// millisecond each, so decoding one inline is a ~60 ms stall -- twice the render
-// period, on every scrub tick of a drag. Budgeting it spreads the catch-up over
-// two or three ticks instead, which is a picture that lags the scrubber slightly
-// rather than a window that stops repainting.
-constexpr double kDecodeBudgetMs = 10.0;
+// onFrame() used to decode inline, rationed to 10 ms per render tick, because a
+// GOP catch-up is around sixty access units at roughly a millisecond each and
+// doing one inline stalls the window for twice the render period. The ration
+// kept the window painting, but it also meant a seek took seven ticks -- about a
+// quarter of a second -- to land, which is exactly what made scrubbing here feel
+// unlike a video player.
+//
+// Decoding belongs to VideoDecodeWorker now, on a thread of its own, where it
+// runs flat out and competes with nothing. What is left here is handing it a
+// window and collecting what came back.
 
 // Enough for one GOP of a live stream plus slack. Live retention is the config's
 // business; this is only the floor under it.
@@ -213,8 +217,8 @@ bool VideoPanel::removeStream()
 
     releaseStream();
     cfg_.zenoh_key.clear();
-    decoder_.reset();
-    decoder_.resetStats();
+    worker_.reset();
+    image_ = QImage();
     seek_points_.clear();
     window_valid_ = false;
     update();
@@ -245,7 +249,8 @@ void VideoPanel::bindStream()
         SPDLOG_WARN("[scope/video] could not bind '{}'.", cfg_.zenoh_key);
     }
 
-    decoder_.reset();
+    worker_.setHardwareEnabled(cfg_.hardware_decode);
+    worker_.reset();
     window_valid_ = false;
 }
 
@@ -271,9 +276,11 @@ void VideoPanel::rebindTo(DataSource& source)
     source_ = &source;
 
     // Everything decoded belongs to the old source's epoch, and on a new one it
-    // would be a picture stamped with a time that does not exist.
-    decoder_.reset();
-    decoder_.resetStats();
+    // would be a picture stamped with a time that does not exist. reset()
+    // BLOCKS until the decoder thread is idle, precisely so a picture already in
+    // flight cannot arrive afterwards and be drawn as if it were the new one's.
+    worker_.reset();
+    image_ = QImage();
     seek_points_.clear();
     window_valid_ = false;
 
@@ -324,52 +331,113 @@ void VideoPanel::setHistorySeconds(double seconds)
 
 // ------------------------------------------------------------------ decoding
 
-bool VideoPanel::decodeUpTo(double position)
+// The ENCODED ACCESS UNIT out of a buffered message -- the `data` field of the
+// CarPlayVideo message, not the message.
+//
+// THE BUFFER HOLDS WHOLE CAPNP MESSAGES. RawBuffer is schema-agnostic on
+// purpose: it stores the bytes that came off the wire and leaves reading them to
+// whoever bound it. So a payload here is a capnp envelope with an Annex-B access
+// unit somewhere inside it, and the decoder must be handed the inside.
+//
+// THIS WAS THE BUG HARDWARE DECODE FOUND. The whole envelope used to go to
+// libavcodec, and it decoded -- the software H.264 decoder scans for a start
+// code and skips whatever precedes it, so the capnp header was silently stepped
+// over and nobody ever saw a symptom. VideoToolbox does not do that: it took the
+// keyframes, whose parameter sets let it build a session, and rejected every
+// P-frame with AVERROR_UNKNOWN -- a panel showing one frame every two seconds.
+// Relying on a decoder to skip bytes we should not have sent was always wrong;
+// it just cost nothing until it did.
+bool VideoPanel::accessUnitBytes(const std::vector<std::uint8_t>& payload,
+                                 std::vector<std::uint8_t>& out)
 {
-    if (!buffer_)
+    try
     {
+        const auto words = kj::arrayPtr(reinterpret_cast<const capnp::word*>(payload.data()),
+                                        payload.size() / sizeof(capnp::word));
+        capnp::FlatArrayMessageReader reader(words);
+        const capnp::Data::Reader data = reader.getRoot<CarPlayVideo>().getData();
+        out.assign(data.begin(), data.end());
+        return true;
+    }
+    catch (const kj::Exception&)
+    {
+        // Truncated or not capnp at all. Skipped rather than fed: the same
+        // message was tagged as neither seek point nor preamble by classify(),
+        // so it was never something the decoder could start from.
         return false;
     }
+}
 
-    const RawHistory& history = buffer_->history();
+namespace
+{
+
+// The window a decoder needs in order to reach `position`: from the seek point
+// at or before it, extended backwards over the preamble messages immediately in
+// front of that.
+//
+// The backwards extension carries the parameter sets in. They are published just
+// ahead of the keyframe they describe, and a window starting exactly at the
+// keyframe leaves them one message behind -- which decodes to nothing at all.
+// RecordedSource cuts its own windows the same way and for the same reason; this
+// is the LIVE side of the same rule, where nothing has cut them for us.
+bool gopStartFor(const RawHistory& history, double position, std::size_t& start)
+{
     if (history.empty())
     {
         return false;
     }
 
-    // PROGRESS IS TRACKED BY TIME, NOT BY INDEX, and the window is identified by
-    // the buffer's generation rather than by its oldest timestamp. Both were
-    // indices/timestamps once, and both are wrong on a LIVE source for the same
-    // reason: the buffer trims its front once retention is reached, which shifts
-    // every index and moves the oldest timestamp. The panel would then reset its
-    // decoder and re-decode the whole retention window on every tick, for ever,
-    // starting exactly when retention first fills -- invisible in a short run.
-    const std::uint64_t generation = buffer_->generation();
-
-    bool restart = !window_valid_ || generation != window_generation_;
-
-    if (!restart && position < last_position_)
+    std::size_t at = history.lowerBound(position);
+    while (at < history.size() && history[at].t <= position)
     {
-        // Moved backwards inside the window we already have. The buffer is
-        // right; the DECODER is not, because it cannot un-consume the frames it
-        // has already been given. Start it again from the front of the window.
-        restart = true;
+        ++at;
+    }
+    if (at == 0)
+    {
+        // Everything buffered is later than the position asked for.
+        return false;
+    }
+    --at;
+
+    while ((history[at].flags & RawMessage::kSeekPoint) == 0)
+    {
+        if (at == 0)
+        {
+            // Nothing decodable at or before here. The honest answer -- it is
+            // the state a live subscriber is in before its first keyframe.
+            return false;
+        }
+        --at;
     }
 
-    if (restart)
+    while (at > 0 && (history[at - 1].flags & RawMessage::kPreamble) != 0)
     {
-        window_generation_ = generation;
-        window_valid_ = true;
-        decoder_.reset();
-        decoded_through_ = -std::numeric_limits<double>::infinity();
+        --at;
     }
 
-    last_position_ = position;
+    start = at;
+    return true;
+}
+
+}  // namespace
+
+void VideoPanel::dispatchDecode(double position)
+{
+    if (!buffer_)
+    {
+        return;
+    }
+
+    const RawHistory& history = buffer_->history();
+    if (history.empty())
+    {
+        return;
+    }
 
     // The scrubber's ticks follow the buffer's CONTENTS, which on a live source
     // grow every frame. Rebuilt only when something actually changed, so an idle
     // tick costs a size comparison.
-    if (restart || history.size() != seek_points_size_)
+    if (history.size() != seek_points_size_)
     {
         seek_points_size_ = history.size();
         seek_points_.clear();
@@ -386,51 +454,80 @@ bool VideoPanel::decodeUpTo(double position)
         }
     }
 
-    // Everything after what has already been fed, up to and including the
-    // playhead. Closed at the top, the same convention RecordedSource::refill
-    // uses, so a frame stamped exactly at the position is shown rather than the
-    // one before it.
-    std::size_t index = 0;
-    if (decoded_through_ > -std::numeric_limits<double>::infinity())
+    std::size_t start = 0;
+    if (!gopStartFor(history, position, start))
     {
-        index = history.lowerBound(decoded_through_);
-        while (index < history.size() && history[index].t <= decoded_through_)
-        {
-            ++index;
-        }
+        return;
     }
 
-    const auto started = std::chrono::steady_clock::now();
-    bool produced = false;
+    // WHICH WINDOW THIS IS, on two counts. The generation catches a buffer that
+    // was REPLACED -- every seek over a recording refills it with a different
+    // GOP -- and the start time catches a live stream simply reaching its next
+    // keyframe. Either one means the decoder starts again, so the whole window
+    // goes over rather than a tail of it.
+    //
+    // See RawBuffer::generation() for why the oldest timestamp cannot do this on
+    // its own: it moves both when the window is replaced and when it is trimmed.
+    const std::uint64_t generation = buffer_->generation();
+    const double start_t = history[start].t;
 
-    while (index < history.size() && history[index].t <= position)
+    const bool new_window =
+        !window_valid_ || generation != window_generation_ || start_t != window_start_t_;
+
+    if (new_window)
     {
-        const RawMessage& message = history[index];
-        ++index;
+        window_generation_ = generation;
+        window_start_t_ = start_t;
+        window_valid_ = true;
+        ++window_id_;
+        shipped_through_ = -std::numeric_limits<double>::infinity();
+    }
 
-        VideoDecoder::AccessUnit unit;
-        unit.data = std::span<const std::uint8_t>(message.payload.data(), message.payload.size());
-        unit.codec = ((message.flags & kFlagH265) != 0) ? VideoDecoder::Codec::H265
-                                                        : VideoDecoder::Codec::H264;
+    VideoDecodeWorker::Request request;
+    request.window_id = window_id_;
+    request.replace = new_window;
+    request.position = position;
+
+    // WHAT KIND OF WINDOW THIS IS, which decides both how it is decoded and what
+    // running out of units means.
+    //
+    // A recording's window is one GOP loaded whole -- nothing more is coming, so
+    // a frame still inside a delayed decoder must be drained out, and frame
+    // threading's five-fold speed-up on the catch-up is free. A live window
+    // grows every tick and its picture has to line up with the traces beside it,
+    // so neither applies.
+    const bool seekable = source_ != nullptr && source_->caps().seekable;
+    request.complete = seekable;
+    request.seek_optimised = seekable;
+
+    // ONLY WHAT THE WORKER HAS NOT SEEN. A live stream adds a frame per tick to
+    // a window that is already a megabyte, so shipping the window every time
+    // would copy that megabyte thirty times a second to deliver one frame of it.
+    for (std::size_t i = start; i < history.size(); ++i)
+    {
+        const RawMessage& message = history[i];
+        if (!new_window && message.t <= shipped_through_)
+        {
+            continue;
+        }
+
+        VideoDecodeWorker::Unit unit;
+        if (!accessUnitBytes(message.payload, unit.data))
+        {
+            continue;
+        }
+        unit.t = message.t;
         unit.is_config = (message.flags & RawMessage::kPreamble) != 0;
         unit.is_keyframe = (message.flags & RawMessage::kSeekPoint) != 0 && !unit.is_config;
-        unit.t = message.t;
+        unit.h265 = (message.flags & kFlagH265) != 0;
+        request.units.push_back(std::move(unit));
 
-        produced = decoder_.submit(unit) || produced;
-        decoded_through_ = message.t;
-
-        // Budgeted, and checked AFTER at least one access unit so a slow decoder
-        // still makes progress rather than spinning without ever advancing.
-        const double elapsed_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-                .count();
-        if (elapsed_ms >= kDecodeBudgetMs)
-        {
-            break;
-        }
+        shipped_through_ = message.t;
     }
 
-    return produced;
+    // A request with no new units is still worth making: the POSITION moved, and
+    // on a scrub backwards inside one window that is the entire change.
+    worker_.request(std::move(request));
 }
 
 void VideoPanel::onFrame()
@@ -447,7 +544,19 @@ void VideoPanel::onFrame()
         buffer_->drain(position);
     }
 
-    const bool produced = decodeUpTo(position);
+    dispatchDecode(position);
+
+    // Whatever the decoder thread finished since the last tick. Collected HERE
+    // rather than delivered by a signal, so a picture lands on a render tick
+    // like everything else the window draws -- see video_decode_worker.h.
+    bool produced = false;
+    VideoDecodeWorker::Result result;
+    if (worker_.takeResult(result))
+    {
+        image_ = std::move(result.image);
+        frame_t_ = result.frame_t;
+        produced = true;
+    }
 
     if (scrubber_ != nullptr)
     {
@@ -483,7 +592,7 @@ void VideoPanel::paintEvent(QPaintEvent* /*event*/)
 
     painter.fillRect(area, QColor(kBackground));
 
-    const QImage& image = decoder_.image();
+    const QImage& image = image_;
     if (!image.isNull() && area.width() > 0 && area.height() > 0)
     {
         // Aspect-preserving and letterboxed. Stretching would be a lie about
@@ -505,6 +614,7 @@ void VideoPanel::paintEvent(QPaintEvent* /*event*/)
     // screen and they are not the same problem, so the one that applies is
     // written on it.
     QString message;
+    const VideoDecodeWorker::Snapshot decoding = worker_.snapshot();
     if (cfg_.zenoh_key.empty())
     {
         message = tr("Drop a video topic here");
@@ -513,14 +623,14 @@ void VideoPanel::paintEvent(QPaintEvent* /*event*/)
     {
         message = tr("Could not bind %1").arg(QString::fromStdString(cfg_.zenoh_key));
     }
-    else if (decoder_.stats().received == 0)
+    else if (decoding.stats.received == 0)
     {
         message = tr("Waiting for %1").arg(QString::fromStdString(cfg_.zenoh_key));
     }
-    else if (!decoder_.synced())
+    else if (!decoding.synced)
     {
         message = tr("Waiting for a keyframe (%1 dropped)")
-                      .arg(decoder_.stats().dropped_before_sync);
+                      .arg(decoding.stats.dropped_before_sync);
     }
     else
     {
@@ -541,8 +651,8 @@ void VideoPanel::applyConfig(const config_t& cfg)
     if (key_changed)
     {
         releaseStream();
-        decoder_.reset();
-        decoder_.resetStats();
+        worker_.reset();
+        image_ = QImage();
         seek_points_.clear();
         window_valid_ = false;
         bindStream();
@@ -552,6 +662,10 @@ void VideoPanel::applyConfig(const config_t& cfg)
         buffer_->setBounds(std::max(cfg_.retention_seconds, kMinRetentionSeconds),
                            static_cast<std::size_t>(cfg_.max_buffer_bytes));
     }
+
+    // Takes effect at the next decoder rather than now: reopening one mid-GOP
+    // would throw away the reference frames the picture on screen is built from.
+    worker_.setHardwareEnabled(cfg_.hardware_decode);
 
     update();
     emit configChanged();
@@ -572,13 +686,16 @@ VideoPanel::stats_t VideoPanel::stats() const
     out.zenoh_key = cfg_.zenoh_key;
     out.bound = handle_ != kInvalidSignal;
 
-    const VideoDecoder::Stats& decoded = decoder_.stats();
+    const VideoDecodeWorker::Snapshot decoding = worker_.snapshot();
+    const VideoDecoder::Stats& decoded = decoding.stats;
     out.received = decoded.received;
     out.decoded = decoded.decoded;
+    out.presented = decoded.presented;
+    out.decoder = decoding.backend;
     out.dropped_before_sync = decoded.dropped_before_sync;
     out.decode_errors = decoded.decode_errors;
     out.convert_errors = decoded.convert_errors;
-    out.synced = decoder_.synced();
+    out.synced = decoding.synced;
 
     if (buffer_)
     {
@@ -603,11 +720,11 @@ VideoPanel::stats_t VideoPanel::stats() const
         }
     }
 
-    const QImage& image = decoder_.image();
+    const QImage& image = image_;
     if (!image.isNull())
     {
         out.has_frame = true;
-        out.frame_t = decoder_.frameTime();
+        out.frame_t = frame_t_;
         out.frame_width = static_cast<std::uint64_t>(image.width());
         out.frame_height = static_cast<std::uint64_t>(image.height());
     }

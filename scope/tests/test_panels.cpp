@@ -17,6 +17,11 @@
 
 #include "time_series/time_series_panel.h"
 #include "video/video_panel.h"
+
+#include "carplay_video.capnp.h"
+
+#include <capnp/message.h>
+#include <capnp/serialize.h>
 #include "video/video_scrubber.h"
 
 #include "config_codec/config_json.h"
@@ -328,6 +333,50 @@ void testBindingAcceptanceIsMirrored()
 // did not issue it, so a panel must release against the OLD source before it
 // repoints -- and the window destroys the old source only after this returns,
 // precisely so the release has somewhere to go.
+void testTheDecoderIsFedTheAccessUnitNotTheEnvelope()
+{
+    // THE BUFFER HOLDS WHOLE CAPNP MESSAGES, and the decoder must be handed the
+    // Annex-B access unit inside one rather than the message around it.
+    //
+    // REGRESSION, and a nasty one: the whole envelope used to go to libavcodec
+    // and decoded anyway, because the software H.264 decoder scans for a start
+    // code and silently steps over whatever precedes it. Nothing looked wrong
+    // for as long as that was the only decoder. A hardware decoder does not do
+    // that -- it took the keyframes and rejected every P-frame -- so the panel
+    // showed one picture every two seconds and blamed the GPU.
+    //
+    // This checks the seam directly rather than through a decoder, because a
+    // decoder is exactly what papered over it.
+    const std::vector<std::uint8_t> access_unit = {0x00, 0x00, 0x00, 0x01, 0x65,
+                                                   0xDE, 0xAD, 0xBE, 0xEF};
+
+    capnp::MallocMessageBuilder builder;
+    CarPlayVideo::Builder video = builder.initRoot<CarPlayVideo>();
+    video.setCodec(CarPlayVideo::Codec::H264);
+    video.setIsKeyframe(true);
+    video.setData(kj::arrayPtr(access_unit.data(), access_unit.size()));
+
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(builder);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+    const std::vector<std::uint8_t> payload(bytes.begin(), bytes.end());
+
+    std::vector<std::uint8_t> out;
+    const bool read = scope::VideoPanel::accessUnitBytes(payload, out);
+
+    expect(read, "envelope: the message was readable");
+    expect(out == access_unit,
+           "envelope: the decoder is fed the ACCESS UNIT, byte for byte");
+    expect(out.size() < payload.size(),
+           "envelope: which is smaller than the message carrying it -- the check "
+           "that fails if the whole payload is handed over");
+
+    // And a payload that is not a CarPlayVideo message at all is declined rather
+    // than passed through as if it were video.
+    std::vector<std::uint8_t> from_rubbish;
+    expect(!scope::VideoPanel::accessUnitBytes({1, 2, 3, 4, 5, 6, 7, 8}, from_rubbish),
+           "envelope: a payload that is not a CarPlayVideo message is declined");
+}
+
 void testVideoPanelReleasesBeforeRepointing()
 {
     StubSource first;
@@ -1674,6 +1723,7 @@ int main(int argc, char** argv)
     testValidateClampsBeforeConstruction();
     testEveryPanelTypeServesItsConfigAndStats();
     testBindingAcceptanceIsMirrored();
+    testTheDecoderIsFedTheAccessUnitNotTheEnvelope();
     testVideoPanelReleasesBeforeRepointing();
     testTheScrubberBracketsItsDragForCoalescing();
     testTheWorkspaceKeepsAVideoPanelsConfig();

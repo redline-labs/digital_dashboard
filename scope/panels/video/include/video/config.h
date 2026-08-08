@@ -34,7 +34,22 @@ REFLECT_STRUCT(VideoPanelConfig_t,
         "Buffer Limit (bytes)", "Encoded video held in memory; 0 disables the byte bound"),
 
     (bool, show_scrubber, true,
-        "Show Scrubber", "Draw the panel's own seek bar along its bottom edge")
+        "Show Scrubber", "Draw the panel's own seek bar along its bottom edge"),
+
+    // OFF, against the obvious expectation, and measurement is why: on a
+    // 1280x720 stream VideoToolbox decodes at 1.67 ms/frame against software's
+    // 0.22 ms/frame with frame threading, so a GOP catch-up is 100 ms on the GPU
+    // and 13 ms on the CPU. A hardware decoder is built for real-time playback
+    // and every frame pays a session round-trip that a burst cannot amortise.
+    //
+    // Worth turning on where the CPU is the scarce thing rather than the clock,
+    // or on a much larger frame -- and worth re-measuring before believing
+    // either way. See VideoDecoder::setHardwareEnabled().
+    (bool, hardware_decode, false,
+        "Hardware Decode", "Decode on the GPU. Measured SLOWER than software for scrubbing "
+                           "(a seek decodes a whole GOP, which a hardware decoder cannot "
+                           "amortise), but costs almost no CPU. Falls back to software by "
+                           "itself if the GPU cannot take the stream")
 )
 
 // Clamps rather than rejects, matching the dashboard widgets' ADL validate()

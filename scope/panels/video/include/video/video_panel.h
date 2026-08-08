@@ -10,8 +10,9 @@
 
 #include "video/config.h"
 #include "video/stats.h"
-#include "video/video_decoder.h"
+#include "video/video_decode_worker.h"
 
+#include <QImage>
 #include <QString>
 
 #include <limits>
@@ -44,9 +45,12 @@ class VideoScrubber;
 //
 // DECODING IS FORWARD-ONLY, WHICH IS THE WHOLE SHAPE OF THIS CLASS. There is no
 // such thing as decoding the frame at t; there is only decoding from the last
-// seek point up to t. So a seek re-runs the decoder over a GOP, and doing that
-// synchronously would block the event loop for as long as the GOP is -- hence
-// the per-tick budget in onFrame().
+// seek point up to t. So a seek re-runs the decoder over a GOP -- sixty-odd
+// access units -- and this panel does not do that itself. It ships the GOP to
+// VideoDecodeWorker and collects the picture on a later render tick, because a
+// catch-up on the GUI thread is a stall as long as the GOP is, and rationing it
+// into per-tick slices only turned one stall into a seek that took a quarter of
+// a second to land. See video_decode_worker.h.
 class VideoPanel : public Panel
 {
     Q_OBJECT
@@ -87,6 +91,20 @@ class VideoPanel : public Panel
     void applyConfig(const config_t& cfg);
     stats_t stats() const;
 
+    // The encoded access unit inside a buffered message: the CarPlayVideo
+    // `data` field, not the capnp envelope carrying it.
+    //
+    // PUBLIC ONLY SO IT CAN BE TESTED, and it earned that. The panel used to
+    // hand libavcodec the whole envelope, which decoded anyway -- the software
+    // H.264 decoder scans for a start code and silently steps over whatever
+    // precedes it -- so nothing looked wrong until a hardware decoder, which
+    // does not, rejected every frame that was not a keyframe. A seam that a
+    // decoder will paper over is a seam a test has to hold.
+    //
+    // False for a payload that is not a readable CarPlayVideo message.
+    static bool accessUnitBytes(const std::vector<std::uint8_t>& payload,
+                                std::vector<std::uint8_t>& out);
+
     // Drops the stream, so the panel can be pointed at another one.
     bool removeStream();
 
@@ -97,13 +115,10 @@ class VideoPanel : public Panel
     // Called on every render tick of the shared time base.
     void onFrame();
 
-    // Re-run the decoder from the start of the buffered window up to `position`.
-    // Returns true when the picture changed.
-    //
-    // Budgeted: it decodes for at most kDecodeBudgetMs and leaves the rest for
-    // the next tick, because a GOP catch-up is ~60 access units and doing all of
-    // them inline is a visible stall on every scrub.
-    bool decodeUpTo(double position);
+    // Hand the decoder thread the window it needs and the instant wanted out of
+    // it. Cheap and non-blocking: the encoded units are copied only when the
+    // window actually changes, and the request supersedes any still pending.
+    void dispatchDecode(double position);
 
     void bindStream();
     void releaseStream();
@@ -125,24 +140,38 @@ class VideoPanel : public Panel
 
     TimeBase* time_base_ = nullptr;
 
-    VideoDecoder decoder_;
+    VideoDecodeWorker worker_;
+
+    // The picture on screen, and the instant it belongs to. OWNED HERE rather
+    // than read back off the decoder: the decoder is on another thread and
+    // reuses its buffer for the next frame.
+    QImage image_;
+    double frame_t_ = 0.0;
 
     VideoScrubber* scrubber_ = nullptr;
     QToolButton* play_button_ = nullptr;
 
-    // Time of the last access unit fed to the decoder, so a tick that only
-    // advances a little does not re-decode the window.
+    // Time of the last access unit HANDED TO THE WORKER, so a tick that only
+    // advances a little ships one frame rather than the window again.
     //
     // A TIME rather than an index, because the buffer trims from the front on a
     // live source and every index would shift under it. -infinity means "nothing
-    // fed yet", which is what a restart resets it to.
-    double decoded_through_ = -std::numeric_limits<double>::infinity();
+    // shipped yet".
+    double shipped_through_ = -std::numeric_limits<double>::infinity();
 
-    // Identifies the buffered window, so a REPLACEMENT is distinguishable from
-    // growth-and-trim. See RawBuffer::generation() for why the oldest timestamp
-    // cannot serve: it moves for both.
+    // Identifies the window currently shipped: the buffer generation it came
+    // from, and where its GOP starts. Either changing means the decoder has to
+    // start again, so the whole window goes over rather than a tail.
+    //
+    // See RawBuffer::generation() for why the oldest timestamp cannot serve on
+    // its own: it moves both when the window is replaced and when it is trimmed.
     std::uint64_t window_generation_ = 0;
+    double window_start_t_ = 0.0;
     bool window_valid_ = false;
+
+    // Bumped whenever the pair above changes. What the worker compares, so it
+    // never has to know what a generation or a GOP is.
+    std::uint64_t window_id_ = 0;
 
     // History size the scrubber's ticks were built from, so an idle tick costs
     // one comparison rather than a walk over the whole window.

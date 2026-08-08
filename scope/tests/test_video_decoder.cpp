@@ -47,10 +47,13 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 
-#include <cstdio>
+#include <QImage>
+
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -228,6 +231,17 @@ scope::VideoDecoder::AccessUnit toAccessUnit(const Unit& unit)
     return out;
 }
 
+// Submit and present in one go: what a caller that wants EVERY frame does, and
+// what the decoder did in one call before presenting became a separate decision.
+// True when a new picture reached image().
+//
+// The seek path deliberately does not do this -- see
+// testCatchUpPresentsOnlyTheFrameAskedFor.
+bool feed(scope::VideoDecoder& decoder, const Unit& unit)
+{
+    return decoder.submit(toAccessUnit(unit)) && decoder.present();
+}
+
 // Where the white box actually is in the decoded picture, or -1 when there is
 // no box. Scans the row the pattern draws through.
 int measureBoxLeft(const QImage& image)
@@ -255,6 +269,15 @@ bool boxNear(int measured, int expected)
     return measured >= 0 && std::abs(measured - expected) <= 2;
 }
 
+// A frame's time is quantised to microseconds on its way through libavcodec --
+// packet->pts is an integer -- so it comes back a fraction of a microsecond off
+// the double that went in. Half a microsecond is four orders of magnitude below
+// a frame interval, so this still tells frames apart.
+bool timeIsFrame(double t, int index)
+{
+    return std::abs(t - static_cast<double>(index) / kFps) < 1e-6;
+}
+
 // ---------------------------------------------------------------------------
 
 void testDecodesAStreamInOrder(const std::vector<Unit>& units)
@@ -265,7 +288,7 @@ void testDecodesAStreamInOrder(const std::vector<Unit>& units)
     int last_index = -1;
     for (const Unit& unit : units)
     {
-        if (decoder.submit(toAccessUnit(unit)))
+        if (feed(decoder, unit))
         {
             ++pictures;
             last_index = unit.index;
@@ -297,7 +320,7 @@ void testConfigAloneProducesNothing(const std::vector<std::uint8_t>& parameter_s
     config.data = std::span<const std::uint8_t>(parameter_sets.data(), parameter_sets.size());
     config.is_config = true;
 
-    const bool produced = decoder.submit(config);
+    const bool produced = decoder.submit(config) && decoder.present();
 
     expect(!produced, "config alone: no picture");
     expect(decoder.image().isNull(), "config alone: nothing was drawn");
@@ -320,7 +343,7 @@ void testDeltaBeforeSyncIsDropped(const std::vector<Unit>& units)
         {
             continue;  // withhold every sync point
         }
-        decoder.submit(toAccessUnit(unit));
+        feed(decoder, unit);
         if (++fed >= 8)
         {
             break;
@@ -343,7 +366,7 @@ void testResetThenSeekToAKeyframe(const std::vector<Unit>& units)
 
     for (const Unit& unit : units)
     {
-        decoder.submit(toAccessUnit(unit));
+        feed(decoder, unit);
     }
     const int box_at_end = measureBoxLeft(decoder.image());
     expect(box_at_end >= 0, "seek: there is a picture before the reset");
@@ -376,7 +399,7 @@ void testResetThenSeekToAKeyframe(const std::vector<Unit>& units)
     int produced = 0;
     for (std::size_t i = start; i < units.size() && produced < 3; ++i)
     {
-        if (decoder.submit(toAccessUnit(units[i])))
+        if (feed(decoder, units[i]))
         {
             ++produced;
             target = units[i].index;
@@ -387,6 +410,283 @@ void testResetThenSeekToAKeyframe(const std::vector<Unit>& units)
     expect(decoder.stats().decode_errors == 0, "seek: no packet was rejected after the reset");
     expect(boxNear(measureBoxLeft(decoder.image()), boxLeftFor(target)),
            "seek: the picture is the SOUGHT frame, checked on the pixels");
+}
+
+void testCatchUpPresentsOnlyTheFrameAskedFor(const std::vector<Unit>& units)
+{
+    // THE SEEK LANDS, IT DOES NOT PLAY. Reaching an instant means restarting at
+    // its keyframe and decoding forward to get there, and a panel that shows
+    // every frame on the way runs the GOP past at decode speed -- forwards, even
+    // when the drag is going backwards. The frames in between are references,
+    // not pictures anyone asked for.
+    scope::VideoDecoder decoder;
+
+    // The second GOP, so there is a real run-up rather than one frame of it.
+    std::size_t keyframe = units.size();
+    std::size_t seen = 0;
+    for (std::size_t i = 0; i < units.size(); ++i)
+    {
+        if (units[i].is_keyframe && seen++ == 1)
+        {
+            keyframe = i;
+            break;
+        }
+    }
+    expect(keyframe < units.size(), "catch-up: the stream has a second keyframe");
+    if (keyframe >= units.size())
+    {
+        return;
+    }
+
+    std::size_t start = keyframe;
+    while (start > 0 && units[start - 1].is_config)
+    {
+        --start;
+    }
+
+    // Six frames in: the instant being sought.
+    std::size_t sought = start;
+    int frames = 0;
+    for (std::size_t i = start; i < units.size(); ++i)
+    {
+        if (!units[i].is_config && ++frames == 6)
+        {
+            sought = i;
+            break;
+        }
+    }
+    expect(frames == 6, "catch-up: the GOP is long enough to run up to");
+
+    const double target_t = static_cast<double>(units[sought].index) / kFps;
+    decoder.setTarget(target_t);
+
+    // What the panel does: feed until the decoder has overshot the instant, and
+    // convert nothing on the way.
+    std::size_t fed = start;
+    while (fed < units.size() && !decoder.reachedTarget())
+    {
+        decoder.submit(toAccessUnit(units[fed]));
+        ++fed;
+    }
+
+    expect(decoder.reachedTarget(), "catch-up: feeding stopped once the target was overshot");
+    expect(decoder.stats().presented == 0,
+           "catch-up: NOTHING was drawn while the run-up decoded -- the whole point");
+    expect(decoder.stats().decoded > 1,
+           "catch-up: the frames in front of it were still DECODED, for their references");
+
+    const bool drew = decoder.present();
+
+    expect(drew, "catch-up: presenting drew the picture");
+    expect(decoder.stats().presented == 1,
+           "catch-up: exactly ONE conversion paid for a whole GOP of decoding");
+    expect(decoder.stats().convert_errors == 0, "catch-up: nothing failed to convert");
+    expect(boxNear(measureBoxLeft(decoder.image()), boxLeftFor(units[sought].index)),
+           "catch-up: and the picture is the sought frame, checked on the pixels");
+    expect(timeIsFrame(decoder.frameTime(), units[sought].index),
+           "catch-up: frameTime is the sought frame's, not a skipped one's");
+
+    // The run-up really was decoded through libavcodec rather than discarded: a
+    // decoder fed only the target would have produced a broken picture or
+    // nothing at all.
+    expect(decoder.stats().decode_errors == 0, "catch-up: no packet was rejected");
+
+    // And presenting again is free: the same instant is already on screen.
+    expect(!decoder.present(), "catch-up: presenting the same instant twice converts once");
+}
+
+void testAStashedFrameIsPresentedWhenTheTargetReachesIt(const std::vector<Unit>& units)
+{
+    // A decoder with delay hands back frames LATER than the packets that carried
+    // them, so reaching an instant means feeding past it -- and the frames that
+    // come with those extra packets are in the future, not the past.
+    //
+    // THEY MUST NOT BE THROWN AWAY. libavcodec will not emit a frame twice, so a
+    // decoder that drops them has nothing to show when playback advances onto
+    // them a fraction of a second later: it would skip exactly the frames that
+    // decoder delay pulled forward, which looks like a stuttering recording.
+    scope::VideoDecoder decoder;
+
+    std::size_t start = 0;
+    while (start < units.size() && !units[start].is_config && !units[start].is_keyframe)
+    {
+        ++start;
+    }
+
+    // Aim at the first frame of the GOP, then feed several units past it.
+    int first_index = -1;
+    for (std::size_t i = start; i < units.size(); ++i)
+    {
+        if (!units[i].is_config)
+        {
+            first_index = units[i].index;
+            break;
+        }
+    }
+    expect(first_index >= 0, "stash: the stream has a frame to aim at");
+    if (first_index < 0)
+    {
+        return;
+    }
+    const double first_t = static_cast<double>(first_index) / kFps;
+
+    decoder.setTarget(first_t);
+
+    std::size_t fed = start;
+    int units_fed = 0;
+    while (fed < units.size() && units_fed < 6)
+    {
+        decoder.submit(toAccessUnit(units[fed]));
+        ++fed;
+        ++units_fed;
+    }
+
+    expect(decoder.stats().decoded > 1, "stash: several frames came out");
+    expect(decoder.present(), "stash: the frame at the target was presented");
+    expect(timeIsFrame(decoder.frameTime(), first_index), "stash: and it is the one asked for");
+
+    // Now the playhead advances onto a frame that came out during the run-up.
+    // Nothing more is fed -- if it was dropped, there is nothing to show.
+    const std::uint64_t decoded_before = decoder.stats().decoded;
+    const double next_t = static_cast<double>(first_index + 1) / kFps;
+    decoder.setTarget(next_t);
+
+    expect(decoder.present(), "stash: the NEXT frame was still held and could be shown");
+    expect(timeIsFrame(decoder.frameTime(), first_index + 1), "stash: and it is the right one");
+    expect(decoder.stats().decoded == decoded_before,
+           "stash: without decoding anything again -- it was already out");
+}
+
+void testTheLastFrameOfAWindowIsReachable(const std::vector<Unit>& units)
+{
+    // THE FRAME AT THE END OF A GOP, which is the one a delayed decoder is
+    // holding when the units run out.
+    //
+    // Frame threading -- what setSeekOptimised(true) turns on, because it makes
+    // a catch-up five times faster -- withholds the first thread_count - 1
+    // pictures. So feeding a whole window and stopping leaves the frame actually
+    // asked for inside libavcodec, and presenting then gives a picture a few
+    // frames early WITH THE WRONG TIME ON IT. That is the exact failure this
+    // panel's design exists to prevent, and drain() is what prevents it.
+    //
+    // Checked with threading both on and off: the answer must not depend on it.
+    const auto landOnLastFrame = [&units](bool seek_optimised) {
+        scope::VideoDecoder decoder;
+        decoder.setSeekOptimised(seek_optimised);
+
+        // The last GOP, so the window really does end where the stream does.
+        std::size_t keyframe = units.size();
+        for (std::size_t i = units.size(); i-- > 0;)
+        {
+            if (units[i].is_keyframe)
+            {
+                keyframe = i;
+                break;
+            }
+        }
+        std::size_t start = keyframe;
+        while (start > 0 && units[start - 1].is_config)
+        {
+            --start;
+        }
+
+        int last_index = -1;
+        for (std::size_t i = start; i < units.size(); ++i)
+        {
+            if (!units[i].is_config)
+            {
+                last_index = units[i].index;
+            }
+        }
+
+        decoder.setTarget(static_cast<double>(last_index) / kFps);
+        for (std::size_t i = start; i < units.size(); ++i)
+        {
+            decoder.submit(toAccessUnit(units[i]));
+        }
+
+        // Nothing in the stream is after the last frame, so the target is never
+        // overshot however the decoder is configured. This is the state that
+        // makes drain() necessary rather than optional.
+        const bool overshot = decoder.reachedTarget();
+        decoder.drain();
+        const bool drew = decoder.present();
+
+        return std::make_tuple(overshot, drew, decoder.frameTime(),
+                               measureBoxLeft(decoder.image()), last_index);
+    };
+
+    for (const bool seek_optimised : {false, true})
+    {
+        const auto [overshot, drew, frame_t, box, last_index] = landOnLastFrame(seek_optimised);
+        const std::string what = seek_optimised ? "frame-threaded" : "single-threaded";
+
+        expect(!overshot, what + ": the last frame is never overshot, so draining is the only way");
+        expect(drew, what + ": draining produced the picture");
+        expect(timeIsFrame(frame_t, last_index), what + ": stamped with the LAST frame's time");
+        expect(boxNear(box, boxLeftFor(last_index)),
+               what + ": and its pixels are the last frame's too");
+    }
+}
+
+void testHardwareAndSoftwareAgreeOnThePicture(const std::vector<Unit>& units)
+{
+    // WHATEVER THIS MACHINE HAS, the picture is the same one. A GPU path that
+    // decodes a different frame -- or the same frame with the colour ranges
+    // swapped -- is not something a user could tell from a bad seek, so it is
+    // pinned against the software decoder rather than against itself.
+    //
+    // Not pixel-identity: H.264 decoding is normative, but the two paths reach
+    // RGB differently (NV12 off the GPU, YUV420P off the CPU) and may differ in
+    // the last bit of a channel. The box position is the frame's identity and is
+    // immune to that.
+    struct Outcome
+    {
+        QImage image;
+        double frame_t = 0.0;
+        bool hardware = false;
+        std::string backend;
+        std::uint64_t decode_errors = 0;
+        std::uint64_t convert_errors = 0;
+    };
+
+    const auto decodeTo = [&units](bool hardware, int frames) {
+        scope::VideoDecoder decoder;
+        decoder.setHardwareEnabled(hardware);
+
+        int produced = 0;
+        for (const Unit& unit : units)
+        {
+            if (feed(decoder, unit) && ++produced >= frames)
+            {
+                break;
+            }
+        }
+
+        // Copied out: the decoder is not copyable, and image() is a reference
+        // into one that is about to go.
+        return Outcome{decoder.image().copy(), decoder.frameTime(), decoder.hardware(),
+                       decoder.backend(), decoder.stats().decode_errors,
+                       decoder.stats().convert_errors};
+    };
+
+    const Outcome cpu = decodeTo(false, 12);
+    const Outcome gpu = decodeTo(true, 12);
+
+    std::fprintf(stderr, "NOTE: video decode backend on this machine: %s\n", gpu.backend.c_str());
+
+    expect(!cpu.hardware, "backends: disabling hardware really did use software");
+    expect(!cpu.image.isNull() && !gpu.image.isNull(), "backends: both produced a picture");
+    expect(cpu.image.size() == gpu.image.size(), "backends: at the same size");
+    expect(measureBoxLeft(gpu.image) == measureBoxLeft(cpu.image),
+           "backends: and the SAME frame, checked on the pixels");
+    expect(gpu.frame_t == cpu.frame_t, "backends: stamped with the same instant");
+
+    // Whether hardware was actually used is a property of the machine, not of
+    // the code, so it cannot be asserted -- but if it WAS used, it must not have
+    // cost anything in errors.
+    expect(gpu.decode_errors == 0, "backends: the chosen backend rejected nothing");
+    expect(gpu.convert_errors == 0, "backends: and everything converted");
 }
 
 void testSeekIsDeterministic(const std::vector<Unit>& units)
@@ -416,7 +716,7 @@ void testSeekIsDeterministic(const std::vector<Unit>& units)
         int produced = 0;
         for (std::size_t i = start; i < units.size() && produced < frames; ++i)
         {
-            if (decoder.submit(toAccessUnit(units[i])))
+            if (feed(decoder, units[i]))
             {
                 ++produced;
             }
@@ -443,7 +743,7 @@ void testSequenceGapForcesResync(const std::vector<Unit>& units)
     std::size_t i = 0;
     for (; i < units.size(); ++i)
     {
-        decoder.submit(toAccessUnit(units[i]));
+        feed(decoder, units[i]);
         if (!decoder.image().isNull())
         {
             break;
@@ -458,7 +758,7 @@ void testSequenceGapForcesResync(const std::vector<Unit>& units)
     // and recovers on the next keyframe rather than getting stuck.
     for (std::size_t j = units.size() * 3 / 4; j < units.size(); ++j)
     {
-        decoder.submit(toAccessUnit(units[j]));
+        feed(decoder, units[j]);
     }
 
     expect(!decoder.image().isNull(), "gap: the decoder recovered and has a picture");
@@ -518,7 +818,7 @@ void testReorderedStream(const std::vector<Unit>& units)
     int measured_pictures = 0;
     for (const Unit& unit : units)
     {
-        if (!decoder.submit(toAccessUnit(unit)))
+        if (!feed(decoder, unit))
         {
             continue;
         }
@@ -562,7 +862,7 @@ void testReorderedStream(const std::vector<Unit>& units)
     int first_index = -1;
     for (std::size_t i = start; i < units.size(); ++i)
     {
-        if (decoder.submit(toAccessUnit(units[i])))
+        if (feed(decoder, units[i]))
         {
             first_index = static_cast<int>(std::llround(decoder.frameTime() * kFps));
             break;
@@ -604,6 +904,10 @@ int main()
     testConfigAloneProducesNothing(parameter_sets);
     testDeltaBeforeSyncIsDropped(units);
     testResetThenSeekToAKeyframe(units);
+    testCatchUpPresentsOnlyTheFrameAskedFor(units);
+    testAStashedFrameIsPresentedWhenTheTargetReachesIt(units);
+    testTheLastFrameOfAWindowIsReachable(units);
+    testHardwareAndSoftwareAgreeOnThePicture(units);
     testSeekIsDeterministic(units);
     testSequenceGapForcesResync(units);
 

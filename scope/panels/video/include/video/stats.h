@@ -28,7 +28,9 @@ REFLECT_STRUCT(VideoPanelStats_t,
     (uint64_t, received, 0,
         "Received", "Access units the decoder was offered"),
     (uint64_t, decoded, 0,
-        "Decoded", "Pictures the decoder produced"),
+        "Decoded", "Pictures libavcodec produced. Climbs far faster than the panel "
+                   "repaints, because reaching a seek means decoding a whole GOP and "
+                   "displaying only its last frame"),
     (uint64_t, dropped_before_sync, 0,
         "Dropped Before Sync", "Access units discarded while waiting for a keyframe or "
                                "parameter sets. Non-zero at startup is normal; still "
@@ -39,6 +41,14 @@ REFLECT_STRUCT(VideoPanelStats_t,
         "Convert Errors", "Decoded frames swscale could not turn into RGB"),
     (bool, synced, false,
         "Synced", "Whether a sync point has been seen and frames are being fed through"),
+
+    (uint64_t, presented, 0,
+        "Presented", "Pictures actually drawn. Far below Decoded on a recording, because "
+                     "reaching an instant decodes a whole GOP and shows only its last frame"),
+    (std::string, decoder, "",
+        "Decoder", "Which backend is decoding: a hardware API name, or 'software'. Software "
+                   "on a machine that has a GPU decoder means the stream was refused and "
+                   "the fallback took over"),
 
     (uint64_t, buffered, 0,
         "Buffered", "Encoded access units currently held"),

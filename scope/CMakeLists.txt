@@ -57,6 +57,7 @@ add_library(scope_core STATIC
 
     panels/video/video_panel.cpp
     panels/video/video_decoder.cpp
+    panels/video/video_decode_worker.cpp
     panels/video/video_scrubber.cpp
     panels/video/include/video/video_panel.h
     panels/video/include/video/video_scrubber.h
