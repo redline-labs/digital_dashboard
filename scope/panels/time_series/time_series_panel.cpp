@@ -1,11 +1,11 @@
 #include "time_series/time_series_panel.h"
 
 #include "scope/data_source.h"
+#include "scope/state_names.h"
 #include "scope/time_base.h"
+#include "scope/value_format.h"
 
 #include "qt_helpers/widget_colors.h"
-
-#include "pub_sub/capnp_json.h"
 
 #include <QApplication>
 #include <QEvent>
@@ -74,24 +74,6 @@ double niceStep(double rough)
     return 10.0 * magnitude;
 }
 
-QString formatValue(double value)
-{
-    const double magnitude = std::abs(value);
-    if (magnitude >= 1000.0)
-    {
-        return QString::number(value, 'f', 0);
-    }
-    if (magnitude >= 10.0)
-    {
-        return QString::number(value, 'f', 1);
-    }
-    if (magnitude >= 0.1 || magnitude == 0.0)
-    {
-        return QString::number(value, 'f', 2);
-    }
-    return QString::number(value, 'g', 3);
-}
-
 // Height of one state lane, and the gap between the plot and the first of them.
 constexpr double kLaneHeight = 20.0;
 constexpr double kLaneGap = 6.0;
@@ -109,126 +91,17 @@ const QColor& stateColor(std::size_t ordinal)
     return palette[ordinal % palette.size()];
 }
 
-// What the states of this binding are called, if it has any.
+// Do these two traces name THE SAME SIGNAL? The binding triple and nothing else:
+// a colour, a label, a units suffix, an axis or a display mode is presentation,
+// and changing one must not cost the trace its history.
 //
-// Resolved from the SCHEMA rather than carried on the BindingCandidate, because
-// a workspace loaded from disk never saw a candidate -- and a trace that got its
-// names only when dragged would lose them on the next reload, which is the sort
-// of difference nobody notices until the labels are missing.
-//
-// Only a bare field (`phase`) or one list element (`values[7]`) resolves. An
-// expression doing arithmetic has left the enum's domain: `phase * 2` is a
-// number, not a state, and labelling it would be a lie.
-struct StateNames
+// The same triple SignalKey is built from, deliberately -- this is the identity
+// the source issues a handle against, so two traces that compare equal here are
+// two the source cannot tell apart.
+bool sameSignal(const signal_binding_t& lhs, const signal_binding_t& rhs)
 {
-    bool is_state = false;
-    std::vector<QString> names;
-};
-
-StateNames resolveStateNames(pub_sub::schema_type_t schema_type, const std::string& expression)
-{
-    StateNames out;
-
-    // `name` or `name[<digits>]`, and nothing else. Written out rather than with
-    // a regex because <regex> costs more to compile than this does to read.
-    std::string field;
-    bool indexed = false;
-    {
-        std::size_t i = 0;
-        while (i < expression.size() && std::isspace(static_cast<unsigned char>(expression[i])))
-        {
-            ++i;
-        }
-        const std::size_t start = i;
-        while (i < expression.size() &&
-               (std::isalnum(static_cast<unsigned char>(expression[i])) || expression[i] == '_'))
-        {
-            ++i;
-        }
-        field = expression.substr(start, i - start);
-        if (field.empty())
-        {
-            return out;
-        }
-
-        if (i < expression.size() && expression[i] == '[')
-        {
-            indexed = true;
-            ++i;
-            const std::size_t digits = i;
-            while (i < expression.size() && std::isdigit(static_cast<unsigned char>(expression[i])))
-            {
-                ++i;
-            }
-            if (i == digits || i >= expression.size() || expression[i] != ']')
-            {
-                return out;
-            }
-            ++i;
-        }
-
-        while (i < expression.size() && std::isspace(static_cast<unsigned char>(expression[i])))
-        {
-            ++i;
-        }
-        if (i != expression.size())
-        {
-            return out;  // Arithmetic, another variable, anything else.
-        }
-    }
-
-    const auto schema = pub_sub::get_schema(schema_type);
-    if (!schema)
-    {
-        return out;
-    }
-
-    const nlohmann::json described = pub_sub::describeSchema(*schema);
-    const auto fields = described.find("fields");
-    if (fields == described.end() || !fields->is_object())
-    {
-        return out;
-    }
-    const auto entry = fields->find(field);
-    if (entry == fields->end())
-    {
-        return out;
-    }
-
-    const std::string type = entry->value("type", std::string{});
-    const std::string element = entry->value("element_type", std::string{});
-    const std::string effective = (type == "list") ? element : type;
-
-    // A list has to be indexed to be a state; a scalar must not be.
-    if ((type == "list") != indexed)
-    {
-        return out;
-    }
-
-    if (effective == "bool")
-    {
-        out.is_state = true;
-        out.names = {QStringLiteral("false"), QStringLiteral("true")};
-        return out;
-    }
-
-    if (effective != "enum")
-    {
-        return out;
-    }
-
-    out.is_state = true;
-    const auto values = entry->find("values");
-    if (values != entry->end() && values->is_array())
-    {
-        // Declaration order, so index N is the name of ordinal N -- which is
-        // exactly what the evaluator hands back.
-        for (const auto& name : *values)
-        {
-            out.names.push_back(QString::fromStdString(name.get<std::string>()));
-        }
-    }
-    return out;
+    return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
+           lhs.value_expression == rhs.value_expression;
 }
 
 }  // namespace
@@ -247,20 +120,11 @@ struct TimeSeriesPanel::Trace
     // turned out to be.
     bool lane = false;
 
-    // Enumerant names in ordinal order, empty for a state channel whose numbers
-    // have no names (a forced lane over a plain integer). A band with no name
-    // still shows its number, which is strictly better than a sloping line.
-    std::vector<QString> state_names;
-
-    QString stateLabel(double value) const
-    {
-        const auto ordinal = static_cast<long long>(std::llround(value));
-        if (ordinal >= 0 && static_cast<std::size_t>(ordinal) < state_names.size())
-        {
-            return state_names[static_cast<std::size_t>(ordinal)];
-        }
-        return QString::number(value, 'g', 4);
-    }
+    // What this binding's states are called, resolved from the schema at bind
+    // time. Empty names for a state channel whose numbers have none (a forced
+    // lane over a plain integer): a band with no name still shows its number,
+    // which is strictly better than a sloping line.
+    StateNames states;
 
     // False when binding failed -- a bad expression, a non-numeric field, a
     // subscription that would not declare. The legend says so rather than
@@ -306,67 +170,125 @@ void TimeSeriesPanel::releaseAll()
     traces_.clear();
 }
 
-void TimeSeriesPanel::rebindAll()
+void TimeSeriesPanel::applyPresentation(Trace& trace) const
 {
-    releaseAll();
+    trace.color = qt_helpers::toQColor(trace.binding.color, QColor("#4FC3F7"));
+    switch (trace.binding.display)
+    {
+        case trace_display_t::automatic:
+            trace.lane = trace.states.is_state;
+            break;
+        case trace_display_t::line:
+            trace.lane = false;
+            break;
+        case trace_display_t::lane:
+            trace.lane = true;
+            break;
+    }
+}
+
+std::unique_ptr<TimeSeriesPanel::Trace> TimeSeriesPanel::makeTrace(const signal_binding_t& binding)
+{
+    auto trace = std::make_unique<Trace>();
+    trace->binding = binding;
+    trace->buffer =
+        std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal, kStagingCapacity);
+
+    SignalKey key;
+    key.zenoh_key = binding.zenoh_key;
+    key.schema_type = binding.schema_type;
+    key.value_expression = binding.value_expression;
+
+    trace->handle = source_->bind(key, trace->buffer);
+    trace->bound = trace->handle != kInvalidSignal;
+
+    // Resolved here rather than at paint time: it reads the schema registry
+    // and builds a JSON description, which is fine once per binding and
+    // absurd at 30 Hz.
+    trace->states = resolveStateNames(binding.schema_type, binding.value_expression);
+    applyPresentation(*trace);
+
+    if (!trace->bound)
+    {
+        // Already logged in detail by the evaluator; this says which panel.
+        SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", cfg_.title,
+                    binding.value_expression, binding.zenoh_key);
+    }
+
+    return trace;
+}
+
+// Bring traces_ into line with cfg_.traces, KEEPING THE BUFFER OF EVERY TRACE
+// THAT IS STILL THERE.
+//
+// This used to rebuild all of them, which threw away the history of traces that
+// had not changed -- so adding a signal blanked every line already on the plot
+// and started them again from that instant. On a paused view they did not come
+// back at all, because the window is frozen over a stretch the new buffers have
+// nothing for. Reported against the table panel, which shows it as every cell
+// reading "--"; the same code here shows it as the plot going empty.
+//
+// This is also what the class header has always PROMISED -- "signals that are
+// unchanged keep their history rather than being torn down and restarted" --
+// while the implementation did the opposite.
+//
+// Identity is the binding triple: the same triple SignalKey is built from, so
+// two traces that compare equal are two the source cannot tell apart. A colour,
+// a label, a units suffix, an axis or a display mode is presentation, and
+// changing one keeps everything and re-reads only those fields.
+void TimeSeriesPanel::syncTraces()
+{
+    std::vector<std::unique_ptr<Trace>> previous;
+    previous.swap(traces_);
+    traces_.reserve(cfg_.traces.size());
 
     for (const signal_binding_t& binding : cfg_.traces)
     {
-        auto trace = std::make_unique<Trace>();
-        trace->binding = binding;
-        trace->color = qt_helpers::toQColor(binding.color, QColor("#4FC3F7"));
-        trace->buffer = std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal,
-                                                       kStagingCapacity);
+        // Moved out of `previous` when claimed, so the entry goes null and a
+        // second trace naming the same signal cannot steal this one's buffer
+        // and leave two traces sharing it.
+        const auto match = std::find_if(previous.begin(), previous.end(),
+                                        [&binding](const std::unique_ptr<Trace>& trace) {
+                                            return trace && sameSignal(trace->binding, binding);
+                                        });
 
-        SignalKey key;
-        key.zenoh_key = binding.zenoh_key;
-        key.schema_type = binding.schema_type;
-        key.value_expression = binding.value_expression;
-
-        trace->handle = source_->bind(key, trace->buffer);
-        trace->bound = trace->handle != kInvalidSignal;
-
-        // Resolved here rather than at paint time: it reads the schema registry
-        // and builds a JSON description, which is fine once per binding and
-        // absurd at 30 Hz.
-        const StateNames states =
-            resolveStateNames(binding.schema_type, binding.value_expression);
-        switch (binding.display)
+        if (match == previous.end())
         {
-            case trace_display_t::automatic:
-                trace->lane = states.is_state;
-                break;
-            case trace_display_t::line:
-                trace->lane = false;
-                break;
-            case trace_display_t::lane:
-                trace->lane = true;
-                break;
-        }
-        trace->state_names = states.names;
-
-        if (!trace->bound)
-        {
-            // Already logged in detail by the evaluator; this says which panel.
-            SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", cfg_.title,
-                        binding.value_expression, binding.zenoh_key);
+            traces_.push_back(makeTrace(binding));
+            continue;
         }
 
+        std::unique_ptr<Trace> trace = std::move(*match);
+        trace->binding = binding;  // Presentation may have changed; the signal did not.
+        applyPresentation(*trace);
         traces_.push_back(std::move(trace));
+    }
+
+    // Whatever was not claimed is genuinely gone, and its subscription with it.
+    for (const std::unique_ptr<Trace>& leftover : previous)
+    {
+        if (leftover && leftover->handle != kInvalidSignal)
+        {
+            source_->release(leftover->handle);
+        }
     }
 
     update();
 }
 
+void TimeSeriesPanel::rebindAll()
+{
+    // The wholesale version, for the two cases where a buffer genuinely cannot
+    // be carried over: a different SOURCE issued the handles, or the retention
+    // the buffers were built with has changed.
+    releaseAll();
+    syncTraces();
+}
+
 void TimeSeriesPanel::applyConfig(const config_t& cfg)
 {
     cfg_ = cfg;
-    // Rebinding everything is the simple choice, and it is what a config change
-    // usually means anyway. Preserving history across an unchanged signal would
-    // need a diff by binding identity; worth doing if it ever proves annoying,
-    // but a plot that restarts when you recolour it is a smaller problem than a
-    // stale binding that keeps feeding a trace you renamed.
-    rebindAll();
+    syncTraces();
     emit configChanged();
 }
 
@@ -466,19 +388,30 @@ bool TimeSeriesPanel::addBinding(const BindingCandidate& candidate)
         std::string(kPalette[cfg_.traces.size() % (sizeof(kPalette) / sizeof(kPalette[0]))]));
 
     cfg_.traces.push_back(binding);
-    rebindAll();
+    syncTraces();
     emit configChanged();
     return true;
 }
 
-bool TimeSeriesPanel::removeSignal(std::size_t index)
+std::vector<QString> TimeSeriesPanel::bindingLabels() const
+{
+    std::vector<QString> labels;
+    labels.reserve(traces_.size());
+    for (const std::unique_ptr<Trace>& trace : traces_)
+    {
+        labels.push_back(trace->displayLabel());
+    }
+    return labels;
+}
+
+bool TimeSeriesPanel::removeBinding(std::size_t index)
 {
     if (index >= cfg_.traces.size())
     {
         return false;
     }
     cfg_.traces.erase(cfg_.traces.begin() + static_cast<std::ptrdiff_t>(index));
-    rebindAll();
+    syncTraces();
     emit configChanged();
     return true;
 }
@@ -690,7 +623,7 @@ void TimeSeriesPanel::paintLanes(QPainter& painter, const QRectF& lanes)
             // The name, when the band is wide enough to hold it. A band too
             // narrow to label is still a visible colour change, which is the
             // thing you are looking for when you scan a lane.
-            const QString label = trace->stateLabel(value);
+            const QString label = trace->states.label(value);
             if (band.width() > metrics.horizontalAdvance(label) + 8.0)
             {
                 painter.setPen(QColor("#0B0D10"));

@@ -82,6 +82,13 @@ class VideoPanel : public Panel
     panel_type_t panelType() const override { return kPanelType; }
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
+
+    // One stream, so at most one label and only index 0 is removable. Both are
+    // still virtual calls rather than a special case in the window: a panel that
+    // holds exactly one binding is not a panel that holds none.
+    std::vector<QString> bindingLabels() const override;
+    bool removeBinding(std::size_t index) override;
+
     void setTimeBase(TimeBase* time_base) override;
     void setHistorySeconds(double seconds) override;
     void rebindTo(DataSource& source) override;

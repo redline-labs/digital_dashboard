@@ -6,7 +6,9 @@
 #include <QString>
 #include <QWidget>
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace scope
 {
@@ -145,6 +147,22 @@ class Panel : public QWidget
     // Callers should check acceptsBinding() first; this returning false is not
     // an error, it is a panel exercising judgement about its own contents.
     virtual bool addBinding(const BindingCandidate& candidate) = 0;
+
+    // What this panel currently holds, named for a human, in the order
+    // removeBinding() indexes them.
+    //
+    // THE OTHER HALF OF THE BINDING SEAM, and it was missing. addBinding() was
+    // virtual from the start but taking one back was not, so the context menu
+    // and `scope.remove_signal` both qobject_cast to TimeSeriesPanel -- which
+    // meant "Remove signal" was silently absent on every other panel kind, and
+    // the RPC answered "that panel has no removable signals" for a panel with
+    // one bound. Adding a panel type must not mean editing the window and the
+    // agent interface again; that is what the table exists to prevent.
+    virtual std::vector<QString> bindingLabels() const = 0;
+
+    // Drop binding `index`. False when there is no such binding, which is a
+    // clean no rather than an error.
+    virtual bool removeBinding(std::size_t index) = 0;
 
     // The shared clock. Panels connect to its frame() to drain and repaint, and
     // read viewBegin()/viewEnd()/cursor() from it. Must outlive the panel.

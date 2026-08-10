@@ -50,6 +50,7 @@
 #include "scope/panel_table.h"
 #include "scope/panel_types.h"
 
+#include "table/table_panel.h"
 #include "time_series/time_series_panel.h"
 #include "video/video_panel.h"
 

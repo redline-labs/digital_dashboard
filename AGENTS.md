@@ -70,7 +70,10 @@ disagree, that is a real bug.
 For `scope`, reach for `scope_sample_stats` before the screenshot. A picture
 shows a line; that says what the line is made of -- sample counts, drops, and
 the min/max actually received -- which is a far stronger statement and the one
-a test can assert. `docs/scope.md` has the rest.
+a test can assert. `scope.stats` is the type-agnostic version, and it is the one
+to use for anything that is not a plot: for a `table` panel it reports the value
+behind each cell, the TEXT the cell prints (an enum reads as its name), and how
+old the reading is. `docs/scope.md` has the rest.
 
 Scope can also be driven over a **recording** rather than the bus, which is the
 faster loop when the data matters more than the timing: `bag record` a few
@@ -108,8 +111,10 @@ discovery seeing only live traffic, and what `accepted: false` and
 - **Adding a scope panel** is a 3-step registration documented at the top of
   `scope/include/scope/panel_registry.h`, and works the same way: one line in
   `SCOPE_PANEL_TABLE` and everything else follows. Panels decide for themselves
-  what they will plot via `acceptsBinding()`, so the signal browser and the drag
-  need no knowledge of panel types. A panel declares a reflected `config_t` AND
+  what they will plot via `acceptsBinding()`, and hand a binding back via
+  `bindingLabels()`/`removeBinding()`, so the signal browser, the drag, the
+  context menu and the agent interface need no knowledge of panel types. A panel
+  declares a reflected `config_t` AND
   a reflected `stats_t`; the second is not optional, because `scope.stats` and
   `scope.describe_stats` are served by visiting it and a panel without one would
   answer `{}` — which looks exactly like a working panel that has received

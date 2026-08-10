@@ -21,8 +21,9 @@
 // A video panel, a tabular readout, an XY plot: each is one line here. That is
 // the extension path, and it is why Panel's interface talks about accepting a
 // BindingCandidate rather than about signals -- see panel.h.
-#define SCOPE_PANEL_TABLE(X)      \
+#define SCOPE_PANEL_TABLE(X)        \
     X(time_series, TimeSeriesPanel) \
-    X(video, VideoPanel)
+    X(video, VideoPanel)            \
+    X(table, TablePanel)
 
 #endif  // SCOPE_PANEL_TABLE_H_

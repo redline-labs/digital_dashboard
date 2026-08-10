@@ -395,6 +395,136 @@ void testAVideoPanelRoundTripsThroughTheCodec()
     std::filesystem::remove(again);
 }
 
+// A THIRD panel type, whose config carries the two things the video one does
+// not: a reflected ENUM field and a list of sub-structs. Both go through the
+// codec differently from a scalar -- an enum by name, a list as a sequence of
+// maps -- and both are what a table row is made of.
+void testATablePanelRoundTripsThroughTheCodec()
+{
+    const std::filesystem::path path = tempPath("scope_table.yaml");
+
+    scope::scope_workspace_t written;
+    written.name = "table";
+
+    scope::panel_entry_t entry;
+    entry.id = "readout";
+    entry.type = scope::panel_type_t::table;
+
+    TablePanelConfig_t config;
+    config.title = "Now";
+    config.follow_cursor = false;
+    config.show_age = false;
+    config.stale_seconds = 5.5;
+
+    // A dragged column and one left automatic, because the sentinel is the half
+    // that a codec quietly turning -1 into 0 would break -- and a zero-width
+    // value column is a readout with no readings in it.
+    config.value_width = 180.0;
+    config.units_width = -1.0;
+
+    table_row_t row;
+    row.zenoh_key = "nodes/carplay/session";
+    row.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    row.value_expression = "phase";
+    row.label = "session";
+    row.format = cell_format_t::state;
+    row.decimals = 0;
+    config.rows.push_back(row);
+
+    table_row_t second;
+    second.zenoh_key = "vehicle/engine/rpm";
+    second.schema_type = pub_sub::schema_type_t::EngineRpm;
+    second.value_expression = "rpm";
+    second.units = "rpm";
+    second.format = cell_format_t::hex;
+    config.rows.push_back(second);
+
+    entry.config = config;
+    written.panels.push_back(entry);
+
+    expect(scope::save_workspace(written, path.string()), "a table workspace saves");
+
+    const auto loaded = scope::load_workspace(path.string());
+    expect(loaded.has_value(), "and loads back");
+    if (loaded && loaded->panels.size() == 1)
+    {
+        expect(loaded->panels[0].type == scope::panel_type_t::table, "the panel type survived");
+
+        const auto* table = std::get_if<TablePanelConfig_t>(&loaded->panels[0].config);
+        expect(table != nullptr, "and its config is the table alternative, not monostate");
+        if (table != nullptr)
+        {
+            expect(table->title == "Now", "the title survived");
+            expect(!table->follow_cursor, "a non-default bool survived");
+            expect(!table->show_age, "and so did the second one");
+            expect(table->stale_seconds == 5.5, "the staleness limit survived");
+            expect(table->value_width == 180.0, "a dragged column width survived");
+            expect(table->units_width == -1.0,
+                   "and a column left automatic came back automatic rather than as a width");
+            expect(table->rows.size() == 2, "both rows survived");
+            if (table->rows.size() == 2)
+            {
+                expect(table->rows[0].format == cell_format_t::state,
+                       "a row's format enum survived BY NAME, which is the thing a "
+                       "sub-struct in a list gets wrong");
+                expect(table->rows[0].schema_type == pub_sub::schema_type_t::CarPlaySessionState,
+                       "and so did its schema");
+                expect(table->rows[0].decimals == 0,
+                       "zero decimals survived rather than reverting to the -1 default");
+                expect(table->rows[1].format == cell_format_t::hex, "the second row kept its own");
+                expect(table->rows[1].units == "rpm", "and its units");
+            }
+        }
+    }
+
+    const std::filesystem::path again = tempPath("scope_table_again.yaml");
+    expect(loaded.has_value() && scope::save_workspace(*loaded, again.string()),
+           "the reloaded workspace saves again");
+    expect(readFile(path) == readFile(again),
+           "saving a table workspace twice produces identical bytes");
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(again);
+}
+
+// The clamps in the table config's validate() hook. A zero staleness limit marks
+// every row stale the instant it arrives, which reads as a bus that is not
+// delivering rather than as a misconfigured limit.
+void testTheTableConfigClampsItsLimits()
+{
+    TablePanelConfig_t config;
+    config.stale_seconds = 0.0;
+    config.value_width = 4000.0;
+
+    table_row_t row;
+    row.decimals = 42;
+    config.rows.push_back(row);
+
+    const std::vector<std::string> notes = validate(config);
+
+    expect(notes.size() == 3, "every silly value was reported");
+    expect(config.stale_seconds >= 0.05, "a zero staleness limit is clamped");
+    expect(config.value_width == 400.0, "a column wider than the panel it lives in is clamped");
+    expect(config.rows[0].decimals == 9, "a decimal count past what a double carries is clamped");
+
+    // NEGATIVE IS THE SENTINEL, not a tiny column. Clamping it up to the minimum
+    // would turn "size this yourself" into a 24-pixel column nobody asked for,
+    // which is the failure the loader is least likely to be blamed for.
+    TablePanelConfig_t sloppy;
+    sloppy.age_width = -7.0;
+    const std::vector<std::string> quiet = validate(sloppy);
+    expect(sloppy.age_width == -1.0, "any negative width normalises to the automatic sentinel");
+    expect(quiet.empty(), "and is not reported, because its meaning did not change");
+
+    // -1 is the sentinel for "pick a width from the magnitude" and must survive
+    // the clamp rather than being pulled up to zero.
+    TablePanelConfig_t automatic;
+    automatic.rows.push_back(table_row_t{});
+    const std::vector<std::string> none = validate(automatic);
+    expect(automatic.rows[0].decimals == -1, "-1 still means 'decide from the magnitude'");
+    expect(none.empty(), "and is not reported as a problem");
+}
+
 // The clamps in the video config's validate() hook, which panel_registry runs
 // BEFORE construction. Below one keyframe the buffer evicts what it was just
 // given on every push, so the panel shows nothing and reads as a dead publisher
@@ -482,6 +612,8 @@ int main()
     testAMissingConfigBlockDefaultConstructs();
     testAVideoPanelRoundTripsThroughTheCodec();
     testTheVideoConfigClampsUselessBounds();
+    testATablePanelRoundTripsThroughTheCodec();
+    testTheTableConfigClampsItsLimits();
     testAPanelWithNoIdLoadsWithAWarning();
     testAnEmptyWorkspaceIsValid();
 

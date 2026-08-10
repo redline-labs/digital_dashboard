@@ -135,6 +135,18 @@ json describePanel(const ScopeWindow::PanelEntry& entry)
     const QRect rect = entry.panel->geometry();
     out["rect"] = json::array({rect.x(), rect.y(), rect.width(), rect.height()});
 
+    // What this panel holds, whatever kind it is, in the order
+    // `scope.remove_signal` indexes them. Type-agnostic on purpose: a caller
+    // that wants to drop a binding needs the index, and reading it out of a
+    // per-type key would mean learning the type list this file exists not to
+    // have.
+    json bindings = json::array();
+    for (const QString& label : entry.panel->bindingLabels())
+    {
+        bindings.push_back(label.toStdString());
+    }
+    out["bindings"] = std::move(bindings);
+
     if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
     {
         json traces = json::array();
@@ -420,13 +432,11 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 return std::unexpected(badParams("'index' (unsigned) is required."));
             }
 
-            auto* plot = qobject_cast<TimeSeriesPanel*>(entry.value()->panel);
-            if (plot == nullptr)
-            {
-                return std::unexpected(badParams("That panel has no removable signals."));
-            }
-
-            if (!plot->removeSignal(index->get<std::size_t>()))
+            // Through Panel's own interface. It used to cast to
+            // TimeSeriesPanel, so this answered "that panel has no removable
+            // signals" for a video panel holding a stream -- a definite no about
+            // a binding that was definitely there.
+            if (!entry.value()->panel->removeBinding(index->get<std::size_t>()))
             {
                 return std::unexpected(badParams("No signal at that index."));
             }

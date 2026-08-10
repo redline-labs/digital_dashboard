@@ -369,18 +369,20 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
     QAction* add = menu.addAction(tr("Add signal…"));
     add->setObjectName("action_panel_add_signal");
 
-    auto* plot = qobject_cast<TimeSeriesPanel*>(entry->panel);
+    // Through the panel's own interface rather than a cast to one kind. This
+    // used to be a qobject_cast<TimeSeriesPanel*>, so "Remove signal" was
+    // silently missing from every other panel type -- including the video
+    // panel, which had a removeStream() nothing ever called.
+    const std::vector<QString> bindings = entry->panel->bindingLabels();
     QMenu* remove_menu = nullptr;
     std::vector<QAction*> remove_actions;
-    if (plot != nullptr && !plot->getConfig().traces.empty())
+    if (!bindings.empty())
     {
         remove_menu = menu.addMenu(tr("Remove signal"));
         remove_menu->setObjectName("menu_panel_remove_signal");
-        for (const signal_binding_t& binding : plot->getConfig().traces)
+        for (const QString& name : bindings)
         {
-            const std::string& name =
-                binding.label.empty() ? binding.value_expression : binding.label;
-            remove_actions.push_back(remove_menu->addAction(QString::fromStdString(name)));
+            remove_actions.push_back(remove_menu->addAction(name));
         }
     }
 
@@ -412,9 +414,9 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
 
     for (std::size_t i = 0; i < remove_actions.size(); ++i)
     {
-        if (chosen == remove_actions[i] && plot != nullptr)
+        if (chosen == remove_actions[i])
         {
-            plot->removeSignal(i);
+            entry->panel->removeBinding(i);
             return;
         }
     }

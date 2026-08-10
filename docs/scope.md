@@ -23,12 +23,12 @@ There is nothing to see without traffic on the bus. For a car-free bring-up:
 ```
                  TimeBase  ── one render timer for the whole window
                     │         one clock, one cursor, ONE VIEW WINDOW
-       ┌────────────┼────────────┬──────────────┐
-       ▼            ▼            ▼              ▼
-  TimeSeries    TimeSeries      Video      OverviewStrip
-     Panel         Panel        Panel      (the whole recording, and
-       │            │            │          the window drawn on it)
-       └────────────┴────────────┘
+       ┌────────────┼────────────┬──────────────┬──────────────┐
+       ▼            ▼            ▼              ▼              ▼
+  TimeSeries      Table        Video      TimeSeries    OverviewStrip
+     Panel        Panel        Panel         Panel      (the whole recording,
+       │            │            │             │         and the window on it)
+       └────────────┴────────────┴─────────────┘
                     │  SignalBuffer per plotted signal
                     │  RawBuffer    per bound stream
                     ▼
@@ -62,11 +62,13 @@ repointing before releasing leaks every subscription on the old one.
 **Panels are registered in one place.** `scope/include/scope/panel_table.h` is
 the list; the enum, the config variant, **the stats variant**, the Panels menu,
 **the toolbar's Add buttons**, the YAML decoder and the agent interface's idea of
-what exists all derive from it. Adding a tabular or XY panel is one line there
-plus a directory — the registration steps are written out at the top of
+what exists all derive from it. Adding an XY panel is one line there plus a
+directory — the registration steps are written out at the top of
 `scope/include/scope/panel_registry.h`. The `video` panel was the first to go
 through that recipe end to end, and adding it needed **no change to
-`scope_methods.cpp` at all**.
+`scope_methods.cpp` at all**. The `table` panel was the second, and needed one:
+not for anything panel-specific, but to stop `scope.remove_signal` casting to
+`TimeSeriesPanel` — see below.
 
 ## The two bars
 
@@ -158,6 +160,12 @@ never saw a `BindingCandidate`, and a trace that got its labels only when dragge
 would lose them on the next reload. Only a bare field (`phase`) or one list
 element (`values[7]`) resolves — `phase * 2` has left the enum's domain and is a
 number, so it stays a line.
+
+That resolution lives in `scope/include/scope/state_names.h` and is shared with
+the table panel's cells, so a lane and a cell can never disagree about what a
+state is called. A lane only has room for the name when the band is wide enough;
+if you want the word every time, that is what [the table panel](#the-table-panel)
+is for.
 
 ## Lists, and how many elements they have
 
@@ -576,6 +584,167 @@ seek points, which are the instants a scrub lands on exactly.
 Hidden when the source is not seekable. A seek bar that looks draggable and does
 nothing reads as a broken panel.
 
+## The table panel
+
+A readout of what every bound signal is doing **right now**, one row each.
+
+```bash
+./build/scope/scope
+# Panels ▸ Add ▸ Table, then drag fields onto it exactly as you would onto a plot
+```
+
+```
+  Signal          │        Value │    Age
+  ────────────────┼──────────────┼───────
+  phase           │ airplayHands…│  12 ms
+  micActive       │         true │  12 ms
+  rpm             │         6120 │   4 ms
+  oilPressurePsi  │           45 │  3.1 m   ← stale, and coloured for it
+                  ↕              ↕
+                  drag either divider to resize the column right of it
+```
+
+It is the complement of a plot rather than a lesser version of one. A plot
+answers *what has this been doing*; forty signals of that is forty traces nobody
+can read. This answers *what is everything at, this instant* — the question a pit
+wall asks and the one a plot is worst at.
+
+**It takes exactly what a plot takes**, which is the opposite arrangement from
+the video panel's mirror-image `acceptsBinding()`. Two panels accepting the same
+candidate is not a conflict: a drop goes to the panel it landed on, and a browser
+double-click goes to the first panel that will have it, which was already the
+rule. So the same drag fills a plot and a table, and the fields a plot reads
+*worst* are the ones a table reads best.
+
+### An enum reads as its name
+
+A plot draws a state lane and writes the name in the band **when the band is wide
+enough to hold it**; at a tight zoom, or on a state that changes quickly, it is a
+colour and nothing else. A cell always has room for the word. `3` and `iap2` are
+the same number and only one of them is an answer.
+
+The names come from the same resolver the lanes use —
+`scope/include/scope/state_names.h`, hoisted out of the plot when the table
+needed it — so the two cannot disagree about which fields have names, what those
+names are, or that `phase * 2` has left the enum's domain and is a number.
+
+`format` per row is `automatic` (state names for an enum or a bool, a number
+otherwise), `number`, `hex`, or `state`. The overrides matter both ways, as they
+do for a lane: reading an ordinal against a raw CAN trace is legitimate, and so
+is naming a gear number that nothing in the schema marks as a state. `hex` is
+for the status words where the decimal form tells you nothing about which bits
+are set.
+
+### And it says how old the reading is
+
+**This is the one failure mode a table has and a plot does not.** A plot shows the
+line stopping, which is unmissable. A table shows a dead publisher's last value
+in exactly the typeface it shows a live one — so the age column and the stale
+colouring are not decoration, they are what stops this panel from lying.
+`stale_seconds` sets the threshold; `scope.stats` reports `age_seconds` and
+`stale` per row, so it is checkable without a screenshot.
+
+### Which instant "now" is
+
+The **shared** one: the cursor when there is one, otherwise the view's right edge
+— which is the source's clock live and the playhead on a recording. That is the
+whole reason the cursor is shared, and a table is where it pays off most, because
+a table beside a plot beside a video frame is only one coherent picture if all
+three answer for the same instant.
+
+The value is the newest sample **at or before** that instant, held rather than
+interpolated. A reading between two samples is a number nothing published, and
+for a state it is not even wrong — it is a fractional ordinal that names nothing.
+`follow_cursor: false` reads the newest sample instead, which is what you want on
+a live bus with a cursor left parked from an earlier look.
+
+### Resizing the columns
+
+Grab the line between two columns and pull. The cursor turns into a split arrow
+over a divider, and **double-clicking one hands that column back to sizing
+itself** — which is the only discoverable way back from a drag you regret, since
+the value that means "automatic" is a sentinel no user would guess.
+
+The three sized columns pack against the **right** edge and the name column
+absorbs whatever they leave. That is what makes a drag mean one thing: a divider
+moves its own column's left edge, and the name column gives up or takes back the
+difference. There is no `name_width` in the config for the same reason — it has
+no width of its own, and giving it one would be a second way to describe the same
+layout, with no rule for which wins.
+
+`value_width` / `units_width` / `age_width` are pixels, and **-1 means
+automatic** — the same sentinel `decimals` uses on a row. A column nobody has
+touched keeps sizing itself to the panel; one that was dragged stays where it was
+put. A plain default cannot express both: it would freeze every column at a
+number chosen in the source, which is exactly what left `airplayHandshake`
+elided inside a panel with 500 px of empty space in it.
+
+Pixels rather than fractions, because pixels are what was dragged. A fraction
+survives a resize more gracefully and gets the important case backwards: a column
+sized to fit `12 ms` would stop fitting it the moment the dock narrowed. Widths
+are clamped against the panel at paint time instead, so a narrow dock squeezes
+rather than overflows — and the name column keeps a minimum whatever the others
+ask for, because rows of readings with nothing saying what they are readings *of*
+are worse than a value that elides.
+
+A drag stores **what the panel will actually show**, not what the pointer asked
+for. Without that second step a drag past a clamp would save a number that was
+never drawn, and reloading the workspace would appear to move the columns by
+itself.
+
+### Editing a panel keeps the data it already has
+
+**A config change rebinds only the signals that actually changed.** Identity is
+the binding triple — key, schema, expression — which is exactly what `SignalKey`
+is built from, so two rows the source cannot tell apart are two rows this treats
+as the same. A label, a colour, a units suffix, a format, a decimal count, an
+axis, a column width: all presentation, all keep the buffer.
+
+This started as a **data-loss bug**, reported from a live session and worth
+recording because nothing about it looked like a failure:
+
+> Attached Live with a few signals reading correctly. Paused, then added one more
+> signal — and every row in the table went to `--`. Resuming brought the values
+> back, but only from the resume point forwards; everything before it stayed
+> blank.
+
+`addBinding()` rebuilt *every* row, so the existing ones got brand-new empty
+buffers and their history was gone. While the view is paused the readout instant
+is frozen in the past, and a fresh buffer has nothing at or before it — so every
+row correctly reported "nothing here" and the panel looked dead. Resuming moved
+the instant to `now()`, where the refilled buffers did have samples. The stretch
+before the resume was simply gone, because the history covering it had been
+discarded.
+
+Nothing logged it. From the panel's point of view it had just bound successfully,
+three times.
+
+**The plot had the identical bug** — same cause, and there it blanks every line
+already drawn instead of every cell. Its class header had promised the correct
+behaviour ("signals that are unchanged keep their history rather than being torn
+down and restarted") since it was written, while `applyConfig()` did the
+opposite.
+
+Two cases still rebuild everything, because a buffer genuinely cannot be carried
+over: `rebindTo()` (a different source issued the handles) and
+`setHistorySeconds()` (the retention a buffer was constructed with changed). Both
+go through `rebindAll()`, and both are honest about the loss — a buffer cannot
+grow a past it never recorded.
+
+### Taking a binding back
+
+Adding the table exposed a hole in `Panel`: `addBinding()` was virtual from the
+start and **removing one was not**. Both the context menu and
+`scope.remove_signal` cast to `TimeSeriesPanel`, so "Remove signal" was silently
+missing from every other panel kind — including the video panel, which had a
+`removeStream()` that nothing ever called — and the RPC answered *"that panel has
+no removable signals"* about a binding that was plainly there.
+
+`bindingLabels()` and `removeBinding()` are now on `Panel` beside
+`addBinding()`, and `scope.panels` reports `bindings` for every panel whatever
+kind it is. `scope_test_panels` drives both over **every** entry in
+`availablePanelTypes()`, so the next panel cannot reintroduce the hole.
+
 ## Discovery
 
 Topics appear in the picker **as soon as a node starts**, whether or not it has
@@ -689,9 +858,9 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 
 | Method | Purpose |
 |---|---|
-| `scope.panels` | panels, their traces, and the types available |
+| `scope.panels` | panels, their `bindings`, and the types available |
 | `scope.add_panel` / `scope.remove_panel` | compose the window |
-| `scope.add_signal` / `scope.remove_signal` | bind and unbind |
+| `scope.add_signal` / `scope.remove_signal` | bind and unbind, on any kind of panel |
 | `scope.browser` | the topic→field tree, optionally rescanning first |
 | `scope.browser_drag` | drive the drop path itself |
 | `scope.time_base` | the view window: `view` / `pan` / `zoom` / `fit` / `seek`, plus `following`, `window_seconds`, `playing`, `rate`, cursor and caps |
@@ -892,6 +1061,31 @@ ctest --test-dir build -R scope --output-on-failure
   adds a table row without a stats struct, and the failure it prevents is not a
   crash but `scope.stats` answering `{}`, which looks exactly like a working
   panel that has received nothing.
+
+  The same sweep now runs over `bindingLabels()`/`removeBinding()`: every panel
+  kind must accept a candidate, report it under a name a human could pick out of
+  a menu, and give it back. That one is there because the hole it closes was
+  real and silent for two panel types — see [the table panel](#the-table-panel).
+
+  The table panel's own cases assert what a cell **prints**, not just what it
+  holds: `3` renders as `iap2`, `phase * 2` renders as `6`, a sample from *after*
+  the readout instant is not read out at all, and a reading older than
+  `stale_seconds` is still shown and marked. The value and the text are both in
+  `scope.stats` precisely so the mapping between them is assertable.
+
+  Both panels pin the **rebind rule**: adding a signal must not release or
+  rebuild the ones already bound. The assertion is on the source — one bind per
+  signal, nothing released — because that is what fails loudly if a wholesale
+  rebind is reintroduced, and the visible symptom (`--` in every cell, a blank
+  plot) only appears when the view happens to be paused.
+
+  Its column geometry is checked against numbers **worked out from the layout
+  rules in the test**, not read back from the panel — a test that asked the panel
+  where its dividers were and then checked it dragged them there would agree with
+  the arithmetic however wrong it was. That is not hypothetical: writing those
+  numbers out by hand is what found the value column being measured from the
+  units column's *right* edge, so the two overlapped by 42 px whenever units were
+  shown. Reintroducing that one-token bug fails eight assertions.
 
 > **One objectName did not survive.** `transport_scrubber` was a `QSlider` and
 > `overview_strip` is not one, so keeping the name would make an agent that

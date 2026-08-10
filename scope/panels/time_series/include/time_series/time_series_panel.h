@@ -72,6 +72,8 @@ class TimeSeriesPanel : public Panel
     panel_type_t panelType() const override { return kPanelType; }
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
+    std::vector<QString> bindingLabels() const override;
+    bool removeBinding(std::size_t index) override;
     void setTimeBase(TimeBase* time_base) override;
     void setHistorySeconds(double seconds) override;
     void rebindTo(DataSource& source) override;
@@ -86,8 +88,6 @@ class TimeSeriesPanel : public Panel
     // restarted -- the same reasoning as the editor's undo diffing, where
     // rebuilding an untouched widget threw away work for nothing.
     void applyConfig(const config_t& cfg);
-
-    bool removeSignal(std::size_t index);
 
     // What this panel actually received. Harvested generically by
     // panelStatsOf() -- see panel_registry.h -- so the agent interface serves it
@@ -115,8 +115,25 @@ class TimeSeriesPanel : public Panel
   private:
     struct Trace;
 
+    // Reconcile traces_ with cfg_.traces, keeping the buffer -- and therefore
+    // the history -- of every trace that is still there. THE DEFAULT PATH for
+    // any config change, including adding and removing a signal.
+    void syncTraces();
+
+    // The wholesale version: drop everything and bind again. Only for the two
+    // cases where a buffer genuinely cannot be carried over -- a different
+    // source issued the handles, or the retention they were built with changed.
     void rebindAll();
+
     void releaseAll();
+
+    std::unique_ptr<Trace> makeTrace(const signal_binding_t& binding);
+
+    // Re-read the presentation half of a binding: colour, and which of
+    // `display`'s modes the trace is in. Separate from makeTrace() because a
+    // trace that only changed how it DRAWS must not be rebound.
+    void applyPresentation(Trace& trace) const;
+
     void onFrame();
 
     // The rectangle the traces live in: the widget minus the axis gutters.

@@ -27,6 +27,7 @@ add_library(scope_core STATIC
     capture_buffer.cpp
     scope_recorder.cpp
     time_base.cpp
+    state_names.cpp
     panel_registry.cpp
     signal_browser.cpp
     add_signal_dialog.cpp
@@ -61,6 +62,9 @@ add_library(scope_core STATIC
     panels/video/video_scrubber.cpp
     panels/video/include/video/video_panel.h
     panels/video/include/video/video_scrubber.h
+
+    panels/table/table_panel.cpp
+    panels/table/include/table/table_panel.h
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
@@ -69,6 +73,7 @@ target_include_directories(scope_core PUBLIC
     include
     panels/time_series/include
     panels/video/include
+    panels/table/include
 )
 
 # libavcodec for software H.264/H.265 decode of the recorded or live video

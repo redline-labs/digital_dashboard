@@ -208,6 +208,20 @@ bool VideoPanel::addBinding(const BindingCandidate& candidate)
     return true;
 }
 
+std::vector<QString> VideoPanel::bindingLabels() const
+{
+    if (cfg_.zenoh_key.empty())
+    {
+        return {};
+    }
+    return {QString::fromStdString(cfg_.zenoh_key)};
+}
+
+bool VideoPanel::removeBinding(std::size_t index)
+{
+    return index == 0 && removeStream();
+}
+
 bool VideoPanel::removeStream()
 {
     if (cfg_.zenoh_key.empty())
