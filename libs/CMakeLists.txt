@@ -23,6 +23,12 @@ add_subdirectory(can_socketcan)
 # `can`: it uses can::dlc_to_length and implements can::Backend.
 add_subdirectory(can_trc)
 add_subdirectory(can_backends)
+# The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
+# which is only declared later in dbcs/ -- that subdirectory has to follow this
+# one, because the generator it calls is defined in libs/dbc_parser. The forward
+# reference is fine: CMake resolves target names when it generates, not when it
+# reads.
+add_subdirectory(msel)
 
 # Wired CarPlay stack (ported from LIVI, GPL-3.0-or-later).
 # plist comes first: both airplay (binary plists on the RTSP channel) and

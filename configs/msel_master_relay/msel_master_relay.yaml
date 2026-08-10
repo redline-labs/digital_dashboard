@@ -1,0 +1,49 @@
+# MSEL Solid State Master Relay.
+#
+# One relay per node process. The base address is configurable on the device so
+# that several can share a bus; watch two of them by running this node twice
+# with different base_address and topic_prefix values.
+#
+# Run it with:
+#
+#     ./build/nodes/msel_master_relay/msel_master_relay \
+#         --config configs/msel_master_relay/msel_master_relay.yaml
+#
+# See docs/msel_master_relay.md for what the settings services do, and for the
+# one thing that cannot be done from here: every configuration change needs a
+# human holding the external kill switch on the relay while the command is sent.
+
+# Where raw CAN frames come from and go to. These are can_bridge's topics for
+# whichever bus the relay is wired to.
+rx_key: vehicle/can0/rx
+tx_key: vehicle/can0/tx
+
+# Everything this node publishes and serves hangs off here.
+topic_prefix: nodes/msel_master_relay
+
+# The relay's base CAN address. Its three messages sit at base, base+1 and
+# base+3 -- 0x6E4, 0x6E5 and 0x6E7 with the factory default below.
+#
+# If the status topic never updates, this is the first thing to check: a relay
+# that has been re-addressed is silent on the default and looks identical to one
+# that is unpowered.
+base_address: 0x6E4
+
+# Where a remote shutdown frame would be sent. This has to match what the relay
+# was configured to listen on; it is not derived from the base address, and the
+# relay ignores it entirely unless remote shutdown has been enabled on the
+# device itself.
+kill_address: 0x6E6
+
+# Whether this node may transmit a remote shutdown at all.
+#
+# The frame this permits isolates the battery and stops the engine. Leave it
+# false unless you specifically want that capability on the bus. Turning it on
+# is not sufficient by itself -- a caller also has to supply the confirmation
+# token, and the relay has to have remote shutdown enabled in its own settings.
+allow_can_kill: false
+
+# Republish the status topic on a timer even when nothing has changed, in
+# milliseconds. Zero publishes only on receipt, which is the right choice here:
+# the relay already transmits at 10Hz, so a subscriber never waits long.
+status_interval_ms: 0

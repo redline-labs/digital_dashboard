@@ -1,0 +1,151 @@
+VERSION "MSEL Master Relay -- manual Rev 2.0, authored 2026-08-09"
+
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEF_REL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_:
+BU_: Master_Relay
+
+BO_ 1764 Master_Relay_Status: 8 Master_Relay
+   SG_ status : 63|8@0+ (1,0) [0|10] "" Vector__XXX
+   SG_ CAN_kill : 55|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ external_kill : 54|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ driver_kill : 53|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ over_temp_kill : 52|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ high_voltage_warn : 51|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ low_voltage_warn : 50|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ over_current_warn : 49|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ over_temp_warn : 48|1@0+ (1,0) [0|1] "" Vector__XXX
+   SG_ temperature_internal : 39|16@0- (0.1,0) [0|125] "C" Vector__XXX
+   SG_ load_current : 23|16@0- (0.1,0) [-255|600] "A" Vector__XXX
+   SG_ voltage_out : 7|16@0+ (0.01,0) [0|655.35] "V" Vector__XXX
+
+BO_ 1765 Master_Relay_Info: 8 Master_Relay
+   SG_ shutdown_cause_2 : 63|4@0+ (1,0) [0|10] "" Vector__XXX
+   SG_ shutdown_cause : 59|4@0+ (1,0) [0|10] "" Vector__XXX
+   SG_ time_since_shutdown : 55|8@0+ (0.1,0) [0|25.5] "s" Vector__XXX
+   SG_ config_shutdown_delay : 47|8@0+ (0.1,0) [0|25.5] "s" Vector__XXX
+   SG_ config_CAN_kill : 39|2@0+ (1,0) [0|2] "" Vector__XXX
+   SG_ config_CAN_baud : 37|2@0+ (1,0) [0|2] "" Vector__XXX
+   SG_ config_output_drive : 35|4@0+ (1,0) [0|6] "" Vector__XXX
+   SG_ serial_no : 23|16@0+ (1,0) [0|65535] "" Vector__XXX
+   SG_ voltage_in : 7|16@0+ (0.01,0) [0|655.35] "V" Vector__XXX
+
+BO_ 1767 Master_Relay_Switch_State: 2 Master_Relay
+   SG_ current_switch_state : 15|8@0+ (1,0) [0|4] "" Vector__XXX
+
+CM_ "MSEL Solid State Master Relay (Motorsport Electronics Ltd), CAN interface.
+
+Authored in this repository from the Master Relay User's Manual Rev 2.0
+(September 2025), https://msel.co.nz/content/MSEMR_User_Manual.pdf -- tables 5,
+6, 7, 8, 9 and 10. It replaces the vendor's own MSEMR_CAN_Information_141119.dbc
+(dated 2014-11-19), which is eleven years older than that manual and describes a
+device that no longer matches: it has no 0x6E7 message, no value tables, and
+signal ranges that contradict the specification (0-20 V on an 8-30 V device).
+
+THE MESSAGE IDS HERE ARE THE FACTORY DEFAULTS, NOT CONSTANTS. The base CAN
+address is user-configurable (manual, 'Changing the Base CAN Identifier'), and
+these three messages sit at base+0, base+1 and base+3. Anything decoding a relay
+that has been re-addressed must map the observed identifier back onto the
+canonical one before dispatching; libs/msel_master_relay does exactly that, and
+is the reason no consumer should match these numbers directly.
+
+Three things the device does over CAN are deliberately absent here, because a
+DBC cannot express them. The five configuration commands are constant-magic
+frames on a fixed identifier (0x789) whose payload carries each value twice, a
+redundancy no signal definition can check. The remote kill trigger is eight
+constant bytes and has no signals at all. And the response to a configuration
+command arrives on the base status identifier, sharing an id with the periodic
+message above -- two different layouts on one id, which is precisely what a DBC
+has no way to describe. All three live in libs/msel_master_relay/protocol.h,
+next to the tests that pin them against the manual's worked examples.";
+
+CM_ BO_ 1764 "Status and telemetry. Base address + 0, default 0x6E4.
+Transmitted at 10Hz by default, 100Hz if the transmit rate is reconfigured.
+All multi-byte channels are big-endian (MSB first). Manual table 5.";
+CM_ SG_ 1764 status "Current device state. Manual table 8.";
+CM_ SG_ 1764 CAN_kill "Warning bit 0x80: shut down by a remote CAN message.";
+CM_ SG_ 1764 external_kill "Warning bit 0x40: external kill switch triggered.";
+CM_ SG_ 1764 driver_kill "Warning bit 0x20: driver kill switch off.";
+CM_ SG_ 1764 over_temp_kill "Warning bit 0x10: isolated at 110C.";
+CM_ SG_ 1764 high_voltage_warn "Warning bit 0x08: above the 28V upper limit.";
+CM_ SG_ 1764 low_voltage_warn "Warning bit 0x04: below the 7V lower limit.";
+CM_ SG_ 1764 over_current_warn "Warning bit 0x02: over current.";
+CM_ SG_ 1764 over_temp_warn "Warning bit 0x01: above the 90C warning limit.";
+CM_ SG_ 1764 temperature_internal "Internal temperature. Sensitivity 0.2C,
+calibration error +/-3C, specified over 0 to 125C.";
+CM_ SG_ 1764 load_current "Current through the relay, positive when the battery
+is discharging and negative when it is being charged. Accurate to +/-10% or 1A,
+whichever is greater -- a total system draw indication, not a per-device
+measurement. Specified over -255 to 600A.";
+CM_ SG_ 1764 voltage_out "Voltage on the output terminal. The device operates
+between 8 and 30V; the range given is what the 16-bit raw value can represent,
+since the vendor specifies no narrower one.";
+
+CM_ BO_ 1765 "Serial number, live configuration readback, and shutdown history.
+Base address + 1, default 0x6E5. Manual table 6.";
+CM_ SG_ 1765 shutdown_cause_2 "Cause of the second to last shutdown, using the
+status enumeration. Only populated from serial number 61061 onward; earlier
+units report the last event alone.";
+CM_ SG_ 1765 shutdown_cause "Cause of the last shutdown, using the status
+enumeration.";
+CM_ SG_ 1765 time_since_shutdown "Time since the last shutdown event.";
+CM_ SG_ 1765 config_shutdown_delay "How long power is held up after a shutdown
+event, so data loggers can flush before the battery is isolated. Default 1.0s.
+This is the one setting that takes effect without a power cycle. An over current
+event ignores it and disconnects immediately.";
+CM_ SG_ 1765 config_CAN_kill "Whether the device accepts a remote CAN shutdown.
+Disabled from the factory. Manual table 10.";
+CM_ SG_ 1765 config_CAN_baud "Configured bus rate. Changing this needs a power
+cycle, and the rest of the bus has to move with it or the relay disappears.";
+CM_ SG_ 1765 config_output_drive "PDM/ECU output drive configuration. Value 3 is
+not assigned. Manual tables 2 and 21.";
+CM_ SG_ 1765 serial_no "Serial number. 64666 and above (firmware 2.0F) also
+transmit Master_Relay_Switch_State, and are identifiable by black torx drive
+screws on the top of the unit.";
+CM_ SG_ 1765 voltage_in "Voltage on the input (battery) terminal.";
+
+CM_ BO_ 1767 "Current calibration and external switch mode. Base address + 3,
+default 0x6E7. Only transmitted by units at serial number 64666 or above, so its
+absence is normal on older hardware rather than a fault. Manual table 7.
+
+Declared as 2 bytes because the manual documents only bytes 0 and 1. That is
+also the safe choice: a message declared shorter than the device sends still
+decodes, whereas one declared longer silently rejects every frame.";
+CM_ SG_ 1767 current_switch_state "Manual table 9.";
+
+VAL_ 1764 status 10 "Power_On_Reset" 9 "CAN_Trigger_Kill" 8 "External_Switch_Kill" 7 "Driver_Switch_Kill" 6 "Over_Temperature_Kill" 5 "High_Voltage_Warning" 4 "Low_Voltage_Warning" 3 "Over_Current_Warning" 2 "Over_Temperature_Warning" 1 "Normal";
+VAL_ 1765 shutdown_cause 10 "Power_On_Reset" 9 "CAN_Trigger_Kill" 8 "External_Switch_Kill" 7 "Driver_Switch_Kill" 6 "Over_Temperature_Kill" 5 "High_Voltage_Warning" 4 "Low_Voltage_Warning" 3 "Over_Current_Warning" 2 "Over_Temperature_Warning" 1 "Normal";
+VAL_ 1765 shutdown_cause_2 10 "Power_On_Reset" 9 "CAN_Trigger_Kill" 8 "External_Switch_Kill" 7 "Driver_Switch_Kill" 6 "Over_Temperature_Kill" 5 "High_Voltage_Warning" 4 "Low_Voltage_Warning" 3 "Over_Current_Warning" 2 "Over_Temperature_Warning" 1 "Normal";
+VAL_ 1765 config_CAN_kill 2 "ADR" 1 "Enabled" 0 "Disabled";
+VAL_ 1765 config_CAN_baud 2 "Baud_250_Kbps" 1 "Baud_500_Kbps" 0 "Baud_1_Mbps";
+VAL_ 1765 config_output_drive 6 "Active_Lo_Low_Side" 5 "Active_Lo_High_Side" 4 "Active_Lo_Half_Bridge" 2 "Active_Hi_Low_Side" 1 "Active_Hi_High_Side" 0 "Active_Hi_Half_Bridge";
+VAL_ 1767 current_switch_state 4 "Legacy_Cal_Internal_External_Switch" 3 "Legacy_Cal_Normal_External_Switch" 2 "Normal_Cal_Internal_External_Switch" 1 "Normal_Cal_Normal_External_Switch";
