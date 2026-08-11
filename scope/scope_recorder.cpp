@@ -95,6 +95,16 @@ bool ScopeRecorder::isValid() const
     return impl_->subscriber && impl_->subscriber->isValid();
 }
 
+void ScopeRecorder::stop()
+{
+    // The subscriber only. Its destructor joins the in-flight callbacks, so
+    // after this line nothing is pushing into `buffer` -- which is what makes it
+    // safe for a CaptureProvider to be handed a pointer to it and read from the
+    // GUI thread without the mutex being contended by an RX thread that no
+    // longer exists.
+    impl_->subscriber.reset();
+}
+
 CaptureBuffer& ScopeRecorder::buffer()
 {
     return impl_->buffer;

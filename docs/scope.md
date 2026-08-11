@@ -5,17 +5,25 @@ what it has been *doing*.
 
 ```bash
 cmake --build build --target scope
-./build/scope/scope                                    # empty, pick signals live
+./build/scope/scope                                     # OFFLINE and empty — the default
+./build/scope/scope --bag drives/2026-08-06             # offline, over a recording
+./build/scope/scope --online                            # attach to the bus and capture
 ./build/scope/scope -c configs/scope/engine_demo.yaml   # a saved workspace
-./build/scope/scope --bag drives/2026-08-06             # review a recording
 ./build/scope/scope --mcp                               # headless, agent-driven
 ```
 
-There is nothing to see without traffic on the bus. For a car-free bring-up:
+**Scope starts OFFLINE and does not open a zenoh session until you ask it to.**
+Load a bag to scrub through, or press `Offline` on the toolbar to go online and
+watch the live bus. `--online` is the startup form; it is mutually exclusive
+with `--bag`, because a bag is an offline source and asking for both asks for
+two different things.
+
+There is nothing to see online without traffic on the bus. For a car-free
+bring-up:
 
 ```bash
 ./build/mock_data/test_data_publisher &
-./build/scope/scope -c configs/scope/engine_demo.yaml
+./build/scope/scope -c configs/scope/engine_demo.yaml --online
 ```
 
 ## The shape of it
@@ -75,15 +83,35 @@ not for anything panel-specific, but to stop `scope.remove_signal` casting to
 **The top bar is about mode and composition; the bottom bar is about time.**
 
 ```
-[● Live][Review ▾]  ⏺ 41 s captured   ∿ Time Series   − + ⤢ Fit   Open Save   Signals
+[Offline ▾][Load Recording…]  drives/2026-08-10 · 412 s   ∿ Time Series   − + ⤢ Fit   Open Save   Signals
+[● Online ▾][Load Recording…]  ⏺ capturing · 41k messages  ∿ Time Series   − + ⤢ Fit   Open Save   Signals
 ```
 
-`Review` enters the in-memory capture in one click — "the last live session",
-which is the case worth making cheap — and its dropdown holds Open Recording…
-and Save Recording…. Both buttons are checked from **the source**, never from
-the click that changed it, so a swap made by `--bag` at startup, by the agent
-interface, or by an open that failed leaves the toolbar saying what is actually
-behind the panels.
+**One button for one bit of state, and it reads the state it is IN.** A window
+is online exactly when its source tails the bus; there is nothing else to store.
+`Offline` / `● Online` rather than a Go Online / Go Offline label, because a
+button named for its action has to be read together with its checked state to
+know which way round it is, and half the people reading it will get that wrong.
+
+It replaced a checkable pair (`mode_live` / `mode_review`) — a hand-rolled radio
+group for a boolean, whose two halves were free to disagree.
+
+The dropdown holds Load Recording…, Review Session Capture and Save Recording…,
+and `Load Recording…` is also promoted onto the bar in its own right: with
+offline as the default, opening a bag is the primary action of a freshly started
+window, and it used to be two clicks deep behind a button labelled "Review" — a
+word that does not say "bag" to anyone looking for one.
+
+The toggle is checked from **the source**, never from the click that changed it,
+so a swap made by `--bag` at startup, by the agent interface, by an open that
+failed or by a transition the user cancelled leaves the toolbar saying what is
+actually behind the panels.
+
+The chip beside it says **what is behind the panels** — the bag and its duration,
+the session capture, or `nothing loaded`. It is not the capture's state: that is
+`transport_status` at the other end of the window, and this label used to render
+the same string from the same line of code. One string rendered twice in one
+window is a tell that one of the two has no job of its own.
 
 Everything on it is the **same `QAction`** the menus already own, not a copy.
 One action means one objectName, one handler and one enabled-state, so the
@@ -388,10 +416,15 @@ both halves of that.
 
 ## Capture, and reviewing it
 
-Scope records **the whole bus** into memory from the moment it starts — `**`,
-no exclusions. That is the point: a signal nobody thought to plot can still be
+While it is **online**, scope records **the whole bus** into memory — `**`, no
+exclusions. That is the point: a signal nobody thought to plot can still be
 added afterwards, and a filter taken from the panels would only ever capture
 what was already on screen.
+
+Offline it records nothing, and opens no zenoh session at all. A window that
+joined the bus before anyone asked would make "Offline" a label rather than a
+fact — and scope is a diagnostic tool, so an instance that quietly attaches to
+the system you are measuring is exactly what you do not want running unattended.
 
 The capture is bounded by **bytes and time, whichever binds first**, evicting
 oldest. Both bounds are needed and for different workloads:
@@ -411,12 +444,24 @@ not started yet. `bag record` already treats it that way, and a saved capture
 records the eviction count as the bag's `dropped_messages`, because from the
 file's point of view that is exactly what it is.
 
-**Capture keeps running while you review it.** Deciding to look at something
-must not cost you everything that happens while you look. The consequence is
-that the provider's span **moves underneath the overview strip** — so the strip
-re-reads the extent every frame, and its cached histogram carries the range it
-was counted over so a stale one stays in the right place rather than smeared
-across a range it never described.
+**The capture is a snapshot of the online session, not a tail.** It starts when
+you go online and stops when you go offline, so reviewing it does not grow it.
+
+This is the cost side of making "Offline" mean something. The capture used to
+keep running while you reviewed it — deciding to look at something did not cost
+you what happened while you looked — but that only worked because scope was on
+the bus from the moment it launched, whatever the toolbar said. With offline as
+the default and the honest meaning attached to it, **the interval you spend
+scrubbing is not captured**, and a rare event you went back online to catch can
+be missed. Go back online before you need the next one.
+
+`ScopeRecorder::stop()` drops **the subscriber only** and keeps the
+`CaptureBuffer`, which is the part that has to stay that way: going offline hands
+the panels a `RecordedSource` over a `CaptureProvider` holding a pointer into
+that buffer. Destroying the recorder instead would leave it reading freed memory
+on the next render tick — a use-after-free that draws plausible data rather than
+crashing. The buffer is dropped only when a NEW online session starts, and only
+after an unsaved-capture prompt.
 
 Saving goes through `bag::BagWriter`, so the result is an ordinary bag: `bag
 info`, `bag verify`, `bag play` and Foxglove all work on it, with the schema
@@ -869,16 +914,18 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 | `scope.stats` | what each panel has RECEIVED, whatever kind it is |
 | `scope.describe_stats` | what fields `scope.stats` will return for that panel |
 | `scope.save` / `scope.load` | workspaces |
-| `scope.source` | which kind of source is behind the panels, and `decodes_pending` |
-| `scope.open_recording` / `scope.go_live` | review a bag directory, or return to the bus |
-| `scope.capture` | messages, bytes, retained span, **evicted** |
-| `scope.review_capture` / `scope.save_recording` | review the capture; write it out as a bag |
+| `scope.source` | `mode` (online/offline), `kind` (live/recorded/empty), and `decodes_pending` |
+| `scope.set_mode` | `{"mode": "online"}` attaches to the bus and starts capturing; `"offline"` detaches and lands on the capture |
+| `scope.open_recording` | open a bag directory — implies offline |
+| `scope.capture` | messages, bytes, retained span, **evicted**; `running: false` once offline |
+| `scope.review_capture` / `scope.save_recording` | review the session capture; write it out as a bag |
 | `scope.sample_stats` | the time-series half of `scope.stats`, under its historical name |
 
 The loop that closes fastest:
 
 ```
 app_launch(app="scope")
+scope_source(online=True)     # FIRST. A window starts offline and sees no topics.
 scope_add_panel(type="time_series", id="plot1")
 scope_browser(rescan=true)
 scope_add_signal(panel="plot1", zenoh_key="vehicle/engine/rpm", field="rpm")
@@ -955,7 +1002,7 @@ vehicle: its test pattern has a **sweeping box whose position is a pure function
 of the frame index**, so the picture is a readable clock.
 
 ```
-app_call("scope.review_capture")
+app_call("scope.set_mode", {"mode": "offline"})   # stops the capture, lands on it
 app_call("scope.time_base", {"window_seconds": 5})
 app_call("scope.time_base", {"seek": 20})
 ui_screenshot(target="video_panel")            # note the hash

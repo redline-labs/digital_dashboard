@@ -1282,11 +1282,16 @@ def scope_source(
     path: Annotated[
         str | None, Field(default=None, description="Bag DIRECTORY to review.")
     ] = None,
-    go_live: Annotated[
-        bool, Field(default=False, description="Return to the live bus.")
-    ] = False,
+    online: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="True attaches to the bus and starts capturing; False detaches and "
+            "lands on the session capture.",
+        ),
+    ] = None,
     review_capture: Annotated[
-        bool, Field(default=False, description="Review what has been captured since startup.")
+        bool, Field(default=False, description="Review what the online session captured.")
     ] = False,
     save_to: Annotated[
         str | None, Field(default=None, description="Write the capture out as a bag directory.")
@@ -1294,24 +1299,27 @@ def scope_source(
 ) -> str:
     """Report or change what is behind the panels: the bus, a bag, or the capture.
 
-    Scope records the WHOLE BUS into memory from the moment it starts, so
-    `review_capture` reaches signals nobody thought to plot at the time. Capture
-    keeps running while you review it -- deciding to look at something must not
-    cost you everything that happens while you look.
+    Scope starts OFFLINE and opens no zenoh session until you set `online=True`.
+    Going online starts a capture of the WHOLE BUS, so `review_capture` reaches
+    signals nobody thought to plot at the time.
 
-    With no arguments this reports the current source, including
-    `decodes_pending`: a recorded source decodes each signal once on a
-    background thread, so anything reading `sample_stats` or taking a screenshot
-    before that reaches zero is looking at an unfinished picture rather than a
-    broken one.
+    The capture is a SNAPSHOT of the online session, not a tail: going offline
+    stops it. So the interval you spend scrubbing is not captured -- go back
+    online before you need the next one.
+
+    With no arguments this reports the current source: `mode` (online/offline),
+    `kind` (live/recorded/empty) and `decodes_pending`. A recorded source decodes
+    each signal once on a background thread, so anything reading `sample_stats`
+    or taking a screenshot before that reaches zero is looking at an unfinished
+    picture rather than a broken one.
     """
     try:
         if path is not None:
             _call(SCOPE_APP, "scope.open_recording", {"path": path})
         elif review_capture:
             _call(SCOPE_APP, "scope.review_capture", {})
-        elif go_live:
-            _call(SCOPE_APP, "scope.go_live", {})
+        elif online is not None:
+            _call(SCOPE_APP, "scope.set_mode", {"mode": "online" if online else "offline"})
         if save_to is not None:
             _call(SCOPE_APP, "scope.save_recording", {"path": save_to})
         return json.dumps(_call(SCOPE_APP, "scope.source", {}), indent=2)

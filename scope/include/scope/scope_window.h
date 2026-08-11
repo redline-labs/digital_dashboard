@@ -85,8 +85,12 @@ class ScopeWindow : public QMainWindow
     // the DataSource seam was for.
     void setSource(std::unique_ptr<DataSource> source);
 
-    // Review a recording on disk: a bag DIRECTORY, from `bag record` or from
+    // Open a recording on disk: a bag DIRECTORY, from `bag record` or from
     // scope's own Save Recording. Dialog-free, per the layer split above.
+    //
+    // Puts the window OFFLINE, because a bag is an offline source -- and stops
+    // the capture for the same reason going offline does. The captured buffer
+    // is kept, so Review Session Capture can still reach it.
     //
     // False when the directory is not a readable bag, leaving the current
     // source untouched -- a failed open must not drop the window into a review
@@ -96,21 +100,49 @@ class ScopeWindow : public QMainWindow
     // The wrapper. False when the user cancelled.
     bool openRecordingDialog();
 
-    // Back to the live bus, whatever was being reviewed.
-    void goLive();
+    // ---------------------------------------------------------------- mode
+    //
+    // ONE bit of state, derived from the source and never stored: a window is
+    // online exactly when its source is tailing the bus. Storing it separately
+    // is how a mode indicator ends up disagreeing with what is behind the
+    // panels after an open that failed.
 
-    // Is the current source a recording rather than the bus?
-    bool isReviewing() const;
+    // Attach to the live bus and start a FRESH capture.
+    //
+    // False when the user declined at the unsaved-capture prompt, which is the
+    // one thing that can refuse: starting a new session discards the previous
+    // capture, and a capture cannot be re-made.
+    bool goOnline();
+
+    // Detach from the bus and stop capturing.
+    //
+    // Lands on the session capture when there is one, because leaving online is
+    // almost always "let me look at what just happened"; on an EmptySource when
+    // there is not. The capture's buffer OUTLIVES the recorder's subscriber --
+    // see ScopeRecorder::stop() -- which is what makes landing on it safe.
+    void goOffline();
+
+    // Is the source tailing the bus?
+    bool isOnline() const;
 
     // ------------------------------------------------------------- capture
 
-    // Review scope's OWN capture -- what it has been recording off the bus
-    // since it started. False when there is nothing captured yet.
+    // Review scope's OWN capture -- what it recorded off the bus during the
+    // online session. False when there is nothing captured yet.
     //
-    // Capture KEEPS RUNNING while it is being reviewed. Stopping it would mean
-    // that deciding to look at something costs you everything that happened
-    // while you looked, which is the wrong way round.
+    // The capture is a SNAPSHOT, not a tail: it runs only while the window is
+    // online, so reviewing it puts the window offline and the buffer stops
+    // growing. The alternative -- keeping the subscriber alive so the capture
+    // grows while you scrub it -- was rejected because it makes "offline" a
+    // claim the process does not honour: an offline window would still be on the
+    // bus. The cost is real and worth stating: the interval you spend looking is
+    // not captured, so a rare event you go back online to catch can be missed.
     bool reviewCapture();
+
+    // Is there a capture with anything in it? What the Review and Save
+    // Recording actions are enabled from, so a button that cannot work is
+    // disabled rather than silently doing nothing.
+    bool hasCapture() const;
 
     // Write the capture out as an ordinary bag directory. Dialog-free.
     bool saveCaptureTo(const QString& directory);
@@ -197,11 +229,26 @@ class ScopeWindow : public QMainWindow
     // and true, with a warning, when there is nobody to ask.
     bool confirmDiscardChanges(const QString& action);
 
+    // The capture half of the above, on its own, because going online destroys
+    // a capture without touching the workspace. Asking about the workspace there
+    // too would train the user to dismiss a prompt that means something else.
+    bool confirmDiscardCapture(const QString& action);
+
   protected:
     void closeEvent(QCloseEvent* event) override;
 
   private:
     void buildMenuBar();
+
+    // The central area: the offline landing screen and the "no panels yet"
+    // hint, which are two different messages and used to be one label.
+    //
+    // "Offline with nothing loaded" is a state worth explaining rather than
+    // merely indicating, because it is now the state every window starts in.
+    // A hint that only said "No panels yet" left the mode unmentioned on the
+    // one screen where it decides what the user should do next.
+    void buildCentralArea();
+
     void showPanelMenu(const QString& panel_id, const QPoint& at);
     void buildTransportBar();
 
@@ -247,6 +294,19 @@ class ScopeWindow : public QMainWindow
     void refreshDensity();
 
     void updateEmptyHint();
+
+    // What the top bar's chip says about the current source. Cheap enough to
+    // run from applySourceCaps() and from the render tick, because online it
+    // has to count a growing capture.
+    void updateSourceChip();
+
+    // Enable or disable the actions that need something to act on: reviewing
+    // and saving a capture that does not exist yet. A disabled action is how a
+    // control says "not now"; the alternative -- staying enabled and doing
+    // nothing but a status-bar line -- is what the old Review button did, and
+    // it reads as a broken app rather than an unavailable one.
+    void updateModeActions();
+
     void updateWindowTitle();
     QString uniqueId(panel_type_t type) const;
 
@@ -267,6 +327,13 @@ class ScopeWindow : public QMainWindow
     // can be re-made by hand, a capture cannot be re-made at all.
     bool capture_saved_ = false;
 
+    // What the offline source is, for the top bar's chip: a bag's directory
+    // name and duration, or empty when the source is the capture or nothing.
+    // Held rather than re-derived because a RecordedSource does not know where
+    // it came from -- it has a provider, and a CaptureProvider has no path at
+    // all.
+    QString source_label_;
+
     std::uint64_t capture_max_bytes_ = 0;
     double capture_max_seconds_ = 0.0;
 
@@ -281,13 +348,31 @@ class ScopeWindow : public QMainWindow
     QDoubleSpinBox* window_spin_ = nullptr;
     QLabel* cursor_label_ = nullptr;
 
-    // The mode control. Checked from the SOURCE in applySourceCaps(), never
-    // from the click that caused the change -- so a source swapped by the agent
-    // interface, by --bag at startup or by a failed open leaves the toolbar
-    // saying what is actually behind the panels.
-    QToolButton* mode_live_ = nullptr;
-    QToolButton* mode_review_ = nullptr;
-    QLabel* capture_chip_ = nullptr;
+    // The mode control: ONE button for one bit of state, checked when online.
+    //
+    // Its checked state is set from the SOURCE in applySourceCaps(), never from
+    // the click that caused the change -- so a source swapped by the agent
+    // interface, by --bag at startup, by an open that failed or by a transition
+    // the user cancelled leaves the toolbar saying what is actually behind the
+    // panels. A button left tracking its own clicks would be wrong in exactly
+    // the cases where being right matters.
+    //
+    // It replaced a checkable pair (`mode_live` / `mode_review`), which was a
+    // hand-rolled radio group for a boolean and left the two halves free to
+    // disagree.
+    QToolButton* mode_toggle_ = nullptr;
+
+    // What is behind the panels, in words: the bag, the capture, or nothing.
+    //
+    // NOT the capture's state -- that is transport_status_ on the bottom bar,
+    // and this label used to duplicate it verbatim. Two widgets rendering one
+    // string from one function is a tell that one of them has no job.
+    QLabel* source_chip_ = nullptr;
+
+    // Where the offline landing screen lives, shown when the window is offline
+    // with nothing loaded. The one place the mode is explained rather than
+    // merely indicated.
+    QWidget* empty_panel_ = nullptr;
 
     // The two control sets. QToolBar::addWidget hands back the QAction that
     // owns the widget's place in the bar, and hiding that is what removes the

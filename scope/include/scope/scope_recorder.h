@@ -41,8 +41,22 @@ class ScopeRecorder
     ScopeRecorder& operator=(const ScopeRecorder&) = delete;
 
     // False when the subscription could not be declared -- no bus, or a session
-    // that would not open. The window keeps working; it simply has no capture.
+    // that would not open -- and false once stop() has been called. The window
+    // keeps working; it simply has no capture.
     bool isValid() const;
+
+    // Stop capturing, KEEPING everything captured so far.
+    //
+    // The subscriber goes and the CaptureBuffer stays, and that split is the
+    // whole point: going offline hands the panels a RecordedSource over a
+    // CaptureProvider, which holds a POINTER INTO THIS BUFFER. Destroying the
+    // recorder instead would leave that provider reading freed memory on the
+    // next render tick -- and reading a deque that was valid a moment ago is the
+    // kind of use-after-free that draws plausible data rather than crashing.
+    //
+    // Idempotent, and destroying the subscriber joins its in-flight callbacks,
+    // so nothing is writing into the buffer by the time this returns.
+    void stop();
 
     CaptureBuffer& buffer();
     const CaptureBuffer& buffer() const;

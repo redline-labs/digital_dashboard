@@ -30,6 +30,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
+#include <QLabel>
 #include <QTreeWidget>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -1917,29 +1918,120 @@ void testTheToolbarOffersEveryPanelType()
     }
 }
 
-void testTheModeButtonsFollowTheSourceNotTheClick()
+void testTheModeToggleFollowsTheSourceNotTheClick()
 {
     scope::ScopeWindow window;
 
-    auto* live = window.findChild<QToolButton*>("mode_live");
-    auto* review = window.findChild<QToolButton*>("mode_review");
-    expect(live != nullptr && review != nullptr, "the mode control exists");
-    if (live == nullptr || review == nullptr)
+    auto* toggle = window.findChild<QToolButton*>("mode_toggle");
+    auto* action = window.findChild<QAction*>("action_online");
+    expect(toggle != nullptr && action != nullptr, "the mode control exists");
+    if (toggle == nullptr || action == nullptr)
     {
         return;
     }
 
-    expect(live->isChecked(), "a fresh window is live");
-    expect(!review->isChecked(), "and not reviewing");
+    expect(!toggle->isChecked(), "a fresh window is offline");
+    expect(!window.isOnline(), "and says so");
+    expect(toggle->text() == QStringLiteral("Offline"),
+           "the button reads the state it is in, not the action it performs");
 
-    // Swapped WITHOUT going near the buttons, which is what --bag at startup and
-    // the agent interface both do. A pair of buttons tracking only their own
-    // clicks would still be claiming Live here.
-    auto seekable = std::make_unique<SeekableStub>();
-    window.setSource(std::move(seekable));
+    // Swapped WITHOUT going near the control, which is what --bag at startup and
+    // the agent interface both do. A button tracking only its own clicks would
+    // still be claiming whatever was last pressed.
+    window.setSource(std::make_unique<SeekableStub>());
 
-    expect(!live->isChecked(), "a source swapped from elsewhere unchecks Live");
-    expect(review->isChecked(), "and checks Review");
+    expect(!toggle->isChecked(), "a recording swapped in from elsewhere is still offline");
+    expect(!action->isChecked(), "and the menu item agrees with the button");
+
+    // The live case, from the same direction. Nothing here touches the toggle.
+    window.setSource(std::make_unique<StubSource>());
+
+    expect(toggle->isChecked(), "a live source swapped in from elsewhere checks the toggle");
+    expect(action->isChecked(), "and the menu item follows it");
+    expect(toggle->text() == QStringLiteral("● Online"), "and the label follows too");
+}
+
+void testAFreshWindowIsOfflineWithNothingLoaded()
+{
+    // The default that everything else here depends on. A window that opened a
+    // zenoh session before anyone asked would make "Offline" a label rather than
+    // a fact -- and there is no assertion that can see a session from here, so
+    // this pins the observable consequences instead: no capture, nothing to
+    // review, and a source that is neither live nor seekable.
+    scope::ScopeWindow window;
+
+    expect(!window.isOnline(), "a fresh window is offline");
+    expect(window.recorder() == nullptr, "with no recorder at all");
+    expect(!window.hasCapture(), "and nothing to review");
+
+    const scope::SourceCaps caps = window.source().caps();
+    expect(!caps.live && !caps.seekable, "over a source that is neither live nor seekable");
+    expect(window.source().topics().empty(), "offering no topics");
+
+    // Both actions act on a capture that does not exist. Enabled, they would
+    // answer a click with a status-bar line, which reads as a broken app rather
+    // than an unavailable one -- and on a freshly started window that was every
+    // click.
+    auto* review = window.findChild<QAction*>("action_review_capture");
+    auto* save = window.findChild<QAction*>("action_save_recording");
+    expect(review != nullptr && !review->isEnabled(), "Review Session Capture is disabled");
+    expect(save != nullptr && !save->isEnabled(), "and so is Save Recording");
+
+    // The landing screen outranks the panel hint: adding a panel over nothing
+    // draws an empty plot, which looks exactly like a signal that is not
+    // publishing.
+    auto* offline_hint = window.findChild<QWidget*>("offline_hint");
+    auto* empty_hint = window.findChild<QLabel*>("empty_hint");
+    expect(offline_hint != nullptr && offline_hint->isVisibleTo(&window),
+           "the offline landing screen is shown");
+    expect(empty_hint != nullptr && !empty_hint->isVisibleTo(&window),
+           "and the no-panels hint is not, because it is the lesser problem");
+}
+
+void testTheOfflineHintDoesNotSqueezeThePanels()
+{
+    // QMainWindow honours the central widget's minimum before it gives anything
+    // to the docks, so a hint wide enough to read costs every plot in the window
+    // the width it needs. This is not hypothetical: growing the hint from one
+    // label into a label and two buttons squeezed the panels from 637 px to 160
+    // and broke three geometry tests on mouse positions that no longer landed
+    // where they used to.
+    //
+    // Measured on the PANEL, not on the hint, because the panel is what the
+    // squeeze costs and what every geometry test downstream depends on. The
+    // window is 1280 wide and the signal browser takes ~260 of it, so anything
+    // above 400 means the hint is not the thing deciding the layout.
+    scope::ScopeWindow window;
+    scope::TimeSeriesPanel* panel = readyPanel(window, "probe");
+
+    auto* offline_hint = window.findChild<QWidget*>("offline_hint");
+    expect(offline_hint != nullptr && !offline_hint->isVisibleTo(&window),
+           "the offline hint yields the central area once there are panels");
+    expect(panel->width() > 400, "so a panel keeps a usable width");
+}
+
+void testGoingOfflineLandsOnTheSessionCapture()
+{
+    // The round trip, with the capture stubbed out of the picture: going online
+    // needs a bus, which this test does not have, so the transition is driven
+    // through setSource() the way --bag and the agent interface drive it, and
+    // what is checked is the part that does not need one.
+    scope::ScopeWindow window;
+
+    // No capture, so going offline from a live source has nothing to land on and
+    // must land on an EMPTY source rather than on a recording of nothing.
+    window.setSource(std::make_unique<StubSource>());
+    expect(window.isOnline(), "the stub live source is online");
+
+    window.goOffline();
+
+    expect(!window.isOnline(), "going offline leaves the bus");
+    const scope::SourceCaps caps = window.source().caps();
+    expect(!caps.seekable, "and lands on nothing rather than on a recording of nothing");
+
+    auto* review = window.findChild<QAction*>("action_review_capture");
+    expect(review != nullptr && !review->isEnabled(),
+           "with Review still disabled, because there is still no capture");
 }
 
 void testPauseFollowsAPanRatherThanOnlyItsOwnClicks()
@@ -2535,7 +2627,10 @@ int main(int argc, char** argv)
 
     testTheToolbarReusesTheMenusActions();
     testTheToolbarOffersEveryPanelType();
-    testTheModeButtonsFollowTheSourceNotTheClick();
+    testTheModeToggleFollowsTheSourceNotTheClick();
+    testAFreshWindowIsOfflineWithNothingLoaded();
+    testTheOfflineHintDoesNotSqueezeThePanels();
+    testGoingOfflineLandsOnTheSessionCapture();
     testPauseFollowsAPanRatherThanOnlyItsOwnClicks();
     testNavigationActionsMoveTheSharedWindow();
 

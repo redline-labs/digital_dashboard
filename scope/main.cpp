@@ -94,7 +94,7 @@ int main(int argc, char** argv)
 
     // AFTER the workspace, so `--config w.yaml --bag drives/today` opens the
     // recording with the workspace's panels already there and binds them to it.
-    // The other order would bind them to the live bus and then throw the
+    // The other order would bind them to an empty source and then throw the
     // bindings away.
     if (!args->bag_path.empty())
     {
@@ -103,6 +103,15 @@ int main(int argc, char** argv)
             SPDLOG_CRITICAL("Failed to open recording '{}'.", args->bag_path);
             return -1;
         }
+    }
+
+    // The window starts OFFLINE and opens no zenoh session on its own, so this
+    // is the only thing that puts a freshly launched scope on the bus. Mutually
+    // exclusive with --bag, which parseCommandLineArgs() has already refused.
+    if (args->start_online && !window.goOnline())
+    {
+        SPDLOG_CRITICAL("Failed to go online.");
+        return -1;
     }
 
     window.show();

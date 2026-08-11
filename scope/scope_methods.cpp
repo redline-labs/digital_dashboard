@@ -773,7 +773,15 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         const SourceCaps caps = win->source().caps();
 
         json out;
-        out["kind"] = caps.live ? "live" : "recorded";
+
+        // The MODE is the thing a caller usually wants, and it is one bit:
+        // online exactly when the source tails the bus. `kind` says which of
+        // the two OFFLINE sources it is, because "recorded" and "nothing
+        // loaded" are answered identically by caps() -- both are non-live and
+        // the empty one is not seekable either -- and a caller that could not
+        // tell them apart would read an empty window as a bag full of silence.
+        out["mode"] = win->isOnline() ? "online" : "offline";
+        out["kind"] = caps.live ? "live" : (caps.seekable ? "recorded" : "empty");
         out["caps"] = json{{"live", caps.live},
                            {"seekable", caps.seekable},
                            {"t_begin", caps.t_begin},
@@ -830,11 +838,50 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
+    // Replaced `scope.go_live`, and the old name is GONE rather than aliased.
+    //
+    // An alias would have kept working while meaning something subtly different:
+    // go_live used to be "stop reviewing", with a capture that ran regardless,
+    // and it now has to be "attach to the bus and start capturing". A caller
+    // that still said go_live would get the new behaviour under the old name --
+    // which is the failure that looks like a broken app rather than a renamed
+    // one, and is exactly what the transport_scrubber rename avoided.
     server.registerMethod(
-        "scope.go_live",
-        [win](const json& /*params*/) -> MethodResult {
-            win->goLive();
-            return json{{"live", !win->isReviewing()}};
+        "scope.set_mode",
+        [win](const json& params) -> MethodResult {
+            const auto mode = params.find("mode");
+            if (mode == params.end() || !mode->is_string())
+            {
+                return std::unexpected(
+                    badParams("'mode' (string) is required: 'online' or 'offline'."));
+            }
+
+            const std::string text = mode->get<std::string>();
+            if (text == "online")
+            {
+                if (!win->goOnline())
+                {
+                    return std::unexpected(internalError(
+                        "Refused to go online: the previous capture is unsaved and the "
+                        "prompt was declined. Save it with scope.save_recording first."));
+                }
+            }
+            else if (text == "offline")
+            {
+                win->goOffline();
+            }
+            else
+            {
+                return std::unexpected(
+                    badParams("'mode' must be 'online' or 'offline', not '" + text + "'."));
+            }
+
+            const SourceCaps caps = win->source().caps();
+            return json{{"mode", win->isOnline() ? "online" : "offline"},
+                        {"caps", json{{"live", caps.live},
+                                      {"seekable", caps.seekable},
+                                      {"t_begin", caps.t_begin},
+                                      {"t_end", caps.t_end}}}};
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
@@ -842,13 +889,25 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     server.registerMethod("scope.capture", [win](const json& /*params*/) -> MethodResult {
         ScopeRecorder* const recorder = win->recorder();
+
+        // Not an error. A window that has never been online has no recorder at
+        // all, and "there is no capture" is the honest answer to the question --
+        // an error here would make the normal startup state look like a fault.
         if (recorder == nullptr)
         {
-            return std::unexpected(internalError("This window has no capture."));
+            return json{{"running", false},
+                        {"messages", 0},
+                        {"bytes", 0},
+                        {"received", 0},
+                        {"retained_span_seconds", 0.0},
+                        {"evicted", 0},
+                        {"evicted_bytes", 0}};
         }
 
         const CaptureBuffer& buffer = recorder->buffer();
         return json{
+            // False once the window goes offline: the capture is a snapshot of
+            // the online session, not a tail that keeps running behind it.
             {"running", recorder->isValid()},
             {"messages", buffer.size()},
             {"bytes", buffer.bytes()},
@@ -867,8 +926,8 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             if (!win->reviewCapture())
             {
                 return std::unexpected(badParams(
-                    "Nothing has been captured yet -- no publisher has sent anything since "
-                    "scope started."));
+                    "Nothing has been captured. Go online with scope.set_mode first, or "
+                    "load a bag with scope.open_recording."));
             }
             const SourceCaps caps = win->source().caps();
             return json{{"reviewing", true},

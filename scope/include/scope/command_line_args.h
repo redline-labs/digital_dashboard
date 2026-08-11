@@ -14,11 +14,20 @@ struct CommandLineArgs
     // you add panels and pick signals live.
     std::string workspace_path;
 
-    // A bag DIRECTORY to review instead of tailing the bus. Empty means live.
+    // A bag DIRECTORY to open. Empty means "offline with nothing loaded",
+    // which is what a bare `scope` starts as.
     //
     // Applied after the workspace, so `--config w.yaml --bag drives/today`
     // opens the recording with the workspace's panels already bound to it.
     std::string bag_path;
+
+    // Attach to the bus and start capturing at startup.
+    //
+    // Needed because the default is OFFLINE: without a flag there would be no
+    // way to launch scope watching live data, which is what every existing
+    // invocation did. Mutually exclusive with bag_path -- a bag is an offline
+    // source, so asking for both asks for two different things.
+    bool start_online = false;
 
     bool debug_enabled = false;
 

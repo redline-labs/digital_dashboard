@@ -32,8 +32,11 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
             // rejects unmatched arguments -- see the check below -- so an
             // undeclared option would abort the whole startup rather than being
             // ignored.
-            ("b,bag", "Path to a bag DIRECTORY to review instead of tailing the bus.",
+            ("b,bag", "Path to a bag DIRECTORY to open. Implies offline, which is the default.",
                 cxxopts::value<std::string>())
+            ("online", "Attach to the bus and start capturing at startup. Scope is OFFLINE by "
+                       "default and does not open a zenoh session without this.",
+                cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("debug", "Enable debug logging.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("mcp", "Enable the agent control interface on a unix socket, and run headless "
@@ -78,6 +81,21 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
         if (result.count("bag") != 0)
         {
             parsed.bag_path = result["bag"].as<std::string>();
+        }
+
+        parsed.start_online = result["online"].as<bool>();
+
+        // Contradictory, and refused rather than resolved by precedence. Either
+        // order silently throws away half of what was asked for: applying --bag
+        // last leaves a window that never went online, and applying --online
+        // last leaves one that discards the bag it was told to open. A startup
+        // that did half the job is worse than one that says why it did none.
+        if (parsed.start_online && !parsed.bag_path.empty())
+        {
+            SPDLOG_CRITICAL("--online and --bag are mutually exclusive: a bag is an offline "
+                            "source. Start with --bag and go online from the toolbar, or use "
+                            "scope.open_recording once online.");
+            return std::nullopt;
         }
 
         if (result.count("mcp") != 0)

@@ -2,6 +2,7 @@
 
 #include "scope/add_signal_dialog.h"
 #include "scope/data_source.h"
+#include "scope/empty_source.h"
 #include "scope/live_zenoh_source.h"
 #include "scope/overview_strip.h"
 #include "scope/panel.h"
@@ -22,6 +23,8 @@
 #include <QFileDialog>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFileInfo>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -30,6 +33,8 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QToolButton>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include <spdlog/spdlog.h>
 
@@ -135,25 +140,22 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
     // is the whole point of the composable layout.
     setDockNestingEnabled(true);
 
-    source_ = std::make_unique<LiveZenohSource>();
+    // OFFLINE, and therefore not on the bus at all.
+    //
+    // A window that opened a zenoh session before anyone asked it to would make
+    // "Offline" a label rather than a fact -- and scope is a diagnostic tool, so
+    // an instance that quietly joins the bus is exactly the thing you do not
+    // want running unattended next to the system you are measuring. Going online
+    // is what constructs a LiveZenohSource and a recorder; see goOnline().
+    source_ = std::make_unique<EmptySource>();
     time_base_ = std::make_unique<TimeBase>(*source_);
 
-    // Capture starts with the window and runs for its whole life. Everything on
-    // the bus, with no exclusions: the point is that a signal nobody thought to
-    // plot can still be added afterwards, and a filter taken from the panels
-    // would only ever record what was already on screen.
+    // The capture's bounds are read now and held, because the recorder they
+    // configure does not exist yet: it is built on the way online, possibly
+    // several times, and each one needs the limits the workspace last set.
     const scope_workspace_t defaults;
     capture_max_bytes_ = defaults.max_capture_bytes;
     capture_max_seconds_ = defaults.max_capture_seconds;
-    recorder_ = std::make_unique<ScopeRecorder>(static_cast<std::size_t>(capture_max_bytes_),
-                                                capture_max_seconds_);
-
-    empty_hint_ = new QLabel(
-        tr("No panels yet.\n\nAdd one from Panels ▸ Add, or press Ctrl+N."), this);
-    empty_hint_->setObjectName("empty_hint");
-    empty_hint_->setAlignment(Qt::AlignCenter);
-    empty_hint_->setStyleSheet("color: palette(mid); font-size: 14px;");
-    setCentralWidget(empty_hint_);
 
     browser_ = new SignalBrowser(*source_, this);
     browser_dock_ = new QDockWidget(tr("Signals"), this);
@@ -187,6 +189,14 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
 
     buildNavigationActions();
     buildMenuBar();
+
+    // AFTER the menu bar, because the landing screen's buttons are the menu's
+    // own QActions rather than copies of them -- the same rule the toolbar
+    // follows, and for the same reason: one action means one handler and one
+    // enabled-state, so a button cannot drift out of step with the menu item
+    // that does the same thing.
+    buildCentralArea();
+
     buildMainToolBar();
     buildTransportBar();
     updateWindowTitle();
@@ -422,11 +432,146 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
     }
 }
 
+void ScopeWindow::buildCentralArea()
+{
+    auto* central = new QWidget(this);
+    central->setObjectName("central_area");
+
+    // THE CENTRAL AREA MUST NOT COMPETE WITH THE DOCKS FOR WIDTH.
+    //
+    // QMainWindow honours the central widget's minimum before it gives anything
+    // to the docks, and the panels ARE docks -- so a hint wide enough to read
+    // squeezes every plot in the window to make room for a sentence. That is
+    // exactly what happened when this grew from one short label into a label and
+    // two buttons: panels lost ~40 px each and three geometry tests failed on
+    // mouse positions that no longer landed where they used to.
+    //
+    // The DEFAULT policy, deliberately, with the minimum kept small by word wrap
+    // on the labels below. Both alternatives were tried and both were wrong:
+    //
+    //   - QSizePolicy::Ignored reads like the right answer and is the exact
+    //     opposite. It means "the sizeHint is ignored, the widget will get as
+    //     much space as possible", so it makes the hint GREEDY: panels went from
+    //     637 px wide to 160.
+    //   - QSizePolicy::Maximum stops it growing at all, so the signal browser
+    //     swallowed the whole window whenever there were no panels to hold it
+    //     back.
+    //
+    // What matters is the MINIMUM, not the stretch: word-wrapped labels claim
+    // almost no width, so the hint stops competing with the docks while still
+    // filling the space nothing else wants.
+    central->setMinimumSize(0, 0);
+
+    auto* layout = new QVBoxLayout(central);
+    layout->setAlignment(Qt::AlignCenter);
+    layout->setSpacing(16);
+
+    // ------------------------------------------------------- offline landing
+
+    empty_panel_ = new QWidget(central);
+    empty_panel_->setObjectName("offline_hint");
+    auto* offline_layout = new QVBoxLayout(empty_panel_);
+    offline_layout->setAlignment(Qt::AlignCenter);
+    offline_layout->setSpacing(12);
+    offline_layout->setContentsMargins(0, 0, 0, 0);
+
+    auto* offline_text = new QLabel(
+        tr("<b>Offline</b> — nothing loaded.<br><br>"
+           "Load a recording to scrub through it, or go online to watch the live bus."),
+        empty_panel_);
+    offline_text->setObjectName("offline_hint_text");
+    offline_text->setAlignment(Qt::AlignCenter);
+    offline_text->setWordWrap(true);
+    offline_text->setMinimumWidth(0);
+    offline_text->setStyleSheet("color: palette(mid); font-size: 14px;");
+    offline_layout->addWidget(offline_text);
+
+    auto* buttons = new QWidget(empty_panel_);
+    auto* button_layout = new QHBoxLayout(buttons);
+    button_layout->setAlignment(Qt::AlignCenter);
+    button_layout->setContentsMargins(0, 0, 0, 0);
+
+    // The MENU'S actions, not copies. Same rule as the toolbar: one action, one
+    // handler, one enabled-state -- so the landing screen cannot offer a button
+    // the menu has already disabled.
+    const auto add_button = [&](const char* action_name, const char* button_name) {
+        QAction* action = findChild<QAction*>(action_name);
+        if (action == nullptr)
+        {
+            return;
+        }
+        auto* button = new QToolButton(buttons);
+        button->setObjectName(button_name);
+        button->setDefaultAction(action);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        button_layout->addWidget(button);
+    };
+
+    add_button("action_open_recording", "offline_load_recording");
+    add_button("action_online", "offline_go_online");
+
+    offline_layout->addWidget(buttons);
+    layout->addWidget(empty_panel_);
+
+    // ------------------------------------------------------------ no panels
+
+    empty_hint_ =
+        new QLabel(tr("No panels yet.\n\nAdd one from Panels ▸ Add, or press Ctrl+N."), central);
+    empty_hint_->setObjectName("empty_hint");
+    empty_hint_->setAlignment(Qt::AlignCenter);
+    empty_hint_->setWordWrap(true);
+    empty_hint_->setMinimumWidth(0);
+    empty_hint_->setStyleSheet("color: palette(mid); font-size: 14px;");
+    layout->addWidget(empty_hint_);
+
+    setCentralWidget(central);
+    updateEmptyHint();
+}
+
 void ScopeWindow::updateEmptyHint()
 {
+    // NEITHER hint is shown once there are panels, and that is a layout rule as
+    // much as a content one.
+    //
+    // QMainWindow honours the central widget's minimum before it gives anything
+    // to the docks, and the panels ARE docks -- so a hint wide enough to read
+    // costs every plot in the window the width it needs. That is not
+    // hypothetical: the offline landing screen's two buttons squeezed panels
+    // from 637 px to 160 and broke three geometry tests on mouse positions that
+    // no longer landed where they used to.
+    //
+    // Confining both hints to the no-panels case removes the competition
+    // entirely rather than trying to win it with size policies -- two of which
+    // were tried, and each broke the layout in a different direction. It costs
+    // nothing: a window with panels already says what it is on the toolbar, and
+    // its central area is a sliver nobody reads.
+    const bool nothing_loaded = !isOnline() && !source_->caps().seekable;
+
+    if (empty_panel_ != nullptr)
+    {
+        // "Offline, nothing loaded" outranks "no panels yet": adding a panel to
+        // a window with nothing behind it produces an empty plot, which looks
+        // exactly like a signal that is not publishing.
+        empty_panel_->setVisible(panels_.empty() && nothing_loaded);
+    }
     if (empty_hint_ != nullptr)
     {
-        empty_hint_->setVisible(panels_.empty());
+        empty_hint_->setVisible(panels_.empty() && !nothing_loaded);
+    }
+
+    // THE WHOLE CENTRAL WIDGET, not just its contents.
+    //
+    // QMainWindowLayout hands the central widget the space left over after the
+    // docks, and it does that from the widget's VISIBILITY, not from its size
+    // hint: hiding only the labels inside left an empty 840 px container sitting
+    // between the browser and the panels, and the panels got 160 px. Emptying
+    // the container is not the same as removing it.
+    //
+    // This is what the old code got for free by making the hint label itself the
+    // central widget and calling setVisible() on it.
+    if (QWidget* central = centralWidget())
+    {
+        central->setVisible(panels_.empty());
     }
 }
 
@@ -570,9 +715,14 @@ bool ScopeWindow::loadWorkspace(const QString& path)
 
 // ------------------------------------------------------------------- recordings
 
-bool ScopeWindow::isReviewing() const
+bool ScopeWindow::isOnline() const
 {
-    return !source_->caps().live;
+    return source_->caps().live;
+}
+
+bool ScopeWindow::hasCapture() const
+{
+    return recorder_ != nullptr && recorder_->buffer().size() > 0;
 }
 
 bool ScopeWindow::openRecording(const QString& directory)
@@ -600,6 +750,23 @@ bool ScopeWindow::openRecording(const QString& directory)
 
     const auto [t_begin, t_end] = provider->spanNanos();
     const double duration = t_end > t_begin ? static_cast<double>(t_end - t_begin) / 1e9 : 0.0;
+
+    // A bag is an offline source, so opening one takes the window offline --
+    // including the capture, which only runs while online. The buffer is kept
+    // rather than dropped: Review Session Capture is still how you get back to
+    // what the last online session recorded, and a bag opened by mistake should
+    // not be able to destroy it.
+    if (recorder_ != nullptr)
+    {
+        recorder_->stop();
+    }
+
+    // Set BEFORE the swap, so the chip that applySourceCaps() refreshes at the
+    // end of setSource() already describes the recording rather than the source
+    // it replaced.
+    source_label_ = tr("%1 · %2 s")
+                        .arg(QFileInfo(directory).fileName())
+                        .arg(duration, 0, 'f', 0);
 
     setSource(std::make_unique<RecordedSource>(std::move(provider)));
 
@@ -652,29 +819,28 @@ bool ScopeWindow::openRecording(const QString& directory)
 
 bool ScopeWindow::reviewCapture()
 {
-    if (!recorder_)
-    {
-        return false;
-    }
-
-    const CaptureBuffer& buffer = recorder_->buffer();
-    if (buffer.size() == 0)
+    if (!hasCapture())
     {
         SPDLOG_WARN("Nothing has been captured yet.");
         statusBar()->showMessage(
-            tr("Nothing captured yet -- no publisher has sent anything since scope started."),
-            5000);
+            tr("Nothing captured yet -- go online first, or load a recording."), 5000);
         return false;
     }
 
-    // Capture KEEPS RUNNING. Entering review does not stop it: deciding to look
-    // at something must not cost you everything that happens while you look.
-    // The consequence is that the provider's span moves under the scrubber,
-    // which is why updateTransport() re-reads the range every frame and why the
-    // retained span and evicted count are on screen.
+    // The capture stops here, and its buffer does not.
+    //
+    // ScopeRecorder::stop() drops only the subscriber, which is the difference
+    // between a snapshot you can scrub and a dangling pointer: the
+    // CaptureProvider below holds a reference into that same buffer for as long
+    // as this source lives.
+    recorder_->stop();
+
+    const CaptureBuffer& buffer = recorder_->buffer();
+    source_label_ = tr("session capture · %1 s").arg(buffer.retainedSpanSeconds(), 0, 'f', 0);
+
     setSource(std::make_unique<RecordedSource>(std::make_unique<CaptureProvider>(buffer)));
 
-    statusBar()->showMessage(tr("Reviewing the capture (%1 messages, %2 s retained)")
+    statusBar()->showMessage(tr("Reviewing the session capture (%1 messages, %2 s)")
                                  .arg(buffer.size())
                                  .arg(buffer.retainedSpanSeconds(), 0, 'f', 1),
                              0);
@@ -732,15 +898,79 @@ bool ScopeWindow::openRecordingDialog()
     return path.isEmpty() ? false : openRecording(path);
 }
 
-void ScopeWindow::goLive()
+bool ScopeWindow::goOnline()
 {
-    if (!isReviewing())
+    if (isOnline())
+    {
+        return true;
+    }
+
+    // Going online starts a NEW capture, so the previous one is about to be
+    // gone. Asked BEFORE anything is swapped: a prompt raised halfway through
+    // would leave the window online over a capture the user just said they
+    // wanted to keep.
+    if (!confirmDiscardCapture(tr("starting a new online session")))
+    {
+        return false;
+    }
+
+    source_label_.clear();
+
+    // The source FIRST, then the recorder, and the order is load-bearing. The
+    // old source may be a RecordedSource over a CaptureProvider pointing into
+    // the recorder's buffer; setSource() destroys it only after every panel has
+    // rebound. Replacing the recorder first would free that buffer underneath a
+    // source that is still live for a few more statements.
+    setSource(std::make_unique<LiveZenohSource>());
+
+    // Everything on the bus, with no exclusions: the point of capturing is that
+    // a signal nobody thought to plot can still be added afterwards, and a
+    // filter taken from the panels would only ever record what was already on
+    // screen -- which is exactly what you do not need after the fact.
+    recorder_ = std::make_unique<ScopeRecorder>(static_cast<std::size_t>(capture_max_bytes_),
+                                                capture_max_seconds_);
+    capture_saved_ = false;
+
+    if (!recorder_->isValid())
+    {
+        // The window still works, tailing the bus through the live source; it
+        // simply has nothing to go back and review. Said out loud because the
+        // difference only shows up later, as a Review action that never enables.
+        statusBar()->showMessage(
+            tr("Online, but the capture could not start -- nothing to review afterwards."), 8000);
+    }
+    else
+    {
+        statusBar()->showMessage(tr("Online"), 3000);
+    }
+
+    updateModeActions();
+    return true;
+}
+
+void ScopeWindow::goOffline()
+{
+    if (!isOnline())
     {
         return;
     }
 
-    setSource(std::make_unique<LiveZenohSource>());
-    statusBar()->showMessage(tr("Live"), 3000);
+    // Land on what was just recorded, which is what leaving online is almost
+    // always for. reviewCapture() stops the recorder itself; the empty case
+    // below has to do it explicitly.
+    if (reviewCapture())
+    {
+        return;
+    }
+
+    if (recorder_ != nullptr)
+    {
+        recorder_->stop();
+    }
+
+    source_label_.clear();
+    setSource(std::make_unique<EmptySource>());
+    statusBar()->showMessage(tr("Offline -- nothing was captured."), 5000);
 }
 
 // ------------------------------------------------------ dialogs and dirty state
@@ -814,50 +1044,57 @@ void ScopeWindow::updateWindowTitle()
     setWindowTitle(dirty_ ? name + QStringLiteral(" *") : name);
 }
 
-bool ScopeWindow::confirmDiscardChanges(const QString& action)
+bool ScopeWindow::confirmDiscardCapture(const QString& action)
 {
-    // An unsaved CAPTURE is the more serious of the two, and is asked about
-    // first. A workspace can be rebuilt by hand in a couple of minutes; a
-    // capture of what the vehicle was doing cannot be rebuilt at all.
-    const bool unsaved_capture =
-        recorder_ != nullptr && !capture_saved_ && recorder_->buffer().size() > 0;
-
-    if (!dirty_ && !unsaved_capture)
+    if (capture_saved_ || !hasCapture())
     {
         return true;
     }
 
     if (headless_)
     {
-        SPDLOG_WARN("Discarding unsaved {}{}{} on {} (headless: nobody to ask).",
-                    unsaved_capture ? "capture" : "", unsaved_capture && dirty_ ? " and " : "",
-                    dirty_ ? "workspace changes" : "", action.toStdString());
+        SPDLOG_WARN("Discarding an unsaved capture of {} message(s) on {} (headless: nobody "
+                    "to ask).",
+                    recorder_->buffer().size(), action.toStdString());
         return true;
     }
 
-    if (unsaved_capture)
-    {
-        const auto choice = QMessageBox::warning(
-            this, tr("Unsaved capture"),
-            tr("%1 captured message(s) have not been saved and cannot be recovered "
-               "afterwards.\n\nSave the recording before %2?")
-                .arg(recorder_->buffer().size())
-                .arg(action),
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    const auto choice = QMessageBox::warning(
+        this, tr("Unsaved capture"),
+        tr("%1 captured message(s) have not been saved and cannot be recovered "
+           "afterwards.\n\nSave the recording before %2?")
+            .arg(recorder_->buffer().size())
+            .arg(action),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
 
-        if (choice == QMessageBox::Cancel)
-        {
-            return false;
-        }
-        if (choice == QMessageBox::Save && !saveCaptureDialog())
-        {
-            // A failed or cancelled save must not fall through into discarding.
-            return false;
-        }
+    if (choice == QMessageBox::Cancel)
+    {
+        return false;
+    }
+
+    // A failed or cancelled save must not fall through into discarding.
+    return choice != QMessageBox::Save || saveCaptureDialog();
+}
+
+bool ScopeWindow::confirmDiscardChanges(const QString& action)
+{
+    // An unsaved CAPTURE is the more serious of the two, and is asked about
+    // first. A workspace can be rebuilt by hand in a couple of minutes; a
+    // capture of what the vehicle was doing cannot be rebuilt at all.
+    if (!confirmDiscardCapture(action))
+    {
+        return false;
     }
 
     if (!dirty_)
     {
+        return true;
+    }
+
+    if (headless_)
+    {
+        SPDLOG_WARN("Discarding unsaved workspace changes on {} (headless: nobody to ask).",
+                    action.toStdString());
         return true;
     }
 
@@ -1000,43 +1237,68 @@ void ScopeWindow::buildMainToolBar()
 
     // ------------------------------------------------------------------ mode
 
-    mode_live_ = new QToolButton(bar);
-    mode_live_->setObjectName("mode_live");
-    mode_live_->setText(tr("● Live"));
-    mode_live_->setToolTip(tr("Show what is on the bus now"));
-    mode_live_->setCheckable(true);
-    connect(mode_live_, &QToolButton::clicked, this, [this]() { goLive(); });
-    bar->addWidget(mode_live_);
+    // ONE button for one bit of state. It reads the state it is IN -- "Offline",
+    // "● Online" -- rather than the action it performs, because a button
+    // labelled with its action has to be read together with its checked state
+    // to know which way round it is, and half the people reading it will get
+    // that wrong.
+    mode_toggle_ = new QToolButton(bar);
+    mode_toggle_->setObjectName("mode_toggle");
+    mode_toggle_->setCheckable(true);
+    mode_toggle_->setPopupMode(QToolButton::MenuButtonPopup);
+    connect(mode_toggle_, &QToolButton::clicked, this, [this](bool online) {
+        if (updating_transport_)
+        {
+            return;
+        }
+        if (online)
+        {
+            (void)goOnline();
+        }
+        else
+        {
+            goOffline();
+        }
+        // Whatever happened -- including a transition the user cancelled at the
+        // unsaved-capture prompt -- the button is re-checked from the source.
+        applySourceCaps();
+    });
 
-    mode_review_ = new QToolButton(bar);
-    mode_review_->setObjectName("mode_review");
-    mode_review_->setText(tr("Review"));
-    mode_review_->setToolTip(tr("Review what has been captured since scope started"));
-    mode_review_->setCheckable(true);
-    mode_review_->setPopupMode(QToolButton::MenuButtonPopup);
-    // The button itself reviews the in-memory capture -- "the last live
-    // session", which is the case worth one click. Anything else is in the menu.
-    connect(mode_review_, &QToolButton::clicked, this, [this]() { (void)reviewCapture(); });
+    auto* mode_menu = new QMenu(mode_toggle_);
+    mode_menu->setObjectName("mode_menu");
+    // The SAME actions the File menu owns, not copies of them: one objectName,
+    // one handler, one enabled-state, and the headless guards inside the dialog
+    // wrappers already apply.
+    for (const char* name :
+         {"action_open_recording", "action_review_capture", "action_save_recording"})
+    {
+        if (QAction* action = findChild<QAction*>(name))
+        {
+            mode_menu->addAction(action);
+        }
+    }
+    mode_toggle_->setMenu(mode_menu);
+    bar->addWidget(mode_toggle_);
 
-    auto* review_menu = new QMenu(mode_review_);
-    review_menu->setObjectName("mode_review_menu");
-    // The SAME action the File menu owns, not a copy of it: one objectName, one
-    // handler, and the headless guard in openRecordingDialog() already applies.
+    // Promoted out of that dropdown and onto the bar. With offline as the
+    // default, opening a bag is the primary action of a freshly started window,
+    // and it used to be two clicks deep behind a button labelled "Review" --
+    // a word that does not say "bag" to anyone looking for one.
     if (QAction* open_recording = findChild<QAction*>("action_open_recording"))
     {
-        review_menu->addAction(open_recording);
+        auto* button = new QToolButton(bar);
+        button->setObjectName("toolbar_open_recording");
+        button->setDefaultAction(open_recording);
+        bar->addWidget(button);
     }
-    if (QAction* save_recording = findChild<QAction*>("action_save_recording"))
-    {
-        review_menu->addAction(save_recording);
-    }
-    mode_review_->setMenu(review_menu);
-    bar->addWidget(mode_review_);
 
-    capture_chip_ = new QLabel(bar);
-    capture_chip_->setObjectName("capture_chip");
-    capture_chip_->setStyleSheet("color: palette(mid); font-size: 11px; padding: 0 8px;");
-    bar->addWidget(capture_chip_);
+    // WHAT is behind the panels, not how the capture is doing -- that is
+    // transport_status_ at the other end of the window. This label used to
+    // render the same string as that one, from the same line of code.
+    source_chip_ = new QLabel(bar);
+    source_chip_->setObjectName("source_chip");
+    source_chip_->setStyleSheet("color: palette(mid); font-size: 11px; padding: 0 8px;");
+    bar->addWidget(source_chip_);
 
     // --------------------------------------------------------------- compose
 
@@ -1113,12 +1375,36 @@ void ScopeWindow::buildMenuBar()
 
     file_menu->addSeparator();
 
-    QAction* open_recording = file_menu->addAction(tr("Open &Recording…"));
+    // Checkable rather than a Go Online / Go Offline pair, for the same reason
+    // the toolbar has one button: there is one bit of state here, and two
+    // actions for one bit is two things that can disagree.
+    QAction* online = file_menu->addAction(tr("&Online"));
+    online->setObjectName("action_online");
+    online->setCheckable(true);
+    connect(online, &QAction::triggered, this, [this](bool checked) {
+        if (updating_transport_)
+        {
+            return;
+        }
+        if (checked)
+        {
+            (void)goOnline();
+        }
+        else
+        {
+            goOffline();
+        }
+        applySourceCaps();
+    });
+
+    file_menu->addSeparator();
+
+    QAction* open_recording = file_menu->addAction(tr("Load &Recording…"));
     open_recording->setObjectName("action_open_recording");
     connect(open_recording, &QAction::triggered, this,
             [this]() { (void)openRecordingDialog(); });
 
-    QAction* review = file_menu->addAction(tr("Stop and Re&view Capture"));
+    QAction* review = file_menu->addAction(tr("Re&view Session Capture"));
     review->setObjectName("action_review_capture");
     connect(review, &QAction::triggered, this, [this]() { (void)reviewCapture(); });
 
@@ -1126,15 +1412,11 @@ void ScopeWindow::buildMenuBar()
     save_recording->setObjectName("action_save_recording");
     connect(save_recording, &QAction::triggered, this, [this]() { (void)saveCaptureDialog(); });
 
-    QAction* live = file_menu->addAction(tr("Go &Live"));
-    live->setObjectName("action_go_live");
-    connect(live, &QAction::triggered, this, [this]() { goLive(); });
-
-    // Enabled only when there is something to go back from, so the menu says
-    // which mode the window is in without anyone having to read the toolbar.
-    live->setEnabled(false);
-    connect(this, &ScopeWindow::sourceChanged, live,
-            [this, live]() { live->setEnabled(isReviewing()); });
+    // Both act on a capture, so both are disabled until there is one. They used
+    // to be enabled always and answer a click with a status-bar line, which is
+    // indistinguishable from a button that is broken -- and on a freshly started
+    // window that was every click.
+    updateModeActions();
 
     file_menu->addSeparator();
 
@@ -1253,9 +1535,16 @@ void ScopeWindow::buildTransportBar()
     pause_button_->setObjectName("transport_pause");
     pause_button_->setCheckable(true);
     pause_button_->setText(tr("Pause"));
+    // Sets the mode and NOTHING ELSE. The label is updateTransport()'s, because
+    // following can be turned off by a pan or a zoom that never comes through
+    // here -- so a handler that also wrote the text would be one of two authors
+    // for one label, which is how it ended up with three different words for two
+    // states.
     connect(pause_button_, &QToolButton::toggled, this, [this](bool paused) {
-        time_base_->setMode(paused ? TimeBase::Mode::Paused : TimeBase::Mode::Live);
-        pause_button_->setText(paused ? tr("Live") : tr("Pause"));
+        if (!updating_transport_)
+        {
+            time_base_->setMode(paused ? TimeBase::Mode::Paused : TimeBase::Mode::Live);
+        }
     });
     live_controls_.push_back(bar->addWidget(pause_button_));
 
@@ -1370,7 +1659,7 @@ void ScopeWindow::applySourceCaps()
 
     // The strip's cached histogram describes the OLD source. Forcing a
     // recompute here rather than waiting for the throttle is what stops a bag's
-    // shape being drawn under a live view for half a second after Go Live.
+    // shape being drawn under a live view for half a second after going online.
     density_computed_at_ms_ = 0;
 
     if (play_button_ != nullptr)
@@ -1379,21 +1668,75 @@ void ScopeWindow::applySourceCaps()
     }
 
     // Driven from the SOURCE rather than from the click that changed it, so a
-    // swap made by the agent interface, by --bag at startup, or by a review
-    // that failed to open leaves the toolbar saying what is actually behind the
-    // panels. A pair of buttons that only tracked their own clicks would be
-    // wrong in exactly the cases where being right matters.
-    const bool reviewing = isReviewing();
-    if (mode_live_ != nullptr)
+    // swap made by the agent interface, by --bag at startup, by an open that
+    // failed or by a transition the user cancelled leaves the control saying
+    // what is actually behind the panels. A button that only tracked its own
+    // clicks would be wrong in exactly the cases where being right matters.
+    //
+    // updating_transport_ guards the writes: setChecked() emits toggled(), and
+    // the handlers read the flag and decline, so refreshing the control cannot
+    // turn into another mode change.
+    const bool online = isOnline();
     {
         const bool was_updating = updating_transport_;
         updating_transport_ = true;
-        mode_live_->setChecked(!reviewing);
-        mode_review_->setChecked(reviewing);
+
+        if (mode_toggle_ != nullptr)
+        {
+            mode_toggle_->setChecked(online);
+            mode_toggle_->setText(online ? tr("● Online") : tr("Offline"));
+            mode_toggle_->setToolTip(online
+                                         ? tr("Tailing the bus and capturing. Click to go "
+                                              "offline and review what was captured.")
+                                         : tr("Not on the bus. Click to go online."));
+        }
+        if (QAction* action = findChild<QAction*>("action_online"))
+        {
+            action->setChecked(online);
+        }
+
         updating_transport_ = was_updating;
     }
 
+    updateModeActions();
+    updateEmptyHint();
     updateTransport();
+}
+
+void ScopeWindow::updateModeActions()
+{
+    const bool has_capture = hasCapture();
+
+    if (QAction* review = findChild<QAction*>("action_review_capture"))
+    {
+        review->setEnabled(has_capture);
+    }
+    if (QAction* save = findChild<QAction*>("action_save_recording"))
+    {
+        save->setEnabled(has_capture);
+    }
+}
+
+void ScopeWindow::updateSourceChip()
+{
+    if (source_chip_ == nullptr)
+    {
+        return;
+    }
+
+    if (isOnline())
+    {
+        const std::uint64_t captured = recorder_ != nullptr ? recorder_->buffer().size() : 0;
+        source_chip_->setText(captured > 0
+                                  ? tr("⏺ capturing · %1 messages").arg(captured)
+                                  : tr("⏺ capturing"));
+        return;
+    }
+
+    // source_label_ is set by whatever opened the source. Empty means nothing
+    // is loaded, which is a state worth naming rather than leaving blank -- a
+    // blank chip beside "Offline" reads as a label that failed to render.
+    source_chip_->setText(source_label_.isEmpty() ? tr("nothing loaded") : source_label_);
 }
 
 void ScopeWindow::updateTransport()
@@ -1442,43 +1785,57 @@ void ScopeWindow::updateTransport()
     }
     cursor_label_->setText(text);
 
-    // The capture's state, always visible while it is running. A capture whose
-    // head is being evicted is the same class of thing as a recorder dropping
-    // samples: the part of the session you can still review has a boundary, and
-    // it moves. Saying so is what stops someone scrubbing back into a gap and
-    // reading it as a publisher that had not started.
-    if (recorder_ != nullptr)
+    // The capture's state. A capture whose head is being evicted is the same
+    // class of thing as a recorder dropping samples: the part of the session you
+    // can still review has a boundary, and it moves. Saying so is what stops
+    // someone scrubbing back into a gap and reading it as a publisher that had
+    // not started.
+    //
+    // ONE widget shows this. It used to be written to the top bar's chip as
+    // well, character for character, from these same lines -- and a string
+    // rendered twice in one window is a tell that one of the two has no job of
+    // its own. The chip now describes the SOURCE, which is a different question.
+    if (transport_status_ != nullptr)
     {
-        const CaptureBuffer& capture = recorder_->buffer();
-        QString state = tr("  ⏺ %1 s captured").arg(capture.retainedSpanSeconds(), 0, 'f', 0);
-        if (const std::uint64_t evicted = capture.evicted(); evicted > 0)
+        QString state;
+        if (recorder_ != nullptr)
         {
-            state += tr(", %1 evicted").arg(evicted);
+            const CaptureBuffer& capture = recorder_->buffer();
+            state = isOnline() ? tr("  ⏺ %1 s captured").arg(capture.retainedSpanSeconds(), 0,
+                                                             'f', 0)
+                               : tr("  ⏹ %1 s captured").arg(capture.retainedSpanSeconds(), 0,
+                                                             'f', 0);
+            if (const std::uint64_t evicted = capture.evicted(); evicted > 0)
+            {
+                state += tr(", %1 evicted").arg(evicted);
+            }
+            if (!capture_saved_ && capture.size() > 0)
+            {
+                state += tr(" (unsaved)");
+            }
         }
-        if (!capture_saved_ && capture.size() > 0)
-        {
-            state += tr(" (unsaved)");
-        }
-        if (transport_status_ != nullptr)
-        {
-            transport_status_->setText(state);
-        }
-        // Also on the top bar, beside the mode control it argues for: the gap
-        // between what is captured and what a live plot can reach is the whole
-        // reason to press Review.
-        if (capture_chip_ != nullptr)
-        {
-            capture_chip_->setText(state);
-        }
+        transport_status_->setText(state);
     }
 
-    // A pan or a zoom turns following off without touching the button, so the
-    // button has to be read back from the time base rather than left to its own
-    // toggled() -- otherwise it sits there saying "Pause" over a frozen plot.
-    if (pause_button_ != nullptr && pause_button_->isChecked() == time_base_->following())
+    updateSourceChip();
+
+    // ONE label pair, driven from ONE place.
+    //
+    // The button used to be written from here AND from its own toggled()
+    // handler, with different words: this one says Pause/Follow, that one said
+    // Pause/Live. Which of the three you saw depended on how the state had last
+    // been reached, so the same frozen plot could be sitting under a button
+    // marked "Live" or one marked "Follow".
+    //
+    // Reading it back from the time base is the part that has to stay: a pan or
+    // a zoom turns following off without touching the button, and a button left
+    // to its own toggled() sits there saying "Pause" over a plot that has
+    // stopped scrolling.
+    if (pause_button_ != nullptr)
     {
-        pause_button_->setChecked(!time_base_->following());
-        pause_button_->setText(time_base_->following() ? tr("Pause") : tr("Follow"));
+        const bool following = time_base_->following();
+        pause_button_->setChecked(!following);
+        pause_button_->setText(following ? tr("Pause") : tr("Follow"));
     }
 
     updateOverview();
@@ -1617,7 +1974,7 @@ void ScopeWindow::refreshDensity()
     {
         // A source that cannot answer cheaply says so, and the strip draws a
         // plain band. Clearing rather than keeping the last answer matters on a
-        // swap: a bag's histogram left behind a Go Live would describe a
+        // swap: a bag's histogram left behind by going online would describe a
         // recording that is no longer on screen.
         overview_->setDensity({}, begin, end);
         density_buckets_ = buckets;
