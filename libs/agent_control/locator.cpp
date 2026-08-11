@@ -103,9 +103,14 @@ std::vector<QWidget*> WidgetLocator::roots() const
         // An if-chain rather than a switch: Qt::WindowType has 33 enumerators and
         // the build runs with -Wswitch-enum, so a switch here would mean listing
         // every one of them to reject a handful.
+        //
+        // Qt::Desktop is deliberately absent. QDesktopWidget was removed in Qt 6
+        // and the flag has been a no-op ever since, so no widget can report it --
+        // testing for it rejects nothing and, from Qt 6.10 on, is a
+        // -Wdeprecated-declarations error under -Werror.
         const Qt::WindowType type = w->windowType();
         if (type == Qt::Popup || type == Qt::ToolTip || type == Qt::SplashScreen ||
-            type == Qt::Desktop || type == Qt::SubWindow)
+            type == Qt::SubWindow)
         {
             continue;
         }

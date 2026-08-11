@@ -6,7 +6,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <locale>
 #include <set>
+#include <sstream>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
@@ -17,10 +19,11 @@ namespace dbc_parser
 namespace
 {
 
-// std::from_chars is the only conversion in the standard library that ignores
-// the global locale. strtod does not: under a comma-decimal locale it stops at
-// the '.' in "0.1", which used to fail the scale parse and -- because failures
-// were swallowed -- delete the enclosing message from the build.
+// These conversions have to ignore the global locale. strtod does not: under a
+// comma-decimal locale it stops at the '.' in "0.1", which used to fail the
+// scale parse and -- because failures were swallowed -- delete the enclosing
+// message from the build. std::from_chars is the integer answer; see
+// parseDoubleText for why the floating point one cannot be.
 bool parseUintText(const std::string &text, uint32_t &out)
 {
     uint64_t wide = 0;
@@ -45,13 +48,29 @@ bool parseInt64Text(const std::string &text, int64_t &out)
 
 bool parseDoubleText(const std::string &text, double &out)
 {
-    const char *first = text.data();
-    const char *last = text.data() + text.size();
-    auto [ptr, ec] = std::from_chars(first, last, out);
-    if ((ec != std::errc()) || (ptr != last))
+    // NOT std::from_chars, unlike the integer parses above. Apple's libc++
+    // implements the floating point overloads in the dylib rather than the
+    // header and marks them "introduced in macOS 26.0", so building against an
+    // older deployment target -- which this project derives from whatever host
+    // it is built on -- has no symbol to call and does not compile.
+    //
+    // A stream imbued with the classic locale is the portable way to keep the
+    // locale independence that matters here: num_get takes the decimal point
+    // from the imbued locale, not from whatever the process locale has become.
+    // The parse is strict for the same reason from_chars was -- failbit for a
+    // malformed or out-of-range value, eof only if every character was
+    // consumed. It is slower, which does not matter: this runs once per numeric
+    // token while reading a DBC, not per CAN frame.
+    std::istringstream stream{text};
+    stream.imbue(std::locale::classic());
+
+    double value = 0.0;
+    stream >> value;
+    if (stream.fail() || !stream.eof())
     {
         return false;
     }
+    out = value;
 
     // A non-finite scale or offset would be emitted into generated source as
     // `inf`, which is not valid C++.

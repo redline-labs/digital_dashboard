@@ -59,6 +59,28 @@ add_compile_options(
     #-flto
 )
 
+# Homebrew on Intel installs into /usr/local, and clang searches
+# /usr/local/include by default without marking it a system directory the way it
+# marks the SDK ones.  Two consequences, both ours to deal with: it sits ahead of
+# the -isystem paths pkg-config hands us, so ffmpeg and OpenSSL resolve through
+# it rather than through their Cellar prefix, and warnings from what it finds are
+# attributed to us -- which turns every old-style cast in those headers into a
+# -Werror failure.  Apple Silicon never sees this because /opt/homebrew is not on
+# the default search path at all, so the -isystem entry is the only way there.
+#
+# Re-flagging the directory as -isystem corrects the classification without
+# introducing a search path that was not already being searched.
+# include_directories(SYSTEM) cannot do it: CMake drops any directory that is
+# already an implicit compiler include, and that is precisely this one.
+if(APPLE)
+    foreach(implicit_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+        if(implicit_dir MATCHES "^(/usr/local|/opt/homebrew)/include$")
+            message(STATUS "Treating ${implicit_dir} as a system include directory")
+            add_compile_options("SHELL:-isystem ${implicit_dir}")
+        endif()
+    endforeach()
+endif()
+
 add_subdirectory(third_party)
 
 # Tests. Deliberately enabled *after* third_party: the vendored projects declare
