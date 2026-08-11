@@ -10,22 +10,6 @@ cmake_minimum_required(VERSION 3.10)
 # duplicates.
 set(CMAKE_LINK_LIBRARIES_STRATEGY REORDER_FREELY)
 
-# These override CMake's defaults, so they have to carry -DNDEBUG themselves --
-# CMake puts it in the release-ish configs and not in Debug. RelWithDebInfo and
-# MinSizeRel are left alone and keep the default flags, NDEBUG included, so Debug
-# is the only config where our own assert() is live.
-#
-# Do not read more into that than it gives you. It does NOT switch on capnp's
-# bounds checking: the primitive List<T>::Builder::set() (list.h) has no check in
-# any configuration, so an out-of-range write there is a store through a null
-# pointer whatever the build type. Only the pointer and blob overloads guard, and
-# those use KJ_IREQUIRE, which kj gates on KJ_DEBUG -- and its heuristic in
-# kj/common.h picks KJ_NDEBUG whenever __OPTIMIZE__ is set, which -O1 below sets.
-set(CMAKE_C_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
-set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3" CACHE STRING "")
-set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "")
-set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "")
-
 # Automatically detect and set macOS deployment target to match current system
 if(APPLE)
     execute_process(

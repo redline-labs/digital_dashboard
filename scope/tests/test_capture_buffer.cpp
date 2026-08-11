@@ -452,6 +452,15 @@ void testProducerAndConsumerUnderThreads()
         (void)buffer.spanNanos();
         (void)buffer.retainedSpanSeconds();
         ++passes;
+
+        // Hand the lock to the producer between passes. forEach holds the buffer
+        // mutex for a whole traversal and this loop would otherwise re-acquire it
+        // the instant it let go; pthread mutexes are not fair, so the producer
+        // loses the race nearly every time and lands about one push per pass.
+        // Optimised builds hide that -- a pass is quick, so 20000 pushes still
+        // finish in under a second -- but at -O0 the passes stretch and the
+        // starvation stretches with them, taking the test past its 120 s timeout.
+        std::this_thread::yield();
     }
 
     producer.join();
