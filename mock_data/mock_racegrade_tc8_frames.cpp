@@ -39,14 +39,6 @@ int main(int argc, char** argv)
 
     pub_sub::ZenohPublisher<CanFrame> pub(key);
 
-    // Initialize fixed-size payload buffer ONCE and reuse it to avoid message growth.
-    pub.fields().setLen(8u);
-    if (!pub.fields().hasData() || pub.fields().getData().size() != 8u)
-    {
-        (void)pub.fields().initData(8u);
-    }
-    pub.fields().setId(dbc_motec_e888_rev1::Inputs_t::id);
-
     dbc_motec_e888_rev1::Inputs_t msg = {};
 
     float iteration = 0.0f;
@@ -80,9 +72,15 @@ int main(int argc, char** argv)
             msg.mux() = multiplexor_index;
 
             const std::array<uint8_t, 8u> payload = msg.encode();
-            
-            auto data = pub.fields().getData();
-            for (size_t i = 0u; i < 8u; ++i)
+
+            // Every field has to be set again for every frame: put() re-roots the
+            // builder, so nothing set before the previous put() survives into this
+            // message. See the note on ZenohPublisher::fields().
+            pub.fields().setId(dbc_motec_e888_rev1::Inputs_t::id);
+            pub.fields().setLen(static_cast<uint8_t>(payload.size()));
+
+            auto data = pub.fields().initData(payload.size());
+            for (size_t i = 0u; i < payload.size(); ++i)
             {
                 data.set(i, payload[i]);
             }
