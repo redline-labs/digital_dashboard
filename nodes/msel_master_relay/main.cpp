@@ -10,17 +10,31 @@
 //
 // The policy worth knowing about:
 //
-//   - Writes are single-shot. A service call builds one frame, publishes it to
-//     the CAN tx topic, and returns. It does not wait for the relay to answer,
-//     because the relay only answers if a human was holding the external kill
-//     switch when the frame arrived, and blocking a service call on a physical
-//     act would just turn every mistimed attempt into a timeout. The answer,
-//     when it comes, is published on `<prefix>/config_response`.
+//   - A write WAITS for the relay to acknowledge it, and the service reports
+//     what it said. `ok` therefore means the relay accepted the change, not
+//     that bytes were transmitted. This is the whole reason the node exists
+//     rather than a script that publishes CAN frames: the acknowledgement
+//     arrives seconds later on an identifier shared with periodic telemetry,
+//     and correlating it with the command that caused it is exactly the work
+//     that should not be pushed onto every caller.
+//
+//     A command that is never answered is the ORDINARY case, not a fault: the
+//     relay ignores configuration commands outright unless a human is holding
+//     its external kill switch as the frame arrives. So a timeout is reported
+//     as `answered: false` and a plain explanation, rather than as an error.
+//
+//   - The waiting is done WITHOUT the decoder lock held. The frame that ends
+//     the wait has to be decoded by the receive thread, which needs that lock,
+//     so waiting under it would deadlock until the timeout and then report
+//     silence every single time.
 //
 //   - The response to a command arrives on the relay's *base status
 //     identifier*, sharing an id with the periodic status message. Telling the
 //     two apart is msel::decodeConfigResponse's job; see the comment there for
 //     why it is safe.
+//
+//   - The kill trigger is not acknowledged at all, so it does not wait. It is
+//     acted on the moment it arrives, which is the point of it.
 //
 //   - Remote shutdown is refused unless the config permits it and the request
 //     carries the confirmation token. Both, not either.
@@ -33,6 +47,7 @@
 
 #include "msel/decoder.h"
 #include "msel/protocol.h"
+#include "msel/response_waiter.h"
 
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -45,10 +60,14 @@
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <functional>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -215,6 +234,9 @@ msel::TransmitRate fromSchema(MselTransmitRate rate)
     return msel::TransmitRate::Hz10;
 }
 
+// Only ever called with something the relay actually said, so there is no case
+// here for NO_ANSWER: that is the schema's zero value, and a response nobody
+// wrote into keeps it.
 MselConfigResponse toSchema(msel::ConfigResponse response)
 {
     switch (response)
@@ -295,15 +317,25 @@ int main(int argc, char** argv)
     pub_sub::ZenohPublisher<MselMasterRelaySwitchState> switchStatePublisher(prefix +
                                                                             "/switch_state");
     pub_sub::ZenohPublisher<MselMasterRelayConfig> configPublisher(prefix + "/config");
-    pub_sub::ZenohPublisher<MselMasterRelayConfigResponse> configResponsePublisher(
-        prefix + "/config_response");
     pub_sub::ZenohPublisher<CanFrame> txPublisher(config.txKey);
 
     // Zenoh delivers on its own receive threads, and a service call arrives on
     // another. Everything below touches the decoder or a publisher, and neither
     // is thread safe, so one lock covers the lot. There is nothing here slow
     // enough to be worth finer granularity: a 10Hz relay is 30 frames a second.
+    //
+    // NOTHING MAY WAIT WHILE HOLDING IT. The receive thread needs it to decode
+    // the very frame a waiting service is waiting for.
     std::mutex mutex;
+
+    // One configuration command at a time. The relay's answers carry no
+    // correlation of any kind -- they are the same byte eight times -- so two
+    // commands in flight together would race for one answer and each could be
+    // told the other's outcome.
+    std::mutex commandMutex;
+    msel::ResponseWaiter waiter;
+
+    const auto commandTimeout = std::chrono::milliseconds { config.commandTimeoutMs };
 
     msel::Decoder decoder(msel::Addresses { .base = config.baseAddress });
 
@@ -360,9 +392,6 @@ int main(int argc, char** argv)
     });
 
     decoder.onConfigResponse([&](msel::ConfigResponse response) {
-        // Loud on purpose. This is the relay's only acknowledgement that a
-        // settings change landed, and it arrives seconds after the service call
-        // that caused it has already returned.
         if (response == msel::ConfigResponse::Success)
         {
             SPDLOG_INFO("[relay] configuration accepted");
@@ -372,10 +401,10 @@ int main(int argc, char** argv)
             SPDLOG_WARN("[relay] configuration rejected: {}", msel::to_string(response));
         }
 
-        auto& out = configResponsePublisher.fields();
-        out.setResponse(toSchema(response));
-        out.setResponseRaw(static_cast<uint8_t>(response));
-        configResponsePublisher.put();
+        // Hands it to whichever service call is waiting. Dropped when none is,
+        // which happens when an answer arrives after its caller gave up -- see
+        // ResponseWaiter for why keeping it would be worse than losing it.
+        waiter.deliver(response);
     });
 
     // --- transmit ----------------------------------------------------------
@@ -383,16 +412,20 @@ int main(int argc, char** argv)
     // One place where a frame goes onto the bus, so that every command is
     // logged and rendered the same way, and the response every service returns
     // says exactly what was sent.
+    //
+    // Call with `mutex` held; it publishes. Returns false when nothing was
+    // transmitted, in which case the response already says why and there is no
+    // answer to wait for.
     const auto sendCommand = [&](const msel::Result<helpers::CanFrame>& built,
                                  const char* what,
-                                 MselCommandResponse::Builder& response) {
+                                 MselCommandResponse::Builder& response) -> bool {
         if (!built)
         {
             SPDLOG_WARN("[node] refusing to {}: {}", what, built.error().message);
             response.setOk(false);
             response.setError(built.error().message);
             response.setFrameSent("");
-            return;
+            return false;
         }
 
         const auto& frame = *built;
@@ -433,6 +466,100 @@ int main(int argc, char** argv)
         response.setRequiresPowerCycle(needsPowerCycle);
         response.setHoldExternalKillSwitch(isConfigCommand &&
                                            msel::requiresHeldExternalKillSwitch());
+        return true;
+    };
+
+    // --- send, then wait for the relay to answer ---------------------------
+    //
+    // THE SHAPE OF EVERY CONFIGURATION COMMAND, in one place so that no service
+    // can get the lock discipline subtly different from the others.
+    //
+    // Arm before transmitting, transmit under the decoder lock, then RELEASE IT
+    // and wait. The frame that ends the wait is decoded by the receive thread,
+    // which needs the same lock -- waiting under it would block that thread out
+    // for the whole timeout and then report silence, every time, on a bus that
+    // was answering perfectly.
+    //
+    // `onSent` runs under the lock immediately after a successful transmit, for
+    // the one command that has to change how the decoder listens before the
+    // answer can arrive.
+    const auto runCommand = [&](const msel::Result<helpers::CanFrame>& built,
+                                const char* what,
+                                MselCommandResponse::Builder& response,
+                                const std::function<void()>& onSent = {})
+        -> std::optional<msel::ConfigResponse> {
+        const std::lock_guard<std::mutex> commandLock(commandMutex);
+
+        response.setAnswered(false);
+        response.setNotAcknowledged(false);
+        response.setWaitedMs(0u);
+
+        bool sent = false;
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+
+            // Armed BEFORE the frame goes out. The relay can be answered and
+            // decoded before this thread returns from its publish, and a waiter
+            // armed afterwards would sit out its whole window waiting for an
+            // answer that had already been dropped on the floor.
+            waiter.arm();
+            sent = sendCommand(built, what, response);
+            if (sent && onSent)
+            {
+                onSent();
+            }
+        }
+
+        if (!sent)
+        {
+            waiter.disarm();
+            return std::nullopt;
+        }
+
+        const auto started = std::chrono::steady_clock::now();
+        const std::optional<msel::ConfigResponse> answer = waiter.wait(commandTimeout);
+        const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started);
+
+        response.setWaitedMs(static_cast<uint16_t>(
+            std::min<int64_t>(waited.count(), std::numeric_limits<uint16_t>::max())));
+        response.setAnswered(answer.has_value());
+
+        if (!answer)
+        {
+            // NOT AN ERROR, and the wording matters: this is what a correctly
+            // sent command looks like when nobody was holding the switch, which
+            // is the overwhelmingly common way to get here.
+            response.setOk(false);
+            response.setError(fmt::format(
+                "the relay did not answer within {}ms. It ignores configuration commands unless "
+                "the external kill switch is held down while the frame arrives -- the frame was "
+                "sent, so try again holding it. A relay that is unpowered, re-addressed or on a "
+                "bus at a different rate is also silent",
+                commandTimeout.count()));
+            SPDLOG_WARN("[node] {}: no answer after {}ms", what, waited.count());
+            return answer;
+        }
+
+        response.setResponse(toSchema(*answer));
+        response.setResponseRaw(static_cast<uint8_t>(*answer));
+
+        if (*answer == msel::ConfigResponse::Success)
+        {
+            response.setOk(true);
+            response.setError("");
+            SPDLOG_INFO("[node] {}: accepted after {}ms", what, waited.count());
+        }
+        else
+        {
+            response.setOk(false);
+            response.setError(fmt::format("the relay rejected the command: {}",
+                                          msel::to_string(*answer)));
+            SPDLOG_WARN("[node] {}: rejected after {}ms ({})", what, waited.count(),
+                        msel::to_string(*answer));
+        }
+
+        return answer;
     };
 
     // --- receive -----------------------------------------------------------
@@ -502,20 +629,50 @@ int main(int argc, char** argv)
         [&](const MselSetBaseAddressRequest::Reader& request,
             MselCommandResponse::Builder& response) {
             const auto requested = static_cast<uint32_t>(request.getBaseAddress());
-            const std::lock_guard<std::mutex> lock(mutex);
-            sendCommand(msel::makeSetBaseAddressFrame(requested), "set the base address", response);
 
-            if (response.getOk())
+            uint32_t previous = 0u;
             {
-                // The relay moves on acknowledge, so the decoder has to move
-                // with it or telemetry stops at exactly the moment the change
-                // succeeds. Nothing else on the bus is told, which is why this
-                // is a warning rather than an info line.
-                decoder.setAddresses(msel::Addresses { .base = requested });
+                const std::lock_guard<std::mutex> lock(mutex);
+                previous = decoder.addresses().base;
+            }
+
+            // THE ONE COMMAND WHOSE ANSWER MOVES WITH IT. The relay re-addresses
+            // as it accepts, so the acknowledgement comes back on the NEW base
+            // -- while the decoder is still tuned to the old one. Retuning
+            // before the wait is what lets the answer be heard at all; watching
+            // the old identifier as well covers the other reading of the manual,
+            // where the relay answers before it moves. Being wrong about which
+            // costs a spurious timeout on a change that actually worked.
+            const auto answer =
+                runCommand(msel::makeSetBaseAddressFrame(requested), "set the base address",
+                           response, [&] {
+                               decoder.setAddresses(msel::Addresses { .base = requested });
+                               decoder.watchConfigResponseAt(previous);
+                           });
+
+            const std::lock_guard<std::mutex> lock(mutex);
+            decoder.watchConfigResponseAt(std::nullopt);
+
+            if (answer && *answer == msel::ConfigResponse::Success)
+            {
                 SPDLOG_WARN("[node] now decoding at base 0x{:X}. Every other consumer of this "
                             "relay -- loggers, dashes, DBC imports -- is still looking at the old "
                             "identifiers",
                             requested);
+                return;
+            }
+
+            // It did not move, so neither do we. Leaving the decoder on the new
+            // address after an unacknowledged change is how this used to lose
+            // telemetry outright: the relay is still transmitting where it
+            // always was, and the node would be listening somewhere else with
+            // nothing to say about why.
+            if (response.getFrameSent().size() > 0u)
+            {
+                decoder.setAddresses(msel::Addresses { .base = previous });
+                SPDLOG_WARN("[node] the relay did not acknowledge the move; still decoding at "
+                            "base 0x{:X}",
+                            previous);
             }
         });
 
@@ -523,9 +680,8 @@ int main(int argc, char** argv)
         prefix + "/set_transmit_rate",
         [&](const MselSetTransmitRateRequest::Reader& request,
             MselCommandResponse::Builder& response) {
-            const std::lock_guard<std::mutex> lock(mutex);
-            sendCommand(msel::makeSetTransmitRateFrame(fromSchema(request.getRate())),
-                        "set the transmit rate", response);
+            runCommand(msel::makeSetTransmitRateFrame(fromSchema(request.getRate())),
+                       "set the transmit rate", response);
         });
 
     pub_sub::ZenohService<MselSetBaudAndShutdownDelayRequest, MselCommandResponse>
@@ -541,10 +697,9 @@ int main(int argc, char** argv)
                     return;
                 }
 
-                const std::lock_guard<std::mutex> lock(mutex);
-                sendCommand(msel::makeSetBaudAndShutdownDelayFrame(
-                                *baud, std::chrono::milliseconds { request.getShutdownDelayMs() }),
-                            "set the baud rate and shutdown delay", response);
+                runCommand(msel::makeSetBaudAndShutdownDelayFrame(
+                               *baud, std::chrono::milliseconds { request.getShutdownDelayMs() }),
+                           "set the baud rate and shutdown delay", response);
 
                 if (response.getOk())
                 {
@@ -566,8 +721,7 @@ int main(int argc, char** argv)
                 return;
             }
 
-            const std::lock_guard<std::mutex> lock(mutex);
-            sendCommand(msel::makeSetOutputDriveFrame(*drive), "set the output drive", response);
+            runCommand(msel::makeSetOutputDriveFrame(*drive), "set the output drive", response);
         });
 
     pub_sub::ZenohService<MselSetCanShutdownRequest, MselCommandResponse> setCanShutdown(
@@ -583,8 +737,7 @@ int main(int argc, char** argv)
                 return;
             }
 
-            const std::lock_guard<std::mutex> lock(mutex);
-            sendCommand(
+            runCommand(
                 msel::makeSetCanShutdownFrame(*mode, static_cast<uint32_t>(request.getKillAddress())),
                 "configure remote shutdown", response);
         });
@@ -621,9 +774,20 @@ int main(int argc, char** argv)
                         "battery and stops the engine",
                         config.killAddress);
 
+            // NO WAIT HERE, and it is not an omission. The kill trigger is not
+            // a configuration command: the relay acts on it the moment it
+            // arrives and never acknowledges it, so a wait would spend the
+            // whole timeout and then report silence for a shutdown that had
+            // already happened -- which reads as "it did not work" at the one
+            // moment nobody should be in doubt. `notAcknowledged` says so in
+            // the response rather than leaving `answered: false` to be
+            // misread.
             const std::lock_guard<std::mutex> lock(mutex);
             sendCommand(msel::makeCanKillTriggerFrame(config.killAddress),
                         "trigger a remote shutdown", response);
+            response.setAnswered(false);
+            response.setNotAcknowledged(true);
+            response.setWaitedMs(0u);
         });
 
     std::signal(SIGINT, onSignal);

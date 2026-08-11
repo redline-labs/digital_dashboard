@@ -151,7 +151,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
 
     reject_unknown_keys(root,
                         { "rx_key", "tx_key", "topic_prefix", "base_address", "kill_address",
-                          "allow_can_kill", "status_interval_ms" },
+                          "allow_can_kill", "command_timeout_ms", "status_interval_ms" },
                         context);
 
     read_string(root, "rx_key", out.rxKey);
@@ -160,6 +160,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     read_uint(root, "base_address", out.baseAddress, context);
     read_uint(root, "kill_address", out.killAddress, context);
     read_bool(root, "allow_can_kill", out.allowCanKill, context);
+    read_uint(root, "command_timeout_ms", out.commandTimeoutMs, context);
     read_uint(root, "status_interval_ms", out.statusIntervalMs, context);
 
     check_topic_key(out.rxKey, "rx_key", context);
@@ -172,6 +173,24 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
             "rx_key and tx_key are both '{}'. Every command this node sends would come straight "
             "back to its own decoder",
             out.rxKey));
+    }
+
+    // A window this short cannot contain an answer that had to queue behind the
+    // relay's own 10Hz telemetry, so every accepted command would be reported
+    // as unanswered -- a "no" that is wrong, which is worse than a slow "yes".
+    // Zero is rejected rather than read as "do not wait": there is no longer
+    // anywhere else for the answer to appear, so not waiting means never
+    // learning the outcome at all.
+    constexpr uint32_t kMinCommandTimeoutMs = 100u;
+    constexpr uint32_t kMaxCommandTimeoutMs = 10000u;
+    if (out.commandTimeoutMs < kMinCommandTimeoutMs ||
+        out.commandTimeoutMs > kMaxCommandTimeoutMs)
+    {
+        context.fail(fmt::format(
+            "command_timeout_ms: {} is outside {}..{}. Below the floor an accepted command reads "
+            "as unanswered; above the ceiling the caller's own query gives up first and reports a "
+            "failure instead of the answer",
+            out.commandTimeoutMs, kMinCommandTimeoutMs, kMaxCommandTimeoutMs));
     }
 
     // The same rule the device itself enforces, applied here so that a bad

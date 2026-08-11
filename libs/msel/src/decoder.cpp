@@ -61,6 +61,24 @@ Decoder::Accepted Decoder::onFrame(const helpers::CanFrame& frame)
 
     const auto data = frame.data_span();
 
+    // The watched identifier, when there is one and it is not already the base.
+    // Responses only -- see watchConfigResponseAt. A frame here that is not a
+    // response is somebody else's traffic, not this relay's telemetry, so it is
+    // declined rather than falling through to the periodic decoders.
+    if (mResponseWatch && frame.id == *mResponseWatch && frame.id != mAddresses.status())
+    {
+        if (const auto response = decodeConfigResponse(data))
+        {
+            mSnapshot.lastConfigResponse = response;
+            if (mConfigResponseHandler)
+            {
+                mConfigResponseHandler(*response);
+            }
+            return Accepted::ConfigResponse;
+        }
+        return Accepted::No;
+    }
+
     if (frame.id == mAddresses.status())
     {
         // Checked before the periodic decode, because both arrive here. See

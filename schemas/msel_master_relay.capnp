@@ -75,10 +75,19 @@ enum MselTransmitRate {
 }
 
 enum MselConfigResponse {
-  success @0;
-  idMismatch @1;
-  frameCheckError @2;
-  invalidId @3;
+  # ORDINAL ZERO ON PURPOSE, and it is not one of the device's codes. This is
+  # the value the field has when nothing has been written into it, which is
+  # every command the relay did not answer -- and silence is the ordinary
+  # outcome here, not a rare one. With `success` at zero, as it was, an
+  # unanswered command reported "success" beside `ok: false`, which is the one
+  # combination a reader is most likely to misread in the one direction that
+  # matters.
+  noAnswer @0;
+
+  success @1;
+  idMismatch @2;
+  frameCheckError @3;
+  invalidId @4;
 }
 
 struct MselMasterRelayStatus {
@@ -148,15 +157,10 @@ struct MselMasterRelayConfig {
     shutdownDelayMs @6 : UInt16;
 }
 
-# The relay's answer to a configuration command.
-#
-# Published rather than returned, because these arrive asynchronously on the
-# base status identifier some time after the command went out -- and only if a
-# human was holding the external kill switch when it did.
-struct MselMasterRelayConfigResponse {
-    response @0 : MselConfigResponse;
-    responseRaw @1 : UInt8;
-}
+# There is no separate response message. The relay's answer to a configuration
+# command is waited for by the node and returned in MselCommandResponse, so a
+# caller learns what happened from the call it made rather than by correlating
+# a service reply with a topic it also had to be subscribed to.
 
 # Read the current settings. Takes no arguments; call it with `--data '{}'`.
 struct MselGetSettingsRequest {
@@ -192,16 +196,21 @@ struct MselGetSettingsResponse {
 # instructions for the change that was just made, returned as data rather than
 # written to a log the caller cannot see.
 struct MselCommandResponse {
+    # THE RELAY ACCEPTED IT. Not "the frame was sent" -- the node waits for the
+    # relay's acknowledgement and reports what it said, so a caller that gets
+    # `ok` can act on it. False covers all three ways this fails: the command
+    # was refused here, it went out and was never answered, or it was answered
+    # with a rejection. `answered` and `error` say which.
     ok @0 : Bool;
 
-    # Empty when ok. Otherwise why not: a value the device cannot store, or a
-    # command this node was not permitted to send.
+    # Empty when ok. Otherwise why not, in the words the caller needs: a value
+    # the device cannot store, a command this node was not permitted to send,
+    # the relay's rejection code, or the timeout and what usually causes it.
     error @1 : Text;
 
     # The exact bytes that went onto the bus, as hex. Empty when nothing was
-    # sent. This is the only way to confirm what happened: the relay's own
-    # answer comes back asynchronously on a different topic, and only if the
-    # external kill switch was held.
+    # sent, which is how a locally refused command is told apart from one the
+    # relay ignored.
     frameSent @2 : Text;
 
     # True when the relay has to be power-cycled before this change is live.
@@ -213,6 +222,30 @@ struct MselCommandResponse {
     # There is no software substitute; without it the relay ignores the frame
     # and never answers.
     holdExternalKillSwitch @4 : Bool;
+
+    # Whether the relay answered at all within the node's wait window.
+    #
+    # FALSE IS THE ORDINARY OUTCOME, not a fault: an unheld external kill switch
+    # produces silence rather than a rejection, and so does a relay that is
+    # unpowered, re-addressed or on a bus at a different rate. It is the one
+    # field that separates "the relay said no" from "nothing answered", and the
+    # two need completely different things done about them.
+    answered @5 : Bool;
+
+    # What it said. Meaningless unless `answered`.
+    response @6 : MselConfigResponse;
+    responseRaw @7 : UInt8;
+
+    # How long the node waited before giving up or being answered, in
+    # milliseconds. Reported so a caller can tell a prompt refusal from one that
+    # sat out the whole window, and so the configured timeout is visible without
+    # reading the node's config.
+    waitedMs @8 : UInt16;
+
+    # The kill trigger is not acknowledged by the relay at all -- it is acted on
+    # the moment it arrives, which is the point of it. True says this node did
+    # not wait for an answer and that `answered: false` means nothing here.
+    notAcknowledged @9 : Bool;
 }
 
 # Moves all three periodic messages. The node retunes its decoder to match, so

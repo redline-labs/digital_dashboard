@@ -18,6 +18,14 @@ all of it is exercised against a stub relay with nothing plugged in:
 ctest --test-dir build -L msel
 ```
 
+That includes the send-and-wait hand-off (`msel::ResponseWaiter`), which is in
+the library rather than the node for the same reason: its interesting cases are
+orderings between two threads, and inside a zenoh service callback they can be
+reasoned about but not provoked. The one worth knowing is that an answer
+arriving after its caller gave up is **dropped**, not saved for the next
+command — these acknowledgements are late by nature, so handing one on would
+report the wrong command as accepted.
+
 ## Read this before changing any setting
 
 **Every configuration command is ignored unless a human is pressing and holding
@@ -25,13 +33,15 @@ the external kill switch on the relay while the frame is transmitted.** There is
 no software substitute. A command sent without it is not rejected — it is not
 answered at all, which looks exactly like a node that is not running.
 
-Settings changes are therefore single-shot. A service call builds one frame,
-sends it, and returns immediately with the bytes it sent; it does not wait for
-the relay, because waiting would turn every mistimed press into a timeout. The
-relay's answer, when it comes, is published on `<prefix>/config_response`.
+**A settings call waits for the relay to answer and tells you what it said.**
+`ok` means the relay accepted the change, not that bytes were transmitted. So
+the intended sequence is simply: hold the switch, make the call, read the reply.
 
-The intended sequence is: hold the switch, make the call, watch
-`config_response`.
+A command that is never answered is therefore an ordinary outcome rather than an
+error, and it is reported as one — `answered: false` with a plain explanation.
+That is what an unheld switch looks like, and it is also what an unpowered,
+re-addressed or wrong-baud-rate relay looks like, which is why the message names
+all four.
 
 ## What it publishes
 
@@ -43,7 +53,9 @@ With the default `topic_prefix` of `nodes/msel_master_relay`:
 | `…/info` | `MselMasterRelayInfo` | Serial number, input voltage, shutdown history |
 | `…/config` | `MselMasterRelayConfig` | The relay's stored settings, read back from its own messages |
 | `…/switch_state` | `MselMasterRelaySwitchState` | Only on serial 64666 and above; absent on older units, which is normal |
-| `…/config_response` | `MselMasterRelayConfigResponse` | The relay's answer to a settings change |
+
+There is no `config_response` topic. The relay's answer to a settings change is
+waited for by the node and returned by the call that caused it — see below.
 
 Load current is signed: positive while the battery is discharging, negative
 while it is being charged. It is accurate to ±10% or 1 A, whichever is greater —
@@ -61,9 +73,40 @@ a whole-system draw indication, not a per-circuit measurement.
 | `…/set_can_shutdown` | `MselSetCanShutdownRequest` | Enable remote shutdown and set its address. Needs a power cycle |
 | `…/can_kill` | `MselCanKillRequest` | Isolates the battery and stops the engine. Gated — see below |
 
-Every write returns an `MselCommandResponse` carrying the exact bytes sent, plus
-`requiresPowerCycle` and `holdExternalKillSwitch`. Those two are returned as
-data rather than logged, because the caller is the one who has to act on them.
+Every write returns an `MselCommandResponse`:
+
+| Field | Means |
+|---|---|
+| `ok` | **The relay accepted it.** False covers all three failures below |
+| `answered` | Whether the relay said anything at all within the wait window |
+| `response` / `responseRaw` | What it said. `noAnswer` when it said nothing |
+| `error` | Why not, in the words you need: a refusal here, a rejection code, or the timeout and what usually causes it |
+| `frameSent` | The exact bytes that went out. Empty when nothing was sent |
+| `waitedMs` | How long the node waited before being answered or giving up |
+| `requiresPowerCycle`, `holdExternalKillSwitch` | Returned as data rather than logged, because the caller is the one who has to act on them |
+| `notAcknowledged` | Only `can_kill` — see below |
+
+The three ways a write fails are worth telling apart, because they need
+completely different things done about them:
+
+```
+ok: false, frameSent: ""        -> refused here. Bad value, or not permitted
+ok: false, answered: false      -> sent, nothing came back. Hold the switch
+ok: false, answered: true       -> the relay rejected it. `response` says why
+```
+
+`can_kill` is the exception: the relay acts on the kill frame the moment it
+arrives and never acknowledges it, so that call does not wait. It reports
+`notAcknowledged: true` so its `answered: false` is not misread as a failure at
+the one moment nobody should be in doubt.
+
+**How long it waits** is `command_timeout_ms`, 1000ms by default. Your own query
+timeout has to be longer than the node's or you get a transport failure instead
+of the answer — `inspect call` gives up after 2000ms unless you pass
+`--timeout`. The node refuses a configured value outside 100..10000ms for the
+same reason at both ends: too short and an acknowledgement that queued behind
+the relay's own 10Hz telemetry reads as silence, too long and the caller gives
+up first.
 
 ```bash
 ./build/nodes/inspect/inspect services                      # discover the keys
@@ -95,6 +138,16 @@ before you check the wiring.
 Changing the base address through this node retunes its decoder in place, so
 telemetry keeps flowing. Nothing else on the bus is told: loggers, dashes and DBC
 imports elsewhere will still be looking at the old identifiers.
+
+**It only retunes if the relay actually acknowledged the move**, and reverts if
+it did not. That matters because an unacknowledged command is the common case
+here: without the fix, a `set_base_address` sent without the switch held left
+the node listening at an address the relay had never moved to, and telemetry
+stopped with nothing said about why. While the change is in flight the node
+listens for the acknowledgement at *both* addresses — the relay re-addresses as
+it accepts, so the answer comes back at the new one, but the manual can also be
+read as answering before the move. Watching both costs nothing and is right
+either way.
 
 **The relay stops transmitting on a quiet bus.** If it sees nothing for more than
 two of its own transmit cycles — checked every five seconds — it disables CAN
@@ -164,7 +217,33 @@ To watch a command go out, subscribe to the transmit topic and make a call:
 ./build/nodes/inspect/inspect call nodes/msel_master_relay/set_output_drive \
     --data '{"drive":"activeLowLowSide"}'
 # id 1929 (0x789), data 0A BC 06 06 00 00 0A BC -- the manual's table 20
+# and, a second later: ok false, answered false -- nothing is out there to answer
 ```
+
+**You can play the relay's half too**, which is how the waiting was checked
+without hardware. Its answer is the same byte eight times on the base
+identifier, so injecting one while a call is in flight is a one-liner. Give the
+call a wide window, because `inspect` takes a moment to start:
+
+```bash
+# In one shell, with command_timeout_ms raised to 6000 in the config:
+./build/nodes/inspect/inspect call nodes/msel_master_relay/set_output_drive \
+    --data '{"drive":"activeLowLowSide"}' --timeout 9000
+
+# In another, before that window closes -- 0x00 x8 is "success" on 0x6E4:
+./build/nodes/inspect/inspect publish vehicle/can0/rx --schema CanFrame \
+    --data '{"id":1764,"len":8,"data":[0,0,0,0,0,0,0,0]}'
+# the call returns ok: true, answered: true, waitedMs: <however long you took>
+
+# 0x33 x8 is a rejection, and comes back as response: invalidId
+./build/nodes/inspect/inspect publish vehicle/can0/rx --schema CanFrame \
+    --data '{"id":1764,"len":8,"data":[51,51,51,51,51,51,51,51]}'
+```
+
+Note the ordering trap if you script both halves: publish too early and the
+answer is dropped as unsolicited — correctly, since no command was outstanding —
+and the call still times out. The node logs the decode, so a log line that comes
+*before* the "sent" line is the giveaway.
 
 ## Where the protocol description came from
 

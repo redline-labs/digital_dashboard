@@ -556,6 +556,63 @@ void test_dbc_agrees_with_the_hand_written_config_word()
     }
 }
 
+// The second identifier a node watches while a base-address change is in
+// flight.
+//
+// This exists because that one command's acknowledgement does not come back
+// where the caller was listening: the relay re-addresses as it accepts, so the
+// answer arrives at the NEW base -- which is what StubRelay models -- while a
+// decoder that has not moved yet is still on the old one. A node that waits for
+// the acknowledgement has to watch both or report a timeout for a change that
+// worked.
+void test_watching_a_second_identifier_for_a_response()
+{
+    msel::Decoder decoder;  // Base 0x6E4.
+    int responseCalls = 0;
+    int statusCalls = 0;
+    decoder.onConfigResponse([&](msel::ConfigResponse) { ++responseCalls; });
+    decoder.onStatus([&](const msel::StatusFrame&) { ++statusCalls; });
+
+    // Nothing watched: an answer at another identifier is not this relay's.
+    check(decoder.onFrame(frameOf(0x700u, { 0, 0, 0, 0, 0, 0, 0, 0 })) ==
+              msel::Decoder::Accepted::No,
+          "a response at an unwatched identifier is ignored");
+    check(responseCalls == 0, "and reaches nobody");
+
+    decoder.watchConfigResponseAt(0x700u);
+    check(decoder.onFrame(frameOf(0x700u, { 0, 0, 0, 0, 0, 0, 0, 0 })) ==
+              msel::Decoder::Accepted::ConfigResponse,
+          "once watched, the same frame is a response");
+    check(responseCalls == 1, "and reaches the response callback");
+
+    // RESPONSES ONLY. The watched identifier is a guess about where an
+    // acknowledgement might appear, and the guess is wrong exactly when the
+    // command failed -- so telemetry-shaped traffic there must not be published
+    // as this relay's readings.
+    check(decoder.onFrame(statusFrameAt(0x700u)) == msel::Decoder::Accepted::No,
+          "a status-shaped frame at the watched identifier is NOT decoded as telemetry");
+    check(statusCalls == 0, "so no invented voltages reach the status callback");
+
+    // The real base still works for both, and is unaffected by the watch.
+    check(decoder.onFrame(statusFrameAt(0x6E4u)) == msel::Decoder::Accepted::Status,
+          "the base identifier still decodes telemetry");
+    check(statusCalls == 1, "which reaches the status callback");
+    check(decoder.onFrame(frameOf(0x6E4u, { 0, 0, 0, 0, 0, 0, 0, 0 })) ==
+              msel::Decoder::Accepted::ConfigResponse,
+          "and still decodes a response");
+    check(responseCalls == 2, "which reaches the response callback");
+
+    // Watching the base itself must not double-handle it.
+    decoder.watchConfigResponseAt(0x6E4u);
+    check(decoder.onFrame(statusFrameAt(0x6E4u)) == msel::Decoder::Accepted::Status,
+          "watching the base identifier does not stop telemetry decoding there");
+
+    decoder.watchConfigResponseAt(std::nullopt);
+    check(decoder.onFrame(frameOf(0x700u, { 0, 0, 0, 0, 0, 0, 0, 0 })) ==
+              msel::Decoder::Accepted::No,
+          "clearing the watch stops it again");
+}
+
 } // namespace
 
 int main()
@@ -570,6 +627,7 @@ int main()
     test_changing_the_base_address_keeps_the_callbacks();
     test_malformed_frames_are_rejected();
     test_config_response_and_status_share_an_identifier();
+    test_watching_a_second_identifier_for_a_response();
     test_stub_relay_round_trip();
     test_commands_need_the_external_kill_switch();
     test_relay_rejects_bad_commands();

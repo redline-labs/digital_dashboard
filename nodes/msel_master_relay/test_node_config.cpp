@@ -156,6 +156,32 @@ void test_malformed_files()
     parseFails("rx_key: [unclosed\n", "a file that is not valid YAML");
 }
 
+// How long a configuration service waits for the relay to acknowledge before it
+// reports that nothing came back.
+//
+// Both bounds are load bearing and they fail in opposite directions. Too short
+// and an accepted command reads as unanswered, because the acknowledgement had
+// to queue behind the relay's own 10Hz telemetry -- a "no" that is wrong, which
+// is worse than a slow "yes". Too long and the CALLER's query gives up first,
+// so a perfectly good answer is delivered to nobody and the caller sees a
+// transport failure instead.
+void test_command_timeout_is_validated()
+{
+    check(parseOk("rx_key: a/b\n", "the default").commandTimeoutMs == 1000u,
+          "command_timeout_ms defaults to a window that fits inside the caller's own");
+
+    check(parseOk("command_timeout_ms: 250\n", "an explicit window").commandTimeoutMs == 250u,
+          "an explicit command_timeout_ms is read");
+
+    // Zero is rejected rather than read as "do not wait". There is nowhere else
+    // for the answer to appear now that the response topic is gone, so not
+    // waiting would mean never learning the outcome at all.
+    parseFails("command_timeout_ms: 0\n", "a zero command timeout");
+    parseFails("command_timeout_ms: 20\n", "a window too short for the relay to answer in");
+    parseFails("command_timeout_ms: 60000\n",
+               "a window longer than the caller's query will wait");
+}
+
 } // namespace
 
 int main()
@@ -172,6 +198,7 @@ int main()
     test_addresses_are_validated();
     test_topic_keys_are_validated();
     test_can_kill_gate();
+    test_command_timeout_is_validated();
     test_malformed_files();
 
     spdlog::set_level(spdlog::level::info);

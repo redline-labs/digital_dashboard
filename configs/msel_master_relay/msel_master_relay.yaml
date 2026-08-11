@@ -43,6 +43,21 @@ kill_address: 0x6E6
 # token, and the relay has to have remote shutdown enabled in its own settings.
 allow_can_kill: false
 
+# How long a settings service waits for the relay to acknowledge its command
+# before answering "nothing came back", in milliseconds.
+#
+# The wait is what makes those services useful: the call itself tells you
+# whether the relay accepted the change, instead of only that bytes were
+# transmitted. Timing out is a normal answer here, not a fault -- a command sent
+# without the external kill switch held is never acknowledged at all.
+#
+# Two things bound it. Below ~100ms an acknowledgement that queued behind the
+# relay's own 10Hz telemetry reads as silence, so an accepted command is
+# reported as unanswered. Above the caller's own query timeout -- 2000ms for
+# `inspect call`, raise it with --timeout -- the caller gives up first and sees
+# a transport failure instead of the answer.
+command_timeout_ms: 1000
+
 # Republish the status topic on a timer even when nothing has changed, in
 # milliseconds. Zero publishes only on receipt, which is the right choice here:
 # the relay already transmits at 10Hz, so a subscriber never waits long.

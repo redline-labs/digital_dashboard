@@ -52,6 +52,29 @@ struct NodeConfig
     // Permit this node to transmit a remote shutdown at all. Off by default.
     bool allowCanKill { false };
 
+    // How long a configuration service waits for the relay to acknowledge its
+    // command before answering "nothing came back".
+    //
+    // The wait is what makes those services useful: without it a caller learns
+    // only that bytes were transmitted, and has to correlate a topic with a call
+    // to find out whether anything happened. With it, the call itself says.
+    //
+    // 1500ms is chosen against the device rather than for latency. The relay
+    // transmits at 10Hz by default, so its answer shares a bus with 30 frames a
+    // second of its own telemetry; a window shorter than a few transmit cycles
+    // would report a timeout for an acknowledgement that was merely queued
+    // behind them. Timing out is not an error here -- a command sent without
+    // the external kill switch held is never answered at all -- so the cost of
+    // waiting a little longer is a slower "no", and the cost of waiting too
+    // little is a "no" that is wrong.
+    //
+    // THE CALLER'S QUERY TIMEOUT HAS TO BE LONGER THAN THIS. `inspect call`
+    // gives up after 2000ms unless told otherwise, and a node that waits longer
+    // than its caller hands back a query failure instead of the answer it was
+    // about to give. That is why the default sits well under it and why the
+    // range below stops where it does.
+    uint32_t commandTimeoutMs { 1000 };
+
     // How often the status topic is republished even when nothing changed. Zero
     // publishes only on receipt, which is the right choice on a bus where the
     // relay is already transmitting at 10Hz; a non-zero value is for keeping a

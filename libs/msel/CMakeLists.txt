@@ -17,6 +17,7 @@ add_library(msel STATIC
     src/decoder.cpp
     src/error.cpp
     src/protocol.cpp
+    src/response_waiter.cpp
     src/stub_relay.cpp
 )
 
@@ -60,3 +61,19 @@ target_link_libraries(msel_test_decode
 )
 
 add_project_test(TARGET msel_test_decode LABELS msel unit)
+
+# The hand-off between the thread that sends a configuration command and the
+# thread that decodes the relay's answer. Real threads, because the cases worth
+# pinning are orderings -- an answer that beats its waiter, and one that arrives
+# after its caller gave up and must not be handed to the next command.
+add_executable(msel_test_response_waiter
+    tests/test_msel_response_waiter.cpp
+)
+
+target_link_libraries(msel_test_response_waiter
+    PRIVATE
+        msel
+        spdlog::spdlog
+)
+
+add_project_test(TARGET msel_test_response_waiter LABELS msel unit)

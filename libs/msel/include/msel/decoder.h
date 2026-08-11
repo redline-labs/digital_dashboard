@@ -76,6 +76,24 @@ class Decoder
     // heard from the relay" immediately after a successful re-addressing.
     void setAddresses(Addresses addresses) { mAddresses = addresses; }
 
+    // One extra identifier to accept a configuration RESPONSE on, and nothing
+    // else. Cleared with nullopt.
+    //
+    // THIS EXISTS FOR EXACTLY ONE CASE: a base-address change is the only
+    // command whose acknowledgement does not come back where the caller was
+    // listening. The relay moves as it accepts, so the answer arrives at the
+    // NEW base while the decoder is still tuned to the old one -- or at the old
+    // one, if a given firmware answers before it moves. Both are plausible
+    // readings of the manual and no test here can settle it, so a node that
+    // waits for the acknowledgement watches both and is right either way.
+    //
+    // Deliberately response-only. Accepting periodic telemetry at a second
+    // address would mean publishing readings from whatever else is on that
+    // identifier the moment the guess is wrong, and the guess is wrong exactly
+    // when the command failed.
+    void watchConfigResponseAt(std::optional<uint32_t> id) { mResponseWatch = id; }
+    const std::optional<uint32_t>& configResponseWatch() const { return mResponseWatch; }
+
     // Decodes one frame, updates the snapshot, and fires the matching callback.
     // A frame that is not this relay's, or that is too short for the message
     // its identifier claims, returns `No` and changes nothing.
@@ -93,6 +111,7 @@ class Decoder
 
   private:
     Addresses mAddresses;
+    std::optional<uint32_t> mResponseWatch;
     Snapshot mSnapshot;
 
     std::function<void(const StatusFrame&)> mStatusHandler;
