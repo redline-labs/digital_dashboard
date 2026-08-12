@@ -1,6 +1,3 @@
-# Set deployment target for Rust builds (zenoh-c uses Cargo) before fetching
-set(ENV{MACOSX_DEPLOYMENT_TARGET} ${CMAKE_OSX_DEPLOYMENT_TARGET})
-
 # THE RUST `zenoh` CRATE IS NOT FETCHED BY CMAKE, and that is the whole
 # awkwardness of what follows. zenoh-c is a CMake project, but the library that
 # actually contains the bug is its cargo dependency:
@@ -105,6 +102,69 @@ endif()
 # CMake, the generator and the shell is a losing game.
 set(zenoh_cargo_config ${CMAKE_BINARY_DIR}/zenoh-patch-cargo-config.toml)
 file(WRITE ${zenoh_cargo_config} "paths = [\"${zenoh_rust_SOURCE_DIR}/zenoh\"]\n")
+
+# THE DEPLOYMENT TARGET HAS TO REACH CARGO, and this config file is the only
+# place it can be said from here. zenoh-c runs cargo from an add_custom_command
+# (its CMakeLists.txt, `cmake -E env OPAQUE_TYPES_BUILD_DIR=... cargo build`),
+# which is a *build* step: it inherits the environment of make or ninja, not the
+# one CMake had while configuring. A set(ENV{MACOSX_DEPLOYMENT_TARGET}) up here
+# -- which is what this file used to do -- therefore reaches nothing. It was
+# measured: with CMAKE_OSX_DEPLOYMENT_TARGET pinned to 15.0, cargo still emitted
+# objects built for 26.5.
+#
+# Without it the archive carries three different targets at once. rustc defaults
+# to 11.0 for aarch64-apple-darwin, the `cc` crate compiling ring's and aws-lc's
+# C sources defaults to the host's full version, and our C++ sits whereever
+# CMAKE_OSX_DEPLOYMENT_TARGET puts it. Whenever the C objects come out highest,
+# every link that touches zenoh reports it -- 700 "object file was built for
+# newer macOS version" warnings on a 26.5 host.
+#
+# Cargo's [env] table applies to build scripts and rustc alike, so one entry
+# covers both halves. force, because the invariant wanted here is that everything
+# in the link agrees; a stale MACOSX_DEPLOYMENT_TARGET left in the developer's
+# shell would otherwise win for cargo while our C++ used the CMake value, which
+# is precisely the split this exists to close.
+#
+# The value to match is whatever the C++ side ends up at, so ask the compiler
+# rather than recompute it. CMAKE_OSX_DEPLOYMENT_TARGET wins when it is set, and
+# when it is not, clang has already picked something -- the host version
+# truncated to major.0, currently, though that rule has changed before and is not
+# ours to depend on. __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ reports the
+# answer either way, as MMmmpp: 260000 for 26.0, 150300 for 15.3.
+#
+# Appended rather than written above, so `paths` stays at TOML top level: keys
+# after a [table] header belong to that table.
+if(APPLE)
+    set(zenoh_deployment_target "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+
+    if(NOT zenoh_deployment_target)
+        execute_process(
+            COMMAND ${CMAKE_CXX_COMPILER} -dM -E -x c++ /dev/null
+            OUTPUT_VARIABLE zenoh_compiler_defines
+            ERROR_QUIET
+        )
+        if(zenoh_compiler_defines MATCHES
+                "__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ ([0-9]+)")
+            math(EXPR zenoh_dt_major "${CMAKE_MATCH_1} / 10000")
+            math(EXPR zenoh_dt_minor "(${CMAKE_MATCH_1} / 100) % 100")
+            set(zenoh_deployment_target "${zenoh_dt_major}.${zenoh_dt_minor}")
+        endif()
+    endif()
+
+    if(zenoh_deployment_target)
+        file(APPEND ${zenoh_cargo_config}
+            "\n[env]\n"
+            "MACOSX_DEPLOYMENT_TARGET = { value = \"${zenoh_deployment_target}\", force = true }\n")
+        message(STATUS "zenoh: cargo deployment target ${zenoh_deployment_target}")
+    else()
+        # Not fatal, but say so: the build still works, it just links a mix of
+        # deployment targets and reports every one of them.
+        message(WARNING
+            "Could not determine the macOS deployment target to hand cargo. "
+            "Expect \"object file was built for newer macOS version\" warnings "
+            "from libzenohc.a; set CMAKE_OSX_DEPLOYMENT_TARGET to silence them.")
+    endif()
+endif()
 
 # GUARDED, because this is a cache variable being appended to: without the
 # check, every reconfigure adds another `--config <same file>` and cargo rejects

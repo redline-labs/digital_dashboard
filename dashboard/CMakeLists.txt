@@ -5,6 +5,11 @@
 # mentioned as a dependency ... but not declared". Finding them before
 # add_subdirectory() also lets the widgets inherit the targets, so their own
 # find_package calls become no-ops instead of re-running Qt's dependency probes.
+#
+# The top-level CMakeLists now finds the same components ahead of this, so these
+# targets are inherited rather than created here. The call stays: it is what
+# documents the components this directory needs, and it keeps this file working
+# if the ordering above ever changes.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Multimedia)
 
 add_subdirectory(widgets)

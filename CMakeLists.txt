@@ -1,4 +1,11 @@
-cmake_minimum_required(VERSION 3.10)
+# 3.16 is the real floor: qt_standard_project_setup() and Qt6Config both need it,
+# and FetchContent_MakeAvailable needs 3.14.  The 3.10 this used to claim was
+# never true, it just went unchecked.  No <max> in the range on purpose -- naming
+# one raises the policy version with it, and CMP0169 (3.30) then turns
+# third_party/mcap.cmake's direct FetchContent_Populate call into a hard error.
+# That call wants replacing on its own merits, but not as a side effect of
+# correcting the floor.
+cmake_minimum_required(VERSION 3.16)
 
 # Let CMake de-duplicate static libraries on the link line.  By default it keeps
 # a target's direct dependencies in their original order and appends the
@@ -9,22 +16,6 @@ cmake_minimum_required(VERSION 3.10)
 # Requires CMake 3.31+; older versions ignore the variable and just keep the
 # duplicates.
 set(CMAKE_LINK_LIBRARIES_STRATEGY REORDER_FREELY)
-
-# Automatically detect and set macOS deployment target to match current system
-if(APPLE)
-    execute_process(
-        COMMAND sw_vers -productVersion
-        OUTPUT_VARIABLE MACOS_VERSION
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    
-    # Extract major.minor version (e.g., "15.5" from "15.5.0")
-    string(REGEX MATCH "^[0-9]+\\.[0-9]+" MACOS_DEPLOYMENT_VERSION "${MACOS_VERSION}")
-    
-    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOS_DEPLOYMENT_VERSION})
-    message(STATUS "Detected macOS version: ${MACOS_VERSION}")
-    message(STATUS "Setting deployment target to: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
-endif()
 
 # project name
 project(dashboard LANGUAGES C CXX)
@@ -59,29 +50,42 @@ add_compile_options(
     #-flto
 )
 
-# Homebrew on Intel installs into /usr/local, and clang searches
-# /usr/local/include by default without marking it a system directory the way it
-# marks the SDK ones.  Two consequences, both ours to deal with: it sits ahead of
-# the -isystem paths pkg-config hands us, so ffmpeg and OpenSSL resolve through
-# it rather than through their Cellar prefix, and warnings from what it finds are
-# attributed to us -- which turns every old-style cast in those headers into a
-# -Werror failure.  Apple Silicon never sees this because /opt/homebrew is not on
-# the default search path at all, so the -isystem entry is the only way there.
-#
-# Re-flagging the directory as -isystem corrects the classification without
-# introducing a search path that was not already being searched.
-# include_directories(SYSTEM) cannot do it: CMake drops any directory that is
-# already an implicit compiler include, and that is precisely this one.
-if(APPLE)
-    foreach(implicit_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
-        if(implicit_dir MATCHES "^(/usr/local|/opt/homebrew)/include$")
-            message(STATUS "Treating ${implicit_dir} as a system include directory")
-            add_compile_options("SHELL:-isystem ${implicit_dir}")
-        endif()
-    endforeach()
-endif()
-
 add_subdirectory(third_party)
+
+# Homebrew's Qt exports its entire install prefix as a system include directory.
+# Qt6::Platform, which every Qt module links transitively, carries
+# "${prefix}/share/qt/mkspecs/<spec>;${prefix}/include".  The mkspecs entry is
+# real; the bare prefix is several hundred unrelated formulae, and it lands on
+# the include path of every Qt target we build.
+#
+# That is not theoretical.  Anything we vendor that is also brewed then has two
+# copies in scope, and the brewed one is found first: Qt's entry is emitted ahead
+# of ours and both are -isystem.  It is how a brewed spdlog -- the same 1.17.0
+# release, but built against an external fmt where ours bundles it -- quietly
+# replaced the copy we compile against.  Nothing complained until the link, as an
+# undefined fmt::v12::detail::allocate.  Ten other vendored headers collide the
+# same way today (nlohmann, lz4, zstd, xxhash) and are saved only by being
+# non-SYSTEM, which the compiler searches ahead of every -isystem entry.
+#
+# We take nothing from that directory.  Every Qt module we use is a framework, so
+# its headers come from lib/Qt*.framework/Headers, and a full build resolves no
+# header at all through the bare prefix.  So drop it rather than try to out-rank
+# it: reordering settles only the collision we happened to notice, while removing
+# the directory retires the class.  Only package-manager prefixes are stripped --
+# a Qt in a prefix of its own is not a grab-bag and not a hazard.
+#
+# Found here rather than only in dashboard/ so every subdirectory inherits the
+# corrected target; the find_package calls further down then reuse it.  If a Qt
+# module ever does need the prefix, it says so at compile time with a missing
+# header -- a better failure than silently compiling against the wrong copy of a
+# dependency.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Multimedia)
+get_target_property(QT_PLATFORM_INCLUDES Qt6::Platform INTERFACE_INCLUDE_DIRECTORIES)
+foreach(prefix IN LISTS CMAKE_SYSTEM_PREFIX_PATH CMAKE_PREFIX_PATH)
+    list(REMOVE_ITEM QT_PLATFORM_INCLUDES "${prefix}/include")
+endforeach()
+set_target_properties(Qt6::Platform PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${QT_PLATFORM_INCLUDES}")
 
 # Tests. Deliberately enabled *after* third_party: the vendored projects declare
 # their own CTest suites, and without testing enabled in their directory scope

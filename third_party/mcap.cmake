@@ -12,21 +12,30 @@
 # without scanning, and seeking is a seek rather than a skip.
 set(MCAP_GIT_TAG releases/cpp/v2.1.3)
 
+# Populate WITHOUT configuring. mcap's repository is a monorepo -- Go, Python,
+# Rust, TypeScript, docs and conformance suites -- and nothing in it builds with
+# CMake. There is nothing to add_subdirectory(); we want the headers and nothing
+# else.
+#
+# SOURCE_SUBDIR is how that is spelled: MakeAvailable only configures when the
+# named subdirectory holds a CMakeLists.txt, and cpp/mcap -- the directory we
+# actually consume -- has none, so population happens and configuration does not.
+# Naming the real directory rather than a sentinel keeps the declaration honest,
+# and means an upstream that starts shipping a build there is a decision we get
+# to make rather than one that lands silently.
+#
+# The older spelling was a bare FetchContent_Populate(mcap) behind an
+# if(NOT mcap_POPULATED) guard. CMP0169 (CMake 3.30) deprecates calling it that
+# way and a future release removes it outright.
 FetchContent_Declare(
     mcap
     GIT_REPOSITORY https://github.com/foxglove/mcap.git
     GIT_TAG ${MCAP_GIT_TAG}
     GIT_SHALLOW TRUE
+    SOURCE_SUBDIR cpp/mcap
 )
 
-# Populate WITHOUT configuring. mcap's repository is a monorepo -- Go, Python,
-# Rust, TypeScript, docs and conformance suites -- and its C++ directory has no
-# CMakeLists.txt at all. There is nothing to add_subdirectory(); we want the
-# headers and nothing else.
-FetchContent_GetProperties(mcap)
-if(NOT mcap_POPULATED)
-    FetchContent_Populate(mcap)
-endif()
+FetchContent_MakeAvailable(mcap)
 
 # Header-only upstream: the implementation lives in .inl files included by the
 # headers, guarded by MCAP_IMPLEMENTATION so exactly one translation unit
