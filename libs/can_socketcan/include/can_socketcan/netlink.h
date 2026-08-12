@@ -11,11 +11,11 @@
 // every configuration change and needs `ip` to exist on the target.
 //
 // The message construction is here, separately from the socket that sends it,
-// for one reason: this file compiles and is tested on macOS. Netlink is a Linux
-// interface and the structures come from Linux headers, so the constants and
-// layouts are declared here rather than included -- which means the alignment
-// arithmetic and the nesting, the parts that are fiddly and silently wrong, are
-// checked on a machine that cannot run them.
+// for one reason: this file compiles and is tested on macOS. The alignment
+// arithmetic and the nesting are the parts that are fiddly and silently wrong,
+// and they do not depend on being on Linux, so they get checked on a machine
+// that cannot run them. What the constants below are worth off Linux is a
+// smaller question, answered where they are defined.
 #ifndef CAN_SOCKETCAN_NETLINK_H
 #define CAN_SOCKETCAN_NETLINK_H
 
@@ -28,39 +28,83 @@
 #include <string>
 #include <vector>
 
+#if defined(__linux__)
+#include <linux/can/netlink.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <net/if.h>
+#endif
+
 namespace can::socketcan
 {
 
-// --- constants, declared rather than included ------------------------------
+// --- the kernel's constants -------------------------------------------------
 //
-// These come from <linux/netlink.h>, <linux/rtnetlink.h>, <linux/if.h> and
-// <linux/can/netlink.h>. Repeating them means this file builds anywhere; the
-// Linux build asserts they still agree with the kernel's own headers.
+// On Linux these are the kernel's own, taken from the headers included above.
+// Nothing else is possible to get right: an attribute identifier that disagrees
+// with the kernel's names a different attribute, and the kernel answers by
+// ignoring it or refusing the message rather than by saying so.
+//
+// Off Linux the headers do not exist and the literals stand in, so that the
+// encoder below still compiles and its padding and nesting can be tested. They
+// are the values the kernel has, but nothing here depends on that -- the tests
+// that run off Linux check the shape of a message, not which attributes it
+// names. Treat them as scaffolding for the build, not as a second source of
+// truth; the numbers that matter are the ones on the left of the #if.
+
+#if defined(__linux__)
+
+inline constexpr uint16_t kRtmNewLink = RTM_NEWLINK;
+
+inline constexpr uint16_t kFlagRequest = NLM_F_REQUEST;
+inline constexpr uint16_t kFlagAck = NLM_F_ACK;
+
+inline constexpr uint16_t kIflaIfname = IFLA_IFNAME;
+inline constexpr uint16_t kIflaLinkInfo = IFLA_LINKINFO;
+inline constexpr uint16_t kIflaInfoKind = IFLA_INFO_KIND;
+inline constexpr uint16_t kIflaInfoData = IFLA_INFO_DATA;
+
+inline constexpr uint16_t kIflaCanBittiming = IFLA_CAN_BITTIMING;
+inline constexpr uint16_t kIflaCanCtrlMode = IFLA_CAN_CTRLMODE;
+inline constexpr uint16_t kIflaCanDataBittiming = IFLA_CAN_DATA_BITTIMING;
+
+inline constexpr uint32_t kIffUp = IFF_UP;
+
+// CAN control mode bits.
+inline constexpr uint32_t kCanCtrlModeLoopback = CAN_CTRLMODE_LOOPBACK;
+inline constexpr uint32_t kCanCtrlModeListenOnly = CAN_CTRLMODE_LISTENONLY;
+inline constexpr uint32_t kCanCtrlModeFd = CAN_CTRLMODE_FD;
+
+// struct can_bittiming as the kernel lays it out: eight 32-bit fields. Only
+// bitrate, sample_point, sjw, prop_seg, phase_seg1, phase_seg2 and brp are
+// meaningful to set; the kernel fills in the rest.
+inline constexpr size_t kCanBittimingSize = sizeof(struct can_bittiming);
+
+#else
 
 inline constexpr uint16_t kRtmNewLink = 16;
 
 inline constexpr uint16_t kFlagRequest = 0x0001;
 inline constexpr uint16_t kFlagAck = 0x0004;
 
+inline constexpr uint16_t kIflaIfname = 3;
 inline constexpr uint16_t kIflaLinkInfo = 18;
 inline constexpr uint16_t kIflaInfoKind = 1;
 inline constexpr uint16_t kIflaInfoData = 2;
 
 inline constexpr uint16_t kIflaCanBittiming = 1;
-inline constexpr uint16_t kIflaCanCtrlMode = 3;
-inline constexpr uint16_t kIflaCanDataBittiming = 8;
+inline constexpr uint16_t kIflaCanCtrlMode = 5;
+inline constexpr uint16_t kIflaCanDataBittiming = 9;
 
 inline constexpr uint32_t kIffUp = 0x1;
 
-// CAN control mode bits.
 inline constexpr uint32_t kCanCtrlModeLoopback = 0x01;
 inline constexpr uint32_t kCanCtrlModeListenOnly = 0x02;
 inline constexpr uint32_t kCanCtrlModeFd = 0x20;
 
-// struct can_bittiming as the kernel lays it out: eight 32-bit fields. Only
-// bitrate, sample_point, sjw, prop_seg, phase_seg1, phase_seg2 and brp are
-// meaningful to set; the kernel fills in the rest.
 inline constexpr size_t kCanBittimingSize = 32;
+
+#endif
 
 // --- message construction --------------------------------------------------
 

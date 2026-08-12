@@ -112,8 +112,8 @@ int main(int argc, char** argv)
         // one means rebuilding the widget in place.
         dashboard::agent::registerWidgetMethods(
             *agent,
-            [&window](QWidget* target, const widget_config_t& cfg)
-            { return window.rebuildWidget(target, cfg); });
+            [&window](QWidget* target, const widget_config_t& widget_config)
+            { return window.rebuildWidget(target, widget_config); });
 
         // Publishing a known value and screenshotting the gauge that subscribes
         // to it is the fastest way to check a dashboard change.

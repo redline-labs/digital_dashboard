@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <string>
 
 namespace
@@ -115,12 +116,16 @@ void testNoOverflowAtTheTop()
 // Through nanoseconds it must be stable.
 void testRoundTrip()
 {
-    for (const std::uint64_t nanos : {0ull,
-                                      1ull,
-                                      999'999'999ull,
-                                      kNanosPerSecond,
-                                      1'785'888'000ull * kNanosPerSecond,
-                                      1'785'888'000ull * kNanosPerSecond + 123'456'789ull})
+    // Spelled out, because `unsigned long long` and `std::uint64_t` are
+    // distinct types where the latter is `unsigned long`, and a braced list
+    // holding both deduces to neither.
+    for (const std::uint64_t nanos : std::initializer_list<std::uint64_t> {
+             0,
+             1,
+             999'999'999,
+             kNanosPerSecond,
+             1'785'888'000 * kNanosPerSecond,
+             1'785'888'000 * kNanosPerSecond + 123'456'789 })
     {
         const std::uint64_t there_and_back =
             pub_sub::ntp64ToUnixNanos(pub_sub::unixNanosToNtp64(nanos));

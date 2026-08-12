@@ -46,23 +46,13 @@ bool is_available()
 namespace
 {
 
-// The constants declared in netlink.h have to be the kernel's. Checking here
-// means a kernel that renumbered something is a build failure on Linux rather
-// than a message the kernel silently ignores.
-static_assert(kRtmNewLink == RTM_NEWLINK, "RTM_NEWLINK has moved");
-static_assert(kFlagRequest == NLM_F_REQUEST, "NLM_F_REQUEST has moved");
-static_assert(kFlagAck == NLM_F_ACK, "NLM_F_ACK has moved");
-static_assert(kIflaLinkInfo == IFLA_LINKINFO, "IFLA_LINKINFO has moved");
-static_assert(kIflaInfoKind == IFLA_INFO_KIND, "IFLA_INFO_KIND has moved");
-static_assert(kIflaInfoData == IFLA_INFO_DATA, "IFLA_INFO_DATA has moved");
-static_assert(kIflaCanBittiming == IFLA_CAN_BITTIMING, "IFLA_CAN_BITTIMING has moved");
-static_assert(kIflaCanCtrlMode == IFLA_CAN_CTRLMODE, "IFLA_CAN_CTRLMODE has moved");
-static_assert(kIflaCanDataBittiming == IFLA_CAN_DATA_BITTIMING,
-              "IFLA_CAN_DATA_BITTIMING has moved");
-static_assert(kIffUp == IFF_UP, "IFF_UP has moved");
-static_assert(kCanCtrlModeListenOnly == CAN_CTRLMODE_LISTENONLY, "listen-only has moved");
-static_assert(kCanCtrlModeFd == CAN_CTRLMODE_FD, "CAN_CTRLMODE_FD has moved");
-static_assert(kCanBittimingSize == sizeof(struct can_bittiming), "can_bittiming has changed size");
+// The frame sizes in socketcan_frame.h are hand-written, because the parsing
+// there is: a read returns a struct and its size is the only thing that says
+// which of the two it is. Checking against the kernel's own structures means a
+// layout change is a build failure rather than a misparsed frame.
+//
+// The netlink constants used to be checked here in the same way. They are taken
+// from the kernel's headers directly now, so there is nothing left to compare.
 static_assert(kClassicFrameSize == sizeof(struct can_frame), "can_frame has changed size");
 static_assert(kFdFrameSize == sizeof(struct canfd_frame), "canfd_frame has changed size");
 

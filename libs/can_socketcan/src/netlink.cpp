@@ -181,8 +181,7 @@ Result<std::vector<uint8_t>> encode_link_request(const LinkRequest& request, uin
 
     std::vector<uint8_t> nameBytes(request.interface.begin(), request.interface.end());
     nameBytes.push_back('\0');
-    // IFLA_IFNAME is 3.
-    put_attribute(body, 3, nameBytes);
+    put_attribute(body, kIflaIfname, nameBytes);
 
     if (!linkInfo.empty())
     {
