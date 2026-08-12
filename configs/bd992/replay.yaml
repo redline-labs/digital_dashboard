@@ -1,0 +1,24 @@
+# Replaying a captured GSOF stream, with no receiver present.
+#
+#   ./build/nodes/bd992_bridge/bd992_bridge \
+#       --config configs/bd992/replay.yaml \
+#       --replay mock_data/data/bd992_gsof_capture.bin --loop
+#
+# This is the `trc:` replay of the GNSS stack: the bytes go through the same
+# framer, page assembler, record parsers and publishers that a live receiver
+# drives, so the topics on the bus are the real thing. It is the fastest way to
+# build a dashboard against GNSS data, and it turns a minute of --dump-gsof
+# from a vehicle into a regression fixture.
+#
+# No `host` and no configuration section: there is nothing to connect to and
+# nothing to configure, so the node offers no services in this mode either --
+# services that could only ever fail are worse than none.
+
+receiver:
+  host: ""
+
+publish:
+  topic_prefix: nodes/bd992
+  status_key: nodes/bd992/status
+  status_interval_ms: 1000
+  publish_unknown_records: true

@@ -10,3 +10,5 @@ add_subdirectory(can_bridge)
 add_subdirectory(motec_pdm)
 add_subdirectory(grayhill_keypad)
 add_subdirectory(carplay)
+# Trimble BD992 GNSS receiver over Ethernet.
+add_subdirectory(bd992_bridge)

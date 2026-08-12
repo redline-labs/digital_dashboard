@@ -23,6 +23,14 @@ add_subdirectory(can_socketcan)
 # `can`: it uses can::dlc_to_length and implements can::Backend.
 add_subdirectory(can_trc)
 add_subdirectory(can_backends)
+# The Trimble GSOF protocol: framing, records, command building. Pure bytes,
+# no I/O -- `bd992` sits above it with the sockets. Independent of everything
+# above, so its position here is only about keeping the hardware libraries
+# together.
+add_subdirectory(gsof)
+# TCP, threads and the read-before-write configuration logic. After `gsof`,
+# which it links; nothing in `gsof` may depend on this.
+add_subdirectory(bd992)
 # The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
 # which is only declared later in dbcs/ -- that subdirectory has to follow this
 # one, because the generator it calls is defined in libs/dbc_parser. The forward

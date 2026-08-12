@@ -1,0 +1,109 @@
+# Trimble BD992 GNSS receiver.
+#
+# The receiver is set up as a TCP SERVER and this node connects to it, so it
+# emits nothing until something attaches. Configure that on the receiver first,
+# through its web interface: I/O Configuration -> Port Summary, add an IP
+# socket in TCP server mode, note its port number, and set it as the output
+# port below.
+#
+# Two connections are used. The stream port carries the GSOF reports; the
+# control port carries command and report packets for reading and changing the
+# configuration. WHICH PORT SERVES COMMANDS IS NOT DOCUMENTED in Trimble's ICD
+# -- run `bd992_bridge --probe --config <this file>` to find out, and if it
+# turns out one socket does both, point stream_port and control_port at the
+# same number.
+
+receiver:
+  host: 192.168.1.100
+
+  # The IP socket configured to output GSOF. Must be the socket that
+  # configuration.port_index names, or the node will configure outputs onto a
+  # port nobody is reading -- which looks exactly like a receiver that is not
+  # working.
+  stream_port: 5017
+
+  # The socket used for command/report. See the note above.
+  control_port: 5018
+
+  connect_timeout_ms: 2000
+
+  # Tried in order, then the last repeats. Capped rather than doubling forever
+  # so a receiver that comes back after an hour is picked up within seconds.
+  reconnect_backoff_ms: [250, 500, 1000, 2000, 5000]
+
+configuration:
+  # enforce      read the receiver's configuration, then write ONLY what
+  #              differs from the list below.
+  # report_only  read and report the difference, change nothing. Use this
+  #              around a receiver somebody else owns.
+  mode: enforce
+
+  # Zero-based port index, as the wire has it: 20, 21, 22 are the first three
+  # IP sockets. Trimble's own documentation numbers them from one in prose and
+  # from zero in the byte, which is a good way to be off by one.
+  port_index: 20
+
+  # additive   leave outputs that are not listed below alone, and report them.
+  #            The default: the receiver may legitimately be feeding something
+  #            else, and a list of what THIS node needs is no basis for
+  #            deciding those are wrong.
+  # exclusive  turn off anything on this port that is not listed. Only for a
+  #            port this node owns outright.
+  port_policy: additive
+
+  # Which stored application file holds the running configuration. Trimble
+  # documents index 0 as the factory defaults and says nothing about the rest,
+  # so `--probe` prints what each index contains.
+  appfile_index: 1
+
+  # How often to re-read and re-compare. Zero checks once, at startup.
+  recheck_interval_s: 60
+
+  reply_timeout_ms: 3000
+
+  # Allows the send_command service to put an arbitrary packet on the wire.
+  # Off by default: an arbitrary command can leave a receiver unreachable.
+  allow_raw_commands: false
+
+  # What the receiver should emit, and how often.
+  #
+  # Rates are named, not numbers, because the frequency byte is not an ordinal
+  # -- 10 Hz is 0x01 and 1 Hz is 0x03. Valid names: off, 100hz, 50hz, 20hz,
+  # 10hz, 5hz, 2hz, 1hz, 2s, 5s, 10s, 15s, 30s, 60s, 5min, 10min, once.
+  #
+  # Record names are the ones in GSOF_RECORD_TABLE
+  # (libs/gsof/include/gsof/record_table.h); an unknown name is refused at load
+  # with the full list.
+  outputs:
+    # Time and satellites used. Cheap, and the first thing to look at when a
+    # position looks wrong.
+    - { record: position_time,    rate: 10hz }
+
+    # Position, and the velocity that goes with it.
+    - { record: lat_long_height,  rate: 10hz }
+    - { record: velocity,         rate: 10hz }
+
+    # Dual-antenna heading. The reason for a BD992 rather than a single-antenna
+    # receiver: this heading is where the vehicle POINTS, which is not the
+    # direction it is travelling and is still valid when stopped.
+    - { record: attitude_info,    rate: 10hz }
+
+    # Fix quality: RTK fixed versus float, and correction age. Slow-moving, so
+    # 1 Hz is plenty.
+    - { record: position_type,    rate: 1hz }
+
+    # Position uncertainty, in the form a human reads.
+    - { record: position_sigma,   rate: 1hz }
+
+    # Leap seconds, which is the only way to turn GPS time into UTC.
+    - { record: current_time_utc, rate: 1hz }
+
+publish:
+  topic_prefix: nodes/bd992
+  status_key: nodes/bd992/status
+  status_interval_ms: 1000
+
+  # Publish records that this build does not model on <prefix>/gsof/raw. Worth
+  # leaving on: a receiver emitting something unrecognised is otherwise
+  # indistinguishable from one that is silent.
+  publish_unknown_records: true
