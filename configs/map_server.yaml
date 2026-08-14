@@ -1,0 +1,30 @@
+# nodes/map_server: offline maps on the bus.
+#
+#   ./build/nodes/map_server/map_server --config configs/map_server.yaml --check
+#   ./build/nodes/map_server/map_server --config configs/map_server.yaml
+#
+# --check opens every archive and says what is in it without touching zenoh,
+# which is the fastest way to find out whether a path is right.
+
+tilesets:
+  # The name is what clients ask for and what appears in a tile URL; the path
+  # is nobody's business but this node's. Renaming the file changes one line
+  # here and nothing in any style or layout.
+  - name: socal
+    path: /Users/ryan/Documents/map_data/socal-260813.mbtiles
+
+services:
+  tile_key: map/tile
+  catalog_key: map/catalog
+  asset_key: map/asset
+  status_key: map/status
+  status_interval_ms: 5000
+
+# assets:
+#   The asset service is off, and nothing needs it today. It exists to serve
+#   files beside the tiles -- icons, an overlay, anything a future widget wants
+#   -- and the dashboard's renderer does not: it draws with QPainter, so labels
+#   use system fonts and there are no glyph ranges or sprite sheets to fetch.
+#
+#   root: /some/directory
+#   max_bytes: 8388608

@@ -31,6 +31,13 @@ add_subdirectory(gsof)
 # TCP, threads and the read-before-write configuration logic. After `gsof`,
 # which it links; nothing in `gsof` may depend on this.
 add_subdirectory(bd992)
+# The mbtiles 1.3 format: an SQLite file full of map tiles. Pure file reading,
+# no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The GUI
+# apps must not link this; see the note in its CMakeLists.
+add_subdirectory(mbtiles)
+# Mapbox Vector Tiles, decoded. After mbtiles only because its real-data test
+# reads an archive through it; nothing in the library itself depends on it.
+add_subdirectory(mvt)
 # The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
 # which is only declared later in dbcs/ -- that subdirectory has to follow this
 # one, because the generator it calls is defined in libs/dbc_parser. The forward

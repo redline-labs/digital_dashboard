@@ -39,6 +39,7 @@
     X(motec_cdl3_tachometer,       MotecCdl3Tachometer) \
     X(carplay,                     CarPlayWidget) \
     X(now_playing,                 NowPlayingWidget) \
-    X(carplay_nav,                 CarPlayNavWidget)
+    X(carplay_nav,                 CarPlayNavWidget) \
+    X(map,                         MapWidget)
 
 #endif // DASHBOARD_WIDGET_TABLE_H

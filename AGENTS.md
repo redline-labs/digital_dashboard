@@ -155,6 +155,27 @@ discovery seeing only live traffic, and what `accepted: false` and
   `python3 -m venv /tmp/ct && /tmp/ct/bin/pip install cantools && /tmp/ct/bin/python libs/dbc_parser/tests/gen_golden.py`.
   Dropping product-DBC round-trip coverage is only safe while that sweep stays
   *generated*; hand-picking cases would break the argument.
+- **Tile coordinates are XYZ everywhere except on disk.** An `.mbtiles` file
+  stores TMS rows; every URL, every style document and every request on the bus
+  uses slippy XYZ. The
+  flip lives in `mbtiles::Archive::tile()` and nowhere else. A second one
+  anywhere in the path renders a perfect map mirrored about the equator, which
+  nobody reads as a coordinate bug -- so `mbtiles_test_archive` writes archives
+  in TMS and asserts in XYZ. See `docs/map.md`.
+- **The map renderer is ours, and it is on the GPU.** `libs/mvt` decodes Mapbox
+  Vector Tiles, `dashboard/widgets/map` tessellates them and draws them through
+  **QRhi against an offscreen texture** -- never a `QRhiWidget` or a
+  `QOpenGLWidget`, both of which bind to a platform surface that does not exist
+  under `QT_QPA_PLATFORM=offscreen`. That distinction is the whole design: a
+  surface-bound renderer hands back a null map there, which would leave the map
+  invisible to `ui_screenshot` and to every `gui` test. Labels stay on QPainter
+  because they must not rotate with the map and their collision is
+  viewport-global. See `docs/map.md`.
+- **No `uint8_t` in a reflected config.** yaml-cpp treats `unsigned char` as a
+  CHARACTER type: the value 14 is written as the unprintable byte 0x0E and read
+  back as a bad conversion, which throws out of the YAML decoder and takes the
+  whole layout with it. Nothing in the type says so and it fails at load time,
+  not compile time. Use `uint16_t`.
 - **Key→schema binding** rides on every zenoh sample as
   `application/capnp;<SchemaName>`. Do not add an out-of-band registry: zenoh has
   no retained messages, so self-description per sample is what lets a
@@ -228,10 +249,12 @@ libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
                     canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_trc/can_backends (CAN channels),
-                    gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport)
+                    gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
+                    mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
-                    plus the two tools: inspect (look at the bus) and bag
-                    (record and replay it -- see docs/bag.md)
+                    plus map_server (a file rather than hardware) and the two
+                    tools: inspect (look at the bus) and bag (record and replay
+                    it -- see docs/bag.md)
 schemas/            .capnp definitions; add one line to its CMakeLists to register
 configs/dashboard/  runtime YAML layouts
 configs/scope/      runtime YAML workspaces

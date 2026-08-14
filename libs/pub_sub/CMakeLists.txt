@@ -196,3 +196,19 @@ target_link_libraries(pub_sub_test_topic_directory PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_topic_directory LABELS pub_sub net)
+
+# The async GET client. What it pins is that the caller's callback fires exactly
+# once in every outcome -- including the two zenoh does not announce, an unserved
+# key and a timeout, which are the same thing on the wire and both arrive only
+# through the drop handler. Runs a service and a client on one session: `net`.
+add_executable(pub_sub_test_async_client
+    test_async_client.cpp
+)
+
+target_link_libraries(pub_sub_test_async_client PRIVATE
+    zenoh_pub_sub
+    schemas
+    capnp
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_async_client LABELS pub_sub net)

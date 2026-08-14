@@ -19,3 +19,6 @@ add_subdirectory(value_readout)
 add_subdirectory(segment_readout)
 add_subdirectory(center_bar)
 add_subdirectory(background_rect)
+# Offline maps. Tessellates vector tiles and draws them through QRhi;
+# everything it draws comes from nodes/map_server over zenoh.
+add_subdirectory(map)

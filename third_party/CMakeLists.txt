@@ -24,5 +24,13 @@ include(zstd.cmake)
 include(lz4.cmake)
 include(mcap.cmake)
 
+# What an .mbtiles archive is made of. Used by libs/mbtiles, and so by
+# nodes/map_server; the map widget never links it, because it asks the node.
+include(sqlite3.cmake)
+
+# Polygon triangulation for the map widget GPU renderer. See earcut.cmake for
+# why this is not hand-rolled.
+include(earcut.cmake)
+
 # LGPL Compliance: Create source code availability notice
 file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)

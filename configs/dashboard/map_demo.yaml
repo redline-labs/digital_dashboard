@@ -1,0 +1,83 @@
+name: "map"
+width: 1000
+height: 640
+background_color: "#0d0f13"
+widgets:
+  # The offline map. Every tile comes from nodes/map_server over zenoh:
+  #
+  #   ./build/nodes/map_server/map_server --config configs/map_server.yaml
+  #
+  # Without that running the widget draws its background and says so, rather
+  # than looking like an empty map.
+  - type: map
+    id: map
+    x: 0
+    y: 0
+    width: 660
+    height: 640
+    config:
+      tileset: "socal"
+      tile_zenoh_key: "map/tile"
+      # The archive's own range. Zooming past max_zoom magnifies the deepest
+      # tiles rather than going blank.
+      min_zoom: 0
+      max_zoom: 14
+
+      # Irvine, CA -- the archive covers Southern California, so anywhere else
+      # is a legitimately empty map.
+      center_latitude: 33.6865966
+      center_longitude: -117.8557874
+      zoom: 14.0
+
+      follow_vehicle: true
+      show_track: true
+      track_points: 600
+
+      # From nodes/bd992_bridge. Leave the key empty for a static map.
+      position_zenoh_key: "nodes/bd992/position"
+      position_schema_type: "GsofLatLongHeight"
+      latitude_expression: "latitudeDeg"
+      longitude_expression: "longitudeDeg"
+
+      marker_color: "#FF3B30"
+      marker_size: 9
+
+  # The same map further out, to show the zoom levels behave. No vehicle on
+  # this one, so it stays put.
+  - type: map
+    id: overview
+    x: 670
+    y: 0
+    width: 330
+    height: 320
+    config:
+      tileset: "socal"
+      center_latitude: 33.6865966
+      center_longitude: -117.8557874
+      zoom: 9.0
+      follow_vehicle: false
+      position_zenoh_key: ""
+      # Everything below is optional -- omitted keys keep the defaults in
+      # dashboard/widgets/map/include/map/style.h. This one is tuned for a
+      # small overview pane: no buildings, thinner text, and roads pulled back
+      # so a region reads as a road network rather than a smear.
+      style:
+        show_buildings: false
+        label_size: 10
+        label_spacing: 10
+        detail:
+          road_minor: 13
+          landuse: 10
+        widths:
+          motorway: 2.5
+          motorway_casing: 3.75
+
+  - type: static_text
+    x: 670
+    y: 336
+    width: 330
+    height: 40
+    config:
+      text: "socal  -  z14 / z9"
+      font_size: 16
+      color: "#8a919e"
