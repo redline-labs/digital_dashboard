@@ -14,6 +14,7 @@ project(mbtiles)
 # meeting. The widget has no use for either: it asks the server.
 add_library(mbtiles STATIC
     src/archive.cpp
+    src/writer.cpp
     src/compression.cpp
     src/error.cpp
     src/metadata.cpp

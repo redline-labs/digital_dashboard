@@ -35,9 +35,21 @@ add_subdirectory(bd992)
 # no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The GUI
 # apps must not link this; see the note in its CMakeLists.
 add_subdirectory(mbtiles)
+# Just enough protobuf for the two formats in this tree that are protobuf.
+# Before mvt and osm, both of which link it.
+add_subdirectory(protowire)
 # Mapbox Vector Tiles, decoded. After mbtiles only because its real-data test
 # reads an archive through it; nothing in the library itself depends on it.
 add_subdirectory(mvt)
+# OpenStreetMap PBF, decoded. The source everything on the map side is built
+# from; see docs/map_build.md.
+add_subdirectory(osm)
+# One set of rules for what OSM data is. Both the tiler and the graph builder
+# call it, which is the whole reason the extractor is ours.
+add_subdirectory(map_rules)
+# The routable road network on disk, mmap'd. After map_rules, which its
+# segment records carry.
+add_subdirectory(road_graph)
 # The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
 # which is only declared later in dbcs/ -- that subdirectory has to follow this
 # one, because the generator it calls is defined in libs/dbc_parser. The forward

@@ -12,6 +12,7 @@
 #include "bd992.capnp.h"
 #include "gsof_attitude.capnp.h"
 #include "gsof_common.capnp.h"
+#include "gsof_epoch.capnp.h"
 #include "gsof_ins.capnp.h"
 #include "gsof_position.capnp.h"
 #include "gsof_satellites.capnp.h"
@@ -441,6 +442,16 @@ struct Publishers::Impl
 
     std::unique_ptr<pub_sub::ZenohPublisher<::GsofRawRecord>> raw;
 
+    // The epoch being accumulated, and the topic it goes out on.
+    //
+    // Touched only from the reader thread, which is also the only thread that
+    // calls publish() and endTransmission() -- so no lock, for the same reason
+    // the publisher slots need none. Its counts are copied under the mutex at
+    // each transmission so the status path can read them.
+    EpochAccumulator epoch;
+    std::unique_ptr<pub_sub::ZenohPublisher<::GsofEpoch>> epochPublisher;
+    std::uint32_t epochSequence { 0 };
+
     struct Counter
     {
         std::string name;
@@ -453,6 +464,7 @@ struct Publishers::Impl
     mutable std::mutex mutex;
     std::unordered_map<std::uint8_t, Counter> counters;
     std::optional<std::int32_t> serialNumber;
+    Publishers::EpochCounts epochCounts;
 
     void note(std::uint8_t type, const char* name)
     {
@@ -533,6 +545,12 @@ void Publishers::publish(const gsof::RawRecord& record)
             const std::lock_guard<std::mutex> lock(mImpl->mutex);
             mImpl->serialNumber = parsed.serialNumber;
         }
+
+        // Stash what a fused epoch is made of. Nothing is decided here: which
+        // records actually arrived together is only known once the
+        // transmission ends. Records that are not part of an epoch are
+        // ignored, so this needs no filter.
+        mImpl->epoch.add(parsed);
     });
 
     if (visited.has_value())
@@ -568,6 +586,108 @@ void Publishers::publish(const gsof::RawRecord& record)
     mImpl->raw->put();
 
     mImpl->note(record.type, "raw");
+}
+
+void Publishers::endTransmission()
+{
+    Impl& impl = *mImpl;
+
+    // take() clears whatever happens below, so a record can never survive into
+    // the next transmission -- carrying one forward is exactly the stale
+    // heading this message exists to prevent.
+    const std::optional<FusedEpoch> taken = impl.epoch.take();
+
+    {
+        const std::lock_guard<std::mutex> lock(impl.mutex);
+        impl.epochCounts.shape = impl.epoch.counts();
+    }
+
+    if (!taken.has_value())
+    {
+        // Not every transmission is an epoch -- a receiver may send status
+        // records on their own schedule. Counted rather than logged, because
+        // logging it would be a line per transmission at the output rate.
+        return;
+    }
+
+    const FusedEpoch& epoch = *taken;
+
+    if (!impl.epochPublisher)
+    {
+        const std::string key = impl.topicPrefix + "/epoch";
+        impl.epochPublisher = std::make_unique<pub_sub::ZenohPublisher<::GsofEpoch>>(key);
+        SPDLOG_INFO("bd992: publishing fused epochs on {}", key);
+    }
+
+    ::GsofEpoch::Builder out = impl.epochPublisher->fields();
+
+    out.setSequence(impl.epochSequence);
+    ++impl.epochSequence;
+
+    out.setLatitudeDeg(toDegrees(epoch.position.latitudeRad));
+    out.setLongitudeDeg(toDegrees(epoch.position.longitudeRad));
+    out.setEllipsoidHeightM(epoch.position.heightM);
+
+    out.setHasTime(epoch.time.has_value());
+    if (epoch.time.has_value())
+    {
+        fillTime(out.initTime(), epoch.time->gpsWeek, epoch.time->gpsTimeMs);
+        out.setSvsUsed(epoch.time->svsUsed);
+    }
+
+    out.setHasVelocity(epoch.velocity.has_value());
+    if (epoch.velocity.has_value())
+    {
+        out.setVelocityValid(epoch.velocity->isValid());
+        out.setDopplerDerived(epoch.velocity->isDopplerDerived());
+        out.setHorizontalSpeedMps(epoch.velocity->horizontalSpeedMps);
+        out.setHeadingDeg(toDegrees(epoch.velocity->headingRad));
+        out.setVerticalVelocityMps(epoch.velocity->verticalVelocityMps);
+    }
+
+    out.setHasFixType(epoch.fixType.has_value());
+    if (epoch.fixType.has_value())
+    {
+        out.setPositionFixType(fixType(epoch.fixType->positionFixTypeRaw));
+        out.setPositionFixTypeRaw(epoch.fixType->positionFixTypeRaw);
+        out.setRtkFixed(epoch.fixType->isRtkFixed());
+        out.setCorrectionAgeS(epoch.fixType->correctionAgeS);
+    }
+
+    out.setHasSigma(epoch.sigma.has_value());
+    if (epoch.sigma.has_value())
+    {
+        out.setPositionRmsM(epoch.sigma->positionRms);
+        out.setSigmaEastM(epoch.sigma->sigmaEastM);
+        out.setSigmaNorthM(epoch.sigma->sigmaNorthM);
+        out.setSigmaUpM(epoch.sigma->sigmaUpM);
+    }
+
+    impl.epochPublisher->put();
+
+    const std::lock_guard<std::mutex> lock(impl.mutex);
+    if (!epoch.time.has_value())
+    {
+        ++impl.epochCounts.withoutTime;
+    }
+    if (!epoch.velocity.has_value())
+    {
+        ++impl.epochCounts.withoutVelocity;
+    }
+    if (!epoch.fixType.has_value())
+    {
+        ++impl.epochCounts.withoutFixType;
+    }
+    if (!epoch.sigma.has_value())
+    {
+        ++impl.epochCounts.withoutSigma;
+    }
+}
+
+Publishers::EpochCounts Publishers::epochCounts() const
+{
+    const std::lock_guard<std::mutex> lock(mImpl->mutex);
+    return mImpl->epochCounts;
 }
 
 std::vector<Publishers::Seen> Publishers::seen() const

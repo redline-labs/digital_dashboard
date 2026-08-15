@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "mvt/reader.h"
+#include "protowire/reader.h"
 
-namespace mvt
+#include <limits>
+
+namespace protowire
 {
 namespace
 {
@@ -53,6 +55,40 @@ Result<std::int64_t> Reader::zigzag()
         return std::unexpected(raw.error());
     }
     return unzigzag(*raw);
+}
+
+Result<std::int64_t> Reader::int64()
+{
+    auto raw = varint();
+    if (!raw)
+    {
+        return std::unexpected(raw.error());
+    }
+    // Every 64-bit pattern is a legal int64, so this is a reinterpretation
+    // rather than a conversion -- and it is written out because the implicit
+    // narrowing it replaces is exactly the bug this function exists to prevent.
+    return static_cast<std::int64_t>(*raw);
+}
+
+Result<std::int32_t> Reader::int32()
+{
+    const std::size_t start = mAt;
+
+    auto wide = int64();
+    if (!wide)
+    {
+        return std::unexpected(wide.error());
+    }
+
+    // A proto int32 travels sign-extended to 64 bits, so anything outside the
+    // 32-bit range is a field that is not the int32 we were told it was.
+    if (*wide < std::numeric_limits<std::int32_t>::min() ||
+        *wide > std::numeric_limits<std::int32_t>::max())
+    {
+        return malformed("int32 field carrying " + std::to_string(*wide), start);
+    }
+
+    return static_cast<std::int32_t>(*wide);
 }
 
 Result<std::uint32_t> Reader::fixed32()
@@ -218,4 +254,4 @@ Result<void> Reader::skip(WireType wire)
     return malformed("unknown wire type", mAt);
 }
 
-} // namespace mvt
+} // namespace protowire

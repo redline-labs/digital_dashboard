@@ -15,6 +15,7 @@ project(map_server)
 add_executable(map_server
     main.cpp
     asset_store.cpp
+    graphs.cpp
     node_config.cpp
     services.cpp
     tilesets.cpp
@@ -23,6 +24,7 @@ add_executable(map_server
 target_link_libraries(map_server
     PRIVATE
         mbtiles
+        road_graph
         zenoh_pub_sub
         schemas
         capnp

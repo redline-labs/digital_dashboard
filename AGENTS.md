@@ -95,6 +95,15 @@ discovery seeing only live traffic, and what `accepted: false` and
 
 ## Conventions
 
+- **One classification table feeds both the tiles and the graph.**
+  `map_rules::classify()` decides, from one tag parse, how a way is DRAWN and how
+  it is ROUTED. A rule that lives in only one of them is the "route goes down a
+  road that isn't drawn on the map" bug, and it costs a day before anyone
+  suspects the cause. That single table is the whole reason `tools/map_build`
+  exists rather than a Lua profile beside a C++ one.
+- **`tools/` runs on the workstation and never ships; `nodes/` runs on the
+  vehicle.** The boundary is what keeps a tool that holds tens of gigabytes of
+  scratch state out of a deployment manifest.
 - **Where samples come from is one interface.** `scope::DataSource` has two
   implementations -- the live bus and a recording -- and nothing above it knows
   which it has. Swapping between them (`ScopeWindow::setSource()`) has ONE
@@ -250,15 +259,21 @@ libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_trc/can_backends (CAN channels),
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
-                    mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md
+                    mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md,
+                    protowire (protobuf reader) + osm (PBF) + map_rules
+                    (tag -> classification, ONE table) + road_graph (routable
+                    graph, contraction hierarchy) -- docs/map_build.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay
                     it -- see docs/bag.md)
-schemas/            .capnp definitions; add one line to its CMakeLists to register
+schemas/            .capnp definitions; drop a file in and build -- the registry
+                    is generated from the schemas themselves
 configs/dashboard/  runtime YAML layouts
 configs/scope/      runtime YAML workspaces
-tools/mcp_dashboard/ the MCP server (Python, uv)
+tools/              WORKSTATION ONLY, never shipped: map_build (OSM PBF in,
+                    tiles + road graph + routing overlay out -- docs/map_build.md)
+                    and mcp_dashboard (the MCP server, Python, uv)
 docs/               architecture and bring-up notes
 ```
 

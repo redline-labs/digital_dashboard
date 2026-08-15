@@ -17,13 +17,17 @@ project(mvt)
 # than the consequences of not owning it. See docs/map.md.
 add_library(mvt STATIC
     src/decode.cpp
-    src/error.cpp
+    src/encode.cpp
     src/gzip.cpp
-    src/reader.cpp
     src/tile.cpp
 )
 
 target_include_directories(mvt PUBLIC include)
+
+# PUBLIC, not PRIVATE: mvt/error.h and mvt/reader.h are alias headers that
+# re-export protowire's types, so every consumer of an mvt Result needs
+# protowire's include path too.
+target_link_libraries(mvt PUBLIC protowire)
 
 # zlib for inflate, and nothing else. Tiles are stored gzipped and travel that
 # way; see mvt/gzip.h. Present on macOS and every Linux, so found rather than
@@ -55,20 +59,6 @@ target_link_libraries(mvt_test_decode
 
 add_project_test(TARGET mvt_test_decode LABELS mvt unit)
 
-# The protobuf reader on its own: varints, zigzag, wire types, and the
-# truncations that must be errors rather than plausible numbers.
-add_executable(mvt_test_reader
-    tests/test_reader.cpp
-)
-
-target_link_libraries(mvt_test_reader
-    PRIVATE
-        mvt
-        spdlog::spdlog
-)
-
-add_project_test(TARGET mvt_test_reader LABELS mvt unit)
-
 # Decoding REAL tiles, from the archive in configs/map_server.yaml if it is
 # present. Skips itself when it is not, so a checkout without the 383 MB file
 # still passes -- but on a machine that has it, this is the only test that
@@ -85,3 +75,23 @@ target_link_libraries(mvt_test_real_tiles
 )
 
 add_project_test(TARGET mvt_test_real_tiles LABELS mvt unit)
+
+# Encode, then decode, and require the two to agree.
+#
+# The round trip is the strongest test either direction has: an encoder bug that
+# a decoder mirrors would pass a one-sided test and produce tiles no other
+# renderer could read. Every trap decode.h names is asserted from the writing
+# side here -- the persistent cursor, the implied closing point, ring winding.
+add_executable(mvt_test_encode
+    tests/test_encode.cpp
+)
+
+target_include_directories(mvt_test_encode PRIVATE tests)
+
+target_link_libraries(mvt_test_encode
+    PRIVATE
+        mvt
+        spdlog::spdlog
+)
+
+add_project_test(TARGET mvt_test_encode LABELS mvt unit)

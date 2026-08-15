@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "map_rules/classification.h"
+#include "road_graph/overlay.h"
+#include "road_graph/search.h"
+
 #include "services.h"
 
 #include <spdlog/spdlog.h>
@@ -38,8 +42,9 @@ void setBlob(capnp::Data::Builder builder, const std::vector<std::uint8_t>& byte
 
 } // namespace
 
-Services::Services(const NodeConfig& config, TilesetRegistry& tilesets) :
+Services::Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphRegistry& graphs) :
     mTilesets(tilesets),
+    mGraphs(graphs),
     mAssets(config.assets.root, config.assets.maxBytes)
 {
     mStatus.emplace(config.services.statusKey);
@@ -62,8 +67,29 @@ Services::Services(const NodeConfig& config, TilesetRegistry& tilesets) :
                               handleAsset(request, response);
                           });
 
+    mNearestService.emplace(config.services.nearestKey,
+                            [this](const ::MapNearestRequest::Reader& request,
+                                   ::MapNearestResponse::Builder& response) {
+                                handleNearest(request, response);
+                            });
+
+    mGraphInfoService.emplace(config.services.graphInfoKey,
+                              [this](const ::MapGraphInfoRequest::Reader& request,
+                                     ::MapGraphInfoResponse::Builder& response) {
+                                  handleGraphInfo(request, response);
+                              });
+
     SPDLOG_INFO("[node] tiles on '{}', catalog on '{}', assets on '{}'", config.services.tileKey,
                 config.services.catalogKey, config.services.assetKey);
+    mRouteService.emplace(config.services.routeKey,
+                          [this](const ::MapRouteRequest::Reader& request,
+                                 ::MapRouteResponse::Builder& response) {
+                              handleRoute(request, response);
+                          });
+
+    SPDLOG_INFO("[node] nearest on '{}', route on '{}', graph info on '{}'",
+                config.services.nearestKey, config.services.routeKey,
+                config.services.graphInfoKey);
     if (!mAssets.enabled())
     {
         SPDLOG_DEBUG("[node] no asset root configured; the asset service will refuse "
@@ -287,6 +313,312 @@ void Services::publishStatus()
     fields.setAssetsRejected(mAssetsRejected.load(std::memory_order_relaxed));
 
     mStatus->put();
+}
+
+
+// ----------------------------------------------------------------------------
+// The road graph
+// ----------------------------------------------------------------------------
+
+namespace
+{
+
+// map_rules::RouteClass -> the wire vocabulary.
+//
+// The two enumerations are deliberately parallel and a cast would work today.
+// It is written out anyway: a cast would keep compiling after someone inserts a
+// value into either one, and the result would be every road on the dash
+// reporting the class of its neighbour. Spelled out, -Wswitch-enum makes that
+// insertion a build failure here.
+::MapRoadClass wireClassOf(map_rules::RouteClass value)
+{
+    switch (value)
+    {
+        case map_rules::RouteClass::None:
+            return ::MapRoadClass::UNKNOWN;
+        case map_rules::RouteClass::Motorway:
+            return ::MapRoadClass::MOTORWAY;
+        case map_rules::RouteClass::Trunk:
+            return ::MapRoadClass::TRUNK;
+        case map_rules::RouteClass::Primary:
+            return ::MapRoadClass::PRIMARY;
+        case map_rules::RouteClass::Secondary:
+            return ::MapRoadClass::SECONDARY;
+        case map_rules::RouteClass::Tertiary:
+            return ::MapRoadClass::TERTIARY;
+        case map_rules::RouteClass::Minor:
+            return ::MapRoadClass::MINOR;
+        case map_rules::RouteClass::Service:
+            return ::MapRoadClass::SERVICE;
+        case map_rules::RouteClass::Track:
+            return ::MapRoadClass::TRACK;
+        case map_rules::RouteClass::Path:
+            return ::MapRoadClass::PATH;
+        case map_rules::RouteClass::Pedestrian:
+            return ::MapRoadClass::PEDESTRIAN;
+        case map_rules::RouteClass::Ferry:
+            return ::MapRoadClass::FERRY;
+    }
+
+    // After the switch rather than in a default:, so adding a class stays a
+    // compile error.
+    return ::MapRoadClass::UNKNOWN;
+}
+
+} // namespace
+
+void Services::handleNearest(const MapNearestRequest::Reader& request,
+                             MapNearestResponse::Builder& response)
+{
+    // ON A ZENOH QUERY THREAD, and there is more than one. Nothing below takes
+    // a lock: a road_graph::Graph is an mmap'd file that is const after open,
+    // so this is genuinely reentrant rather than merely careful.
+    const std::string name = request.getGraph().cStr();
+
+    GraphEntry* entry = mGraphs.find(name);
+    if (entry == nullptr)
+    {
+        response.setStatus(::MapQueryStatus::NO_SUCH_GRAPH);
+        response.setError(name.empty() ? "no graph is configured" : "no graph named '" + name + "'");
+        return;
+    }
+    if (!entry->graph)
+    {
+        // Configured and unreadable. A DIFFERENT answer from "not configured",
+        // because one is a typo and the other is a permissions or path problem.
+        response.setStatus(::MapQueryStatus::NO_SUCH_GRAPH);
+        response.setError(entry->error);
+        return;
+    }
+
+    const double radiusM = request.getRadiusM();
+    if (radiusM <= 0.0)
+    {
+        // Not defaulted. A forgotten field must not silently become a 50 m
+        // search that then reports "no road here".
+        response.setStatus(::MapQueryStatus::BAD_REQUEST);
+        response.setError("radiusM must be greater than zero");
+        return;
+    }
+
+    entry->queries.fetch_add(1, std::memory_order_relaxed);
+
+    const auto lat = road_graph::fromDegrees(request.getLatitudeDeg());
+    const auto lon = road_graph::fromDegrees(request.getLongitudeDeg());
+
+    const road_graph::FileHeader& header = entry->graph->header();
+    if (lat < header.south || lat > header.north || lon < header.west || lon > header.east)
+    {
+        // Past the edge of the map. Distinct from "no road within the radius",
+        // because a driver off the end of the coverage should be told so.
+        response.setStatus(::MapQueryStatus::OUT_OF_COVERAGE);
+        return;
+    }
+
+    std::optional<double> heading;
+    if (request.getHasHeading())
+    {
+        heading = request.getHeadingDeg();
+    }
+
+    const std::uint16_t wanted = request.getMaxCandidates();
+    const auto matches = entry->graph->nearest(lat, lon, radiusM, wanted == 0 ? 1 : wanted, heading);
+
+    if (matches.empty())
+    {
+        // NORMAL. A car park, a private drive, a field. Not an error, and
+        // specifically not the tile meaning of notFound.
+        entry->unmatched.fetch_add(1, std::memory_order_relaxed);
+        response.setStatus(::MapQueryStatus::NO_MATCH);
+        return;
+    }
+
+    entry->matched.fetch_add(1, std::memory_order_relaxed);
+    response.setStatus(::MapQueryStatus::OK);
+
+    auto list = response.initCandidates(static_cast<unsigned>(matches.size()));
+    for (unsigned i = 0; i < matches.size(); ++i)
+    {
+        const road_graph::Match& match = matches[i];
+        const road_graph::SegmentRecord& segment = entry->graph->segments()[match.segment];
+
+        auto out = list[i];
+        auto where = out.initWhere();
+        where.setSegmentId(segment.id);
+        where.setOffsetCm(match.offsetCm);
+        // Which way along the segment we are going. With no heading there is no
+        // way to know, so the segment's own direction is reported rather than
+        // guessed at.
+        where.setForward(!heading.has_value() ||
+                         road_graph::bearingDeltaDeg(*heading, match.bearingDeg) <= 90.0);
+
+        out.setOsmWayId(segment.osmWayId);
+        out.setDistanceM(static_cast<float>(match.distanceM));
+        out.setHeadingDeg(static_cast<float>(match.bearingDeg));
+        out.setName(std::string(entry->graph->nameOf(segment)));
+        out.setRef(std::string(entry->graph->refOf(segment)));
+        out.setRoadClass(wireClassOf(static_cast<map_rules::RouteClass>(segment.routeClass)));
+        // The raw OSM highway value is not stored in the graph today. Left
+        // empty rather than guessed at: an escape hatch that lies is worse than
+        // one that is shut.
+        out.setHighwayTag("");
+
+        auto speed = out.initSpeed();
+        speed.setHasPosted((segment.flags & road_graph::kFlagHasPosted) != 0);
+        speed.setPostedKph(segment.postedSpeedKph);
+        speed.setPostedSource(static_cast<::MapSpeedSource>(segment.postedSource));
+        speed.setFreeFlowKph(segment.freeFlowSpeedKph);
+    }
+}
+
+void Services::handleGraphInfo(const MapGraphInfoRequest::Reader& request,
+                               MapGraphInfoResponse::Builder& response)
+{
+    const std::string wanted = request.getGraph().cStr();
+
+    std::vector<const GraphEntry*> selected;
+    for (const auto& entry : mGraphs.all())
+    {
+        if (wanted.empty() || entry->name == wanted)
+        {
+            selected.push_back(entry.get());
+        }
+    }
+
+    if (!wanted.empty() && selected.empty())
+    {
+        response.setStatus(::MapQueryStatus::NO_SUCH_GRAPH);
+        response.setError("no graph named '" + wanted + "'");
+        return;
+    }
+
+    response.setStatus(::MapQueryStatus::OK);
+    auto list = response.initGraphs(static_cast<unsigned>(selected.size()));
+    for (unsigned i = 0; i < selected.size(); ++i)
+    {
+        const GraphEntry& entry = *selected[i];
+        auto out = list[i];
+        out.setName(entry.name);
+        out.setOpen(entry.graph != nullptr);
+        out.setError(entry.error);
+
+        if (!entry.graph)
+        {
+            continue;
+        }
+
+        const road_graph::FileHeader& header = entry.graph->header();
+        out.setSegmentCount(header.segmentCount);
+        out.setEdgeCount(header.edgeCount);
+        out.setBuiltAtUnixS(static_cast<std::uint64_t>(header.builtAtUnixS));
+
+        auto bounds = out.initBounds(4);
+        bounds.set(0, header.west * 1e-7);
+        bounds.set(1, header.south * 1e-7);
+        bounds.set(2, header.east * 1e-7);
+        bounds.set(3, header.north * 1e-7);
+
+        // Routing profiles arrive at stage 6 as additive overlay sections. An
+        // empty list is the honest answer today.
+        out.initProfiles(0);
+    }
+}
+
+
+void Services::handleRoute(const MapRouteRequest::Reader& request,
+                           MapRouteResponse::Builder& response)
+{
+    const std::string name = request.getGraph().cStr();
+
+    GraphEntry* entry = mGraphs.find(name);
+    if (entry == nullptr || !entry->graph)
+    {
+        response.setStatus(::MapQueryStatus::NO_SUCH_GRAPH);
+        response.setError(entry == nullptr ? "no graph named '" + name + "'" : entry->error);
+        return;
+    }
+
+    const std::string profile = request.getProfile().cStr();
+    if (!profile.empty() && profile != "fastest")
+    {
+        // Cost profiles are precomputed overlays and arrive at stage 6. Refused
+        // by name rather than silently answered with the default, which would
+        // give a driver who asked to avoid tolls a route straight over one.
+        response.setStatus(::MapQueryStatus::BAD_REQUEST);
+        response.setError("profile '" + profile + "' is not built into this graph");
+        return;
+    }
+
+    const road_graph::Graph& graph = *entry->graph;
+
+    // Snap both endpoints to the network first. A route between two points that
+    // are not on roads is not a routing failure, and saying so separately is
+    // what lets a caller tell "your destination is in a field" from "there is
+    // no way through".
+    std::optional<double> fromHeading;
+    if (request.getHasFromHeading())
+    {
+        fromHeading = request.getFromHeadingDeg();
+    }
+
+    const auto snap = [&](double lat, double lon, std::optional<double> heading) {
+        return graph.nearest(road_graph::fromDegrees(lat), road_graph::fromDegrees(lon), 200.0, 1,
+                             heading);
+    };
+
+    const auto start = snap(request.getFromLatitudeDeg(), request.getFromLongitudeDeg(), fromHeading);
+    const auto finish = snap(request.getToLatitudeDeg(), request.getToLongitudeDeg(), std::nullopt);
+
+    if (start.empty() || finish.empty())
+    {
+        response.setStatus(::MapQueryStatus::NO_MATCH);
+        response.setError(start.empty() ? "no road near the start" : "no road near the destination");
+        return;
+    }
+
+    const road_graph::SegmentRecord& startSegment = graph.segments()[start[0].segment];
+    const road_graph::SegmentRecord& endSegment = graph.segments()[finish[0].segment];
+
+    // THE OVERLAY WHEN THERE IS ONE, the plain search when there is not. Both
+    // return the same route -- road_graph_test_contraction requires it, pair by
+    // pair -- so this is a speed decision and never an accuracy one, and a
+    // vehicle with a stale overlay still gets correct answers.
+    auto route = entry->overlay
+                     ? road_graph::findRouteVia(graph, *entry->overlay, startSegment.toNode,
+                                                endSegment.fromNode)
+                     : road_graph::findRoute(graph, startSegment.toNode, endSegment.fromNode);
+    if (!route)
+    {
+        // Genuinely no path, or the search gave up before finding one. Both are
+        // noRoute to a caller; the distinction is in the node's log rather than
+        // on the wire, because neither gives a driver anything to do.
+        response.setStatus(::MapQueryStatus::NO_ROUTE);
+        return;
+    }
+
+    response.setStatus(::MapQueryStatus::OK);
+    response.setDistanceM(route->distanceM);
+    response.setDurationS(route->durationS);
+
+    auto ids = response.initSegmentIds(static_cast<unsigned>(route->segments.size()));
+    for (unsigned i = 0; i < route->segments.size(); ++i)
+    {
+        // SEGMENT IDS, not indices. A caller holding the same graph can render
+        // from these alone, and an id survives a rebuild where an index does
+        // not -- which is the whole of decision 2 in format.h.
+        ids.set(i, graph.segments()[route->segments[i]].id);
+    }
+
+    // Interleaved lon, lat -- lon first, matching MapTileset.bounds. Full
+    // precision, so it will NOT lie exactly on top of the road as drawn from
+    // simplified vector tiles at low zoom; drawing the tile feature by
+    // segmentId is the exact answer and this is the portable one.
+    auto geometry = response.initGeometry(static_cast<unsigned>(route->geometry.size()));
+    for (unsigned i = 0; i + 1 < route->geometry.size(); i += 2)
+    {
+        geometry.set(i, road_graph::toDegrees(route->geometry[i + 1]));
+        geometry.set(i + 1, road_graph::toDegrees(route->geometry[i]));
+    }
 }
 
 } // namespace map_server

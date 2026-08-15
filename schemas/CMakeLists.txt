@@ -42,9 +42,9 @@ set(REGISTRY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp")
 #
 # One invocation rather than one per file because it is the only way imports are
 # correct: compiling each schema separately means a file that imports another is
-# never regenerated when the imported one changes. Nothing imports anything
-# today, and this is what keeps that from becoming a silent staleness bug the
-# first time something does.
+# never regenerated when the imported one changes. Several files do import --
+# gsof_*.capnp share gsof_common.capnp, map_*.capnp share map_common.capnp --
+# so this is load-bearing rather than precautionary.
 #
 # capnp writes into a staging directory and cmake -E copy_if_different promotes
 # the results. Without that, touching any schema would rewrite

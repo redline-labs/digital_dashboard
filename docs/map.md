@@ -135,7 +135,16 @@ From another terminal:
     --data '{"tileset":"socal","z":14,"x":2828,"y":6562}' --json
 ```
 
-That last one is the Irvine tile: 71230 bytes, gzip, 14 layers, 2462 lines.
+That last one is the Irvine tile: 81958 bytes, gzip, 14 layers — the two the
+archive carries that Irvine has none of are `mountain_peak` and
+`aerodrome_label`.
+
+## Where an archive comes from
+
+`tools/map_build` — see [Building the map](map_build.md). It reads an OSM PBF and
+writes the tiles, the routable road graph and the routing overlay from one
+classification pass, so the drawn road and the routable road can never disagree.
+`tilemaker` is no longer in the loop.
 
 ## Adding a tileset
 
@@ -144,7 +153,7 @@ One entry in `configs/map_server.yaml`:
 ```yaml
 tilesets:
   - name: socal
-    path: /Users/ryan/Documents/map_data/socal-260813.mbtiles
+    path: /Users/ryan/Documents/map_data/socal.mbtiles
 ```
 
 The **name** is what clients ask for; the path is nobody's business but the
@@ -185,7 +194,7 @@ rather than fail:
 | The geometry **cursor persists across commands** | every road collapses onto the tile corner |
 | `ClosePath` does **not** repeat the first point | polygons drawn with one edge missing |
 
-`mvt_test_decode` covers each. `mvt_test_real_tiles` decodes real tilemaker
+`mvt_test_decode` covers each. `mvt_test_real_tiles` decodes real
 output from the archive named in `configs/map_server.yaml`, and **skips loudly**
 when that 383 MB file is absent so a fresh checkout still passes.
 
@@ -234,8 +243,9 @@ Two things about that surface are worth knowing:
   existed.
 - **`style.detail` can only ever be stricter than the archive.** Lowering
   `detail.building` below z13, or `detail.water` below z6, draws nothing extra —
-  tilemaker never wrote those features at those zooms. Raising a threshold is
-  the useful direction and is free. See the split above.
+  nothing wrote those features at those zooms. The build-time dial is the
+  per-class `minZoom` in `libs/map_rules`; raising a threshold here is the useful
+  direction and is free. See the split above.
 
 **`paintEvent` composites three passes**: the GPU frame, then labels, then the
 vehicle marker and its trail. There is deliberately no `CachedPaintWidget` and

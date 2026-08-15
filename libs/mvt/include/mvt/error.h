@@ -2,54 +2,28 @@
 //
 // What goes wrong decoding a Mapbox Vector Tile.
 //
-// Same shape as can::Error and mbtiles::Error. Deliberately NOT gsof::Error's
-// literal-only form: a malformed tile is worth saying *where* it went wrong,
-// because the tile that fails is one of tens of thousands and the offset is the
-// only way to find it again.
+// The type moved to libs/protowire when libs/osm needed the same reader, and
+// this header re-exports it so nothing that says `mvt::Error` had to change.
+// The alias is not a deprecation: inside this library the errors ARE vector
+// tile errors, and reading them as such is the point.
 #ifndef MVT_ERROR_H
 #define MVT_ERROR_H
 
-#include <cstddef>
-#include <expected>
-#include <string>
+#include "protowire/error.h"
 
 namespace mvt
 {
 
-struct Error
-{
-    enum class Kind
-    {
-        // The buffer ended in the middle of something -- a varint, a
-        // length-delimited field, a geometry command's parameters.
-        Truncated,
-        // A field is present but cannot mean what it says: a length that
-        // overruns the buffer, a tag index past the end of the key table, a
-        // geometry command id that is not MoveTo/LineTo/ClosePath.
-        Malformed,
-        // Structurally fine, but not something this decoder handles -- a
-        // protobuf wire type MVT does not use.
-        Unsupported,
-        // zlib said no.
-        Decompress,
-    };
-
-    Kind kind { Kind::Malformed };
-    std::string message;
-    // Byte offset into the tile where it went wrong. Zero when not applicable.
-    std::size_t offset { 0 };
-};
-
-const char* to_string(Error::Kind kind);
-std::string to_string(const Error& error);
+using Error = protowire::Error;
 
 template <typename T>
-using Result = std::expected<T, Error>;
+using Result = protowire::Result<T>;
 
-std::unexpected<Error> truncated(std::string message, std::size_t offset = 0);
-std::unexpected<Error> malformed(std::string message, std::size_t offset = 0);
-std::unexpected<Error> unsupported(std::string message, std::size_t offset = 0);
-std::unexpected<Error> decompress_failed(std::string message);
+using protowire::malformed;
+using protowire::truncated;
+using protowire::unsupported;
+using protowire::decompress_failed;
+using protowire::to_string;
 
 } // namespace mvt
 

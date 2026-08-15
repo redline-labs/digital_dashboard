@@ -24,12 +24,27 @@ struct TilesetConfig
     std::string path;
 };
 
+struct GraphConfig
+{
+    // What clients ask for, exactly as a tileset name: a client has no business
+    // knowing where the file lives.
+    std::string name;
+    std::string path;
+};
+
 struct ServiceConfig
 {
     std::string tileKey { "map/tile" };
     std::string catalogKey { "map/catalog" };
     std::string assetKey { "map/asset" };
     std::string statusKey { "map/status" };
+
+    // The road graph services. Answered from the same process as the tiles
+    // because a graph is another file on the bus, and because a mmap'd graph is
+    // const after open -- so unlike the archives it needs no lock at all.
+    std::string nearestKey { "map/nearest" };
+    std::string routeKey { "map/route" };
+    std::string graphInfoKey { "map/graph" };
 
     std::uint32_t statusIntervalMs { 5000 };
 };
@@ -51,6 +66,7 @@ struct AssetConfig
 struct NodeConfig
 {
     std::vector<TilesetConfig> tilesets;
+    std::vector<GraphConfig> graphs;
     ServiceConfig services;
     AssetConfig assets;
 };

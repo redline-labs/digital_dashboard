@@ -7,7 +7,9 @@
 // to send three times the bytes would spend CPU at both ends to make the wire
 // worse. So the client inflates, here.
 //
-// Only inflate. Nothing in this tree compresses a tile.
+// Only inflate. Compression lives in mvt/encode.h, which is the one place a
+// tile is written -- and it is separate because inflating is on the hot path of
+// every viewport and deflating happens once, offline, in tools/map_build.
 #ifndef MVT_GZIP_H
 #define MVT_GZIP_H
 

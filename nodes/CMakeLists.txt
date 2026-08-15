@@ -15,3 +15,7 @@ add_subdirectory(bd992_bridge)
 # Offline maps: .mbtiles archives served as tiles, catalogs and style assets.
 # The only node with no hardware behind it -- what it bridges is a file.
 add_subdirectory(map_server)
+# Which road the vehicle is on, and what is ahead of it. Opens the road graph
+# directly rather than asking map_server -- a matcher makes dozens of lookups
+# per fix, and a read-only mmap is shareable between processes.
+add_subdirectory(map_match)

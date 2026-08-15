@@ -165,6 +165,67 @@ void parseTilesets(const YAML::Node& node, std::vector<TilesetConfig>& out, Cont
     }
 }
 
+// Graphs, the same shape as tilesets and for the same reasons: named rather
+// than pathed, names unique, no '/' in a name.
+void parseGraphs(const YAML::Node& node, std::vector<GraphConfig>& out, Context& context)
+{
+    if (!node)
+    {
+        // Absent is fine. A deployment that only draws maps needs no graph, and
+        // the nearest/route services then answer noSuchGraph rather than
+        // refusing to start.
+        return;
+    }
+    if (!node.IsSequence())
+    {
+        context.fail("graphs must be a sequence");
+        return;
+    }
+
+    std::set<std::string> names;
+
+    for (std::size_t i = 0; i < node.size(); ++i)
+    {
+        const YAML::Node& entry = node[i];
+        const std::string where = "graphs[" + std::to_string(i) + "]";
+
+        if (!entry.IsMap())
+        {
+            context.fail(where + " must be a mapping with `name` and `path`");
+            continue;
+        }
+
+        GraphConfig graph;
+        readString(entry, "name", graph.name, context, where);
+        readString(entry, "path", graph.path, context, where);
+
+        if (graph.name.empty())
+        {
+            context.fail(where + ".name is required");
+            continue;
+        }
+        if (graph.path.empty())
+        {
+            context.fail(where + ".path is required");
+            continue;
+        }
+        if (graph.name.find('/') != std::string::npos)
+        {
+            context.fail(where + ".name ('" + graph.name + "') must not contain '/'");
+            continue;
+        }
+        if (!names.insert(graph.name).second)
+        {
+            // Two graphs with one name is a server that starts cleanly and
+            // answers from whichever it happened to store second.
+            context.fail(where + ".name ('" + graph.name + "') is already used");
+            continue;
+        }
+
+        out.push_back(std::move(graph));
+    }
+}
+
 void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
 {
     if (node)
@@ -179,6 +240,9 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
         readString(node, "catalog_key", out.catalogKey, context, "services");
         readString(node, "asset_key", out.assetKey, context, "services");
         readString(node, "status_key", out.statusKey, context, "services");
+        readString(node, "nearest_key", out.nearestKey, context, "services");
+        readString(node, "route_key", out.routeKey, context, "services");
+        readString(node, "graph_info_key", out.graphInfoKey, context, "services");
         readUint(node, "status_interval_ms", out.statusIntervalMs, context, "services");
     }
 
@@ -186,6 +250,9 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
     checkKey(out.catalogKey, "catalog_key", context);
     checkKey(out.assetKey, "asset_key", context);
     checkKey(out.statusKey, "status_key", context);
+    checkKey(out.nearestKey, "nearest_key", context);
+    checkKey(out.routeKey, "route_key", context);
+    checkKey(out.graphInfoKey, "graph_info_key", context);
 
     // Two services on one key both answer, and a client takes whichever reply
     // arrives first -- so a tile request would sometimes come back as a
@@ -197,6 +264,9 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
         { &out.catalogKey, "catalog_key" },
         { &out.assetKey, "asset_key" },
         { &out.statusKey, "status_key" },
+        { &out.nearestKey, "nearest_key" },
+        { &out.routeKey, "route_key" },
+        { &out.graphInfoKey, "graph_info_key" },
     };
 
     for (std::size_t i = 0; i < std::size(keys); ++i)
@@ -258,6 +328,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     }
 
     parseTilesets(root["tilesets"], out.tilesets, context);
+    parseGraphs(root["graphs"], out.graphs, context);
     parseServices(root["services"], out.services, context);
     parseAssets(root["assets"], out.assets, context);
 

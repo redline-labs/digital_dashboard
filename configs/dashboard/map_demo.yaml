@@ -34,8 +34,15 @@ widgets:
       track_points: 600
 
       # From nodes/bd992_bridge. Leave the key empty for a static map.
-      position_zenoh_key: "nodes/bd992/position"
-      position_schema_type: "GsofLatLongHeight"
+      #
+      # The FUSED topic, not the per-record one: `<prefix>/epoch` carries the
+      # position with the velocity, time and fix quality that arrived in the
+      # same GSOF transmission. `<prefix>/gsof/lat_long_height` is still
+      # published and would work here, but it carries a position and nothing
+      # else -- and this key is the one anything that also wants heading or
+      # accuracy should use. See schemas/gsof_epoch.capnp.
+      position_zenoh_key: "nodes/bd992/epoch"
+      position_schema_type: "GsofEpoch"
       latitude_expression: "latitudeDeg"
       longitude_expression: "longitudeDeg"
 
@@ -81,3 +88,18 @@ widgets:
       text: "socal  -  z14 / z9"
       font_size: 16
       color: "#8a919e"
+
+  # What road we are on, from nodes/map_match. Reads the horizon topic
+  # directly: the road name is text, and the generic expression binding yields
+  # a double.
+  - type: road_info
+    id: road
+    x: 8
+    y: 8
+    width: 380
+    height: 76
+    config:
+      horizon_zenoh_key: "nodes/map_match/horizon"
+      horizon_schema_type: "MapHorizon"
+      show_confidence: true
+      background_color: "#000000B0"

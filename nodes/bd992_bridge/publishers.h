@@ -13,6 +13,12 @@
 // sending: a topic that exists but has never published looks identical, in
 // every picker in this tree, to one whose receiver has gone quiet.
 //
+// ONE topic is not a record: `<prefix>/epoch` carries the position, velocity,
+// time and quality that arrived in the SAME transmission, fused. It is additive
+// -- every per-record topic still publishes exactly as before -- and it exists
+// because the record grouping is knowable here and nowhere downstream. See
+// schemas/gsof_epoch.capnp.
+//
 // Everything here runs on the StreamClient's reader thread. ZenohPublisher is
 // not thread-safe, and nothing else touches these.
 
@@ -27,6 +33,7 @@
 #include <string>
 #include <vector>
 
+#include "epoch.h"
 #include "gsof/record_iterator.h"
 #include "gsof/record_table.h"
 #include "gsof/records.h"
@@ -45,6 +52,34 @@ class Publishers
 
     // Decode and publish one record. Called on the reader thread.
     void publish(const gsof::RawRecord& raw);
+
+    // End of a transmission: everything since the last call was sent together.
+    // Publishes the fused GsofEpoch, if a position was among it, and clears
+    // what was accumulated.
+    //
+    // This is the ONLY point in the system that knows which records belong to
+    // one instant -- see schemas/gsof_epoch.capnp for why that matters and what
+    // goes wrong downstream without it. Called on the reader thread, after the
+    // publish() calls for that transmission.
+    void endTransmission();
+
+    // Fused epochs published, and how many were missing each component. A
+    // component that is persistently absent means the receiver is not
+    // configured to send those records together, which is a fault this node
+    // cannot fix and must therefore report.
+    struct EpochCounts
+    {
+        // How the transmissions were shaped, from the accumulator.
+        EpochAccumulator::Counts shape {};
+
+        // Of the epochs published, how many were missing each component.
+        std::uint64_t withoutTime { 0 };
+        std::uint64_t withoutVelocity { 0 };
+        std::uint64_t withoutFixType { 0 };
+        std::uint64_t withoutSigma { 0 };
+    };
+
+    EpochCounts epochCounts() const;
 
     // What has been seen, and how long ago. The status message's most useful
     // field: a receiver that quietly stopped sending one record is otherwise

@@ -140,6 +140,11 @@ add_subdirectory(dashboard)
 add_subdirectory(scope)
 add_subdirectory(mock_data)
 add_subdirectory(nodes)
+# Workstation-only tools. Placed HERE, beside nodes, rather than earlier: the
+# -Werror block above applies from add_subdirectory(schemas) onwards, and a
+# tools/ added above it would silently opt out of every warning this tree treats
+# as load-bearing.
+add_subdirectory(tools)
 
 # Local docs preview (manual): serves the Jekyll site from the docs directory.
 # Usage: cmake --build . --target docs_serve

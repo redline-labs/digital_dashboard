@@ -11,13 +11,28 @@ tilesets:
   # is nobody's business but this node's. Renaming the file changes one line
   # here and nothing in any style or layout.
   - name: socal
-    path: /Users/ryan/Documents/map_data/socal-260813.mbtiles
+    path: /Users/ryan/Documents/map_data/socal.mbtiles
+
+# The routable road network, built by tools/map_build:
+#
+#   ./build/tools/map_build/map_build graph \
+#       --input /Users/ryan/Documents/map_data/socal-260813.osm.pbf \
+#       --output /Users/ryan/Documents/map_data/socal.graph
+#
+# Named, not pathed, exactly as a tileset is. Absent is fine: without one the
+# nearest/route services answer noSuchGraph and the tiles are unaffected.
+graphs:
+  - name: socal
+    path: /Users/ryan/Documents/map_data/socal.graph
 
 services:
   tile_key: map/tile
   catalog_key: map/catalog
   asset_key: map/asset
   status_key: map/status
+  nearest_key: map/nearest
+  route_key: map/route
+  graph_info_key: map/graph
   status_interval_ms: 5000
 
 # assets:

@@ -12,7 +12,7 @@
 // bd992_bridge against libs/bd992.
 //
 // Modes:
-//   --check       open every configured archive, report what is in it, exit
+//   --check       open every configured archive AND graph, report, exit
 //   (default)     serve
 
 #include <spdlog/spdlog.h>
@@ -22,11 +22,13 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <ctime>
 #include <string>
 #include <thread>
 
 #include "pub_sub/node_identity.h"
 
+#include "graphs.h"
 #include "node_config.h"
 #include "services.h"
 #include "tilesets.h"
@@ -46,6 +48,23 @@ using namespace map_server;
 // Open everything, say what is in it, and exit. The fastest way to find out
 // whether a path is right and an archive is what you think it is, without
 // starting a bus session.
+// A build time a person can read. The raw epoch is in the header because that is
+// what a checksum and a comparison want; a driver reporting a missing road is
+// asking which build they have, and "1755300000" does not answer that.
+std::string buildTime(std::int64_t unixSeconds)
+{
+    if (unixSeconds == 0)
+    {
+        return "(unknown)";
+    }
+    const auto seconds = static_cast<std::time_t>(unixSeconds);
+    std::tm parts {};
+    ::localtime_r(&seconds, &parts);
+    char buffer[64];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &parts);
+    return buffer;
+}
+
 int runCheck(const NodeConfig& config)
 {
     TilesetRegistry tilesets(config.tilesets);
@@ -94,13 +113,57 @@ int runCheck(const NodeConfig& config)
         }
     }
 
+    // THE GRAPH IS CHECKED TOO, and it is the half more likely to be wrong.
+    //
+    // An archive is one path in one config entry. A graph is a path, plus a
+    // sidecar overlay beside it that was built by a different verb at a
+    // different time and is accepted only if its checksum still matches. Every
+    // one of those can be stale or absent without anything failing at startup --
+    // the node is deliberately built to degrade rather than refuse -- so if
+    // `--check` did not look, the first sign of a wrong path would be a query
+    // answering `noSuchGraph` in a vehicle.
+    //
+    // Constructing the registry IS the check: it opens each file and logs what
+    // it found, or why it could not.
+    GraphRegistry graphs(config.graphs);
+    for (const auto& graph : graphs.all())
+    {
+        if (!graph->graph)
+        {
+            ++broken;
+            continue;
+        }
+
+        const road_graph::FileHeader& header = graph->graph->header();
+        SPDLOG_INFO("{}", graph->name);
+        SPDLOG_INFO("  path        {}", graph->path);
+        SPDLOG_INFO("  built       {}", buildTime(header.builtAtUnixS));
+        SPDLOG_INFO("  contents    {} nodes, {} segments, {} edges", header.nodeCount,
+                    header.segmentCount, header.edgeCount);
+        SPDLOG_INFO("  bounds      {:.6f} {:.6f} {:.6f} {:.6f}", header.west * 1e-7,
+                    header.south * 1e-7, header.east * 1e-7, header.north * 1e-7);
+        if (graph->overlay)
+        {
+            SPDLOG_INFO("  overlay     {} shortcuts", graph->overlay->header().shortcutCount);
+        }
+        else
+        {
+            // Not counted as broken: routing still answers, with the same route,
+            // more slowly. Reported anyway, because "never built" and "built for
+            // a different graph" are different mistakes.
+            SPDLOG_WARN("  overlay     absent -- {}", graph->overlayError);
+        }
+    }
+
+    const std::size_t configured = tilesets.all().size() + graphs.all().size();
     if (broken != 0)
     {
-        SPDLOG_ERROR("{} of {} tileset(s) unusable", broken, tilesets.all().size());
+        SPDLOG_ERROR("{} of {} configured archive(s)/graph(s) unusable", broken, configured);
         return 1;
     }
 
-    SPDLOG_INFO("{} tileset(s) usable", tilesets.all().size());
+    SPDLOG_INFO("{} tileset(s) and {} graph(s) usable", tilesets.all().size(),
+                graphs.all().size());
     return 0;
 }
 
@@ -176,7 +239,17 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("[node] no archive opened; every tile request will report the reason");
     }
 
-    Services services(config, tilesets);
+    GraphRegistry graphs(config.graphs);
+    if (!config.graphs.empty() && graphs.openCount() == 0)
+    {
+        // Not fatal, exactly as an unopenable archive is not: the node still
+        // serves tiles, and map/nearest answers with the reason rather than
+        // going silent. A dashboard with a map and no road names beats no
+        // dashboard.
+        SPDLOG_ERROR("[node] no road graph opened; map/nearest will report why");
+    }
+
+    Services services(config, tilesets, graphs);
 
     const auto statusInterval = std::chrono::milliseconds(config.services.statusIntervalMs);
     auto nextStatus = std::chrono::steady_clock::now();

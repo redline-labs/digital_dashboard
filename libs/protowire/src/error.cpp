@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "mvt/error.h"
+#include "protowire/error.h"
 
-namespace mvt
+namespace protowire
 {
 
 const char* to_string(Error::Kind kind)
@@ -58,4 +58,4 @@ std::unexpected<Error> decompress_failed(std::string message)
     return std::unexpected(Error { Error::Kind::Decompress, std::move(message), 0 });
 }
 
-} // namespace mvt
+} // namespace protowire

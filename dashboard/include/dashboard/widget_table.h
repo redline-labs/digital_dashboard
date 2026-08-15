@@ -26,6 +26,7 @@
 
 #define DASHBOARD_WIDGET_TABLE(X) \
     X(static_text,                 StaticTextWidget) \
+    X(road_info,                   RoadInfoWidget) \
     X(value_readout,               ValueReadoutWidget) \
     X(segment_readout,             SegmentReadoutWidget) \
     X(center_bar,                  CenterBarWidget) \

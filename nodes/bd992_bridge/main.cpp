@@ -394,6 +394,12 @@ int main(int argc, char** argv)
     bd992::StreamClient stream(std::move(factory), options,
                                [&publishers](const gsof::RawRecord& record) { publishers.publish(record); });
 
+    // The transmission boundary is where the fused epoch is published. It is
+    // the only place that knows which records were sent together, and that
+    // grouping is gone by the time anything downstream sees them -- see
+    // schemas/gsof_epoch.capnp.
+    stream.setTransmissionHandler([&publishers]() { publishers.endTransmission(); });
+
     std::ofstream dump;
     if (!dumpPath.empty())
     {

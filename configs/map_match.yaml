@@ -1,0 +1,61 @@
+# nodes/map_match: which road we are on, and what is ahead.
+#
+#   ./build/nodes/map_match/map_match --config configs/map_match.yaml --check
+#   ./build/nodes/map_match/map_match --config configs/map_match.yaml
+#
+# --check opens the graph, says what is in it and probes a query, without
+# touching zenoh -- the fastest way to find out whether the path is right.
+
+# Built by tools/map_build:
+#
+#   ./build/tools/map_build/map_build graph \
+#       --input /Users/ryan/Documents/map_data/socal-260813.osm.pbf \
+#       --output /Users/ryan/Documents/map_data/socal.graph
+#
+# Opened directly rather than through map_server: a matcher makes dozens of
+# lookups per fix at 10 Hz, and a read-only mmap is shareable, so both processes
+# hold the same file with no coordination.
+graph: /Users/ryan/Documents/map_data/socal.graph
+
+position:
+  # The FUSED epoch topic. Not <prefix>/gsof/lat_long_height, which carries a
+  # position and nothing else -- no time, no velocity -- so pairing it with the
+  # velocity topic by arrival order gives a heading from a different instant.
+  # See schemas/gsof_epoch.capnp.
+  zenoh_key: nodes/bd992/epoch
+  schema_type: GsofEpoch
+
+  # A gap longer than this drops the candidate beam. Carrying it across would
+  # explain a jump across town as a very long detour, and the matcher would be
+  # confidently wrong until it recovered.
+  stale_after_ms: 3000
+
+match:
+  search_radius_m: 50.0
+  beam_width: 6
+
+  # The emission width comes from the RECEIVER and is clamped into this range.
+  #
+  # The floor is a statement about the MAP's accuracy rather than the
+  # receiver's: OSM centrelines are metres from the real road, so believing a
+  # 2 cm RTK fix completely would make every candidate impossible and match
+  # nothing at all. The ceiling stops a receiver that has lost its corrections
+  # from making every road equally likely.
+  min_sigma_m: 4.0
+  max_sigma_m: 30.0
+  default_sigma_m: 8.0
+
+  transition_beta_m: 15.0
+
+  # Below this speed a course over ground is noise -- a stationary vehicle's
+  # heading wanders through all 360 degrees, and using it would re-match the car
+  # onto a different road every fix while it sits at a light.
+  heading_valid_above_mps: 1.5
+
+  lookahead_m: 2000
+
+services:
+  horizon_key: nodes/map_match/horizon
+  status_key: nodes/map_match/status
+  horizon_interval_ms: 100
+  status_interval_ms: 5000

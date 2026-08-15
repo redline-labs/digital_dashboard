@@ -47,3 +47,22 @@ target_link_libraries(bd992_test_config
 )
 
 add_project_test(TARGET bd992_test_config LABELS bd992 unit)
+
+# Which records describe the same instant. epoch.h is deliberately free of
+# zenoh and capnp so this rule can be tested on its own -- the failures it
+# guards against (a heading from one epoch against a position from another)
+# produce a plausible wrong answer rather than an error, and would otherwise
+# only be visible as a vehicle matched onto the road beside the one it is on.
+add_executable(bd992_test_epoch
+    tests/test_epoch.cpp
+)
+
+target_include_directories(bd992_test_epoch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(bd992_test_epoch
+    PRIVATE
+        gsof
+        spdlog::spdlog
+)
+
+add_project_test(TARGET bd992_test_epoch LABELS bd992 unit)
