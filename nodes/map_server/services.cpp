@@ -126,46 +126,67 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
         return;
     }
 
+    // The tileset resolved, so the REQUEST is ok however the individual tiles
+    // turn out. A batch where every tile is absent is a correct answer about a
+    // working archive, and reporting notFound up here would make it look like
+    // the tileset was the problem.
+    response.setStatus(::MapStatus::OK);
     response.setFormat(tileset->archive->metadata().format);
 
-    auto tile = tileset->archive->tile(request.getZ(), request.getX(), request.getY());
-    if (!tile)
+    const auto wanted = request.getTiles();
+    auto results = response.initTiles(wanted.size());
+
+    for (unsigned i = 0; i < wanted.size(); ++i)
     {
-        const mbtiles::Error& error = tile.error();
-        switch (error.kind)
+        const auto coord = wanted[i];
+        auto result = results[i];
+
+        // Echoed back, so a client never has to infer which tile it is holding
+        // from position alone.
+        auto echo = result.initCoord();
+        echo.setZ(coord.getZ());
+        echo.setX(coord.getX());
+        echo.setY(coord.getY());
+
+        auto tile = tileset->archive->tile(coord.getZ(), coord.getX(), coord.getY());
+        if (!tile)
         {
-            case mbtiles::Error::Kind::InvalidArgument:
-                response.setStatus(::MapStatus::OUT_OF_RANGE);
-                break;
-            case mbtiles::Error::Kind::NotFound:
-            case mbtiles::Error::Kind::NotReadable:
-            case mbtiles::Error::Kind::NotAnArchive:
-            case mbtiles::Error::Kind::Query:
-                response.setStatus(::MapStatus::FAILED);
-                SPDLOG_ERROR("[tile] {}/{}/{}/{}: {}", name, request.getZ(), request.getX(),
-                             request.getY(), mbtiles::to_string(error));
-                break;
+            const mbtiles::Error& error = tile.error();
+            switch (error.kind)
+            {
+                case mbtiles::Error::Kind::InvalidArgument:
+                    result.setStatus(::MapStatus::OUT_OF_RANGE);
+                    break;
+                case mbtiles::Error::Kind::NotFound:
+                case mbtiles::Error::Kind::NotReadable:
+                case mbtiles::Error::Kind::NotAnArchive:
+                case mbtiles::Error::Kind::Query:
+                    result.setStatus(::MapStatus::FAILED);
+                    SPDLOG_ERROR("[tile] {}/{}/{}/{}: {}", name, coord.getZ(), coord.getX(),
+                                 coord.getY(), mbtiles::to_string(error));
+                    break;
+            }
+            result.setError(mbtiles::to_string(error));
+            continue;
         }
-        response.setError(mbtiles::to_string(error));
-        return;
+
+        if (!tile->has_value())
+        {
+            // The common answer. A client asks for whatever is under the
+            // viewport and most of the pyramid is empty, so this is not logged.
+            tileset->missing.fetch_add(1, std::memory_order_relaxed);
+            result.setStatus(::MapStatus::NOT_FOUND);
+            continue;
+        }
+
+        const mbtiles::Tile& found = **tile;
+        result.setStatus(::MapStatus::OK);
+        result.setEncoding(toWire(found.encoding));
+        setBlob(result.initData(static_cast<unsigned>(found.data.size())), found.data);
+
+        tileset->served.fetch_add(1, std::memory_order_relaxed);
+        tileset->bytes.fetch_add(found.data.size(), std::memory_order_relaxed);
     }
-
-    if (!tile->has_value())
-    {
-        // The common answer. A client asks for whatever is under the viewport
-        // and most of the pyramid is empty, so this is not logged.
-        tileset->missing.fetch_add(1, std::memory_order_relaxed);
-        response.setStatus(::MapStatus::NOT_FOUND);
-        return;
-    }
-
-    const mbtiles::Tile& found = **tile;
-    response.setStatus(::MapStatus::OK);
-    response.setEncoding(toWire(found.encoding));
-    setBlob(response.initData(static_cast<unsigned>(found.data.size())), found.data);
-
-    tileset->served.fetch_add(1, std::memory_order_relaxed);
-    tileset->bytes.fetch_add(found.data.size(), std::memory_order_relaxed);
 }
 
 void Services::handleCatalog(const ::MapCatalogRequest::Reader& request,

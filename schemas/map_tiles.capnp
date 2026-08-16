@@ -52,33 +52,67 @@ enum MapEncoding {
 # rows, which count the other way. The flip between them happens exactly once,
 # in mbtiles::Archive::tile(), and nowhere else. A second flip anywhere in this
 # path yields a map that renders perfectly and is mirrored about the equator.
+# One tile's coordinates, so a request can name several.
+struct MapTileCoord {
+  z @0 :UInt8;
+  x @1 :UInt32;
+  y @2 :UInt32;
+}
+
+# A BATCH. A viewport is a few dozen tiles and they are all wanted at once, so
+# asking for them one query at a time is a few dozen round trips, a few dozen
+# capnp messages and a few dozen replies to fill one screen.
+#
+# The list is not unbounded: a client asks for what it can draw, and a server
+# that is handed thousands has been asked for something nobody will look at.
+# See kMaxTilesPerRequest in the widget's tile source.
 struct MapTileRequest {
   # The name from the server's YAML, not a file path. Clients have no business
   # knowing where the archive lives.
   tileset @0 :Text;
 
-  z @1 :UInt8;
-  x @2 :UInt32;
-  y @3 :UInt32;
+  tiles @1 :List(MapTileCoord);
 }
 
-struct MapTileResponse {
-  status @0 :MapStatus;
+# What became of one requested tile.
+#
+# PER TILE, because the answers differ within a single batch: most of the
+# pyramid is empty, so a request for nine tiles routinely comes back with two
+# tiles and seven notFounds, and a client that could not tell them apart would
+# have to re-ask for the empty ones forever.
+struct MapTileResult {
+  # Echoed back. The results are in request order, but a client that pipelines
+  # or retries should not have to rely on that to know what it is holding.
+  coord @0 :MapTileCoord;
 
-  # Empty unless status is error or badRequest.
-  error @1 :Text;
+  status @1 :MapStatus;
 
-  encoding @2 :MapEncoding;
+  # Empty unless status is failed or badRequest.
+  error @2 :Text;
 
-  # The archive's own `format` metadata: "pbf", "png", "jpg", "webp". Carried
-  # per tile so a client that did not ask for the catalog still knows what it
-  # is holding.
-  format @3 :Text;
+  encoding @3 :MapEncoding;
 
   # Empty when status is not ok. Note that this is NOT the same as a
   # zero-length tile, which is a legitimate thing for an archive to store for
   # an empty area -- status is what distinguishes them.
   data @4 :Data;
+}
+
+struct MapTileResponse {
+  # The answer to the REQUEST, not to any one tile: whether the tileset exists
+  # and could be opened. Per-tile answers are in each result, and a request
+  # that names a good tileset reports ok here even when every tile is absent.
+  status @0 :MapStatus;
+
+  # Empty unless status is error or badRequest.
+  error @1 :Text;
+
+  # The archive's own `format` metadata: "pbf", "png", "jpg", "webp". One per
+  # response rather than per tile: it is a property of the archive, and it was
+  # never going to differ between two tiles of the same one.
+  format @2 :Text;
+
+  tiles @3 :List(MapTileResult);
 }
 
 # ============================================================================

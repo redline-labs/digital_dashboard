@@ -25,10 +25,15 @@ namespace
 // what makes a pinch-zoom instant rather than a refetch.
 constexpr std::size_t kMaxCachedTiles = 256;
 
-// How many requests may be outstanding at once. Unbounded, a fast pan across a
-// city queues thousands and every one of them is still wanted by nobody by the
-// time it lands.
-constexpr std::size_t kMaxInFlight = 32;
+// How many tiles one request may name.
+//
+// A viewport plus its prefetch ring is a few dozen, so this is normally the
+// whole screen in one query. The cap is not about the wire -- it is about a
+// fast pan queuing more than anybody will look at: whatever does not fit is
+// asked for on the next drain, at most a frame away, and because the request
+// list is ordered centre-outward what gets left behind is what is furthest
+// from where the driver is looking.
+constexpr std::size_t kMaxTilesPerRequest = 64;
 
 // How long to wait before asking again for a tile whose request FAILED, and
 // the ceiling the doubling stops at. The first wait is deliberately short: the
@@ -66,130 +71,188 @@ void TileSource::request(const std::vector<TileId>& wanted)
 {
     const auto now = std::chrono::steady_clock::now();
 
-    for (const TileId& id : wanted)
-    {
-        if (mCache.contains(id))
-        {
-            continue;
-        }
+    // ONE request for the whole viewport, not one per tile. A pan used to
+    // issue a few dozen zenoh queries to fill one screen, each with its own
+    // capnp message, its own round trip and its own reply -- and needed a
+    // 32-slot in-flight budget to stop a fast pan queuing thousands.
+    std::vector<TileId> ask;
+    ask.reserve(std::min(wanted.size(), kMaxTilesPerRequest));
 
-        if (const auto backoff = mBackoff.find(id); backoff != mBackoff.end())
+    {
+        const std::lock_guard<std::mutex> guard(mMutex);
+        for (const TileId& id : wanted)
         {
-            if (now < backoff->second.retryAt)
+            if (ask.size() >= kMaxTilesPerRequest)
+            {
+                break;
+            }
+            if (mCache.contains(id))
             {
                 continue;
             }
-            // Due for another go. The entry stays until the retry succeeds, so
-            // a second failure doubles the wait rather than restarting it.
-        }
-
-        {
-            const std::lock_guard<std::mutex> guard(mMutex);
-            if (mInFlight.size() >= kMaxInFlight)
+            if (const auto backoff = mBackoff.find(id); backoff != mBackoff.end())
             {
-                // Out of slots. The rest of the viewport is asked for on the
-                // next drain, which is at most a frame away -- and because
-                // visibleTiles() orders centre-outward, the ones dropped here
-                // are the ones furthest from where the driver is looking.
-                return;
+                if (now < backoff->second.retryAt)
+                {
+                    continue;
+                }
+                // Due for another go. The entry stays until the retry
+                // succeeds, so a second failure doubles the wait rather than
+                // restarting it.
             }
             if (!mInFlight.insert(id).second)
             {
                 continue;
             }
-            ++mStats.requested;
+            ask.push_back(id);
         }
+        mStats.requested += ask.size();
+    }
 
-        // mTileset directly, not a local copied for the lambda to capture by
-        // reference. That was safe only because ZenohAsyncClient invokes `fill`
-        // synchronously; the moment it stopped doing so it would have been a
-        // dangling reference into a dead stack frame, and mTileset is const
-        // after construction anyway.
-        const bool sent = mClient->request(
-            [this, id](::MapTileRequest::Builder& builder) {
-                builder.setTileset(mTileset);
-                builder.setZ(id.z);
-                builder.setX(id.x);
-                builder.setY(id.y);
-            },
-            [this, id](Client::Status status, const ::MapTileResponse::Reader* reply) {
-                // ON A ZENOH THREAD. Nothing here may touch Qt.
-                if (status != Client::Status::Ok || reply == nullptr)
-                {
-                    deliver(id, CachedTile {}, false, true);
+    if (ask.empty())
+    {
+        return;
+    }
+
+    const bool sent = mClient->request(
+        [this, &ask](::MapTileRequest::Builder& builder) {
+            builder.setTileset(mTileset);
+            auto list = builder.initTiles(static_cast<unsigned>(ask.size()));
+            for (unsigned i = 0; i < ask.size(); ++i)
+            {
+                auto coord = list[i];
+                coord.setZ(ask[i].z);
+                coord.setX(ask[i].x);
+                coord.setY(ask[i].y);
+            }
+        },
+        [this, ask](Client::Status status, const ::MapTileResponse::Reader* reply) {
+            // ON A ZENOH THREAD. Nothing here may touch Qt.
+            if (status != Client::Status::Ok || reply == nullptr)
+            {
+                failBatch(ask);
+                return;
+            }
+
+            switch (reply->getStatus())
+            {
+                case ::MapStatus::OK:
+                    break;
+
+                case ::MapStatus::UNKNOWN:
+                case ::MapStatus::NOT_FOUND:
+                case ::MapStatus::OUT_OF_RANGE:
+                case ::MapStatus::NO_SUCH_TILESET:
+                case ::MapStatus::BAD_REQUEST:
+                case ::MapStatus::FAILED:
+                    // The whole REQUEST failed -- a bad tileset name, an
+                    // archive that will not open. Every tile in it is a
+                    // failure, not an absence: absence is a fact about a
+                    // working archive and would be cached forever.
+                    SPDLOG_ERROR("[map] tileset '{}': {}", mTileset, reply->getError().cStr());
+                    failBatch(ask);
                     return;
-                }
+            }
 
-                switch (reply->getStatus())
+            for (const auto result : reply->getTiles())
+            {
+                const auto coord = result.getCoord();
+                const TileId id { coord.getZ(), coord.getX(), coord.getY() };
+
+                Outcome outcome = Outcome::Failed;
+                switch (result.getStatus())
                 {
                     case ::MapStatus::OK:
+                        outcome = Outcome::Ok;
                         break;
 
                     case ::MapStatus::NOT_FOUND:
                     case ::MapStatus::OUT_OF_RANGE:
-                        // The normal answer for most of the pyramid. Cached as
-                        // an empty tile so it is not asked for again every
-                        // frame -- an absent tile re-requested forever is a
-                        // steady stream of queries for nothing.
-                        deliver(id,
-                                CachedTile { std::make_shared<const mvt::Tile>(),
-                                             std::make_shared<const TileGeometry>() },
-                                true, false);
-                        return;
+                        outcome = Outcome::Absent;
+                        break;
 
                     case ::MapStatus::UNKNOWN:
                     case ::MapStatus::NO_SUCH_TILESET:
                     case ::MapStatus::BAD_REQUEST:
                     case ::MapStatus::FAILED:
                         SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y,
-                                     reply->getError().cStr());
-                        deliver(id, CachedTile {}, false, true);
-                        return;
+                                     result.getError().cStr());
+                        outcome = Outcome::Failed;
+                        break;
                 }
 
-                const auto data = reply->getData();
-                const std::span<const std::uint8_t> bytes(
-                    reinterpret_cast<const std::uint8_t*>(data.begin()), data.size());
+                const auto data = result.getData();
+                deliverResult(id, outcome,
+                              std::span<const std::uint8_t>(
+                                  reinterpret_cast<const std::uint8_t*>(data.begin()),
+                                  data.size()));
+            }
+        });
 
-                // Inflate first: the server ships tiles exactly as the archive
-                // stored them, which for vector tiles is gzipped. Feeding gzip
-                // to the decoder does not fail loudly enough to be obvious.
-                auto raw = mvt::inflateIfCompressed(bytes);
-                if (!raw)
-                {
-                    SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y,
-                                 mvt::to_string(raw.error()));
-                    deliver(id, CachedTile {}, false, true);
-                    return;
-                }
+    if (!sent)
+    {
+        failBatch(ask);
+    }
+}
 
-                auto tile = mvt::decode(*raw);
-                if (!tile)
-                {
-                    SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y,
-                                 mvt::to_string(tile.error()));
-                    deliver(id, CachedTile {}, false, true);
-                    return;
-                }
+void TileSource::deliverResult(const TileId& id, Outcome outcome,
+                               std::span<const std::uint8_t> bytes)
+{
+    switch (outcome)
+    {
+        case Outcome::Ok:
+            break;
 
-                auto decoded = std::make_shared<const mvt::Tile>(std::move(*tile));
+        case Outcome::Absent:
+            // The normal answer for most of the pyramid. Cached as an empty
+            // tile so it is not asked for again every frame -- an absent tile
+            // re-requested forever is a steady stream of queries for nothing.
+            deliver(id,
+                    CachedTile { std::make_shared<const mvt::Tile>(),
+                                 std::make_shared<const TileGeometry>() },
+                    true, false);
+            return;
 
-                // Tessellated HERE, on the zenoh thread, not on the GUI thread
-                // when the tile is first drawn. It is the expensive step by an
-                // order of magnitude and its result is reused every frame; doing
-                // it on arrival means the frame that shows a new tile costs the
-                // same as the frame before it.
-                auto geometry =
-                    std::make_shared<const TileGeometry>(tessellate(*decoded, mStyle));
+        case Outcome::Failed:
+            deliver(id, CachedTile {}, false, true);
+            return;
+    }
 
-                deliver(id, CachedTile { std::move(decoded), std::move(geometry) }, false, false);
-            });
+    // Inflate first: the server ships tiles exactly as the archive stored
+    // them, which for vector tiles is gzipped. Feeding gzip to the decoder
+    // does not fail loudly enough to be obvious.
+    auto raw = mvt::inflateIfCompressed(bytes);
+    if (!raw)
+    {
+        SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y, mvt::to_string(raw.error()));
+        deliver(id, CachedTile {}, false, true);
+        return;
+    }
 
-        if (!sent)
-        {
-            const std::lock_guard<std::mutex> guard(mMutex);
-            mInFlight.erase(id);
-        }
+    auto tile = mvt::decode(*raw);
+    if (!tile)
+    {
+        SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y, mvt::to_string(tile.error()));
+        deliver(id, CachedTile {}, false, true);
+        return;
+    }
+
+    auto decoded = std::make_shared<const mvt::Tile>(std::move(*tile));
+
+    // Tessellated HERE, on the zenoh thread, not on the GUI thread when the
+    // tile is first drawn. It is the expensive step by an order of magnitude
+    // and its result is reused every frame; doing it on arrival means the
+    // frame that shows a new tile costs the same as the frame before it.
+    auto geometry = std::make_shared<const TileGeometry>(tessellate(*decoded, mStyle));
+
+    deliver(id, CachedTile { std::move(decoded), std::move(geometry) }, false, false);
+}
+
+void TileSource::failBatch(const std::vector<TileId>& ids)
+{
+    for (const TileId& id : ids)
+    {
+        deliver(id, CachedTile {}, false, true);
     }
 }
 

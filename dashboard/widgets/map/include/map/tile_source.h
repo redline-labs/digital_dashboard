@@ -35,6 +35,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -128,6 +129,24 @@ class TileSource
 
   private:
     void deliver(const TileId& id, CachedTile tile, bool absent, bool failed);
+    // What the server said about one tile of a batch. Decomposed from the
+    // capnp status here rather than passed through, so this header stays free
+    // of the generated schema -- the switch that maps MapStatus onto it lives
+    // in the .cpp, where -Wswitch-enum can see it.
+    enum class Outcome
+    {
+        // Bytes to decode.
+        Ok,
+        // The archive has nothing there. NORMAL, and cached as an empty tile.
+        Absent,
+        // The server could not answer. Backed off, never cached.
+        Failed,
+    };
+
+    // Decode, tessellate and hand one tile to the mailbox. On a zenoh thread.
+    void deliverResult(const TileId& id, Outcome outcome, std::span<const std::uint8_t> bytes);
+    // Mark every tile of a batch failed -- the request itself did not land.
+    void failBatch(const std::vector<TileId>& ids);
     void evictIfNeeded();
 
     std::string mTileset;
