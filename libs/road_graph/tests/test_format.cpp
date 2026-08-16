@@ -251,6 +251,17 @@ void test_a_ways_segments_are_contiguous_and_ordered()
 
     check(graph->segmentsOfWay(999999).empty(), "and a way that is not there reports nothing");
 
+    // The old implementation handed back a span over a thread_local vector, so
+    // a second call on the same thread rewrote the first caller's result under
+    // it. Both answers have to stay valid and independent.
+    const auto first = graph->segmentsOfWay(500);
+    const auto second = graph->segmentsOfWay(500);
+    const auto missing = graph->segmentsOfWay(999999);
+    check(first.size() == 3 && second.size() == 3,
+          "two live results from the same way both stay valid");
+    check(missing.empty(), "and asking for a missing way does not empty them");
+    check(first.front() == second.front(), "with the same contents");
+
     std::filesystem::remove(path);
 }
 

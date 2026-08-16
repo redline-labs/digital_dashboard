@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -117,7 +118,13 @@ class Graph
     // The segments a way was split into, in order along the way. Empty if the
     // way contributed nothing routable. Decision 3 -- stage 4 resolves turn
     // restrictions through this.
-    std::span<const SegmentIndex> segmentsOfWay(std::int64_t wayId) const;
+    //
+    // A RANGE, not a span. map_build emits a way's segments contiguously and
+    // in order, so the answer is always `first .. first + count` -- there is
+    // nothing to store. It used to be materialised into a thread_local vector
+    // and returned as a span over it, which meant a second call on the same
+    // thread silently invalidated the first caller's result.
+    std::ranges::iota_view<SegmentIndex, SegmentIndex> segmentsOfWay(std::int64_t wayId) const;
 
     // Whether a vehicle on `fromSegment` may continue onto `toSegment` at
     // `viaNode`.

@@ -2,6 +2,7 @@
 #include "road_graph/graph.h"
 
 #include <algorithm>
+#include <ranges>
 #include <cstring>
 #include <limits>
 
@@ -308,7 +309,7 @@ std::optional<SegmentIndex> Graph::indexOf(SegmentId id) const
     return it->index;
 }
 
-std::span<const SegmentIndex> Graph::segmentsOfWay(std::int64_t wayId) const
+std::ranges::iota_view<SegmentIndex, SegmentIndex> Graph::segmentsOfWay(std::int64_t wayId) const
 {
     const auto it = std::lower_bound(mWayIndex.begin(), mWayIndex.end(), wayId,
                                      [](const WayIndexEntry& entry, std::int64_t value) {
@@ -316,19 +317,15 @@ std::span<const SegmentIndex> Graph::segmentsOfWay(std::int64_t wayId) const
                                      });
     if (it == mWayIndex.end() || it->wayId != wayId)
     {
-        return {};
+        return std::views::iota(SegmentIndex { 0 }, SegmentIndex { 0 });
     }
 
-    // The way index stores a contiguous range because map_build emits a way's
+    // The way index stores a contiguous RANGE because map_build emits a way's
     // segments together and in order. That is what makes "the piece of this way
-    // that touches this junction" answerable at stage 4.
-    static thread_local std::vector<SegmentIndex> scratch;
-    scratch.clear();
-    for (std::uint32_t i = 0; i < it->segmentCount; ++i)
-    {
-        scratch.push_back(it->firstSegment + i);
-    }
-    return scratch;
+    // that touches this junction" answerable at stage 4 -- and it is why there
+    // is nothing here to materialise.
+    return std::views::iota(it->firstSegment,
+                            static_cast<SegmentIndex>(it->firstSegment + it->segmentCount));
 }
 
 bool Graph::turnAllowed(SegmentIndex fromSegment, NodeIndex viaNode, SegmentIndex toSegment) const
