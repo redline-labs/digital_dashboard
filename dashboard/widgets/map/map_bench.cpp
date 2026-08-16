@@ -405,6 +405,9 @@ int main(int argc, char** argv)
     SPDLOG_INFO("");
     SPDLOG_INFO("  uploads {} over {} frames   ({} draw calls, {} vertices resident)",
                 stats.uploads, frames, stats.drawCalls, stats.vertices);
+    // The camera moves every frame here, so this must stay 0. Anything else
+    // means the frame memo's key is missing an input.
+    SPDLOG_INFO("  frames reused {} (expected 0: the camera moves every frame)", stats.reused);
     SPDLOG_INFO("");
 
     return 0;

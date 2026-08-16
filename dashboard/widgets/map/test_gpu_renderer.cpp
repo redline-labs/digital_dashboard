@@ -486,6 +486,55 @@ void test_a_tile_with_no_geometry_is_harmless()
     }
 }
 
+void test_an_unchanged_frame_is_not_drawn_again()
+{
+    // A widget repaints for reasons that have nothing to do with the map --
+    // a sibling widget updating, an expose event. Redrawing an identical image
+    // and reading it back is the entire frame cost for no change at all.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        check(false, "a GPU backend comes up");
+        return;
+    }
+
+    MapStyle_t style;
+    const QColor background("#0d0f13");
+    const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 };
+    const Projection projection(camera, kWidth, kHeight);
+
+    std::vector<GpuBatch> batches;
+    batches.push_back(GpuBatch { centreTile(projection),
+                                 fullTileQuad(MapLayer::Water, 0.1f, 0.3f, 0.8f) });
+
+    const QImage first = renderer->render(projection, batches, style, background).copy();
+    check(!first.isNull(), "the first frame draws");
+    const std::uint64_t afterFirst = renderer->stats().reused;
+
+    const QImage second = renderer->render(projection, batches, style, background).copy();
+    check(renderer->stats().reused == afterFirst + 1,
+          "an identical second call is served from the memo");
+    check(first == second, "and hands back the same pixels");
+
+    // Every input in the key must invalidate it, or the map freezes in a way
+    // that looks like the bus having stopped.
+    const Projection moved(Camera { Coordinate { kIrvineLat + 0.01, kIrvineLon }, 14.0, 0.0 },
+                           kWidth, kHeight);
+    renderer->render(moved, batches, style, background);
+    check(renderer->stats().reused == afterFirst + 1, "a camera move redraws");
+
+    std::vector<GpuBatch> newGeometry;
+    newGeometry.push_back(GpuBatch { batches[0].id,
+                                     fullTileQuad(MapLayer::Water, 0.8f, 0.2f, 0.1f) });
+    renderer->render(projection, newGeometry, style, background);
+    check(renderer->stats().reused == afterFirst + 1, "and so does a tile arriving");
+
+    MapStyle_t wider = style;
+    wider.road_width_scale = style.road_width_scale * 2.0;
+    renderer->render(projection, newGeometry, wider, background);
+    check(renderer->stats().reused == afterFirst + 1, "and so does a style change");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -498,6 +547,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
 
     test_a_backend_comes_up_with_no_window();
+    test_an_unchanged_frame_is_not_drawn_again();
     test_an_empty_frame_is_the_background_colour();
     test_geometry_reaches_the_pixels();
     test_layer_order_beats_tile_order();

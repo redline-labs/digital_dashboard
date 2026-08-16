@@ -366,6 +366,31 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
     const std::vector<GpuBatch>& batches = clamped.empty() ? requested : clamped;
 
+    // Same camera, same tiles, same style, same viewport -- so the same
+    // pixels. Handing back the frame already in hand skips the draw AND the
+    // readback, which together are the whole cost.
+    FrameKey key;
+    key.size = size;
+    key.center = projection.camera().center;
+    key.zoom = projection.camera().zoom;
+    key.bearing = projection.camera().bearing;
+    key.widthScale = widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale);
+    key.background = background.rgba();
+    key.ids.reserve(batches.size());
+    key.serials.reserve(batches.size());
+    for (const GpuBatch& batch : batches)
+    {
+        key.ids.push_back(batch.id);
+        key.serials.push_back(batch.geometry ? batch.geometry->serial : 0);
+    }
+
+    if (mHaveFrame && key == mFrameKey && !mFrame.isNull())
+    {
+        ++mStats.reused;
+        mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
+        return mFrame;
+    }
+
     // Prepared, not submitted. The vertices ride in the same resource update
     // batch as the uniforms below -- uploading them used to open and close an
     // offscreen frame of its own, so a frame that brought in a new tile cost
@@ -383,8 +408,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // Zoom taper times the user's multiplier. Applied here rather than baked
     // into the vertices so that widening every road stays a uniform write and
     // does not re-tessellate the city.
-    const float widthScale =
-        widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale);
+    const float widthScale = key.widthScale;
     std::vector<char> uniforms(std::size_t(mUniformStride) * std::max<std::size_t>(batches.size(), 1),
                                0);
     for (std::size_t i = 0; i < batches.size(); ++i)
@@ -513,6 +537,9 @@ const QImage& GpuRenderer::render(const Projection& projection,
     mFrame = QImage(reinterpret_cast<const uchar*>(mReadbackData.constData()),
                     readback.pixelSize.width(), readback.pixelSize.height(),
                     QImage::Format_RGBA8888);
+
+    mFrameKey = std::move(key);
+    mHaveFrame = true;
 
     mStats.drawCalls = draws;
     mStats.tiles = int(batches.size());

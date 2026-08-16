@@ -86,6 +86,10 @@ class GpuRenderer
 
     struct Stats
     {
+        // Frames served from the memo because nothing that affects the image
+        // had changed. Climbing while the vehicle moves would mean the key is
+        // missing something.
+        std::uint64_t reused { 0 };
         int drawCalls { 0 };
         int tiles { 0 };
         std::uint32_t vertices { 0 };
@@ -153,6 +157,28 @@ class GpuRenderer
 
     // The tile-limit warning is once per renderer, not once per frame.
     bool mWarnedTileLimit { false };
+
+    // What produced mFrame. A repaint with all of this unchanged would redraw
+    // the identical image and read it back again, which is the whole frame
+    // cost for nothing -- and a widget repaints for reasons that have nothing
+    // to do with the map, including a sibling widget being updated.
+    struct FrameKey
+    {
+        QSize size;
+        Coordinate center;
+        double zoom { 0.0 };
+        double bearing { 0.0 };
+        float widthScale { 0.0F };
+        QRgb background { 0 };
+        // Batch identity, so a tile arriving invalidates the frame. Serials,
+        // not addresses -- see TileGeometry::serial.
+        std::vector<TileId> ids;
+        std::vector<std::uint64_t> serials;
+
+        bool operator==(const FrameKey&) const = default;
+    };
+    FrameKey mFrameKey;
+    bool mHaveFrame { false };
 
     // Holds the pixels mFrame points AT -- see render(). MOVED out of the
     // readback result rather than copied, so this costs a pointer swap. Both

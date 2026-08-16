@@ -52,6 +52,11 @@ struct Coordinate
 {
     double latitude { 0.0 };
     double longitude { 0.0 };
+
+    // Exact comparison, deliberately. Callers use this to ask "is this the
+    // same camera as last frame", where the values are copies of each other
+    // rather than the results of two different computations.
+    friend bool operator==(const Coordinate&, const Coordinate&) = default;
 };
 
 // One tile of the pyramid, in slippy (XYZ) coordinates -- y counting southward
