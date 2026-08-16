@@ -18,6 +18,11 @@ namespace
 // that the shift below stays defined.
 constexpr std::uint8_t kMaxZoom = 31;
 
+// The one statement a tile read runs. Shared by open()'s validation probe and
+// by every pooled reader, so they cannot describe different queries.
+constexpr const char* kTileSql =
+    "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?";
+
 // A NULL column reads as empty rather than failing. The metadata table is a
 // free-form key/value store and a NULL value is just an absent one.
 std::string columnText(sqlite3_stmt* stmt, int column)
@@ -93,13 +98,18 @@ Result<Archive> Archive::open(const std::filesystem::path& path)
     // prepare a statement against it, which succeeds for either and fails for
     // a file that is not an archive at all. Cheaper and more honest than
     // interrogating sqlite_master for a shape we do not actually depend on.
-    static constexpr const char* kTileSql =
-        "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?";
-    const int prepared = sqlite3_prepare_v2(archive.mDb, kTileSql, -1, &archive.mTileStmt, nullptr);
-    if (prepared != SQLITE_OK)
+    //
+    // Prepared and discarded: it is a VALIDATION here. Tile reads get their
+    // own connection and statement from the pool.
     {
-        return not_an_archive(path.string() + ": no usable `tiles` (" +
-                              sqlite3_errmsg(archive.mDb) + ")");
+        sqlite3_stmt* probe = nullptr;
+        const int prepared = sqlite3_prepare_v2(archive.mDb, kTileSql, -1, &probe, nullptr);
+        if (prepared != SQLITE_OK)
+        {
+            return not_an_archive(path.string() + ": no usable `tiles` (" +
+                                  sqlite3_errmsg(archive.mDb) + ")");
+        }
+        sqlite3_finalize(probe);
     }
 
     if (auto loaded = archive.loadMetadata(); !loaded)
@@ -110,12 +120,22 @@ Result<Archive> Archive::open(const std::filesystem::path& path)
     return archive;
 }
 
+Archive::Reader::~Reader()
+{
+    if (stmt != nullptr)
+    {
+        sqlite3_finalize(stmt);
+    }
+    if (db != nullptr)
+    {
+        sqlite3_close(db);
+    }
+}
+
 Archive::~Archive()
 {
-    if (mTileStmt != nullptr)
-    {
-        sqlite3_finalize(mTileStmt);
-    }
+    // The pool first: every reader owns a connection to the same file.
+    mPool.clear();
     if (mDb != nullptr)
     {
         sqlite3_close(mDb);
@@ -125,8 +145,8 @@ Archive::~Archive()
 Archive::Archive(Archive&& other) noexcept :
     mPath(std::move(other.mPath)),
     mDb(std::exchange(other.mDb, nullptr)),
-    mTileStmt(std::exchange(other.mTileStmt, nullptr)),
-    mMetadata(std::move(other.mMetadata))
+    mMetadata(std::move(other.mMetadata)),
+    mPool(std::move(other.mPool))
 {
     // The mutex is not moved -- a std::mutex cannot be, and there is nothing to
     // carry: an Archive being moved from is not being queried.
@@ -136,10 +156,7 @@ Archive& Archive::operator=(Archive&& other) noexcept
 {
     if (this != &other)
     {
-        if (mTileStmt != nullptr)
-        {
-            sqlite3_finalize(mTileStmt);
-        }
+        mPool.clear();
         if (mDb != nullptr)
         {
             sqlite3_close(mDb);
@@ -147,8 +164,8 @@ Archive& Archive::operator=(Archive&& other) noexcept
 
         mPath = std::move(other.mPath);
         mDb = std::exchange(other.mDb, nullptr);
-        mTileStmt = std::exchange(other.mTileStmt, nullptr);
         mMetadata = std::move(other.mMetadata);
+        mPool = std::move(other.mPool);
     }
     return *this;
 }
@@ -300,43 +317,124 @@ Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::
     // tree that converts between them -- see the header.
     const std::uint32_t row = side - 1U - y;
 
-    const std::scoped_lock lock(mTileMutex);
+    // A reader of our own for the duration. The lock inside acquire() and
+    // release() covers the pool, never the query -- which is the whole point:
+    // sharing one statement meant the read itself was serialized.
+    Error failure;
+    std::unique_ptr<Reader> reader = acquire(failure);
+    if (!reader)
+    {
+        return std::unexpected(failure);
+    }
 
-    sqlite3_reset(mTileStmt);
-    sqlite3_clear_bindings(mTileStmt);
-    sqlite3_bind_int(mTileStmt, 1, static_cast<int>(z));
-    sqlite3_bind_int64(mTileStmt, 2, static_cast<sqlite3_int64>(x));
-    sqlite3_bind_int64(mTileStmt, 3, static_cast<sqlite3_int64>(row));
+    // Returned to the pool however this exits.
+    struct Return
+    {
+        const Archive* archive;
+        std::unique_ptr<Reader>* reader;
+        ~Return() { archive->release(std::move(*reader)); }
+    } giveBack { this, &reader };
 
-    const int step = sqlite3_step(mTileStmt);
+    sqlite3_reset(reader->stmt);
+    sqlite3_clear_bindings(reader->stmt);
+    sqlite3_bind_int(reader->stmt, 1, static_cast<int>(z));
+    sqlite3_bind_int64(reader->stmt, 2, static_cast<sqlite3_int64>(x));
+    sqlite3_bind_int64(reader->stmt, 3, static_cast<sqlite3_int64>(row));
+
+    const int step = sqlite3_step(reader->stmt);
     if (step == SQLITE_DONE)
     {
         // No row. Not an error: most of the pyramid is empty.
-        sqlite3_reset(mTileStmt);
+        sqlite3_reset(reader->stmt);
         return std::optional<Tile> {};
     }
     if (step != SQLITE_ROW)
     {
-        const std::string message = sqlite3_errmsg(mDb);
-        sqlite3_reset(mTileStmt);
+        const std::string message = sqlite3_errmsg(reader->db);
+        sqlite3_reset(reader->stmt);
         return query_error(mPath.string() + ": reading tile: " + message, step);
     }
 
     Tile tile;
-    if (sqlite3_column_type(mTileStmt, 0) != SQLITE_NULL)
+    if (sqlite3_column_type(reader->stmt, 0) != SQLITE_NULL)
     {
-        const auto* blob = static_cast<const std::uint8_t*>(sqlite3_column_blob(mTileStmt, 0));
-        const int bytes = sqlite3_column_bytes(mTileStmt, 0);
+        const auto* blob = static_cast<const std::uint8_t*>(sqlite3_column_blob(reader->stmt, 0));
+        const int bytes = sqlite3_column_bytes(reader->stmt, 0);
         if (blob != nullptr && bytes > 0)
         {
             tile.data.assign(blob, blob + bytes);
         }
     }
 
-    sqlite3_reset(mTileStmt);
+    sqlite3_reset(reader->stmt);
 
     tile.encoding = sniff(tile.data);
     return std::optional<Tile>(std::move(tile));
+}
+
+std::unique_ptr<Archive::Reader> Archive::acquire(Error& error) const
+{
+    {
+        std::unique_lock lock(mPoolMutex);
+        // Wait for an idle reader, or for room to open one. Bounded either
+        // way: what is being waited for is a 0.015 ms read.
+        mPoolFree.wait(lock, [this] { return !mPool.empty() || mReadersOut < kMaxReaders; });
+
+        if (!mPool.empty())
+        {
+            std::unique_ptr<Reader> reader = std::move(mPool.back());
+            mPool.pop_back();
+            ++mReadersOut;
+            return reader;
+        }
+        ++mReadersOut;
+    }
+
+    // Opened OUTSIDE the lock: a thread waiting for the pool should not also
+    // wait for another thread's open().
+    auto reader = std::make_unique<Reader>();
+    const int rc =
+        sqlite3_open_v2(mPath.string().c_str(), &reader->db, SQLITE_OPEN_READONLY, nullptr);
+    if (rc != SQLITE_OK)
+    {
+        error = not_readable(mPath.string() + ": " +
+                             (reader->db != nullptr ? sqlite3_errmsg(reader->db) : "open failed"),
+                             rc)
+                    .error();
+        // The slot has to go back even though nothing is going into the pool,
+        // or a run of failed opens wedges every future reader.
+        release(nullptr);
+        return nullptr;
+    }
+
+    if (sqlite3_prepare_v2(reader->db, kTileSql, -1, &reader->stmt, nullptr) != SQLITE_OK)
+    {
+        error = not_an_archive(mPath.string() + ": no usable `tiles` (" +
+                               sqlite3_errmsg(reader->db) + ")")
+                    .error();
+        release(nullptr);
+        return nullptr;
+    }
+
+    return reader;
+}
+
+void Archive::release(std::unique_ptr<Reader> reader) const
+{
+    {
+        const std::scoped_lock lock(mPoolMutex);
+        if (mReadersOut > 0)
+        {
+            --mReadersOut;
+        }
+        if (reader)
+        {
+            mPool.push_back(std::move(reader));
+        }
+    }
+    // Outside the lock: the thread being woken should not immediately block on
+    // the mutex the waker still holds.
+    mPoolFree.notify_one();
 }
 
 std::string Archive::tileJson(std::string_view tileUrlTemplate) const

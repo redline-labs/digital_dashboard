@@ -361,9 +361,16 @@ void test_an_empty_tile_is_present_and_empty()
 void test_concurrent_reads_return_the_right_tiles()
 {
     // nodes/map_server answers zenoh queries on several RX threads against one
-    // Archive. One prepared statement has one cursor, so without the lock two
-    // threads step it at once and hand each other the wrong tile -- which is
-    // not a crash, and not a blank map, just wrong geography.
+    // Archive. A prepared statement has one cursor, so two threads stepping the
+    // same one hand each other the wrong tile -- not a crash, and not a blank
+    // map, just wrong geography.
+    //
+    // It used to be one statement behind a mutex, which was correct and meant
+    // the whole read was serialized. It is a bounded pool of connections now,
+    // and more threads than the pool holds is the case worth running: eight
+    // here against a cap of four, so threads genuinely wait for and reuse each
+    // other's readers. A reader handed back with a live cursor, or two threads
+    // handed the same one, both show up as another thread's tile.
     const TempDir dir("threads");
     const auto path = dir.file("threads.mbtiles");
 
