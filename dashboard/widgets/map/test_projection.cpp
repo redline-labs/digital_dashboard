@@ -318,6 +318,50 @@ void test_the_visible_order_does_not_move_with_the_camera()
           "and the same set of tiles never comes back in a different order");
 }
 
+void test_the_margined_walk_agrees_with_two_separate_ones()
+{
+    // One traversal now produces both sets. They have to be exactly what two
+    // separate calls produced, or the paint pass draws the prefetch ring (which
+    // it must not) or drops tiles that are on screen (which leaves holes).
+    const Camera cameras[] = {
+        Camera { kIrvine, 14.0, 0.0 },
+        Camera { kIrvine, 14.0, 45.0 },
+        // Astride the date line, where x wraps and the ring straddles the seam.
+        Camera { Coordinate { 0.0, 179.99 }, 5.0, 0.0 },
+        Camera { Coordinate { 0.0, -179.99 }, 5.0, 30.0 },
+        // Hard against the northern Mercator limit, where y is clamped.
+        Camera { Coordinate { 85.0, 0.0 }, 4.0, 0.0 },
+    };
+
+    for (const Camera& camera : cameras)
+    {
+        const Projection projection(camera, 660.0, 640.0);
+        const auto z = static_cast<std::uint8_t>(camera.zoom);
+
+        const auto both = projection.visibleTilesWithMargin(z, 1);
+        const auto drawnAlone = projection.visibleTiles(z, 0);
+        const auto ringAlone = projection.visibleTiles(z, 1);
+
+        check(both.drawn == drawnAlone,
+              "the drawn set matches an un-margined walk at bearing " +
+                  std::to_string(camera.bearing));
+        check(both.withMargin == ringAlone,
+              "and the margined set matches a margined walk at bearing " +
+                  std::to_string(camera.bearing));
+
+        // The ring must be a superset, or a tile would be drawn without ever
+        // having been requested.
+        for (const TileId& id : both.drawn)
+        {
+            const bool present = std::any_of(
+                both.withMargin.begin(), both.withMargin.end(),
+                [&](const TileId& other) { return other == id; });
+            check(present, "every drawn tile is also requested");
+        }
+        check(both.withMargin.size() >= both.drawn.size(), "and the ring is no smaller");
+    }
+}
+
 void test_a_rotated_viewport_still_covers_its_corners()
 {
     // With the map turned, the axis-aligned box of two corners does not contain
@@ -433,6 +477,7 @@ int main()
     test_tile_zoom_is_rounded_and_clamped();
     test_visible_tiles_cover_the_viewport();
     test_the_visible_order_does_not_move_with_the_camera();
+    test_the_margined_walk_agrees_with_two_separate_ones();
     test_a_rotated_viewport_still_covers_its_corners();
     test_rotation_turns_the_map_the_right_way();
     test_a_camera_at_the_date_line_takes_the_short_way_round();

@@ -294,9 +294,9 @@ int main(int argc, char** argv)
         // Exactly what the widget does: the drawn set in its stable order, and
         // the prefetch ring sorted centre-outward for the request path only.
         const Timer visibleTimer;
-        const std::vector<TileId> wanted = projection.visibleTiles(z);
-        std::vector<TileId> ring = projection.visibleTiles(z, 1);
-        projection.sortCentreOutward(ring);
+        auto sets = projection.visibleTilesWithMargin(z, 1);
+        const std::vector<TileId> wanted = sets.drawn;
+        projection.sortCentreOutward(sets.withMargin);
         visible.add(visibleTimer.ms());
 
         const Timer readyTimer;
@@ -389,7 +389,6 @@ int main(int argc, char** argv)
 
         painter.end();
         frame.add(frameTimer.ms());
-        (void)ring;
     }
 
     const GpuRenderer::Stats stats = gpu->stats();

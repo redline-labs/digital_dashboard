@@ -170,10 +170,8 @@ ScreenPoint Projection::tileOrigin(const TileId& id) const
                                   static_cast<double>(id.y) / side });
 }
 
-std::vector<TileId> Projection::visibleTiles(std::uint8_t z, int marginTiles) const
+Projection::TileBounds Projection::tileBounds(std::uint8_t z, int marginTiles) const
 {
-    std::vector<TileId> tiles;
-
     const double side = std::exp2(static_cast<double>(z));
     const auto sideTiles = static_cast<std::int64_t>(side);
 
@@ -199,45 +197,73 @@ std::vector<TileId> Projection::visibleTiles(std::uint8_t z, int marginTiles) co
         maxY = std::max(maxY, world.y);
     }
 
-    std::int64_t firstX = static_cast<std::int64_t>(std::floor(minX * side)) - marginTiles;
-    std::int64_t lastX = static_cast<std::int64_t>(std::floor(maxX * side)) + marginTiles;
-    std::int64_t firstY = static_cast<std::int64_t>(std::floor(minY * side)) - marginTiles;
-    std::int64_t lastY = static_cast<std::int64_t>(std::floor(maxY * side)) + marginTiles;
+    TileBounds bounds;
+    bounds.sideTiles = sideTiles;
+    bounds.firstX = static_cast<std::int64_t>(std::floor(minX * side)) - marginTiles;
+    bounds.lastX = static_cast<std::int64_t>(std::floor(maxX * side)) + marginTiles;
+    bounds.firstY = static_cast<std::int64_t>(std::floor(minY * side)) - marginTiles;
+    bounds.lastY = static_cast<std::int64_t>(std::floor(maxY * side)) + marginTiles;
 
     // y does not wrap: above the north edge and below the south there is
     // nothing, and asking for y = -1 would be a request no archive can answer.
-    firstY = std::max<std::int64_t>(firstY, 0);
-    lastY = std::min<std::int64_t>(lastY, sideTiles - 1);
+    bounds.firstY = std::max<std::int64_t>(bounds.firstY, 0);
+    bounds.lastY = std::min<std::int64_t>(bounds.lastY, sideTiles - 1);
 
-    if (firstY > lastY || lastX < firstX)
+    return bounds;
+}
+
+std::vector<TileId> Projection::visibleTiles(std::uint8_t z, int marginTiles) const
+{
+    return visibleTilesWithMargin(z, marginTiles).withMargin;
+}
+
+Projection::VisibleTiles Projection::visibleTilesWithMargin(std::uint8_t z, int marginTiles) const
+{
+    VisibleTiles out;
+
+    const TileBounds ring = tileBounds(z, marginTiles);
+    // The un-margined box, so the ring can be told from what is actually on
+    // screen without walking the grid a second time.
+    const TileBounds inner = tileBounds(z, 0);
+
+    if (ring.firstY > ring.lastY || ring.lastX < ring.firstX)
     {
-        return tiles;
+        return out;
     }
 
-    for (std::int64_t y = firstY; y <= lastY; ++y)
+    for (std::int64_t y = ring.firstY; y <= ring.lastY; ++y)
     {
-        for (std::int64_t x = firstX; x <= lastX; ++x)
+        for (std::int64_t x = ring.firstX; x <= ring.lastX; ++x)
         {
             // x wraps. A camera near the date line legitimately sees tiles from
             // both ends of the world, and the modulo is what turns -1 into the
             // last column rather than into a request that cannot be served.
-            std::int64_t wrapped = x % sideTiles;
+            std::int64_t wrapped = x % ring.sideTiles;
             if (wrapped < 0)
             {
-                wrapped += sideTiles;
+                wrapped += ring.sideTiles;
             }
 
-            tiles.push_back(TileId { z, static_cast<std::uint32_t>(wrapped),
-                                     static_cast<std::uint32_t>(y) });
+            const TileId id { z, static_cast<std::uint32_t>(wrapped),
+                              static_cast<std::uint32_t>(y) };
+            out.withMargin.push_back(id);
 
-            if (tiles.size() >= kMaxVisibleTiles)
+            // Tested on the UNWRAPPED x, against the un-margined box: after the
+            // modulo a ring tile on one side of the date line is
+            // indistinguishable from a drawn tile on the other.
+            if (x >= inner.firstX && x <= inner.lastX && y >= inner.firstY && y <= inner.lastY)
             {
-                return tiles;
+                out.drawn.push_back(id);
+            }
+
+            if (out.withMargin.size() >= kMaxVisibleTiles)
+            {
+                return out;
             }
         }
     }
 
-    return tiles;
+    return out;
 }
 
 void Projection::sortCentreOutward(std::vector<TileId>& tiles) const

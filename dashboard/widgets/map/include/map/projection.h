@@ -147,6 +147,20 @@ class Projection
     // that the middle of the map fills before the corners.
     void sortCentreOutward(std::vector<TileId>& tiles) const;
 
+    // The two tile sets a paint needs, from one traversal.
+    struct VisibleTiles
+    {
+        // What the paint pass will draw: the tiles actually touching the
+        // viewport.
+        std::vector<TileId> drawn;
+        // `drawn` plus a ring around it -- what to ASK for, so a pan shows map
+        // rather than background at the leading edge. A superset, which is why
+        // it is worth returning together rather than walking the grid twice.
+        std::vector<TileId> withMargin;
+    };
+
+    VisibleTiles visibleTilesWithMargin(std::uint8_t z, int marginTiles) const;
+
     // Where a whole tile lands on screen: its north-west corner, and how many
     // pixels across it is. A tile is square in world space and stays square on
     // screen, which is what lets a feature inside it be placed by a single
@@ -155,6 +169,20 @@ class Projection
     double tileScreenSize(std::uint8_t z) const;
 
   private:
+    // The inclusive tile box covering the viewport, before x is wrapped. y is
+    // already clamped to the world; x is not, because a camera at the date line
+    // legitimately spans both ends of it.
+    struct TileBounds
+    {
+        std::int64_t firstX { 0 };
+        std::int64_t lastX { 0 };
+        std::int64_t firstY { 0 };
+        std::int64_t lastY { 0 };
+        std::int64_t sideTiles { 1 };
+    };
+
+    TileBounds tileBounds(std::uint8_t z, int marginTiles) const;
+
     Camera mCamera;
     double mWidthPx;
     double mHeightPx;

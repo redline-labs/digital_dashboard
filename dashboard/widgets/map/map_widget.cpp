@@ -149,29 +149,25 @@ void MapWidget::refreshTiles()
     const std::uint8_t z = projection.tileZoom(static_cast<std::uint8_t>(mConfig.min_zoom),
                                                static_cast<std::uint8_t>(mConfig.max_zoom));
 
-    mVisible = projection.visibleTiles(z);
+    // Both sets from one walk of the grid. The prefetch ring is requested but
+    // never drawn, which is what keeps mVisible honest about what the paint
+    // pass will look at -- and what status() reports.
+    auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
+    mVisible = std::move(tiles.drawn);
 
-    // The prefetch ring is requested but never drawn. Asking for it separately
-    // keeps mVisible honest about what the paint pass will look at, which is
-    // what status() reports.
-    //
     // Sorted centre-outward HERE and not in mVisible: the request order decides
     // which tiles win the in-flight slots, and the draw order must stay stable
     // or the renderer re-uploads every tile whenever the camera reshuffles it.
-    std::vector<map_widget::TileId> wanted = projection.visibleTiles(z, kPrefetchRingTiles);
-    projection.sortCentreOutward(wanted);
-    mTiles->request(wanted);
+    projection.sortCentreOutward(tiles.withMargin);
+    mTiles->request(tiles.withMargin);
 }
 
 void MapWidget::resizeEvent(QResizeEvent* event)
 {
-    // A head start, not the mechanism. Qt does not deliver a resize event to a
-    // widget that has never been shown, so a widget sized by a layout before it
-    // appears would otherwise keep the tiles it worked out at Qt's default
-    // 640x480 -- and draw them, at the wrong scale, forever. The paint pass
-    // recomputes; this only gets the fetch going a frame earlier.
+    // No refreshTiles() here. A resize is always followed by a paint, and the
+    // paint pass recomputes at the size actually being drawn -- doing it twice
+    // only walked the tile grid twice for the same answer.
     QWidget::resizeEvent(event);
-    refreshTiles();
 }
 
 void MapWidget::setLatitude(double degrees)
@@ -191,7 +187,8 @@ void MapWidget::setHeading(double degrees)
     mHeading = degrees;
     if (mConfig.rotate_with_heading)
     {
-        refreshTiles();
+        // update() only: the paint pass refreshes the tile set itself, at the
+        // camera it is actually about to draw.
         update();
     }
 }
@@ -212,11 +209,6 @@ void MapWidget::onPositionChanged()
         {
             mTrack.pop_front();
         }
-    }
-
-    if (mConfig.follow_vehicle)
-    {
-        refreshTiles();
     }
 
     update();
