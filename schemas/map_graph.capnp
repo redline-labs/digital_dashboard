@@ -148,6 +148,17 @@ struct MapRouteRequest {
   # offline and are weight-only: none of them removes edges, because a profile
   # that changed the topology could not share preprocessing with the others.
   profile @7 :Text;
+
+  # Drop geometry points that lie within this many metres of the line they sit
+  # on. Zero keeps every point.
+  #
+  # A route is drawn at a zoom, and at z12 a 40 km route's centimetre-accurate
+  # geometry is thousands of points inside one screen pixel. The caller knows
+  # its zoom and the server knows the geometry, so the caller says how much
+  # precision it needs rather than receiving all of it and throwing most away.
+  # Segment boundaries survive simplification regardless, or segmentStarts
+  # would stop lining up.
+  simplifyToleranceM @8 :Float32;
 }
 
 struct MapRouteResponse {
@@ -159,11 +170,28 @@ struct MapRouteResponse {
   segmentIds @2 :List(UInt64);
 
   # Interleaved longitude, latitude pairs -- lon first, matching
-  # MapTileset.bounds. Full precision, so it will NOT lie exactly on top of the
-  # road as drawn from vector tiles at low zoom, where tile geometry is
-  # simplified and quantised. Drawing the tile feature by segmentId is the
-  # exact answer; this is the portable one.
-  geometry @3 :List(Float64);
+  # MapTileset.bounds -- in 1e-7 DEGREES, which is what the graph itself
+  # stores. Float64 was two words per coordinate to carry a number that had
+  # seven decimal places in it: a 40 km route is thousands of points, and half
+  # of every one of them was zeroes.
+  #
+  # 1e-7 degrees is about 11 mm at the equator, far finer than OSM centrelines
+  # are surveyed. This will still NOT lie exactly on top of the road as drawn
+  # from vector tiles at low zoom, where tile geometry is simplified and
+  # quantised -- drawing the tile feature by segmentId is the exact answer and
+  # this is the portable one.
+  geometry @3 :List(Int32);
+
+  # Where each segment's geometry starts, as an index into `geometry` in
+  # COORDINATE PAIRS -- so segment i occupies
+  # [segmentStarts[i], segmentStarts[i+1]) and there is one more entry than
+  # there are segments.
+  #
+  # Without this a client holding both lists cannot say which points belong to
+  # which segment, so it can draw the line or label the roads but not both --
+  # and "highlight the segment I am on" is the first thing a route overlay
+  # wants.
+  segmentStarts @6 :List(UInt32);
 
   distanceM @4 :Float64;
   durationS @5 :Float64;

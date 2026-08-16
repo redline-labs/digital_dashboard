@@ -68,6 +68,15 @@ struct Route
     // Interleaved lat/lon, in travel order, with the reversal of any segment
     // traversed against its stored direction already applied.
     std::vector<Coord> geometry;
+    // Where each segment's run begins, as an index into `geometry` in
+    // COORDINATE PAIRS. One entry more than `segments`, so segment i occupies
+    // [segmentStarts[i], segmentStarts[i + 1]).
+    //
+    // Filled HERE rather than recomputed by callers from geometryCount: the
+    // code that appends the points is the code that knows where each run
+    // started, and a caller deriving it separately is a second source of truth
+    // that can drift.
+    std::vector<std::uint32_t> segmentStarts;
     double distanceM { 0.0 };
     double durationS { 0.0 };
 };

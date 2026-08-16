@@ -270,6 +270,8 @@ std::optional<Route> findRoute(const Graph& graph, NodeIndex from, NodeIndex to,
         // Geometry is stored once, in the segment's own direction; an edge that
         // runs the other way reverses HERE rather than owning a copy. That is
         // decision 4 in format.h, paid for at the one place it costs anything.
+        route.segmentStarts.push_back(static_cast<std::uint32_t>(route.geometry.size() / 2));
+
         const auto geometry = graph.geometryOf(segment);
         if (edge.forward != 0)
         {
@@ -288,6 +290,9 @@ std::optional<Route> findRoute(const Graph& graph, NodeIndex from, NodeIndex to,
             }
         }
     }
+
+    // The closing entry, so segment i is always [starts[i], starts[i + 1]).
+    route.segmentStarts.push_back(static_cast<std::uint32_t>(route.geometry.size() / 2));
 
     return route;
 }

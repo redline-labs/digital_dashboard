@@ -18,6 +18,7 @@ add_executable(map_server
     graphs.cpp
     node_config.cpp
     route_endpoints.cpp
+    route_geometry.cpp
     services.cpp
     tilesets.cpp
 )
@@ -114,3 +115,22 @@ target_link_libraries(map_server_test_route_endpoints
 )
 
 add_project_test(TARGET map_server_test_route_endpoints LABELS map unit)
+
+# Thinning a route's polyline. The properties worth pinning are structural --
+# the segment boundaries still line up and nothing moves further than the
+# caller allowed -- because a simplifier that drops the wrong points still
+# draws something road-shaped.
+add_executable(map_server_test_route_geometry
+    tests/test_route_geometry.cpp
+    route_geometry.cpp
+)
+
+target_include_directories(map_server_test_route_geometry PRIVATE .)
+
+target_link_libraries(map_server_test_route_geometry
+    PRIVATE
+        road_graph
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_server_test_route_geometry LABELS map unit)

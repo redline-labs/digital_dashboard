@@ -6,6 +6,7 @@
 #include "road_graph/search.h"
 
 #include "route_endpoints.h"
+#include "route_geometry.h"
 
 #include "services.h"
 
@@ -581,15 +582,29 @@ void Services::handleRoute(const MapRouteRequest::Reader& request,
         ids.set(i, graph.segments()[route->segments[i]].id);
     }
 
-    // Interleaved lon, lat -- lon first, matching MapTileset.bounds. Full
-    // precision, so it will NOT lie exactly on top of the road as drawn from
-    // simplified vector tiles at low zoom; drawing the tile feature by
-    // segmentId is the exact answer and this is the portable one.
-    auto geometry = response.initGeometry(static_cast<unsigned>(route->geometry.size()));
-    for (unsigned i = 0; i + 1 < route->geometry.size(); i += 2)
+    // Thinned to what the caller asked for BEFORE it goes on the wire. A route
+    // is drawn at a zoom and the graph's geometry is finer than any of them;
+    // shipping all of it so the client can throw most of it away is the wrong
+    // way round. Zero keeps every point.
+    const SimplifiedRoute drawn =
+        simplifyPerSegment(route->geometry, route->segmentStarts, request.getSimplifyToleranceM());
+
+    // Interleaved lon, lat -- lon first, matching MapTileset.bounds -- in the
+    // 1e-7 degrees the graph itself stores. Float64 spent two words per
+    // coordinate carrying a number with seven decimal places in it.
+    auto geometry = response.initGeometry(static_cast<unsigned>(drawn.geometry.size()));
+    for (unsigned i = 0; i + 1 < drawn.geometry.size(); i += 2)
     {
-        geometry.set(i, road_graph::toDegrees(route->geometry[i + 1]));
-        geometry.set(i + 1, road_graph::toDegrees(route->geometry[i]));
+        geometry.set(i, drawn.geometry[i + 1]);
+        geometry.set(i + 1, drawn.geometry[i]);
+    }
+
+    // Which points belong to which segment. Without it a client holding both
+    // lists can draw the line or name the roads but not both.
+    auto starts = response.initSegmentStarts(static_cast<unsigned>(drawn.segmentStarts.size()));
+    for (unsigned i = 0; i < drawn.segmentStarts.size(); ++i)
+    {
+        starts.set(i, drawn.segmentStarts[i]);
     }
 }
 

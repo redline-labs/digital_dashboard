@@ -481,6 +481,8 @@ std::optional<Route> findRouteVia(const Graph& graph, const Overlay& overlay, No
         const SegmentRecord& segment = graph.segments()[edge.segment];
         route.distanceM += static_cast<double>(segment.lengthCm) / 100.0;
 
+        route.segmentStarts.push_back(static_cast<std::uint32_t>(route.geometry.size() / 2));
+
         const auto geometry = graph.geometryOf(segment);
         if (edge.forward != 0)
         {
@@ -499,6 +501,9 @@ std::optional<Route> findRouteVia(const Graph& graph, const Overlay& overlay, No
             }
         }
     }
+
+    // The closing entry, so segment i is always [starts[i], starts[i + 1]).
+    route.segmentStarts.push_back(static_cast<std::uint32_t>(route.geometry.size() / 2));
 
     return route;
 }
