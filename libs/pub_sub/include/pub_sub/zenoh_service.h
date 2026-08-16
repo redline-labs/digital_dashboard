@@ -69,16 +69,29 @@ class ZenohService
 
             SPDLOG_DEBUG("Sending response to key '{}' = {}", mKeyExpr, resp.toString().flatten().cStr());
 
-            // Serialize and reply
-            kj::Array<capnp::word> respWords = capnp::messageToFlatArray(respBuilder);
-            kj::ArrayPtr<const kj::byte> respBytesView = respWords.asBytes();
-            std::vector<uint8_t> respBytes(respBytesView.size());
-            std::memcpy(respBytes.data(), respBytesView.begin(), respBytesView.size());
+            // Serialize and reply.
+            //
+            // capnp has already laid the message out contiguously; zenoh is
+            // handed THAT buffer rather than a copy of it. This used to
+            // allocate a second buffer the size of the whole reply and memcpy
+            // into it, which for a map tile is a hundred kilobytes moved to
+            // produce bytes identical to the ones next to it -- on every
+            // request, for every service on the bus.
+            //
+            // The kj::Array is moved onto the heap and released by the
+            // deleter, which zenoh calls once the payload and every clone of
+            // it are done. Nothing here may assume the reply has been sent by
+            // the time reply() returns.
+            auto* held = new kj::Array<capnp::word>(capnp::messageToFlatArray(respBuilder));
+            const std::size_t bytes = held->size() * sizeof(capnp::word);
 
             zenoh::Query::ReplyOptions ropts = zenoh::Query::ReplyOptions::create_default();
             ropts.encoding.emplace(kCapnpEncodingMime);
             ropts.encoding->set_schema(std::string(schema_traits<ResponseT>::name));
-            query.reply(mKeyExpr, zenoh::Bytes(std::move(respBytes)), std::move(ropts));
+            query.reply(mKeyExpr,
+                        zenoh::Bytes(reinterpret_cast<uint8_t*>(held->begin()), bytes,
+                                     [held](uint8_t*) { delete held; }),
+                        std::move(ropts));
         };
 
         auto on_drop = []() {};
