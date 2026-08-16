@@ -21,6 +21,11 @@
 #include "config_codec/config_json.h"
 
 #include <QApplication>
+#include <QPainter>
+#include <cmath>
+#include <QPen>
+#include <QPainterPath>
+#include <QFontMetricsF>
 #include <QImage>
 
 #include <spdlog/spdlog.h>
@@ -423,6 +428,83 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+void test_a_cached_label_is_pixel_identical_to_drawing_it_directly()
+{
+    // The label pass blits a pre-rendered image instead of stroking and
+    // filling the glyph outlines every frame -- 0.88 ms per label down to
+    // 0.014 ms. That is only a legitimate trade if the pixels are the same,
+    // and "the halo looks a bit different" is not something a screenshot
+    // review reliably catches.
+    QFont font;
+    font.setPointSizeF(12.0);
+    const QColor halo("#101216");
+    const QColor text("#e8eaed");
+    constexpr double kHaloWidth = 3.0;
+    const QString label = QStringLiteral("Santa Ana");
+
+    const QFontMetricsF metrics(font);
+    const QRectF bounds = metrics.boundingRect(label);
+
+    // Somewhere with room for the halo on every side.
+    const QPointF at(20.0, 20.0);
+    const QSize canvasSize(static_cast<int>(std::ceil(bounds.width())) + 60,
+                           static_cast<int>(std::ceil(bounds.height())) + 60);
+
+    // What the code used to do, inline.
+    QImage direct(canvasSize, QImage::Format_ARGB32_Premultiplied);
+    direct.fill(Qt::transparent);
+    {
+        QPainter painter(&direct);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+        QPainterPath glyphs;
+        glyphs.addText(at.x(), at.y() + metrics.ascent(), font, label);
+
+        QPen pen(halo);
+        pen.setWidthF(kHaloWidth);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(glyphs);
+
+        painter.setPen(Qt::NoPen);
+        painter.fillPath(glyphs, text);
+    }
+
+    // What it does now.
+    QImage blitted(canvasSize, QImage::Format_ARGB32_Premultiplied);
+    blitted.fill(Qt::transparent);
+    {
+        map_widget::LabelCache cache;
+        QPainter painter(&blitted);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+        const map_widget::LabelCache::Entry& entry =
+            cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
+        painter.drawImage(at + entry.offset, entry.image);
+
+        check(cache.size() == 1, "one render is cached");
+        // A second ask must not re-render, and must land in the same place.
+        const map_widget::LabelCache::Entry& again =
+            cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
+        check(&again == &entry, "and the second ask reuses it");
+        check(again.bounds == entry.bounds, "with the same bounds for placement");
+    }
+
+    check(direct == blitted,
+          "a blitted label is pixel-identical to stroking and filling it inline");
+
+    // A style change must not serve stale pixels.
+    {
+        map_widget::LabelCache cache;
+        cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
+        cache.entryFor(label, font, kHaloWidth, halo, QColor("#ff0000"), 1.0);
+        check(cache.size() == 1, "changing a colour empties the cache rather than reusing it");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -451,6 +533,7 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_a_cached_label_is_pixel_identical_to_drawing_it_directly();
 
     spdlog::set_level(spdlog::level::info);
 

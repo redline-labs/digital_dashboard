@@ -280,7 +280,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
     const map_widget::LabelStats labels =
-        map_widget::paintLabels(painter, projection, labelTiles, mConfig.style);
+        map_widget::paintLabels(painter, projection, labelTiles, mConfig.style, mLabelCache);
     mLastLabelsPlaced = labels.placed;
 
     // --- 3. the vehicle ----------------------------------------------------

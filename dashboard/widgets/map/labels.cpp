@@ -5,6 +5,7 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QPaintDevice>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -58,8 +59,94 @@ int placePriority(std::string_view className)
     return 0;
 }
 
+const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& font,
+                                              double haloWidth, const QColor& haloColour,
+                                              const QColor& textColour, double devicePixelRatio)
+{
+    // Everything baked into the image is part of the key. Getting this wrong
+    // would hand back a label in the previous style, which reads as the style
+    // change not having applied.
+    const QString key = font.key() + QChar('|') + QString::number(haloWidth) + QChar('|') +
+                        haloColour.name(QColor::HexArgb) + QChar('|') +
+                        textColour.name(QColor::HexArgb) + QChar('|') +
+                        QString::number(devicePixelRatio);
+    if (key != mKey)
+    {
+        mKey = key;
+        mEntries.clear();
+    }
+
+    if (const auto found = mEntries.constFind(text); found != mEntries.constEnd())
+    {
+        return *found;
+    }
+
+    // A long drive through many named places would otherwise grow this without
+    // bound. Dropping everything is fine: the visible labels are rebuilt over
+    // the next few frames.
+    constexpr int kMaxEntries = 512;
+    if (mEntries.size() >= kMaxEntries)
+    {
+        mEntries.clear();
+    }
+
+    const QFontMetricsF metrics(font);
+
+    Entry entry;
+    entry.bounds = metrics.boundingRect(text);
+
+    // Room for the halo, which straddles the outline, plus a pixel for the
+    // antialiasing to fade into. Without it the stroke is clipped at the edges
+    // and the label looks bitten.
+    //
+    // A WHOLE number of pixels, because the blit position is rounded to whole
+    // pixels too -- see below. A fractional offset would make Qt resample the
+    // image and the text would come out soft.
+    const double pad = std::ceil(haloWidth / 2.0) + 2.0;
+    entry.offset = QPointF(-pad, -pad);
+
+    const double width = entry.bounds.width() + (2.0 * pad);
+    const double height = entry.bounds.height() + (2.0 * pad);
+    const double ratio = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
+
+    entry.image = QImage(QSize(static_cast<int>(std::ceil(width * ratio)),
+                               static_cast<int>(std::ceil(height * ratio))),
+                         QImage::Format_ARGB32_Premultiplied);
+    entry.image.setDevicePixelRatio(ratio);
+    entry.image.fill(Qt::transparent);
+
+    QPainter into(&entry.image);
+    into.setRenderHint(QPainter::Antialiasing, true);
+    into.setRenderHint(QPainter::TextAntialiasing, true);
+
+    // Same geometry the old inline path used: the glyph origin sits at
+    // (0, ascent) from the placement box's top left, which is `pad` in here.
+    QPainterPath glyphs;
+    glyphs.addText(pad, pad + metrics.ascent(), font, text);
+
+    // Halo by stroking the glyph outlines rather than drawing the text several
+    // times at offsets: one path, one stroke, and the halo is even on every
+    // side. The offset trick leaves the corners thin.
+    if (haloWidth > 0.0)
+    {
+        QPen halo(haloColour);
+        halo.setWidthF(haloWidth);
+        halo.setJoinStyle(Qt::RoundJoin);
+        into.setPen(halo);
+        into.setBrush(Qt::NoBrush);
+        into.drawPath(glyphs);
+    }
+
+    into.setPen(Qt::NoPen);
+    into.fillPath(glyphs, textColour);
+    into.end();
+
+    return *mEntries.insert(text, std::move(entry));
+}
+
 LabelStats paintLabels(QPainter& painter, const Projection& projection,
-                       const std::vector<LabelTile>& tiles, const MapStyle_t& style)
+                       const std::vector<LabelTile>& tiles, const MapStyle_t& style,
+                       LabelCache& cache)
 {
     LabelStats stats;
     if (!style.show_labels)
@@ -134,8 +221,6 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     }
     font.setPointSizeF(double(style.label_size));
     painter.setFont(font);
-    const QFontMetricsF metrics(font);
-
     const QColor textColour = toQColor(style.label_text);
     const QColor haloColour = toQColor(style.label_halo);
 
@@ -146,7 +231,13 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
 
     for (const Candidate& candidate : candidates)
     {
-        const QRectF text = metrics.boundingRect(candidate.text);
+        // Rendered once per string, not once per string per frame -- and the
+        // bounding rect comes back with it, so the placement pass does not
+        // re-measure either.
+        const LabelCache::Entry& entry =
+            cache.entryFor(candidate.text, font, style.label_halo_width, haloColour, textColour,
+                           painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0);
+        const QRectF& text = entry.bounds;
         const QRectF box(candidate.at.x - (text.width() / 2.0),
                          candidate.at.y - (text.height() / 2.0), text.width(), text.height());
 
@@ -170,24 +261,11 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
         }
         taken.push_back(padded);
 
-        // Halo by stroking the glyph outlines rather than drawing the text
-        // several times at offsets: one path, one stroke, and the halo is even
-        // on every side. The offset trick leaves the corners thin.
-        QPainterPath glyphs;
-        glyphs.addText(box.left(), box.top() + metrics.ascent(), font, candidate.text);
-
-        if (style.label_halo_width > 0.0)
-        {
-            QPen halo(haloColour);
-            halo.setWidthF(style.label_halo_width);
-            halo.setJoinStyle(Qt::RoundJoin);
-            painter.setPen(halo);
-            painter.setBrush(Qt::NoBrush);
-            painter.drawPath(glyphs);
-        }
-
-        painter.setPen(Qt::NoPen);
-        painter.fillPath(glyphs, textColour);
+        // Snapped to whole pixels. Blitting at a fractional position makes Qt
+        // resample, and resampled text is visibly soft; half a pixel of
+        // placement error on a place name is not.
+        const QPointF where = box.topLeft() + entry.offset;
+        painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())), entry.image);
 
         ++stats.placed;
     }

@@ -41,6 +41,7 @@
 
 #include "map/config.h"
 #include "map/gpu_renderer.h"
+#include "map/labels.h"
 #include "map/projection.h"
 #include "map/tile_source.h"
 
@@ -130,6 +131,9 @@ class MapWidget : public QWidget
     // re-running the Mercator forward transform over the whole trail on every
     // paint to compute a number that had not changed.
     std::deque<map_widget::WorldPoint> mTrack;
+
+    // Glyph outlines for the label pass, kept between frames. See map/labels.h.
+    map_widget::LabelCache mLabelCache;
 
     // Written by paintEvent, read by status(). Both on the GUI thread.
     int mLastTilesDrawn { 0 };

@@ -267,6 +267,7 @@ int main(int argc, char** argv)
     std::deque<WorldPoint> trackWorldPoints;
 
     QImage canvas(width, height, QImage::Format_RGBA8888);
+    map_widget::LabelCache labelCache;
 
     // ~25 m per fix at 10 Hz is about 90 km/h, and moving every frame is the
     // point: a stationary camera would measure the memoised case, not the
@@ -330,7 +331,7 @@ int main(int argc, char** argv)
 
         const Timer labelTimer;
         const map_widget::LabelStats placed =
-            map_widget::paintLabels(painter, projection, labelTiles, style);
+            map_widget::paintLabels(painter, projection, labelTiles, style, labelCache);
         labels.add(labelTimer.ms());
         (void)placed;
 
