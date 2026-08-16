@@ -70,10 +70,14 @@ void TileSource::request(const std::vector<TileId>& wanted)
             ++mStats.requested;
         }
 
-        const std::string tileset = mTileset;
+        // mTileset directly, not a local copied for the lambda to capture by
+        // reference. That was safe only because ZenohAsyncClient invokes `fill`
+        // synchronously; the moment it stopped doing so it would have been a
+        // dangling reference into a dead stack frame, and mTileset is const
+        // after construction anyway.
         const bool sent = mClient->request(
-            [&tileset, id](::MapTileRequest::Builder& builder) {
-                builder.setTileset(tileset);
+            [this, id](::MapTileRequest::Builder& builder) {
+                builder.setTileset(mTileset);
                 builder.setZ(id.z);
                 builder.setX(id.x);
                 builder.setY(id.y);
