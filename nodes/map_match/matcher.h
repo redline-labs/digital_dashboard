@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "road_graph/graph.h"
+#include "road_graph/search.h"
 
 namespace map_match
 {
@@ -148,6 +149,11 @@ class Matcher
 
     const road_graph::Graph& mGraph;
     MatcherConfig mConfig;
+
+    // One reusable bounded-search context for the whole matcher. update()
+    // makes up to beamWidth^2 of these per fix; a fresh hash table each time
+    // was most of the cost of a fix. See road_graph::BoundedSearch.
+    road_graph::BoundedSearch mSearch;
 
     std::vector<Candidate> mBeam;
     bool mHavePrevious { false };

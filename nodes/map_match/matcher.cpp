@@ -138,7 +138,7 @@ MatchResult Matcher::update(const Fix& fix)
                     // few times the distance travelled are not a plausible pair,
                     // and searching further to prove it would expand the city.
                     const double limit = std::max(200.0, travelledM * 4.0);
-                    const auto distance = road_graph::boundedDistance(
+                    const auto distance = mSearch.distance(
                         mGraph, previous.forward ? from.toNode : from.fromNode,
                         candidate.forward ? to.fromNode : to.toNode, limit);
                     if (!distance)

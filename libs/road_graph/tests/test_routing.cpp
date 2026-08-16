@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -564,6 +565,67 @@ void test_a_graph_with_no_speeds_at_all_is_still_searchable()
     std::filesystem::remove(path);
 }
 
+void test_a_reused_search_gives_the_same_answers_as_fresh_ones()
+{
+    // BoundedSearch keeps its hash table and heap between calls. The whole
+    // risk of that is state leaking from one query into the next, which would
+    // show up as a distance that is right the first time and wrong after.
+    const auto path = scratch("rg_reused_search.graph");
+
+    road_graph::Builder builder;
+    builder.add(link(1, nodeId(0, 0), nodeId(1, 0), 0, 0, 1, 0, "A"));
+    builder.add(link(2, nodeId(1, 0), nodeId(2, 0), 1, 0, 2, 0, "B"));
+    builder.add(link(3, nodeId(2, 0), nodeId(2, 1), 2, 0, 2, 1, "C"));
+    // A disconnected piece, so some queries legitimately find nothing.
+    builder.add(link(4, nodeId(5, 5), nodeId(6, 5), 5, 5, 6, 5, "Island"));
+    check(builder.write(path, 0).has_value(), "the graph writes");
+
+    auto graph = road_graph::Graph::open(path);
+    if (!graph)
+    {
+        check(false, "graph opens");
+        return;
+    }
+
+    const road_graph::NodeIndex a = findNode(*graph, 0, 0);
+    const road_graph::NodeIndex b = findNode(*graph, 1, 0);
+    const road_graph::NodeIndex c = findNode(*graph, 2, 1);
+    const road_graph::NodeIndex island = findNode(*graph, 5, 5);
+
+    const std::vector<std::pair<road_graph::NodeIndex, road_graph::NodeIndex>> pairs {
+        { a, b }, { a, c }, { b, c }, { a, island }, { island, a }, { a, a }, { c, a },
+    };
+
+    // Every pair, each with its own throwaway context.
+    std::vector<std::optional<double>> fresh;
+    for (const auto& [from, to] : pairs)
+    {
+        fresh.push_back(road_graph::boundedDistance(*graph, from, to, 10000.0));
+    }
+
+    // The same pairs through ONE reused context, twice over, so a stale entry
+    // from an earlier query would have to survive to be caught.
+    road_graph::BoundedSearch search;
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        for (std::size_t i = 0; i < pairs.size(); ++i)
+        {
+            const auto reused =
+                search.distance(*graph, pairs[i].first, pairs[i].second, 10000.0);
+            check(reused.has_value() == fresh[i].has_value(),
+                  "a reused search agrees on whether there is a path, pair " +
+                      std::to_string(i));
+            if (reused && fresh[i])
+            {
+                check(std::abs(*reused - *fresh[i]) < 1e-6,
+                      "and on the distance, pair " + std::to_string(i));
+            }
+        }
+    }
+
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main()
@@ -579,6 +641,7 @@ int main()
     test_a_u_turn_is_refused_where_there_is_a_choice();
     test_no_route_between_disconnected_pieces();
     test_bounded_distance_gives_up_rather_than_expanding();
+    test_a_reused_search_gives_the_same_answers_as_fresh_ones();
     test_a_graph_with_no_restrictions_allows_everything();
     test_the_fastest_speed_is_in_the_header();
     test_an_old_graph_without_the_field_still_resolves_a_speed();

@@ -17,6 +17,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #include <vector>
 
 #include "road_graph/graph.h"
@@ -30,6 +33,31 @@ namespace road_graph
 // bound is the whole point: the matcher asks this about candidates that are
 // usually metres apart, and an unbounded search would expand a city to discover
 // that two roads do not connect.
+// A REUSABLE working set for boundedDistance.
+//
+// The matcher makes up to beamWidth^2 bounded searches per fix, at fix rate.
+// Each one used to build a fresh unordered_map and priority_queue and throw
+// them away; keeping one context means the hash table's buckets and the heap's
+// storage survive between calls.
+//
+// Not thread safe, deliberately: it is per-caller state. Two threads matching
+// at once hold one each.
+class BoundedSearch
+{
+  public:
+    // Same answer as the free function below, reusing this object's storage.
+    std::optional<double> distance(const Graph& graph, NodeIndex from, NodeIndex to,
+                                   double limitM);
+
+  private:
+    std::unordered_map<NodeIndex, double> mBest;
+    // A heap kept by hand rather than a priority_queue, which cannot be
+    // cleared without discarding its buffer.
+    std::vector<std::pair<double, NodeIndex>> mQueue;
+};
+
+// One-off form: allocates a context, uses it once, drops it. For callers that
+// make a single query -- tools and tests -- where the context would be noise.
 std::optional<double> boundedDistance(const Graph& graph, NodeIndex from, NodeIndex to,
                                       double limitM);
 

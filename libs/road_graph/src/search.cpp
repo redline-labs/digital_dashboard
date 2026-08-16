@@ -30,6 +30,13 @@ double lengthM(const Graph& graph, const EdgeRecord& edge)
 std::optional<double> boundedDistance(const Graph& graph, NodeIndex from, NodeIndex to,
                                       double limitM)
 {
+    BoundedSearch search;
+    return search.distance(graph, from, to, limitM);
+}
+
+std::optional<double> BoundedSearch::distance(const Graph& graph, NodeIndex from, NodeIndex to,
+                                              double limitM)
+{
     if (from == to)
     {
         return 0.0;
@@ -53,45 +60,55 @@ std::optional<double> boundedDistance(const Graph& graph, NodeIndex from, NodeIn
     // A plain Dijkstra with a hash map rather than a full distance array: the
     // search is bounded to a few hundred metres, so it settles tens of nodes
     // out of millions, and allocating an array per call would dwarf the search.
-    std::unordered_map<NodeIndex, double> best;
-    Queue queue;
-    queue.push({ 0.0, from });
-    best.emplace(from, 0.0);
+    //
+    // CLEARED, not reconstructed. clear() on an unordered_map keeps its bucket
+    // array and on a vector keeps its buffer, which is the whole point of this
+    // object outliving the call.
+    mBest.clear();
+    mQueue.clear();
 
-    while (!queue.empty())
+    const auto greater = [](const std::pair<double, NodeIndex>& a,
+                            const std::pair<double, NodeIndex>& b) { return a.first > b.first; };
+
+    mQueue.emplace_back(0.0, from);
+    mBest.emplace(from, 0.0);
+
+    while (!mQueue.empty())
     {
-        const Frontier current = queue.top();
-        queue.pop();
+        std::pop_heap(mQueue.begin(), mQueue.end(), greater);
+        const std::pair<double, NodeIndex> current = mQueue.back();
+        mQueue.pop_back();
 
-        if (current.node == to)
+        if (current.second == to)
         {
-            return current.cost;
+            return current.first;
         }
-        if (current.cost > limitM)
+        if (current.first > limitM)
         {
             // Every remaining frontier node is at least this far, so nothing
             // under the limit is left to find.
             return std::nullopt;
         }
 
-        const auto found = best.find(current.node);
-        if (found != best.end() && current.cost > found->second)
+        const auto found = mBest.find(current.second);
+        if (found != mBest.end() && current.first > found->second)
         {
             continue;
         }
 
-        for (const EdgeRecord& edge : graph.edgesFrom(current.node))
+        for (const EdgeRecord& edge : graph.edgesFrom(current.second))
         {
-            const double next = current.cost + lengthM(graph, edge);
+            const double next = current.first + lengthM(graph, edge);
             if (next > limitM)
             {
                 continue;
             }
-            auto [entry, inserted] = best.try_emplace(edge.target, next);
+            auto [entry, inserted] = mBest.try_emplace(edge.target, next);
             if (inserted || next < entry->second)
             {
                 entry->second = next;
-                queue.push({ next, edge.target });
+                mQueue.emplace_back(next, edge.target);
+                std::push_heap(mQueue.begin(), mQueue.end(), greater);
             }
         }
     }
