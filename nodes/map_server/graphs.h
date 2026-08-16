@@ -70,6 +70,21 @@ class GraphRegistry
     std::vector<std::unique_ptr<GraphEntry>> mGraphs;
 };
 
+// Which cost profiles this graph can actually route with.
+//
+// ONE list, used both to answer graphInfo and to accept or refuse a route
+// request. They were separate before -- graphInfo reported none while
+// handleRoute accepted "fastest" -- so a client that discovered profiles
+// correctly concluded it could not route at all. map_graph.capnp defines the
+// relationship: "a route request naming one that is not here is badRequest".
+//
+// Empty for a graph that failed to open: it cannot route with anything.
+std::vector<std::string> profilesOf(const GraphEntry& entry);
+
+// Whether `requested` names a profile this graph has. Empty means the graph's
+// default, which the schema allows and which is the first entry.
+bool hasProfile(const GraphEntry& entry, std::string_view requested);
+
 } // namespace map_server
 
 #endif // MAP_SERVER_GRAPHS_H

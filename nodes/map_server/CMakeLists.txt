@@ -72,3 +72,25 @@ target_link_libraries(map_server_test_assets
 )
 
 add_project_test(TARGET map_server_test_assets LABELS map unit)
+
+# Which profiles a graph offers, and which it accepts -- the two answers that
+# used to come from different places and disagree. Recompiles graphs.cpp
+# directly, as the config test does with node_config.cpp, so the test drives
+# the same translation unit the node does.
+add_executable(map_server_test_graphs
+    tests/test_graphs.cpp
+    graphs.cpp
+)
+
+target_include_directories(map_server_test_graphs PRIVATE .)
+
+target_link_libraries(map_server_test_graphs
+    PRIVATE
+        road_graph
+        map_rules
+        zenoh_pub_sub
+        spdlog::spdlog
+        yaml-cpp::yaml-cpp
+)
+
+add_project_test(TARGET map_server_test_graphs LABELS map unit)

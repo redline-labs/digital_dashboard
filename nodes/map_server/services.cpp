@@ -468,9 +468,13 @@ void Services::handleGraphInfo(const MapGraphInfoRequest::Reader& request,
         bounds.set(2, header.east * 1e-7);
         bounds.set(3, header.north * 1e-7);
 
-        // Routing profiles arrive at stage 6 as additive overlay sections. An
-        // empty list is the honest answer today.
-        out.initProfiles(0);
+        // The SAME list handleRoute accepts from, so the two cannot disagree.
+        const std::vector<std::string> profiles = profilesOf(entry);
+        auto names = out.initProfiles(static_cast<unsigned>(profiles.size()));
+        for (unsigned p = 0; p < profiles.size(); ++p)
+        {
+            names.set(p, profiles[p]);
+        }
     }
 }
 
@@ -489,11 +493,11 @@ void Services::handleRoute(const MapRouteRequest::Reader& request,
     }
 
     const std::string profile = request.getProfile().cStr();
-    if (!profile.empty() && profile != "fastest")
+    if (!hasProfile(*entry, profile))
     {
-        // Cost profiles are precomputed overlays and arrive at stage 6. Refused
-        // by name rather than silently answered with the default, which would
-        // give a driver who asked to avoid tolls a route straight over one.
+        // Refused by name rather than silently answered with the default,
+        // which would give a driver who asked to avoid tolls a route straight
+        // over one. The list is graphs.cpp's, the same one graphInfo reports.
         response.setStatus(::MapQueryStatus::BAD_REQUEST);
         response.setError("profile '" + profile + "' is not built into this graph");
         return;

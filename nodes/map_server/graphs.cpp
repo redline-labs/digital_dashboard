@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "graphs.h"
 
+#include <algorithm>
 #include <filesystem>
 
 #include <spdlog/spdlog.h>
@@ -107,6 +108,39 @@ std::size_t GraphRegistry::openCount() const
         }
     }
     return count;
+}
+
+std::vector<std::string> profilesOf(const GraphEntry& entry)
+{
+    if (!entry.graph)
+    {
+        return {};
+    }
+
+    // "fastest" is always available, with or without an overlay: the plain
+    // search and the contracted one return the SAME route, which
+    // road_graph_test_contraction requires pair by pair. The overlay is a
+    // speed decision, never an accuracy one, so it does not change what can be
+    // asked for.
+    //
+    // The others -- "shortest", "avoid_tolls" -- arrive as additional overlay
+    // sections and will be listed from the file when they exist.
+    return { "fastest" };
+}
+
+bool hasProfile(const GraphEntry& entry, std::string_view requested)
+{
+    const std::vector<std::string> available = profilesOf(entry);
+    if (available.empty())
+    {
+        return false;
+    }
+    if (requested.empty())
+    {
+        // The graph's default, per map_graph.capnp.
+        return true;
+    }
+    return std::find(available.begin(), available.end(), requested) != available.end();
 }
 
 } // namespace map_server
