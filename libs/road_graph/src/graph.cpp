@@ -379,72 +379,6 @@ bool Graph::turnAllowed(SegmentIndex fromSegment, NodeIndex viaNode, SegmentInde
     return !sawOnly;
 }
 
-void Graph::queryBox(Coord west, Coord south, Coord east, Coord north,
-                     const std::function<void(SegmentIndex)>& visit) const
-{
-    if (mRTree.empty() || mRTreeLevels.empty())
-    {
-        return;
-    }
-
-    const auto intersects = [&](const RTreeNode& node) {
-        return !(node.east < west || node.west > east || node.north < south || node.south > north);
-    };
-
-    // Walk down from the root. Levels are stored bottom-up, so the root is the
-    // single node at the last level.
-    struct Frame
-    {
-        std::size_t level;
-        std::uint32_t index;
-    };
-
-    std::vector<Frame> stack;
-    stack.push_back({ mRTreeLevels.size() - 1, 0 });
-
-    while (!stack.empty())
-    {
-        const Frame frame = stack.back();
-        stack.pop_back();
-
-        const std::uint32_t base = mRTreeLevels[frame.level];
-        const std::uint32_t at = base + frame.index;
-        if (at >= mRTree.size())
-        {
-            continue;
-        }
-
-        const RTreeNode& node = mRTree[at];
-        if (!intersects(node))
-        {
-            continue;
-        }
-
-        if (frame.level == 0)
-        {
-            visit(node.payload);
-            continue;
-        }
-
-        const std::size_t childLevel = frame.level - 1;
-        const std::uint32_t childBase = mRTreeLevels[childLevel];
-        const std::uint32_t childCount =
-            (childLevel + 1 < mRTreeLevels.size())
-                ? mRTreeLevels[childLevel + 1] - childBase
-                : static_cast<std::uint32_t>(mRTree.size()) - childBase;
-
-        for (std::uint32_t i = 0; i < kRTreeFanout; ++i)
-        {
-            const std::uint32_t child = node.payload + i;
-            if (child >= childCount)
-            {
-                break;
-            }
-            stack.push_back({ childLevel, child });
-        }
-    }
-}
-
 std::vector<Match> Graph::nearest(Coord lat, Coord lon, double radiusM, std::size_t maxCandidates,
                                   std::optional<double> headingDeg) const
 {
@@ -567,11 +501,16 @@ std::vector<Match> Graph::nearest(Coord lat, Coord lon, double radiusM, std::siz
         scored.push_back({ match, score });
     });
 
-    std::sort(scored.begin(), scored.end(),
-              [](const Scored& a, const Scored& b) { return a.score < b.score; });
+    // partial_sort, not sort. maxCandidates is 1 for a route snap and a
+    // handful for the matcher's beam, while a dense box turns up hundreds of
+    // candidates -- ordering the ones that lose is work nobody reads.
+    const std::size_t wanted = std::min(scored.size(), maxCandidates);
+    std::partial_sort(scored.begin(), scored.begin() + static_cast<std::ptrdiff_t>(wanted),
+                      scored.end(),
+                      [](const Scored& a, const Scored& b) { return a.score < b.score; });
 
-    out.reserve(std::min(scored.size(), maxCandidates));
-    for (std::size_t i = 0; i < scored.size() && i < maxCandidates; ++i)
+    out.reserve(wanted);
+    for (std::size_t i = 0; i < wanted; ++i)
     {
         out.push_back(scored[i].match);
     }
