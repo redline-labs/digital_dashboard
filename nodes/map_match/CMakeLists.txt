@@ -21,6 +21,7 @@ target_include_directories(map_match PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(map_match
     PRIVATE
         road_graph
+        map_wire
         zenoh_pub_sub
         schemas
         capnp

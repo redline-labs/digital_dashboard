@@ -50,6 +50,9 @@ add_subdirectory(map_rules)
 # The routable road network on disk, mmap'd. After map_rules, which its
 # segment records carry.
 add_subdirectory(road_graph)
+# A segment on the wire. After road_graph and map_rules, whose types it maps,
+# and after schemas, whose vocabulary it maps them to.
+add_subdirectory(map_wire)
 # The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
 # which is only declared later in dbcs/ -- that subdirectory has to follow this
 # one, because the generator it calls is defined in libs/dbc_parser. The forward

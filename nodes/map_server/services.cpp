@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "map_rules/classification.h"
+#include "map_wire/segment.h"
 #include "road_graph/overlay.h"
 #include "road_graph/search.h"
 
@@ -320,53 +321,6 @@ void Services::publishStatus()
 // The road graph
 // ----------------------------------------------------------------------------
 
-namespace
-{
-
-// map_rules::RouteClass -> the wire vocabulary.
-//
-// The two enumerations are deliberately parallel and a cast would work today.
-// It is written out anyway: a cast would keep compiling after someone inserts a
-// value into either one, and the result would be every road on the dash
-// reporting the class of its neighbour. Spelled out, -Wswitch-enum makes that
-// insertion a build failure here.
-::MapRoadClass wireClassOf(map_rules::RouteClass value)
-{
-    switch (value)
-    {
-        case map_rules::RouteClass::None:
-            return ::MapRoadClass::UNKNOWN;
-        case map_rules::RouteClass::Motorway:
-            return ::MapRoadClass::MOTORWAY;
-        case map_rules::RouteClass::Trunk:
-            return ::MapRoadClass::TRUNK;
-        case map_rules::RouteClass::Primary:
-            return ::MapRoadClass::PRIMARY;
-        case map_rules::RouteClass::Secondary:
-            return ::MapRoadClass::SECONDARY;
-        case map_rules::RouteClass::Tertiary:
-            return ::MapRoadClass::TERTIARY;
-        case map_rules::RouteClass::Minor:
-            return ::MapRoadClass::MINOR;
-        case map_rules::RouteClass::Service:
-            return ::MapRoadClass::SERVICE;
-        case map_rules::RouteClass::Track:
-            return ::MapRoadClass::TRACK;
-        case map_rules::RouteClass::Path:
-            return ::MapRoadClass::PATH;
-        case map_rules::RouteClass::Pedestrian:
-            return ::MapRoadClass::PEDESTRIAN;
-        case map_rules::RouteClass::Ferry:
-            return ::MapRoadClass::FERRY;
-    }
-
-    // After the switch rather than in a default:, so adding a class stays a
-    // compile error.
-    return ::MapRoadClass::UNKNOWN;
-}
-
-} // namespace
-
 void Services::handleNearest(const MapNearestRequest::Reader& request,
                              MapNearestResponse::Builder& response)
 {
@@ -457,17 +411,13 @@ void Services::handleNearest(const MapNearestRequest::Reader& request,
         out.setHeadingDeg(static_cast<float>(match.bearingDeg));
         out.setName(std::string(entry->graph->nameOf(segment)));
         out.setRef(std::string(entry->graph->refOf(segment)));
-        out.setRoadClass(wireClassOf(static_cast<map_rules::RouteClass>(segment.routeClass)));
+        out.setRoadClass(map_wire::classOf(segment.routeClass));
         // The raw OSM highway value is not stored in the graph today. Left
         // empty rather than guessed at: an escape hatch that lies is worse than
         // one that is shut.
         out.setHighwayTag("");
 
-        auto speed = out.initSpeed();
-        speed.setHasPosted((segment.flags & road_graph::kFlagHasPosted) != 0);
-        speed.setPostedKph(segment.postedSpeedKph);
-        speed.setPostedSource(static_cast<::MapSpeedSource>(segment.postedSource));
-        speed.setFreeFlowKph(segment.freeFlowSpeedKph);
+        map_wire::fillSpeed(out.initSpeed(), segment);
     }
 }
 

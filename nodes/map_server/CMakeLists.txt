@@ -25,6 +25,7 @@ target_link_libraries(map_server
     PRIVATE
         mbtiles
         road_graph
+        map_wire
         zenoh_pub_sub
         schemas
         capnp

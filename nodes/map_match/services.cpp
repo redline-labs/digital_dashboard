@@ -7,6 +7,7 @@
 
 #include "horizon.h"
 #include "map_rules/classification.h"
+#include "map_wire/segment.h"
 
 namespace map_match
 {
@@ -24,44 +25,6 @@ MatcherConfig matcherConfigOf(const MatchConfig& config)
     out.transitionBetaM = config.transitionBetaM;
     out.headingValidAboveMps = config.headingValidAboveMps;
     return out;
-}
-
-// map_rules::RouteClass -> the wire vocabulary.
-//
-// Written out rather than cast for the same reason as in map_server: the two
-// enumerations are parallel today, and a cast would keep compiling after
-// someone inserts a value into either -- leaving every road on the dash
-// reporting its neighbour's class.
-::MapRoadClass wireClassOf(map_rules::RouteClass value)
-{
-    switch (value)
-    {
-        case map_rules::RouteClass::None:
-            return ::MapRoadClass::UNKNOWN;
-        case map_rules::RouteClass::Motorway:
-            return ::MapRoadClass::MOTORWAY;
-        case map_rules::RouteClass::Trunk:
-            return ::MapRoadClass::TRUNK;
-        case map_rules::RouteClass::Primary:
-            return ::MapRoadClass::PRIMARY;
-        case map_rules::RouteClass::Secondary:
-            return ::MapRoadClass::SECONDARY;
-        case map_rules::RouteClass::Tertiary:
-            return ::MapRoadClass::TERTIARY;
-        case map_rules::RouteClass::Minor:
-            return ::MapRoadClass::MINOR;
-        case map_rules::RouteClass::Service:
-            return ::MapRoadClass::SERVICE;
-        case map_rules::RouteClass::Track:
-            return ::MapRoadClass::TRACK;
-        case map_rules::RouteClass::Path:
-            return ::MapRoadClass::PATH;
-        case map_rules::RouteClass::Pedestrian:
-            return ::MapRoadClass::PEDESTRIAN;
-        case map_rules::RouteClass::Ferry:
-            return ::MapRoadClass::FERRY;
-    }
-    return ::MapRoadClass::UNKNOWN;
 }
 
 } // namespace
@@ -233,14 +196,9 @@ void Services::publishHorizon(const Fix& fix, const MatchResult& match)
 
         fill(at++).setRoadName(std::string(mGraph.nameOf(segment)));
         fill(at++).setRoadRef(std::string(mGraph.refOf(segment)));
-        fill(at++).setRoadClass(
-            wireClassOf(static_cast<map_rules::RouteClass>(segment.routeClass)));
+        fill(at++).setRoadClass(map_wire::classOf(segment.routeClass));
 
-        auto speed = fill(at++).initSpeed();
-        speed.setHasPosted((segment.flags & road_graph::kFlagHasPosted) != 0);
-        speed.setPostedKph(segment.postedSpeedKph);
-        speed.setPostedSource(static_cast<::MapSpeedSource>(segment.postedSource));
-        speed.setFreeFlowKph(segment.freeFlowSpeedKph);
+        map_wire::fillSpeed(fill(at++).initSpeed(), segment);
 
         fill(at++).setSegment(run.segmentId);
     }
