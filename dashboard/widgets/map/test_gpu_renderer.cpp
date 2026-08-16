@@ -94,10 +94,20 @@ std::shared_ptr<const TileGeometry> fullTileQuad(MapLayer layer, float r, float 
 }
 
 // The tile the camera is centred on, so its quad covers the middle of the frame.
+//
+// The sort is not decoration: visibleTiles() is row-major and stable -- see
+// Projection::visibleTiles -- so front() is the north-west corner of the
+// viewport, not the middle. Asking for centre-outward is what makes this
+// helper's name true.
 TileId centreTile(const Projection& projection)
 {
-    const auto tiles = projection.visibleTiles(14, 0);
-    return tiles.empty() ? TileId { 14, 0, 0 } : tiles.front();
+    auto tiles = projection.visibleTiles(14, 0);
+    if (tiles.empty())
+    {
+        return TileId { 14, 0, 0 };
+    }
+    projection.sortCentreOutward(tiles);
+    return tiles.front();
 }
 
 // ============================================================================

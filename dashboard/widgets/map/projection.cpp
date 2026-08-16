@@ -214,13 +214,6 @@ std::vector<TileId> Projection::visibleTiles(std::uint8_t z, int marginTiles) co
         return tiles;
     }
 
-    // Centre-out ordering, so the tiles under the driver's eyes are requested
-    // before the ones at the edge. With a serial request path that is the
-    // difference between the middle of the map filling first and the corners
-    // filling first.
-    const double centreX = (minX + maxX) / 2.0 * side;
-    const double centreY = (minY + maxY) / 2.0 * side;
-
     for (std::int64_t y = firstY; y <= lastY; ++y)
     {
         for (std::int64_t x = firstX; x <= lastX; ++x)
@@ -244,15 +237,30 @@ std::vector<TileId> Projection::visibleTiles(std::uint8_t z, int marginTiles) co
         }
     }
 
-    std::sort(tiles.begin(), tiles.end(), [&](const TileId& a, const TileId& b) {
+    return tiles;
+}
+
+void Projection::sortCentreOutward(std::vector<TileId>& tiles) const
+{
+    if (tiles.empty())
+    {
+        return;
+    }
+
+    // The camera centre in tile units at whatever zoom these tiles are.
+    const double side = std::exp2(static_cast<double>(tiles.front().z));
+    const double centreX = mCenterWorld.x * side;
+    const double centreY = mCenterWorld.y * side;
+
+    // stable_sort, so two tiles the same distance out keep the row-major order
+    // they came in with rather than swapping on a floating-point tie.
+    std::stable_sort(tiles.begin(), tiles.end(), [&](const TileId& a, const TileId& b) {
         const double ax = (static_cast<double>(a.x) + 0.5) - centreX;
         const double ay = (static_cast<double>(a.y) + 0.5) - centreY;
         const double bx = (static_cast<double>(b.x) + 0.5) - centreX;
         const double by = (static_cast<double>(b.y) + 0.5) - centreY;
         return ((ax * ax) + (ay * ay)) < ((bx * bx) + (by * by));
     });
-
-    return tiles;
 }
 
 } // namespace map_widget

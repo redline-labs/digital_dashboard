@@ -291,9 +291,12 @@ int main(int argc, char** argv)
         const Camera camera { here, zoom, 0.0 };
         const Projection projection(camera, width, height);
 
+        // Exactly what the widget does: the drawn set in its stable order, and
+        // the prefetch ring sorted centre-outward for the request path only.
         const Timer visibleTimer;
         const std::vector<TileId> wanted = projection.visibleTiles(z);
-        const std::vector<TileId> ring = projection.visibleTiles(z, 1);
+        std::vector<TileId> ring = projection.visibleTiles(z, 1);
+        projection.sortCentreOutward(ring);
         visible.add(visibleTimer.ms());
 
         const Timer readyTimer;

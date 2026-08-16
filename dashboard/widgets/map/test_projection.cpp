@@ -257,8 +257,65 @@ void test_visible_tiles_cover_the_viewport()
                            std::to_string(corner.y) + ") is requested");
     }
 
-    check(tiles.front().x == 2828 && tiles.front().y == 6562,
-          "and the centre tile is requested FIRST, so the middle of the map fills first");
+    auto ordered = tiles;
+    projection.sortCentreOutward(ordered);
+    check(ordered.front().x == 2828 && ordered.front().y == 6562,
+          "and sorted centre-outward the middle tile is requested FIRST");
+    check(ordered.size() == tiles.size(), "without gaining or losing any");
+}
+
+void test_the_visible_order_does_not_move_with_the_camera()
+{
+    // THE reason visibleTiles() is row-major. This order reaches GpuRenderer,
+    // which compares the batch list positionally to decide whether its vertex
+    // buffer is still valid -- so if a camera nudge that changes nothing about
+    // WHICH tiles are visible reorders them, the renderer re-uploads every
+    // tile's geometry for no reason. Measured at 30 uploads over a 300-frame
+    // drive that crossed ~12 tile boundaries.
+    //
+    // A centre-outward sort does exactly that: two tiles at nearly equal
+    // distance swap the moment the camera passes the midpoint between them.
+    // A z14 tile is about 2 km across at this latitude, so this crosses
+    // several tile boundaries over the run rather than jiggling inside one.
+    const double step = 0.005;
+    std::vector<TileId> previous;
+    int reorderings = 0;
+    int setChanges = 0;
+
+    for (int i = 0; i < 40; ++i)
+    {
+        const Coordinate here { kIrvine.latitude, kIrvine.longitude + (i * step) };
+        const Projection projection(Camera { here, 14.0, 0.0 }, 660.0, 640.0);
+        const auto tiles = projection.visibleTiles(14);
+
+        if (!previous.empty())
+        {
+            std::vector<TileId> a = previous;
+            std::vector<TileId> b = tiles;
+            const auto byId = [](const TileId& l, const TileId& r) {
+                return (l.z != r.z) ? (l.z < r.z)
+                                    : ((l.x != r.x) ? (l.x < r.x) : (l.y < r.y));
+            };
+            std::sort(a.begin(), a.end(), byId);
+            std::sort(b.begin(), b.end(), byId);
+
+            if (a != b)
+            {
+                ++setChanges;
+            }
+            else if (previous != tiles)
+            {
+                // Same tiles, different order. This is the case that used to
+                // cost a full re-upload.
+                ++reorderings;
+            }
+        }
+        previous = tiles;
+    }
+
+    check(setChanges > 0, "the camera moved far enough to change the tile set");
+    check(reorderings == 0,
+          "and the same set of tiles never comes back in a different order");
 }
 
 void test_a_rotated_viewport_still_covers_its_corners()
@@ -375,6 +432,7 @@ int main()
 
     test_tile_zoom_is_rounded_and_clamped();
     test_visible_tiles_cover_the_viewport();
+    test_the_visible_order_does_not_move_with_the_camera();
     test_a_rotated_viewport_still_covers_its_corners();
     test_rotation_turns_the_map_the_right_way();
     test_a_camera_at_the_date_line_takes_the_short_way_round();

@@ -131,9 +131,21 @@ class Projection
     std::uint8_t tileZoom(std::uint8_t minZoom, std::uint8_t maxZoom) const;
 
     // Every tile touching the viewport at `z`, with `marginTiles` of extra ring
-    // around it. Ordered from the centre outward, so the tiles the driver is
-    // looking at are requested first.
+    // around it.
+    //
+    // ROW-MAJOR, and stably so: the same set of tiles comes back in the same
+    // order however the camera moved to get there. That matters because this
+    // order reaches GpuRenderer, which compares the batch list POSITIONALLY to
+    // decide whether its vertex buffer is still good -- so an order that
+    // shifted as the camera moved re-uploaded every visible tile's geometry
+    // for no change at all. Sort a COPY with sortCentreOutward() when the
+    // question is what to fetch first.
     std::vector<TileId> visibleTiles(std::uint8_t z, int marginTiles = 0) const;
+
+    // Reorder `tiles` nearest-first about the viewport centre. For REQUESTS
+    // only: with a bounded number of in-flight fetches, this is what decides
+    // that the middle of the map fills before the corners.
+    void sortCentreOutward(std::vector<TileId>& tiles) const;
 
     // Where a whole tile lands on screen: its north-west corner, and how many
     // pixels across it is. A tile is square in world space and stays square on

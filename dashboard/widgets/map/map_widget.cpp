@@ -154,7 +154,13 @@ void MapWidget::refreshTiles()
     // The prefetch ring is requested but never drawn. Asking for it separately
     // keeps mVisible honest about what the paint pass will look at, which is
     // what status() reports.
-    mTiles->request(projection.visibleTiles(z, kPrefetchRingTiles));
+    //
+    // Sorted centre-outward HERE and not in mVisible: the request order decides
+    // which tiles win the in-flight slots, and the draw order must stay stable
+    // or the renderer re-uploads every tile whenever the camera reshuffles it.
+    std::vector<map_widget::TileId> wanted = projection.visibleTiles(z, kPrefetchRingTiles);
+    projection.sortCentreOutward(wanted);
+    mTiles->request(wanted);
 }
 
 void MapWidget::resizeEvent(QResizeEvent* event)
