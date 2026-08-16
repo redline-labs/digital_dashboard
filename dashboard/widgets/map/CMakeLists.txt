@@ -105,6 +105,28 @@ dashboard_widget_register(${MAP_WIDGET_LIB})
 
 set_target_properties(${MAP_WIDGET_LIB} PROPERTIES AUTOMOC ON)
 
+# --------------------------------------------------------------- benchmark
+
+# What a frame costs, stage by stage. NOT registered as a test: it asserts
+# nothing and always exits 0, and add_project_test() on a program that cannot
+# fail is how a green run stops meaning anything.
+#
+# It reads tiles straight from an .mbtiles archive, so it needs no bus:
+#   map_bench --tiles ~/Documents/map_data/socal.mbtiles
+add_executable(map_bench EXCLUDE_FROM_ALL
+    map_bench.cpp
+)
+
+target_link_libraries(map_bench
+    PRIVATE
+        ${MAP_WIDGET_LIB}
+        mbtiles
+        mvt
+        spdlog::spdlog
+)
+
+set_target_properties(map_bench PROPERTIES AUTOMOC ON)
+
 # ------------------------------------------------------------------- tests
 
 # Web Mercator and the tile arithmetic, on their own. No Qt, no bus, no tiles.
