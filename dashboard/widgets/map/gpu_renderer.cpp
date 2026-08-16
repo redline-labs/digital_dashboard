@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "mapVert_qsb.h"
 #include "mapFrag_qsb.h"
@@ -111,6 +112,9 @@ bool GpuRenderer::initialise()
     }
 
     mUniformStride = std::max<quint32>(quint32(mRhi->ubufAlignment()), kUniformBlockSize);
+    // Fixed for the life of the backend, and read once: it decides which way
+    // up the ortho box goes, which is per tile per frame.
+    mYUpInFramebuffer = mRhi->isYUpInFramebuffer();
 
     // 4x if the hardware has it. Fill rate is not the constraint here -- a
     // frame costs the same at 2560x1440 as at 660x640 -- so the only reason not
@@ -243,7 +247,6 @@ bool GpuRenderer::ensureTarget(const QSize& size)
     }
 
     mSize = size;
-    mFrame = QImage(size, QImage::Format_RGBA8888);
     return true;
 }
 
@@ -399,7 +402,20 @@ const QImage& GpuRenderer::render(const Projection& projection,
         // already carries the rotation and the date-line wrap, so the rotation
         // here only orients the tile's own axes.
         QMatrix4x4 mvp = mRhi->clipSpaceCorrMatrix();
-        mvp.ortho(0.0f, float(size.width()), float(size.height()), 0.0f, -1.0f, 1.0f);
+        // The framebuffer flip, done HERE rather than on the image that comes
+        // back. OpenGL reads back bottom-up and everything else top-down; a
+        // QImage::flipped() afterwards copies the whole frame to fix it, while
+        // swapping the ortho box costs nothing and produces the same pixels.
+        // Winding is not a concern -- the pipeline does not cull, because MVT
+        // ring order means exterior-or-hole rather than front-or-back.
+        if (mYUpInFramebuffer)
+        {
+            mvp.ortho(0.0f, float(size.width()), 0.0f, float(size.height()), -1.0f, 1.0f);
+        }
+        else
+        {
+            mvp.ortho(0.0f, float(size.width()), float(size.height()), 0.0f, -1.0f, 1.0f);
+        }
         mvp.translate(float(origin.x), float(origin.y));
         if (projection.camera().bearing != 0.0)
         {
@@ -483,13 +499,18 @@ const QImage& GpuRenderer::render(const Projection& projection,
         return kNull;
     }
 
-    const QImage view(reinterpret_cast<const uchar*>(readback.data.constData()),
-                      readback.pixelSize.width(), readback.pixelSize.height(),
-                      QImage::Format_RGBA8888);
-    // OpenGL's framebuffer origin is bottom-left; everything else is top-left.
-    // Getting this wrong renders a correct map upside down, which reads as a
-    // projection bug rather than a readback one.
-    mFrame = mRhi->isYUpInFramebuffer() ? view.flipped(Qt::Vertical) : view.copy();
+    // MOVED, not copied. The bytes are already the frame; copying them buys a
+    // whole-image memcpy every paint to produce something identical. Holding
+    // them in a member is what lets the QImage below be a view -- and render()
+    // already promises the image is only valid until the next call, which is
+    // exactly how long the member lives.
+    mReadbackData = std::move(readback.data);
+    // Rebuilt each frame rather than kept: the buffer moves in from a fresh
+    // QByteArray every time, so a QImage held across frames would be pointing
+    // at whatever the previous one owned.
+    mFrame = QImage(reinterpret_cast<const uchar*>(mReadbackData.constData()),
+                    readback.pixelSize.width(), readback.pixelSize.height(),
+                    QImage::Format_RGBA8888);
 
     mStats.drawCalls = draws;
     mStats.tiles = int(batches.size());

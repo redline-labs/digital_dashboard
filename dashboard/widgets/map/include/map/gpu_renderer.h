@@ -25,6 +25,7 @@
 #include <memory>
 #include <vector>
 
+#include <QByteArray>
 #include <QImage>
 #include <QString>
 #include <QtGui/qtguiglobal.h>
@@ -131,6 +132,9 @@ class GpuRenderer
 
     QSize mSize;
     int mSampleCount { 1 };
+    // OpenGL reads back bottom-up, every other backend top-down. Baked into
+    // the projection instead of flipping the image afterwards.
+    bool mYUpInFramebuffer { false };
     // Bytes between one tile's uniform block and the next. The hardware's
     // minimum alignment, not sizeof(the struct).
     quint32 mUniformStride { 256 };
@@ -146,6 +150,11 @@ class GpuRenderer
     // The tile-limit warning is once per renderer, not once per frame.
     bool mWarnedTileLimit { false };
 
+    // Holds the pixels mFrame points AT -- see render(). MOVED out of the
+    // readback result rather than copied, so this costs a pointer swap. Both
+    // are only valid until the next render(), which is the lifetime the
+    // accessor already promises.
+    QByteArray mReadbackData;
     QImage mFrame;
     Stats mStats;
 };
