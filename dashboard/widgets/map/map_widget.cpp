@@ -207,7 +207,7 @@ void MapWidget::onPositionChanged()
 
     if (mConfig.show_track && mConfig.track_points > 0)
     {
-        mTrack.push_back(here);
+        mTrack.push_back(map_widget::worldFor(here));
         while (mTrack.size() > mConfig.track_points)
         {
             mTrack.pop_front();
@@ -361,7 +361,7 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
     {
         QPainterPath path;
         bool started = false;
-        for (const map_widget::Coordinate& point : mTrack)
+        for (const map_widget::WorldPoint& point : mTrack)
         {
             const auto at = projection.screenFor(point);
             const QPointF pixel(at.x, at.y);

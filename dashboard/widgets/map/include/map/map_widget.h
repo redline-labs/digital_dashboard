@@ -125,7 +125,11 @@ class MapWidget : public QWidget
     std::optional<double> mLongitude;
     std::optional<double> mHeading;
 
-    std::deque<map_widget::Coordinate> mTrack;
+    // WORLD points, not coordinates. A track point's world position is fixed
+    // the moment it arrives; only the camera moves. Keeping degrees meant
+    // re-running the Mercator forward transform over the whole trail on every
+    // paint to compute a number that had not changed.
+    std::deque<map_widget::WorldPoint> mTrack;
 
     // Written by paintEvent, read by status(). Both on the GUI thread.
     int mLastTilesDrawn { 0 };
