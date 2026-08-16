@@ -5,10 +5,13 @@
 #include "road_graph/overlay.h"
 #include "road_graph/search.h"
 
+#include "route_endpoints.h"
+
 #include "services.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <string>
 
 namespace map_server
@@ -533,14 +536,16 @@ void Services::handleRoute(const MapRouteRequest::Reader& request,
     const road_graph::SegmentRecord& startSegment = graph.segments()[start[0].segment];
     const road_graph::SegmentRecord& endSegment = graph.segments()[finish[0].segment];
 
+    const RouteEndpoints ends = resolveEndpoints(graph, start[0], finish[0], fromHeading);
+
     // THE OVERLAY WHEN THERE IS ONE, the plain search when there is not. Both
     // return the same route -- road_graph_test_contraction requires it, pair by
     // pair -- so this is a speed decision and never an accuracy one, and a
     // vehicle with a stale overlay still gets correct answers.
     auto route = entry->overlay
-                     ? road_graph::findRouteVia(graph, *entry->overlay, startSegment.toNode,
-                                                endSegment.fromNode)
-                     : road_graph::findRoute(graph, startSegment.toNode, endSegment.fromNode);
+                     ? road_graph::findRouteVia(graph, *entry->overlay, ends.startNode,
+                                                ends.endNode)
+                     : road_graph::findRoute(graph, ends.startNode, ends.endNode);
     if (!route)
     {
         // Genuinely no path, or the search gave up before finding one. Both are
@@ -550,9 +555,22 @@ void Services::handleRoute(const MapRouteRequest::Reader& request,
         return;
     }
 
+    // DOOR TO DOOR, not junction to junction. The search runs between the two
+    // junctions, so neither the piece of the start segment still ahead of the
+    // vehicle nor the piece of the destination segment before the destination
+    // was counted -- and on a long rural segment that is hundreds of metres
+    // missing from a number a driver reads.
+    const auto secondsFor = [](double metres, std::uint16_t speedKph) {
+        // A segment with no free-flow speed cannot be timed; contributing zero
+        // is better than dividing by it.
+        return speedKph == 0 ? 0.0 : metres / (speedKph / 3.6);
+    };
+
     response.setStatus(::MapQueryStatus::OK);
-    response.setDistanceM(route->distanceM);
-    response.setDurationS(route->durationS);
+    response.setDistanceM(route->distanceM + ends.startRemainingM + ends.endLeadInM);
+    response.setDurationS(route->durationS +
+                          secondsFor(ends.startRemainingM, startSegment.freeFlowSpeedKph) +
+                          secondsFor(ends.endLeadInM, endSegment.freeFlowSpeedKph));
 
     auto ids = response.initSegmentIds(static_cast<unsigned>(route->segments.size()));
     for (unsigned i = 0; i < route->segments.size(); ++i)

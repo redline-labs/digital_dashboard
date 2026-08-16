@@ -17,6 +17,7 @@ add_executable(map_server
     asset_store.cpp
     graphs.cpp
     node_config.cpp
+    route_endpoints.cpp
     services.cpp
     tilesets.cpp
 )
@@ -94,3 +95,22 @@ target_link_libraries(map_server_test_graphs
 )
 
 add_project_test(TARGET map_server_test_graphs LABELS map unit)
+
+# Which junctions a route search runs between. The departure heading was being
+# used to rank candidates and then discarded, so a vehicle pointing against its
+# segment's stored direction was routed from the junction behind it.
+add_executable(map_server_test_route_endpoints
+    tests/test_route_endpoints.cpp
+    route_endpoints.cpp
+)
+
+target_include_directories(map_server_test_route_endpoints PRIVATE .)
+
+target_link_libraries(map_server_test_route_endpoints
+    PRIVATE
+        road_graph
+        map_rules
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_server_test_route_endpoints LABELS map unit)
