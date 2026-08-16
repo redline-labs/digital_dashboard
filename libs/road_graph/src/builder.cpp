@@ -482,6 +482,13 @@ Result<void> Builder::write(const std::filesystem::path& path, std::int64_t buil
     header.geometryCount = static_cast<std::uint32_t>(geometry.size() / 2);
     header.builtAtUnixS = builtAtUnixS;
 
+    // A* reads this instead of scanning every segment for it. See FileHeader.
+    for (const SegmentRecord& segment : segments)
+    {
+        header.maxFreeFlowSpeedKph = std::max(header.maxFreeFlowSpeedKph,
+                                              static_cast<std::uint32_t>(segment.freeFlowSpeedKph));
+    }
+
     header.west = std::numeric_limits<Coord>::max();
     header.south = std::numeric_limits<Coord>::max();
     header.east = std::numeric_limits<Coord>::min();

@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -460,6 +461,109 @@ void test_a_graph_with_no_restrictions_allows_everything()
     std::filesystem::remove(path);
 }
 
+// A road faster than every other, so the header value is not the one a graph
+// of uniform 50 km/h links would produce by accident.
+road_graph::Builder::SegmentInput fastLink(std::int64_t wayId, std::int64_t fromNode,
+                                           std::int64_t toNode, int fromX, int fromY, int toX,
+                                           int toY, std::uint16_t speedKph)
+{
+    road_graph::Builder::SegmentInput input =
+        link(wayId, fromNode, toNode, fromX, fromY, toX, toY, "Fast");
+    input.classification.freeFlowSpeedKph = speedKph;
+    return input;
+}
+
+void test_the_fastest_speed_is_in_the_header()
+{
+    // A* divides by this. It used to be derived by scanning every segment on
+    // every query -- 320 MB of SegmentRecords on a real graph, which cost more
+    // than most searches. It is written at build time now.
+    const auto path = scratch("rg_max_speed.graph");
+
+    road_graph::Builder builder;
+    builder.add(link(1, nodeId(0, 0), nodeId(1, 0), 0, 0, 1, 0, "Slow"));
+    builder.add(fastLink(2, nodeId(1, 0), nodeId(2, 0), 1, 0, 2, 0, 113));
+    builder.add(link(3, nodeId(2, 0), nodeId(3, 0), 2, 0, 3, 0, "Slow"));
+    check(builder.write(path, 0).has_value(), "the graph writes");
+
+    auto graph = road_graph::Graph::open(path);
+    if (!graph)
+    {
+        check(false, "graph opens");
+        return;
+    }
+
+    check(graph->header().maxFreeFlowSpeedKph == 113,
+          "the header carries the fastest free-flow speed");
+    check(graph->maxFreeFlowSpeedKph() == 113, "and the accessor reports it");
+
+    std::filesystem::remove(path);
+}
+
+void test_an_old_graph_without_the_field_still_resolves_a_speed()
+{
+    // The field lives in what used to be `reserved`, so every graph built
+    // before it reads zero there. Zero means UNKNOWN, not "no speed limits" --
+    // and a zero reaching A* would be a divide by zero in the heuristic.
+    const auto path = scratch("rg_old_graph.graph");
+
+    road_graph::Builder builder;
+    builder.add(link(1, nodeId(0, 0), nodeId(1, 0), 0, 0, 1, 0, "A"));
+    builder.add(fastLink(2, nodeId(1, 0), nodeId(2, 0), 1, 0, 2, 0, 97));
+    check(builder.write(path, 0).has_value(), "the graph writes");
+
+    // Reach in and zero the field, which is exactly what an older build left.
+    {
+        std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+        check(file.good(), "the graph reopens for patching");
+        road_graph::FileHeader header {};
+        file.read(reinterpret_cast<char*>(&header), sizeof(header));
+        header.maxFreeFlowSpeedKph = 0;
+        file.seekp(0);
+        file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    }
+
+    auto graph = road_graph::Graph::open(path);
+    if (!graph)
+    {
+        check(false, "the patched graph opens");
+        return;
+    }
+
+    check(graph->header().maxFreeFlowSpeedKph == 0, "the header really is zero");
+    check(graph->maxFreeFlowSpeedKph() == 97, "and open() derived it from the segments");
+
+    // The route still comes out, which is the thing that actually matters: a
+    // zero divisor here produced an infinite heuristic and no route at all.
+    const auto route = road_graph::findRoute(*graph, 0, 2);
+    check(route.has_value(), "and a route is still found across it");
+
+    std::filesystem::remove(path);
+}
+
+void test_a_graph_with_no_speeds_at_all_is_still_searchable()
+{
+    // Every segment at zero. The max is then zero too, and the floor in
+    // Graph::bind() is the only thing between that and a division by zero.
+    const auto path = scratch("rg_no_speeds.graph");
+
+    road_graph::Builder builder;
+    builder.add(fastLink(1, nodeId(0, 0), nodeId(1, 0), 0, 0, 1, 0, 0));
+    builder.add(fastLink(2, nodeId(1, 0), nodeId(2, 0), 1, 0, 2, 0, 0));
+    check(builder.write(path, 0).has_value(), "the graph writes");
+
+    auto graph = road_graph::Graph::open(path);
+    if (!graph)
+    {
+        check(false, "graph opens");
+        return;
+    }
+
+    check(graph->maxFreeFlowSpeedKph() >= 1, "the divisor is floored above zero");
+
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main()
@@ -476,6 +580,9 @@ int main()
     test_no_route_between_disconnected_pieces();
     test_bounded_distance_gives_up_rather_than_expanding();
     test_a_graph_with_no_restrictions_allows_everything();
+    test_the_fastest_speed_is_in_the_header();
+    test_an_old_graph_without_the_field_still_resolves_a_speed();
+    test_a_graph_with_no_speeds_at_all_is_still_searchable();
 
     if (failures != 0)
     {

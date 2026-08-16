@@ -88,6 +88,17 @@ class Graph
         return mGeometry.subspan(segment.geometryOffset * 2, segment.geometryCount * 2);
     }
 
+    // The fastest free-flow speed anywhere in the graph, km/h. What A* builds
+    // its heuristic from -- a graph of city streets searched with a motorway's
+    // optimism has a weak heuristic and a wide search.
+    //
+    // Read from the header, or derived at OPEN for a graph too old to carry
+    // it. Never per query: the derivation reads every SegmentRecord, which is
+    // 320 MB on SoCal, and doing it per route was a constant term big enough
+    // to make a 1.5 km route slower than an 8 km one. Never zero -- it is a
+    // divisor.
+    std::uint32_t maxFreeFlowSpeedKph() const { return mMaxFreeFlowSpeedKph; }
+
     std::string_view string(std::uint32_t offset) const;
 
     std::string_view nameOf(const SegmentRecord& segment) const
@@ -157,6 +168,10 @@ class Graph
     std::span<const TurnRestrictionRecord> mRestrictions;
     // Level offsets of the packed tree, root last.
     std::vector<std::uint32_t> mRTreeLevels;
+
+    // Resolved at open, so queries never scan for it and this stays a plain
+    // value that a defaulted move can carry.
+    std::uint32_t mMaxFreeFlowSpeedKph { 0 };
 };
 
 } // namespace road_graph

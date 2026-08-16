@@ -153,7 +153,22 @@ struct FileHeader
     // asking about this number.
     std::int64_t builtAtUnixS;
 
-    std::uint64_t reserved[4];
+    // The fastest free-flow speed anywhere in the graph, for A*'s heuristic.
+    //
+    // Here rather than derived at query time because deriving it means reading
+    // every SegmentRecord: 5 M of them at 64 bytes is 320 MB faulted in per
+    // route, which dwarfs the search and evicts the pages the search wanted.
+    // It was measured as a constant term big enough to make a 1.5 km route
+    // slower than an 8 km one.
+    //
+    // ZERO MEANS UNKNOWN, not "no speed limits". Graphs built before this
+    // field zero-filled `reserved`, so Graph::maxFreeFlowSpeedKph() falls back
+    // to computing it once -- an old graph stays usable and simply pays the
+    // scan on first use instead of on every query.
+    std::uint32_t maxFreeFlowSpeedKph;
+    std::uint32_t reservedPad;
+
+    std::uint64_t reserved[3];
 };
 
 struct SectionEntry

@@ -129,11 +129,11 @@ std::optional<Route> findRoute(const Graph& graph, NodeIndex from, NodeIndex to,
     // from the data rather than assumed: a graph of city streets should not be
     // searched with a motorway's optimism, which would make the heuristic weak
     // and the search wide.
-    double fastestMps = 1.0;
-    for (const SegmentRecord& segment : graph.segments())
-    {
-        fastestMps = std::max(fastestMps, segment.freeFlowSpeedKph / 3.6);
-    }
+    //
+    // Resolved at open, not here. Deriving it per query read every
+    // SegmentRecord -- 320 MB on SoCal -- which cost more than most searches
+    // and evicted the pages the search was about to want.
+    const double fastestMps = std::max(1.0, graph.maxFreeFlowSpeedKph() / 3.6);
 
     const NodeRecord& target = graph.nodes()[to];
     const auto heuristic = [&](NodeIndex node) {

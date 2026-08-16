@@ -248,6 +248,21 @@ Result<void> Graph::bind()
                          " entries for " + std::to_string(mNodes.size()) + " nodes");
     }
 
+    // The A* heuristic's divisor. Taken from the header when the build wrote
+    // one; scanned HERE, at open, for a graph predating the field. Never at
+    // query time -- that scan is 320 MB on SoCal and it is the same answer
+    // every time. Floored at 1 so it can be divided by.
+    mMaxFreeFlowSpeedKph = mHeader->maxFreeFlowSpeedKph;
+    if (mMaxFreeFlowSpeedKph == 0)
+    {
+        for (const SegmentRecord& segment : mSegments)
+        {
+            mMaxFreeFlowSpeedKph = std::max(mMaxFreeFlowSpeedKph,
+                                            static_cast<std::uint32_t>(segment.freeFlowSpeedKph));
+        }
+    }
+    mMaxFreeFlowSpeedKph = std::max(mMaxFreeFlowSpeedKph, 1U);
+
     // Rebuild the packed tree's level offsets. They are derivable from the
     // segment count and the fanout, so they are not stored -- one less thing
     // that can disagree with the data.
