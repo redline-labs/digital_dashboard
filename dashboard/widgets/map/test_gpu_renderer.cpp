@@ -93,6 +93,49 @@ std::shared_ptr<const TileGeometry> fullTileQuad(MapLayer layer, float r, float 
     return geometry;
 }
 
+// A tile whose only geometry is one horizontal line across its middle, at
+// `halfPx` half-width. The vertex layout is pos, normal, half-width, colour --
+// the normal and the half-width are what the shader expands, and expanding it
+// there rather than on the CPU is why a width is a SCREEN pixel count rather
+// than something baked into the geometry. See map.vert.
+std::shared_ptr<const TileGeometry> fullTileStripe(float halfPx)
+{
+    auto geometry = std::make_shared<TileGeometry>();
+
+    const auto vertex = [&](float x, float normalY) {
+        return MapVertex { x, 0.5f, 0.0f, normalY, halfPx, 0.0f, 1.0f, 0.0f, 1.0f };
+    };
+
+    geometry->vertices = { vertex(0.0f, -1.0f), vertex(1.0f, -1.0f), vertex(1.0f, 1.0f),
+                           vertex(0.0f, -1.0f), vertex(1.0f, 1.0f),  vertex(0.0f, 1.0f) };
+
+    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    {
+        geometry->layerStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 6U;
+    }
+    return geometry;
+}
+
+// How much of the frame the green stripe covers. Counted rather than sampled,
+// because the question is how WIDE the line came out and a sample says only
+// whether it was hit.
+int greenPixels(const QImage& frame)
+{
+    int count = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        for (int x = 0; x < frame.width(); ++x)
+        {
+            const QColor pixel = frame.pixelColor(x, y);
+            if (pixel.green() > 128 && pixel.red() < 128 && pixel.blue() < 128)
+            {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
 // The tile the camera is centred on, so its quad covers the middle of the frame.
 //
 // The sort is not decoration: visibleTiles() is row-major and stable -- see
@@ -535,6 +578,209 @@ void test_an_unchanged_frame_is_not_drawn_again()
     check(renderer->stats().reused == afterFirst + 1, "and so does a style change");
 }
 
+void test_a_hidpi_frame_is_rendered_at_device_resolution()
+{
+    // THE HiDPI bug. The widget built its projection from logical width and
+    // height and blitted the result as it came, so on a 2x screen the geometry
+    // was rendered at half the resolution the screen has and upscaled -- while
+    // the label and marker passes, which go through QPainter, were drawn at
+    // full resolution over the top. Soft roads under sharp text, which reads as
+    // a styling problem rather than a resolution one.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 };
+
+    // Square and larger than the rest of this file, so a 512 px tile's own
+    // edges land inside the frame and a misplaced draw has somewhere to show.
+    constexpr int kSize = 600;
+    const Projection logical(camera, kSize, kSize);
+    const Projection retina(camera, kSize, kSize, 2.0);
+
+    check(retina.viewportWidth() == double(kSize) && retina.viewportHeight() == double(kSize),
+          "the projection stays LOGICAL -- the labels and the marker are drawn from it");
+
+    const TileId id = centreTile(logical);
+    check(centreTile(retina) == id,
+          "and the ratio does not change which tiles are wanted: the same screen shows the "
+          "same map, only with more pixels in it");
+
+    // The tile's northern half only, so the boundary between drawn and empty is
+    // somewhere a shifted or mis-scaled draw cannot hide.
+    auto half = std::make_shared<TileGeometry>();
+    const auto vertex = [](float x, float y) {
+        return MapVertex { x, y, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f };
+    };
+    half->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
+                       vertex(0.0f, 0.0f), vertex(1.0f, 0.5f), vertex(0.0f, 0.5f) };
+    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    {
+        half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
+    }
+    const std::vector<GpuBatch> batches { GpuBatch { id, half } };
+
+    const QImage plain = renderer->render(logical, batches, style, background).copy();
+    const QImage sharp = renderer->render(retina, batches, style, background).copy();
+    if (plain.isNull() || sharp.isNull())
+    {
+        check(false, "both frames render");
+        return;
+    }
+
+    check(plain.width() == kSize && plain.height() == kSize,
+          "a 1x screen still gets a 1x frame, got " + std::to_string(plain.width()) + "x" +
+              std::to_string(plain.height()));
+    check(sharp.width() == kSize * 2 && sharp.height() == kSize * 2,
+          "a 2x screen gets twice the pixels in each direction, got " +
+              std::to_string(sharp.width()) + "x" + std::to_string(sharp.height()));
+
+    // Without this the widget's blit would treat the frame's device pixels as
+    // logical ones and cover four times the widget, which is a far louder
+    // failure than the soft map it replaces -- but a failure all the same.
+    check(std::abs(sharp.devicePixelRatio() - 2.0) < 1e-9,
+          "and the frame carries the ratio it was rendered at, got " +
+              std::to_string(sharp.devicePixelRatio()));
+    check(sharp.deviceIndependentSize() == QSizeF(kSize, kSize),
+          "so it still blits across the logical rectangle it was asked for");
+
+    // Same map, more pixels: every logical pixel of the 1x frame must match the
+    // device pixel it maps to. A projection that forgot the ratio anywhere --
+    // the tile origin, the tile size -- draws the tile at half its place and
+    // half its size, and misses this everywhere at once.
+    int sampled = 0;
+    int mismatched = 0;
+    for (int y = 4; y < kSize; y += 17)
+    {
+        for (int x = 4; x < kSize; x += 17)
+        {
+            ++sampled;
+            if (!near(plain.pixelColor(x, y), sharp.pixelColor(x * 2, y * 2)))
+            {
+                ++mismatched;
+            }
+        }
+    }
+
+    check(sampled > 500, "the comparison covers the frame, got " + std::to_string(sampled) +
+                             " samples");
+    // A few samples sit on the quad's own edge, where the 2x frame legitimately
+    // resolves what the 1x one blurred. That is one row out of thirty-odd.
+    check(mismatched <= sampled / 20,
+          "the 2x frame is the same map at higher resolution, got " +
+              std::to_string(mismatched) + " of " + std::to_string(sampled) +
+              " samples differing");
+}
+
+void test_a_viewport_too_wide_for_a_texture_comes_back_soft_not_blank()
+{
+    // Rendering at the device ratio halves the logical viewport a texture can
+    // hold, so the ceiling is now something a very wide widget could reach.
+    // Crossing it must not be a blank map: ensureTarget() refuses the texture,
+    // render() returns null, and the widget fills its background with no
+    // diagnostic that says why -- so the ratio is lowered until the frame fits
+    // and the map merely loses sharpness.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 };
+
+    // Wide and short, so the clamp bites on one axis without asking for a
+    // 64-megapixel readback to prove it.
+    constexpr double kWide = 5000.0;
+    constexpr double kShort = 200.0;
+    const Projection projection(camera, kWide, kShort, 4.0);
+
+    const std::vector<GpuBatch> batches {
+        GpuBatch { centreTile(projection), fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) }
+    };
+
+    const QImage& frame = renderer->render(projection, batches, style, background);
+    check(!frame.isNull(), "a viewport past the texture limit still renders");
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    const double ratio = frame.devicePixelRatio();
+    check(ratio > 1.0 && ratio < 4.0,
+          "at a ratio between 1x and what the screen asked for, got " + std::to_string(ratio));
+    check(frame.width() <= 8192 && frame.height() <= 8192,
+          "with the texture inside what the backend will allocate, got " +
+              std::to_string(frame.width()) + "x" + std::to_string(frame.height()));
+    check(std::abs(frame.deviceIndependentSize().width() - kWide) < 1.0 &&
+              std::abs(frame.deviceIndependentSize().height() - kShort) < 1.0,
+          "and still covering the whole widget, just upscaled");
+    check(std::abs(renderer->stats().devicePixelRatio - ratio) < 1e-9,
+          "and status() can say so -- a soft map has no other evidence");
+}
+
+void test_line_widths_stay_logical_pixels()
+{
+    // A width is in SCREEN pixels and the vertices carry it unscaled -- see
+    // halfWidthFor(). Rendering at 2x without also scaling the width uniform
+    // leaves every road the same DEVICE width, which is half the road it should
+    // be: a HiDPI map whose geometry is sharp and whose roads are hairlines.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    // Wide, so the stripe is tens of pixels across and the antialiased fringe
+    // at its edges is noise rather than most of the measurement.
+    style.road_width_scale = 4.0;
+
+    const QColor background(0x16, 0x18, 0x1d);
+    const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 };
+
+    constexpr int kSize = 600;
+    const Projection logical(camera, kSize, kSize);
+    const Projection retina(camera, kSize, kSize, 2.0);
+
+    const std::vector<GpuBatch> batches {
+        GpuBatch { centreTile(logical), fullTileStripe(map_widget::halfWidthFor(
+                                            MapLayer::Motorway, style)) }
+    };
+
+    const QImage plain = renderer->render(logical, batches, style, background).copy();
+    const QImage sharp = renderer->render(retina, batches, style, background).copy();
+    if (plain.isNull() || sharp.isNull())
+    {
+        check(false, "both frames render");
+        return;
+    }
+
+    const int plainPixels = greenPixels(plain);
+    const int sharpPixels = greenPixels(sharp);
+    check(plainPixels > 5000,
+          "the stripe is actually on screen at 1x, got " + std::to_string(plainPixels) + " pixels");
+    if (plainPixels == 0)
+    {
+        return;
+    }
+
+    // Four times the area: twice as long AND twice as wide. Getting the width
+    // wrong and the length right lands on two, which is the whole point of
+    // measuring area rather than checking that the line is there at all.
+    const double ratio = double(sharpPixels) / double(plainPixels);
+    check(ratio > 3.7 && ratio < 4.3,
+          "the same road covers four times the device pixels at 2x -- so it is the same width "
+          "on screen -- got " +
+              std::to_string(ratio) + "x (" + std::to_string(plainPixels) + " then " +
+              std::to_string(sharpPixels) + ")");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -557,6 +803,9 @@ int main(int argc, char** argv)
     test_north_is_up_and_the_image_is_not_flipped();
     test_many_tiles_still_render();
     test_a_tile_with_no_geometry_is_harmless();
+    test_a_hidpi_frame_is_rendered_at_device_resolution();
+    test_line_widths_stay_logical_pixels();
+    test_a_viewport_too_wide_for_a_texture_comes_back_soft_not_blank();
 
     if (failures != 0)
     {

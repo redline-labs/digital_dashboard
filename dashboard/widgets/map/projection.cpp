@@ -65,10 +65,12 @@ Coordinate coordinateFor(const WorldPoint& world)
     return Coordinate { latitude, longitude };
 }
 
-Projection::Projection(const Camera& camera, double widthPx, double heightPx, int tileSizePx) :
+Projection::Projection(const Camera& camera, double widthPx, double heightPx,
+                       double devicePixelRatio, int tileSizePx) :
     mCamera(camera),
     mWidthPx(widthPx),
     mHeightPx(heightPx),
+    mDevicePixelRatio(devicePixelRatio > 0.0 ? devicePixelRatio : 1.0),
     mTileSizePx(static_cast<double>(tileSizePx)),
     mWorldPixels(std::exp2(camera.zoom) * static_cast<double>(tileSizePx)),
     mCenterWorld(worldFor(camera.center))

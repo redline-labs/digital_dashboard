@@ -11,9 +11,15 @@
 //
 // Driving QRhi directly against an offscreen texture has no such dependency:
 // Metal, Vulkan and D3D do not need a window to render into a texture. The
-// frame is read back into a QImage and blitted by the widget's QPainter. The
-// readback was measured at ~0.03 ms, which is noise against a ~0.2 ms frame --
-// on unified-memory hardware there is no copy across a bus to pay for.
+// frame is read back into a QImage and blitted by the widget's QPainter.
+//
+// That readback is what the frame costs, and it is linear in pixels: about
+// 0.5 ms per megapixel of the TARGET on an M-series Metal backend, so a
+// 660x640 widget is ~0.4 ms and the same widget at a device pixel ratio of 2 is
+// ~1.0 ms. Multisampling is not the cost -- forcing sampleCount to 1 moves a
+// 5120x2880 frame by under a millisecond -- which is why the sample count is
+// taken as high as the hardware offers and the SIZE is the thing to think
+// about. Measure with map_bench --width/--height/--dpr.
 //
 // One draw call per (layer, tile), layer-major. Tile-major would let one tile's
 // landcover bury its neighbour's motorway, which shows up as roads vanishing
@@ -102,6 +108,13 @@ class GpuRenderer
         // frame count, something is invalidating the cache every frame.
         std::uint64_t uploads { 0 };
         int sampleCount { 1 };
+        // What the last frame was actually rendered at. Normally the screen's
+        // ratio; lower when the viewport was wide enough that a device-pixel
+        // texture would have exceeded what the backend will allocate, in which
+        // case the frame is upscaled to fit the widget. Worth reporting,
+        // because the only other evidence of that is a map that looks slightly
+        // soft.
+        double devicePixelRatio { 1.0 };
     };
 
     Stats stats() const { return mStats; }

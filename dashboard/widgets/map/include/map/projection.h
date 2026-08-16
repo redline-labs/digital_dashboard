@@ -16,7 +16,11 @@
 //     gives tile coordinates and by 2^zoom * tileSize gives pixels. Keeping the
 //     unscaled form means the zoom appears exactly once in each conversion.
 //
-//   * SCREEN coordinates are widget pixels, y down, origin top-left.
+//   * SCREEN coordinates are LOGICAL widget pixels, y down, origin top-left --
+//     the units QPainter and every widget coordinate are already in. A
+//     projection also carries the device pixel ratio, but does not apply it:
+//     the passes that draw through QPainter must stay logical, and the GPU
+//     pass is the only one that renders at the screen's real resolution.
 //
 //   * Latitude is clamped to +/-85.0511287798, where Mercator's tan() runs to
 //     infinity. Web Mercator is defined only inside that, and it is what makes
@@ -113,12 +117,24 @@ struct Camera
 class Projection
 {
   public:
-    Projection(const Camera& camera, double widthPx, double heightPx, int tileSizePx = 512);
+    // `widthPx`/`heightPx` are LOGICAL pixels. `devicePixelRatio` says how many
+    // real ones the screen puts in each, and is carried rather than applied --
+    // see the note on SCREEN coordinates above.
+    //
+    // The ratio comes BEFORE the tile size on purpose, so that the common call
+    // does not have to name a tile size to reach it. Both are defaulted, so
+    // Projection(camera, w, h, 512) would quietly mean a ratio of 512; pass
+    // the tile size by name or not at all.
+    Projection(const Camera& camera, double widthPx, double heightPx,
+               double devicePixelRatio = 1.0, int tileSizePx = 512);
 
     const Camera& camera() const { return mCamera; }
     double tileSize() const { return mTileSizePx; }
     double viewportWidth() const { return mWidthPx; }
     double viewportHeight() const { return mHeightPx; }
+    // Always positive; a non-positive ratio from the window system is taken as
+    // 1, because every coordinate here is a divisor away from a zero.
+    double devicePixelRatio() const { return mDevicePixelRatio; }
 
     // Pixels across the whole world at this zoom. The single number that ties
     // world coordinates to screen ones.
@@ -191,6 +207,7 @@ class Projection
     Camera mCamera;
     double mWidthPx;
     double mHeightPx;
+    double mDevicePixelRatio;
     double mTileSizePx;
     double mWorldPixels;
     WorldPoint mCenterWorld;

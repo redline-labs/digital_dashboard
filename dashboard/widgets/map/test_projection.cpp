@@ -227,6 +227,47 @@ void test_tile_zoom_is_rounded_and_clamped()
     check(zoomFor(10.0, 14, 6) == 10, "an inverted min/max pair is put in order rather than empty");
 }
 
+void test_the_device_pixel_ratio_is_carried_and_not_applied()
+{
+    // The ratio exists for one consumer -- the GPU pass, which renders into a
+    // texture of its own and can afford the screen's real resolution. Every
+    // other pass draws through QPainter in logical pixels, so a projection that
+    // APPLIED the ratio would put the labels, the marker and the trail at twice
+    // their coordinates: a map whose text has slid off the bottom right.
+    const Camera camera { kIrvine, 14.0, 0.0 };
+    const Projection logical(camera, 800.0, 600.0);
+    const Projection retina(camera, 800.0, 600.0, 2.0);
+
+    check(near(logical.devicePixelRatio(), 1.0, 1e-12), "a projection is 1x unless told otherwise");
+    check(near(retina.devicePixelRatio(), 2.0, 1e-12), "and carries the ratio it was given");
+
+    // A ratio of zero reaches here from a window system that has not worked out
+    // which screen a widget is on yet. Taking it at face value divides the map
+    // by nothing.
+    check(near(Projection(camera, 800.0, 600.0, 0.0).devicePixelRatio(), 1.0, 1e-12),
+          "a non-positive ratio is taken as 1 rather than propagated");
+
+    check(near(retina.viewportWidth(), 800.0, 1e-12) &&
+              near(retina.viewportHeight(), 600.0, 1e-12),
+          "the viewport stays the logical one");
+    check(near(retina.tileScreenSize(14), logical.tileScreenSize(14), 1e-12),
+          "and a tile is the same number of logical pixels across");
+
+    const ScreenPoint sameSpot =
+        retina.screenFor(Coordinate { kIrvine.latitude + 0.01, kIrvine.longitude + 0.01 });
+    const ScreenPoint reference =
+        logical.screenFor(Coordinate { kIrvine.latitude + 0.01, kIrvine.longitude + 0.01 });
+    check(near(sameSpot.x, reference.x, 1e-9) && near(sameSpot.y, reference.y, 1e-9),
+          "so a coordinate lands on exactly the same screen pixel");
+
+    // The trap on the other side: scaling the viewport into device pixels
+    // instead of carrying a ratio would cover four times the world at the same
+    // zoom, and the widget would fetch four times the tiles to draw the same
+    // map.
+    check(retina.visibleTiles(14, 1) == logical.visibleTiles(14, 1),
+          "and the same screen wants exactly the same tiles at either ratio");
+}
+
 void test_visible_tiles_cover_the_viewport()
 {
     const Projection projection(Camera { kIrvine, 14.0, 0.0 }, 1024.0, 768.0);
@@ -475,6 +516,7 @@ int main()
     test_zoom_scales_by_powers_of_two();
 
     test_tile_zoom_is_rounded_and_clamped();
+    test_the_device_pixel_ratio_is_carried_and_not_applied();
     test_visible_tiles_cover_the_viewport();
     test_the_visible_order_does_not_move_with_the_camera();
     test_the_margined_walk_agrees_with_two_separate_ones();

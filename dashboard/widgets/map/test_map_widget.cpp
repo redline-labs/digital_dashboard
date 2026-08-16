@@ -322,6 +322,51 @@ void test_the_widget_paints_offscreen()
           "visible to ui_screenshot");
 }
 
+void test_the_widget_paints_at_its_screens_ratio()
+{
+    // The GPU frame used to be built from logical width and height and blitted
+    // as it came, so on a 2x screen the map geometry was rendered at half the
+    // resolution the panel has and upscaled -- underneath labels and a marker
+    // that QPainter drew at the full ratio.
+    //
+    // Whatever ratio this run has, the frame must have been rendered at it.
+    // That is trivially true at 1x and is the whole assertion under
+    // map_test_widget_hidpi, which runs this same binary with
+    // QT_SCALE_FACTOR=2 -- see the CMakeLists. An offscreen widget has no
+    // screen to take a ratio from, so that variable is the only way to reach
+    // the HiDPI path at all.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.style.background = helpers::Color("#112233");
+    config.show_status = false;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+
+    QImage canvas(400, 300, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::black);
+    widget.render(&canvas);
+
+    if (!widget.status().gpuReady)
+    {
+        return;
+    }
+
+    const double ratio = widget.devicePixelRatioF();
+    check(std::abs(widget.status().gpu.devicePixelRatio - ratio) < 1e-9,
+          "the GPU frame is rendered at the ratio of the screen the widget is on, wanted " +
+              std::to_string(ratio) + " and the frame used " +
+              std::to_string(widget.status().gpu.devicePixelRatio));
+
+    // Still the same picture, whatever the ratio: the frame carries its own
+    // ratio, so the blit covers the widget rather than a quarter of it.
+    const QColor sampled = canvas.pixelColor(200, 150);
+    check(sampled.red() == 0x11 && sampled.green() == 0x22 && sampled.blue() == 0x33,
+          "and the blit still covers the widget, got rgb(" + std::to_string(sampled.red()) +
+              "," + std::to_string(sampled.green()) + "," + std::to_string(sampled.blue()) +
+              ")");
+}
+
 // Draw the widget into a throwaway image, which is what makes its status mean
 // something. Qt does not deliver a resize event to a widget that has never been
 // shown, so a test that only resized would be reading the tile set worked out
@@ -530,6 +575,7 @@ int main(int argc, char** argv)
     test_the_widget_constructs_without_a_server();
     test_a_bad_expression_does_not_take_the_widget_down();
     test_the_widget_paints_offscreen();
+    test_the_widget_paints_at_its_screens_ratio();
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();

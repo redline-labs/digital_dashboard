@@ -6,6 +6,7 @@
 
 #include <QFont>
 #include <QMetaObject>
+#include <QPaintDevice>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -133,7 +134,26 @@ map_widget::Camera MapWidget::camera() const
     return out;
 }
 
-void MapWidget::refreshTiles()
+map_widget::Projection MapWidget::projectionFor(const QPainter& painter) const
+{
+    // LOGICAL size plus the ratio, rather than one or the other. Everything
+    // this widget draws with QPainter -- labels, the marker, the trail -- is in
+    // logical pixels and Qt scales the backing store for them, so a projection
+    // in device pixels would put all three at twice their coordinates. The GPU
+    // pass is the one that reads the ratio, and it is the one that was
+    // rendering at half resolution without it.
+    //
+    // Read off the PAINT DEVICE rather than the widget, because that is where
+    // paintLabels() reads it from. The two passes have to agree on the ratio or
+    // this bug comes straight back in the other direction -- text rendered for
+    // a ratio the geometry underneath was not drawn at -- and the only way to
+    // guarantee that is to ask the same object.
+    const double ratio =
+        painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0;
+    return map_widget::Projection(camera(), width(), height(), ratio);
+}
+
+void MapWidget::refreshTiles(const map_widget::Projection& projection)
 {
     // CLEARED, not left alone. A widget is constructed at Qt's default size and
     // may then be resized to nothing by a layout that has not run yet; keeping
@@ -145,7 +165,6 @@ void MapWidget::refreshTiles()
         return;
     }
 
-    const map_widget::Projection projection(camera(), width(), height());
     const std::uint8_t z = projection.tileZoom(static_cast<std::uint8_t>(mConfig.min_zoom),
                                                static_cast<std::uint8_t>(mConfig.max_zoom));
 
@@ -230,11 +249,12 @@ void MapWidget::paintEvent(QPaintEvent* event)
         return;
     }
 
-    // Recomputed here rather than only on resize: unlike resizeEvent this is
-    // guaranteed to run before anything is drawn, at the size actually painted.
-    refreshTiles();
+    // Built here rather than only on resize: unlike resizeEvent this is
+    // guaranteed to run before anything is drawn, at the size and the ratio
+    // actually being painted.
+    const map_widget::Projection projection = projectionFor(painter);
+    refreshTiles(projection);
 
-    const map_widget::Projection projection(camera(), width(), height());
     const auto tiles = mTiles->ready(mVisible);
 
     // --- 1. geometry, on the GPU -------------------------------------------
@@ -264,9 +284,11 @@ void MapWidget::paintEvent(QPaintEvent* event)
         }
         else
         {
-            // Straight blit, no scaling: the renderer was asked for exactly this
-            // viewport. SmoothPixmapTransform would be pure cost.
-            painter.drawImage(0, 0, frame);
+            // Straight blit, no scaling: the renderer was asked for exactly
+            // this viewport, at exactly this screen's device pixel ratio, and
+            // carries that ratio on the image. SmoothPixmapTransform would be
+            // pure cost.
+            painter.drawImage(QPointF(0.0, 0.0), frame);
         }
     }
     else

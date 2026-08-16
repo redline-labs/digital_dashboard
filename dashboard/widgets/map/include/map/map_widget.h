@@ -14,16 +14,30 @@
 //      offscreen texture through QRhi and hands back a QImage. Not a
 //      QRhiWidget and not a QOpenGLWidget -- both bind to a platform surface
 //      that does not exist offscreen. See map/gpu_renderer.h.
+//
+//      At the screen's DEVICE pixel ratio, not the logical size: passes 2 and 3
+//      go through QPainter and are drawn at the ratio for free, so a logical
+//      frame here put upscaled geometry under sharp text.
+//
+//      This is NOT free. The frame is close to linear in device pixels --
+//      roughly 0.5 ms per megapixel on an M-series Metal backend, measured with
+//      map_bench --dpr -- so a 660x640 widget pays about +0.6 ms to go to 2x
+//      and a 2560x1440 one about +5.5 ms. It is the readback rather than the
+//      rasterisation: turning MSAA off entirely moves 2x at 2560x1440 by less
+//      than a millisecond. Worth it at dashboard sizes, and worth knowing about
+//      before putting a full-screen map on a 4K panel at 60 Hz.
 //   2. Labels, with QPainter. They must not rotate with the map and their
 //      collision is viewport-global, so they cannot ride in the GPU transform
 //      or be baked per tile. See map/labels.h.
 //   3. The vehicle marker and its trail, also QPainter.
 //
 // There is no qt_helpers::CachedPaintWidget here and no cached underlay. That
-// split exists to keep an expensive redraw off the hot path, and on this widget
-// the expensive part is tessellation -- which TileSource already does once per
-// tile on a zenoh thread. What is left is a ~0.2 ms GPU frame that is flat in
-// resolution, so caching it would cost a full-size QPixmap to save nothing.
+// split exists to keep an expensive redraw off the hot path, and both expensive
+// parts of this one are already cached somewhere better: tessellation happens
+// once per tile on a zenoh thread inside TileSource, and a frame whose camera,
+// tiles and style are unchanged is handed straight back out of GpuRenderer's
+// own memo without being drawn or read back at all. A QPixmap here would be a
+// third copy of the same picture.
 #ifndef MAP_MAP_WIDGET_H
 #define MAP_MAP_WIDGET_H
 
@@ -96,8 +110,15 @@ class MapWidget : public QWidget
     bool hasPosition() const { return mLatitude.has_value() && mLongitude.has_value(); }
 
     map_widget::Camera camera() const;
+    // The camera, the logical viewport and the ratio of whatever is being
+    // painted into, as one value. Built per paint rather than kept -- see
+    // map/projection.h.
+    map_widget::Projection projectionFor(const QPainter& painter) const;
     void onPositionChanged();
-    void refreshTiles();
+    // Takes the frame's projection rather than making its own: the tile set has
+    // to be the one the projection handed to the GPU is about to draw, and two
+    // projections built independently is how those drift apart.
+    void refreshTiles(const map_widget::Projection& projection);
     void paintMarker(QPainter& painter, const map_widget::Projection& projection);
     void paintDiagnostic(QPainter& painter);
 

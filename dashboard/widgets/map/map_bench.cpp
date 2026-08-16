@@ -12,6 +12,7 @@
 // what it measures.
 //
 //   map_bench --tiles ~/Documents/map_data/socal.mbtiles
+//   map_bench --tiles ... --width 2560 --height 1440 --dpr 2
 //
 // The number to watch is `uploads`: it should climb only when the visible tile
 // SET changes. If it tracks the frame count, something is invalidating the
@@ -36,6 +37,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <memory>
@@ -151,6 +153,12 @@ int main(int argc, char** argv)
     const int width = std::atoi(argumentAfter(argc, argv, "--width", "660").c_str());
     const int height = std::atoi(argumentAfter(argc, argv, "--height", "640").c_str());
     const double zoom = std::atof(argumentAfter(argc, argv, "--zoom", "14").c_str());
+    // The screen's device pixel ratio, which the GPU stage renders at and the
+    // label stage draws at. Worth a knob rather than a constant 1: --dpr 2 is
+    // four times the fragments and four times the readback, and whether that
+    // shows up in `gpu render` is the whole question behind drawing the map at
+    // the resolution the screen has.
+    const double dpr = std::atof(argumentAfter(argc, argv, "--dpr", "1").c_str());
 
     if (tilesPath.empty())
     {
@@ -190,7 +198,7 @@ int main(int argc, char** argv)
 
     const auto z = static_cast<std::uint8_t>(zoom);
     const Camera startCamera { Coordinate { kStartLat, kStartLon }, zoom, 0.0 };
-    const Projection probe(startCamera, width, height);
+    const Projection probe(startCamera, width, height, dpr);
 
     // The whole corridor the camera will drive along, plus a generous margin.
     const WorldPoint centre = map_widget::worldFor(Coordinate { kStartLat, kStartLon });
@@ -238,7 +246,8 @@ int main(int argc, char** argv)
 
     SPDLOG_INFO("");
     SPDLOG_INFO("archive    {}", tilesPath);
-    SPDLOG_INFO("viewport   {}x{} at z{:.1f}", width, height, zoom);
+    SPDLOG_INFO("viewport   {}x{} logical at z{:.1f}, {}x device pixel ratio", width, height,
+                zoom, dpr);
     SPDLOG_INFO("backend    {} ({}x MSAA)", gpu->backendName().toStdString(),
                 gpu->stats().sampleCount);
     SPDLOG_INFO("tiles      {} decoded, {} absent, {} vertices, {:.0f} ms to load+tessellate",
@@ -266,7 +275,12 @@ int main(int argc, char** argv)
     std::deque<Coordinate> track;
     std::deque<WorldPoint> trackWorldPoints;
 
-    QImage canvas(width, height, QImage::Format_RGBA8888);
+    // At the ratio, like the widget's backing store: the label pass renders
+    // its glyphs at the canvas's ratio, so a 1x canvas would measure cheaper
+    // text than the screen actually draws.
+    QImage canvas(int(std::lround(width * dpr)), int(std::lround(height * dpr)),
+                  QImage::Format_RGBA8888);
+    canvas.setDevicePixelRatio(dpr);
     map_widget::LabelCache labelCache;
 
     // ~25 m per fix at 10 Hz is about 90 km/h, and moving every frame is the
@@ -290,7 +304,7 @@ int main(int argc, char** argv)
         const Timer frameTimer;
 
         const Camera camera { here, zoom, 0.0 };
-        const Projection projection(camera, width, height);
+        const Projection projection(camera, width, height, dpr);
 
         // Exactly what the widget does: the drawn set in its stable order, and
         // the prefetch ring sorted centre-outward for the request path only.
@@ -324,7 +338,7 @@ int main(int argc, char** argv)
         QPainter painter(&canvas);
         if (!gpuFrame.isNull())
         {
-            painter.drawImage(0, 0, gpuFrame);
+            painter.drawImage(QPointF(0.0, 0.0), gpuFrame);
         }
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setRenderHint(QPainter::TextAntialiasing, true);

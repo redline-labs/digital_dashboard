@@ -250,9 +250,32 @@ Two things about that surface are worth knowing:
 **`paintEvent` composites three passes**: the GPU frame, then labels, then the
 vehicle marker and its trail. There is deliberately no `CachedPaintWidget` and
 no cached underlay — that split exists to keep an expensive redraw off the hot
-path, and here the expensive part is tessellation, which `TileSource` already
-does once per tile on a zenoh thread. What is left is a ~0.2 ms frame that is
-flat in resolution, so caching it would cost a full-size pixmap to save nothing.
+path, and both expensive parts here are already cached somewhere better.
+Tessellation happens once per tile on a zenoh thread inside `TileSource`, and a
+frame whose camera, tiles and style are unchanged comes straight back out of
+`GpuRenderer`'s own memo without being drawn or read back at all. A pixmap here
+would be a third copy of the same picture.
+
+**The GPU pass renders at the screen's device pixel ratio**; the other two are
+QPainter and are drawn at it anyway. `Projection` carries the ratio without
+applying it — every coordinate it returns is logical, which is what the label,
+marker and tile-selection passes need — and `GpuRenderer::render()` is the only
+thing that multiplies by it, for the target size, the tile placement and the
+road width uniform. The frame it returns carries the ratio on the `QImage`, so
+the widget's blit covers the same rectangle either way.
+
+That is not free. The frame is close to linear in device pixels — about **0.5 ms
+per megapixel** on an M-series Metal backend — so a 660×640 widget goes from
+~0.4 ms to ~1.0 ms at 2x, and a 2560×1440 one from ~1.8 ms to ~7.4 ms. The cost
+is the readback, not the rasterisation: forcing `sampleCount` to 1 moves a
+5120×2880 frame by under a millisecond. Measure it with
+`map_bench --width … --height … --dpr …`.
+
+A viewport wide enough that the device-pixel texture would exceed the 8192 px
+limit has its ratio lowered until the frame fits, rather than failing and
+leaving a blank widget with no diagnostic. `status().gpu.devicePixelRatio`
+reports what the last frame was actually rendered at, which is the only evidence
+that happened.
 
 For a BD992:
 

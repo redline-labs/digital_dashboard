@@ -207,3 +207,11 @@ target_link_libraries(map_test_widget
 set_target_properties(map_test_widget PROPERTIES AUTOMOC ON)
 
 add_project_test(TARGET map_test_widget LABELS dashboard map gui)
+
+# The same assertions on a 2x screen. QT_SCALE_FACTOR is what gives an offscreen
+# widget a device pixel ratio -- there is no display to take one from -- and it
+# is the only way to reach the paint path the map renders its geometry through
+# on a HiDPI panel. Without this the ratio is 1 in every test on the machine and
+# the map could go back to rendering at half resolution unnoticed.
+add_project_test(TARGET map_test_widget NAME map_test_widget_hidpi
+                 LABELS dashboard map gui ENVIRONMENT QT_SCALE_FACTOR=2)

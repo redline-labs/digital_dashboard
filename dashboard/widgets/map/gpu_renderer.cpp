@@ -45,6 +45,28 @@ constexpr int kMaxDimension = 8192;
 // stricter backends impose.
 constexpr std::size_t kMaxTilesPerFrame = 192;
 
+// The ratio this frame will actually be rendered at: the screen's, unless the
+// viewport is wide enough that the device-pixel texture would cross
+// kMaxDimension.
+//
+// Clamping rather than failing matters because the alternative is a blank map:
+// ensureTarget() refuses an oversized texture, render() returns a null image,
+// and the widget fills its background with no diagnostic to say why. A map
+// that comes back soft is a far better answer than one that does not come back.
+double renderRatio(const Projection& projection)
+{
+    double ratio = projection.devicePixelRatio();
+    if (projection.viewportWidth() > 0.0)
+    {
+        ratio = std::min(ratio, double(kMaxDimension) / projection.viewportWidth());
+    }
+    if (projection.viewportHeight() > 0.0)
+    {
+        ratio = std::min(ratio, double(kMaxDimension) / projection.viewportHeight());
+    }
+    return ratio;
+}
+
 QShader loadShader(const unsigned char* bytes, std::size_t size)
 {
     return QShader::fromSerialized(
@@ -116,9 +138,10 @@ bool GpuRenderer::initialise()
     // up the ortho box goes, which is per tile per frame.
     mYUpInFramebuffer = mRhi->isYUpInFramebuffer();
 
-    // 4x if the hardware has it. Fill rate is not the constraint here -- a
-    // frame costs the same at 2560x1440 as at 660x640 -- so the only reason not
-    // to antialias is not being able to.
+    // 4x if the hardware has it. Multisampling is not what a frame costs -- see
+    // the header: at 5120x2880 the difference between 4x and none is under a
+    // millisecond, against six for the pixels themselves -- so the only reason
+    // not to antialias is not being able to.
     const QList<int> counts = mRhi->supportedSampleCounts();
     mSampleCount = counts.contains(4) ? 4 : (counts.contains(2) ? 2 : 1);
     mStats.sampleCount = mSampleCount;
@@ -341,12 +364,20 @@ const QImage& GpuRenderer::render(const Projection& projection,
     QElapsedTimer timer;
     timer.start();
 
-    const QSize size(int(std::lround(projection.viewportWidth())),
-                     int(std::lround(projection.viewportHeight())));
+    // DEVICE pixels, which is the whole point of the ratio: the projection is
+    // logical because the label and marker passes drawn over this frame go
+    // through QPainter, and this is the one pass that can render at what the
+    // screen actually has. Rendering it logical left the geometry upscaled
+    // underneath text drawn sharp, which reads as a blurry map rather than as
+    // a bug.
+    const double ratio = renderRatio(projection);
+    const QSize size(int(std::lround(projection.viewportWidth() * ratio)),
+                     int(std::lround(projection.viewportHeight() * ratio)));
     if (!mRhi || !ensureTarget(size))
     {
         return kNull;
     }
+    mStats.devicePixelRatio = ratio;
 
     // Truncated rather than grown, because the uniform buffer is fixed -- see
     // kMaxTilesPerFrame. Projection::visibleTiles() orders centre-outward, so
@@ -374,7 +405,12 @@ const QImage& GpuRenderer::render(const Projection& projection,
     key.center = projection.camera().center;
     key.zoom = projection.camera().zoom;
     key.bearing = projection.camera().bearing;
-    key.widthScale = widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale);
+    // Times the ratio, because a vertex's halfPx is a LOGICAL pixel count and
+    // this frame is drawn in device ones -- without it roads come out a ratio
+    // thinner on a HiDPI screen while everything else keeps its width. It also
+    // means the ratio is part of the key, along with `size` above.
+    key.widthScale =
+        widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale) * float(ratio);
     key.background = background.rgba();
     key.ids.reserve(batches.size());
     key.serials.reserve(batches.size());
@@ -414,8 +450,10 @@ const QImage& GpuRenderer::render(const Projection& projection,
     for (std::size_t i = 0; i < batches.size(); ++i)
     {
         const TileId& id = batches[i].id;
+        // Scaled into device pixels, like `size` above: the projection hands
+        // back logical ones and the ortho box below is the device-sized frame.
         const ScreenPoint origin = projection.tileOrigin(id);
-        const float tileSize = float(projection.tileScreenSize(id.z));
+        const float tileSize = float(projection.tileScreenSize(id.z) * ratio);
 
         // Screen pixels -> clip, then place the tile: its rotated on-screen
         // origin, the map's rotation, and local [0,1] -> pixels. tileOrigin()
@@ -436,7 +474,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
         {
             mvp.ortho(0.0f, float(size.width()), float(size.height()), 0.0f, -1.0f, 1.0f);
         }
-        mvp.translate(float(origin.x), float(origin.y));
+        mvp.translate(float(origin.x * ratio), float(origin.y * ratio));
         if (projection.camera().bearing != 0.0)
         {
             mvp.rotate(float(-projection.camera().bearing), 0.0f, 0.0f, 1.0f);
@@ -537,6 +575,13 @@ const QImage& GpuRenderer::render(const Projection& projection,
     mFrame = QImage(reinterpret_cast<const uchar*>(mReadbackData.constData()),
                     readback.pixelSize.width(), readback.pixelSize.height(),
                     QImage::Format_RGBA8888);
+    // What makes the blit a straight one: with this set, QPainter draws the
+    // frame across the logical rectangle it was rendered for instead of
+    // treating its device pixels as logical ones and covering four times the
+    // widget. It is also the clamp's escape hatch -- a frame that had to come
+    // back at less than the screen's ratio still lands on the same rectangle,
+    // upscaled.
+    mFrame.setDevicePixelRatio(ratio);
 
     mFrameKey = std::move(key);
     mHaveFrame = true;
