@@ -29,6 +29,7 @@
 #ifndef MAP_TILE_SOURCE_H
 #define MAP_TILE_SOURCE_H
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -65,6 +66,10 @@ struct TileSourceStats
     std::uint64_t absent { 0 };
     // A reply that did not decode, or never came.
     std::uint64_t failed { 0 };
+    // Tiles currently in backoff after a failure, and so deliberately not
+    // being asked for. A steady non-zero here with a dead server is the
+    // system working, not the system stuck.
+    std::size_t backingOff { 0 };
     std::size_t cached { 0 };
     std::size_t inFlight { 0 };
 };
@@ -138,6 +143,10 @@ class TileSource
     // decode.
     mutable std::mutex mMutex;
     std::vector<std::pair<TileId, CachedTile>> mMailbox;
+    // Tiles whose request failed, waiting to be folded into mBackoff by the
+    // next drain. Separate from the mailbox because there is nothing to cache
+    // -- only the fact of the failure.
+    std::vector<TileId> mFailures;
     std::unordered_set<TileId, TileIdHash> mInFlight;
     TileSourceStats mStats;
 
@@ -147,6 +156,23 @@ class TileSource
     // to keep: a z14 tile decodes to a few hundred kilobytes of vectors, and an
     // unbounded cache over a long drive is unbounded memory.
     std::deque<TileId> mCacheOrder;
+
+    // A failed tile is not cached -- there is nothing to draw -- so without
+    // this it is re-requested on the very next paint, forever. Against a
+    // server that is down, that is a permanent kMaxInFlight-deep queue of
+    // queries at fix rate, each waiting out the full timeout.
+    //
+    // Absence of a tile is NOT a failure: that answer is cached as an empty
+    // tile and never lands here. This is only for a reply that errored or
+    // never came, which is the case that can recover -- so it backs off rather
+    // than giving up.
+    struct Backoff
+    {
+        // Consecutive failures, for the doubling.
+        unsigned attempts { 0 };
+        std::chrono::steady_clock::time_point retryAt;
+    };
+    std::unordered_map<TileId, Backoff, TileIdHash> mBackoff;
 };
 
 } // namespace map_widget

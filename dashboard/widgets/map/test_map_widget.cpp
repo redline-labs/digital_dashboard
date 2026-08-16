@@ -25,6 +25,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
+#include <thread>
+
 #include <memory>
 #include <string>
 
@@ -368,6 +371,58 @@ void test_a_zero_sized_widget_asks_for_nothing()
     check(widget.status().tiles.requested == 0, "and has asked for none");
 }
 
+// Let queued invokes run. The tile source hands failures to the GUI thread
+// through QMetaObject::invokeMethod, so nothing is folded into the backoff
+// until the event loop turns.
+void pump(std::chrono::milliseconds duration)
+{
+    const auto until = std::chrono::steady_clock::now() + duration;
+    while (std::chrono::steady_clock::now() < until)
+    {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+}
+
+void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
+{
+    // With no server, every request times out. A failed tile is not cached --
+    // there is nothing to draw -- so without a backoff it is re-requested on
+    // the very next paint, forever: a permanent queue of queries at fix rate,
+    // each waiting out the full timeout.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.zoom = 14.0;
+    config.request_timeout_ms = 150;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+
+    render(widget);
+    const std::uint64_t firstRound = widget.status().tiles.requested;
+    check(firstRound > 0, "the first paint asks for tiles");
+
+    // Long enough for the requests to time out and for the drain to fold the
+    // failures in, but well inside the 500 ms first retry.
+    pump(std::chrono::milliseconds(320));
+
+    const MapWidget::Status afterFailure = widget.status();
+    check(afterFailure.tiles.failed > 0, "and they fail with no server running");
+    check(afterFailure.tiles.backingOff > 0, "which puts them in backoff");
+
+    render(widget);
+    check(widget.status().tiles.requested == firstRound,
+          "so the next paint asks for NOTHING new while the backoff holds");
+
+    // Past the first retry, it must try again -- a map that gave up for good
+    // would stay blank after map_server finally came up.
+    pump(std::chrono::milliseconds(500));
+    render(widget);
+    check(widget.status().tiles.requested > firstRound,
+          "and once the backoff expires it asks again");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -395,6 +450,7 @@ int main(int argc, char** argv)
     test_the_widget_paints_offscreen();
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
+    test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
 
     spdlog::set_level(spdlog::level::info);
 

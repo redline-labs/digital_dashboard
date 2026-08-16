@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 
 namespace map_widget
 {
@@ -28,6 +29,23 @@ constexpr std::size_t kMaxCachedTiles = 256;
 // city queues thousands and every one of them is still wanted by nobody by the
 // time it lands.
 constexpr std::size_t kMaxInFlight = 32;
+
+// How long to wait before asking again for a tile whose request FAILED, and
+// the ceiling the doubling stops at. The first wait is deliberately short: the
+// common failure is map_server not being up yet when the dashboard starts, and
+// a driver should not wait 30 s for the map once it does come up.
+constexpr std::chrono::milliseconds kFirstRetry { 500 };
+constexpr std::chrono::milliseconds kMaxRetry { 30000 };
+
+std::chrono::milliseconds retryDelay(unsigned attempts)
+{
+    std::chrono::milliseconds delay = kFirstRetry;
+    for (unsigned i = 1; i < attempts && delay < kMaxRetry; ++i)
+    {
+        delay *= 2;
+    }
+    return std::min(delay, kMaxRetry);
+}
 
 using Client = pub_sub::ZenohAsyncClient<::MapTileRequest, ::MapTileResponse>;
 
@@ -46,11 +64,23 @@ TileSource::~TileSource() = default;
 
 void TileSource::request(const std::vector<TileId>& wanted)
 {
+    const auto now = std::chrono::steady_clock::now();
+
     for (const TileId& id : wanted)
     {
         if (mCache.contains(id))
         {
             continue;
+        }
+
+        if (const auto backoff = mBackoff.find(id); backoff != mBackoff.end())
+        {
+            if (now < backoff->second.retryAt)
+            {
+                continue;
+            }
+            // Due for another go. The entry stays until the retry succeeds, so
+            // a second failure doubles the wait rather than restarting it.
         }
 
         {
@@ -186,6 +216,10 @@ void TileSource::deliver(const TileId& id, CachedTile tile, bool absent, bool fa
         {
             mMailbox.emplace_back(id, std::move(tile));
         }
+        else if (failed)
+        {
+            mFailures.push_back(id);
+        }
     }
 
     // Outside the lock. The callback hops to the GUI thread and could, in
@@ -200,13 +234,27 @@ void TileSource::deliver(const TileId& id, CachedTile tile, bool absent, bool fa
 std::size_t TileSource::drain()
 {
     std::vector<std::pair<TileId, CachedTile>> arrived;
+    std::vector<TileId> failures;
     {
         const std::lock_guard<std::mutex> guard(mMutex);
         arrived.swap(mMailbox);
+        failures.swap(mFailures);
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    for (const TileId& id : failures)
+    {
+        Backoff& backoff = mBackoff[id];
+        ++backoff.attempts;
+        backoff.retryAt = now + retryDelay(backoff.attempts);
     }
 
     for (auto& [id, tile] : arrived)
     {
+        // Anything that arrived is working again, including the absent-tile
+        // answer -- that is the server talking, not a failure.
+        mBackoff.erase(id);
+
         // insert_or_assign, not insert: a tile re-fetched after eviction must
         // replace the old entry, and a duplicate reply must not push a second
         // eviction record for the same id.
@@ -250,6 +298,7 @@ TileSourceStats TileSource::stats() const
     TileSourceStats out = mStats;
     out.cached = mCache.size();
     out.inFlight = mInFlight.size();
+    out.backingOff = mBackoff.size();
     return out;
 }
 
@@ -267,6 +316,9 @@ void TileSource::clear()
 
     mCache.clear();
     mCacheOrder.clear();
+    // Cleared too: a new tileset is a different question, and the old one's
+    // failures say nothing about it.
+    mBackoff.clear();
 }
 
 } // namespace map_widget
