@@ -32,7 +32,7 @@ void Matcher::reset()
     mBeam.clear();
     mHavePrevious = false;
     mPreviousSegment = road_graph::kNoSegment;
-    ++mCounts.resets;
+    mResets.fetch_add(1, std::memory_order_relaxed);
 }
 
 double Matcher::sigmaFor(const Fix& fix) const
@@ -52,7 +52,7 @@ double Matcher::sigmaFor(const Fix& fix) const
 
 MatchResult Matcher::update(const Fix& fix)
 {
-    ++mCounts.fixes;
+    mFixes.fetch_add(1, std::memory_order_relaxed);
 
     MatchResult result;
     const double sigma = sigmaFor(fix);
@@ -78,7 +78,7 @@ MatchResult Matcher::update(const Fix& fix)
         // NORMAL: a car park, a private drive, a road that is not in the map.
         // The beam is dropped rather than carried, because the next fix has no
         // trustworthy predecessor to have come from.
-        ++mCounts.unmatched;
+        mUnmatched.fetch_add(1, std::memory_order_relaxed);
         mBeam.clear();
         mHavePrevious = true;
         mPreviousLat = fix.lat;
@@ -221,7 +221,7 @@ MatchResult Matcher::update(const Fix& fix)
     mPreviousLat = fix.lat;
     mPreviousLon = fix.lon;
     mPreviousSegment = winner.segment;
-    ++mCounts.matched;
+    mMatched.fetch_add(1, std::memory_order_relaxed);
 
     return result;
 }

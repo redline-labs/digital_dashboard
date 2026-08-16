@@ -89,9 +89,22 @@ void Services::onEpoch(const ::GsofEpoch::Reader& epoch)
     // ON A ZENOH RX THREAD. Must not block: the receiver keeps sending.
     const auto now = std::chrono::steady_clock::now();
 
-    if (mHaveFix)
+    // Under the lock because publishStatus() reads both from the main loop.
+    // Held only across the two loads and the two stores -- never across the
+    // match itself.
+    bool haveFix = false;
+    std::chrono::steady_clock::time_point lastFix {};
     {
-        const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastFix);
+        const std::lock_guard<std::mutex> lock(mMutex);
+        haveFix = mHaveFix;
+        lastFix = mLastFix;
+        mLastFix = now;
+        mHaveFix = true;
+    }
+
+    if (haveFix)
+    {
+        const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFix);
         if (gap.count() > mConfig.position.staleAfterMs)
         {
             // A gap in the stream. Carrying the beam across it would explain a
@@ -100,8 +113,6 @@ void Services::onEpoch(const ::GsofEpoch::Reader& epoch)
             mMatcher.reset();
         }
     }
-    mLastFix = now;
-    mHaveFix = true;
 
     Fix fix;
     fix.lat = road_graph::fromDegrees(epoch.getLatitudeDeg());
@@ -253,20 +264,23 @@ void Services::publishStatus()
     out.setFixesMatched(counts.matched);
     out.setFixesUnmatched(counts.unmatched);
 
+    // Grows without bound when the receiver stops, which is the signal that
+    // this node is fine and its input is not.
+    std::int64_t age = 0;
     {
         const std::lock_guard<std::mutex> lock(mMutex);
         out.setFixesReceived(mFixesReceived);
         out.setHorizonsPublished(mHorizonsPublished);
         out.setLastConfidence(mLastConfidence);
         out.setLastSigmaM(mLastSigmaM);
-    }
 
-    // Grows without bound when the receiver stops, which is the signal that
-    // this node is fine and its input is not.
-    const auto age = mHaveFix ? std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now() - mLastFix)
-                                    .count()
-                              : 0;
+        // Read here rather than after the lock: mLastFix is written on the RX
+        // thread on every fix.
+        age = mHaveFix ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - mLastFix)
+                             .count()
+                       : 0;
+    }
     out.setLastFixAgeMs(static_cast<std::uint64_t>(age));
 
     mStatus->put();

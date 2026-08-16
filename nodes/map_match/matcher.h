@@ -20,6 +20,7 @@
 #ifndef MAP_MATCH_MATCHER_H
 #define MAP_MATCH_MATCHER_H
 
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -105,6 +106,15 @@ class Matcher
     // forward would explain a jump across town as a very long detour.
     void reset();
 
+    // A SNAPSHOT, by value. update() runs on the zenoh RX thread and the node's
+    // status timer reads these from the main loop, so the counters are atomics
+    // and this hands back a copy -- returning a reference to them was a data
+    // race, and the neighbouring fields in Services were already under a mutex
+    // for exactly this reason.
+    //
+    // The four values are read independently, so a snapshot taken mid-update
+    // may show `fixes` incremented before `matched`. That is fine for a status
+    // topic and is not worth a lock on the matcher's hot path.
     struct Counts
     {
         std::uint64_t fixes { 0 };
@@ -113,7 +123,13 @@ class Matcher
         std::uint64_t resets { 0 };
     };
 
-    const Counts& counts() const { return mCounts; }
+    Counts counts() const
+    {
+        return Counts { mFixes.load(std::memory_order_relaxed),
+                        mMatched.load(std::memory_order_relaxed),
+                        mUnmatched.load(std::memory_order_relaxed),
+                        mResets.load(std::memory_order_relaxed) };
+    }
 
   private:
     struct Candidate
@@ -139,7 +155,10 @@ class Matcher
     road_graph::Coord mPreviousLon { 0 };
     road_graph::SegmentIndex mPreviousSegment { road_graph::kNoSegment };
 
-    Counts mCounts;
+    std::atomic<std::uint64_t> mFixes { 0 };
+    std::atomic<std::uint64_t> mMatched { 0 };
+    std::atomic<std::uint64_t> mUnmatched { 0 };
+    std::atomic<std::uint64_t> mResets { 0 };
 };
 
 } // namespace map_match

@@ -16,6 +16,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <type_traits>
+#include <atomic>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -495,6 +498,74 @@ void test_the_horizon_stops_at_a_fork()
     std::filesystem::remove(path);
 }
 
+// counts() must hand back a SNAPSHOT, not a reference into live state. The
+// node's status timer reads it from the main loop while update() runs on a
+// zenoh RX thread; a reference there was a data race on four plain uint64s.
+//
+// A compile-time check, because that is the half of this that a test can pin
+// deterministically -- the race itself needs a thread sanitizer to observe.
+static_assert(
+    std::is_same_v<decltype(std::declval<const map_match::Matcher&>().counts()),
+                   map_match::Matcher::Counts>,
+    "Matcher::counts() must return by value; a reference into the live counters is a race");
+
+void test_counts_stay_monotonic_while_another_thread_reads_them()
+{
+    // Not a proof of thread safety -- only a sanitizer gives that -- but it
+    // does catch a counter that goes backwards or lands on the wrong total,
+    // which is what a torn read would look like on the status topic.
+    const auto path = buildStraightRoad("mm_counts_concurrent.graph");
+    auto graph = road_graph::Graph::open(path);
+    if (!graph)
+    {
+        check(false, "the test graph opens");
+        std::filesystem::remove(path);
+        return;
+    }
+
+    map_match::MatcherConfig config;
+    map_match::Matcher matcher(*graph, config);
+
+    constexpr int kFixes = 2000;
+    std::atomic<bool> reading { true };
+    std::atomic<bool> wentBackwards { false };
+
+    std::thread reader([&] {
+        map_match::Matcher::Counts previous;
+        while (reading.load(std::memory_order_relaxed))
+        {
+            const map_match::Matcher::Counts now = matcher.counts();
+            if (now.fixes < previous.fixes || now.matched < previous.matched ||
+                now.unmatched < previous.unmatched || now.resets < previous.resets)
+            {
+                wentBackwards.store(true, std::memory_order_relaxed);
+            }
+            previous = now;
+        }
+    });
+
+    for (int i = 0; i < kFixes; ++i)
+    {
+        map_match::Fix fix;
+        fix.lat = kLat;
+        fix.lon = static_cast<road_graph::Coord>(kLon + i);
+        matcher.update(fix);
+    }
+
+    reading.store(false, std::memory_order_relaxed);
+    reader.join();
+
+    check(!wentBackwards.load(std::memory_order_relaxed),
+          "a concurrent reader never sees a counter go backwards");
+
+    const map_match::Matcher::Counts final = matcher.counts();
+    check(final.fixes == kFixes, "and every fix is counted exactly once");
+    check(final.matched + final.unmatched == kFixes,
+          "with each one either matched or unmatched, never both or neither");
+
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main()
@@ -503,6 +574,7 @@ int main()
     spdlog::set_pattern("[%^%l%$] %v");
 
     test_a_drive_along_a_road_stays_on_it();
+    test_counts_stay_monotonic_while_another_thread_reads_them();
     test_an_rtk_sigma_is_not_believed_completely();
     test_a_poor_fix_widens_the_search();
     test_heading_decides_between_parallel_roads();

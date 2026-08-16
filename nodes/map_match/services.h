@@ -3,9 +3,10 @@
 // The position subscription and the two publishers.
 //
 // THREADING: the position callback runs on a zenoh RX thread and the status
-// timer on the main loop. The matcher is touched only from the callback; the
-// counters the status reads are guarded. Nothing here blocks -- the receiver
-// keeps sending while a callback runs.
+// timer on the main loop. The matcher's state is touched only from the
+// callback, and everything the status reads is either behind mMutex or atomic
+// -- see Matcher::counts(). Nothing here blocks: the receiver keeps sending
+// while a callback runs, so the lock is never held across a match or a put.
 #ifndef MAP_MATCH_SERVICES_H
 #define MAP_MATCH_SERVICES_H
 
@@ -50,11 +51,14 @@ class Services
     std::uint32_t mSequence { 0 };
     std::uint32_t mEpoch { 0 };
 
-    std::chrono::steady_clock::time_point mLastFix {};
+    // RX thread only: publishHorizon() is called from onEpoch() and nowhere
+    // else, so these need no guard.
     std::chrono::steady_clock::time_point mLastPublish {};
-    bool mHaveFix { false };
 
     mutable std::mutex mMutex;
+    // Written on the RX thread, read by publishStatus() on the main loop.
+    std::chrono::steady_clock::time_point mLastFix {};
+    bool mHaveFix { false };
     std::uint64_t mFixesReceived { 0 };
     std::uint64_t mHorizonsPublished { 0 };
     std::uint8_t mLastConfidence { 0 };
