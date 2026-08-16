@@ -276,7 +276,8 @@ bool GpuRenderer::batchesChanged(const std::vector<GpuBatch>& batches) const
     return false;
 }
 
-bool GpuRenderer::upload(const std::vector<GpuBatch>& batches)
+bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
+                                std::vector<MapVertex>& flat)
 {
     mTileBaseVertex.clear();
     mUploadedIds.clear();
@@ -317,7 +318,7 @@ bool GpuRenderer::upload(const std::vector<GpuBatch>& batches)
         mVertexCapacity = capacity;
     }
 
-    std::vector<MapVertex> flat;
+    flat.clear();
     flat.reserve(total);
     for (const GpuBatch& batch : batches)
     {
@@ -328,17 +329,6 @@ bool GpuRenderer::upload(const std::vector<GpuBatch>& batches)
         flat.insert(flat.end(), batch.geometry->vertices.begin(), batch.geometry->vertices.end());
     }
 
-    QRhiCommandBuffer* cb = nullptr;
-    if (mRhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess)
-    {
-        return false;
-    }
-    QRhiResourceUpdateBatch* updates = mRhi->nextResourceUpdateBatch();
-    updates->uploadStaticBuffer(mVertexBuffer.get(), 0, needBytes, flat.data());
-    cb->resourceUpdate(updates);
-    mRhi->endOffscreenFrame();
-
-    ++mStats.uploads;
     return true;
 }
 
@@ -376,7 +366,13 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
     const std::vector<GpuBatch>& batches = clamped.empty() ? requested : clamped;
 
-    if (batchesChanged(batches) && !upload(batches))
+    // Prepared, not submitted. The vertices ride in the same resource update
+    // batch as the uniforms below -- uploading them used to open and close an
+    // offscreen frame of its own, so a frame that brought in a new tile cost
+    // two submissions and two GPU waits instead of one.
+    std::vector<MapVertex> flat;
+    const bool uploading = batchesChanged(batches);
+    if (uploading && !prepareUpload(batches, flat))
     {
         return kNull;
     }
@@ -437,6 +433,12 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
 
     QRhiResourceUpdateBatch* updates = mRhi->nextResourceUpdateBatch();
+    if (uploading && !flat.empty())
+    {
+        updates->uploadStaticBuffer(mVertexBuffer.get(), 0,
+                                    quint32(flat.size() * sizeof(MapVertex)), flat.data());
+        ++mStats.uploads;
+    }
     if (!batches.empty())
     {
         updates->updateDynamicBuffer(mUniformBuffer.get(), 0,

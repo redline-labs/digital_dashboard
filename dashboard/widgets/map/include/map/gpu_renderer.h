@@ -112,7 +112,11 @@ class GpuRenderer
     bool ensureTarget(const QSize& size);
     // True when `batches` differ from what is already on the GPU.
     bool batchesChanged(const std::vector<GpuBatch>& batches) const;
-    bool upload(const std::vector<GpuBatch>& batches);
+    // Works out the per-tile offsets, grows the vertex buffer if it must, and
+    // flattens the geometry into `flat`. Does NOT submit: the caller puts the
+    // upload in the same resource update batch as the frame's uniforms, so a
+    // frame that brings in a new tile is still one submission.
+    bool prepareUpload(const std::vector<GpuBatch>& batches, std::vector<MapVertex>& flat);
 
 #if MAP_HAS_VULKAN
     // Declared BEFORE mRhi so it outlives it: members are destroyed in reverse
