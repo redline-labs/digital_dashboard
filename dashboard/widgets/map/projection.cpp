@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace map_widget
 {
@@ -289,6 +290,78 @@ void Projection::sortCentreOutward(std::vector<TileId>& tiles) const
         const double by = (static_cast<double>(b.y) + 0.5) - centreY;
         return ((ax * ax) + (ay * ay)) < ((bx * bx) + (by * by));
     });
+}
+
+std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
+                                    const std::vector<bool>& have,
+                                    const std::function<bool(const TileId&)>& drawable,
+                                    std::size_t budget)
+{
+    std::vector<TileId> out;
+    if (budget == 0 || wanted.size() != have.size() || !drawable)
+    {
+        return out;
+    }
+
+    std::unordered_set<TileId, TileIdHash> seen;
+
+    for (std::size_t i = 0; i < wanted.size() && out.size() < budget; ++i)
+    {
+        if (have[i])
+        {
+            // The real thing is here. Nothing to stand in for, and adding one
+            // anyway would draw the same ground twice for no reason.
+            continue;
+        }
+
+        const TileId& want = wanted[i];
+
+        // Up first, nearest ancestor wins: it is the least magnified of the
+        // candidates and covers this tile's siblings too, so four missing tiles
+        // usually cost one extra draw call between them.
+        bool substituted = false;
+        for (int up = 1; up <= kMaxSubstituteLevelsUp && up <= int(want.z); ++up)
+        {
+            const TileId ancestor { static_cast<std::uint8_t>(int(want.z) - up),
+                                    want.x >> up, want.y >> up };
+            if (!drawable(ancestor))
+            {
+                continue;
+            }
+            if (seen.insert(ancestor).second)
+            {
+                out.push_back(ancestor);
+            }
+            substituted = true;
+            break;
+        }
+        if (substituted)
+        {
+            continue;
+        }
+
+        // Then one level down. Only one: two levels is sixteen tiles for one,
+        // which spends the frame's whole budget on stand-ins, and a zoom
+        // gesture moves a level at a time anyway.
+        if (want.z >= kMaxTileZoom)
+        {
+            continue;
+        }
+        for (std::uint32_t dy = 0; dy < 2 && out.size() < budget; ++dy)
+        {
+            for (std::uint32_t dx = 0; dx < 2 && out.size() < budget; ++dx)
+            {
+                const TileId child { static_cast<std::uint8_t>(want.z + 1),
+                                     (want.x << 1) + dx, (want.y << 1) + dy };
+                if (drawable(child) && seen.insert(child).second)
+                {
+                    out.push_back(child);
+                }
+            }
+        }
+    }
+
+    return out;
 }
 
 } // namespace map_widget

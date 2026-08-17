@@ -18,6 +18,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <functional>
+#include <unordered_set>
 #include <cmath>
 #include <string>
 
@@ -44,7 +46,10 @@ using map_widget::Camera;
 using map_widget::Coordinate;
 using map_widget::Projection;
 using map_widget::ScreenPoint;
+using map_widget::kMaxTileZoom;
+using map_widget::substituteTiles;
 using map_widget::TileId;
+using map_widget::TileIdHash;
 using map_widget::WorldPoint;
 
 constexpr Coordinate kIrvine { 33.6865966, -117.8557874 };
@@ -266,6 +271,199 @@ void test_the_device_pixel_ratio_is_carried_and_not_applied()
     // map.
     check(retina.visibleTiles(14, 1) == logical.visibleTiles(14, 1),
           "and the same screen wants exactly the same tiles at either ratio");
+}
+
+// ---------------------------------------------------- standing in for a tile
+
+// A cache stub: whatever ids are put in it are "drawable", nothing else is.
+struct FakeCache
+{
+    std::unordered_set<TileId, TileIdHash> have;
+
+    void add(std::uint8_t z, std::uint32_t x, std::uint32_t y) { have.insert(TileId { z, x, y }); }
+
+    std::function<bool(const TileId&)> predicate() const
+    {
+        return [this](const TileId& id) { return have.contains(id); };
+    }
+};
+
+bool contains(const std::vector<TileId>& tiles, std::uint8_t z, std::uint32_t x, std::uint32_t y)
+{
+    return std::find(tiles.begin(), tiles.end(), TileId { z, x, y }) != tiles.end();
+}
+
+void test_nothing_stands_in_for_a_tile_that_arrived()
+{
+    // The whole point is filling GAPS. Drawing a stand-in under a tile that is
+    // already there is the same ground drawn twice for nothing.
+    const std::vector<TileId> wanted { { 14, 2828, 6562 }, { 14, 2829, 6562 } };
+    FakeCache cache;
+    cache.add(13, 1414, 3281);
+
+    const auto out = substituteTiles(wanted, { true, true }, cache.predicate(), 64);
+    check(out.empty(), "a fully arrived set needs no stand-ins");
+}
+
+void test_one_ancestor_covers_a_tile_and_its_siblings()
+{
+    // Four children of one parent, all missing. The economy of preferring
+    // ancestors is exactly this: one extra draw call, not four.
+    const std::vector<TileId> wanted {
+        { 14, 2828, 6562 }, { 14, 2829, 6562 }, { 14, 2828, 6563 }, { 14, 2829, 6563 }
+    };
+    FakeCache cache;
+    cache.add(13, 1414, 3281);
+
+    const auto out = substituteTiles(wanted, { false, false, false, false }, cache.predicate(), 64);
+    check(out.size() == 1, "four missing siblings share one ancestor, got " +
+                               std::to_string(out.size()));
+    check(contains(out, 13, 1414, 3281), "and it is their parent");
+}
+
+void test_the_nearest_ancestor_wins()
+{
+    // The nearest is the least magnified. Taking a further one when a nearer is
+    // cached would throw away detail that was already in hand.
+    const std::vector<TileId> wanted { { 14, 2828, 6562 } };
+    FakeCache cache;
+    cache.add(13, 1414, 3281);
+    cache.add(12, 707, 1640);
+
+    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    check(out.size() == 1 && contains(out, 13, 1414, 3281),
+          "the parent is used rather than the grandparent");
+}
+
+void test_a_deeper_cache_stands_in_when_there_is_no_ancestor()
+{
+    // The zoom-OUT case: what you have is deeper than what you asked for.
+    // Children PARTITION their parent, so unlike an ancestor they overlay
+    // nothing and all four are worth drawing.
+    const std::vector<TileId> wanted { { 13, 1414, 3281 } };
+    FakeCache cache;
+    cache.add(14, 2828, 6562);
+    cache.add(14, 2829, 6562);
+    cache.add(14, 2828, 6563);
+    cache.add(14, 2829, 6563);
+
+    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    check(out.size() == 4, "all four children stand in, got " + std::to_string(out.size()));
+    check(contains(out, 14, 2828, 6562) && contains(out, 14, 2829, 6563),
+          "and they are the right ones");
+}
+
+void test_a_partial_deeper_cache_still_helps()
+{
+    // Half a map beats none: the user asked for exactly this -- "zoomed out and
+    // only covering a portion of the window".
+    const std::vector<TileId> wanted { { 13, 1414, 3281 } };
+    FakeCache cache;
+    cache.add(14, 2828, 6562);
+
+    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    check(out.size() == 1 && contains(out, 14, 2828, 6562),
+          "the one cached child is drawn rather than nothing");
+}
+
+void test_an_ancestor_beats_descendants()
+{
+    // One draw call against four, for the same ground.
+    const std::vector<TileId> wanted { { 13, 1414, 3281 } };
+    FakeCache cache;
+    cache.add(12, 707, 1640);
+    cache.add(14, 2828, 6562);
+    cache.add(14, 2829, 6562);
+
+    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    check(out.size() == 1 && contains(out, 12, 707, 1640),
+          "the ancestor is preferred, got " + std::to_string(out.size()) + " tiles");
+}
+
+void test_the_budget_is_not_exceeded()
+{
+    // The renderer draws a bounded number of tiles and truncates the TAIL, and
+    // the real tiles are appended after these. A stand-in that overran the
+    // budget would push a tile that actually arrived off the frame.
+    //
+    // Run down BOTH paths: the ancestor walk and the descendant walk count
+    // against the same budget, and a check on only one of them bounds only
+    // half the cases.
+    for (const bool viaAncestor : { true, false })
+    {
+        std::vector<TileId> wanted;
+        std::vector<bool> have;
+        FakeCache cache;
+        for (std::uint32_t i = 0; i < 40; ++i)
+        {
+            // Far enough apart that no two share a parent, so each needs a
+            // stand-in of its own and the cap is what bounds the result.
+            const std::uint32_t x = 1000 + (i * 64);
+            wanted.push_back(TileId { 13, x, 3281 });
+            have.push_back(false);
+            if (viaAncestor)
+            {
+                cache.add(12, x / 2, 1640);
+            }
+            else
+            {
+                cache.add(14, x * 2, 6562);
+                cache.add(14, (x * 2) + 1, 6562);
+                cache.add(14, x * 2, 6563);
+                cache.add(14, (x * 2) + 1, 6563);
+            }
+        }
+
+        const std::string path = viaAncestor ? " (ancestors)" : " (descendants)";
+        const auto out = substituteTiles(wanted, have, cache.predicate(), 7);
+        check(out.size() <= 7, "the cap holds" + path + ", got " + std::to_string(out.size()));
+        check(!out.empty(), "and it did not give up entirely" + path);
+
+        check(substituteTiles(wanted, have, cache.predicate(), 0).empty(),
+              "a budget of zero yields nothing rather than one" + path);
+    }
+}
+
+void test_the_edges_of_the_pyramid_do_not_overflow()
+{
+    // Against a cache that says YES TO EVERYTHING, so the guards are what stops
+    // the walk rather than a lookup that happens to miss. Without that this
+    // passes whether or not the guards are there: an unguarded walk above z0
+    // computes z = 255 and any real cache simply says no to it.
+    //
+    // The invariant is not "nothing is proposed" -- at z0 the descendants are a
+    // perfectly good answer, and at the deepest level the ancestors are -- but
+    // that every id proposed names a level that EXISTS.
+    const auto anything = [](const TileId&) { return true; };
+
+    for (const TileId& id : substituteTiles({ TileId { 0, 0, 0 } }, { false }, anything, 64))
+    {
+        check(id.z <= kMaxTileZoom,
+              "nothing above z0 is proposed -- an unguarded walk up wraps to z255, got z" +
+                  std::to_string(id.z));
+    }
+
+    // The descendant guard needs a cache that says no to every ANCESTOR, or the
+    // walk up succeeds at the first try and the code below it never runs.
+    const auto onlyImpossiblyDeep = [](const TileId& id) { return id.z > kMaxTileZoom; };
+    for (const TileId& id :
+         substituteTiles({ TileId { kMaxTileZoom, 5, 5 } }, { false }, onlyImpossiblyDeep, 64))
+    {
+        check(id.z <= kMaxTileZoom,
+              "and nothing deeper than the projection goes, got z" + std::to_string(id.z));
+    }
+}
+
+void test_a_mismatched_call_is_refused_rather_than_read_off_the_end()
+{
+    FakeCache cache;
+    cache.add(13, 1414, 3281);
+    const std::vector<TileId> wanted { { 14, 2828, 6562 }, { 14, 2829, 6562 } };
+
+    check(substituteTiles(wanted, { false }, cache.predicate(), 64).empty(),
+          "a have[] of the wrong length yields nothing rather than an overrun");
+    check(substituteTiles(wanted, { false, false }, nullptr, 64).empty(),
+          "and so does a missing cache predicate");
 }
 
 void test_visible_tiles_cover_the_viewport()
@@ -517,6 +715,16 @@ int main()
 
     test_tile_zoom_is_rounded_and_clamped();
     test_the_device_pixel_ratio_is_carried_and_not_applied();
+
+    test_nothing_stands_in_for_a_tile_that_arrived();
+    test_one_ancestor_covers_a_tile_and_its_siblings();
+    test_the_nearest_ancestor_wins();
+    test_a_deeper_cache_stands_in_when_there_is_no_ancestor();
+    test_a_partial_deeper_cache_still_helps();
+    test_an_ancestor_beats_descendants();
+    test_the_budget_is_not_exceeded();
+    test_the_edges_of_the_pyramid_do_not_overflow();
+    test_a_mismatched_call_is_refused_rather_than_read_off_the_end();
     test_visible_tiles_cover_the_viewport();
     test_the_visible_order_does_not_move_with_the_camera();
     test_the_margined_walk_agrees_with_two_separate_ones();

@@ -394,6 +394,61 @@ interface has to be told about. It paints itself in the style's *label* colours
 mouse; the interaction tests post `QMouseEvent`/`QWheelEvent` straight at the
 widget, which reaches the same handlers Qt would.
 
+## Not blanking while tiles are in flight
+
+Drawing only what has arrived is what makes a map flash its background on every
+zoom, and it reads as a fault rather than as loading. The data to avoid it is
+usually already in hand: `TileSource`'s cache is keyed by `TileId` **across
+zooms** and is never cleared on a camera change, so zooming in leaves the
+shallower tiles you came from and zooming out leaves the deeper ones. And a tile
+drawn at a zoom other than its own needs no special handling at all —
+`tileOrigin()` and `tileScreenSize()` place it from its own id.
+
+So each paint, `substituteTiles()` asks the cache what can go **under** the gaps:
+
+- **Ancestors first**, nearest wins. One covers a tile and its three siblings,
+  so four missing tiles usually cost one extra draw call between them. Measured
+  against the real archive: six missing z12 tiles were covered by **two** z11
+  ancestors.
+- **Then one level of descendants.** They partition their parent, so unlike an
+  ancestor they overlay nothing. This is the zoom-*out* case, and one level is
+  the cap because two is sixteen tiles for one — a zoom gesture moves a level at
+  a time anyway.
+
+Stand-ins go **first** in the batch list, so within each layer pass a real tile
+covers its own ground. Where an ancestor spans a tile that *did* arrive they
+overdraw, which is harmless: an ancestor is the same geography more simply
+drawn, so the two coincide.
+
+Three things worth knowing:
+
+- **Stand-ins label too, but only after every real tile**, and that order is the
+  whole trick. Leaving them out of the label pass — the first thing tried — made
+  the text blink out for the frames a zoom was in flight while the geometry
+  underneath stayed, which is a worse artefact than the blank map this was meant
+  to fix. Duplicates take care of themselves: a place named by both an ancestor
+  and the real tile lands on the same pixels, and `paintLabels()` rejects a
+  candidate colliding with one already placed, so real tiles going in first
+  decides which wins. Measured through a z11→z12 transition: 18 labels during,
+  18 after, in the same positions.
+- **The diagnostic caption knows about them.** `paintDiagnostic()` explains a
+  map with *nothing* on it, so it tests `tilesDrawn` **and** `tilesStandIn` —
+  without the second it captions a perfectly good stand-in frame with "No
+  coverage here in tileset 'socal'", which is a line of text flashing over
+  visible roads.
+- **It is budgeted.** The renderer draws at most `kMaxTilesPerFrame` and
+  truncates the *tail*, where the real tiles are, so stand-ins are capped at
+  what is left over. `status().tilesStandIn` reports how many were used; a
+  number that stays non-zero means tiles are not arriving.
+- **Panning at a constant zoom is not covered**, and cannot be by this
+  mechanism: the leading edge's ancestor is only cached if you happened to view
+  that ground at a shallower zoom. The one-tile prefetch ring is what covers a
+  pan.
+
+Zooming *in* past the archive never produces a gap at all, for a different
+reason — `tileZoom()` clamps to what the archive holds, so the tiles are already
+the ones on screen, just magnified.
+
 ## Who decides the zoom range
 
 Two different questions, and the widget stopped conflating them:

@@ -401,6 +401,13 @@ std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted) con
     return out;
 }
 
+bool TileSource::drawable(const TileId& id) const
+{
+    const auto found = mCache.find(id);
+    return found != mCache.end() && found->second.geometry &&
+           !found->second.geometry->vertices.empty();
+}
+
 std::optional<TileSource::ZoomRange> TileSource::archiveZoomRange() const
 {
     const std::lock_guard<std::mutex> guard(mMutex);

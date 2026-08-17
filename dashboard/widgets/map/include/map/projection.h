@@ -29,6 +29,7 @@
 #define MAP_PROJECTION_H
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace map_widget
@@ -224,6 +225,42 @@ class Projection
     double mSin { 0.0 };
     bool mRotated { false };
 };
+
+// ------------------------------------------------------- standing in for a tile
+
+// How many levels up substituteTiles() will look for a stand-in.
+//
+// Five is about four thousand times magnified, past which an ancestor is a
+// coloured smear rather than a map and is worse than the background it would
+// replace.
+inline constexpr int kMaxSubstituteLevelsUp = 5;
+
+// What to draw UNDER `wanted` while some of it is still in flight.
+//
+// Drawing only what has arrived is what makes a map flash its background on
+// every zoom, and it reads as a fault rather than as loading. The data to avoid
+// that is usually already in hand: a tile cache keyed across zooms still holds
+// the shallower tiles you zoomed in from and the deeper ones you zoomed out of,
+// and a tile drawn at a zoom other than its own needs no special handling --
+// tileOrigin() and tileScreenSize() place it correctly from its own id.
+//
+// `have[i]` says whether wanted[i] has arrived. `drawable` answers whether some
+// OTHER tile is cached and has geometry worth drawing -- not the same question
+// as "is it cached", because an absent tile is cached too, with nothing in it,
+// so that it is not asked for again.
+//
+// Ancestors are preferred over descendants: one covers a tile and its three
+// siblings, so it is one draw call for four. Descendants are the zoom-OUT case,
+// and they PARTITION their parent, so unlike an ancestor they overlay nothing.
+//
+// Deduplicated, and capped at `budget` because the renderer draws a bounded
+// number of tiles per frame and truncates the tail -- the real tiles must not
+// lose their slots to stand-ins. What is dropped when the cap bites is the end
+// of the row-major order, i.e. the bottom right of the viewport.
+std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
+                                    const std::vector<bool>& have,
+                                    const std::function<bool(const TileId&)>& drawable,
+                                    std::size_t budget);
 
 } // namespace map_widget
 

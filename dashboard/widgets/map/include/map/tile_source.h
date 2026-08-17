@@ -127,6 +127,15 @@ class TileSource
     // the answer is zero.
     std::size_t drain();
 
+    // Cached AND carrying geometry worth drawing.
+    //
+    // Not the same question as "is it cached": an ABSENT tile is cached too,
+    // with nothing in it, so that it is not asked for again. As a stand-in for
+    // some other tile it would occupy a draw slot and paint nothing.
+    //
+    // GUI thread only, like ready() -- it reads the same cache.
+    bool drawable(const TileId& id) const;
+
     TileSourceStats stats() const;
 
     // The zoom levels the archive actually holds, as the server reported them.

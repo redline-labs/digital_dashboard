@@ -32,19 +32,6 @@ constexpr quint32 kUniformBlockSize = 80;
 // Refuse absurd viewports rather than trying to allocate for them.
 constexpr int kMaxDimension = 8192;
 
-// How many tiles one frame may draw. The uniform buffer holds one block per
-// tile and is allocated ONCE at this size, because the graphics pipeline holds
-// a pointer to the shader resource bindings and the bindings hold a pointer to
-// the buffer -- so growing the buffer later means destroying an object the
-// pipeline still refers to, and the symptom of that is a frame that draws
-// nothing at all while every draw call reports success.
-//
-// A 3840x2160 viewport at 512 px tiles needs 40, and 70 with the prefetch ring,
-// so this is roughly triple the worst real case. At 256 bytes of stride it is
-// 48 KB, which also keeps it under the 64 KB uniform buffer limit that the
-// stricter backends impose.
-constexpr std::size_t kMaxTilesPerFrame = 192;
-
 // The ratio this frame will actually be rendered at: the screen's, unless the
 // viewport is wide enough that the device-pixel texture would cross
 // kMaxDimension.
@@ -146,7 +133,7 @@ bool GpuRenderer::initialise()
     mSampleCount = counts.contains(4) ? 4 : (counts.contains(2) ? 2 : 1);
     mStats.sampleCount = mSampleCount;
 
-    // Allocated once, here, and never replaced -- see kMaxTilesPerFrame. Both
+    // Allocated once, here, and never replaced -- see the header. Both
     // objects outlive every pipeline built against them, which is the whole
     // point of doing it before the first ensureTarget().
     mUniformBuffer.reset(mRhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer,

@@ -85,6 +85,11 @@ class MapWidget : public QWidget
         map_widget::TileSourceStats tiles;
         int tilesVisible { 0 };
         int tilesDrawn { 0 };
+        // Cached tiles from another zoom level drawn under the gaps while the
+        // real ones are in flight. Non-zero during a zoom or a pan and back to
+        // zero once the frame has settled; a number that STAYS non-zero means
+        // tiles are not arriving.
+        int tilesStandIn { 0 };
         int labelsPlaced { 0 };
         bool hasPosition { false };
         // False when no QRhi backend could be created. Hard failure: there is
@@ -220,6 +225,7 @@ class MapWidget : public QWidget
 
     // Written by paintEvent, read by status(). Both on the GUI thread.
     int mLastTilesDrawn { 0 };
+    int mLastTilesStandIn { 0 };
     int mLastLabelsPlaced { 0 };
 
     dashboard::ExpressionSubscriptionPtr<double> mLatitudeSubscription;

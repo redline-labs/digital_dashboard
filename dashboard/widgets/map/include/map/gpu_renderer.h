@@ -72,6 +72,23 @@ struct GpuBatch
 class GpuRenderer
 {
   public:
+    // How many tiles one frame may draw. The uniform buffer holds one block per
+    // tile and is allocated ONCE at this size, because the graphics pipeline
+    // holds a pointer to the shader resource bindings and the bindings hold a
+    // pointer to the buffer -- so growing the buffer later means destroying an
+    // object the pipeline still refers to, and the symptom of that is a frame
+    // that draws nothing at all while every draw call reports success.
+    //
+    // A 3840x2160 viewport at 512 px tiles needs 40, and 70 with the prefetch
+    // ring, so this is roughly triple the worst real case. At 256 bytes of
+    // stride it is 48 KB, which also keeps it under the 64 KB uniform buffer
+    // limit that the stricter backends impose.
+    //
+    // Public because the widget budgets against it: a frame that spends this on
+    // stand-in tiles would have its real ones truncated away, and truncation
+    // takes the tail.
+    static constexpr std::size_t kMaxTilesPerFrame = 192;
+
     // Null when no backend could be created. That is a hard failure -- there is
     // no CPU fallback -- but it must not be a crash: the widget reports it.
     static std::unique_ptr<GpuRenderer> create();

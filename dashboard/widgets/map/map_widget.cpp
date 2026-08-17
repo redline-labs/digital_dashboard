@@ -470,6 +470,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     {
         mVisible.clear();
         mLastTilesDrawn = 0;
+        mLastTilesStandIn = 0;
         mLastLabelsPlaced = 0;
         painter.fillRect(rect(), background);
         return;
@@ -485,10 +486,39 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     // --- 1. geometry, on the GPU -------------------------------------------
 
+    // What the cache can put under the gaps while the real tiles are in flight.
+    // See substituteTiles(): without it a zoom blanks the map to its background
+    // for as long as the round trip takes, which reads as a fault.
+    std::vector<bool> have(mVisible.size());
+    for (std::size_t i = 0; i < mVisible.size(); ++i)
+    {
+        have[i] = static_cast<bool>(tiles[i]);
+    }
+    const std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > mVisible.size()
+                                   ? map_widget::GpuRenderer::kMaxTilesPerFrame - mVisible.size()
+                                   : 0;
+    const std::vector<map_widget::TileId> standIns = map_widget::substituteTiles(
+        mVisible, have, [this](const map_widget::TileId& id) { return mTiles->drawable(id); },
+        budget);
+    const std::vector<map_widget::CachedTile> standInTiles = mTiles->ready(standIns);
+
     std::vector<map_widget::GpuBatch> batches;
     std::vector<map_widget::LabelTile> labelTiles;
-    batches.reserve(mVisible.size());
+    batches.reserve(mVisible.size() + standIns.size());
     labelTiles.reserve(mVisible.size());
+
+    // Stand-ins FIRST, so they are drawn UNDER within each layer pass and a
+    // real tile that has arrived covers its own ground. They overdraw where an
+    // ancestor spans a tile that did arrive, which is harmless: an ancestor is
+    // the same geography more simply drawn, so the two coincide.
+    for (std::size_t i = 0; i < standIns.size(); ++i)
+    {
+        if (standInTiles[i])
+        {
+            batches.push_back(map_widget::GpuBatch { standIns[i], standInTiles[i].geometry });
+        }
+    }
+    mLastTilesStandIn = static_cast<int>(batches.size());
 
     for (std::size_t i = 0; i < mVisible.size(); ++i)
     {
@@ -499,7 +529,25 @@ void MapWidget::paintEvent(QPaintEvent* event)
         batches.push_back(map_widget::GpuBatch { mVisible[i], tiles[i].geometry });
         labelTiles.push_back(map_widget::LabelTile { mVisible[i], tiles[i].tile });
     }
-    mLastTilesDrawn = static_cast<int>(batches.size());
+    mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
+
+    // Stand-ins label too, but only AFTER every real tile, and that order is
+    // the whole trick. Without them the text blinks out for the frames a zoom
+    // is in flight while the geometry underneath stays -- which is a worse
+    // artefact than the blank map this was all meant to fix.
+    //
+    // Duplicates take care of themselves: a place named by both an ancestor and
+    // the real tile lands at the SAME geographic point and so the same pixels,
+    // and paintLabels() rejects a candidate that collides with one already
+    // placed. Real tiles going in first is what decides which of the two wins.
+    labelTiles.reserve(labelTiles.size() + standIns.size());
+    for (std::size_t i = 0; i < standIns.size(); ++i)
+    {
+        if (standInTiles[i])
+        {
+            labelTiles.push_back(map_widget::LabelTile { standIns[i], standInTiles[i].tile });
+        }
+    }
 
     if (mGpu)
     {
@@ -552,8 +600,12 @@ void MapWidget::paintDiagnostic(QPainter& painter)
     {
         message = QStringLiteral("No GPU backend — map geometry cannot be drawn");
     }
-    else if (mLastTilesDrawn == 0)
+    else if (mLastTilesDrawn == 0 && mLastTilesStandIn == 0)
     {
+        // Both, because this exists to explain a map with NOTHING on it. A
+        // frame carrying stand-ins is a map -- older and coarser, but a map --
+        // and captioning it "no coverage here" over the top of visible roads
+        // is worse than saying nothing at all.
         const map_widget::TileSourceStats sourceStats = mTiles->stats();
 
         if (sourceStats.requested == 0)
@@ -674,6 +726,7 @@ MapWidget::Status MapWidget::status() const
     }
     out.tilesVisible = static_cast<int>(mVisible.size());
     out.tilesDrawn = mLastTilesDrawn;
+    out.tilesStandIn = mLastTilesStandIn;
     out.labelsPlaced = mLastLabelsPlaced;
     out.hasPosition = hasPosition();
     out.camera = camera();
