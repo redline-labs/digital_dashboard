@@ -47,9 +47,11 @@ void setBlob(capnp::Data::Builder builder, const std::vector<std::uint8_t>& byte
 
 } // namespace
 
-Services::Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphRegistry& graphs) :
+Services::Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphRegistry& graphs,
+                   TracksetRegistry& tracksets) :
     mTilesets(tilesets),
     mGraphs(graphs),
+    mTracksets(tracksets),
     mAssets(config.assets.root, config.assets.maxBytes)
 {
     mStatus.emplace(config.services.statusKey);
@@ -92,6 +94,20 @@ Services::Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphReg
                               handleRoute(request, response);
                           });
 
+    mTrackCatalogService.emplace(config.services.trackCatalogKey,
+                                 [this](const ::MapTrackCatalogRequest::Reader& request,
+                                        ::MapTrackCatalogResponse::Builder& response) {
+                                     handleTrackCatalog(request, response);
+                                 });
+
+    mTrackDetailService.emplace(config.services.trackDetailKey,
+                                [this](const ::MapTrackDetailRequest::Reader& request,
+                                       ::MapTrackDetailResponse::Builder& response) {
+                                    handleTrackDetail(request, response);
+                                });
+
+    SPDLOG_INFO("[node] track catalog on '{}', track detail on '{}'",
+                config.services.trackCatalogKey, config.services.trackDetailKey);
     SPDLOG_INFO("[node] nearest on '{}', route on '{}', graph info on '{}'",
                 config.services.nearestKey, config.services.routeKey,
                 config.services.graphInfoKey);
@@ -662,6 +678,293 @@ void Services::handleRoute(const MapRouteRequest::Reader& request,
     for (unsigned i = 0; i < drawn.segmentStarts.size(); ++i)
     {
         starts.set(i, drawn.segmentStarts[i]);
+    }
+}
+
+// ============================================================================
+// Race tracks
+// ============================================================================
+
+namespace
+{
+
+::MapTrackQuality qualityOf(track_store::Quality quality)
+{
+    // Written out rather than static_cast so -Wswitch-enum catches an
+    // enumerant added on one side and not the other. Same argument as
+    // libs/map_wire: the two vocabularies are allowed to drift only
+    // deliberately.
+    switch (quality)
+    {
+        case track_store::Quality::Unknown:
+            return ::MapTrackQuality::UNKNOWN;
+        case track_store::Quality::Ok:
+            return ::MapTrackQuality::OK;
+        case track_store::Quality::SeamNotFound:
+            return ::MapTrackQuality::SEAM_NOT_FOUND;
+        case track_store::Quality::MultipleLoops:
+            return ::MapTrackQuality::MULTIPLE_LOOPS;
+        case track_store::Quality::WidthOutOfRange:
+            return ::MapTrackQuality::WIDTH_OUT_OF_RANGE;
+        case track_store::Quality::LengthMismatch:
+            return ::MapTrackQuality::LENGTH_MISMATCH;
+        case track_store::Quality::SourceLengthImplausible:
+            return ::MapTrackQuality::SOURCE_LENGTH_IMPLAUSIBLE;
+        case track_store::Quality::Degenerate:
+            return ::MapTrackQuality::DEGENERATE;
+    }
+    return ::MapTrackQuality::UNKNOWN;
+}
+
+::MapGateSource gateSourceOf(track_store::GateSource source)
+{
+    switch (source)
+    {
+        case track_store::GateSource::None:
+            return ::MapGateSource::NONE;
+        case track_store::GateSource::DataDrop:
+            return ::MapGateSource::DATA_DROP;
+        case track_store::GateSource::Derived:
+            return ::MapGateSource::DERIVED;
+        case track_store::GateSource::Manual:
+            return ::MapGateSource::MANUAL;
+    }
+    return ::MapGateSource::NONE;
+}
+
+void fillSummary(const track_store::TrackRecord& record, ::MapTrackSummary::Builder builder)
+{
+    builder.setId(record.id);
+    builder.setName(record.name);
+    builder.setCircuit(record.circuit);
+    builder.setVenueId(record.venueId);
+
+    auto bounds = builder.initBounds(4);
+    bounds.set(0, record.west);
+    bounds.set(1, record.south);
+    bounds.set(2, record.east);
+    bounds.set(3, record.north);
+
+    builder.setCenterlineLengthM(record.centerlineLengthM);
+    builder.setPublishedLengthM(record.publishedLengthM);
+    builder.setMedianWidthM(record.medianWidthM);
+    builder.setPrincipalAxisDeg(record.principalAxisDeg);
+    builder.setHasCenterline(record.hasCenterline);
+    builder.setClosed(record.closed);
+    builder.setCombo(record.combo);
+    builder.setQuality(qualityOf(record.quality));
+    builder.setOutlinePoints(record.outlinePoints);
+
+    auto gate = builder.initGate();
+    gate.setSource(gateSourceOf(record.gate.source));
+    gate.setCentreLatE7(record.gate.centreLatE7);
+    gate.setCentreLonE7(record.gate.centreLonE7);
+    gate.setLeftLatE7(record.gate.leftLatE7);
+    gate.setLeftLonE7(record.gate.leftLonE7);
+    gate.setRightLatE7(record.gate.rightLatE7);
+    gate.setRightLonE7(record.gate.rightLonE7);
+    gate.setCenterlineOffsetCm(record.gate.centerlineOffsetCm);
+    gate.setWidthM(static_cast<float>(record.gate.widthM));
+}
+
+// Metres between two points, on the same equirectangular approximation
+// road_graph::distanceM uses. Only ever asked about a track's bbox centre
+// against a query point, so the approximation is far inside the noise.
+double roughDistanceM(double lat1, double lon1, double lat2, double lon2)
+{
+    constexpr double kMetresPerDegree = 111194.93;
+    const double meanLat = (lat1 + lat2) * 0.5 * std::numbers::pi / 180.0;
+    const double dLat = (lat2 - lat1) * kMetresPerDegree;
+    const double dLon = (lon2 - lon1) * kMetresPerDegree * std::cos(meanLat);
+    return std::hypot(dLat, dLon);
+}
+
+// The catalogue is stored as interleaved LAT/LON, and the wire is LON/LAT.
+//
+// Its own function because of how it fails: a track with the two swapped still
+// parses, still simplifies and still draws -- somewhere in the Indian Ocean, at
+// a latitude that does not exist for half the corpus.
+std::vector<std::int32_t> toLonLat(const std::vector<std::int32_t>& latLon)
+{
+    std::vector<std::int32_t> out(latLon.size());
+    for (std::size_t i = 0; i + 1 < latLon.size(); i += 2)
+    {
+        out[i] = latLon[i + 1];
+        out[i + 1] = latLon[i];
+    }
+    return out;
+}
+
+void setCoords(::capnp::List<std::int32_t>::Builder builder,
+               const std::vector<std::int32_t>& values)
+{
+    for (unsigned i = 0; i < values.size(); ++i)
+    {
+        builder.set(i, values[i]);
+    }
+}
+
+} // namespace
+
+void Services::handleTrackCatalog(const ::MapTrackCatalogRequest::Reader& request,
+                                  ::MapTrackCatalogResponse::Builder& response)
+{
+    const std::string name = request.getTrackset();
+    Trackset* trackset = mTracksets.find(name);
+    if (trackset == nullptr)
+    {
+        response.setStatus(::MapStatus::NO_SUCH_TILESET);
+        response.setError("no trackset named '" + name + "'");
+        return;
+    }
+    if (!trackset->store)
+    {
+        // Configured and unreadable, which is a different conversation from a
+        // typo -- most often "this archive has no track tables at all".
+        response.setStatus(::MapStatus::FAILED);
+        response.setError(trackset->error);
+        return;
+    }
+
+    trackset->catalogQueries.fetch_add(1, std::memory_order_relaxed);
+
+    response.setStatus(::MapStatus::OK);
+    response.setBuildId(trackset->store->buildId());
+
+    const auto near = request.getNear();
+    const bool filterByPoint = near.size() >= 2 && request.getRadiusM() > 0.0;
+    const double queryLon = filterByPoint ? near[0] : 0.0;
+    const double queryLat = filterByPoint ? near[1] : 0.0;
+    const std::string venueId = request.getVenueId();
+
+    std::vector<const track_store::TrackRecord*> matched;
+    for (const auto& record : trackset->store->tracks())
+    {
+        if (!venueId.empty() && record.venueId != venueId)
+        {
+            continue;
+        }
+        if (filterByPoint)
+        {
+            // Against the bbox CENTRE, not the nearest edge. A picker asking
+            // "what is near me" wants venues, and a circuit is a kilometre
+            // across -- the difference is smaller than the question.
+            const double centreLat = (record.south + record.north) * 0.5;
+            const double centreLon = (record.west + record.east) * 0.5;
+            if (roughDistanceM(queryLat, queryLon, centreLat, centreLon) > request.getRadiusM())
+            {
+                continue;
+            }
+        }
+        matched.push_back(&record);
+    }
+
+    auto tracks = response.initTracks(static_cast<unsigned>(matched.size()));
+    for (unsigned i = 0; i < matched.size(); ++i)
+    {
+        fillSummary(*matched[i], tracks[i]);
+    }
+}
+
+void Services::handleTrackDetail(const ::MapTrackDetailRequest::Reader& request,
+                                 ::MapTrackDetailResponse::Builder& response)
+{
+    const std::string name = request.getTrackset();
+    Trackset* trackset = mTracksets.find(name);
+    if (trackset == nullptr)
+    {
+        response.setStatus(::MapStatus::NO_SUCH_TILESET);
+        response.setError("no trackset named '" + name + "'");
+        return;
+    }
+    if (!trackset->store)
+    {
+        response.setStatus(::MapStatus::FAILED);
+        response.setError(trackset->error);
+        return;
+    }
+
+    const std::string id = request.getId();
+    if (id.empty())
+    {
+        response.setStatus(::MapStatus::BAD_REQUEST);
+        response.setError("id is required");
+        return;
+    }
+
+    trackset->detailQueries.fetch_add(1, std::memory_order_relaxed);
+
+    const track_store::TrackRecord* record = trackset->store->find(id);
+    if (record == nullptr)
+    {
+        trackset->missing.fetch_add(1, std::memory_order_relaxed);
+        response.setStatus(::MapStatus::NOT_FOUND);
+        return;
+    }
+
+    response.setStatus(::MapStatus::OK);
+    response.setBuildId(trackset->store->buildId());
+    fillSummary(*record, response.initSummary());
+
+    const double tolerance = request.getSimplifyToleranceM();
+
+    const auto load = [&](track_store::GeometryKind kind) -> std::vector<std::int32_t> {
+        auto blob = trackset->store->geometry(id, kind);
+        if (!blob || !blob->has_value())
+        {
+            return {};
+        }
+        return toLonLat((*blob)->asCoords());
+    };
+
+    if (request.getWantOutline())
+    {
+        const auto outer = simplifyCoords(load(track_store::GeometryKind::OuterRing), tolerance,
+                                          true);
+        setCoords(response.initOutlineOuter(static_cast<unsigned>(outer.size())), outer);
+
+        const auto inner = simplifyCoords(load(track_store::GeometryKind::InnerRing), tolerance,
+                                          true);
+        setCoords(response.initOutlineInner(static_cast<unsigned>(inner.size())), inner);
+    }
+
+    if (request.getWantCenterline() && record->hasCenterline)
+    {
+        auto centerline = trackset->store->geometry(id, track_store::GeometryKind::Centerline);
+        auto distance =
+            trackset->store->geometry(id, track_store::GeometryKind::CenterlineDistanceCm);
+        auto halfWidth = trackset->store->geometry(id, track_store::GeometryKind::HalfWidthCm);
+
+        if (centerline && centerline->has_value())
+        {
+            // NOT simplified, and that is deliberate. The three lists are
+            // PARALLEL -- one distance and one half width per centreline point
+            // -- and dropping points from the first without the others silently
+            // misaligns every lap measurement made against them. A consumer
+            // that only wants to draw the shape has the outline for that.
+            const auto points = toLonLat((*centerline)->asCoords());
+            setCoords(response.initCenterline(static_cast<unsigned>(points.size())), points);
+
+            if (distance && distance->has_value())
+            {
+                const auto values = (*distance)->asUint32();
+                auto builder = response.initCenterlineDistanceCm(
+                    static_cast<unsigned>(values.size()));
+                for (unsigned i = 0; i < values.size(); ++i)
+                {
+                    builder.set(i, values[i]);
+                }
+            }
+            if (halfWidth && halfWidth->has_value())
+            {
+                const auto values = (*halfWidth)->asUint16();
+                auto builder = response.initHalfWidthCm(static_cast<unsigned>(values.size()));
+                for (unsigned i = 0; i < values.size(); ++i)
+                {
+                    builder.set(i, values[i]);
+                }
+            }
+        }
     }
 }
 

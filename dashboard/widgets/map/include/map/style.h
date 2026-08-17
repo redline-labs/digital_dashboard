@@ -54,7 +54,9 @@ REFLECT_STRUCT(MapWidths_t,
     (double, waterway, 1.25,
         "Waterway", "Rivers, streams and canals"),
     (double, boundary, 0.9,
-        "Boundary", "State and country borders")
+        "Boundary", "State and country borders"),
+    (double, racetrack_centre, 1.0,
+        "Racetrack Centre Line", "The derived centre line of a race track")
 )
 
 inline std::vector<std::string> validate(MapWidths_t& widths)
@@ -73,6 +75,7 @@ inline std::vector<std::string> validate(MapWidths_t& widths)
     clamp(widths.rail, "widths.rail");
     clamp(widths.waterway, "widths.waterway");
     clamp(widths.boundary, "widths.boundary");
+    clamp(widths.racetrack_centre, "widths.racetrack_centre");
     return notes;
 }
 
@@ -111,7 +114,14 @@ REFLECT_STRUCT(MapDetail_t,
     (uint16_t, rail, 11,
         "Rail From", "Lowest zoom that draws railway lines"),
     (uint16_t, boundary, 0,
-        "Boundary From", "Lowest zoom that draws state and country borders")
+        "Boundary From", "Lowest zoom that draws state and country borders"),
+    // A circuit is a kilometre across, so its surface is a few pixels before
+    // z11 and its centre line is inside the surface until z12. Drawing either
+    // sooner costs a tile fetch to paint a smudge.
+    (uint16_t, racetrack_surface, 11,
+        "Racetrack From", "Lowest zoom that draws the race track surface"),
+    (uint16_t, racetrack_centre, 12,
+        "Racetrack Centre From", "Lowest zoom that draws a race track's centre line")
 )
 
 inline std::vector<std::string> validate(MapDetail_t& detail)
@@ -132,6 +142,8 @@ inline std::vector<std::string> validate(MapDetail_t& detail)
     clamp(detail.motorway, "detail.motorway");
     clamp(detail.rail, "detail.rail");
     clamp(detail.boundary, "detail.boundary");
+    clamp(detail.racetrack_surface, "detail.racetrack_surface");
+    clamp(detail.racetrack_centre, "detail.racetrack_centre");
     return notes;
 }
 
@@ -167,6 +179,15 @@ REFLECT_STRUCT(MapStyle_t,
     (helpers::Color, boundary, "#4a4f5c",
         "Boundary", "State and country borders"),
 
+    // NAMED `racetrack_`, NOT `track_`. MapConfig_t already uses track_* for
+    // the vehicle's own breadcrumb trail -- show_track, track_points,
+    // track_width, track_opacity -- and a `track_width` on the style meaning
+    // something else entirely would be unreadable in the properties panel.
+    (helpers::Color, racetrack_surface, "#2a2f3a",
+        "Racetrack Surface", "The tarmac of a race track. The infield is cut out as a hole, so this is the ribbon only"),
+    (helpers::Color, racetrack_centre, "#7fd8ff",
+        "Racetrack Centre Line", "The derived centre line, which is what a lap is measured along"),
+
     (helpers::Color, label_text, "#c3cad6",
         "Label Text", "Place name colour"),
     (helpers::Color, label_halo, "#12141a",
@@ -189,6 +210,8 @@ REFLECT_STRUCT(MapStyle_t,
         "Show Labels", "Draw place names"),
     (bool, show_boundaries, true,
         "Show Boundaries", "Draw state and country borders"),
+    (bool, show_racetracks, true,
+        "Show Racetracks", "Draw race tracks. They come from their own archive, so this does nothing unless one is configured as an overlay tileset"),
 
     (MapWidths_t, widths, {},
         "Widths", "Per-layer line widths in pixels at zoom 14"),

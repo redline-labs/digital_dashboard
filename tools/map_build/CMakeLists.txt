@@ -17,6 +17,9 @@ add_executable(map_build
     route.cpp
     tile.cpp
     tiler.cpp
+    track_geometry.cpp
+    track_source.cpp
+    tracks.cpp
     verify.cpp
 )
 
@@ -35,6 +38,9 @@ target_link_libraries(map_build
         nlohmann_json::nlohmann_json
         osm
         road_graph
+        # The race-track catalogue, which the `tracks` verb writes into the same
+        # .mbtiles it just filled with tiles.
+        track_store
         spdlog::spdlog
         cxxopts::cxxopts
 )
@@ -105,3 +111,27 @@ target_link_libraries(map_build_test_rings
 )
 
 add_project_test(TARGET map_build_test_rings LABELS map_build unit)
+
+# Splitting a traced track OUTLINE into its two loops and averaging them into a
+# centreline. The fixture is an annulus, whose answers are known in closed form,
+# built at a latitude where forgetting the projection is visible.
+#
+# Every failure this guards against is SILENT: a reflected pairing preserves
+# length, a file holding four loops yields a plausible-looking width, and a
+# source whose outline disagrees with its own published lap reads as our
+# arithmetic going wrong rather than as bad data.
+add_executable(map_build_test_track_geometry
+    tests/test_track_geometry.cpp
+    track_geometry.cpp
+)
+
+target_include_directories(map_build_test_track_geometry PRIVATE include)
+
+target_link_libraries(map_build_test_track_geometry
+    PRIVATE
+        osm
+        road_graph
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_build_test_track_geometry LABELS map_build unit)

@@ -32,6 +32,20 @@ struct GraphConfig
     std::string path;
 };
 
+// The race-track catalogue, which lives in extra tables INSIDE an .mbtiles.
+//
+// So a track layer is normally configured TWICE -- once here and once as a
+// tileset, both pointing at the same file. That is deliberate and not a
+// redundancy to tidy away: the two halves are read by different libraries for
+// different questions (mbtiles::Archive for the tiles, track_store::Store for
+// the catalogue), and either can be present without the other. Two read-only
+// SQLite connections on one file is fine.
+struct TracksetConfig
+{
+    std::string name;
+    std::string path;
+};
+
 struct ServiceConfig
 {
     std::string tileKey { "map/tile" };
@@ -45,6 +59,13 @@ struct ServiceConfig
     std::string nearestKey { "map/nearest" };
     std::string routeKey { "map/route" };
     std::string graphInfoKey { "map/graph" };
+
+    // The race-track services. Separate from the tile services because they
+    // answer a different question about the same file: the catalogue is what
+    // tracks exist and where, the detail is one track's full-resolution
+    // geometry, and neither survives tiling.
+    std::string trackCatalogKey { "map/track_catalog" };
+    std::string trackDetailKey { "map/track_detail" };
 
     std::uint32_t statusIntervalMs { 5000 };
 };
@@ -67,6 +88,7 @@ struct NodeConfig
 {
     std::vector<TilesetConfig> tilesets;
     std::vector<GraphConfig> graphs;
+    std::vector<TracksetConfig> tracksets;
     ServiceConfig services;
     AssetConfig assets;
 };

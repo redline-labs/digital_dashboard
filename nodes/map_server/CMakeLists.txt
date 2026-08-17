@@ -20,12 +20,15 @@ add_executable(map_server
     route_endpoints.cpp
     route_geometry.cpp
     services.cpp
+    tracksets.cpp
     tilesets.cpp
 )
 
 target_link_libraries(map_server
     PRIVATE
         mbtiles
+        # The race-track catalogue, in extra tables inside the same .mbtiles.
+        track_store
         road_graph
         map_wire
         zenoh_pub_sub

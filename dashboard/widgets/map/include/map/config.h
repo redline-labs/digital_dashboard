@@ -28,6 +28,20 @@
 REFLECT_STRUCT(MapConfig_t,
     (std::string, tileset, "socal",
         "Tileset", "Tileset name as configured in nodes/map_server"),
+    // Drawn OVER the base tileset, in this order, from their own archives.
+    //
+    // A separate archive rather than more layers in one, because the two are
+    // updated on their own schedules from their own sources: the race-track
+    // layer is global and rebuilt whenever new track maps arrive, the basemap
+    // is regional and rebuilt from an OSM extract, and neither may force the
+    // other. Each overlay keeps its own zoom range, cache and backoff, so a
+    // missing overlay archive is distinguishable from a hole in coverage.
+    //
+    // Costs one extra query batch per viewport per overlay. That is cheap for a
+    // sparse layer: nearly every tile comes back notFound, and an absent tile
+    // is cached as absent and never asked for again.
+    (std::vector<std::string>, overlay_tilesets, {},
+        "Overlay Tilesets", "Extra tilesets drawn over the base one, e.g. 'tracks'. Each is an independent archive with its own zoom range"),
     (std::string, tile_zenoh_key, "map/tile",
         "Tile Zenoh Key", "Service key map_server answers tile requests on"),
     (uint16_t, request_timeout_ms, 4000,

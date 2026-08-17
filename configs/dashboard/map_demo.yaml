@@ -17,6 +17,13 @@ widgets:
     height: 640
     config:
       tileset: "socal"
+      # The race-track layer, drawn OVER the basemap from its own archive.
+      #
+      # A separate archive on purpose: new track maps arrive on their own
+      # schedule and must not mean rebuilding a 383 MB basemap, nor the
+      # reverse. It is global where socal is regional, which costs nothing --
+      # 994 circuits are 4 MB of tiles. Built by `map_build tracks`.
+      overlay_tilesets: ["tracks"]
       tile_zenoh_key: "map/tile"
       # The CAMERA's limits, not the archive's -- map_server reports what its
       # archive actually holds and the widget clamps its tile requests to that.

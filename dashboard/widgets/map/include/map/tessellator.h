@@ -64,9 +64,23 @@ enum class MapLayer : std::uint8_t
     Motorway,
     Rail,
     Boundary,
+    // Race tracks, ON TOP of everything else. A circuit is the thing being
+    // looked at when it is on screen at all, and it comes from a separate
+    // archive drawn as an overlay, so burying it under the basemap's roads
+    // would defeat the point. The trade is real and deliberate: on a street
+    // circuit the surface covers the public roads that ARE the circuit.
+    TrackSurface,
+    TrackCentre,
 };
 
-inline constexpr std::size_t kMapLayerCount = 13;
+inline constexpr std::size_t kMapLayerCount = 15;
+
+// Nothing else checks that the enum and kMapLayerCount agree, and a mismatch
+// is not a compile error in the obvious place: TileGeometry::layerStart is
+// sized from the count, so an enumerant past the end is an out-of-bounds write
+// that still draws SOMETHING.
+static_assert(static_cast<std::size_t>(MapLayer::TrackCentre) + 1 == kMapLayerCount,
+              "kMapLayerCount must match the last MapLayer enumerator");
 
 const char* to_string(MapLayer layer);
 

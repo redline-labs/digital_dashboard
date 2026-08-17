@@ -13,6 +13,24 @@ tilesets:
   - name: socal
     path: /Users/ryan/Documents/map_data/socal.mbtiles
 
+  # The race-track layer, built by a verb that never opens a PBF:
+  #
+  #   ./build/tools/map_build/map_build tracks \
+  #       --input /Users/ryan/Documents/map_data/tracks \
+  #       --output /Users/ryan/Documents/map_data/tracks.mbtiles \
+  #       --report /tmp/tracks_qa.csv
+  #
+  # A SEPARATE ARCHIVE, and that is the whole point: new track maps arrive on
+  # their own schedule from their own source, and rebuilding them must not mean
+  # rebuilding a 383 MB basemap -- nor the reverse. It is also global where the
+  # basemap is regional, which is only affordable because 994 circuits are 4 MB
+  # of tiles.
+  #
+  # The dashboard asks for it as an OVERLAY alongside the basemap; see
+  # `overlay_tilesets` in configs/dashboard/map_demo.yaml.
+  - name: tracks
+    path: /Users/ryan/Documents/map_data/tracks.mbtiles
+
 # The routable road network, built by tools/map_build:
 #
 #   ./build/tools/map_build/map_build graph \
@@ -25,6 +43,22 @@ graphs:
   - name: socal
     path: /Users/ryan/Documents/map_data/socal.graph
 
+# The race-track CATALOGUE, which lives in extra tables inside the same file the
+# `tracks` tileset above draws from.
+#
+# THE SAME PATH APPEARS TWICE ON PURPOSE. mbtiles::Archive reads the tiles and
+# track_store::Store reads the catalogue; they are different libraries answering
+# different questions, and either half can be present without the other -- an
+# ordinary basemap has no catalogue at all. Two read-only SQLite connections to
+# one file is fine. Do not "tidy" this into one entry.
+#
+# What the catalogue carries that the tiles cannot: the full-resolution outline,
+# a centreline with a distance along it, and the start/finish gate. Tiling
+# simplifies and clips, so none of those survive it.
+tracksets:
+  - name: tracks
+    path: /Users/ryan/Documents/map_data/tracks.mbtiles
+
 services:
   tile_key: map/tile
   catalog_key: map/catalog
@@ -33,6 +67,8 @@ services:
   nearest_key: map/nearest
   route_key: map/route
   graph_info_key: map/graph
+  track_catalog_key: map/track_catalog
+  track_detail_key: map/track_detail
   status_interval_ms: 5000
 
 # assets:

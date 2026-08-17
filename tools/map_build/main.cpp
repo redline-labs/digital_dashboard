@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// map_build: an OSM PBF in, the things the map stack needs out.
+// map_build: map sources in, the things the map stack needs out.
+//
+// Two sources, deliberately unconnected. `verify`, `graph`, `tile`, `route` and
+// `overlay` read an OSM PBF; `tracks` reads a directory of race-track GeoJSON
+// and never touches one. They share the Tiler and the mbtiles writer and
+// nothing else, so a new drop of track maps rebuilds neither the basemap nor
+// the road graph -- and a new PBF extract leaves the tracks alone.
 //
 // WORKSTATION ONLY. It never runs on the vehicle, which is why it lives in
 // tools/ rather than nodes/ -- see the note in AGENTS.md. It links zlib and
@@ -18,7 +24,7 @@
 namespace
 {
 
-constexpr std::array<cli::Verb, 5> kVerbs { {
+constexpr std::array<cli::Verb, 6> kVerbs { {
     { "verify", "Read a PBF, classify everything, report, write nothing",
       map_build::addVerifyOptions, map_build::runVerify },
     { "graph", "Build the routable road graph", map_build::addGraphOptions,
@@ -28,6 +34,8 @@ constexpr std::array<cli::Verb, 5> kVerbs { {
       map_build::runRoute },
     { "overlay", "Contract the graph into a routing overlay", map_build::addOverlayOptions,
       map_build::runOverlay },
+    { "tracks", "Build the race-track layer from a directory of GeoJSON",
+      map_build::addTracksOptions, map_build::runTracks },
 } };
 
 } // namespace
@@ -37,6 +45,7 @@ int main(int argc, char** argv)
     spdlog::set_level(spdlog::level::info);
     spdlog::set_pattern("[%^%l%$] %v");
 
-    const cli::Program program("map_build", "Build map artifacts from an OSM PBF", kVerbs);
+    const cli::Program program("map_build", "Build map artifacts from an OSM PBF or track GeoJSON",
+                               kVerbs);
     return program.run(argc, argv);
 }

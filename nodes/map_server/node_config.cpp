@@ -226,6 +226,62 @@ void parseGraphs(const YAML::Node& node, std::vector<GraphConfig>& out, Context&
     }
 }
 
+// Tracksets, the same shape as graphs and tilesets. Absent is fine: without one
+// the track services answer noSuchTileset and the map is unaffected.
+void parseTracksets(const YAML::Node& node, std::vector<TracksetConfig>& out, Context& context)
+{
+    if (!node)
+    {
+        return;
+    }
+    if (!node.IsSequence())
+    {
+        context.fail("tracksets must be a sequence");
+        return;
+    }
+
+    std::set<std::string> names;
+
+    for (std::size_t i = 0; i < node.size(); ++i)
+    {
+        const YAML::Node& entry = node[i];
+        const std::string where = "tracksets[" + std::to_string(i) + "]";
+
+        if (!entry.IsMap())
+        {
+            context.fail(where + " must be a mapping with `name` and `path`");
+            continue;
+        }
+
+        TracksetConfig trackset;
+        readString(entry, "name", trackset.name, context, where);
+        readString(entry, "path", trackset.path, context, where);
+
+        if (trackset.name.empty())
+        {
+            context.fail(where + ".name is required");
+            continue;
+        }
+        if (trackset.path.empty())
+        {
+            context.fail(where + ".path is required");
+            continue;
+        }
+        if (trackset.name.find('/') != std::string::npos)
+        {
+            context.fail(where + ".name ('" + trackset.name + "') must not contain '/'");
+            continue;
+        }
+        if (!names.insert(trackset.name).second)
+        {
+            context.fail(where + ".name ('" + trackset.name + "') is already used");
+            continue;
+        }
+
+        out.push_back(std::move(trackset));
+    }
+}
+
 void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
 {
     if (node)
@@ -243,6 +299,8 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
         readString(node, "nearest_key", out.nearestKey, context, "services");
         readString(node, "route_key", out.routeKey, context, "services");
         readString(node, "graph_info_key", out.graphInfoKey, context, "services");
+        readString(node, "track_catalog_key", out.trackCatalogKey, context, "services");
+        readString(node, "track_detail_key", out.trackDetailKey, context, "services");
         readUint(node, "status_interval_ms", out.statusIntervalMs, context, "services");
     }
 
@@ -253,6 +311,8 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
     checkKey(out.nearestKey, "nearest_key", context);
     checkKey(out.routeKey, "route_key", context);
     checkKey(out.graphInfoKey, "graph_info_key", context);
+    checkKey(out.trackCatalogKey, "track_catalog_key", context);
+    checkKey(out.trackDetailKey, "track_detail_key", context);
 
     // Two services on one key both answer, and a client takes whichever reply
     // arrives first -- so a tile request would sometimes come back as a
@@ -329,6 +389,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
 
     parseTilesets(root["tilesets"], out.tilesets, context);
     parseGraphs(root["graphs"], out.graphs, context);
+    parseTracksets(root["tracksets"], out.tracksets, context);
     parseServices(root["services"], out.services, context);
     parseAssets(root["assets"], out.assets, context);
 

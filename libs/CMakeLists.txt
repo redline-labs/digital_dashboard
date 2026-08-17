@@ -35,6 +35,10 @@ add_subdirectory(bd992)
 # no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The GUI
 # apps must not link this; see the note in its CMakeLists.
 add_subdirectory(mbtiles)
+# The race-track catalogue, which lives in extra tables INSIDE an .mbtiles.
+# After mbtiles, whose Archive must stay unable to see it and whose Writer
+# must have closed the file before this one opens it.
+add_subdirectory(track_store)
 # Just enough protobuf for the two formats in this tree that are protobuf.
 # Before mvt and osm, both of which link it.
 add_subdirectory(protowire)

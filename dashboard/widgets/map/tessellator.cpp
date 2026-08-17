@@ -102,7 +102,27 @@ constexpr std::array<LayerSpec, kMapLayerCount> kSpecs { {
     { MapLayer::Motorway,       "transportation", 4, false },
     { MapLayer::Rail,           "transportation", 5, false },
     { MapLayer::Boundary,       "boundary",       0, false },
+    // From the tracks archive rather than the basemap. The source layer names
+    // are disjoint from the OpenMapTiles sixteen by construction, which is what
+    // lets two archives be drawn through one tessellator without either
+    // shadowing the other.
+    { MapLayer::TrackSurface,   "track",            0, true  },
+    { MapLayer::TrackCentre,    "track_centerline", 0, false },
 } };
+
+// kSpecs is indexed by the ENUM ORDINAL in tessellate(), and nothing else
+// checks that the rows are in enum order. A row out of place silently
+// tessellates one layer's features into another layer's slot.
+static_assert([] {
+    for (std::size_t i = 0; i < kSpecs.size(); ++i)
+    {
+        if (kSpecs[i].layer != static_cast<MapLayer>(i))
+        {
+            return false;
+        }
+    }
+    return true;
+}(), "kSpecs rows must be in MapLayer order");
 
 Colour colourFor(MapLayer layer, const MapStyle_t& style)
 {
@@ -121,6 +141,8 @@ Colour colourFor(MapLayer layer, const MapStyle_t& style)
         case MapLayer::Motorway:       return toRgba(style.motorway);
         case MapLayer::Rail:           return toRgba(style.rail);
         case MapLayer::Boundary:       return toRgba(style.boundary);
+        case MapLayer::TrackSurface:   return toRgba(style.racetrack_surface);
+        case MapLayer::TrackCentre:    return toRgba(style.racetrack_centre);
     }
     return { 1.f, 0.f, 1.f, 1.f };
 }
@@ -131,6 +153,9 @@ bool layerEnabled(MapLayer layer, const MapStyle_t& style)
     {
         case MapLayer::Building: return style.show_buildings;
         case MapLayer::Boundary: return style.show_boundaries;
+        case MapLayer::TrackSurface:
+        case MapLayer::TrackCentre:
+            return style.show_racetracks;
         case MapLayer::Landcover:
         case MapLayer::Landuse:
         case MapLayer::Park:
@@ -316,6 +341,8 @@ const char* to_string(MapLayer layer)
         case MapLayer::Motorway:       return "motorway";
         case MapLayer::Rail:           return "rail";
         case MapLayer::Boundary:       return "boundary";
+        case MapLayer::TrackSurface:   return "track_surface";
+        case MapLayer::TrackCentre:    return "track_centre";
     }
     return "unknown";
 }
@@ -337,6 +364,8 @@ double layerMinZoom(MapLayer layer, const MapStyle_t& style)
         case MapLayer::Motorway:       return double(style.detail.motorway);
         case MapLayer::Rail:           return double(style.detail.rail);
         case MapLayer::Boundary:       return double(style.detail.boundary);
+        case MapLayer::TrackSurface:   return double(style.detail.racetrack_surface);
+        case MapLayer::TrackCentre:    return double(style.detail.racetrack_centre);
     }
     return 0.0;
 }
@@ -359,6 +388,11 @@ float halfWidthFor(MapLayer layer, const MapStyle_t& style)
         case MapLayer::Motorway:       return float(style.widths.motorway);
         case MapLayer::Rail:           return float(style.widths.rail);
         case MapLayer::Boundary:       return float(style.widths.boundary);
+        // The surface is a FILL -- it is the tarmac, drawn as an area with the
+        // infield cut out as a hole -- so it carries no width. The centreline
+        // is a line and does.
+        case MapLayer::TrackSurface:   return 0.0f;
+        case MapLayer::TrackCentre:    return float(style.widths.racetrack_centre);
     }
     return 0.0f;
 }

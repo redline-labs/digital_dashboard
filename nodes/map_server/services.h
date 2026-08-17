@@ -17,11 +17,13 @@
 
 #include "map_graph.capnp.h"
 #include "map_tiles.capnp.h"
+#include "map_tracks.capnp.h"
 
 #include "asset_store.h"
 #include "graphs.h"
 #include "node_config.h"
 #include "tilesets.h"
+#include "tracksets.h"
 
 namespace map_server
 {
@@ -29,7 +31,8 @@ namespace map_server
 class Services
 {
   public:
-    Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphRegistry& graphs);
+    Services(const NodeConfig& config, TilesetRegistry& tilesets, GraphRegistry& graphs,
+             TracksetRegistry& tracksets);
 
     // Publish what every tileset is doing. Called from the main loop on a
     // timer, never from a query thread.
@@ -47,8 +50,17 @@ class Services
                          MapGraphInfoResponse::Builder& response);
     void handleRoute(const MapRouteRequest::Reader& request, MapRouteResponse::Builder& response);
 
+    // The race-track services. What tracks exist and where, and one track's
+    // full-resolution geometry -- neither of which survives tiling, which is
+    // why they are answered here rather than read off a tile.
+    void handleTrackCatalog(const MapTrackCatalogRequest::Reader& request,
+                            MapTrackCatalogResponse::Builder& response);
+    void handleTrackDetail(const MapTrackDetailRequest::Reader& request,
+                           MapTrackDetailResponse::Builder& response);
+
     TilesetRegistry& mTilesets;
     GraphRegistry& mGraphs;
+    TracksetRegistry& mTracksets;
     AssetStore mAssets;
 
     std::atomic<std::uint64_t> mAssetsServed { 0 };
@@ -65,6 +77,10 @@ class Services
     std::optional<pub_sub::ZenohService<::MapGraphInfoRequest, ::MapGraphInfoResponse>>
         mGraphInfoService;
     std::optional<pub_sub::ZenohService<::MapRouteRequest, ::MapRouteResponse>> mRouteService;
+    std::optional<pub_sub::ZenohService<::MapTrackCatalogRequest, ::MapTrackCatalogResponse>>
+        mTrackCatalogService;
+    std::optional<pub_sub::ZenohService<::MapTrackDetailRequest, ::MapTrackDetailResponse>>
+        mTrackDetailService;
 };
 
 } // namespace map_server

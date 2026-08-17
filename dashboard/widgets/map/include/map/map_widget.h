@@ -82,7 +82,13 @@ class MapWidget : public QWidget
     // and this is what tells them apart without guessing.
     struct Status
     {
+        // The BASE tileset's counters. Overlays report separately below rather
+        // than being summed in: a working basemap with a missing track archive
+        // and a missing basemap with working tracks are different faults, and
+        // one set of totals cannot tell them apart.
         map_widget::TileSourceStats tiles;
+        // One per entry in MapConfig_t::overlay_tilesets, in that order.
+        std::vector<map_widget::TileSourceStats> overlays;
         int tilesVisible { 0 };
         int tilesDrawn { 0 };
         // Cached tiles from another zoom level drawn under the gaps while the
@@ -167,7 +173,15 @@ class MapWidget : public QWidget
 
     config_t mConfig;
 
-    std::unique_ptr<map_widget::TileSource> mTiles;
+    // The base tileset first, then each overlay in configured order.
+    //
+    // Separate sources rather than one archive with more layers in it, because
+    // the two are updated on their own schedules from their own sources -- a
+    // new drop of track maps must not mean rebuilding a 383 MB basemap, nor the
+    // reverse. Each keeps its own zoom range, its own cache and its own
+    // backoff, which is also what makes "no coverage here" and "that archive is
+    // missing" distinguishable.
+    std::vector<std::unique_ptr<map_widget::TileSource>> mSources;
 
     // Null when no backend came up. Checked on every paint rather than once,
     // because a null renderer is a state the widget draws differently rather
@@ -184,7 +198,11 @@ class MapWidget : public QWidget
     // costs nothing at all, which a 60 Hz poll would not.
     std::atomic<bool> mDrainPending { false };
 
-    std::vector<map_widget::TileId> mVisible;
+    // Parallel to mSources: each picks its own integer zoom from its own
+    // archive's range, so a global track layer that stops at z14 and a regional
+    // basemap that goes deeper are asked for different levels in the same
+    // frame.
+    std::vector<std::vector<map_widget::TileId>> mVisible;
 
     std::optional<double> mLatitude;
     std::optional<double> mLongitude;

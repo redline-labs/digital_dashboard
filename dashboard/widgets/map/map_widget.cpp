@@ -72,34 +72,56 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
     // The exchange is the coalescing: the first tile of a burst posts one
     // invoke, the rest see the flag set and post nothing, and the single
     // handler drains however many arrived. See mDrainPending.
-    mTiles = std::make_unique<map_widget::TileSource>(
-        mConfig.tileset, mConfig.tile_zenoh_key, mConfig.request_timeout_ms, mConfig.style,
-        [this]() {
-            if (mDrainPending.exchange(true))
-            {
-                return;
-            }
+    // The base tileset, then each overlay. One TileSource each: they are
+    // separate archives on separate update schedules, and each learns its own
+    // zoom range from its own server replies.
+    //
+    // ONE drain callback shared between them, and the coalescing flag is shared
+    // too. A burst arriving from two sources at once must still post one
+    // invoke, not two -- the handler drains every source anyway.
+    const auto onArrival = [this]() {
+        if (mDrainPending.exchange(true))
+        {
+            return;
+        }
 
-            QMetaObject::invokeMethod(
-                this,
-                [this]() {
-                    mDrainPending.store(false);
-                    if (!mTiles)
-                    {
-                        return;
-                    }
-                    // Both, and drain() FIRST so it always runs: a newly
-                    // learned zoom range changes which level the next paint
-                    // asks for, and when the camera is parked past the archive
-                    // that is the only thing that will have changed.
-                    const bool drained = mTiles->drain() > 0;
-                    if (drained || mTiles->takeArchiveRangeLearned())
-                    {
-                        update();
-                    }
-                },
-                Qt::QueuedConnection);
-        });
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+                mDrainPending.store(false);
+                // Both, and drain() FIRST so it always runs: a newly learned
+                // zoom range changes which level the next paint asks for, and
+                // when the camera is parked past the archive that is the only
+                // thing that will have changed.
+                bool changed = false;
+                for (const auto& source : mSources)
+                {
+                    const bool drained = source->drain() > 0;
+                    changed = changed || drained || source->takeArchiveRangeLearned();
+                }
+                if (changed)
+                {
+                    update();
+                }
+            },
+            Qt::QueuedConnection);
+    };
+
+    mSources.push_back(std::make_unique<map_widget::TileSource>(
+        mConfig.tileset, mConfig.tile_zenoh_key, mConfig.request_timeout_ms, mConfig.style,
+        onArrival));
+    for (const std::string& overlay : mConfig.overlay_tilesets)
+    {
+        if (overlay.empty() || overlay == mConfig.tileset)
+        {
+            // Naming the base again would double every request and draw every
+            // feature twice, which is invisible except as a halved frame rate.
+            continue;
+        }
+        mSources.push_back(std::make_unique<map_widget::TileSource>(
+            overlay, mConfig.tile_zenoh_key, mConfig.request_timeout_ms, mConfig.style,
+            onArrival));
+    }
 
     if (!mConfig.position_zenoh_key.empty())
     {
@@ -204,18 +226,22 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     // may then be resized to nothing by a layout that has not run yet; keeping
     // the tiles worked out for the default size would have it claim to need
     // tiles it will never draw, and status() would report a healthy map.
-    if (width() <= 0 || height() <= 0 || !mTiles)
+    if (width() <= 0 || height() <= 0 || mSources.empty())
     {
         mVisible.clear();
         return;
     }
+
+    mVisible.assign(mSources.size(), {});
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
 
     // The ARCHIVE's range, reported by the server, NOT the configured one --
     // which is the camera's business and may legitimately reach past what any
     // archive holds. Until the first reply lands there is nothing to clamp to,
     // so the whole span is allowed and at most one batch comes back
     // outOfRange; from then on the range is known and it cannot happen again.
-    const auto archive = mTiles->archiveZoomRange();
+    const auto archive = mSources[s]->archiveZoomRange();
     const std::uint8_t z =
         archive.has_value()
             ? projection.tileZoom(archive->min, archive->max)
@@ -225,13 +251,14 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     // never drawn, which is what keeps mVisible honest about what the paint
     // pass will look at -- and what status() reports.
     auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
-    mVisible = std::move(tiles.drawn);
+    mVisible[s] = std::move(tiles.drawn);
 
     // Sorted centre-outward HERE and not in mVisible: the request order decides
     // which tiles win the in-flight slots, and the draw order must stay stable
     // or the renderer re-uploads every tile whenever the camera reshuffles it.
     projection.sortCentreOutward(tiles.withMargin);
-    mTiles->request(tiles.withMargin);
+    mSources[s]->request(tiles.withMargin);
+    }
 }
 
 void MapWidget::resizeEvent(QResizeEvent* event)
@@ -466,7 +493,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     const QColor background = toQColor(mConfig.style.background);
 
-    if (!mTiles || width() <= 0 || height() <= 0)
+    if (mSources.empty() || width() <= 0 || height() <= 0)
     {
         mVisible.clear();
         mLastTilesDrawn = 0;
@@ -482,52 +509,84 @@ void MapWidget::paintEvent(QPaintEvent* event)
     const map_widget::Projection projection = projectionFor(painter);
     refreshTiles(projection);
 
-    const auto tiles = mTiles->ready(mVisible);
-
     // --- 1. geometry, on the GPU -------------------------------------------
-
-    // What the cache can put under the gaps while the real tiles are in flight.
-    // See substituteTiles(): without it a zoom blanks the map to its background
-    // for as long as the round trip takes, which reads as a fault.
-    std::vector<bool> have(mVisible.size());
-    for (std::size_t i = 0; i < mVisible.size(); ++i)
-    {
-        have[i] = static_cast<bool>(tiles[i]);
-    }
-    const std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > mVisible.size()
-                                   ? map_widget::GpuRenderer::kMaxTilesPerFrame - mVisible.size()
-                                   : 0;
-    const std::vector<map_widget::TileId> standIns = map_widget::substituteTiles(
-        mVisible, have, [this](const map_widget::TileId& id) { return mTiles->drawable(id); },
-        budget);
-    const std::vector<map_widget::CachedTile> standInTiles = mTiles->ready(standIns);
 
     std::vector<map_widget::GpuBatch> batches;
     std::vector<map_widget::LabelTile> labelTiles;
-    batches.reserve(mVisible.size() + standIns.size());
-    labelTiles.reserve(mVisible.size());
+
+    // The stand-in budget is SHARED across sources, and counted against what
+    // every source together already wants to draw. Working it out per source
+    // would let two of them each claim the whole frame's headroom and overrun
+    // kMaxTilesPerFrame, which silently drops whatever came last.
+    std::size_t visibleTotal = 0;
+    for (const auto& ids : mVisible)
+    {
+        visibleTotal += ids.size();
+    }
+    std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > visibleTotal
+                             ? map_widget::GpuRenderer::kMaxTilesPerFrame - visibleTotal
+                             : 0;
+
+    std::vector<std::vector<map_widget::CachedTile>> ready(mSources.size());
+    std::vector<std::vector<map_widget::TileId>> standIns(mSources.size());
+    std::vector<std::vector<map_widget::CachedTile>> standInTiles(mSources.size());
+
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
+        ready[s] = mSources[s]->ready(mVisible[s]);
+
+        // What the cache can put under the gaps while the real tiles are in
+        // flight. See substituteTiles(): without it a zoom blanks the map to
+        // its background for as long as the round trip takes, which reads as a
+        // fault.
+        std::vector<bool> have(mVisible[s].size());
+        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
+        {
+            have[i] = static_cast<bool>(ready[s][i]);
+        }
+        map_widget::TileSource& source = *mSources[s];
+        standIns[s] = map_widget::substituteTiles(
+            mVisible[s], have, [&source](const map_widget::TileId& id) {
+                return source.drawable(id);
+            },
+            budget);
+        budget -= std::min(budget, standIns[s].size());
+        standInTiles[s] = source.ready(standIns[s]);
+    }
 
     // Stand-ins FIRST, so they are drawn UNDER within each layer pass and a
     // real tile that has arrived covers its own ground. They overdraw where an
     // ancestor spans a tile that did arrive, which is harmless: an ancestor is
     // the same geography more simply drawn, so the two coincide.
-    for (std::size_t i = 0; i < standIns.size(); ++i)
+    //
+    // Every source's stand-ins before any source's real tiles, and not
+    // per-source, because the renderer draws LAYER-major across the whole batch
+    // list -- so within one layer the order here is the only thing deciding
+    // what covers what.
+    for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        if (standInTiles[i])
+        for (std::size_t i = 0; i < standIns[s].size(); ++i)
         {
-            batches.push_back(map_widget::GpuBatch { standIns[i], standInTiles[i].geometry });
+            if (standInTiles[s][i])
+            {
+                batches.push_back(
+                    map_widget::GpuBatch { standIns[s][i], standInTiles[s][i].geometry });
+            }
         }
     }
     mLastTilesStandIn = static_cast<int>(batches.size());
 
-    for (std::size_t i = 0; i < mVisible.size(); ++i)
+    for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        if (!tiles[i])
+        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
         {
-            continue;
+            if (!ready[s][i])
+            {
+                continue;
+            }
+            batches.push_back(map_widget::GpuBatch { mVisible[s][i], ready[s][i].geometry });
+            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].tile });
         }
-        batches.push_back(map_widget::GpuBatch { mVisible[i], tiles[i].geometry });
-        labelTiles.push_back(map_widget::LabelTile { mVisible[i], tiles[i].tile });
     }
     mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
 
@@ -540,12 +599,15 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // the real tile lands at the SAME geographic point and so the same pixels,
     // and paintLabels() rejects a candidate that collides with one already
     // placed. Real tiles going in first is what decides which of the two wins.
-    labelTiles.reserve(labelTiles.size() + standIns.size());
-    for (std::size_t i = 0; i < standIns.size(); ++i)
+    for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        if (standInTiles[i])
+        for (std::size_t i = 0; i < standIns[s].size(); ++i)
         {
-            labelTiles.push_back(map_widget::LabelTile { standIns[i], standInTiles[i].tile });
+            if (standInTiles[s][i])
+            {
+                labelTiles.push_back(
+                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].tile });
+            }
         }
     }
 
@@ -606,7 +668,11 @@ void MapWidget::paintDiagnostic(QPainter& painter)
         // frame carrying stand-ins is a map -- older and coarser, but a map --
         // and captioning it "no coverage here" over the top of visible roads
         // is worse than saying nothing at all.
-        const map_widget::TileSourceStats sourceStats = mTiles->stats();
+        // The BASE tileset's counters. An overlay that is absent is not what
+        // makes the map empty -- the basemap is -- and captioning a blank
+        // screen with the track archive's troubles would send somebody after
+        // the wrong file.
+        const map_widget::TileSourceStats sourceStats = mSources.front()->stats();
 
         if (sourceStats.requested == 0)
         {
@@ -720,11 +786,20 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
 MapWidget::Status MapWidget::status() const
 {
     Status out;
-    if (mTiles)
+    if (!mSources.empty())
     {
-        out.tiles = mTiles->stats();
+        out.tiles = mSources.front()->stats();
+        for (std::size_t s = 1; s < mSources.size(); ++s)
+        {
+            out.overlays.push_back(mSources[s]->stats());
+        }
     }
-    out.tilesVisible = static_cast<int>(mVisible.size());
+    std::size_t visibleTotal = 0;
+    for (const auto& ids : mVisible)
+    {
+        visibleTotal += ids.size();
+    }
+    out.tilesVisible = static_cast<int>(visibleTotal);
     out.tilesDrawn = mLastTilesDrawn;
     out.tilesStandIn = mLastTilesStandIn;
     out.labelsPlaced = mLastLabelsPlaced;

@@ -48,6 +48,15 @@ int runRoute(cli::Context& context);
 void addOverlayOptions(cxxopts::Options& options);
 int runOverlay(cli::Context& context);
 
+// Build the race-track layer from a directory of GeoJSON.
+//
+// THE ONE VERB WITH NO PBF ANYWHERE IN IT. Track maps come from their own
+// source on their own schedule, and the whole point of the layer is that a new
+// drop of them does not mean rebuilding the basemap, nor the reverse. It shares
+// the Tiler and the mbtiles writer with `tile` and nothing else.
+void addTracksOptions(cxxopts::Options& options);
+int runTracks(cli::Context& context);
+
 } // namespace map_build
 
 #endif // MAP_BUILD_VERBS_H

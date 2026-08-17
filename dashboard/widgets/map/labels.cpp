@@ -13,6 +13,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace map_widget
@@ -30,6 +31,98 @@ struct Candidate
 QColor toQColor(const helpers::Color& colour)
 {
     return QColor(QString::fromStdString(colour.value()));
+}
+
+// Which source layers carry labels, and how each ranks its own.
+//
+// A TABLE rather than a hardcoded layer(), because there is more than one now:
+// the basemap's `place` and the track archive's `track_label`, which arrive in
+// the same viewport from two different archives. They compete for the same
+// screen space and are placed by one pass, which is the whole reason the
+// candidates are gathered before any of them is drawn.
+struct LabelLayerSpec
+{
+    const char* sourceLayer;
+    int (*priority)(const mvt::Layer&, const mvt::Feature&);
+};
+
+int placeLayerPriority(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    return placePriority(layer.attributeText(feature, "class"));
+}
+
+int trackLayerPriority(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    // Between a town and a city. A circuit is a landmark worth seeing from a
+    // distance, and it is also the reason the driver is looking at this part of
+    // the map -- but it must not push a city name off a country view.
+    (void)layer;
+    (void)feature;
+    return 2;
+}
+
+constexpr std::array<LabelLayerSpec, 2> kLabelLayers { {
+    { "place", placeLayerPriority },
+    { "track_label", trackLayerPriority },
+} };
+
+// Every labelled point in one source layer of one tile, as screen-space
+// candidates.
+//
+// Gathered rather than placed, because a label's position depends on which
+// labels were already accepted and the order tiles arrive in is decode order --
+// which is not an order anybody chose. With two source layers it matters more
+// than it did with one: a circuit's name and a town's name land in the same
+// place from two different archives, and only one of them can have it.
+void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
+                  const Projection& projection, std::vector<Candidate>& candidates)
+{
+    const mvt::Layer* layer = entry.tile->layer(spec.sourceLayer);
+    if (layer == nullptr || layer->extent == 0)
+    {
+        return;
+    }
+
+    const ScreenPoint origin = projection.tileOrigin(entry.id);
+    const double size = projection.tileScreenSize(entry.id.z);
+    const double scale = size / double(layer->extent);
+    const double bearing = projection.camera().bearing;
+    const double radians = -bearing * 3.14159265358979323846 / 180.0;
+    const double cosB = std::cos(radians);
+    const double sinB = std::sin(radians);
+
+    for (const mvt::Feature& feature : layer->features)
+    {
+        if (feature.type != mvt::GeomType::Point || feature.rings.empty() ||
+            feature.rings.front().empty())
+        {
+            continue;
+        }
+
+        // name:latin, not name. This archive's tilemaker config emits only the
+        // latin field, and reading `name` returns an empty string for every
+        // place -- a map with no labels and no error anywhere. map_build writes
+        // BOTH spellings for exactly this reason, so the track layer is safe
+        // either way.
+        const std::string text = layer->attributeText(feature, "name:latin");
+        if (text.empty())
+        {
+            continue;
+        }
+
+        // The tile's own axes are rotated with the map even though the text is
+        // not, so the anchor has to go through the same rotation the GPU
+        // applies to the geometry.
+        const mvt::Point& p = feature.rings.front().front();
+        const double lx = double(p.x) * scale;
+        const double ly = double(p.y) * scale;
+        const double rx = (lx * cosB) - (ly * sinB);
+        const double ry = (lx * sinB) + (ly * cosB);
+
+        candidates.push_back(Candidate { QString::fromStdString(text),
+                                         ScreenPoint { origin.x + rx, origin.y + ry },
+                                         spec.priority(*layer, feature) });
+    }
 }
 
 } // namespace
@@ -165,49 +258,9 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
         {
             continue;
         }
-        const mvt::Layer* layer = entry.tile->layer("place");
-        if (layer == nullptr || layer->extent == 0)
+        for (const LabelLayerSpec& spec : kLabelLayers)
         {
-            continue;
-        }
-
-        const ScreenPoint origin = projection.tileOrigin(entry.id);
-        const double size = projection.tileScreenSize(entry.id.z);
-        const double scale = size / double(layer->extent);
-        const double bearing = projection.camera().bearing;
-        const double radians = -bearing * 3.14159265358979323846 / 180.0;
-        const double cosB = std::cos(radians);
-        const double sinB = std::sin(radians);
-
-        for (const mvt::Feature& feature : layer->features)
-        {
-            if (feature.type != mvt::GeomType::Point || feature.rings.empty() ||
-                feature.rings.front().empty())
-            {
-                continue;
-            }
-
-            // name:latin, not name. This archive's tilemaker config emits only
-            // the latin field, and reading `name` returns an empty string for
-            // every place -- a map with no labels and no error anywhere.
-            const std::string text = layer->attributeText(feature, "name:latin");
-            if (text.empty())
-            {
-                continue;
-            }
-
-            // The tile's own axes are rotated with the map even though the text
-            // is not, so the anchor has to go through the same rotation the GPU
-            // applies to the geometry.
-            const mvt::Point& p = feature.rings.front().front();
-            const double lx = double(p.x) * scale;
-            const double ly = double(p.y) * scale;
-            const double rx = (lx * cosB) - (ly * sinB);
-            const double ry = (lx * sinB) + (ly * cosB);
-
-            candidates.push_back(
-                Candidate { QString::fromStdString(text), ScreenPoint { origin.x + rx, origin.y + ry },
-                            placePriority(layer->attributeText(feature, "class")) });
+            gatherLabels(entry, spec, projection, candidates);
         }
     }
 

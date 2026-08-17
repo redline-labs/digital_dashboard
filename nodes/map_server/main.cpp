@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <map>
 #include <ctime>
 #include <string>
 #include <thread>
@@ -32,6 +33,7 @@
 #include "node_config.h"
 #include "services.h"
 #include "tilesets.h"
+#include "tracksets.h"
 
 namespace
 {
@@ -155,15 +157,54 @@ int runCheck(const NodeConfig& config)
         }
     }
 
-    const std::size_t configured = tilesets.all().size() + graphs.all().size();
+    // The race-track catalogues, which live in extra tables inside an .mbtiles.
+    // Reported per QUALITY rather than as a count: a fifth of the corpus has no
+    // usable centreline for five different reasons, and "994 tracks" would hide
+    // the only number anybody wants to know, which is how many can measure a
+    // lap.
+    TracksetRegistry tracksets(config.tracksets);
+    for (const auto& trackset : tracksets.all())
+    {
+        if (!trackset->store)
+        {
+            SPDLOG_ERROR("{}: {}", trackset->name, trackset->error);
+            ++broken;
+            continue;
+        }
+
+        std::map<std::string, std::size_t> byQuality;
+        std::size_t withGate = 0;
+        for (const auto& record : trackset->store->tracks())
+        {
+            ++byQuality[track_store::to_string(record.quality)];
+            if (record.gate.present())
+            {
+                ++withGate;
+            }
+        }
+
+        SPDLOG_INFO("{}", trackset->name);
+        SPDLOG_INFO("  path        {}", trackset->path);
+        SPDLOG_INFO("  build       {}", trackset->store->buildId());
+        SPDLOG_INFO("  tracks      {}", trackset->store->tracks().size());
+        SPDLOG_INFO("  gates       {}", withGate);
+        for (const auto& [quality, count] : byQuality)
+        {
+            SPDLOG_INFO("  {:<11} {}", quality, count);
+        }
+    }
+
+    const std::size_t configured =
+        tilesets.all().size() + graphs.all().size() + tracksets.all().size();
     if (broken != 0)
     {
-        SPDLOG_ERROR("{} of {} configured archive(s)/graph(s) unusable", broken, configured);
+        SPDLOG_ERROR("{} of {} configured archive(s)/graph(s)/trackset(s) unusable", broken,
+                     configured);
         return 1;
     }
 
-    SPDLOG_INFO("{} tileset(s) and {} graph(s) usable", tilesets.all().size(),
-                graphs.all().size());
+    SPDLOG_INFO("{} tileset(s), {} graph(s) and {} trackset(s) usable", tilesets.all().size(),
+                graphs.all().size(), tracksets.all().size());
     return 0;
 }
 
@@ -239,6 +280,12 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("[node] no archive opened; every tile request will report the reason");
     }
 
+    TracksetRegistry tracksets(config.tracksets);
+    if (!config.tracksets.empty() && tracksets.openCount() == 0)
+    {
+        SPDLOG_ERROR("[node] no track catalogue opened; map/track_catalog will report why");
+    }
+
     GraphRegistry graphs(config.graphs);
     if (!config.graphs.empty() && graphs.openCount() == 0)
     {
@@ -249,7 +296,7 @@ int main(int argc, char** argv)
         SPDLOG_ERROR("[node] no road graph opened; map/nearest will report why");
     }
 
-    Services services(config, tilesets, graphs);
+    Services services(config, tilesets, graphs, tracksets);
 
     const auto statusInterval = std::chrono::milliseconds(config.services.statusIntervalMs);
     auto nextStatus = std::chrono::steady_clock::now();
