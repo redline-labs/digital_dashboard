@@ -12,6 +12,10 @@ add_subdirectory(grayhill_keypad)
 add_subdirectory(carplay)
 # Trimble BD992 GNSS receiver over Ethernet.
 add_subdirectory(bd992_bridge)
+# The same GNSS topics, with no receiver behind them: asks map_server for a
+# route or a track centreline and drives it. The first caller of map/route and
+# map/track_detail anywhere in the tree.
+add_subdirectory(bd992_mock)
 # Offline maps: .mbtiles archives served as tiles, catalogs and style assets.
 # The only node with no hardware behind it -- what it bridges is a file.
 add_subdirectory(map_server)

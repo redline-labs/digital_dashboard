@@ -37,7 +37,7 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor", "scope", "map_server"]
+AppName = Literal["dashboard", "editor", "scope", "map_server", "bd992_mock"]
 
 
 @dataclass(frozen=True)
@@ -91,6 +91,17 @@ APPS: dict[str, AppSpec] = {
         controllable=False,
         # services.cpp logs this once every service is registered.
         ready_marker="[node] tiles on ",
+    ),
+    "bd992_mock": AppSpec(
+        binaries=("nodes/bd992_mock/bd992_mock",),
+        controllable=False,
+        # Logged after the route or track has been fetched from map_server and
+        # the publishers are open -- so a match means samples are on the bus,
+        # not that it is still asking for a route. It needs extra_args to say
+        # where to drive, e.g. ["--track", "Willow Springs"]; without them it
+        # exits with a usage error rather than hanging, which app_launch
+        # reports as a startup failure.
+        ready_marker="[mock] driving at ",
     ),
 }
 

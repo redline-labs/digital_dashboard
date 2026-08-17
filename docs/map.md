@@ -200,6 +200,12 @@ carries that Irvine has none of are `mountain_peak` and `aerodrome_label`.
 
 ### Exercising the routing half
 
+The one program that calls these for a living is `nodes/bd992_mock`: it asks
+`map/route` for a road route and `map/nearest` for each segment's speed limit,
+then drives the result and publishes it as GNSS. `bd992_mock --route ... --check`
+exercises the whole routing half in one command and prints what came back — see
+[bd992.md](bd992.md). What follows is the same thing by hand.
+
 `map/graph` first, because it names the graph and the profiles the other two
 calls have to match:
 

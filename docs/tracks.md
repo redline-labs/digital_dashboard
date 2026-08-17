@@ -243,6 +243,12 @@ which is what makes one lap comparable against another driven at a different
 speed. Nothing consumes them yet; they are on the wire so that whatever
 eventually does is not blocked behind a re-ingest.
 
+`nodes/bd992_mock` is the first caller of either service: `bd992_mock --track
+"Willow Springs"` fetches the centreline and drives a car round it, publishing
+the GNSS topics as it goes. It uses the geometry rather than the distances, and
+`--check` reports the derived length against the catalogue's own as a
+cross-check — see [bd992.md](bd992.md).
+
 ## Drawing it
 
 ```yaml

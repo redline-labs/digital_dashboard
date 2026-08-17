@@ -1,0 +1,95 @@
+# A BD992 with no receiver behind it, driving a road the map really has.
+#
+#   ./build/nodes/bd992_mock/bd992_mock \
+#       --route 33.6866,-117.8558 --to 33.7701,-118.1937
+#
+#   ./build/nodes/bd992_mock/bd992_mock --track "Willow Springs"
+#
+# Add --check to resolve the path, report it and exit without publishing --
+# the fastest way to find out whether map_server can answer at all.
+#
+# THIS FILE IS OPTIONAL. Every value below is already the default, and the
+# defaults are this tree's, so the two command lines above work with no --config
+# at all. It exists to be edited when you want a different vehicle.
+#
+# nodes/map_server must be running:
+#
+#   ./build/nodes/map_server/map_server --config configs/map_server.yaml
+#
+# AND nodes/bd992_bridge must NOT BE. Both publish on `nodes/bd992`, and two
+# publishers on one key interleave: consumers take whichever sample arrives
+# first, with nothing logged and nothing thrown. The node checks the bus at
+# startup and warns, but it cannot see a publisher that is quiet at that moment.
+
+services:
+  # map_server's own defaults, from configs/map_server.yaml. If you moved them
+  # there, move them here.
+  graph_info_key: map/graph
+  route_key: map/route
+  nearest_key: map/nearest
+  track_catalog_key: map/track_catalog
+  track_detail_key: map/track_detail
+
+  # The track catalogue is 994 entries and is the slowest of these.
+  request_timeout_ms: 5000
+
+  # EMPTY MEANS ASK THE SERVER. The graph is resolved by querying map/graph and
+  # taking the first one that opened; the empty trackset already means "the
+  # first configured one" on the wire. Name either to pin it -- worth doing once
+  # the server holds more than one.
+  graph: ""
+  trackset: ""
+
+# The vehicle, as a point mass on a line.
+#
+# Nothing here claims to be a real car. It is the smallest set of numbers that
+# makes position, speed and heading agree with each other.
+vehicle:
+  # The ceiling, before posted limits and corners take their bite. ~60 mph.
+  cruise_speed_mps: 27.0
+
+  accel_mps2: 2.0
+  brake_mps2: 3.5
+
+  # What sets corner speed: v = sqrt(lateral_accel * radius). 3.0 is a brisk
+  # road car. For a circuit lap, 8-12 is the range that looks right -- and is
+  # the one line worth changing when driving a track rather than a route.
+  lateral_accel_mps2: 3.0
+
+  # Heading is measured to a point this far ahead rather than to the next
+  # vertex. Map geometry is quantised to 1e-7 degrees (about 11 mm) and vertices
+  # can be a metre apart, so an adjacent-vertex bearing jitters by tens of
+  # degrees on a straight road -- which reads downstream as a car weaving, and
+  # map_match weights heading.
+  heading_lookahead_m: 5.0
+
+  # The same problem, worse, for curvature: the bow of a point off the chord
+  # between its neighbours is millimetres on densely sampled geometry, i.e.
+  # under the coordinate grid, so a corner radius measured that way is fitted to
+  # rounding. Also the window over which a corner's speed limit starts applying
+  # before the corner. Raise it and short corners get averaged away; lower it
+  # and phantom corners appear on straight roads.
+  curvature_baseline_m: 8.0
+
+publish:
+  # THE REAL PREFIX, which is what makes every existing consumer -- map_match,
+  # the dashboard map widget, any scope panel -- work with no change at all.
+  topic_prefix: nodes/bd992
+
+  # The five per-record topics alongside the fused <prefix>/epoch. The epoch is
+  # what nodes/map_match reads and the only one it reads; these are what a
+  # widget bound to a single GSOF record expects.
+  publish_records: true
+
+  rate_hz: 10
+
+  # THERE IS NO ELEVATION IN EITHER SOURCE -- route geometry and track
+  # centrelines are both lon/lat only -- so this is a constant rather than an
+  # invented terrain model. Above the WGS-84 ellipsoid, not sea level.
+  ellipsoid_height_m: 50.0
+
+  # Zero puts the car exactly on the road, which is what you want when looking
+  # at the map. Raise it to make nodes/map_match work for its living; the seed
+  # is here so a run that misbehaves can be repeated.
+  position_noise_m: 0.0
+  noise_seed: 1
