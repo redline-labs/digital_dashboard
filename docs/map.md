@@ -187,13 +187,68 @@ From another terminal:
 ```bash
 ./build/nodes/inspect/inspect services
 ./build/nodes/inspect/inspect call map/catalog --data '{}' --json
-./build/nodes/inspect/inspect call map/tile \
-    --data '{"tileset":"socal","z":14,"x":2828,"y":6562}' --json
+
+# Tiles are a BATCH -- `tiles` is a list, not z/x/y at the top level. The reply
+# also carries the archive's minzoom/maxzoom, which is what the widget clamps
+# its requests to.
+./build/nodes/inspect/inspect call map/tile --json \
+    --data '{"tileset":"socal","tiles":[{"z":14,"x":2828,"y":6562}]}'
 ```
 
-That last one is the Irvine tile: 81958 bytes, gzip, 14 layers — the two the
-archive carries that Irvine has none of are `mountain_peak` and
-`aerodrome_label`.
+That is the Irvine tile: 81958 bytes, gzip, 14 layers — the two the archive
+carries that Irvine has none of are `mountain_peak` and `aerodrome_label`.
+
+### Exercising the routing half
+
+`map/graph` first, because it names the graph and the profiles the other two
+calls have to match:
+
+```bash
+./build/nodes/inspect/inspect call map/graph --data '{"graph":"socal"}' --json
+```
+
+That reports `profiles: ["fastest"]` and the graph's bounds — for the SoCal
+build, 5 001 449 segments and 9 501 530 edges.
+
+`map/nearest` is the snap: which segments a coordinate could be on. It is also
+where a route's time goes, so it is the one to reach for when routing is slow:
+
+```bash
+./build/nodes/inspect/inspect call map/nearest --json \
+    --data '{"graph":"socal","latitudeDeg":33.6866,"longitudeDeg":-117.8558,
+             "radiusM":50.0,"maxCandidates":3}'
+```
+
+`map/route` is the search. Irvine to UC Irvine, about 7.3 km:
+
+```bash
+./build/nodes/inspect/inspect call map/route --json \
+    --data '{"graph":"socal","profile":"fastest",
+             "fromLatitudeDeg":33.6866,"fromLongitudeDeg":-117.8558,
+             "toLatitudeDeg":33.6405,"toLongitudeDeg":-117.8443,
+             "simplifyToleranceM":5.0}'
+```
+
+Knobs worth exercising, and what each one changes:
+
+| change | what it shows |
+|---|---|
+| `"hasFromHeading":true,"fromHeadingDeg":0` vs `180` | the departure heading ranks the start candidates — 7329 m northbound against 7498 m southbound, a genuinely different route |
+| `"simplifyToleranceM":0` vs `5` | geometry precision: 414 points against 277, same distance |
+| a destination in Santa Barbara (`34.4208,-119.6982`) | a 217 km, 2 h 05 search rather than a local one |
+| a coordinate in Denver | `noMatch`, *"no road near the start"* — the coverage edge |
+| `"graph":"nope"` | `noSuchGraph`, distinct from a graph that is configured and will not open |
+
+A route is **geometry and segment ids, and nothing above that** — there are no
+turn instructions, and no service resolves a segment id to the name the graph
+holds for it. Names, refs and road class reach a client only through
+`map/nearest`.
+
+`geometry` is a flat list of **interleaved lon,lat** in units of 1e-7 degrees,
+so `[-1178556935, 336866382]` is -117.8556935, 33.6866382. `segmentStarts`
+indexes into it, one entry per segment plus a final end, so segment *i* owns
+points `[segmentStarts[i], segmentStarts[i+1])`.
+
 
 ## Where an archive comes from
 
