@@ -97,6 +97,24 @@ target_link_libraries(map_server_test_graphs
 
 add_project_test(TARGET map_server_test_graphs LABELS map unit)
 
+# Which tile coordinates an archive could hold. Pure comparisons, no bus and no
+# archive -- and a test of its own because the dashboard's whole zoom behaviour
+# hangs off telling notFound, outOfRange and badRequest apart.
+add_executable(map_server_test_tile_range
+    tests/test_tile_range.cpp
+    tilesets.cpp
+)
+
+target_include_directories(map_server_test_tile_range PRIVATE .)
+
+target_link_libraries(map_server_test_tile_range
+    PRIVATE
+        mbtiles
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_server_test_tile_range LABELS map unit)
+
 # Which junctions a route search runs between. The departure heading was being
 # used to rank candidates and then discarded, so a vehicle pointing against its
 # segment's stored direction was routed from the junction behind it.

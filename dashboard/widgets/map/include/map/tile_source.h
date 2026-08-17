@@ -35,6 +35,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -71,6 +72,10 @@ struct TileSourceStats
     // being asked for. A steady non-zero here with a dead server is the
     // system working, not the system stuck.
     std::size_t backingOff { 0 };
+    // Tiles asked for at a zoom the archive does not hold. Only reachable
+    // before the first reply teaches the range, so a number that keeps
+    // climbing means the range is not being applied.
+    std::uint64_t outOfRange { 0 };
     std::size_t cached { 0 };
     std::size_t inFlight { 0 };
 };
@@ -124,6 +129,27 @@ class TileSource
 
     TileSourceStats stats() const;
 
+    // The zoom levels the archive actually holds, as the server reported them.
+    // Empty until the first reply lands.
+    //
+    // This is what the widget clamps its tile requests to. It is NOT the
+    // camera's range -- a camera zoomed past the deepest level draws that level
+    // magnified, which for vector tiles stays sharp. See MapConfig_t.
+    struct ZoomRange
+    {
+        std::uint8_t min { 0 };
+        std::uint8_t max { 0 };
+    };
+    std::optional<ZoomRange> archiveZoomRange() const;
+
+    // True ONCE, the first time the server's range arrives. The widget has to
+    // repaint on it and cannot infer it from drain(): the range changes which
+    // tile level the next paint asks for, and the case that needs it most is
+    // the one where nothing was drained at all -- a camera parked past the
+    // archive, every tile back as outOfRange, an empty mailbox and no other
+    // reason to redraw.
+    bool takeArchiveRangeLearned();
+
     // Drop everything. Used when the tileset changes under the widget.
     void clear();
 
@@ -139,6 +165,11 @@ class TileSource
         Ok,
         // The archive has nothing there. NORMAL, and cached as an empty tile.
         Absent,
+        // The archive does not go to that ZOOM LEVEL at all. Not the same as
+        // Absent: absence is a fact about a coordinate and is worth caching
+        // forever, while this is a fact about the request, and once the range
+        // is known the tile is simply never asked for again.
+        OutOfRange,
         // The server could not answer. Backed off, never cached.
         Failed,
     };
@@ -168,6 +199,11 @@ class TileSource
     std::vector<TileId> mFailures;
     std::unordered_set<TileId, TileIdHash> mInFlight;
     TileSourceStats mStats;
+    // Learned from the first reply and unchanged after -- an archive does not
+    // grow levels under a running server. Guarded by mMutex because it is
+    // written on a zenoh thread and read on the GUI thread.
+    std::optional<ZoomRange> mArchiveZoom;
+    bool mArchiveZoomLearned { false };
 
     // GUI thread only, so no lock.
     std::unordered_map<TileId, CachedTile, TileIdHash> mCache;

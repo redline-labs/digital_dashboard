@@ -39,6 +39,32 @@ struct Tileset
     std::atomic<std::uint64_t> bytes { 0 };
 };
 
+// Whether a coordinate is one this archive could hold, and if not, why not.
+//
+// Three answers, and keeping them apart is the whole point -- a client needs to
+// know whether to give up on a coordinate or to ask for it at a shallower zoom:
+//
+//   * BadRequest -- not a tile coordinate at all. z past the projection, or x/y
+//     outside 2^z. A bug in the client rather than a fact about the archive.
+//   * OutOfRange -- a real coordinate, at a zoom level this archive does not
+//     go to. The answer exists SHALLOWER, and the client should ask there.
+//   * InRange -- the archive covers that level. Whether there is anything at
+//     that coordinate is a question for the archive; most of the pyramid is
+//     empty, and a miss here is final.
+//
+// Free and pure so it can be tested without a node, a bus or an archive: this
+// is the one decision in the tile path that a client's zoom behaviour hangs
+// off, and it is three comparisons that are easy to get quietly backwards.
+enum class TileRangeCheck
+{
+    InRange,
+    OutOfRange,
+    BadRequest,
+};
+
+TileRangeCheck checkTileRange(const mbtiles::Metadata& meta, std::uint8_t z, std::uint32_t x,
+                              std::uint32_t y);
+
 class TilesetRegistry
 {
   public:

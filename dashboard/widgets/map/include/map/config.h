@@ -38,10 +38,21 @@ REFLECT_STRUCT(MapConfig_t,
     // of the YAML decoder and takes the whole layout with it. Nothing in the
     // type says so, and it fails at load time rather than at compile time. No
     // reflected config in this tree should use an 8-bit integer.
+    //
+    // The CAMERA's limits, not the archive's. Which tile level is drawn is not
+    // configured at all any more: map_server reports what its archive actually
+    // holds on every reply, and the widget clamps its requests to that. So
+    // these two say how far a layout lets the user zoom, and nothing else --
+    // asking for more than the archive has magnifies the deepest tiles it does
+    // have, which for vector tiles stays sharp and simply shows less.
+    //
+    // 17 rather than 22, because past about three levels beyond the archive
+    // there is so little left in frame that it stops being a map. Measured
+    // against the SoCal archive; a deeper archive wants a higher number.
     (uint16_t, min_zoom, 0,
-        "Minimum Zoom", "Shallowest tile level the archive has"),
-    (uint16_t, max_zoom, 14,
-        "Maximum Zoom", "Deepest tile level the archive has. Zooming past this magnifies rather than blanking"),
+        "Minimum Zoom", "Shallowest the camera may go. Not the archive's range -- that comes from the server"),
+    (uint16_t, max_zoom, 17,
+        "Maximum Zoom", "Deepest the camera may go. Past what the archive holds this magnifies its deepest tiles rather than blanking"),
 
     (double, center_latitude, 33.6865966,
         "Center Latitude", "Degrees north. Used until a position arrives, and whenever Follow Vehicle is off"),
@@ -51,6 +62,13 @@ REFLECT_STRUCT(MapConfig_t,
         "Zoom", "0 is the whole world, each step doubles. 14 is street level"),
     (double, bearing, 0.0,
         "Bearing", "Map rotation in degrees clockwise from north"),
+
+    // OFF by default, and that is not timidity. A dashboard is a surface people
+    // brace a hand against on a bad road, and a map that pans out of position
+    // when they do is worse than one that never moves. A layout that wants it
+    // asks for it.
+    (bool, interactive, false,
+        "Interactive", "Allow dragging to pan and the wheel to zoom. A recentre button appears once the camera has been moved"),
 
     (bool, follow_vehicle, true,
         "Follow Vehicle", "Keep the camera centred on the vehicle position as it arrives"),
@@ -112,9 +130,11 @@ inline std::vector<std::string> validate(MapConfig_t& config)
     config_codec::limits::clampInto<uint16_t>(config.request_timeout_ms, 100u, 30000u,
                                               "request_timeout_ms", notes);
 
-    // An inverted zoom range would make every tile request fall outside it and
-    // the map would be permanently blank. Swapping is the only reading that
-    // leaves it usable.
+    // An inverted camera range would refuse every zoom -- clamp(z, 17, 0) has
+    // no answer that satisfies both ends -- so the wheel would do nothing and
+    // nothing would say why. Swapping is the only reading that leaves it
+    // usable. It no longer affects which TILES are asked for: that range comes
+    // from the server.
     config_codec::limits::orderRange(config.min_zoom, config.max_zoom, "the zoom range", notes);
 
     // Bearing wraps rather than clamping: 350 and -10 are the same heading, and

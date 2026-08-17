@@ -54,6 +54,7 @@ add_library(${MAP_WIDGET_LIB} STATIC
     labels.cpp
     map_widget.cpp
     projection.cpp
+    recentre_button.cpp
     tessellator.cpp
     tile_source.cpp
     ${MAP_VERT_HEADER}
@@ -63,6 +64,7 @@ add_library(${MAP_WIDGET_LIB} STATIC
     include/map/labels.h
     include/map/map_widget.h
     include/map/projection.h
+    include/map/recentre_button.h
     include/map/style.h
     include/map/tessellator.h
     include/map/tile_source.h

@@ -1,9 +1,24 @@
-"""Launches and tracks the dashboard and editor processes.
+"""Launches and tracks the processes this interface drives.
 
-At most one instance of each application type runs at a time. That is a
-deliberate limit, not an oversight: instances share a zenoh bus, so a second
-dashboard would observe samples injected at the first, and telling the two apart
-would need per-instance zenoh connectivity configuration for very little gain.
+Two kinds, and the difference matters at every call site:
+
+  * CONTROLLABLE apps -- dashboard, editor, scope -- embed libs/agent_control,
+    take --mcp=<socket>, and answer JSON-RPC. Everything in the interface that
+    inspects or clicks anything talks to one of these.
+  * NODES -- map_server -- are headless and have no control socket. They are
+    supervised only: launched, watched, read back through their output, and
+    stopped. Embedding agent_control in one would mean linking Qt Widgets and a
+    GUI-thread dispatcher into a server process, which is the wrong shape for
+    an inarguable gain of nothing.
+
+They are here together because the useful thing is running them together: a map
+widget with no map_server behind it draws its background and says so, which is
+a screenshot nobody wanted.
+
+At most one instance of each type runs at a time. That is a deliberate limit,
+not an oversight: instances share a zenoh bus, so a second dashboard would
+observe samples injected at the first, and telling the two apart would need
+per-instance zenoh connectivity configuration for very little gain.
 """
 
 from __future__ import annotations
@@ -22,16 +37,80 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor", "scope"]
+AppName = Literal["dashboard", "editor", "scope", "map_server"]
 
-# How long to wait for the AGENT_READY handshake before giving up on a launch.
-# Generous because a debug build loading a large config on a cold page cache is
-# genuinely slow.
+
+@dataclass(frozen=True)
+class AppSpec:
+    """How to start one process and how to know it came up.
+
+    A table rather than a chain of `if app ==`, because the four differ along
+    axes that cut across each other -- where the binary lives, whether there is
+    a control socket, what "ready" looks like -- and a chain would grow a branch
+    per axis per app.
+    """
+
+    # Relative to the build directory, first match wins. The editor is a macOS
+    # bundle in this tree and a plain executable elsewhere, so order matters.
+    binaries: tuple[str, ...]
+
+    # Embeds libs/agent_control: takes --mcp=<socket> and answers JSON-RPC.
+    # False means supervision only -- see the module docstring.
+    controllable: bool
+
+    # The substring in the child's output that means it is up and serving.
+    #
+    # Controllable apps print AGENT_READY on stdout once the socket is
+    # listening, which is a handshake written for this. A node has no such
+    # handshake, so the marker is a log line it already emits -- chosen as the
+    # LAST thing logged before it starts answering, so a match means "serving"
+    # rather than "started opening files". Waiting for the process merely to
+    # stay alive would not do: map_server spends seconds opening a 512 MB
+    # archive, and a request sent into that window is answered as noSuchTileset.
+    ready_marker: str
+
+
+APPS: dict[str, AppSpec] = {
+    "dashboard": AppSpec(
+        binaries=("dashboard/dashboard",),
+        controllable=True,
+        ready_marker="AGENT_READY",
+    ),
+    "editor": AppSpec(
+        binaries=("dashboard/editor.app/Contents/MacOS/editor", "dashboard/editor"),
+        controllable=True,
+        ready_marker="AGENT_READY",
+    ),
+    "scope": AppSpec(
+        binaries=("scope/scope",),
+        controllable=True,
+        ready_marker="AGENT_READY",
+    ),
+    "map_server": AppSpec(
+        binaries=("nodes/map_server/map_server",),
+        controllable=False,
+        # services.cpp logs this once every service is registered.
+        ready_marker="[node] tiles on ",
+    ),
+}
+
+
+def spec_for(app: AppName) -> AppSpec:
+    try:
+        return APPS[app]
+    except KeyError:
+        raise LaunchError(f"Unknown app '{app}'. Known: {', '.join(sorted(APPS))}") from None
+
+# How long to wait for a process to report readiness before giving up on a
+# launch. Generous because a debug build loading a large config on a cold page
+# cache is genuinely slow, and a node opening a 512 MB archive more so.
 READY_TIMEOUT_S = 30.0
 
-# Lines of the child's stderr kept for crash reporting. The app's in-process log
-# ring dies with the process, so this is what survives a segfault.
-STDERR_RING = 400
+# Lines of the child's OUTPUT -- both streams -- kept in memory. For an app this
+# is crash reporting: its in-process log ring dies with the process, so this is
+# what survives a segfault. For a node it is the only log there is, and what
+# app_logs reads.
+OUTPUT_RING = 2000
 
 
 class LaunchError(RuntimeError):
@@ -46,13 +125,19 @@ class Instance:
     config_path: str | None
     client: AgentClient
     started_at: float
-    stderr: collections.deque[str] = field(default_factory=lambda: collections.deque(maxlen=STDERR_RING))
+    controllable: bool = True
+    # BOTH streams, interleaved in arrival order. spdlog writes to stdout and
+    # Qt to stderr, and splitting them would put a node's whole log on one side
+    # and an app's crash on the other.
+    output: collections.deque[str] = field(
+        default_factory=lambda: collections.deque(maxlen=OUTPUT_RING)
+    )
 
     def alive(self) -> bool:
         return self.process.poll() is None
 
-    def stderr_tail(self, lines: int = 40) -> str:
-        return "".join(list(self.stderr)[-lines:])
+    def output_tail(self, lines: int = 40) -> str:
+        return "".join(list(self.output)[-lines:])
 
 
 def _repo_root() -> pathlib.Path:
@@ -86,19 +171,7 @@ def _repo_root() -> pathlib.Path:
 def binary_for(app: AppName) -> pathlib.Path:
     root = _repo_root()
     build = pathlib.Path(os.environ.get("REDLINE_BUILD_DIR", root / "build"))
-
-    if app == "dashboard":
-        candidates = [build / "dashboard" / "dashboard"]
-    elif app == "scope":
-        # Top-level target, and a plain executable everywhere: only the editor
-        # is built as a macOS bundle.
-        candidates = [build / "scope" / "scope"]
-    else:
-        # The editor is a macOS bundle in this tree; plain executable elsewhere.
-        candidates = [
-            build / "dashboard" / "editor.app" / "Contents" / "MacOS" / "editor",
-            build / "dashboard" / "editor",
-        ]
+    candidates = [build / rel for rel in spec_for(app).binaries]
 
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -133,12 +206,19 @@ class Supervisor:
                 # mean every caller writes quit-then-launch by hand.
                 self._quit_locked(app)
 
+            spec = spec_for(app)
             binary = binary_for(app)
-            socket_path = os.path.join(self._tmpdir, f"{app}.sock")
-            if os.path.exists(socket_path):
+
+            # A node gets no socket. Handing it one and letting the connect fail
+            # later would make "this app cannot be clicked" surface as a
+            # connection error at the first ui_ call, which reads as a crash.
+            socket_path = os.path.join(self._tmpdir, f"{app}.sock") if spec.controllable else ""
+            if socket_path and os.path.exists(socket_path):
                 os.unlink(socket_path)
 
-            argv = [str(binary), f"--mcp={socket_path}"]
+            argv = [str(binary)]
+            if socket_path:
+                argv.append(f"--mcp={socket_path}")
             if config:
                 argv += ["-c", config]
             argv += extra_args or []
@@ -162,24 +242,23 @@ class Supervisor:
                 config_path=config,
                 client=AgentClient(socket_path),
                 started_at=time.time(),
+                controllable=spec.controllable,
             )
 
             ready = threading.Event()
 
-            def pump_stderr() -> None:
-                assert process.stderr is not None
-                for line in process.stderr:
-                    instance.stderr.append(line)
-
-            def pump_stdout() -> None:
-                assert process.stdout is not None
-                for line in process.stdout:
-                    if line.startswith("AGENT_READY"):
+            def pump(stream) -> None:
+                for line in stream:
+                    instance.output.append(line)
+                    if spec.ready_marker in line:
                         ready.set()
 
-            stderr_thread = threading.Thread(target=pump_stderr, daemon=True)
+            # Both streams keep their lines AND both are watched for the marker:
+            # which stream a given app announces itself on is its business, and
+            # spdlog and Qt do not agree about it.
+            stderr_thread = threading.Thread(target=pump, args=(process.stderr,), daemon=True)
             stderr_thread.start()
-            threading.Thread(target=pump_stdout, daemon=True).start()
+            threading.Thread(target=pump, args=(process.stdout,), daemon=True).start()
 
             def drained_tail() -> str:
                 # The pump thread ends at EOF, which arrives once the process is
@@ -189,7 +268,7 @@ class Supervisor:
                 # and the report -- and an error report that loses the error is
                 # worse than no report.
                 stderr_thread.join(timeout=2.0)
-                return instance.stderr_tail()
+                return instance.output_tail()
 
             # Wait for the handshake, but stop early if the process dies -- that
             # turns a crash-on-start into an immediate, explained failure instead
@@ -201,13 +280,14 @@ class Supervisor:
                 if process.poll() is not None:
                     raise LaunchError(
                         f"{app} exited with code {process.returncode} before it was ready.\n"
-                        f"--- stderr ---\n{drained_tail()}"
+                        f"--- output ---\n{drained_tail()}"
                     )
             else:
                 process.kill()
                 raise LaunchError(
-                    f"{app} did not report AGENT_READY within {READY_TIMEOUT_S:g}s.\n"
-                    f"--- stderr ---\n{drained_tail()}"
+                    f"{app} did not report readiness ({spec.ready_marker!r}) within "
+                    f"{READY_TIMEOUT_S:g}s.\n"
+                    f"--- output ---\n{drained_tail()}"
                 )
 
             self._instances[app] = instance
@@ -220,16 +300,20 @@ class Supervisor:
             live = {name: inst for name, inst in self._instances.items() if inst.alive()}
 
             if app is None:
-                if not live:
-                    raise LaunchError(
-                        "No application is running. Call app_launch first."
-                    )
-                if len(live) > 1:
-                    names = ", ".join(sorted(live))
+                # Only controllable apps. "Which app did you mean" is a question
+                # about the thing being inspected or clicked, and a node is
+                # never the answer -- letting map_server into this set would
+                # make every existing no-app call ambiguous the moment one is
+                # running, which is exactly when they are most useful.
+                pickable = {n: i for n, i in live.items() if i.controllable}
+                if not pickable:
+                    raise LaunchError("No application is running. Call app_launch first.")
+                if len(pickable) > 1:
+                    names = ", ".join(sorted(pickable))
                     raise LaunchError(
                         f"Both {names} are running; pass app= to say which one you mean."
                     )
-                return next(iter(live.values()))
+                return next(iter(pickable.values()))
 
             instance = self._instances.get(app)
             if instance is None:
@@ -237,7 +321,7 @@ class Supervisor:
             if not instance.alive():
                 raise LaunchError(
                     f"The {app} process exited with code {instance.process.returncode}.\n"
-                    f"--- stderr ---\n{instance.stderr_tail()}"
+                    f"--- output ---\n{instance.output_tail()}"
                 )
             return instance
 
@@ -252,7 +336,8 @@ class Supervisor:
                         "running": inst.alive(),
                         "exit_code": inst.process.returncode,
                         "config_path": inst.config_path,
-                        "socket_path": inst.socket_path,
+                        "controllable": inst.controllable,
+                        "socket_path": inst.socket_path or None,
                         "uptime_s": round(time.time() - inst.started_at, 1),
                     }
                 )

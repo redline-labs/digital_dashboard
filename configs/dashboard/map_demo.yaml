@@ -18,16 +18,22 @@ widgets:
     config:
       tileset: "socal"
       tile_zenoh_key: "map/tile"
-      # The archive's own range. Zooming past max_zoom magnifies the deepest
-      # tiles rather than going blank.
+      # The CAMERA's limits, not the archive's -- map_server reports what its
+      # archive actually holds and the widget clamps its tile requests to that.
+      # 17 lets the driver get about three levels closer than the socal
+      # archive's z14, magnifying its deepest tiles.
       min_zoom: 0
-      max_zoom: 14
+      max_zoom: 17
 
       # Irvine, CA -- the archive covers Southern California, so anywhere else
       # is a legitimately empty map.
       center_latitude: 33.6865966
       center_longitude: -117.8557874
       zoom: 14.0
+
+      # Drag to pan, wheel to zoom. A recentre button appears in the corner
+      # once the camera has been moved off the vehicle.
+      interactive: true
 
       follow_vehicle: true
       show_track: true

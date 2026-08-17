@@ -44,6 +44,12 @@ struct sqlite3_stmt;
 namespace mbtiles
 {
 
+// The deepest tile level a coordinate may name. Not a property of any one
+// archive -- an archive says how deep IT goes in its metadata -- but the point
+// past which z is not a tile coordinate at all: 2^z stops fitting a uint32 and
+// the shift that computes it is undefined.
+inline constexpr std::uint8_t kMaxTileZoom = 22;
+
 using Blob = std::vector<std::uint8_t>;
 
 struct Tile

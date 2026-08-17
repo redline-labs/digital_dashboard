@@ -299,10 +299,10 @@ Result<void> Archive::loadMetadata()
 
 Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::uint32_t y) const
 {
-    if (z > kMaxZoom)
+    if (z > kMaxTileZoom)
     {
         return invalid_argument("zoom " + std::to_string(z) + " is past " +
-                                std::to_string(kMaxZoom));
+                                std::to_string(kMaxTileZoom));
     }
 
     const std::uint32_t side = 1U << z;

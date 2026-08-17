@@ -9,6 +9,29 @@
 namespace map_server
 {
 
+TileRangeCheck checkTileRange(const mbtiles::Metadata& meta, std::uint8_t z, std::uint32_t x,
+                              std::uint32_t y)
+{
+    // Structural first. A z of 40 is not "deeper than this archive", it is not
+    // a tile, and 1U << 40 is undefined behaviour on the very next line.
+    if (z > mbtiles::kMaxTileZoom)
+    {
+        return TileRangeCheck::BadRequest;
+    }
+    const std::uint32_t side = 1U << z;
+    if (x >= side || y >= side)
+    {
+        return TileRangeCheck::BadRequest;
+    }
+
+    if (z < meta.minzoom || z > meta.maxzoom)
+    {
+        return TileRangeCheck::OutOfRange;
+    }
+
+    return TileRangeCheck::InRange;
+}
+
 TilesetRegistry::TilesetRegistry(const std::vector<TilesetConfig>& configured)
 {
     mTilesets.reserve(configured.size());

@@ -20,13 +20,16 @@
 
 #include "config_codec/config_json.h"
 
+#include <QAbstractButton>
 #include <QApplication>
+#include <QMouseEvent>
 #include <QPainter>
 #include <cmath>
 #include <QPen>
 #include <QPainterPath>
 #include <QFontMetricsF>
 #include <QImage>
+#include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
 
@@ -34,6 +37,7 @@
 #include <thread>
 
 #include <memory>
+#include <utility>
 #include <string>
 
 namespace
@@ -66,7 +70,13 @@ void test_defaults_point_somewhere_real()
           "the default longitude is in Southern California");
     check(config.tile_zenoh_key == "map/tile",
           "and the default tile key matches configs/map_server.yaml");
-    check(config.max_zoom == 14, "and the default max zoom matches the archive");
+    // NOT "matches the archive" any more. min_zoom/max_zoom bound the camera;
+    // which tile level is drawn comes from the server, which reports what its
+    // archive actually holds on every reply. The default lets the camera reach
+    // about three levels past a street-level archive, which is roughly where
+    // there is too little left in frame for it to read as a map.
+    check(config.max_zoom > 14 && config.max_zoom <= 22,
+          "the default camera maximum allows some magnification past a z14 archive");
 }
 
 void test_out_of_range_values_are_clamped_not_refused()
@@ -379,6 +389,284 @@ void render(MapWidget& widget)
     widget.render(&canvas);
 }
 
+// ============================================================================
+// The mouse
+// ============================================================================
+
+// Qt delivers these through the event loop in a running app; a test posts them
+// straight at the widget, which reaches the same handlers.
+void drag(MapWidget& widget, const QPointF& from, const QPointF& to)
+{
+    QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(&widget, &press);
+
+    QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&widget, &move);
+
+    QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(&widget, &release);
+}
+
+void scroll(MapWidget& widget, const QPointF& at, int notches)
+{
+    // angleDelta only, with a null pixelDelta: that is what a wheel with
+    // detents sends, and it is the branch a mouse takes.
+    QWheelEvent event(at, at, QPoint(0, 0), QPoint(0, notches * 120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&widget, &event);
+}
+
+map_widget::Projection projectionOf(const MapWidget& widget)
+{
+    return map_widget::Projection(widget.status().camera, widget.width(), widget.height());
+}
+
+bool sameCoordinate(const map_widget::Coordinate& a, const map_widget::Coordinate& b)
+{
+    // A tenth of a microdegree is about a centimetre. The drag arithmetic is
+    // exact up to floating point, so this is loose enough to survive the
+    // round trip through degrees and tight enough that a pixel of slip fails.
+    return std::abs(a.latitude - b.latitude) < 1e-7 &&
+           std::abs(a.longitude - b.longitude) < 1e-7;
+}
+
+void test_a_map_that_was_not_asked_to_be_interactive_ignores_the_mouse()
+{
+    // The default, and the one every existing layout gets. A dashboard is a
+    // surface people brace a hand against on a bad road; a map that panned when
+    // they did would be worse than one that never moves.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.follow_vehicle = false;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    const map_widget::Camera before = widget.status().camera;
+    drag(widget, QPointF(120.0, 90.0), QPointF(200.0, 160.0));
+    scroll(widget, QPointF(200.0, 150.0), 3);
+
+    check(widget.status().camera.center == before.center, "a drag does not move the camera");
+    check(widget.status().camera.zoom == before.zoom, "and the wheel does not zoom");
+    check(!widget.status().cameraMoved, "and nothing reports having been moved");
+    check(widget.findChild<QAbstractButton*>() == nullptr,
+          "and there is no recentre button to be found, because there is nothing to recentre");
+}
+
+void test_a_drag_keeps_the_grabbed_point_under_the_pointer()
+{
+    // THE assertion for panning, and the reason worldForScreen() is the
+    // primitive rather than a screen-space delta. Anything that merely moves
+    // the camera "about the right amount" drifts under the pointer, and on a
+    // ROTATED map a screen-space delta sends the map off at an angle to the
+    // drag entirely -- which is why this runs at a bearing as well as square.
+    for (const double bearing : { 0.0, 37.0 })
+    {
+        MapConfig_t config;
+        config.position_zenoh_key.clear();
+        config.interactive = true;
+        config.follow_vehicle = false;
+        config.zoom = 14.0;
+        config.bearing = bearing;
+
+        MapWidget widget(config);
+        widget.resize(400, 300);
+        render(widget);
+
+        const QPointF from(120.0, 90.0);
+        const QPointF to(190.0, 145.0);
+
+        const map_widget::Coordinate grabbed =
+            projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { from.x(),
+                                                                               from.y() });
+
+        drag(widget, from, to);
+
+        const map_widget::Coordinate under =
+            projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { to.x(), to.y() });
+
+        const std::string at = " (bearing " + std::to_string(int(bearing)) + ")";
+        check(sameCoordinate(grabbed, under),
+              "the place that was grabbed ends up under the pointer" + at);
+        check(widget.status().cameraMoved, "and the camera reports having been moved" + at);
+        check(widget.status().camera.zoom == 14.0, "with the zoom untouched" + at);
+    }
+}
+
+void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    // No vehicle to go back to in a test with no bus, so recentring goes back
+    // to the configured centre. Same code either way -- camera() simply falls
+    // through to the next source once the pan is dropped.
+    config.follow_vehicle = false;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    auto* button = widget.findChild<QAbstractButton*>();
+    check(button != nullptr, "an interactive map has a recentre button");
+    if (button == nullptr)
+    {
+        return;
+    }
+
+    // isHidden() rather than isVisible(): a child of a widget that was never
+    // shown is never "visible", so isVisible() would be false here whatever the
+    // code did and the assertion would pass for the wrong reason.
+    check(button->isHidden(), "hidden while the camera is still where the layout put it");
+
+    const map_widget::Coordinate configured = widget.status().camera.center;
+    drag(widget, QPointF(120.0, 90.0), QPointF(220.0, 170.0));
+
+    check(!button->isHidden(), "shown once a drag has moved the camera");
+    check(!sameCoordinate(widget.status().camera.center, configured),
+          "which it has");
+
+    button->click();
+
+    check(sameCoordinate(widget.status().camera.center, configured),
+          "clicking it puts the camera back on the configured centre");
+    check(!widget.status().cameraMoved, "and the pan is forgotten");
+    check(button->isHidden(), "so the button takes itself away again");
+}
+
+void test_the_wheel_zooms_about_the_pointer()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    // Deliberately NOT the centre of the widget: anchoring on the pointer and
+    // anchoring on the centre are the same thing there, and this test would
+    // pass on either.
+    const QPointF at(90.0, 70.0);
+    const map_widget::Coordinate before =
+        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+
+    scroll(widget, at, 2);
+
+    check(widget.status().camera.zoom > 12.0, "the wheel zooms in, got " +
+                                                  std::to_string(widget.status().camera.zoom));
+
+    const map_widget::Coordinate after =
+        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    check(sameCoordinate(before, after),
+          "and the place under the pointer stays under the pointer while the scale changes");
+}
+
+void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
+{
+    // Wanting a closer look is not asking to be left behind. Zooming while
+    // Follow Vehicle is on anchors on the CENTRE instead of the pointer, so the
+    // vehicle does not move on screen and there is nothing to suspend.
+    //
+    // Note there is no position here -- no bus -- and that is the point: follow
+    // is a declared intent, not a state that waits for a fix. A rule that keyed
+    // off hasPosition() would let a zoom taken while the GPS was still coming
+    // up cancel following for good.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = true;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    const map_widget::Coordinate centre = widget.status().camera.center;
+    scroll(widget, QPointF(90.0, 70.0), 2);
+
+    check(widget.status().camera.zoom > 12.0, "the wheel still zooms");
+    check(sameCoordinate(widget.status().camera.center, centre),
+          "about the centre, which does not move");
+    check(!widget.status().cameraMoved, "so following is not suspended");
+
+    auto* button = widget.findChild<QAbstractButton*>();
+    check(button != nullptr && button->isHidden(),
+          "and no recentre button appears, because there is nothing to go back to");
+}
+
+void test_the_wheel_stops_at_the_camera_range_the_layout_allows()
+{
+    // min_zoom/max_zoom bound the CAMERA and nothing else. They are not the
+    // archive's range -- that comes from the server on every reply -- so a
+    // layout may legitimately let the user zoom past what any archive holds,
+    // and refreshTiles() then draws the deepest level there is, magnified.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.min_zoom = 6;
+    config.max_zoom = 17;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    scroll(widget, QPointF(200.0, 150.0), 40);
+    check(widget.status().camera.zoom == 17.0,
+          "the wheel reaches the configured maximum, got " +
+              std::to_string(widget.status().camera.zoom));
+
+    // And it still knows what to draw up there. With no server the archive
+    // range is unknown, so the request is uncapped rather than blank -- the
+    // failure this guards against is a widget that asks for nothing at all
+    // once the camera passes some limit.
+    check(widget.status().tilesVisible > 0,
+          "and still works out tiles to ask for past it, got " +
+              std::to_string(widget.status().tilesVisible));
+
+    scroll(widget, QPointF(200.0, 150.0), -80);
+    check(widget.status().camera.zoom == 6.0, "and zooming out stops at min_zoom, got " +
+                                                  std::to_string(widget.status().camera.zoom));
+}
+
+void test_a_drag_cannot_leave_the_projection()
+{
+    // Dragging north past the pole produces a latitude Web Mercator has no
+    // answer for -- the forward transform runs to infinity and the map paints
+    // nothing at all -- and dragging west past the date line produces a
+    // longitude that would project a whole world away.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.zoom = 1.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    for (int i = 0; i < 12; ++i)
+    {
+        drag(widget, QPointF(200.0, 40.0), QPointF(40.0, 260.0));
+    }
+
+    const map_widget::Camera camera = widget.status().camera;
+    check(camera.center.latitude <= 85.06 && camera.center.latitude >= -85.06,
+          "a drag off the top of the world stops at the Mercator limit, got " +
+              std::to_string(camera.center.latitude));
+    check(camera.center.longitude >= -180.0 && camera.center.longitude < 180.0,
+          "and one across the date line wraps rather than running off, got " +
+              std::to_string(camera.center.longitude));
+    check(widget.status().tilesVisible > 0, "and the map still knows what to draw");
+}
+
 void test_a_sized_widget_knows_which_tiles_it_needs()
 {
     // The bridge between the projection and the bus. If this is empty, no tile
@@ -576,6 +864,14 @@ int main(int argc, char** argv)
     test_a_bad_expression_does_not_take_the_widget_down();
     test_the_widget_paints_offscreen();
     test_the_widget_paints_at_its_screens_ratio();
+
+    test_a_map_that_was_not_asked_to_be_interactive_ignores_the_mouse();
+    test_a_drag_keeps_the_grabbed_point_under_the_pointer();
+    test_the_recentre_button_appears_with_the_pan_and_undoes_it();
+    test_the_wheel_zooms_about_the_pointer();
+    test_the_wheel_does_not_stop_the_map_following_the_vehicle();
+    test_the_wheel_stops_at_the_camera_range_the_layout_allows();
+    test_a_drag_cannot_leave_the_projection();
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();

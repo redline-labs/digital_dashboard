@@ -38,6 +38,13 @@ namespace map_widget
 // degrees -- the value that makes the projected world exactly square.
 inline constexpr double kMaxLatitude = 85.0511287798066;
 
+// The deepest tile level this projection is defined for. At z22 a tile is about
+// 9 m across and the whole world is 2^22 tiles a side, which is where the
+// 64-bit tile hash and the float32 tile-local coordinates both stop being
+// comfortable. No archive in this tree goes near it; it is the ceiling used
+// before a server has said what its archive actually holds.
+inline constexpr std::uint8_t kMaxTileZoom = 22;
+
 struct WorldPoint
 {
     // Both in [0, 1] for points on the map. x wraps; y does not, and a y

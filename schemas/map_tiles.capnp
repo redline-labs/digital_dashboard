@@ -15,9 +15,14 @@ enum MapStatus {
   notFound @2;
   # No tileset by that name is configured on the server.
   noSuchTileset @3;
-  # Outside the archive's minzoom/maxzoom, or x/y outside 2^z.
+  # Outside the ZOOM LEVELS THIS ARCHIVE HOLDS. Distinct from notFound, and the
+  # distinction is the useful part: absence is final and the client should draw
+  # nothing there, while out-of-range means the answer exists at a shallower
+  # level and the client should ask for it there instead.
   outOfRange @4;
-  # The request could not be understood -- an empty path, a traversal attempt.
+  # The request could not be understood -- an empty path, a traversal attempt,
+  # or a coordinate that is not a tile at all: z past 22, or x/y outside 2^z.
+  # A bug in the client, rather than a fact about the archive.
   badRequest @5;
   # The server tried and failed. See docs/map.md; this is the one worth a log
   # line. Named `failed` rather than `error` because capnp generates enumerants
@@ -113,6 +118,23 @@ struct MapTileResponse {
   format @2 :Text;
 
   tiles @3 :List(MapTileResult);
+
+  # What the archive actually holds, on EVERY reply.
+  #
+  # A client cannot work this out from the per-tile answers. Most of the pyramid
+  # is empty, so notFound means "nothing at this coordinate" and says nothing
+  # about how deep the archive goes -- a hole over the desert at z14 and a level
+  # the archive never had both come back absent. Without these a client that
+  # wanted to zoom past the archive would have to walk down a level at a time,
+  # one round trip each, and would still walk all the way to zero over genuinely
+  # uncovered ground.
+  #
+  # Two bytes on a reply that already carries a hundred kilobytes of tile, and
+  # it means the first reply of a session is enough: the client clamps what it
+  # asks for from then on, and the outOfRange status stays the answer for the
+  # one request it may get wrong before that.
+  minzoom @4 :UInt8;
+  maxzoom @5 :UInt8;
 }
 
 # ============================================================================

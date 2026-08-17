@@ -36,9 +36,25 @@ TARGET_FIELD = Field(
 
 INSTRUCTIONS = """\
 Drives the Redline dashboard, editor and scope headlessly (Qt 'offscreen'
-platform) so you can see and interact with them without a human at the screen.
+platform) so you can see and interact with them without a human at the screen,
+and supervises the nodes they need behind them.
 
-AT MOST ONE OF EACH APP TYPE RUNS AT A TIME. There is no support for running two
+TWO KINDS OF PROCESS. dashboard, editor and scope are controllable: they take a
+control socket, and every ui_/input_/widget_/scope_/editor_ tool works on them.
+map_server is a supervised NODE: launch it, read it with app_logs, quit it, and
+nothing else -- it is headless and has no control socket.
+
+Launch a node when what you are looking at depends on it. A map widget with no
+map_server behind it draws its background and says "No reply from map_server",
+which is a screenshot that tells you nothing about the map:
+
+    app_launch(app="map_server", config="configs/map_server.yaml")
+    app_launch(app="dashboard", config="configs/dashboard/map_demo.yaml")
+
+app_launch waits for each to be SERVING before it returns, so that pair is not a
+race.
+
+AT MOST ONE OF EACH TYPE RUNS AT A TIME. There is no support for running two
 dashboards: instances share a zenoh bus, so a second one would observe samples
 injected at the first. `app_launch` on a type that is already running REPLACES
 that instance (any unsaved editor or scope state is lost). To run several
@@ -76,6 +92,16 @@ def _fail(exc: Exception) -> str:
 
 def _call(app: AppName | None, method: str, params: dict[str, Any] | None = None) -> Any:
     instance = supervisor.get(app)
+    if not instance.controllable:
+        # Said plainly here rather than letting the connect fail on a socket
+        # that was never created. "Connection refused" on a process that is
+        # running perfectly well reads as a crash, and the next move after that
+        # is usually to relaunch something that did not need relaunching.
+        raise LaunchError(
+            f"{instance.app} is a supervised node, not a controllable app: it has no "
+            f"control socket, so '{method}' does not apply to it. It can be launched, "
+            f"read with app_logs, and quit."
+        )
     return instance.client.call(method, params)
 
 
@@ -119,16 +145,31 @@ def app_launch(
         Field(default=None, description="Additional command-line arguments."),
     ] = None,
 ) -> str:
-    """Launch the dashboard or editor headless, with the control interface enabled.
+    """Launch an app headless with the control interface, or a supporting node.
 
-    ONE INSTANCE PER TYPE. If this app type is already running, it is QUIT AND
+    Two kinds:
+
+      * dashboard, editor, scope -- Qt apps with a control socket. Everything
+        that inspects, screenshots or clicks works on these.
+      * map_server -- a headless node, supervised only: launch it, read it with
+        app_logs, quit it. It has no control socket, so ui_/input_/widget_ calls
+        do not apply to it and say so.
+
+    Launch a node when the app under test needs it. A map widget with no
+    map_server behind it draws its background and reports "No reply from
+    map_server", which is a screenshot that says nothing about the map:
+
+        app_launch(app="map_server", config="configs/map_server.yaml")
+        app_launch(app="dashboard", config="configs/dashboard/map_demo.yaml")
+
+    ONE INSTANCE PER TYPE. If this type is already running, it is QUIT AND
     REPLACED -- any unsaved editor state is lost. Running two dashboards is not
-    supported. To have a dashboard and an editor up at the same time, call this
-    once for each.
+    supported. To have several up at once, call this once for each.
 
-    Waits for the app to report readiness before returning, so the next call can
-    address widgets immediately. If the app crashes on startup, the failure comes
-    back with its stderr rather than as a timeout.
+    Waits for readiness before returning, so the next call can address widgets
+    immediately -- and for a node, so the app launched after it does not race a
+    server still opening a 512 MB archive. If the process dies on startup, the
+    failure comes back with its output rather than as a timeout.
     """
     try:
         instance = supervisor.launch(app, config, extra_args)
@@ -140,7 +181,7 @@ def app_launch(
             "app": instance.app,
             "pid": instance.process.pid,
             "config_path": instance.config_path,
-            "socket_path": instance.socket_path,
+            "socket_path": instance.socket_path or None,
         },
         indent=2,
     )
@@ -148,13 +189,17 @@ def app_launch(
 
 @mcp.tool()
 def app_list() -> str:
-    """List the running apps. At most two rows: one dashboard and one editor."""
+    """List the running processes: what they are, whether they are still up.
+
+    `controllable` false marks a supervised node -- see app_launch. At most one
+    row per type.
+    """
     return json.dumps(supervisor.list(), indent=2)
 
 
 @mcp.tool()
 def app_quit(app: Annotated[AppName, Field(description="Which app to quit.")]) -> str:
-    """Stop an application and clean up its process."""
+    """Stop an app or node and clean up its process."""
     return "stopped" if supervisor.quit(app) else f"no {app} was running"
 
 
@@ -221,7 +266,12 @@ def app_logs(
         int, Field(default=200, description="Maximum records; keeps the newest.")
     ] = 200,
 ) -> str:
-    """Read the app's in-process log ring: structured, filterable, with a cursor.
+    """Read a process's logs.
+
+    For an app this is its in-process ring: structured, filterable, with a
+    cursor. For a supervised node it is the captured stdout and stderr, since
+    there is no ring to query -- `source` in the reply says which you got, and
+    `since_seq`/`logger` do not apply to the latter.
 
     This is usually faster than guessing when something looks wrong. The app logs
     each stage of its work, and Qt's own diagnostics (QPA errors, layout
@@ -232,9 +282,34 @@ def app_logs(
     read them; poll more often if you see it.
     """
     try:
+        instance = supervisor.get(app)
+        if not instance.controllable:
+            # A node has no in-process ring to query, so this is its captured
+            # output instead. Deliberately the same TOOL rather than a second
+            # one: "read the logs" is the same intent whichever kind of process
+            # answered, and the fields that cannot apply are simply absent.
+            lines = list(instance.output)
+            if grep:
+                needle = grep.lower()
+                lines = [line for line in lines if needle in line.lower()]
+            if level:
+                lines = [line for line in lines if f"[{level.lower()}]" in line.lower()]
+            return json.dumps(
+                {
+                    "app": instance.app,
+                    "source": "process output",
+                    "note": (
+                        "A supervised node has no in-process log ring; these are its "
+                        "captured stdout and stderr. since_seq and logger do not apply."
+                    ),
+                    "truncated": len(lines) > limit,
+                    "lines": [line.rstrip("\n") for line in lines[-limit:]],
+                },
+                indent=2,
+            )
+
         return json.dumps(
-            _call(
-                app,
+            instance.client.call(
                 "app.logs",
                 {
                     "since_seq": since_seq,

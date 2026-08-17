@@ -134,6 +134,31 @@ void TileSource::request(const std::vector<TileId>& wanted)
                 return;
             }
 
+            bool learned = false;
+            {
+                // Before anything else: an archive does not grow levels under
+                // a running server, so one reply is enough and every later one
+                // says the same thing. Learning it here is what stops the
+                // widget ever asking out of range again -- see map_tiles.capnp
+                // for why the per-tile answers cannot be used for this.
+                std::lock_guard<std::mutex> lock(mMutex);
+                if (!mArchiveZoom.has_value())
+                {
+                    mArchiveZoom = ZoomRange { reply->getMinzoom(), reply->getMaxzoom() };
+                    mArchiveZoomLearned = true;
+                    learned = true;
+                }
+            }
+
+            // Outside the lock, and unconditionally: the widget may have asked
+            // at a level this archive does not have, in which case nothing will
+            // arrive in the mailbox to prompt a repaint and the newly known
+            // range would sit unused until something else moved the camera.
+            if (learned && mOnTilesReady)
+            {
+                mOnTilesReady();
+            }
+
             switch (reply->getStatus())
             {
                 case ::MapStatus::OK:
@@ -167,8 +192,17 @@ void TileSource::request(const std::vector<TileId>& wanted)
                         break;
 
                     case ::MapStatus::NOT_FOUND:
-                    case ::MapStatus::OUT_OF_RANGE:
                         outcome = Outcome::Absent;
+                        break;
+
+                    case ::MapStatus::OUT_OF_RANGE:
+                        // Only reachable before the range is known -- one batch
+                        // at startup, at most. Deliberately NOT cached as
+                        // absent: that would be a permanent "nothing here" for
+                        // a coordinate the archive simply does not go to, and
+                        // it would survive a server restart onto a deeper
+                        // archive.
+                        outcome = Outcome::OutOfRange;
                         break;
 
                     case ::MapStatus::UNKNOWN:
@@ -202,6 +236,18 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
     {
         case Outcome::Ok:
             break;
+
+        case Outcome::OutOfRange:
+            // Nothing to cache and nothing to back off: the range was learned
+            // from this very reply, so the tile is not asked for again.
+            {
+                // Both under the lock. mStats is read by stats() from the GUI
+                // thread and this runs on a zenoh one.
+                const std::lock_guard<std::mutex> guard(mMutex);
+                ++mStats.outOfRange;
+                mInFlight.erase(id);
+            }
+            return;
 
         case Outcome::Absent:
             // The normal answer for most of the pyramid. Cached as an empty
@@ -353,6 +399,20 @@ std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted) con
     }
 
     return out;
+}
+
+std::optional<TileSource::ZoomRange> TileSource::archiveZoomRange() const
+{
+    const std::lock_guard<std::mutex> guard(mMutex);
+    return mArchiveZoom;
+}
+
+bool TileSource::takeArchiveRangeLearned()
+{
+    const std::lock_guard<std::mutex> guard(mMutex);
+    const bool learned = mArchiveZoomLearned;
+    mArchiveZoomLearned = false;
+    return learned;
 }
 
 TileSourceStats TileSource::stats() const

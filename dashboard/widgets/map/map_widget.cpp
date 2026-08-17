@@ -6,12 +6,14 @@
 
 #include <QFont>
 #include <QMetaObject>
+#include <QMouseEvent>
 #include <QPaintDevice>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPolygonF>
 #include <QResizeEvent>
+#include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
 
@@ -24,6 +26,20 @@ namespace
 // An extra ring of tiles around the viewport, fetched but not visible. It is
 // what makes a pan show map rather than background at the leading edge.
 constexpr int kPrefetchRingTiles = 1;
+
+// How much of a zoom level one detent of a wheel is worth. A whole level per
+// notch overshoots badly on the way in -- street to block in one click -- and a
+// quarter takes four clicks to do anything.
+constexpr double kZoomPerWheelNotch = 0.5;
+
+// A wheel reports in eighths of a degree and a detent is 15 degrees, so 120 is
+// one notch. Qt documents this and every mouse in the world follows it.
+constexpr double kWheelUnitsPerNotch = 120.0;
+
+// A trackpad sends pixels instead, continuously and in much smaller amounts.
+// This is a FEEL constant with no authority behind it: it is how far two
+// fingers travel for one notch's worth of zoom.
+constexpr double kTrackpadPixelsPerNotch = 60.0;
 
 QColor toQColor(const helpers::Color& color)
 {
@@ -68,7 +84,16 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
                 this,
                 [this]() {
                     mDrainPending.store(false);
-                    if (mTiles && mTiles->drain() > 0)
+                    if (!mTiles)
+                    {
+                        return;
+                    }
+                    // Both, and drain() FIRST so it always runs: a newly
+                    // learned zoom range changes which level the next paint
+                    // asks for, and when the camera is parked past the archive
+                    // that is the only thing that will have changed.
+                    const bool drained = mTiles->drain() > 0;
+                    if (drained || mTiles->takeArchiveRangeLearned())
                     {
                         update();
                     }
@@ -104,6 +129,19 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         }
     }
 
+    if (mConfig.interactive)
+    {
+        // An open hand is the whole affordance: there is nothing else on a map
+        // that says it can be dragged, and a cursor that changes is cheaper
+        // than any chrome that would.
+        setCursor(Qt::OpenHandCursor);
+
+        mRecentre = new map_widget::RecentreButton(toQColor(mConfig.style.label_text),
+                                                   toQColor(mConfig.style.label_halo), this);
+        mRecentre->hide();
+        connect(mRecentre, &QAbstractButton::clicked, this, &MapWidget::recentreCamera);
+    }
+
     // No refreshTiles() here on purpose. A widget is constructed at Qt's
     // default 640x480 and sized by its layout afterwards, so fetching now would
     // request a dozen tiles for a viewport this widget never has. The paint
@@ -116,9 +154,16 @@ map_widget::Camera MapWidget::camera() const
 {
     map_widget::Camera out;
 
-    // The vehicle wins once there is one and follow is on; otherwise the
-    // configured centre, which is also what the editor previews.
-    if (mConfig.follow_vehicle && hasPosition())
+    // Three sources, in this order and not another: where the user dragged to,
+    // then the vehicle if follow is on, then the configured centre -- which is
+    // also what the editor previews. A drag beats Follow Vehicle rather than
+    // fighting it, because the alternative is a map that snaps back on the
+    // next position fix and cannot be looked away from at all.
+    if (mInteractionCentre.has_value())
+    {
+        out.center = *mInteractionCentre;
+    }
+    else if (mConfig.follow_vehicle && hasPosition())
     {
         out.center = map_widget::Coordinate { *mLatitude, *mLongitude };
     }
@@ -128,7 +173,7 @@ map_widget::Camera MapWidget::camera() const
             map_widget::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
     }
 
-    out.zoom = mConfig.zoom;
+    out.zoom = mInteractionZoom.value_or(mConfig.zoom);
     out.bearing = (mConfig.rotate_with_heading && mHeading.has_value()) ? *mHeading
                                                                        : mConfig.bearing;
     return out;
@@ -165,8 +210,16 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
         return;
     }
 
-    const std::uint8_t z = projection.tileZoom(static_cast<std::uint8_t>(mConfig.min_zoom),
-                                               static_cast<std::uint8_t>(mConfig.max_zoom));
+    // The ARCHIVE's range, reported by the server, NOT the configured one --
+    // which is the camera's business and may legitimately reach past what any
+    // archive holds. Until the first reply lands there is nothing to clamp to,
+    // so the whole span is allowed and at most one batch comes back
+    // outOfRange; from then on the range is known and it cannot happen again.
+    const auto archive = mTiles->archiveZoomRange();
+    const std::uint8_t z =
+        archive.has_value()
+            ? projection.tileZoom(archive->min, archive->max)
+            : projection.tileZoom(0, static_cast<std::uint8_t>(map_widget::kMaxTileZoom));
 
     // Both sets from one walk of the grid. The prefetch ring is requested but
     // never drawn, which is what keeps mVisible honest about what the paint
@@ -187,6 +240,179 @@ void MapWidget::resizeEvent(QResizeEvent* event)
     // paint pass recomputes at the size actually being drawn -- doing it twice
     // only walked the tile grid twice for the same answer.
     QWidget::resizeEvent(event);
+    layOutRecentreButton();
+}
+
+// ------------------------------------------------------------------- the mouse
+
+map_widget::Projection MapWidget::interactionProjection() const
+{
+    return map_widget::Projection(camera(), width(), height(), devicePixelRatioF());
+}
+
+void MapWidget::setInteractionCentre(const map_widget::Coordinate& where)
+{
+    // Clamped and wrapped HERE rather than trusted. A drag past the top of the
+    // world produces a latitude Web Mercator has no answer for, and one across
+    // the date line produces a longitude outside [-180, 180) that would project
+    // a whole world away. Both functions are the projection's own, so the map
+    // stops at the poles and runs continuously round the equator.
+    mInteractionCentre = map_widget::Coordinate { map_widget::clampLatitude(where.latitude),
+                                                  map_widget::wrapLongitude(where.longitude) };
+    layOutRecentreButton();
+    update();
+}
+
+void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen)
+{
+    const map_widget::Projection projection = interactionProjection();
+
+    // What is under the pointer NOW, at the camera as it currently stands. The
+    // difference between that and where the caller wants it is exactly how far
+    // the centre has to move -- in world units, so it is right at every zoom,
+    // and through worldForScreen(), so it is right under rotation too. A
+    // rotated map dragged with a screen-space delta moves off at an angle to
+    // the pointer, and that inverse is already written and tested.
+    const map_widget::WorldPoint under =
+        projection.worldForScreen(map_widget::ScreenPoint { screen.x(), screen.y() });
+    const map_widget::WorldPoint centre = map_widget::worldFor(projection.camera().center);
+
+    setInteractionCentre(map_widget::coordinateFor(map_widget::WorldPoint {
+        centre.x + (world.x - under.x), centre.y + (world.y - under.y) }));
+}
+
+void MapWidget::zoomBy(double levels, const QPointF& at)
+{
+    const map_widget::Projection before = interactionProjection();
+
+    // The CAMERA's range, which is the layout's business and has nothing to do
+    // with how deep the archive goes. Asking to be closer than the archive can
+    // answer is a perfectly reasonable thing to want -- refreshTiles() draws
+    // the deepest level there is, magnified, and magnified vector tiles stay
+    // sharp.
+    const double wanted = std::clamp(before.camera().zoom + levels,
+                                     static_cast<double>(mConfig.min_zoom),
+                                     static_cast<double>(mConfig.max_zoom));
+    if (wanted == before.camera().zoom)
+    {
+        return;
+    }
+
+    // Following the vehicle: zoom about the CENTRE. The vehicle does not move
+    // on screen, so there is nothing to suspend and the map keeps tracking --
+    // see mInteractionCentre. Anchoring on the pointer here would drag the
+    // camera off the vehicle as a side effect of wanting a closer look.
+    //
+    // Deliberately NOT conditioned on hasPosition(): Follow Vehicle is a
+    // declared intent, not a state that waits for a fix. Zooming in while the
+    // GPS is still coming up must not quietly cancel it, or the map sits on the
+    // configured centre forever and the first position to arrive changes
+    // nothing.
+    if (!mInteractionCentre.has_value() && mConfig.follow_vehicle)
+    {
+        mInteractionZoom = wanted;
+        update();
+        return;
+    }
+
+    const map_widget::WorldPoint anchor =
+        before.worldForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    mInteractionZoom = wanted;
+    // Reads the new zoom back out of camera(), so this is the scale the map is
+    // about to be drawn at rather than the one it was.
+    moveCameraSoThat(anchor, at);
+}
+
+void MapWidget::recentreCamera()
+{
+    mInteractionCentre.reset();
+    layOutRecentreButton();
+    update();
+}
+
+void MapWidget::layOutRecentreButton()
+{
+    if (mRecentre == nullptr)
+    {
+        return;
+    }
+
+    // Bottom right, which is where a map's controls live and, more to the
+    // point, the one corner nothing else uses: the diagnostic line is centred
+    // and the vehicle marker follows the vehicle.
+    const int size = map_widget::RecentreButton::kSize;
+    const int margin = map_widget::RecentreButton::kMargin;
+    mRecentre->setGeometry(width() - size - margin, height() - size - margin, size, size);
+
+    // Shown only when it has something to undo. A button that is always there
+    // is a button that is usually a lie.
+    mRecentre->setVisible(mInteractionCentre.has_value() && width() > (size + (2 * margin)) &&
+                          height() > (size + (2 * margin)));
+}
+
+void MapWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (!mConfig.interactive || event->button() != Qt::LeftButton)
+    {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
+    mDragAnchor = interactionProjection().worldForScreen(
+        map_widget::ScreenPoint { event->position().x(), event->position().y() });
+    setCursor(Qt::ClosedHandCursor);
+    event->accept();
+}
+
+void MapWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!mDragAnchor.has_value())
+    {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    moveCameraSoThat(*mDragAnchor, event->position());
+    event->accept();
+}
+
+void MapWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (!mDragAnchor.has_value())
+    {
+        QWidget::mouseReleaseEvent(event);
+        return;
+    }
+
+    mDragAnchor.reset();
+    setCursor(Qt::OpenHandCursor);
+    event->accept();
+}
+
+void MapWidget::wheelEvent(QWheelEvent* event)
+{
+    if (!mConfig.interactive)
+    {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    // pixelDelta first, because a device that reports both is a trackpad and
+    // its pixels are the finer signal. angleDelta is what a wheel with detents
+    // sends and is all it sends.
+    const QPoint pixels = event->pixelDelta();
+    const double notches = !pixels.isNull()
+                               ? (static_cast<double>(pixels.y()) / kTrackpadPixelsPerNotch)
+                               : (static_cast<double>(event->angleDelta().y()) /
+                                  kWheelUnitsPerNotch);
+    if (notches == 0.0)
+    {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    zoomBy(notches * kZoomPerWheelNotch, event->position());
+    event->accept();
 }
 
 void MapWidget::setLatitude(double degrees)
@@ -450,6 +676,8 @@ MapWidget::Status MapWidget::status() const
     out.tilesDrawn = mLastTilesDrawn;
     out.labelsPlaced = mLastLabelsPlaced;
     out.hasPosition = hasPosition();
+    out.camera = camera();
+    out.cameraMoved = mInteractionCentre.has_value();
     out.gpuReady = (mGpu != nullptr);
     if (mGpu)
     {

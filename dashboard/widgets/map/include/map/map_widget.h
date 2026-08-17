@@ -57,6 +57,7 @@
 #include "map/gpu_renderer.h"
 #include "map/labels.h"
 #include "map/projection.h"
+#include "map/recentre_button.h"
 #include "map/tile_source.h"
 
 class MapWidget : public QWidget
@@ -90,6 +91,15 @@ class MapWidget : public QWidget
         // no CPU fallback, so the map is background and labels only.
         bool gpuReady { false };
         map_widget::GpuRenderer::Stats gpu;
+        // Where the map is ACTUALLY looking, which is not always the configured
+        // centre: Follow Vehicle moves it, and so does a drag. A screenshot of
+        // the wrong place and a screenshot of an archive with no coverage there
+        // are the same picture, and this is what tells them apart.
+        map_widget::Camera camera;
+        // True once a drag has moved the camera off the configured centre or
+        // off the vehicle. Also exactly what puts the recentre button on
+        // screen -- see recentreCamera().
+        bool cameraMoved { false };
     };
 
     Status status() const;
@@ -97,6 +107,13 @@ class MapWidget : public QWidget
   protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+
+    // All four no-op and pass to QWidget unless `interactive` is set, so a
+    // dashboard that did not ask for a movable map behaves exactly as it did.
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
   private:
     void setLatitude(double degrees);
@@ -114,6 +131,27 @@ class MapWidget : public QWidget
     // painted into, as one value. Built per paint rather than kept -- see
     // map/projection.h.
     map_widget::Projection projectionFor(const QPainter& painter) const;
+
+    // The projection the MOUSE works against. Deliberately does not go looking
+    // for a paint device -- there is none during an event -- and it does not
+    // need one: every coordinate a Projection returns is logical, and the
+    // device pixel ratio plays no part in screen<->world at all.
+    map_widget::Projection interactionProjection() const;
+
+    // Move the camera so that `world` ends up under `screen`. ONE primitive for
+    // both gestures: a drag is "keep the point you grabbed under the pointer"
+    // and a wheel is "keep the point under the pointer where it is while the
+    // scale changes", which are the same sentence.
+    void moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen);
+    void setInteractionCentre(const map_widget::Coordinate& where);
+    void zoomBy(double levels, const QPointF& at);
+    // Drop the pan and go back to the vehicle, or to the configured centre when
+    // there is no vehicle to follow. Does NOT touch the zoom: the user chose
+    // that separately and asking to be recentred is not asking to be zoomed
+    // back out.
+    void recentreCamera();
+    void layOutRecentreButton();
+
     void onPositionChanged();
     // Takes the frame's projection rather than making its own: the tile set has
     // to be the one the projection handed to the GPU is about to draw, and two
@@ -146,6 +184,30 @@ class MapWidget : public QWidget
     std::optional<double> mLatitude;
     std::optional<double> mLongitude;
     std::optional<double> mHeading;
+
+    // The camera the USER put the map on, which beats both the configured
+    // centre and the vehicle. Two separate optionals rather than one Camera,
+    // because they are suspended independently and only one of them breaks
+    // Follow Vehicle:
+    //
+    //   * A drag sets the centre, and having a centre IS what "following is
+    //     suspended" means. There is no second flag to keep in step with it.
+    //   * The wheel sets only the zoom. Zooming while following the vehicle
+    //     zooms about the CENTRE rather than the pointer, so the vehicle does
+    //     not move on screen and there is no reason to stop tracking it --
+    //     wanting a closer look is not asking to be left behind.
+    std::optional<map_widget::Coordinate> mInteractionCentre;
+    std::optional<double> mInteractionZoom;
+
+    // The world point grabbed on mouse-down, held for the whole drag. Fixed at
+    // press rather than recomputed per move: chasing a delta between successive
+    // move events accumulates the rounding of every one of them, and the map
+    // slides out from under the pointer over a long drag.
+    std::optional<map_widget::WorldPoint> mDragAnchor;
+
+    // Null unless the map is interactive. Parented to this widget, so the
+    // editor's recursive mouse-transparency reaches it in edit mode.
+    map_widget::RecentreButton* mRecentre { nullptr };
 
     // WORLD points, not coordinates. A track point's world position is fixed
     // the moment it arrives; only the camera moves. Keeping degrees meant

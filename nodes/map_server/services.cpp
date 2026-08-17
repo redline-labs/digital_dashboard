@@ -131,7 +131,16 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
     // working archive, and reporting notFound up here would make it look like
     // the tileset was the problem.
     response.setStatus(::MapStatus::OK);
-    response.setFormat(tileset->archive->metadata().format);
+    const mbtiles::Metadata& meta = tileset->archive->metadata();
+    response.setFormat(meta.format);
+
+    // On EVERY reply, not just on a mis-ask. A client cannot infer the depth
+    // from the per-tile answers -- most of the pyramid is empty, so a hole at
+    // z14 and a level the archive never had both read as absent -- and telling
+    // it here means the first reply of a session is enough to stop it ever
+    // asking out of range. See map_tiles.capnp.
+    response.setMinzoom(meta.minzoom);
+    response.setMaxzoom(meta.maxzoom);
 
     const auto wanted = request.getTiles();
     auto results = response.initTiles(wanted.size());
@@ -148,6 +157,29 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
         echo.setX(coord.getX());
         echo.setY(coord.getY());
 
+        // Checked HERE rather than left to the archive, because the archive
+        // cannot tell the two apart: a level it never had and a hole in a level
+        // it does have are both "no row", and both would come back notFound.
+        // The client needs them separated -- absence is final, out-of-range
+        // means ask a level up -- and this is the only place that knows.
+        const TileRangeCheck range =
+            checkTileRange(meta, coord.getZ(), coord.getX(), coord.getY());
+        if (range == TileRangeCheck::BadRequest)
+        {
+            result.setStatus(::MapStatus::BAD_REQUEST);
+            result.setError("not a tile coordinate: " + std::to_string(coord.getZ()) + "/" +
+                            std::to_string(coord.getX()) + "/" + std::to_string(coord.getY()));
+            continue;
+        }
+        if (range == TileRangeCheck::OutOfRange)
+        {
+            result.setStatus(::MapStatus::OUT_OF_RANGE);
+            result.setError("zoom " + std::to_string(coord.getZ()) + " is outside " + name +
+                            "'s " + std::to_string(meta.minzoom) + "-" +
+                            std::to_string(meta.maxzoom));
+            continue;
+        }
+
         auto tile = tileset->archive->tile(coord.getZ(), coord.getX(), coord.getY());
         if (!tile)
         {
@@ -155,7 +187,11 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
             switch (error.kind)
             {
                 case mbtiles::Error::Kind::InvalidArgument:
-                    result.setStatus(::MapStatus::OUT_OF_RANGE);
+                    // Unreachable now that checkTileRange() screens for it, and
+                    // kept as BAD_REQUEST rather than OUT_OF_RANGE so that if
+                    // the two ever disagree the client is told it has a bug
+                    // instead of politely retrying a level up forever.
+                    result.setStatus(::MapStatus::BAD_REQUEST);
                     break;
                 case mbtiles::Error::Kind::NotFound:
                 case mbtiles::Error::Kind::NotReadable:

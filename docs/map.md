@@ -48,7 +48,8 @@ The renderer is **2D only**, by construction rather than by omission:
 
 - `MapVertex` carries `x, y` and a 2D normal. There is no z, no depth buffer,
   and no depth test — correctness comes from painter's-algorithm draw order
-  (layer-major across tiles), which only works because everything is flat.
+  (layer-major across tiles), which works because everything is coplanar. Note
+  *coplanar*, not *axis-aligned*: tilting the camera does not break it.
 - `Camera` has `center`, `zoom` and `bearing`. There is **no pitch**, so the
   view is always straight down; the MVP is an orthographic projection with a
   rotation about z.
@@ -56,12 +57,48 @@ The renderer is **2D only**, by construction rather than by omission:
   unused: the `building` layer in the bench archive carries `render_height` and
   `render_min_height`, and the tessellator reads neither.
 
-Adding 3D would mean a pitch angle on `Camera`, a perspective MVP, a depth
-buffer on the render target, extruded wall geometry, and per-face lighting —
-and it would break the flat draw-order model that the current correctness
-argument rests on. It is a rewrite of the draw path, not a feature flag. There
-is no plan for it: a dash map is read at a glance, and a tilted view trades
-legibility for looks.
+There is no plan for either: a dash map is read at a glance, and a tilted view
+trades legibility for looks. But they are **two separate projects of very
+different size**, and it is worth not conflating them.
+
+**A tilted camera (pitch) does not need a depth buffer.** Everything drawn is
+coplanar on the ground, so layer-major painter's order stays correct at any
+camera angle, and `map.vert` is already projective — `gl_Position = mvp *
+vec4(p, 0, 1)` with a full `mat4`, where today `w` is always 1. The per-tile
+uniform block survives untouched: it is a model matrix placing a unit quad on
+the ground, times a shared view-projection, and only the shared half changes.
+
+What pitch actually costs, in order:
+
+1. **Per-tile LOD — this is the project.** `refreshTiles()` picks one integer
+   zoom for the whole frame and `tileBounds()` takes the axis-aligned box of
+   four projected screen corners. Under pitch the visible region is a trapezoid
+   running to the horizon, and the top corners have no ground intersection at
+   all. Uniform z14 to the horizon is hundreds to thousands of tiles against a
+   hard `kMaxTilesPerFrame`. It needs a quadtree descent emitting leaves, plus a
+   far-plane cutoff and a pitch cap. Everything downstream already copes:
+   `TileSource` is keyed by `TileId` *across* zooms, so mixed-zoom tile sets are
+   already representable end to end.
+2. **Line widths.** `map.vert` expands lines in tile-local space by
+   `halfPx * widthScale / pxPerLocal`, one constant per tile. Under perspective
+   the screen scale varies *across* a tile, so distant roads shrink to
+   sub-pixel. The fix is to expand in clip space after projection, which wants
+   the viewport size as one more uniform — worth doing regardless, since it
+   decouples road width from tile size.
+3. **Labels.** `paintLabels()` places anchors as `tileOrigin + local * scale`
+   with a hand-rolled bearing rotation — a 2D similarity assumption. Each anchor
+   has to go through the full matrix instead; the code gets *shorter*. The new
+   problem is that mixed-zoom tiles show the same place twice, so label dedup
+   becomes real work.
+4. **`screenFor()` has to be allowed to fail.** Points behind the camera or
+   above the horizon have no screen position. Four call sites, but the vehicle
+   trail also needs clipping against the horizon or it draws garbage.
+
+**Extruded buildings are the separate, additive project**, and they are what the
+depth buffer is for. They also need height in the tessellator and
+`render_height` carried through `map_build`/`map_rules` into the archive —
+i.e. rebuilding the 512 MB archive. Pitch is worth having on its own; buildings
+are only worth it once pitch exists.
 
 ## How it draws
 
@@ -78,11 +115,17 @@ but Metal, Vulkan and D3D render into a *texture* without any window at all.
 The frame is read back into a `QImage` and blitted by the widget's `paintEvent`.
 
 Measured on the same scene: tessellation **1.9 ms once**, upload **6 ms once**,
-and then **0.22 ms per frame** with pan, zoom and rotate — and flat in
-resolution (0.23 ms at 2560×1440), because the cost is draw-call submission
-rather than fill rate. Readback is noise (0.40 ms vs 0.44 ms without it) on
-unified memory. There is **no CPU fallback**: without a backend the widget draws
-its background and says so, which `status().gpuReady` reports.
+and then a fraction of a millisecond per frame with pan, zoom and rotate.
+
+The frame is **linear in pixels**, not flat — about **0.5 ms per megapixel** of
+the target, so 660×640 is ~0.4 ms and the same widget at a device pixel ratio of
+2 is ~1.0 ms. The cost is the readback rather than the rasterisation: forcing
+`sampleCount` to 1 moves a 5120×2880 frame by under a millisecond, which is why
+the sample count is taken as high as the hardware offers and the SIZE is the
+thing to think about. Measure with `map_bench --width/--height/--dpr`.
+
+There is **no CPU fallback**: without a backend the widget draws its background
+and says so, which `status().gpuReady` reports.
 
 Four things in that path are worth knowing before changing it:
 
@@ -121,10 +164,23 @@ shader that will not load *at runtime*; a header cannot be dropped by a linker.
 
 # serve
 ./build/nodes/map_server/map_server --config configs/map_server.yaml
+```
 
-# look at it
+Or drive both through the agent interface, which supervises `map_server` as a
+node — launched, read with `app_logs`, quit, but with no control socket, so
+nothing that inspects or clicks applies to it:
+
+```python
+app_launch(app="map_server", config="configs/map_server.yaml")
 app_launch(app="dashboard", config="configs/dashboard/map_demo.yaml")
 ```
+
+Launch the node **first**. `app_launch` returns only once the server is
+serving — it waits for the log line that means every service is registered, not
+merely that the process survived — so the pair is not a race against an archive
+still being opened. Without a server behind it the widget draws its background
+and reports `No reply from map_server`, which is a screenshot that says nothing
+about the map.
 
 From another terminal:
 
@@ -293,6 +349,107 @@ For a BD992:
 
 `configs/dashboard/map_demo.yaml` is a working layout with two of them.
 
+## Panning and zooming
+
+Off by default. `interactive: true` turns on dragging to pan and the wheel to
+zoom — a dashboard is a surface people brace a hand against on a bad road, so a
+layout has to ask for a map that moves.
+
+Both gestures go through `Projection::worldForScreen()`, which is what makes
+them anchored rather than approximate: a drag keeps the point you grabbed under
+the pointer, and the wheel keeps the point under the pointer where it is while
+the scale changes. Anchoring in world units also means it stays correct under
+rotation — a screen-space delta sends a bearing-rotated map off at an angle to
+the drag.
+
+The camera has three sources, in order: where the user dragged to, then the
+vehicle if `follow_vehicle` is on, then the configured centre.
+
+- **A drag suspends Follow Vehicle**, and having a dragged-to centre *is* what
+  suspended means — there is no second flag to keep in step with it. The
+  alternative is a map that snaps back on the next position fix and cannot be
+  looked away from at all.
+- **The wheel does not.** While Follow Vehicle is on, zooming anchors on the
+  centre instead of the pointer, so the vehicle does not move on screen and
+  there is nothing to suspend. This is deliberately not conditioned on a
+  position having arrived: following is a declared intent, not a state that
+  waits for a fix, and a zoom taken while the GPS is still coming up must not
+  cancel it for good.
+- Zoom is clamped to `[min_zoom, max_zoom]`, which bound the **camera** and
+  nothing else — see *Who decides the zoom range* below.
+- The panned centre is clamped to the Mercator limit and wrapped at the date
+  line, so a drag cannot leave the projection.
+
+`RecentreButton` appears in the bottom right once the camera has been moved,
+and drops the pan when clicked. It does **not** touch the zoom: the user chose
+that separately, and asking to be recentred is not asking to be zoomed back
+out. It is a real `QAbstractButton` rather than a rectangle painted into
+`paintEvent`, which buys hover and press states, makes the editor's recursive
+mouse-transparency (`Canvas::setEditorMode`) cover it in edit mode, and puts it
+in `ui_snapshot` as an addressable widget instead of a coordinate the agent
+interface has to be told about. It paints itself in the style's *label* colours
+— the pair already chosen to stay readable over an arbitrary map.
+
+`map_test_widget_hidpi` aside, an offscreen widget has no screen and so no
+mouse; the interaction tests post `QMouseEvent`/`QWheelEvent` straight at the
+widget, which reaches the same handlers Qt would.
+
+## Who decides the zoom range
+
+Two different questions, and the widget stopped conflating them:
+
+| | who answers | what it means |
+|---|---|---|
+| which tile level to fetch | **the server**, on every reply | what the archive actually holds |
+| how far the camera may zoom | `min_zoom`/`max_zoom` in the layout | how close a layout lets the user get |
+
+`MapTileResponse` carries `minzoom`/`maxzoom` on every reply, `TileSource` keeps
+the first pair it sees, and `refreshTiles()` clamps `tileZoom()` to it. So a
+layout no longer transcribes a number that has to match an `.mbtiles` file on
+another machine — point a widget at a deeper archive and it uses the depth.
+
+**Why the reply carries it rather than a catalogue call, and rather than
+nothing at all.** A client cannot infer the depth from the per-tile answers:
+most of the pyramid is empty, so a hole over the desert at z14 and a level the
+archive never had both come back absent. Left to work it out, a client wanting
+to zoom past the archive would walk down a level at a time — one round trip
+each — and would still walk all the way to zero over genuinely uncovered
+ground. Two bytes on a reply that already carries a hundred kilobytes of tile
+removes all of that, and the first reply of a session is enough.
+
+`checkTileRange()` in `tilesets.h` is what separates the three answers, and
+`map_server_test_tile_range` pins them:
+
+- **badRequest** — not a tile coordinate at all (z past 22, x/y outside 2^z).
+  A client bug. Screened *before* anything shifts by `z`, because `1U << 40` is
+  undefined rather than large.
+- **outOfRange** — a real coordinate at a level this archive lacks. The answer
+  exists shallower; ask there.
+- **notFound** — the archive covers that level and has nothing at that
+  coordinate. Final; draw nothing.
+
+Getting the middle two the wrong way round fails quietly in both directions: a
+blank map the moment anyone zooms past the archive, or a client retrying
+uncovered ground a level up, and again, all the way to zero, once per tile.
+
+Two consequences worth knowing:
+
+- **Overzoom is cheap; underzoom is not.** A camera deeper than the archive
+  looks at a *fraction* of one tile — free, and magnified vector tiles stay
+  sharp, because the geometry is triangles in tile-local coordinates and roads
+  are expanded in the shader to a screen-pixel width. Measured against the
+  SoCal archive (z14): z16 is indistinguishable in sharpness, z17 still reads
+  as streets, and by z18 there is too little left in frame to be a map — hence
+  a default `max_zoom` of 17. A camera *shallower* than `minzoom` is the
+  opposite: 256× the tiles at four levels out, truncated by `kMaxVisibleTiles`
+  into a partly drawn map. Raise `min_zoom` to the archive's floor if that
+  matters.
+- **Learning the range has to trigger a repaint.** When the camera is parked
+  past the archive, every tile comes back `outOfRange`, nothing lands in the
+  mailbox, `drain()` returns zero — and without
+  `TileSource::takeArchiveRangeLearned()` the widget would sit blank holding a
+  range it never redrew with. That bug was real; it is why the flag exists.
+
 ## Diagnosing a blank map
 
 `MapWidget::status()` separates the causes that look identical in a screenshot,
@@ -305,6 +462,12 @@ and the widget draws the answer on itself when `show_status` is on:
 | `No reply from map_server on 'map/tile'` | the node is not running, or the key is wrong |
 | `Waiting for tiles…` | requests are out, nothing back yet |
 | `No coverage here in tileset 'socal'` | tiles arrived and the archive is empty here |
+
+`status()` also reports `camera` — where the map is *actually* looking, which
+is not always the configured centre once Follow Vehicle or a drag has moved it
+— and `cameraMoved`, which says a pan is in effect. A screenshot of the wrong
+place and a screenshot of an archive with no coverage there are the same
+picture.
 
 ## Things that are load-bearing
 
