@@ -152,7 +152,7 @@ struct FeatureSpec
 {
     std::uint32_t type { 2 };  // 1 point, 2 linestring, 3 polygon
     Bytes geometry;
-    std::vector<std::uint32_t> tags;
+    std::vector<std::uint32_t> tags {};
     std::uint64_t id { 0 };
     bool hasId { false };
     // Emit the tags one varint per field rather than packed. Both are legal.

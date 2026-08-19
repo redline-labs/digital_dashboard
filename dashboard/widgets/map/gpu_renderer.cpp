@@ -7,6 +7,8 @@
 // feature test for its own backend.
 #include <rhi/qrhi_platform.h>
 
+#include <QOffscreenSurface>
+#include <QSurfaceFormat>
 #include <QColor>
 #include <QElapsedTimer>
 #include <QMatrix4x4>
@@ -78,9 +80,11 @@ GpuRenderer::~GpuRenderer() = default;
 bool GpuRenderer::initialise()
 {
     // Tried in the order each platform actually prefers. OpenGL is last
-    // everywhere: under a headless QPA plugin it needs an offscreen surface
-    // from the platform, and `QOpenGLContext::create()` was measured returning
-    // false there -- which is the dependency this whole class exists to avoid.
+    // everywhere: it is the backend that always exists, not the one to reach
+    // for first. It does work under a headless QPA plugin, provided it is given
+    // the fallback surface below -- and it has to, because the offscreen plugin
+    // never implements createPlatformVulkanInstance, so Vulkan cannot come up
+    // there no matter what the driver supports.
 #if QT_CONFIG(metal)
     {
         QRhiMetalInitParams params;
@@ -110,8 +114,30 @@ bool GpuRenderer::initialise()
 
     if (!mRhi)
     {
+        // 3.3 core because that is what the shaders are baked for: CMakeLists
+        // runs qsb at --glsl 330, so a context below it has nothing to compile.
+        // Qt's default surface format is GL 2.0, which QRhi honours and then
+        // reports as GLSL 120 -- and the mismatch does not surface here, where
+        // the backend comes up happily, but later at pipeline creation as "no
+        // GLSL shader code found". Asking for the version the bake targets puts
+        // the failure, if there is one, at the point that can explain it.
         QRhiGles2InitParams params;
+        params.format.setVersion(3, 3);
+        params.format.setProfile(QSurfaceFormat::CoreProfile);
+
+        // The fallback surface is NOT optional, and not merely a nicety for
+        // headless. QRhi drives GL through a context that has to be current on
+        // something, and with no window in play there is nothing to make it
+        // current on. Given no surface to fall back to, QRhi does not decline
+        // the backend -- it dereferences the null and takes the process with it.
+        // It has to carry the same format as the context, or the two disagree.
+        mFallbackSurface.reset(QRhiGles2InitParams::newFallbackSurface(params.format));
+        params.fallbackSurface = mFallbackSurface.get();
         mRhi.reset(QRhi::create(QRhi::OpenGLES2, &params));
+        if (!mRhi)
+        {
+            mFallbackSurface.reset();
+        }
     }
 
     if (!mRhi)
@@ -129,7 +155,16 @@ bool GpuRenderer::initialise()
     // the header: at 5120x2880 the difference between 4x and none is under a
     // millisecond, against six for the pixels themselves -- so the only reason
     // not to antialias is not being able to.
-    const QList<int> counts = mRhi->supportedSampleCounts();
+    //
+    // supportedSampleCounts() is the wrong question on its own: it answers
+    // "can this backend multisample", where ensureTarget() needs "can it
+    // multisample into a TEXTURE", which QRhi tracks separately. The GL backend
+    // here reports 1 2 4 8 16 and lets newTexture(..., 4, ...) succeed, then
+    // fails at framebuffer completeness -- an incomplete attachment two calls
+    // away from the list that promised it. Ask the feature that governs it.
+    const QList<int> counts = mRhi->isFeatureSupported(QRhi::MultisampleTexture)
+                                  ? mRhi->supportedSampleCounts()
+                                  : QList<int> { 1 };
     mSampleCount = counts.contains(4) ? 4 : (counts.contains(2) ? 2 : 1);
     mStats.sampleCount = mSampleCount;
 

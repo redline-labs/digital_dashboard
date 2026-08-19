@@ -33,6 +33,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 #include "gsof/byte_order.h"
@@ -82,14 +83,25 @@ namespace detail
 {
 
 // The length check every parser starts with. Short is fatal, long is fine --
-// see the header comment on forward compatibility.
-constexpr Result<void> require(std::span<const std::uint8_t> bytes, std::size_t need, RecordType type)
+// see the header comment on forward compatibility. Returns the failure ready to
+// propagate, or nullopt when the buffer is long enough.
+//
+// Templated on the caller's record, rather than the plainer Result<void>, so the
+// failure is built as the caller's own Result<T> and returned as-is. The obvious
+// spelling -- return a Result<void>, then `return std::unexpected(ok.error())` --
+// makes each parser copy an Error out of one expected and into the union of
+// another, and that union is as wide as the record while Error is four bytes.
+// GCC 15 duly widens the copy to the whole union and warns that the bytes past
+// Error's end are uninitialised. They are, and nothing reads them, but the round
+// trip through the stack slot is real work on a path that has none to do.
+template <typename T>
+constexpr std::optional<Result<T>> require(std::span<const std::uint8_t> bytes, std::size_t need, RecordType type)
 {
-    if (bytes.size() < need)
+    if (bytes.size() >= need)
     {
-        return truncated(static_cast<std::uint16_t>(bytes.size()), static_cast<std::uint8_t>(type));
+        return std::nullopt;
     }
-    return {};
+    return Result<T> { truncated(static_cast<std::uint16_t>(bytes.size()), static_cast<std::uint8_t>(type)) };
 }
 
 } // namespace detail
@@ -136,9 +148,9 @@ struct PositionTime
 
     static constexpr Result<PositionTime> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<PositionTime>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return PositionTime {
@@ -164,9 +176,9 @@ struct LatLongHeight
 
     static constexpr Result<LatLongHeight> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<LatLongHeight>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return LatLongHeight { read_f64(b, 0), read_f64(b, 8), read_f64(b, 16) };
@@ -185,9 +197,9 @@ struct EcefPosition
 
     static constexpr Result<EcefPosition> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<EcefPosition>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return EcefPosition { read_f64(b, 0), read_f64(b, 8), read_f64(b, 16) };
@@ -206,9 +218,9 @@ struct EcefDelta
 
     static constexpr Result<EcefDelta> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<EcefDelta>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return EcefDelta { read_f64(b, 0), read_f64(b, 8), read_f64(b, 16) };
@@ -228,9 +240,9 @@ struct TangentPlaneDelta
 
     static constexpr Result<TangentPlaneDelta> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<TangentPlaneDelta>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return TangentPlaneDelta { read_f64(b, 0), read_f64(b, 8), read_f64(b, 16) };
@@ -262,9 +274,9 @@ struct Velocity
 
     static constexpr Result<Velocity> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<Velocity>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         Velocity out {};
@@ -296,9 +308,9 @@ struct DopInfo
 
     static constexpr Result<DopInfo> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<DopInfo>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return DopInfo { read_f32(b, 0), read_f32(b, 4), read_f32(b, 8), read_f32(b, 12) };
@@ -321,9 +333,9 @@ struct ClockInfo
 
     static constexpr Result<ClockInfo> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<ClockInfo>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return ClockInfo { read_u8(b, 0), read_f64(b, 1), read_f64(b, 9) };
@@ -349,9 +361,9 @@ struct PositionVcv
 
     static constexpr Result<PositionVcv> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<PositionVcv>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return PositionVcv {
@@ -382,9 +394,9 @@ struct PositionSigma
 
     static constexpr Result<PositionSigma> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<PositionSigma>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return PositionSigma {
@@ -405,9 +417,9 @@ struct ReceiverSerial
 
     static constexpr Result<ReceiverSerial> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<ReceiverSerial>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return ReceiverSerial { read_i32(b, 0) };
@@ -433,9 +445,9 @@ struct CurrentTimeUtc
 
     static constexpr Result<CurrentTimeUtc> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<CurrentTimeUtc>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return CurrentTimeUtc { read_u32(b, 0), read_u16(b, 4), read_i16(b, 6), read_u8(b, 8) };
@@ -489,9 +501,9 @@ struct AttitudeInfo
 
     static constexpr Result<AttitudeInfo> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<AttitudeInfo>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         AttitudeInfo out {};
@@ -618,9 +630,9 @@ struct AllSvBrief
 
     static constexpr Result<AllSvBrief> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<AllSvBrief>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         AllSvBrief out {};
@@ -671,9 +683,9 @@ struct AllSvDetailed
 
     static constexpr Result<AllSvDetailed> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<AllSvDetailed>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         AllSvDetailed out {};
@@ -734,9 +746,9 @@ struct ReceivedBase
 
     static constexpr Result<ReceivedBase> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<ReceivedBase>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         ReceivedBase out {};
@@ -765,9 +777,9 @@ struct BatteryMemory
 
     static constexpr Result<BatteryMemory> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<BatteryMemory>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return BatteryMemory { read_u16(b, 0), read_f64(b, 2) };
@@ -840,9 +852,9 @@ struct PositionType
 
     static constexpr Result<PositionType> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<PositionType>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return PositionType {
@@ -895,9 +907,9 @@ struct LbandStatus
 
     static constexpr Result<LbandStatus> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<LbandStatus>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         LbandStatus out {};
@@ -946,9 +958,9 @@ struct BasePosition
 
     static constexpr Result<BasePosition> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<BasePosition>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return BasePosition {
@@ -999,9 +1011,9 @@ struct InsFullNav
 
     static constexpr Result<InsFullNav> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<InsFullNav>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         InsFullNav out {};
@@ -1056,9 +1068,9 @@ struct InsRms
 
     static constexpr Result<InsRms> parse(std::span<const std::uint8_t> b)
     {
-        if (const Result<void> ok = detail::require(b, kSize, kType); !ok.has_value())
+        if (const auto err = detail::require<InsRms>(b, kSize, kType))
         {
-            return std::unexpected(ok.error());
+            return *err;
         }
 
         return InsRms {

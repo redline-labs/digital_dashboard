@@ -67,8 +67,8 @@ std::optional<double> BoundedSearch::distance(const Graph& graph, NodeIndex from
     mBest.clear();
     mQueue.clear();
 
-    const auto greater = [](const std::pair<double, NodeIndex>& a,
-                            const std::pair<double, NodeIndex>& b) { return a.first > b.first; };
+    const auto greater = [](const std::pair<double, NodeIndex>& lhs,
+                            const std::pair<double, NodeIndex>& rhs) { return lhs.first > rhs.first; };
 
     mQueue.emplace_back(0.0, from);
     mBest.emplace(from, 0.0);

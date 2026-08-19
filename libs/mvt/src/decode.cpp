@@ -3,6 +3,7 @@
 
 #include "mvt/reader.h"
 
+#include <cstring>
 #include <limits>
 #include <utility>
 

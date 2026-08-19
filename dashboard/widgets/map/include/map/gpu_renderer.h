@@ -51,6 +51,7 @@
 #include "map/style.h"
 #include "map/tessellator.h"
 
+class QOffscreenSurface;
 class QRhi;
 class QRhiBuffer;
 class QRhiGraphicsPipeline;
@@ -158,6 +159,10 @@ class GpuRenderer
     // every platform that did not take the Vulkan path.
     std::unique_ptr<QVulkanInstance> mVulkan;
 #endif
+    // Declared BEFORE mRhi for the same reason, and null unless the OpenGL path
+    // was taken: that backend keeps this surface to make its context current on
+    // whenever there is no window to bind to.
+    std::unique_ptr<QOffscreenSurface> mFallbackSurface;
     std::unique_ptr<QRhi> mRhi;
     std::unique_ptr<QRhiTexture> mMsaaColour;
     std::unique_ptr<QRhiTexture> mResolve;
