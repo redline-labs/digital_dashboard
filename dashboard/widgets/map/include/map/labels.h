@@ -18,6 +18,7 @@
 #ifndef MAP_LABELS_H
 #define MAP_LABELS_H
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -26,6 +27,7 @@
 #include <QFont>
 #include <QHash>
 #include <QImage>
+#include <QList>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
@@ -50,7 +52,46 @@ struct LabelTile
 
 // Which place classes get a label, and how important each is. A city keeps its
 // name and a hamlet loses it, rather than whichever tile decoded first winning.
+//
+// Only the ORDER of the returned values means anything. They are spaced so that
+// a layer can rank exactly half way between two classes; see labels.cpp.
 int placePriority(std::string_view className);
+
+// How a single label candidate ranks against the others on screen.
+//
+// Two keys rather than one because the questions are different. `tier` is what
+// KIND of thing this is -- a country beats a city beats a hamlet, whatever
+// their sizes. `magnitude` settles a collision between two of the same kind,
+// and without it that is decided by which tile happened to decode first.
+struct LabelRank
+{
+    int tier { 0 };
+    std::uint32_t magnitude { 0 };
+};
+
+// The rank of one feature of the basemap's `place` layer.
+//
+// Prefers the `rank` and `population` attributes map_build writes over the
+// class name: the class alone cannot tell a town of 400 000 from one of 400,
+// and a large town should outrank a small city rather than lose to it on a tag
+// whose meaning shifts between countries. Falls back to `placePriority()` for
+// an archive built before `rank` was written.
+LabelRank placeRank(const mvt::Layer& layer, const mvt::Feature& feature);
+
+// The rank of one feature of the tracks overlay's `track_label` layer.
+//
+// Sits between a town and a city, and orders circuits among themselves by the
+// length-derived rank map_build writes, so that where two collide the bigger
+// circuit keeps its name.
+LabelRank trackRank(const mvt::Layer& layer, const mvt::Feature& feature);
+
+// The rank of one feature of the basemap's `transportation_name` layer.
+//
+// Sits between a neighbourhood and a locality: a street name must not push a
+// town off the map, but at the zooms road labels appear at it is worth more
+// than the name of a junction three miles away. Ordered among roads by
+// roadPriority(), so the bigger road keeps its name.
+LabelRank roadRank(const mvt::Layer& layer, const mvt::Feature& feature);
 
 struct LabelStats
 {
@@ -89,16 +130,56 @@ class LabelCache
 
     // `font`, the halo width and the two colours are all baked into the image,
     // so they form the cache key; a change to any of them empties it.
+    //
+    // The returned reference is valid until the NEXT call. An insertion may
+    // rehash and an eviction may remove, and either can move what is already
+    // held -- so use the entry and let go of it, which is what the paint loop
+    // does.
     const Entry& entryFor(const QString& text, const QFont& font, double haloWidth,
                           const QColor& haloColour, const QColor& textColour,
                           double devicePixelRatio);
 
     std::size_t size() const { return static_cast<std::size_t>(mEntries.size()); }
-    void clear() { mEntries.clear(); }
+    // The text's bounding box, WITHOUT rendering it.
+    //
+    // Placement needs a size for every candidate, but only the handful that
+    // survive collision need pixels. Rendering a label costs 0.88 ms; measuring
+    // one is a font-metrics lookup.
+    //
+    // This does NOT explain the label pass's cost against a real archive --
+    // see docs/map.md, which measures that at 476 ms both with and without
+    // this change. It is here because asking for pixels to find out a width is
+    // wrong on its own terms, not because it was the fix.
+    const QRectF& measure(const QString& text, const QFont& font);
+
+    // Whether a rendered label for `text` is in hand. Exposed so that eviction
+    // policy is testable: "still cached after 600 other names went past" is the
+    // only observable difference between dropping the oldest and dropping the
+    // one the viewport is still showing.
+    bool contains(const QString& text) const { return mEntries.contains(text); }
+    void clear()
+    {
+        mEntries.clear();
+        mOrder.clear();
+        mMeasured.clear();
+    }
 
   private:
+    // Move `text` to the most-recently-used end. Called on every hit, so that
+    // eviction drops a label that has left the screen rather than one the
+    // viewport is still showing.
+    void touch(const QString& text);
+
     QString mKey;
     QHash<QString, Entry> mEntries;
+    // Measurements, keyed by text within the current font. Far cheaper to hold
+    // than rendered images, and needed for every candidate rather than every
+    // placed label.
+    QString mMeasureKey;
+    QHash<QString, QRectF> mMeasured;
+    // Least recently used first. Parallel to mEntries and holding the same
+    // keys; the two are only ever changed together.
+    QList<QString> mOrder;
 };
 
 LabelStats paintLabels(QPainter& painter, const Projection& projection,

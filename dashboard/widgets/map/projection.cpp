@@ -261,6 +261,7 @@ Projection::VisibleTiles Projection::visibleTilesWithMargin(std::uint8_t z, int 
 
             if (out.withMargin.size() >= kMaxVisibleTiles)
             {
+                out.truncated = true;
                 return out;
             }
         }

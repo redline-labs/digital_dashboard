@@ -27,6 +27,26 @@ namespace
 // what makes a pan show map rather than background at the leading edge.
 constexpr int kPrefetchRingTiles = 1;
 
+// How many zoom levels BELOW the drawn one to fetch as a coarse overview.
+//
+// The ring above covers a pan of a tile or so. It cannot cover a zoom, and it
+// cannot cover a pan into ground the drive has never seen at any zoom -- for
+// that, substituteTiles() needs an ancestor in the cache, and the only reason
+// one is ever there today is that the camera happened to sit at a shallower
+// zoom earlier. Fetching the ancestors outright is what makes a stand-in
+// available for ground that was never visited.
+//
+// Four levels, which is what MapLibre's prefetchZoomDelta defaults to, and the
+// arithmetic is why: one overview tile spans 16x16 of the drawn ones, so a
+// viewport of forty tiles is covered by one or two. That is a rounding error on
+// the request budget in exchange for never blanking.
+//
+// It must stay within substituteTiles()'s reach -- kMaxSubstituteLevelsUp is 5
+// -- or the tiles would be fetched, cached, and never looked at.
+constexpr std::uint8_t kOverviewZoomDelta = 4;
+static_assert(kOverviewZoomDelta <= map_widget::kMaxSubstituteLevelsUp,
+              "an overview deeper than substituteTiles() will look is fetched and never drawn");
+
 // How much of a zoom level one detent of a wheel is worth. A whole level per
 // notch overshoots badly on the way in -- street to block in one click -- and a
 // quarter takes four clicks to do anything.
@@ -233,6 +253,7 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     }
 
     mVisible.assign(mSources.size(), {});
+    mTileWalkTruncated = false;
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
 
@@ -252,11 +273,27 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     // pass will look at -- and what status() reports.
     auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
     mVisible[s] = std::move(tiles.drawn);
+    mTileWalkTruncated = mTileWalkTruncated || tiles.truncated;
 
     // Sorted centre-outward HERE and not in mVisible: the request order decides
     // which tiles win the in-flight slots, and the draw order must stay stable
     // or the renderer re-uploads every tile whenever the camera reshuffles it.
     projection.sortCentreOutward(tiles.withMargin);
+
+    // The coarse overview goes on the END of the request list, so it can only
+    // ever spend request slots the viewport did not want. A stand-in that
+    // arrives at the cost of the real tile it stands in for is not a saving.
+    const std::uint8_t archiveMin = archive.has_value() ? archive->min : 0;
+    if (z > archiveMin)
+    {
+        const auto overviewZ =
+            static_cast<std::uint8_t>(std::max(int(z) - int(kOverviewZoomDelta), int(archiveMin)));
+        for (const map_widget::TileId& id : projection.visibleTiles(overviewZ, 0))
+        {
+            tiles.withMargin.push_back(id);
+        }
+    }
+
     mSources[s]->request(tiles.withMargin);
     }
 }
@@ -802,6 +839,7 @@ MapWidget::Status MapWidget::status() const
     out.tilesVisible = static_cast<int>(visibleTotal);
     out.tilesDrawn = mLastTilesDrawn;
     out.tilesStandIn = mLastTilesStandIn;
+    out.tileWalkTruncated = mTileWalkTruncated;
     out.labelsPlaced = mLastLabelsPlaced;
     out.hasPosition = hasPosition();
     out.camera = camera();

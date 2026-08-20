@@ -132,6 +132,19 @@ class Tiler
         std::uint16_t postedKph { 0 };
         bool hasPosted { false };
         std::uint8_t adminLevel { 0 };
+        // Grade separation. `osmLayer` is OSM's own `layer` key and is NOT the
+        // `layer` field below -- that one is the name of the tile layer this
+        // feature is written into, and the collision is why this one is
+        // spelled out.
+        //
+        // Without these there is no way to draw an overpass: a freeway and the
+        // surface street beneath it are the same two crossing lines.
+        bool isBridge { false };
+        bool isTunnel { false };
+        std::int8_t osmLayer { 0 };
+        std::uint8_t laneCount { 0 };
+        bool onewayForward { false };
+        bool onewayBackward { false };
         // Set only by the label layers; empty means layerFor(renderClass).
         const char* layer { "" };
         std::vector<std::pair<std::string, std::string>> attributes;

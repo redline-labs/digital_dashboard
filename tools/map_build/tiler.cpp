@@ -594,6 +594,12 @@ void Tiler::add(DrawInput&& feature)
     prepared.ref = std::move(feature.ref);
     prepared.postedKph = feature.classification.postedSpeedKph;
     prepared.hasPosted = feature.classification.hasPosted;
+    prepared.isBridge = feature.classification.isBridge;
+    prepared.isTunnel = feature.classification.isTunnel;
+    prepared.osmLayer = feature.classification.layer;
+    prepared.laneCount = feature.classification.laneCount;
+    prepared.onewayForward = feature.classification.onewayForward;
+    prepared.onewayBackward = feature.classification.onewayBackward;
 
     // Projected ONCE, here. Doing it per zoom would be the same arithmetic
     // fourteen times, and doing it twice anywhere is how a map ends up subtly
@@ -1005,6 +1011,73 @@ mbtiles::Result<TileStats> Tiler::write(mbtiles::Writer& writer, const TileOptio
                     {
                         out.tags.push_back(builder.key("admin_level"));
                         out.tags.push_back(builder.number(feature.adminLevel));
+                    }
+                    // The posted limit, where OSM records one.
+                    //
+                    // ONLY AT AND ABOVE THE MERGE THRESHOLD, and that is the
+                    // whole subtlety. Below it, mergeLines() folds line features
+                    // that share byte-identical tags into one multi-part
+                    // feature, and that is what keeps low-zoom tiles small.
+                    // A per-road speed splits roads that would otherwise merge,
+                    // so writing it everywhere would inflate exactly the tiles
+                    // generalization exists to shrink -- to buy an attribute
+                    // that means nothing at continental zoom anyway.
+                    //
+                    // `hasPosted` and not `postedKph != 0`: absence of the key
+                    // has to mean "not tagged", which is a different fact from
+                    // a limit of zero and is the one a consumer must not guess.
+                    if (feature.hasPosted && z >= options.mergeBelowZoom)
+                    {
+                        out.tags.push_back(builder.key("maxspeed"));
+                        out.tags.push_back(builder.number(feature.postedKph));
+                    }
+                    // Grade separation, and the rest of the per-road detail.
+                    //
+                    // All of it behind the same merge threshold as `maxspeed`,
+                    // and for the same reason: mergeLines() folds features with
+                    // byte-identical tags into one, so a per-road attribute
+                    // splits roads that would otherwise merge and inflates the
+                    // low-zoom tiles generalization exists to shrink. None of
+                    // this means anything at continental zoom anyway -- an
+                    // overpass is a few pixels of a grey smear.
+                    if (z >= options.mergeBelowZoom)
+                    {
+                        // `brunnel`, spelled the way OpenMapTiles spells it,
+                        // because the whole schema is built to that vocabulary
+                        // and the widget's style names follow it. Absent means
+                        // at grade, which is the overwhelming majority -- a key
+                        // written on every road would cost more than it says.
+                        if (feature.isBridge)
+                        {
+                            out.tags.push_back(builder.key("brunnel"));
+                            out.tags.push_back(builder.value("bridge"));
+                        }
+                        else if (feature.isTunnel)
+                        {
+                            out.tags.push_back(builder.key("brunnel"));
+                            out.tags.push_back(builder.value("tunnel"));
+                        }
+                        // OSM's own `layer`, which is what stacks one bridge
+                        // over another. Zero is the default and is not written.
+                        if (feature.osmLayer != 0)
+                        {
+                            out.tags.push_back(builder.key("layer"));
+                            out.tags.push_back(builder.number(feature.osmLayer));
+                        }
+                        if (feature.laneCount != 0)
+                        {
+                            out.tags.push_back(builder.key("lanes"));
+                            out.tags.push_back(builder.number(feature.laneCount));
+                        }
+                        // 1 forward, -1 backward, absent for two-way. The same
+                        // encoding OpenMapTiles uses, and the reason -1 exists
+                        // rather than a second key is that a way's direction is
+                        // its geometry's direction.
+                        if (feature.onewayForward != feature.onewayBackward)
+                        {
+                            out.tags.push_back(builder.key("oneway"));
+                            out.tags.push_back(builder.number(feature.onewayForward ? 1 : -1));
+                        }
                     }
                     for (const auto& [key, value] : feature.attributes)
                     {

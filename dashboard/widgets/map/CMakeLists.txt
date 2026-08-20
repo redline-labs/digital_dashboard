@@ -44,8 +44,11 @@ endfunction()
 
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map.vert mapVert MAP_VERT_HEADER)
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map.frag mapFrag MAP_FRAG_HEADER)
+map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map_highlight.frag mapHighlightFrag
+                MAP_HIGHLIGHT_FRAG_HEADER)
 
-add_custom_target(map_widget_shaders DEPENDS ${MAP_VERT_HEADER} ${MAP_FRAG_HEADER})
+add_custom_target(map_widget_shaders
+    DEPENDS ${MAP_VERT_HEADER} ${MAP_FRAG_HEADER} ${MAP_HIGHLIGHT_FRAG_HEADER})
 
 # ----------------------------------------------------------------- library
 
@@ -56,6 +59,8 @@ add_library(${MAP_WIDGET_LIB} STATIC
     projection.cpp
     recentre_button.cpp
     tessellator.cpp
+    tile_cache.cpp
+    tile_workers.cpp
     tile_source.cpp
     ${MAP_VERT_HEADER}
     ${MAP_FRAG_HEADER}
@@ -67,6 +72,8 @@ add_library(${MAP_WIDGET_LIB} STATIC
     include/map/recentre_button.h
     include/map/style.h
     include/map/tessellator.h
+    include/map/tile_cache.h
+    include/map/tile_workers.h
     include/map/tile_source.h
 )
 
@@ -175,6 +182,48 @@ target_link_libraries(map_test_tessellator
 )
 
 add_project_test(TARGET map_test_tessellator LABELS map unit)
+
+# The decoded-tile cache and its eviction policy. Split out of TileSource so it
+# can be tested at all: TileSource cannot be built without a zenoh session, and
+# the policy is the part worth testing -- dropping the wrong tile does not draw
+# anything wrong, it re-fetches, and the map reads as a slow server.
+add_executable(map_test_tile_cache
+    test_tile_cache.cpp
+    tile_cache.cpp
+    tile_workers.cpp
+    tessellator.cpp
+)
+
+target_include_directories(map_test_tile_cache PRIVATE include)
+
+target_link_libraries(map_test_tile_cache
+    PRIVATE
+        mvt
+        earcut::earcut
+        config_codec
+        reflection
+        helpers
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_test_tile_cache LABELS map unit)
+
+# The thread pool that spreads tile decode across cores. Its one caller needs a
+# zenoh session and a live server, so it cannot be exercised there -- and a
+# concurrency bug in it presents as a tile that occasionally does not arrive.
+add_executable(map_test_tile_workers
+    test_tile_workers.cpp
+    tile_workers.cpp
+)
+
+target_include_directories(map_test_tile_workers PRIVATE include)
+
+target_link_libraries(map_test_tile_workers
+    PRIVATE
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_test_tile_workers LABELS map unit)
 
 # The GPU renderer, headless. Asserts that known geometry lands on known pixels
 # under QT_QPA_PLATFORM=offscreen -- the property the whole design exists to

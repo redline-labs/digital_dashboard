@@ -31,7 +31,7 @@
 
 #include <chrono>
 #include <cstdint>
-#include <deque>
+
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -45,6 +45,8 @@
 #include "mvt/tile.h"
 
 #include "map/projection.h"
+#include "map/tile_cache.h"
+#include "map/tile_workers.h"
 #include "map/style.h"
 #include "map/tessellator.h"
 
@@ -76,22 +78,18 @@ struct TileSourceStats
     // before the first reply teaches the range, so a number that keeps
     // climbing means the range is not being applied.
     std::uint64_t outOfRange { 0 };
+    // Tiles a request could not carry because it was already full, summed over
+    // every request. They are not lost -- the next paint asks again -- but a
+    // number climbing every frame means the viewport is permanently larger than
+    // one request, which is the difference between "filling in" and "stuck".
+    std::uint64_t deferred { 0 };
     std::size_t cached { 0 };
+    // What those tiles weigh, decoded and tessellated. The count alone does not
+    // say: an empty ocean tile and a city tile differ by three orders of
+    // magnitude, and it is the bytes that decide whether a long drive fits in
+    // memory.
+    std::size_t cachedBytes { 0 };
     std::size_t inFlight { 0 };
-};
-
-// One tile, in both the forms the widget draws from: the triangles for the GPU
-// and the decoded features for the label pass.
-//
-// Both, because labels are placed on the CPU with viewport-global collision and
-// so cannot be baked per tile the way the geometry is. Keeping the mvt::Tile is
-// what pays for that; see map/labels.h.
-struct CachedTile
-{
-    std::shared_ptr<const mvt::Tile> tile;
-    std::shared_ptr<const TileGeometry> geometry;
-
-    explicit operator bool() const { return tile != nullptr; }
 };
 
 class TileSource
@@ -118,7 +116,11 @@ class TileSource
     // What is available to draw right now, in the order asked for. Tiles that
     // have not arrived come back default-constructed -- a partially filled map
     // is the normal state during a pan, not an error.
-    std::vector<CachedTile> ready(const std::vector<TileId>& wanted) const;
+    //
+    // NOT const: asking for a tile is what marks it as in use, and that is what
+    // keeps the cache from evicting the ground the driver is looking at. See
+    // the eviction note below.
+    std::vector<CachedTile> ready(const std::vector<TileId>& wanted);
 
     // Move anything that arrived since the last call out of the mailbox and
     // into the cache. GUI thread only.
@@ -133,8 +135,10 @@ class TileSource
     // with nothing in it, so that it is not asked for again. As a stand-in for
     // some other tile it would occupy a draw slot and paint nothing.
     //
-    // GUI thread only, like ready() -- it reads the same cache.
-    bool drawable(const TileId& id) const;
+    // GUI thread only, like ready() -- and, like ready(), asking counts as use.
+    // A tile serving as a stand-in is on screen, so it must not be the next
+    // thing evicted.
+    bool drawable(const TileId& id);
 
     TileSourceStats stats() const;
 
@@ -187,13 +191,20 @@ class TileSource
     void deliverResult(const TileId& id, Outcome outcome, std::span<const std::uint8_t> bytes);
     // Mark every tile of a batch failed -- the request itself did not land.
     void failBatch(const std::vector<TileId>& ids);
-    void evictIfNeeded();
 
     std::string mTileset;
     // Read from zenoh threads during tessellation and never written after
     // construction, so no lock.
     MapStyle_t mStyle;
     std::function<void()> mOnTilesReady;
+
+    // Decode and tessellation, spread across threads.
+    //
+    // DECLARED BEFORE THE CLIENT, so it is destroyed AFTER it: members go in
+    // reverse declaration order, and the reply callback that dispatches into
+    // this pool belongs to the client. A pool torn down while a callback is
+    // still inside runAll() joins threads that are mid-job.
+    TileWorkers mWorkers;
 
     std::unique_ptr<pub_sub::ZenohAsyncClient<::MapTileRequest, ::MapTileResponse>> mClient;
 
@@ -214,12 +225,10 @@ class TileSource
     std::optional<ZoomRange> mArchiveZoom;
     bool mArchiveZoomLearned { false };
 
-    // GUI thread only, so no lock.
-    std::unordered_map<TileId, CachedTile, TileIdHash> mCache;
-    // Insertion order, for eviction. A tile is cheap to re-fetch and expensive
-    // to keep: a z14 tile decodes to a few hundred kilobytes of vectors, and an
-    // unbounded cache over a long drive is unbounded memory.
-    std::deque<TileId> mCacheOrder;
+    // GUI thread only, so no lock. The eviction policy -- least recently used,
+    // bounded by both count and bytes -- lives in TileCache, which is testable
+    // without a zenoh session.
+    TileCache mCache;
 
     // A failed tile is not cached -- there is nothing to draw -- so without
     // this it is re-requested on the very next paint, forever. Against a

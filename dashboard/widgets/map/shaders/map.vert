@@ -25,13 +25,41 @@ layout(std140, binding = 0) uniform buf {
     // vertex, so zooming does not invalidate the geometry.
     float widthScale;
     vec2 pad;
+    // Read only by map_highlight.frag, but declared here because the block
+    // layout has to match across every stage that binds it.
+    vec4 highlight;
 };
 
+// Half a pixel, i.e. one pixel of total width, below which a line stops being
+// reliably drawable. See main().
+const float kMinHalfPx = 0.5;
+
 void main() {
+    // Half-width in SCREEN pixels, after the zoom taper.
+    float screenHalf = halfPx * widthScale;
+
+    // A line thinner than a pixel does not land on pixel centres reliably: it
+    // breaks into dashes, and which dashes depends on sub-pixel position, so it
+    // CRAWLS as the camera moves. That is the state minor roads are in at low
+    // zoom -- widthScaleForZoom() tapers to 0.15, so a 1.5 px half-width is
+    // 0.22 px, well under half a pixel.
+    //
+    // Widen to the floor and take the difference out of ALPHA. Total ink stays
+    // the same, so the road keeps its weight in the picture, but it is now a
+    // continuous faint line instead of an intermittent solid one. This is what
+    // MSAA alone cannot do: four coverage samples cannot represent a fifth of a
+    // pixel of coverage, and no sample count fixes a line that misses the pixel
+    // entirely.
+    //
+    // Guarded on screenHalf > 0 so FILLS are untouched: they carry a zero
+    // normal and a zero halfPx, and a fill must never be faded.
+    float drawnHalf = max(screenHalf, kMinHalfPx);
+    float fade = screenHalf > 0.0 ? screenHalf / drawnHalf : 1.0;
+
     // Expanding here rather than on the CPU is what keeps a road the same
     // number of pixels wide at every zoom AND under rotation: the normal is in
     // local units and the matrix rotates it, which preserves its length.
-    vec2 p = pos + nrm * (halfPx * widthScale / max(pxPerLocal, 1e-6));
-    vcol = col;
+    vec2 p = pos + nrm * (drawnHalf / max(pxPerLocal, 1e-6));
+    vcol = vec4(col.rgb, col.a * fade);
     gl_Position = mvp * vec4(p, 0.0, 1.0);
 }

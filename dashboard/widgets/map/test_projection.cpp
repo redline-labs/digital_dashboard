@@ -293,6 +293,49 @@ bool contains(const std::vector<TileId>& tiles, std::uint8_t z, std::uint32_t x,
     return std::find(tiles.begin(), tiles.end(), TileId { z, x, y }) != tiles.end();
 }
 
+
+// The coarse overview prefetch only pays off if substituteTiles() can actually
+// reach the level it fetches. MapWidget fetches four levels down; the
+// substitute walk looks five up, and a static_assert ties the two together --
+// this is the behavioural half of that.
+//
+// The scenario is the one the prefetch exists for: ground the drive has NEVER
+// visited at any zoom, so the only thing in the cache is the overview.
+void test_a_four_level_overview_stands_in_for_ground_never_visited()
+{
+    // A z14 viewport: four tiles, none of them arrived, and no z13 or z12
+    // ancestor in the cache because the camera was never there.
+    const std::vector<TileId> wanted {
+        { 14, 2828, 6562 }, { 14, 2829, 6562 }, { 14, 2828, 6563 }, { 14, 2829, 6563 }
+    };
+
+    FakeCache cache;
+    // Only the overview, four levels down: 2828 >> 4 == 176, 6562 >> 4 == 410.
+    cache.add(10, 176, 410);
+
+    const auto out = substituteTiles(wanted, { false, false, false, false }, cache.predicate(), 64);
+    check(out.size() == 1,
+          "one overview tile covers the whole viewport, got " + std::to_string(out.size()));
+    check(contains(out, 10, 176, 410), "and it is the z10 ancestor the prefetch asked for");
+}
+
+// One level further than the prefetch fetches, to show the walk is not merely
+// finding it by luck -- and one level past the cap, to show where it stops.
+void test_the_substitute_walk_reaches_five_levels_and_no_further()
+{
+    const std::vector<TileId> wanted { { 14, 2828, 6562 } };
+
+    FakeCache atTheLimit;
+    atTheLimit.add(9, 2828 >> 5, 6562 >> 5);
+    check(substituteTiles(wanted, { false }, atTheLimit.predicate(), 64).size() == 1,
+          "five levels up is still found");
+
+    FakeCache pastTheLimit;
+    pastTheLimit.add(8, 2828 >> 6, 6562 >> 6);
+    check(substituteTiles(wanted, { false }, pastTheLimit.predicate(), 64).empty(),
+          "six is not, which is why the overview delta may not grow past five");
+}
+
 void test_nothing_stands_in_for_a_tile_that_arrived()
 {
     // The whole point is filling GAPS. Drawing a stand-in under a tile that is
@@ -717,6 +760,8 @@ int main()
     test_the_device_pixel_ratio_is_carried_and_not_applied();
 
     test_nothing_stands_in_for_a_tile_that_arrived();
+    test_a_four_level_overview_stands_in_for_ground_never_visited();
+    test_the_substitute_walk_reaches_five_levels_and_no_further();
     test_one_ancestor_covers_a_tile_and_its_siblings();
     test_the_nearest_ancestor_wins();
     test_a_deeper_cache_stands_in_when_there_is_no_ancestor();

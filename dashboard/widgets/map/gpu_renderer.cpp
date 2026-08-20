@@ -21,6 +21,7 @@
 
 #include "mapVert_qsb.h"
 #include "mapFrag_qsb.h"
+#include "mapHighlightFrag_qsb.h"
 
 namespace map_widget
 {
@@ -29,7 +30,10 @@ namespace
 
 // mat4 + two floats + padding, rounded to a std140-friendly size. The stride
 // between tiles is the hardware's uniform alignment, which is larger.
-constexpr quint32 kUniformBlockSize = 80;
+// mat4 + two floats + vec2 pad + the highlight vec4. Still comfortably inside
+// the 256-byte stride the alignment rounds up to, and inside the 64 KB uniform
+// buffer limit the stricter backends impose.
+constexpr quint32 kUniformBlockSize = 96;
 
 // Refuse absurd viewports rather than trying to allocate for them.
 constexpr int kMaxDimension = 8192;
@@ -184,7 +188,8 @@ bool GpuRenderer::initialise()
     // alternative -- a matrix per vertex, or one buffer per tile -- is either
     // more bandwidth or more objects for the same result.
     mSrb->setBindings({ QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
-        0, QRhiShaderResourceBinding::VertexStage, mUniformBuffer.get(), kUniformBlockSize) });
+        0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+        mUniformBuffer.get(), kUniformBlockSize) });
     if (!mSrb->create())
     {
         SPDLOG_ERROR("[map] GPU shader resource bindings could not be created");
@@ -215,6 +220,7 @@ bool GpuRenderer::ensureTarget(const QSize& size)
     // Order matters on teardown: the pipeline references the render pass
     // descriptor, which references the target.
     mPipeline.reset();
+    mHighlightPipeline.reset();
     mTarget.reset();
     mPass.reset();
     mResolve.reset();
@@ -291,6 +297,28 @@ bool GpuRenderer::ensureTarget(const QSize& size)
         return false;
     }
 
+    // The highlight pipeline. Identical in every respect but the fragment
+    // stage, and sharing the same shader resource bindings -- so it draws the
+    // same vertex buffer, through the same per-tile uniform, at the same line
+    // width. Only the colour comes from somewhere else.
+    mHighlightPipeline.reset(mRhi->newGraphicsPipeline());
+    mHighlightPipeline->setTargetBlends({ blend });
+    mHighlightPipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+    mHighlightPipeline->setCullMode(QRhiGraphicsPipeline::None);
+    mHighlightPipeline->setSampleCount(mSampleCount);
+    mHighlightPipeline->setShaderStages(
+        { { QRhiShaderStage::Vertex, loadShader(map_shaders::mapVert, map_shaders::mapVertSize) },
+          { QRhiShaderStage::Fragment,
+            loadShader(map_shaders::mapHighlightFrag, map_shaders::mapHighlightFragSize) } });
+    mHighlightPipeline->setVertexInputLayout(layout);
+    mHighlightPipeline->setShaderResourceBindings(mSrb.get());
+    mHighlightPipeline->setRenderPassDescriptor(mPass.get());
+    if (!mHighlightPipeline->create())
+    {
+        SPDLOG_ERROR("[map] GPU highlight pipeline could not be created");
+        return false;
+    }
+
     mSize = size;
     return true;
 }
@@ -322,16 +350,20 @@ bool GpuRenderer::batchesChanged(const std::vector<GpuBatch>& batches) const
 }
 
 bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
-                                std::vector<MapVertex>& flat)
+                                std::vector<MapVertex>& flat,
+                                std::vector<std::uint32_t>& flatIndices)
 {
     mTileBaseVertex.clear();
+    mTileBaseIndex.clear();
     mUploadedIds.clear();
     mUploadedSerials.clear();
 
     std::uint32_t total = 0;
+    std::uint32_t totalIndices = 0;
     for (const GpuBatch& batch : batches)
     {
         mTileBaseVertex.push_back(total);
+        mTileBaseIndex.push_back(totalIndices);
         mUploadedIds.push_back(batch.id);
         mUploadedSerials.push_back(batch.geometry ? batch.geometry->serial : 0);
         // Null is a normal state -- a tile that has been asked for but has not
@@ -340,10 +372,14 @@ bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
         total += batch.geometry
                      ? static_cast<std::uint32_t>(batch.geometry->vertices.size())
                      : 0U;
+        totalIndices += batch.geometry
+                            ? static_cast<std::uint32_t>(batch.geometry->indices.size())
+                            : 0U;
     }
     mUploadedVertexCount = total;
+    mUploadedIndexCount = totalIndices;
 
-    if (total == 0)
+    if (total == 0 || totalIndices == 0)
     {
         return true;
     }
@@ -363,8 +399,23 @@ bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
         mVertexCapacity = capacity;
     }
 
+    const quint32 needIndexBytes = quint32(totalIndices * sizeof(std::uint32_t));
+    if (!mIndexBuffer || needIndexBytes > mIndexCapacity)
+    {
+        const quint32 capacity = needIndexBytes + (needIndexBytes / 2);
+        mIndexBuffer.reset(
+            mRhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::IndexBuffer, capacity));
+        if (!mIndexBuffer->create())
+        {
+            return false;
+        }
+        mIndexCapacity = capacity;
+    }
+
     flat.clear();
     flat.reserve(total);
+    flatIndices.clear();
+    flatIndices.reserve(totalIndices);
     for (const GpuBatch& batch : batches)
     {
         if (!batch.geometry)
@@ -372,6 +423,12 @@ bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
             continue;
         }
         flat.insert(flat.end(), batch.geometry->vertices.begin(), batch.geometry->vertices.end());
+        // Copied VERBATIM: they are tile-local, and drawIndexed() is handed the
+        // tile's base vertex to add. Rewriting them here would make a tile's
+        // indices depend on where in the batch it landed, which is exactly what
+        // batchesChanged() relies on NOT being true.
+        flatIndices.insert(flatIndices.end(), batch.geometry->indices.begin(),
+                           batch.geometry->indices.end());
     }
 
     return true;
@@ -379,7 +436,7 @@ bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
 
 const QImage& GpuRenderer::render(const Projection& projection,
                                   const std::vector<GpuBatch>& requested, const MapStyle_t& style,
-                                  const QColor& background)
+                                  const QColor& background, const Highlight& highlight)
 {
     static const QImage kNull;
 
@@ -434,6 +491,16 @@ const QImage& GpuRenderer::render(const Projection& projection,
     key.widthScale =
         widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale) * float(ratio);
     key.background = background.rgba();
+    // The highlight is part of the picture, so it is part of the key -- without
+    // it, moving onto the next road leaves the previous one lit until something
+    // else happens to invalidate the frame.
+    key.highlightColour = highlight.colour.rgba();
+    key.highlightWidth = highlight.extraHalfPx;
+    key.highlightIds = highlight.osmWayIds;
+    for (std::size_t li = 0; li < kMapLayerCount; ++li)
+    {
+        key.layerMinZooms[li] = layerMinZoom(static_cast<MapLayer>(li), style);
+    }
     key.ids.reserve(batches.size());
     key.serials.reserve(batches.size());
     for (const GpuBatch& batch : batches)
@@ -454,8 +521,9 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // offscreen frame of its own, so a frame that brought in a new tile cost
     // two submissions and two GPU waits instead of one.
     std::vector<MapVertex> flat;
+    std::vector<std::uint32_t> flatIndices;
     const bool uploading = batchesChanged(batches);
-    if (uploading && !prepareUpload(batches, flat))
+    if (uploading && !prepareUpload(batches, flat, flatIndices))
     {
         return kNull;
     }
@@ -508,6 +576,13 @@ const QImage& GpuRenderer::render(const Projection& projection,
         const float px = tileSize;
         std::memcpy(slot + (16 * sizeof(float)), &px, sizeof(float));
         std::memcpy(slot + (17 * sizeof(float)), &widthScale, sizeof(float));
+        // Offset 20 floats in: mat4 (16) + pxPerLocal + widthScale + vec2 pad.
+        // std140 aligns a vec4 to 16 bytes, which is where the pad puts it.
+        const std::array<float, 4> highlightRgba {
+            float(highlight.colour.redF()), float(highlight.colour.greenF()),
+            float(highlight.colour.blueF()), float(highlight.colour.alphaF())
+        };
+        std::memcpy(slot + (20 * sizeof(float)), highlightRgba.data(), 4 * sizeof(float));
     }
 
     QRhiCommandBuffer* cb = nullptr;
@@ -517,10 +592,13 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
 
     QRhiResourceUpdateBatch* updates = mRhi->nextResourceUpdateBatch();
-    if (uploading && !flat.empty())
+    if (uploading && !flat.empty() && !flatIndices.empty())
     {
         updates->uploadStaticBuffer(mVertexBuffer.get(), 0,
                                     quint32(flat.size() * sizeof(MapVertex)), flat.data());
+        updates->uploadStaticBuffer(mIndexBuffer.get(), 0,
+                                    quint32(flatIndices.size() * sizeof(std::uint32_t)),
+                                    flatIndices.data());
         ++mStats.uploads;
     }
     if (!batches.empty())
@@ -532,12 +610,17 @@ const QImage& GpuRenderer::render(const Projection& projection,
     cb->beginPass(mTarget.get(), background, { 1.0f, 0 }, updates);
 
     int draws = 0;
-    if (!batches.empty() && mUploadedVertexCount > 0)
+    if (!batches.empty() && mUploadedVertexCount > 0 && mUploadedIndexCount > 0)
     {
         cb->setGraphicsPipeline(mPipeline.get());
         cb->setViewport({ 0.0f, 0.0f, float(size.width()), float(size.height()) });
         const QRhiCommandBuffer::VertexInput vertexInput(mVertexBuffer.get(), 0);
-        cb->setVertexInput(0, 1, &vertexInput);
+        // 32-bit indices. A single tile stays far under 65 536 vertices, but the
+        // buffer is SHARED across every tile in the frame and the index is into
+        // that -- so 16-bit would cap a frame at 65 536 vertices in total, which
+        // is one dense z14 tile.
+        cb->setVertexInput(0, 1, &vertexInput, mIndexBuffer.get(), 0,
+                           QRhiCommandBuffer::IndexUInt32);
 
         // Layer-major across tiles. See the header.
         for (std::size_t li = 0; li < kMapLayerCount; ++li)
@@ -558,7 +641,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
                     continue;
                 }
                 const TileGeometry& geometry = *batches[ti].geometry;
-                const std::uint32_t count = geometry.layerVertexCount(layer);
+                const std::uint32_t count = geometry.layerIndexCount(layer);
                 if (count == 0)
                 {
                     continue;
@@ -566,8 +649,48 @@ const QImage& GpuRenderer::render(const Projection& projection,
                 const QRhiCommandBuffer::DynamicOffset offset(
                     0, quint32(mUniformStride * ti));
                 cb->setShaderResources(mSrb.get(), 1, &offset);
-                cb->draw(count, 1, mTileBaseVertex[ti] + geometry.layerStart[li]);
+                // The tile's base vertex is the LAST argument, not folded into
+                // the indices: that is what lets a tile's geometry be uploaded
+                // unchanged wherever it lands in the shared buffer.
+                cb->drawIndexed(count, 1, mTileBaseIndex[ti] + geometry.layerIndexStart[li], 
+                                qint32(mTileBaseVertex[ti]));
                 ++draws;
+            }
+        }
+
+        // The highlight pass, AFTER every layer: the route and the road the
+        // vehicle is on have to sit over the map, not inside its draw order.
+        //
+        // The same vertex buffer, the same per-tile uniform and the same line
+        // expansion -- only the fragment stage differs, so this is the map's
+        // own geometry recoloured rather than a second polyline that can drift
+        // off the road it is meant to be on.
+        if (!highlight.empty())
+        {
+            cb->setGraphicsPipeline(mHighlightPipeline.get());
+            for (std::size_t ti = 0; ti < batches.size(); ++ti)
+            {
+                if (!batches[ti].geometry || batches[ti].geometry->roads.empty())
+                {
+                    continue;
+                }
+                const TileGeometry& geometry = *batches[ti].geometry;
+                const QRhiCommandBuffer::DynamicOffset offset(0, quint32(mUniformStride * ti));
+                bool bound = false;
+                for (const std::uint64_t osmWayId : highlight.osmWayIds)
+                {
+                    geometry.forEachRoadRange(osmWayId, [&](const FeatureRange& range) {
+                        if (!bound)
+                        {
+                            cb->setShaderResources(mSrb.get(), 1, &offset);
+                            bound = true;
+                        }
+                        cb->drawIndexed(range.indexCount, 1,
+                                        mTileBaseIndex[ti] + range.indexStart,
+                                        qint32(mTileBaseVertex[ti]));
+                        ++draws;
+                    });
+                }
             }
         }
     }
@@ -611,6 +734,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
     mStats.drawCalls = draws;
     mStats.tiles = int(batches.size());
     mStats.vertices = mUploadedVertexCount;
+    mStats.indices = mUploadedIndexCount;
     mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
     return mFrame;
 }

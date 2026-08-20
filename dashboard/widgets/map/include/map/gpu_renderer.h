@@ -27,6 +27,7 @@
 #ifndef MAP_GPU_RENDERER_H
 #define MAP_GPU_RENDERER_H
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -101,12 +102,42 @@ class GpuRenderer
 
     QString backendName() const;
 
+    // Roads to draw again, on top, in one colour.
+    //
+    // OSM way ids, because that is the identifier every one of these arrives
+    // as: `map/nearest` answers with `osmWayId`, `map/route` returns segment
+    // ids that pack it, and `map_build` stamps it on every tile feature for
+    // exactly this join. Sorted, so matching against a tile's own sorted road
+    // list is a walk rather than a search per id.
+    struct Highlight
+    {
+        std::vector<std::uint64_t> osmWayIds;
+        QColor colour;
+        // Added to the road's own half-width, so the highlight reads as a
+        // casing around the road rather than replacing it. Zero draws it at
+        // exactly the road's width, which mostly disappears.
+        float extraHalfPx { 0.0F };
+
+        bool empty() const { return osmWayIds.empty(); }
+        bool operator==(const Highlight&) const = default;
+    };
+
     // Draw one frame. The returned image is owned by the renderer and is valid
     // until the next call -- the widget blits it and does not keep it.
     //
     // Returns a null QImage if the frame could not be rendered.
     const QImage& render(const Projection& projection, const std::vector<GpuBatch>& batches,
-                         const MapStyle_t& style, const QColor& background);
+                         const MapStyle_t& style, const QColor& background,
+                         const Highlight& highlight);
+
+    // Nothing highlighted, which is every caller that has no route and no
+    // matched road -- the bench, the tests, and the widget before the first fix
+    // arrives.
+    const QImage& render(const Projection& projection, const std::vector<GpuBatch>& batches,
+                         const MapStyle_t& style, const QColor& background)
+    {
+        return render(projection, batches, style, background, Highlight {});
+    }
 
     struct Stats
     {
@@ -117,6 +148,9 @@ class GpuRenderer
         int drawCalls { 0 };
         int tiles { 0 };
         std::uint32_t vertices { 0 };
+        // Indices uploaded for the frame. Three per triangle, and no longer the
+        // same number as `vertices` -- which is the point of indexing.
+        std::uint32_t indices { 0 };
         // Wall clock for the last render() including readback. endOffscreenFrame
         // waits for the GPU, so this is a real number rather than a submission
         // time.
@@ -151,7 +185,8 @@ class GpuRenderer
     // flattens the geometry into `flat`. Does NOT submit: the caller puts the
     // upload in the same resource update batch as the frame's uniforms, so a
     // frame that brings in a new tile is still one submission.
-    bool prepareUpload(const std::vector<GpuBatch>& batches, std::vector<MapVertex>& flat);
+    bool prepareUpload(const std::vector<GpuBatch>& batches, std::vector<MapVertex>& flat,
+                       std::vector<std::uint32_t>& flatIndices);
 
 #if MAP_HAS_VULKAN
     // Declared BEFORE mRhi so it outlives it: members are destroyed in reverse
@@ -169,8 +204,12 @@ class GpuRenderer
     std::unique_ptr<QRhiTextureRenderTarget> mTarget;
     std::unique_ptr<QRhiRenderPassDescriptor> mPass;
     std::unique_ptr<QRhiGraphicsPipeline> mPipeline;
+    // Same everything but the fragment stage: draws the map's own geometry in
+    // one colour, for the route and the road the vehicle is on.
+    std::unique_ptr<QRhiGraphicsPipeline> mHighlightPipeline;
     std::unique_ptr<QRhiShaderResourceBindings> mSrb;
     std::unique_ptr<QRhiBuffer> mVertexBuffer;
+    std::unique_ptr<QRhiBuffer> mIndexBuffer;
     std::unique_ptr<QRhiBuffer> mUniformBuffer;
 
     QSize mSize;
@@ -187,8 +226,14 @@ class GpuRenderer
     std::vector<TileId> mUploadedIds;
     std::vector<std::uint64_t> mUploadedSerials;
     std::vector<std::uint32_t> mTileBaseVertex;
+    // Where each tile's indices start in the shared index buffer. The indices
+    // themselves stay tile-local; drawIndexed() is given the tile's base vertex
+    // separately, so a tile's geometry never has to be rewritten to be placed.
+    std::vector<std::uint32_t> mTileBaseIndex;
     std::uint32_t mUploadedVertexCount { 0 };
+    std::uint32_t mUploadedIndexCount { 0 };
     quint32 mVertexCapacity { 0 };
+    quint32 mIndexCapacity { 0 };
 
     // The tile-limit warning is once per renderer, not once per frame.
     bool mWarnedTileLimit { false };
@@ -205,6 +250,22 @@ class GpuRenderer
         double bearing { 0.0 };
         float widthScale { 0.0F };
         QRgb background { 0 };
+        // The per-layer zoom floors, which the draw loop culls whole layers on
+        // -- so two frames with the same camera and the same tiles are still
+        // different pictures if these moved.
+        //
+        // Kept as the RESOLVED floors rather than as MapDetail_t, because that
+        // is exactly what render() consults; a style field that stops feeding
+        // layerMinZoom() would otherwise leave a stale entry here forever.
+        //
+        // It cannot go stale today -- a config change destroys and rebuilds the
+        // widget, so the style is fixed for a renderer's life. It is in the key
+        // because that is a fact about the dashboard, not about this class, and
+        // the failure it would cause is a style edit that silently does nothing.
+        std::array<double, kMapLayerCount> layerMinZooms {};
+        QRgb highlightColour { 0 };
+        float highlightWidth { 0.0F };
+        std::vector<std::uint64_t> highlightIds;
         // Batch identity, so a tile arriving invalidates the frame. Serials,
         // not addresses -- see TileGeometry::serial.
         std::vector<TileId> ids;

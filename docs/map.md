@@ -36,7 +36,9 @@ up and then removed. Two findings killed it:
 A vector tile is protobuf with a command-encoded geometry stream. That turned
 out to be a smaller thing to own than the consequences of not owning it. What
 the replacement gives up: **no 3D** — see below — no GL style documents, and
-labels that do not follow road curves.
+labels that do not follow road curves — street names are placed horizontally at
+the middle of a road's longest visible run, which is most of the value for none
+of the glyph-atlas machinery.
 
 What it gains, beyond working offscreen: **no glyph PBFs**. `QPainter` has
 fonts, so there is no font pipeline, no sprite sheet, and no "the map has no
@@ -46,7 +48,10 @@ labels and nothing said why" failure mode.
 
 The renderer is **2D only**, by construction rather than by omission:
 
-- `MapVertex` carries `x, y` and a 2D normal. There is no z, no depth buffer,
+- `MapVertex` carries `x, y` and a 2D normal, and the triangles that use it are
+  an **index buffer** — a polyline is two vertices per point rather than six per
+  segment, which measured 2.24x smaller on a road-and-lake mix. There is no z,
+  no depth buffer,
   and no depth test — correctness comes from painter's-algorithm draw order
   (layer-major across tiles), which works because everything is coplanar. Note
   *coplanar*, not *axis-aligned*: tilting the camera does not break it.
@@ -141,8 +146,12 @@ Four things in that path are worth knowing before changing it:
   Geometry freed by a cache eviction is routinely handed straight back by the
   allocator, so a replacement tile can land on the dead one's address — and an
   address comparison then says "unchanged" and keeps drawing stale triangles.
-- **Tessellation happens on the zenoh reply thread**, in `TileSource`, not on
-  the GUI thread when a tile is first drawn. That works only because a config
+- **Tessellation happens on zenoh reply threads**, in `TileSource`, not on
+  the GUI thread when a tile is first drawn. A reply carries up to 64 tiles at
+  ~1.9 ms each, so it is spread across a small pool (`map/tile_workers.h`) and
+  the reply thread blocks until they are all done — blocking rather than posting
+  because the tile bytes are a span into the capnp reply, which dies with the
+  callback. That works only because a config
   change rebuilds the widget, so the style is fixed for a `TileSource`'s life.
   If that ever stops being true, the geometry cache needs a style revision.
 
@@ -155,6 +164,46 @@ Shaders are baked by `qsb` at build time into a header of bytes
 (`cmake/EmbedBinary.cmake`) rather than a `.qrc`. A resource that fails to
 register inside a static library linked into two executables presents as a
 shader that will not load *at runtime*; a header cannot be dropped by a linker.
+
+## Labels
+
+Two kinds, placed by one pass so they compete for the same screen space.
+
+**Point labels** come from the basemap's `place` layer and the tracks archive's
+`track_label`. Ranked by the `rank` and `population` attributes `map_build`
+writes rather than by the class name alone: the class cannot tell a town of
+400 000 from one of 400, and where the city/town line falls is local convention
+that moves by an order of magnitude between countries. A place big enough is
+promoted a tier, using the **same thresholds** `map_rules` already uses to
+promote its minZoom — promoting the zoom and not the rank is what drew a large
+town from z6 and then labelled it under a city of 3 000. Promotion is upward
+only, because a city tagged with a small population is far more often a stale
+tag than a tiny city. An archive with no `rank` falls back to the class name, so
+the bench archive still labels.
+
+**Road names** come from `transportation_name`, and are the one line-placed
+layer. Three things about them:
+
+- **Horizontal, at the middle of the longest visible run.** Not curved text
+  following the road: that wants a glyph atlas and per-character placement, and
+  a horizontal name is most of the value and stays readable at every bearing —
+  the same argument the whole label pass rests on. The longest run rather than
+  the first, because MVT clips a road into as many parts as it has crossings of
+  the tile edge and the first is as often as not a stub in a corner.
+- **One label per name per viewport.** A road crosses every tile it passes
+  through and each tile carries the whole name, so without this a single street
+  is labelled a dozen times across one screen.
+- **A name wider than the road it names is dropped.** This is what stops the
+  two-metre stubs MVT leaves in tile corners from each claiming a label.
+
+They rank between a neighbourhood and a locality: a street name must not push a
+town off the map, but at the zooms it appears at, the street the driver is on is
+worth more than a junction three miles away. Among themselves they order by
+`roadPriority()` — the tessellator's own ladder, reused rather than restated so
+the layer a road is DRAWN in and the weight its name carries cannot drift apart.
+
+`detail.road_label` is the zoom floor, z14 by default, and `show_road_labels`
+turns them off outright.
 
 ## Running it
 
@@ -343,11 +392,22 @@ implementing it faithfully is a larger job than the renderer it configures.
 
 Everything is optional; omitting a key keeps the default in `map/style.h`.
 
+Two things do not fit the one-knob-per-layer shape and are worth knowing.
+**Boundaries take their weight from `admin_level`**, as a fraction of
+`widths.boundary` — a country border is heavier than a city limit, but there is
+still only one knob for the set, and setting it to zero still hides all of them.
+An archive that does not write the attribute keeps a single weight rather than
+dropping to the thinnest. **Aeroways are three layers from one source layer**:
+the apron surface as a fill, and runways and taxiways as lines at different
+widths, because a runway is tens of metres of concrete and a taxiway is a lane —
+drawn at one width, either the runway stops reading as the landmark that
+identifies an airport or every taxiway becomes a second runway.
+
 | group | what it holds |
 |---|---|
-| `style.*` | 16 colours, `label_font`/`label_size`/`label_halo_width`/`label_spacing`, `road_width_scale`, the three `show_*` toggles |
-| `style.widths.*` | per-layer half-width in px at z14 — motorway, casing, primary, major, minor, rail, waterway, boundary. **0 hides the layer** and costs nothing: no vertices, no upload, no draw call |
-| `style.detail.*` | per-layer lowest zoom, 12 layers. The clutter dial |
+| `style.*` | 19 colours, `label_font`/`label_size`/`label_halo_width`/`label_spacing`, `road_width_scale`, the five `show_*` toggles |
+| `style.widths.*` | per-layer half-width in px at z14 — motorway, casing, primary, major, minor, rail, runway, taxiway, waterway, boundary, racetrack centre. **0 hides the layer** and costs nothing: no vertices, no upload, no draw call |
+| `style.detail.*` | per-layer lowest zoom, 18 layers plus `road_label`. The clutter dial |
 | `marker_*`, `track_*` | the vehicle marker, its outline and its trail |
 
 Two things about that surface are worth knowing:
@@ -503,8 +563,13 @@ Three things worth knowing:
   number that stays non-zero means tiles are not arriving.
 - **Panning at a constant zoom is not covered**, and cannot be by this
   mechanism: the leading edge's ancestor is only cached if you happened to view
-  that ground at a shallower zoom. The one-tile prefetch ring is what covers a
-  pan.
+  that ground at a shallower zoom. The one-tile prefetch ring covers a pan of
+  about a tile; a **coarse overview cover four levels down** is requested
+  alongside it, at the END of the request list so it can only spend slots the
+  viewport did not want, and that is what covers ground never visited at any
+  zoom. Four levels because one overview tile spans 16x16 of the drawn ones, and
+  because `kMaxSubstituteLevelsUp` is five — an overview deeper than the
+  substitute walk looks would be fetched and never drawn.
 
 Zooming *in* past the archive never produces a gap at all, for a different
 reason — `tileZoom()` clamps to what the archive holds, so the tiles are already
@@ -585,7 +650,70 @@ is not always the configured centre once Follow Vehicle or a drag has moved it
 place and a screenshot of an archive with no coverage there are the same
 picture.
 
+## The tile cache, and what leaves it
+
+`map/tile_cache.h`, split out of `TileSource` because that class cannot be built
+without a zenoh session and the eviction policy is the part worth testing.
+
+Bounded by **both** a tile count (256) and a byte budget (128 MB), because
+neither works alone: an empty ocean tile is a few dozen bytes and a downtown z14
+tile is a few hundred kilobytes, so a count alone permits anywhere between
+nothing and hundreds of megabytes depending on where the drive went — while a
+byte budget alone would let a city of tiny tiles grow the map without limit.
+
+**Least recently used, and asking counts as use.** `ready()` and `drawable()`
+promote what they are asked about, which is every tile the paint pass looks at.
+Insertion order — what this was — evicts the tile under the vehicle in favour of
+one the drive left behind an hour ago, and an evicted tile that is still on
+screen is re-fetched immediately: the cost is a round trip and a re-tessellation
+every frame rather than once. `contains()` is the exception and deliberately
+does NOT promote: `request()` asks it of the whole viewport plus its prefetch
+ring on every paint, and treating that as use would protect exactly the
+speculative ring tiles that should go first.
+
+**The floor wins over the byte budget.** Eviction stops at 80 tiles however
+heavy they are, because a viewport bigger than the budget would otherwise evict
+tiles it is still drawing and re-request them on the next paint — a refetch loop
+that reads as a slow server rather than as a small cache. With worst-case tiles
+that knowingly exceeds the budget. Memory spent holding the screen is worth more
+than memory saved thrashing it.
+
+## The label pass costs half a second, and always has
+
+Measured against the real SoCal archive with `map_bench`: **labels are 476 ms
+median per frame**, against ~5 ms for the entire GPU frame. This is NOT a
+regression from the road-label work — it was measured on an unmodified checkout
+at 475.8 ms and on the current one at 476.7 ms, i.e. the same number.
+
+Two things about it are worth knowing before anyone chases it.
+
+- **`map_bench` hands `paintLabels()` every decoded tile**, all 112 of them,
+  not the visible set. `MapWidget::paintEvent()` builds `labelTiles` only from
+  tiles in `mVisible`, so the widget asks a far smaller question than the bench
+  does. How much of the 476 ms the widget actually pays is **not established**;
+  nobody has profiled the widget itself against a real archive.
+- **`labels.h` quotes 0.88 ms to render one label** and 0.001 ms to gather the
+  candidates. Those figures are per-label and per-tile and are not wrong; what
+  is missing is that the pass scales with the number of tiles handed to it, and
+  the bench hands it all of them.
+
+The fix is not obvious from the numbers alone and wants a profiler rather than
+another guess. Two attempts that did NOT move it, both since kept because they
+are right anyway: measuring text instead of rendering it during placement, and
+culling candidates to the viewport during the gather.
+
 ## Things that are load-bearing
+
+- **A line thinner than a pixel is widened to one and faded, not drawn thin.**
+  `widthScaleForZoom()` tapers to 0.15, so a 1.5 px half-width is 0.22 px at low
+  zoom — and a sub-pixel line does not land on pixel centres reliably. Measured
+  before the floor: a 0.1 px half-width swept over one pixel of camera offset
+  gave ink between 0.0 and 32.1, i.e. gone entirely at some positions and back
+  at others, which reads as crawling when the map moves. No sample count fixes
+  that. `map.vert` widens to half a pixel either side and takes the difference
+  out of ALPHA, so total ink is unchanged — widening without fading turns a
+  continental view into a solid mat of roads. Fills carry a zero half-width and
+  are explicitly excluded.
 
 - **A missing tile is `NOT_FOUND`, not an error, and is cached as an empty
   tile.** Most of the pyramid is empty; without caching the miss, the widget

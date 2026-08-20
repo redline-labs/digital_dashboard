@@ -20,6 +20,7 @@
 #ifndef MAP_TESSELLATOR_H
 #define MAP_TESSELLATOR_H
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string_view>
@@ -54,15 +55,43 @@ enum class MapLayer : std::uint8_t
     Landcover,
     Landuse,
     Park,
+    // Aprons, aerodrome grounds and helipads: ground surface, so it sits with
+    // the other ground surfaces and UNDER water. An airport beside a river is
+    // the case that decides the order, and the river wins.
+    AerowaySurface,
     Water,
     Waterway,
     Building,
+    // Runways and taxiways, drawn OVER the surface they sit on and under the
+    // road network -- the two do not overlap in practice, so the order between
+    // them is about which reads as on top at an airport's edge, and a road
+    // bridge over a taxiway is the commoner picture.
+    //
+    // Two layers rather than one because a runway is tens of metres of concrete
+    // and a taxiway is a lane: drawn at one width, either the runway vanishes
+    // or the taxiways smear into it.
+    AerowayTaxiway,
+    AerowayRunway,
     RoadMinor,
     RoadMajor,
     RoadPrimary,
     MotorwayCasing,
     Motorway,
     Rail,
+    // Grade separation. A bridge is drawn AFTER every road at grade, which is
+    // the whole point: without it a minor road crossing a motorway on a bridge
+    // is drawn first and the motorway paints straight over it, so the overpass
+    // reads as the road underneath.
+    //
+    // Two layers rather than one because a bridge needs a casing to separate it
+    // from whatever it crosses -- a bridge deck the same colour as the road
+    // below, meeting it at a crossing, says nothing about which is on top.
+    //
+    // These carry roads of EVERY class, with per-feature colour and width taken
+    // from the class's own layer, rather than a bridge variant of each of the
+    // six road layers.
+    RoadBridgeCasing,
+    RoadBridge,
     Boundary,
     // Race tracks, ON TOP of everything else. A circuit is the thing being
     // looked at when it is on screen at all, and it comes from a separate
@@ -73,7 +102,7 @@ enum class MapLayer : std::uint8_t
     TrackCentre,
 };
 
-inline constexpr std::size_t kMapLayerCount = 15;
+inline constexpr std::size_t kMapLayerCount = 20;
 
 // Nothing else checks that the enum and kMapLayerCount agree, and a mismatch
 // is not a compile error in the obvious place: TileGeometry::layerStart is
@@ -102,9 +131,32 @@ float halfWidthFor(MapLayer layer, const MapStyle_t& style);
 // network is worse than a road of the wrong width.
 int roadPriority(std::string_view className);
 
+// The layer a road of this priority is drawn in at grade.
+//
+// Exists so the bridge layers can borrow a road's own colour and width instead
+// of restating the ladder: a bridge is the same road, drawn higher up.
+MapLayer roadLayerFor(int priority);
+
 // Handed out by TileGeometry's constructor. Tiles are tessellated on zenoh
 // threads, so this is atomic.
 std::uint64_t nextSerial();
+
+// Where one road feature's triangles live, so a client can find them again.
+//
+// This is the join `map_build` stamps an OSM way id on every feature FOR: the
+// route a driver is following, and the road they are on, come back from
+// `map/nearest` and `map/route` as way ids, and highlighting them means
+// recolouring geometry that is already on the GPU rather than overlaying a
+// second polyline that can diverge from it (docs/map_build.md).
+//
+// Roads only. Recording a range for every landcover polygon would double the
+// size of this for something nothing joins on.
+struct FeatureRange
+{
+    std::uint64_t osmWayId { 0 };
+    std::uint32_t indexStart { 0 };
+    std::uint32_t indexCount { 0 };
+};
 
 // One tile's geometry, ready to upload.
 //
@@ -124,7 +176,43 @@ struct TileGeometry
     std::uint64_t serial { nextSerial() };
 
     std::vector<MapVertex> vertices;
+    // Triangles, as offsets into `vertices` -- TILE-LOCAL, so a tile's geometry
+    // is still independent of where in the shared buffer it lands. The renderer
+    // passes the tile's base vertex to drawIndexed() rather than rewriting
+    // these.
+    //
+    // Indexed rather than expanded, because the expansion was most of the
+    // memory: a polyline shares a vertex between the two triangles either side
+    // of it and between the two segments either side of THAT, so writing them
+    // out cost six vertices per segment where two per point will do. A dense
+    // z14 tile was ~24k vertices at 36 bytes; this is where that goes.
+    std::vector<std::uint32_t> indices;
+
+    // Vertices for layer i occupy [layerStart[i], layerStart[i+1]), and the
+    // indices that draw it [layerIndexStart[i], layerIndexStart[i+1]).
     std::array<std::uint32_t, kMapLayerCount + 1> layerStart {};
+    std::array<std::uint32_t, kMapLayerCount + 1> layerIndexStart {};
+
+    // Road features that carry an OSM way id, SORTED BY IT so a lookup is a
+    // binary search. A tile holds a few thousand roads and the highlight set is
+    // a handful of ids, so the search runs over the smaller side.
+    std::vector<FeatureRange> roads;
+
+    // Every range drawing `osmWayId`. A way clipped by the tiler arrives as
+    // several features, and a road drawn with a casing occupies two layers, so
+    // one id legitimately maps to more than one range.
+    template <typename Fn>
+    void forEachRoadRange(std::uint64_t osmWayId, Fn&& fn) const
+    {
+        auto at = std::lower_bound(roads.begin(), roads.end(), osmWayId,
+                                   [](const FeatureRange& range, std::uint64_t id) {
+                                       return range.osmWayId < id;
+                                   });
+        for (; at != roads.end() && at->osmWayId == osmWayId; ++at)
+        {
+            fn(*at);
+        }
+    }
 
     std::uint32_t layerVertexCount(MapLayer layer) const
     {
@@ -132,7 +220,17 @@ struct TileGeometry
         return layerStart[i + 1] - layerStart[i];
     }
 
-    bool empty() const { return vertices.empty(); }
+    // How many indices draw this layer, i.e. three per triangle. This is the
+    // count a draw call wants; layerVertexCount() is how much room the layer
+    // takes in the vertex buffer, and since indexing they are no longer the
+    // same number.
+    std::uint32_t layerIndexCount(MapLayer layer) const
+    {
+        const auto i = static_cast<std::size_t>(layer);
+        return layerIndexStart[i + 1] - layerIndexStart[i];
+    }
+
+    bool empty() const { return indices.empty(); }
 };
 
 TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style);

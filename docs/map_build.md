@@ -31,6 +31,15 @@ brunnel, class, expressway, foot, horse, service, subclass, surface, toll` — a
 quantised to about half a metre at z14, and simplified before that. Topology is
 gone: nothing distinguishes a junction from an overpass.
 
+Ours writes `maxspeed` on road lines **at z13 and above**, where OSM records one
+— the absence of the key means "not tagged", which is a different fact from a
+limit of zero. It stops at the merge threshold on purpose: below it,
+`mergeLines()` folds line features with byte-identical tags into one, and a
+per-road speed splits roads that would otherwise merge, inflating exactly the
+tiles generalization exists to shrink. `oneway`, `brunnel` and `layer` are
+parsed by `map_rules` for the graph and are still **not** written to tiles;
+without the last two there is no way to draw an overpass correctly.
+
 So map matching, speed limits and routing could never have been served from it,
 and the extractor had to be ours regardless. Given that, the tiler came too — so
 that **one `map_rules::classify()` call decides both the drawn road and the

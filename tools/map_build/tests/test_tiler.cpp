@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <string_view>
+#include <variant>
 #include <string>
 #include <vector>
 
@@ -55,6 +57,27 @@ constexpr std::int32_t kIrvineLon = -1178557874;
 std::filesystem::path scratch(const std::string& name)
 {
     return std::filesystem::temp_directory_path() / name;
+}
+
+// Read a numeric attribute. builder.number() picks an integer or a double
+// encoding by value, so both have to be accepted.
+std::optional<double> numberAttribute(const mvt::Layer& layer, const mvt::Feature& feature,
+                                      std::string_view key)
+{
+    const auto value = layer.attribute(feature, key);
+    if (!value.has_value())
+    {
+        return std::nullopt;
+    }
+    if (const auto* d = std::get_if<double>(&value.value()))
+    {
+        return *d;
+    }
+    if (const auto* i = std::get_if<std::int64_t>(&value.value()))
+    {
+        return double(*i);
+    }
+    return std::nullopt;
 }
 
 map_rules::RoadClassification motorway()
@@ -283,6 +306,390 @@ void test_a_tile_decodes_with_the_attributes_a_style_reads()
           "and its name");
     check(feature.hasId && feature.id == 4987265,
           "and the source way id, which is how a client joins a tile feature back to the graph");
+
+    std::filesystem::remove(path);
+}
+
+
+// The posted limit, which map_rules parses for the routing graph and the tiler
+// carried into Tiler::Prepared and then, for a long time, dropped on the floor:
+// two fields populated for 11.7 M features and never written to a tag.
+//
+// docs/map_build.md cites "no oneway, no maxspeed" as a reason tilemaker was
+// replaced, so the claim was untrue in the direction that flatters us.
+void test_the_posted_speed_limit_reaches_the_tile()
+{
+    const auto path = scratch("tiler_maxspeed.mbtiles");
+
+    map_rules::RoadClassification limited = motorway();
+    limited.postedSpeedKph = 105;
+    limited.hasPosted = true;
+
+    map_build::Tiler tiler;
+    tiler.add(lineAt(4987265, kIrvineLat, kIrvineLon, 8, 300, "Costa Mesa Freeway", limited));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+
+    map_build::TileOptions options;
+    options.minZoom = 14;
+    options.maxZoom = 14;
+    options.progressEvery = 0;
+    auto stats = tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon,
+                             kIrvineLat);
+    check(stats.has_value() && stats->tiles > 0, "at least one tile is written");
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    if (!archive)
+    {
+        check(false, "archive opens");
+        return;
+    }
+    auto stored = archive->tile(14, 2828, 6562);
+    if (!stored || !*stored)
+    {
+        check(false, "the anchor tile is present");
+        return;
+    }
+    auto inflated = mvt::inflateIfCompressed((*stored)->data);
+    if (!inflated)
+    {
+        check(false, "the tile inflates");
+        return;
+    }
+    auto tile = mvt::decode(*inflated);
+    if (!tile)
+    {
+        check(false, "and decodes");
+        return;
+    }
+
+    const mvt::Layer* transportation = tile->layer("transportation");
+    if (transportation == nullptr || transportation->features.empty())
+    {
+        check(false, "with a transportation layer carrying features");
+        return;
+    }
+
+    const auto value = transportation->attribute(transportation->features[0], "maxspeed");
+    check(value.has_value(), "the posted limit is written");
+    if (value.has_value())
+    {
+        // builder.number() picks an encoding by value, so accept either.
+        double kph = -1.0;
+        if (const auto* d = std::get_if<double>(&value.value()))
+        {
+            kph = *d;
+        }
+        else if (const auto* i = std::get_if<std::int64_t>(&value.value()))
+        {
+            kph = double(*i);
+        }
+        check(std::abs(kph - 105.0) < 1e-9, "and it is the limit that went in");
+    }
+
+    std::filesystem::remove(path);
+}
+
+// Absence of the key has to mean "OSM does not say", which is a different fact
+// from a limit of zero -- and the one a consumer must not have to guess at.
+void test_an_untagged_road_carries_no_speed_at_all()
+{
+    const auto path = scratch("tiler_no_maxspeed.mbtiles");
+
+    map_build::Tiler tiler;
+    // motorway() leaves hasPosted false: a free-flow estimate is not a posting.
+    tiler.add(lineAt(4987266, kIrvineLat, kIrvineLon, 8, 300, "Untagged Road", motorway()));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+    map_build::TileOptions options;
+    options.minZoom = 14;
+    options.maxZoom = 14;
+    options.progressEvery = 0;
+    (void)tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon, kIrvineLat);
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    auto stored = archive ? archive->tile(14, 2828, 6562) : std::nullopt;
+    if (!archive || !stored || !*stored)
+    {
+        check(false, "the anchor tile is present");
+        return;
+    }
+    auto inflated = mvt::inflateIfCompressed((*stored)->data);
+    if (!inflated)
+    {
+        check(false, "the tile inflates");
+        return;
+    }
+    auto tile = mvt::decode(*inflated);
+    const mvt::Layer* transportation = tile ? tile->layer("transportation") : nullptr;
+    if (transportation == nullptr || transportation->features.empty())
+    {
+        check(false, "with a transportation layer carrying features");
+        return;
+    }
+
+    check(!transportation->attribute(transportation->features[0], "maxspeed").has_value(),
+          "a road OSM says nothing about carries no maxspeed key");
+
+    std::filesystem::remove(path);
+}
+
+// Below the merge threshold, line features that share byte-identical tags fold
+// into one -- and that is what keeps low-zoom tiles small. A per-road speed
+// splits roads that would otherwise merge, so it must not be written there:
+// the attribute means nothing at continental zoom and the cost is paid on
+// exactly the tiles generalization exists to shrink.
+void test_the_speed_limit_is_not_written_below_the_merge_threshold()
+{
+    const auto path = scratch("tiler_maxspeed_lowzoom.mbtiles");
+
+    map_rules::RoadClassification limited = motorway();
+    limited.postedSpeedKph = 105;
+    limited.hasPosted = true;
+    limited.minZoom = 0;
+
+    map_build::Tiler tiler;
+    tiler.add(lineAt(4987267, kIrvineLat, kIrvineLon, 8, 3000, "Costa Mesa Freeway", limited));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+    map_build::TileOptions options;
+    options.minZoom = 8;
+    options.maxZoom = 8;
+    options.progressEvery = 0;
+    check(options.mergeBelowZoom > 8, "z8 is below the merge threshold");
+    (void)tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon, kIrvineLat);
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    if (!archive)
+    {
+        check(false, "archive opens");
+        return;
+    }
+
+    // Whichever z8 tile it landed in.
+    bool sawFeature = false;
+    bool sawSpeed = false;
+    for (std::uint32_t x = 0; x < 256 && !sawFeature; ++x)
+    {
+        for (std::uint32_t y = 0; y < 256 && !sawFeature; ++y)
+        {
+            auto stored = archive->tile(8, x, y);
+            if (!stored || !*stored)
+            {
+                continue;
+            }
+            auto inflated = mvt::inflateIfCompressed((*stored)->data);
+            if (!inflated)
+            {
+                continue;
+            }
+            auto tile = mvt::decode(*inflated);
+            const mvt::Layer* transportation = tile ? tile->layer("transportation") : nullptr;
+            if (transportation == nullptr || transportation->features.empty())
+            {
+                continue;
+            }
+            sawFeature = true;
+            sawSpeed = transportation->attribute(transportation->features[0], "maxspeed")
+                           .has_value();
+        }
+    }
+
+    check(sawFeature, "the road reaches a z8 tile");
+    check(!sawSpeed, "and carries no maxspeed there, so low-zoom merging is untouched");
+
+    std::filesystem::remove(path);
+}
+
+// Grade separation, which is the attribute whose absence meant there was no way
+// to draw an overpass correctly: a freeway and the surface street beneath it
+// were the same two crossing lines, and nothing said which was on top.
+//
+// map_rules has parsed `bridge`, `tunnel` and `layer` all along -- the routing
+// graph uses them -- and the tiler carried the classification that holds them
+// and then wrote none of it.
+void test_grade_separation_reaches_the_tile()
+{
+    const auto path = scratch("tiler_brunnel.mbtiles");
+
+    map_rules::RoadClassification bridge = motorway();
+    bridge.isBridge = true;
+    bridge.layer = 2;
+    bridge.laneCount = 4;
+    bridge.onewayForward = true;
+
+    map_build::Tiler tiler;
+    tiler.add(lineAt(4987270, kIrvineLat, kIrvineLon, 8, 300, "Overpass", bridge));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+    map_build::TileOptions options;
+    options.minZoom = 14;
+    options.maxZoom = 14;
+    options.progressEvery = 0;
+    (void)tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon, kIrvineLat);
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    auto stored = archive ? archive->tile(14, 2828, 6562) : std::nullopt;
+    if (!archive || !stored || !*stored)
+    {
+        check(false, "the anchor tile is present");
+        return;
+    }
+    auto inflated = mvt::inflateIfCompressed((*stored)->data);
+    if (!inflated)
+    {
+        check(false, "the tile inflates");
+        return;
+    }
+    auto tile = mvt::decode(*inflated);
+    const mvt::Layer* transportation = tile ? tile->layer("transportation") : nullptr;
+    if (transportation == nullptr || transportation->features.empty())
+    {
+        check(false, "with a transportation layer carrying features");
+        return;
+    }
+
+    const mvt::Feature& feature = transportation->features[0];
+    check(transportation->attributeText(feature, "brunnel") == "bridge",
+          "a bridge says so, in the vocabulary the rest of the schema uses");
+    check(numberAttribute(*transportation, feature, "layer").value_or(0) == 2,
+          "and carries OSM's own layer, which is what stacks one bridge over another");
+    check(numberAttribute(*transportation, feature, "lanes").value_or(0) == 4, "and its lanes");
+    check(numberAttribute(*transportation, feature, "oneway").value_or(0) == 1,
+          "and its direction, 1 for forward");
+
+    std::filesystem::remove(path);
+}
+
+// Absent means at grade, which is the overwhelming majority of roads. A key
+// written on every one of eleven million features would cost more than it says.
+void test_a_road_at_grade_carries_no_brunnel()
+{
+    const auto path = scratch("tiler_no_brunnel.mbtiles");
+
+    map_build::Tiler tiler;
+    tiler.add(lineAt(4987271, kIrvineLat, kIrvineLon, 8, 300, "Ordinary Road", motorway()));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+    map_build::TileOptions options;
+    options.minZoom = 14;
+    options.maxZoom = 14;
+    options.progressEvery = 0;
+    (void)tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon, kIrvineLat);
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    auto stored = archive ? archive->tile(14, 2828, 6562) : std::nullopt;
+    if (!archive || !stored || !*stored)
+    {
+        check(false, "the anchor tile is present");
+        return;
+    }
+    auto inflated = mvt::inflateIfCompressed((*stored)->data);
+    if (!inflated)
+    {
+        check(false, "the tile inflates");
+        return;
+    }
+    auto tile = mvt::decode(*inflated);
+    const mvt::Layer* transportation = tile ? tile->layer("transportation") : nullptr;
+    if (transportation == nullptr || transportation->features.empty())
+    {
+        check(false, "with a transportation layer carrying features");
+        return;
+    }
+
+    const mvt::Feature& feature = transportation->features[0];
+    check(!transportation->attribute(feature, "brunnel").has_value(),
+          "a road at grade says nothing");
+    check(!transportation->attribute(feature, "layer").has_value(),
+          "and a layer of zero is not written either");
+    check(!transportation->attribute(feature, "oneway").has_value(),
+          "nor is a two-way road's direction");
+}
+
+// A tunnel is the other half of the same key, and must be distinguishable from
+// a bridge rather than merely from a road at grade.
+void test_a_tunnel_is_told_from_a_bridge()
+{
+    const auto path = scratch("tiler_tunnel.mbtiles");
+
+    map_rules::RoadClassification tunnel = motorway();
+    tunnel.isTunnel = true;
+    tunnel.layer = -1;
+
+    map_build::Tiler tiler;
+    tiler.add(lineAt(4987272, kIrvineLat, kIrvineLon, 8, 300, "Underpass", tunnel));
+
+    auto writer = mbtiles::Writer::create(path);
+    if (!writer)
+    {
+        check(false, "archive created");
+        return;
+    }
+    map_build::TileOptions options;
+    options.minZoom = 14;
+    options.maxZoom = 14;
+    options.progressEvery = 0;
+    (void)tiler.write(*writer, options, "test", kIrvineLon, kIrvineLat, kIrvineLon, kIrvineLat);
+    check(writer->finish().has_value(), "the archive closes");
+
+    auto archive = mbtiles::Archive::open(path);
+    auto stored = archive ? archive->tile(14, 2828, 6562) : std::nullopt;
+    if (!archive || !stored || !*stored)
+    {
+        check(false, "the anchor tile is present");
+        return;
+    }
+    auto inflated = mvt::inflateIfCompressed((*stored)->data);
+    if (!inflated)
+    {
+        check(false, "the tile inflates");
+        return;
+    }
+    auto tile = mvt::decode(*inflated);
+    const mvt::Layer* transportation = tile ? tile->layer("transportation") : nullptr;
+    if (transportation == nullptr || transportation->features.empty())
+    {
+        check(false, "with a transportation layer carrying features");
+        return;
+    }
+
+    const mvt::Feature& feature = transportation->features[0];
+    check(transportation->attributeText(feature, "brunnel") == "tunnel", "a tunnel says so");
+    // Negative layers are how OSM says "below". The encoder takes a signed
+    // integer; storing it unsigned would turn -1 into a bridge miles above.
+    check(numberAttribute(*transportation, feature, "layer").value_or(0) == -1,
+          "and a negative layer survives the encoding");
 
     std::filesystem::remove(path);
 }
@@ -1168,6 +1575,12 @@ int main()
     test_a_feature_lands_in_the_tile_the_rest_of_the_stack_expects();
     test_the_tms_flip_round_trips();
     test_a_tile_decodes_with_the_attributes_a_style_reads();
+    test_the_posted_speed_limit_reaches_the_tile();
+    test_an_untagged_road_carries_no_speed_at_all();
+    test_the_speed_limit_is_not_written_below_the_merge_threshold();
+    test_grade_separation_reaches_the_tile();
+    test_a_road_at_grade_carries_no_brunnel();
+    test_a_tunnel_is_told_from_a_bridge();
     test_the_archive_advertises_the_layers_it_actually_carries();
     test_a_place_label_reaches_the_widget_that_draws_it();
     test_a_collapsed_area_does_not_take_the_whole_tile_down();

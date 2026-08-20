@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <variant>
 
 namespace map_widget
 {
@@ -24,6 +25,7 @@ namespace
 // viewport, its surroundings, and a couple of zoom levels either side, which is
 // what makes a pinch-zoom instant rather than a refetch.
 constexpr std::size_t kMaxCachedTiles = 256;
+
 
 // How many tiles one request may name.
 //
@@ -84,6 +86,13 @@ void TileSource::request(const std::vector<TileId>& wanted)
         {
             if (ask.size() >= kMaxTilesPerRequest)
             {
+                // Not dropped -- deferred. The rest is asked for on the next
+                // paint, at most a frame away, and because the list is ordered
+                // centre-outward what waits is what is furthest from where the
+                // driver is looking. Counted so that a cap which is biting
+                // every single frame is visible rather than inferred from a map
+                // that fills in slowly.
+                mStats.deferred += wanted.size() - ask.size();
                 break;
             }
             if (mCache.contains(id))
@@ -179,8 +188,18 @@ void TileSource::request(const std::vector<TileId>& wanted)
                     return;
             }
 
-            for (const auto result : reply->getTiles())
-            {
+            // Decoded and tessellated ACROSS THREADS, blocking until every one
+            // is done. A batch is up to 64 tiles at ~1.9 ms each, which is a
+            // fifth of a second of work that used to run serially on this one
+            // zenoh thread -- and that time is exactly how long a pan takes to
+            // fill in.
+            //
+            // Blocking rather than posting and forgetting: `result.getData()`
+            // is a span into the capnp reply, which dies with this callback.
+            // See map/tile_workers.h.
+            const auto tiles = reply->getTiles();
+            mWorkers.runAll(tiles.size(), [&](std::size_t i) {
+                const auto result = tiles[static_cast<unsigned>(i)];
                 const auto coord = result.getCoord();
                 const TileId id { coord.getZ(), coord.getX(), coord.getY() };
 
@@ -220,7 +239,7 @@ void TileSource::request(const std::vector<TileId>& wanted)
                               std::span<const std::uint8_t>(
                                   reinterpret_cast<const std::uint8_t*>(data.begin()),
                                   data.size()));
-            }
+            });
         });
 
     if (!sent)
@@ -364,48 +383,35 @@ std::size_t TileSource::drain()
         // answer -- that is the server talking, not a failure.
         mBackoff.erase(id);
 
-        // insert_or_assign, not insert: a tile re-fetched after eviction must
-        // replace the old entry, and a duplicate reply must not push a second
-        // eviction record for the same id.
-        if (mCache.insert_or_assign(id, std::move(tile)).second)
-        {
-            mCacheOrder.push_back(id);
-        }
+        // What the entry being replaced weighed, read BEFORE insert_or_assign
+        // overwrites it. Without this the running total only ever grows.
+        // Weighing, ordering and eviction are the cache's business.
+        mCache.insert(id, std::move(tile));
     }
 
-    evictIfNeeded();
     return arrived.size();
 }
 
-void TileSource::evictIfNeeded()
-{
-    while (mCacheOrder.size() > kMaxCachedTiles)
-    {
-        const TileId oldest = mCacheOrder.front();
-        mCacheOrder.pop_front();
-        mCache.erase(oldest);
-    }
-}
 
-std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted) const
+std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted)
 {
     std::vector<CachedTile> out;
     out.reserve(wanted.size());
 
     for (const TileId& id : wanted)
     {
-        const auto found = mCache.find(id);
-        out.push_back((found == mCache.end()) ? CachedTile {} : found->second);
+        // Asking counts as use, which is what keeps the ground the driver is
+        // looking at out of the eviction queue. See TileCache.
+        const CachedTile* found = mCache.find(id);
+        out.push_back(found != nullptr ? *found : CachedTile {});
     }
 
     return out;
 }
 
-bool TileSource::drawable(const TileId& id) const
+bool TileSource::drawable(const TileId& id)
 {
-    const auto found = mCache.find(id);
-    return found != mCache.end() && found->second.geometry &&
-           !found->second.geometry->vertices.empty();
+    return mCache.drawable(id);
 }
 
 std::optional<TileSource::ZoomRange> TileSource::archiveZoomRange() const
@@ -427,6 +433,7 @@ TileSourceStats TileSource::stats() const
     const std::lock_guard<std::mutex> guard(mMutex);
     TileSourceStats out = mStats;
     out.cached = mCache.size();
+    out.cachedBytes = mCache.bytes();
     out.inFlight = mInFlight.size();
     out.backingOff = mBackoff.size();
     return out;
@@ -445,7 +452,6 @@ void TileSource::clear()
     }
 
     mCache.clear();
-    mCacheOrder.clear();
     // Cleared too: a new tileset is a different question, and the old one's
     // failures say nothing about it.
     mBackoff.clear();

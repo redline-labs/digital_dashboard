@@ -2,6 +2,10 @@
 
 #include "map/labels.h"
 
+// For roadPriority(): the ladder that decides which layer a road is drawn in is
+// the same one that decides whose name survives a collision.
+#include "map/tessellator.h"
+
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -10,11 +14,14 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QRectF>
+#include <QSet>
 #include <QString>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
+#include <variant>
 
 namespace map_widget
 {
@@ -25,8 +32,42 @@ struct Candidate
 {
     QString text;
     ScreenPoint at;
+    // How much room the feature itself occupies on screen, for a line label:
+    // a name wider than the road it names reads as floating text. Zero means
+    // "no constraint", which is every point label.
+    double spanPx { 0.0 };
+    bool oneLabelPerName { false };
+    // Coarse tier: which KIND of thing this is. A country outranks a city
+    // outranks a hamlet, whatever their sizes.
     int priority { 0 };
+    // Tie-break within a tier, higher first: population for a place, track
+    // length for a circuit. Two cities competing for the same pixels should
+    // not be settled by which tile decoded first.
+    std::uint32_t magnitude { 0 };
 };
+
+// Read a number out of an MVT attribute. The tiler writes rank and population
+// through `builder.number()`, which picks an integer or a double encoding by
+// value, so both have to be accepted here -- reading only one of them yields a
+// silent zero and the old decode-order behaviour back again.
+std::optional<double> attributeNumber(const mvt::Layer& layer, const mvt::Feature& feature,
+                                      std::string_view key)
+{
+    const std::optional<mvt::Value> value = layer.attribute(feature, key);
+    if (!value.has_value())
+    {
+        return std::nullopt;
+    }
+    if (const auto* d = std::get_if<double>(&value.value()))
+    {
+        return *d;
+    }
+    if (const auto* i = std::get_if<std::int64_t>(&value.value()))
+    {
+        return double(*i);
+    }
+    return std::nullopt;
+}
 
 QColor toQColor(const helpers::Color& colour)
 {
@@ -40,30 +81,48 @@ QColor toQColor(const helpers::Color& colour)
 // the same viewport from two different archives. They compete for the same
 // screen space and are placed by one pass, which is the whole reason the
 // candidates are gathered before any of them is drawn.
+// Tiers step by TWO, not one, so that a layer can sit exactly half way between
+// two of them. The track layer is the reason: it is documented as ranking
+// between a town and a city, and on a unit scale there is no such number.
+constexpr int kPlaceTierStep = 2;
+
+// Point labels sit AT a coordinate; line labels sit along one. The difference
+// is not cosmetic -- a road's name has to be placed from geometry that may be
+// forty miles long and clipped into a dozen tiles, and the same name then turns
+// up once per tile it crosses.
+enum class LabelGeometry
+{
+    Point,
+    Line,
+};
+
 struct LabelLayerSpec
 {
     const char* sourceLayer;
-    int (*priority)(const mvt::Layer&, const mvt::Feature&);
+    LabelRank (*priority)(const mvt::Layer&, const mvt::Feature&);
+    LabelGeometry geometry { LabelGeometry::Point };
+    // Whether this layer draws at all, at this camera zoom. Null means always
+    // -- which is right for places, whose own archive minzoom is the only
+    // sensible floor.
+    bool (*enabled)(const MapStyle_t&, double zoom) { nullptr };
+    // Place at most one label per distinct name. Only lines need it: a place
+    // name appears once, in one tile, and duplicates from a stand-in ancestor
+    // land on the same pixels and lose the collision test. A road crosses every
+    // tile it passes through and each one carries the whole name, so without
+    // this a single street is labelled a dozen times across the viewport.
+    bool oneLabelPerName { false };
 };
 
-int placeLayerPriority(const mvt::Layer& layer, const mvt::Feature& feature)
+bool roadLabelsEnabled(const MapStyle_t& style, double zoom)
 {
-    return placePriority(layer.attributeText(feature, "class"));
+    return style.show_road_labels && zoom >= double(style.detail.road_label);
 }
 
-int trackLayerPriority(const mvt::Layer& layer, const mvt::Feature& feature)
-{
-    // Between a town and a city. A circuit is a landmark worth seeing from a
-    // distance, and it is also the reason the driver is looking at this part of
-    // the map -- but it must not push a city name off a country view.
-    (void)layer;
-    (void)feature;
-    return 2;
-}
-
-constexpr std::array<LabelLayerSpec, 2> kLabelLayers { {
-    { "place", placeLayerPriority },
-    { "track_label", trackLayerPriority },
+constexpr std::array<LabelLayerSpec, 3> kLabelLayers { {
+    { "place", placeRank },
+    { "track_label", trackRank },
+    { "transportation_name", roadRank, LabelGeometry::Line, roadLabelsEnabled,
+      /*oneLabelPerName=*/true },
 } };
 
 // Every labelled point in one source layer of one tile, as screen-space
@@ -75,7 +134,8 @@ constexpr std::array<LabelLayerSpec, 2> kLabelLayers { {
 // than it did with one: a circuit's name and a town's name land in the same
 // place from two different archives, and only one of them can have it.
 void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
-                  const Projection& projection, std::vector<Candidate>& candidates)
+                  const Projection& projection, const QRectF& viewport,
+                  std::vector<Candidate>& candidates)
 {
     const mvt::Layer* layer = entry.tile->layer(spec.sourceLayer);
     if (layer == nullptr || layer->extent == 0)
@@ -91,10 +151,151 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
     const double cosB = std::cos(radians);
     const double sinB = std::sin(radians);
 
+    // Tile-local to screen. The tile's own axes are rotated with the map even
+    // though the text is not, so an anchor has to go through the same rotation
+    // the GPU applies to the geometry.
+    const auto toScreen = [&](const mvt::Point& p) {
+        const double lx = double(p.x) * scale;
+        const double ly = double(p.y) * scale;
+        return ScreenPoint { origin.x + ((lx * cosB) - (ly * sinB)),
+                             origin.y + ((lx * sinB) + (ly * cosB)) };
+    };
+
+    const bool wantLine = spec.geometry == LabelGeometry::Line;
+
     for (const mvt::Feature& feature : layer->features)
     {
-        if (feature.type != mvt::GeomType::Point || feature.rings.empty() ||
-            feature.rings.front().empty())
+        const bool isPoint = feature.type == mvt::GeomType::Point;
+        const bool isLine = feature.type == mvt::GeomType::LineString;
+        if (feature.rings.empty() || (wantLine ? !isLine : !isPoint))
+        {
+            continue;
+        }
+
+        // GEOMETRY FIRST, STRINGS LAST.
+        //
+        // A viewport holds a few dozen labels; the tiles behind it hold tens of
+        // thousands of road features. Everything below is arranged to reject a
+        // feature using integer arithmetic before it costs a string read or an
+        // allocation.
+        //
+        // Worth knowing before this is cited as an optimisation: it did NOT
+        // move the label pass against a real archive, which map_bench measures
+        // at 476 ms with and without it. See docs/map.md.
+        if (!wantLine)
+        {
+            if (feature.rings.front().empty())
+            {
+                continue;
+            }
+            const ScreenPoint at = toScreen(feature.rings.front().front());
+            if (!viewport.contains(QPointF(at.x, at.y)))
+            {
+                continue;
+            }
+            const std::string text = layer->attributeText(feature, "name:latin");
+            if (text.empty())
+            {
+                continue;
+            }
+            const LabelRank rank = spec.priority(*layer, feature);
+            candidates.push_back(Candidate { QString::fromStdString(text), at, 0.0,
+                                             spec.oneLabelPerName, rank.tier,
+                                             rank.magnitude });
+            continue;
+        }
+
+        // A line label goes at the MIDDLE OF THE LONGEST PART, measured on
+        // screen.
+        //
+        // The longest part rather than the first: MVT clips a road into as many
+        // parts as it has crossings of the tile edge, and the first is as often
+        // as not a two-metre stub in a corner. Measured on screen rather than in
+        // tile units so the choice does not change with zoom.
+        //
+        // This is deliberately NOT curved text following the road. That wants a
+        // glyph atlas and per-character placement; a horizontal name at the
+        // middle of the run is most of the value for none of that, and it stays
+        // readable at every bearing -- which is the same reason the whole label
+        // pass is upright.
+        // Measured in TILE-LOCAL units and converted once at the end, rather
+        // than projecting every point.
+        //
+        // The tile-to-screen transform is a similarity -- a uniform scale, a
+        // rotation and a translation -- so it multiplies every length by
+        // `scale` and changes no ratio. Arc length, the halfway point along it,
+        // and which part is longest are therefore all the same answers computed
+        // either side of it, and only the anchor has to be projected.
+        //
+        // This is not a micro-optimisation. The label pass runs on EVERY paint,
+        // and `transportation_name` at z14 is hundreds of features of tens of
+        // points each across a dozen tiles: projecting them all, into a vector
+        // allocated per ring, cost more than the entire GPU frame it is drawn
+        // over.
+        double bestLocalLength = 0.0;
+        mvt::Point bestAnchorLocal {};
+        bool haveAnchor = false;
+
+        for (const auto& ring : feature.rings)
+        {
+            if (ring.size() < 2)
+            {
+                continue;
+            }
+
+            double length = 0.0;
+            for (std::size_t i = 1; i < ring.size(); ++i)
+            {
+                length += std::hypot(double(ring[i].x) - double(ring[i - 1].x),
+                                     double(ring[i].y) - double(ring[i - 1].y));
+            }
+            if (length <= bestLocalLength)
+            {
+                continue;
+            }
+
+            // Walk to the halfway point by arc length.
+            const double half = length / 2.0;
+            double travelled = 0.0;
+            mvt::Point anchor = ring.front();
+            for (std::size_t i = 1; i < ring.size(); ++i)
+            {
+                const double dx = double(ring[i].x) - double(ring[i - 1].x);
+                const double dy = double(ring[i].y) - double(ring[i - 1].y);
+                const double segment = std::hypot(dx, dy);
+                if (travelled + segment >= half)
+                {
+                    const double t = segment > 0.0 ? (half - travelled) / segment : 0.0;
+                    anchor = mvt::Point { std::int32_t(std::lround(double(ring[i - 1].x) + (dx * t))),
+                                          std::int32_t(std::lround(double(ring[i - 1].y) + (dy * t))) };
+                    break;
+                }
+                travelled += segment;
+                anchor = ring[i];
+            }
+
+            bestLocalLength = length;
+            bestAnchorLocal = anchor;
+            haveAnchor = true;
+        }
+
+        if (!haveAnchor || bestLocalLength <= 0.0)
+        {
+            continue;
+        }
+
+        const ScreenPoint at = toScreen(bestAnchorLocal);
+        if (!viewport.contains(QPointF(at.x, at.y)))
+        {
+            continue;
+        }
+
+        // A road too short on screen to hold any name at all is rejected here,
+        // before a name is even read. The exact test against the rendered text
+        // width still happens at placement.
+        constexpr double kShortestWorthNaming = 24.0;
+        const double spanPx = bestLocalLength * scale;
+        if (spanPx < kShortestWorthNaming)
         {
             continue;
         }
@@ -102,54 +303,204 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
         // name:latin, not name. This archive's tilemaker config emits only the
         // latin field, and reading `name` returns an empty string for every
         // place -- a map with no labels and no error anywhere. map_build writes
-        // BOTH spellings for exactly this reason, so the track layer is safe
-        // either way.
-        const std::string text = layer->attributeText(feature, "name:latin");
+        // BOTH spellings for exactly this reason, so the track and road layers
+        // are safe either way.
+        std::string text = layer->attributeText(feature, "name:latin");
+        if (text.empty())
+        {
+            // A numbered route with no name still has something to say, and
+            // map_build emits it into this layer for exactly that reason.
+            text = layer->attributeText(feature, "ref");
+        }
         if (text.empty())
         {
             continue;
         }
 
-        // The tile's own axes are rotated with the map even though the text is
-        // not, so the anchor has to go through the same rotation the GPU
-        // applies to the geometry.
-        const mvt::Point& p = feature.rings.front().front();
-        const double lx = double(p.x) * scale;
-        const double ly = double(p.y) * scale;
-        const double rx = (lx * cosB) - (ly * sinB);
-        const double ry = (lx * sinB) + (ly * cosB);
-
-        candidates.push_back(Candidate { QString::fromStdString(text),
-                                         ScreenPoint { origin.x + rx, origin.y + ry },
-                                         spec.priority(*layer, feature) });
+        const LabelRank rank = spec.priority(*layer, feature);
+        candidates.push_back(Candidate { QString::fromStdString(text), at, spanPx,
+                                         spec.oneLabelPerName, rank.tier, rank.magnitude });
     }
 }
 
 } // namespace
 
+// map_rules writes a `rank` on every label point, LOW meaning important:
+// country 0, state 1, city 2, town 3, village 4, hamlet 5, suburb 6,
+// neighbourhood 7, locality 8 (libs/map_rules/src/classification.cpp).
+//
+// Preferred over the class name because it is the tiler's own ordering and
+// stays right when a class is added upstream. The class is the fallback, for
+// archives built before rank was written -- the bench archive is one, which is
+// why this cannot simply require the attribute.
+constexpr std::int64_t kMaxPlaceRank = 8;
+
+int tierForRank(std::int64_t rank)
+{
+    return kPlaceTierStep * int(kMaxPlaceRank - std::clamp(rank, std::int64_t { 0 }, kMaxPlaceRank));
+}
+
+LabelRank placeRank(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    LabelRank out;
+
+    const std::optional<double> rank = attributeNumber(layer, feature, "rank");
+    out.tier = rank.has_value() ? tierForRank(std::int64_t(*rank))
+                                : placePriority(layer.attributeText(feature, "class"));
+
+    const std::optional<double> population = attributeNumber(layer, feature, "population");
+    if (population.has_value() && *population > 0.0)
+    {
+        out.magnitude = std::uint32_t(std::clamp(*population, 0.0, 1.0e8));
+
+        // The city/town line is drawn by local convention and moves by an order
+        // of magnitude between countries, so a large town must be able to
+        // outrank a small city rather than lose to it on the tag alone.
+        //
+        // The SAME thresholds map_rules already uses to promote a place's
+        // minZoom (classification.cpp). Promoting the zoom but not the rank is
+        // what produced a 400 000-strong town drawn from z6 and then labelled
+        // beneath a city of 3 000.
+        //
+        // Upward only, for map_rules' reason: a city tagged with a small
+        // population is far more often a stale tag than a tiny city.
+        const int cityTier = tierForRank(2);
+        const int townTier = tierForRank(3);
+        if (out.magnitude >= 200'000)
+        {
+            out.tier = std::max(out.tier, cityTier);
+        }
+        else if (out.magnitude >= 50'000)
+        {
+            out.tier = std::max(out.tier, townTier);
+        }
+    }
+
+    return out;
+}
+
+LabelRank trackRank(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    // Between a town and a city, which is the HALF step the doubled tier scale
+    // exists to express. A circuit is a landmark worth seeing from a distance,
+    // and it is the reason the driver is looking at this part of the map -- but
+    // it must not push a city name off a country view.
+    LabelRank out;
+    out.tier = tierForRank(3) + 1;
+
+    // map_build writes a length-derived rank on every circuit: 0 for the
+    // longest, 20 for the shortest (tools/map_build/tracks.cpp). Inverted here
+    // because magnitude sorts high-first, and used rather than ignored so that
+    // where two circuits collide the bigger one keeps its name -- the sense is
+    // easy to invert and the result is a map that labels the kart track and
+    // hides Spa.
+    constexpr double kMaxTrackRank = 20.0;
+    const std::optional<double> rank = attributeNumber(layer, feature, "rank");
+    out.magnitude =
+        std::uint32_t(kMaxTrackRank - std::clamp(rank.value_or(kMaxTrackRank), 0.0, kMaxTrackRank));
+    return out;
+}
+
+LabelRank roadRank(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    // Between a neighbourhood and a locality.
+    //
+    // Below every settlement worth the name, because a street name must not
+    // push a town off the map -- and above `locality`, because at the zooms a
+    // road label appears at, the street you are on is worth more than the name
+    // of a road junction three miles away.
+    LabelRank out;
+    out.tier = tierForRank(kMaxPlaceRank) + 1;
+
+    // Among roads, the bigger road wins the collision. roadPriority() is the
+    // tessellator's own ladder -- motorway 4, trunk/primary 3, secondary 2,
+    // minor 1, rail 5 -- reused rather than restated so the layer a road is
+    // DRAWN in and the weight its name carries cannot drift apart.
+    out.magnitude = std::uint32_t(roadPriority(layer.attributeText(feature, "class")));
+    return out;
+}
+
+// The fallback for an archive whose label points carry no `rank`. Kept in step
+// with map_rules' own table (classification.cpp) so that the two agree about
+// which is the bigger place, and expressed through tierForRank() rather than as
+// its own ladder of literals so they cannot drift apart.
+//
+// Returns a value on the same doubled scale placeLayerPriority() uses; only the
+// ORDER is meaningful, never the number.
 int placePriority(std::string_view className)
 {
     if (className == "country")
     {
-        return 5;
+        return tierForRank(0);
     }
     if (className == "state" || className == "province")
     {
-        return 4;
+        return tierForRank(1);
     }
     if (className == "city")
     {
-        return 3;
+        return tierForRank(2);
     }
     if (className == "town")
     {
-        return 2;
+        return tierForRank(3);
     }
-    if (className == "village" || className == "suburb" || className == "neighbourhood")
+    if (className == "village")
     {
-        return 1;
+        return tierForRank(4);
     }
-    return 0;
+    if (className == "hamlet")
+    {
+        return tierForRank(5);
+    }
+    if (className == "suburb" || className == "quarter")
+    {
+        return tierForRank(6);
+    }
+    if (className == "neighbourhood")
+    {
+        return tierForRank(7);
+    }
+    // Everything unlisted, `locality` included, sorts last rather than
+    // vanishing: an unknown class is a place we have no opinion about, not a
+    // place that is not there.
+    return tierForRank(kMaxPlaceRank);
+}
+
+void LabelCache::touch(const QString& text)
+{
+    const auto at = std::find(mOrder.begin(), mOrder.end(), text);
+    if (at != mOrder.end())
+    {
+        mOrder.erase(at);
+    }
+    mOrder.append(text);
+}
+
+const QRectF& LabelCache::measure(const QString& text, const QFont& font)
+{
+    const QString key = font.key();
+    if (key != mMeasureKey)
+    {
+        mMeasureKey = key;
+        mMeasured.clear();
+    }
+
+    if (const auto found = mMeasured.constFind(text); found != mMeasured.constEnd())
+    {
+        return *found;
+    }
+
+    // Bounded the same way the rendered cache is, and for the same reason: a
+    // long drive passes through a great many street names.
+    constexpr int kMaxMeasured = 4096;
+    if (mMeasured.size() >= kMaxMeasured)
+    {
+        mMeasured.clear();
+    }
+
+    const QFontMetricsF metrics(font);
+    return *mMeasured.insert(text, metrics.boundingRect(text));
 }
 
 const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& font,
@@ -167,21 +518,34 @@ const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& 
     {
         mKey = key;
         mEntries.clear();
+        mOrder.clear();
     }
 
     if (const auto found = mEntries.constFind(text); found != mEntries.constEnd())
     {
+        touch(text);
         return *found;
     }
 
     // A long drive through many named places would otherwise grow this without
-    // bound. Dropping everything is fine: the visible labels are rebuilt over
-    // the next few frames.
+    // bound.
+    //
+    // EVICTED ONE AT A TIME, least recently used first, rather than cleared.
+    // Clearing is a cliff: a label costs 0.88 ms to render, so a viewport
+    // holding forty of them pays about 35 ms -- two dropped frames -- in the
+    // single frame that crosses the threshold, and it pays it again on any
+    // frame that crosses back. Evicting the oldest costs one render for one
+    // label that had left the screen anyway.
+    //
+    // The list scan is O(n) in 512 entries and runs a few dozen times a frame.
+    // That is thousands of pointer comparisons against a 0.88 ms render, so
+    // the bookkeeping an O(1) LRU would need buys nothing measurable.
     constexpr int kMaxEntries = 512;
-    if (mEntries.size() >= kMaxEntries)
+    while (mEntries.size() >= kMaxEntries && !mOrder.isEmpty())
     {
-        mEntries.clear();
+        mEntries.remove(mOrder.takeFirst());
     }
+    mOrder.append(text);
 
     const QFontMetricsF metrics(font);
 
@@ -252,6 +616,11 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     // decode order -- which is not an order anybody chose.
     std::vector<Candidate> candidates;
 
+    // Generous enough that a label whose anchor is just off screen but whose
+    // text would reach onto it is still considered.
+    const QRectF viewport(0.0, 0.0, projection.viewportWidth(), projection.viewportHeight());
+    const QRectF gatherBounds = viewport.adjusted(-256.0, -64.0, 256.0, 64.0);
+
     for (const LabelTile& entry : tiles)
     {
         if (!entry.tile)
@@ -260,12 +629,33 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
         }
         for (const LabelLayerSpec& spec : kLabelLayers)
         {
-            gatherLabels(entry, spec, projection, candidates);
+            if (spec.enabled != nullptr && !spec.enabled(style, projection.camera().zoom))
+            {
+                continue;
+            }
+            gatherLabels(entry, spec, projection, gatherBounds, candidates);
         }
     }
 
+    // Tier first, then size within a tier. STABLE still, so that two places of
+    // the same kind and the same population keep tile decode order rather than
+    // swapping between frames -- a label that flickers as you pan is worse than
+    // one that loses consistently.
     std::stable_sort(candidates.begin(), candidates.end(),
-                     [](const Candidate& a, const Candidate& b) { return a.priority > b.priority; });
+                     [](const Candidate& a, const Candidate& b) {
+                         if (a.priority != b.priority)
+                         {
+                             return a.priority > b.priority;
+                         }
+                         if (a.magnitude != b.magnitude)
+                         {
+                             return a.magnitude > b.magnitude;
+                         }
+                         // Longest on-screen run first, so that the one label a
+                         // road gets lands on its longest visible stretch
+                         // rather than on whichever tile decoded first.
+                         return a.spanPx > b.spanPx;
+                     });
 
     QFont font = painter.font();
     if (!style.label_font.empty())
@@ -280,21 +670,42 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     // A linear scan against accepted boxes. A viewport holds tens of labels,
     // not thousands, so a grid would cost more to maintain than it saves.
     std::vector<QRectF> taken;
-    const QRectF viewport(0.0, 0.0, projection.viewportWidth(), projection.viewportHeight());
+    // Names already placed, for the layers that ask for one label each. A road
+    // crosses every tile it passes through and each tile carries the whole
+    // name, so without this a single street is labelled a dozen times across
+    // one viewport.
+    //
+    // The candidates are already sorted, so the FIRST time a name is seen is
+    // its best placement -- biggest road first, and within a road the part with
+    // the longest on-screen run.
+    QSet<QString> namesPlaced;
 
     for (const Candidate& candidate : candidates)
     {
-        // Rendered once per string, not once per string per frame -- and the
-        // bounding rect comes back with it, so the placement pass does not
-        // re-measure either.
-        const LabelCache::Entry& entry =
-            cache.entryFor(candidate.text, font, style.label_halo_width, haloColour, textColour,
-                           painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0);
-        const QRectF& text = entry.bounds;
+        // MEASURED, not rendered. Rendering costs 0.88 ms a label; measuring is
+        // a font-metrics lookup. Only the labels that survive every test below
+        // are worth pixels -- and with road names in the mix, the candidate
+        // list is tens of thousands long while the placed set is a few dozen.
+        const QRectF& text = cache.measure(candidate.text, font);
         const QRectF box(candidate.at.x - (text.width() / 2.0),
                          candidate.at.y - (text.height() / 2.0), text.width(), text.height());
 
         if (!viewport.intersects(box))
+        {
+            continue;
+        }
+
+        // A name wider than the thing it names reads as text floating over the
+        // map rather than as a label on a road. Cheaper than it looks: this is
+        // the check that keeps the two-metre stubs MVT leaves in tile corners
+        // from each claiming a label.
+        if (candidate.spanPx > 0.0 && text.width() > candidate.spanPx)
+        {
+            ++stats.suppressed;
+            continue;
+        }
+
+        if (candidate.oneLabelPerName && namesPlaced.contains(candidate.text))
         {
             continue;
         }
@@ -313,6 +724,16 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
             continue;
         }
         taken.push_back(padded);
+        if (candidate.oneLabelPerName)
+        {
+            namesPlaced.insert(candidate.text);
+        }
+
+        // Only NOW is it worth pixels.
+        const LabelCache::Entry& entry =
+            cache.entryFor(candidate.text, font, style.label_halo_width, haloColour, textColour,
+                           painter.device() != nullptr ? painter.device()->devicePixelRatioF()
+                                                       : 1.0);
 
         // Snapped to whole pixels. Blitting at a fractional position makes Qt
         // resample, and resampled text is visibly soft; half a pixel of

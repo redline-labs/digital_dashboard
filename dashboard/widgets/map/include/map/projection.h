@@ -186,6 +186,11 @@ class Projection
         // rather than background at the leading edge. A superset, which is why
         // it is worth returning together rather than walking the grid twice.
         std::vector<TileId> withMargin;
+        // The walk hit its hard cap and stopped early, so both lists are
+        // partial. Only reachable from a camera far shallower than the archive
+        // -- 256x the tiles at four levels out -- but when it happens the map
+        // is partly drawn and nothing else says why.
+        bool truncated { false };
     };
 
     VisibleTiles visibleTilesWithMargin(std::uint8_t z, int marginTiles) const;

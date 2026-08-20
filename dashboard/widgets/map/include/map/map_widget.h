@@ -96,6 +96,11 @@ class MapWidget : public QWidget
         // zero once the frame has settled; a number that STAYS non-zero means
         // tiles are not arriving.
         int tilesStandIn { 0 };
+        // The visible-tile walk hit its cap and stopped early, so the map is
+        // knowingly partial. Reachable by parking the camera several levels
+        // shallower than the archive holds; without this the picture and a
+        // genuine coverage hole look identical.
+        bool tileWalkTruncated { false };
         int labelsPlaced { 0 };
         bool hasPosition { false };
         // False when no QRhi backend could be created. Hard failure: there is
@@ -244,6 +249,7 @@ class MapWidget : public QWidget
     // Written by paintEvent, read by status(). Both on the GUI thread.
     int mLastTilesDrawn { 0 };
     int mLastTilesStandIn { 0 };
+    bool mTileWalkTruncated { false };
     int mLastLabelsPlaced { 0 };
 
     dashboard::ExpressionSubscriptionPtr<double> mLatitudeSubscription;

@@ -15,6 +15,8 @@
 #include "map/gpu_renderer.h"
 #include "map/tessellator.h"
 
+#include "mvt/tile.h"
+
 #include <QColor>
 #include <QGuiApplication>
 #include <QImage>
@@ -81,14 +83,17 @@ std::shared_ptr<const TileGeometry> fullTileQuad(MapLayer layer, float r, float 
         return MapVertex { x, y, 0.0f, 0.0f, 0.0f, r, g, b, 1.0f };
     };
 
-    // Tile-local [0,1], two triangles.
+    // Tile-local [0,1], four corners drawn as two triangles by index.
     geometry->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 1.0f),
-                           vertex(0.0f, 0.0f), vertex(1.0f, 1.0f), vertex(0.0f, 1.0f) };
+                           vertex(0.0f, 1.0f) };
+    geometry->indices = { 0, 1, 2, 0, 2, 3 };
 
-    // Everything before `layer` starts at 0 and everything from it on ends at 6.
+    // Everything before `layer` starts at 0 and everything from it on ends at
+    // the full count.
     for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
     {
-        geometry->layerStart[i] = (i <= std::size_t(layer)) ? 0U : 6U;
+        geometry->layerStart[i] = (i <= std::size_t(layer)) ? 0U : 4U;
+        geometry->layerIndexStart[i] = (i <= std::size_t(layer)) ? 0U : 6U;
     }
     return geometry;
 }
@@ -106,12 +111,16 @@ std::shared_ptr<const TileGeometry> fullTileStripe(float halfPx)
         return MapVertex { x, 0.5f, 0.0f, normalY, halfPx, 0.0f, 1.0f, 0.0f, 1.0f };
     };
 
-    geometry->vertices = { vertex(0.0f, -1.0f), vertex(1.0f, -1.0f), vertex(1.0f, 1.0f),
-                           vertex(0.0f, -1.0f), vertex(1.0f, 1.0f),  vertex(0.0f, 1.0f) };
+    // Two vertices per end, one either side of the centreline -- the shape the
+    // tessellator now produces.
+    geometry->vertices = { vertex(0.0f, -1.0f), vertex(0.0f, 1.0f), vertex(1.0f, -1.0f),
+                           vertex(1.0f, 1.0f) };
+    geometry->indices = { 0, 1, 2, 2, 1, 3 };
 
     for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
     {
-        geometry->layerStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 6U;
+        geometry->layerStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 4U;
+        geometry->layerIndexStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 6U;
     }
     return geometry;
 }
@@ -229,7 +238,9 @@ void test_geometry_reaches_the_pixels()
     const auto stats = renderer->stats();
     check(stats.tiles == 1, "one tile was drawn");
     check(stats.drawCalls >= 1, "with at least one draw call");
-    check(stats.vertices == 6, "and six vertices, got " + std::to_string(stats.vertices));
+    // Four corners, six indices: the quad is indexed now, not expanded.
+    check(stats.vertices == 4, "and four vertices, got " + std::to_string(stats.vertices));
+    check(stats.indices == 6, "drawn by six indices, got " + std::to_string(stats.indices));
     SPDLOG_INFO("frame {:.2f} ms, {} draw call(s), {}x MSAA", stats.lastFrameMs, stats.drawCalls,
                 stats.sampleCount);
 }
@@ -414,11 +425,13 @@ void test_north_is_up_and_the_image_is_not_flipped()
         return MapVertex { x, y, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f };
     };
     // The tile's top half: local y from 0 to 0.5.
-    half->vertices = { vertex(0.0f, 0.0f),  vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
-                       vertex(0.0f, 0.0f),  vertex(1.0f, 0.5f), vertex(0.0f, 0.5f) };
+    half->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
+                       vertex(0.0f, 0.5f) };
+    half->indices = { 0, 1, 2, 0, 2, 3 };
     for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
     {
-        half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
+        half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 4U;
+        half->layerIndexStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
     }
 
     const QImage& frame = renderer->render(projection, { GpuBatch { id, half } }, style, background);
@@ -452,6 +465,456 @@ void test_north_is_up_and_the_image_is_not_flipped()
     check(near(frame.pixelColor(column, belowMid), background),
           "and its southern half is empty -- the image is not flipped, got " +
               describe(frame.pixelColor(column, belowMid)));
+}
+
+
+// Total green coverage in the frame, in whole-pixel equivalents.
+//
+// Counted as coverage rather than sampled, because the question a sub-pixel
+// line raises is not "was it hit" but "how much ink did it lay down, and did
+// that stay the same as the camera moved".
+double greenInk(const QImage& frame, const QColor& background)
+{
+    double ink = 0.0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        for (int x = 0; x < frame.width(); ++x)
+        {
+            ink += double(frame.pixelColor(x, y).green() - background.green()) /
+                   (255.0 - background.green());
+        }
+    }
+    return ink;
+}
+
+// The ink a stripe of `halfPx` lays down, swept across a whole pixel of
+// sub-pixel camera offset. A line narrower than a pixel lands differently at
+// each offset, and the spread is the whole point: it is what the eye sees as
+// crawling when the map moves.
+struct InkSweep
+{
+    double lowest { 0.0 };
+    double highest { 0.0 };
+    double spread() const { return highest > 0.0 ? (highest - lowest) / highest : 0.0; }
+    double middle() const { return (lowest + highest) / 2.0; }
+};
+
+InkSweep sweepInk(GpuRenderer& renderer, float halfPx)
+{
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+
+    InkSweep out { 1e18, 0.0 };
+    for (int step = 0; step < 10; ++step)
+    {
+        // Nudge the camera by a tenth of a pixel at a time, through the
+        // projection's own maths so the offset really is sub-pixel.
+        const Projection base(Camera { Coordinate { kIrvineLat, kIrvineLon }, 12.0, 0.0 }, kWidth,
+                              kHeight);
+        const auto centre = base.coordinateForScreen(
+            map_widget::ScreenPoint { kWidth / 2.0, (kHeight / 2.0) + (step * 0.1) });
+        const Projection projection(Camera { centre, 12.0, 0.0 }, kWidth, kHeight);
+
+        const QImage& frame = renderer.render(
+            projection, { GpuBatch { centreTile(projection), fullTileStripe(halfPx) } }, style,
+            background);
+        if (frame.isNull())
+        {
+            return InkSweep {};
+        }
+        const double ink = greenInk(frame, background);
+        out.lowest = std::min(out.lowest, ink);
+        out.highest = std::max(out.highest, ink);
+    }
+    return out;
+}
+
+// A line thinner than a pixel does not land on pixel centres reliably. It drops
+// out entirely at some sub-pixel positions and comes back at others, so it
+// CRAWLS as the map moves -- and widthScaleForZoom() tapers to 0.15, which puts
+// minor roads in exactly that state at low zoom.
+//
+// Measured against the old shader, a 0.1 px half-width swept over one pixel of
+// camera offset gave ink between 0.0 and 32.1: gone entirely at some positions.
+// No sample count fixes that; four coverage samples cannot represent a line
+// that misses the pixel.
+void test_a_hairline_road_never_disappears()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const InkSweep thin = sweepInk(*renderer, 0.1f);
+    if (thin.highest <= 0.0)
+    {
+        return;
+    }
+
+    check(thin.lowest > 0.0,
+          "a hairline road is drawn at every sub-pixel position, lowest ink " +
+              std::to_string(thin.lowest));
+    check(thin.spread() < 0.15,
+          "and lays down the same ink wherever the camera sits, spread " +
+              std::to_string(thin.spread()));
+}
+
+// The other half, and the one that is easy to get wrong: widening a hairline to
+// a pixel WITHOUT fading it draws every one of them at full strength, and a
+// continental view becomes a solid mat of roads -- worse than the crawl it
+// replaced.
+//
+// Checked as linearity. Ink must stay proportional to the width asked for, so
+// that five times the width is five times the ink even where both are below a
+// pixel.
+void test_widening_a_hairline_does_not_add_ink()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const InkSweep thin = sweepInk(*renderer, 0.1f);
+    const InkSweep fivefold = sweepInk(*renderer, 0.5f);
+    if (thin.highest <= 0.0 || fivefold.highest <= 0.0)
+    {
+        return;
+    }
+
+    const double expected = fivefold.middle() / 5.0;
+    const double ratio = thin.middle() / expected;
+    check(ratio > 0.75 && ratio < 1.25,
+          "a fifth of the width lays down a fifth of the ink, ratio " + std::to_string(ratio));
+}
+
+// A line comfortably wider than the floor must be untouched by any of this.
+void test_a_normal_width_line_is_unaffected()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 12.0, 0.0 },
+                                kWidth, kHeight);
+    const QImage& frame = renderer->render(
+        projection, { GpuBatch { centreTile(projection), fullTileStripe(6.0f) } }, style,
+        background);
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    int peak = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        peak = std::max(peak, frame.pixelColor(kWidth / 2, y).green());
+    }
+    check(peak > 240, "a wide line still draws solid, peak green " + std::to_string(peak));
+}
+
+// Fills carry a zero normal and a zero half-width and must never be faded --
+// a washed-out lake is a bug none of the line checks above can see.
+void test_a_fill_is_never_faded_by_the_line_floor()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+
+    const QImage& frame = renderer->render(
+        projection,
+        { GpuBatch { centreTile(projection), fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) } },
+        style, background);
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    check(near(frame.pixelColor(kWidth / 2, kHeight / 2), QColor(0, 255, 0)),
+          "a fill draws at full strength, got " +
+              describe(frame.pixelColor(kWidth / 2, kHeight / 2)));
+}
+
+// The only test that joins the tessellator to the pixels.
+//
+// Everything else here feeds the renderer geometry built by hand, which checks
+// the renderer but says nothing about what tessellate() produces. A wrong index
+// -- a quad whose second triangle is degenerate, say -- passes every count
+// assertion in the tessellator tests and every pixel assertion here, because
+// neither one draws what the other made.
+//
+// A road across the middle of a tile, tessellated for real, must come out as a
+// CONTINUOUS band: covered at both ends and in the middle. Half a quad draws a
+// wedge that is present at one end and gone at the other.
+void test_a_tessellated_road_draws_as_a_continuous_band()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    // Wide enough that a band is unambiguous at this viewport.
+    style.widths.road_primary = 8.0;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+
+    // A z14 tile is 512 px and the viewport is shorter than that, so the tile's
+    // own middle is not necessarily on screen. Put the road on the row the
+    // CAMERA is on, which is.
+    const auto origin = projection.tileOrigin(id);
+    const double tileSize = projection.tileScreenSize(id.z);
+    const double localY = ((kHeight / 2.0) - origin.y) / tileSize;
+    check(localY > 0.05 && localY < 0.95, "the camera sits inside the tile it picked");
+    const auto roadY = std::int32_t(std::lround(localY * 4096.0));
+
+    // A straight road right across the tile, in the layer `class: primary`
+    // routes to.
+    mvt::Layer roads;
+    roads.name = "transportation";
+    roads.extent = 4096;
+    roads.keys = { "class" };
+    roads.values = { mvt::Value(std::in_place_type<std::string>, "primary") };
+    mvt::Feature road;
+    road.type = mvt::GeomType::LineString;
+    road.rings.push_back({ { 0, roadY }, { 1024, roadY }, { 2048, roadY }, { 3072, roadY },
+                           { 4096, roadY } });
+    road.tags = { 0, 0 };
+    roads.features.push_back(std::move(road));
+
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(roads));
+
+    const auto geometry =
+        std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+    check(geometry->layerIndexCount(MapLayer::RoadPrimary) > 0, "the road tessellated");
+
+    const QImage& frame =
+        renderer->render(projection, { GpuBatch { id, geometry } }, style, background);
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    // The row the road actually landed on, found rather than computed: which
+    // part of the centre tile is on screen depends on where the camera sits
+    // inside it, and the question here is about the road, not the tile.
+    int row = -1;
+    int widest = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        int run = 0;
+        for (int x = 0; x < frame.width(); ++x)
+        {
+            if (!near(frame.pixelColor(x, y), background, 6))
+            {
+                ++run;
+            }
+        }
+        if (run > widest)
+        {
+            widest = run;
+            row = y;
+        }
+    }
+
+    check(row >= 0 && widest > frame.width() / 4,
+          "the road is on screen and spans a good part of it, widest run " +
+              std::to_string(widest));
+    if (row < 0)
+    {
+        return;
+    }
+
+    // Now walk that row and require the covered pixels to be CONTIGUOUS. Half a
+    // quad draws a wedge: present at one end of the segment, gone at the other,
+    // which shows up here as the run breaking into pieces.
+    int runs = 0;
+    bool inRun = false;
+    for (int x = 0; x < frame.width(); ++x)
+    {
+        const bool covered = !near(frame.pixelColor(x, row), background, 6);
+        if (covered && !inRun)
+        {
+            ++runs;
+        }
+        inRun = covered;
+    }
+
+    check(runs == 1, "the road is one unbroken band, not " + std::to_string(runs) +
+                         " pieces -- a degenerate triangle in a quad shows up here");
+}
+
+// Each tile's indices are TILE-LOCAL, and drawIndexed() is handed that tile's
+// base vertex to add. Get that wrong and every tile draws tile zero's geometry.
+//
+// Invisible unless the tiles differ: the existing multi-tile check gives every
+// tile the same quad, so indexing into the wrong one produces the same picture.
+// Here neighbouring tiles carry different COLOURS, so drawing the wrong tile's
+// vertices shows up as the wrong colour on screen.
+void test_each_tile_draws_its_own_vertices()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 13.0, 0.0 },
+                                kWidth, kHeight);
+
+    auto tiles = projection.visibleTiles(13, 0);
+    projection.sortCentreOutward(tiles);
+    if (tiles.size() < 2)
+    {
+        return;
+    }
+
+    // Green first, then red for everything else. Whichever tile is drawn at the
+    // viewport centre must show ITS colour, and the two must not agree.
+    std::vector<GpuBatch> batches;
+    for (std::size_t i = 0; i < tiles.size(); ++i)
+    {
+        batches.push_back(GpuBatch {
+            tiles[i], i == 0 ? fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f)
+                             : fullTileQuad(MapLayer::Water, 1.0f, 0.0f, 0.0f) });
+    }
+
+    const QImage& frame = renderer->render(projection, batches, style, background);
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    // The centre-most tile is first in the batch and is the green one, so the
+    // centre pixel is green -- unless a tile drew someone else's vertices.
+    const QColor centre = frame.pixelColor(kWidth / 2, kHeight / 2);
+    check(near(centre, QColor(0, 255, 0)),
+          "the centre tile draws its own green, got " + describe(centre));
+
+    // And somewhere out at the edge, a different tile's red. If every tile were
+    // indexing tile zero's vertices, the whole frame would be green.
+    bool sawRed = false;
+    for (int x = 0; x < frame.width() && !sawRed; ++x)
+    {
+        for (int y = 0; y < frame.height() && !sawRed; ++y)
+        {
+            sawRed = near(frame.pixelColor(x, y), QColor(255, 0, 0));
+        }
+    }
+    check(sawRed, "and its neighbours draw their own red");
+}
+
+// The overpass, end to end and in pixels.
+//
+// A minor road crossing a motorway on a bridge. Before `brunnel` reached the
+// tiles there was no way to draw this correctly: RoadMinor is drawn before
+// Motorway, so the motorway painted over the bridge and the overpass read as
+// the road underneath. Nothing in the archive said which was on top.
+//
+// Checked at the crossing pixel, which is the one place the two disagree.
+void test_an_overpass_draws_over_the_road_it_crosses()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+
+    // Put the crossing where the camera is, so it is definitely on screen: a
+    // z14 tile is 512 px and the viewport is smaller than that.
+    const auto origin = projection.tileOrigin(id);
+    const double tileSize = projection.tileScreenSize(id.z);
+    const double localX = ((kWidth / 2.0) - origin.x) / tileSize;
+    const double localY = ((kHeight / 2.0) - origin.y) / tileSize;
+    check(localX > 0.05 && localX < 0.95 && localY > 0.05 && localY < 0.95,
+          "the camera sits well inside the tile it picked");
+    const auto crossX = std::int32_t(std::lround(localX * 4096.0));
+    const auto crossY = std::int32_t(std::lround(localY * 4096.0));
+
+    mvt::Layer roads;
+    roads.name = "transportation";
+    roads.extent = 4096;
+    roads.keys = { "class", "brunnel" };
+    roads.values = { mvt::Value(std::in_place_type<std::string>, "motorway"),
+                     mvt::Value(std::in_place_type<std::string>, "minor"),
+                     mvt::Value(std::in_place_type<std::string>, "bridge") };
+
+    // A motorway at grade, running east-west through the crossing.
+    mvt::Feature motorway;
+    motorway.type = mvt::GeomType::LineString;
+    motorway.rings.push_back({ { 0, crossY }, { 4096, crossY } });
+    motorway.tags = { 0, 0 };
+    roads.features.push_back(std::move(motorway));
+
+    // A minor road on a bridge, running north-south through the same point.
+    mvt::Feature bridge;
+    bridge.type = mvt::GeomType::LineString;
+    bridge.rings.push_back({ { crossX, 0 }, { crossX, 4096 } });
+    bridge.tags = { 0, 1, 1, 2 };
+    roads.features.push_back(std::move(bridge));
+
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(roads));
+
+    const auto geometry =
+        std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+    check(geometry->layerIndexCount(MapLayer::Motorway) > 0, "the motorway is at grade");
+    check(geometry->layerIndexCount(MapLayer::RoadBridge) > 0, "the minor road is on the bridge");
+
+    const QImage& frame =
+        renderer->render(projection, { GpuBatch { id, geometry } }, style, background);
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    // At the crossing the BRIDGE is what shows. The motorway is the loud
+    // orange here, so getting this backwards is unmistakable.
+    const QColor centre = frame.pixelColor(kWidth / 2, kHeight / 2);
+    const QColor deck(0x2b, 0x30, 0x38);       // style.road_minor
+    const QColor motorwayFill(0xd9, 0xa4, 0x41);
+
+    check(near(centre, deck, 12),
+          "the bridge deck is what shows at the crossing, got " + describe(centre));
+    check(!near(centre, motorwayFill, 40),
+          "and not the motorway it passes over, got " + describe(centre));
+
+    // Away from the crossing the motorway is still a motorway -- the bridge
+    // must not have cut a hole in it.
+    bool sawMotorway = false;
+    for (int x = 0; x < frame.width() && !sawMotorway; ++x)
+    {
+        sawMotorway = near(frame.pixelColor(x, kHeight / 2), motorwayFill, 40);
+    }
+    check(sawMotorway, "the motorway still draws either side of the overpass");
 }
 
 void test_many_tiles_still_render()
@@ -617,10 +1080,12 @@ void test_a_hidpi_frame_is_rendered_at_device_resolution()
         return MapVertex { x, y, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f };
     };
     half->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
-                       vertex(0.0f, 0.0f), vertex(1.0f, 0.5f), vertex(0.0f, 0.5f) };
+                       vertex(0.0f, 0.5f) };
+    half->indices = { 0, 1, 2, 0, 2, 3 };
     for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
     {
-        half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
+        half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 4U;
+        half->layerIndexStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
     }
     const std::vector<GpuBatch> batches { GpuBatch { id, half } };
 
@@ -801,6 +1266,14 @@ int main(int argc, char** argv)
     test_new_geometry_for_the_same_tile_does_reupload();
     test_the_frame_follows_a_resize();
     test_north_is_up_and_the_image_is_not_flipped();
+    test_a_fill_is_never_faded_by_the_line_floor();
+    test_a_hairline_road_never_disappears();
+    test_widening_a_hairline_does_not_add_ink();
+    test_a_normal_width_line_is_unaffected();
+    test_a_fill_is_never_faded_by_the_line_floor();
+    test_a_tessellated_road_draws_as_a_continuous_band();
+    test_an_overpass_draws_over_the_road_it_crosses();
+    test_each_tile_draws_its_own_vertices();
     test_many_tiles_still_render();
     test_a_tile_with_no_geometry_is_harmless();
     test_a_hidpi_frame_is_rendered_at_device_resolution();
