@@ -19,6 +19,8 @@ add_subdirectory(canopen)
 add_subdirectory(can)
 add_subdirectory(can_pcan)
 add_subdirectory(can_socketcan)
+# The MoTeC UTC, over libusb. After `can` for the same reason can_pcan is.
+add_subdirectory(can_motec)
 # Reads and writes PCAN .trc traces, and turns one into a replay channel. After
 # `can`: it uses can::dlc_to_length and implements can::Backend.
 add_subdirectory(can_trc)

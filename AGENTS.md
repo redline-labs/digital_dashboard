@@ -180,6 +180,34 @@ discovery seeing only live traffic, and what `accepted: false` and
   invisible to `ui_screenshot` and to every `gui` test. Labels stay on QPainter
   because they must not rotate with the map and their collision is
   viewport-global. See `docs/map.md`.
+- **CAN adapter register fields are counted from zero, and getting it wrong is
+  silent.** The PCAN uCAN timing command encodes sjw, tseg1, tseg2 AND brp each
+  one less than its value. Encoding only brp that way asked a controller for
+  952 kbit/s where 1 Mbit/s was configured, and nothing anywhere reported it:
+  a controller that cannot hold sync never wins arbitration, so the channel
+  transmits nothing, receives nothing and stays error-free. Two dongles on one
+  bus is what found it -- see `docs/motec_utc.md`. When a CAN link carries no
+  traffic and reports no errors, suspect the timing encoding before the cable.
+- **A latched MoTeC UTC is recovered through `tag`, not through USB.** The
+  device can refuse every command on the normal tag with `0x21`, `Open`
+  included. Nothing at the USB level helps -- not a reset, not port-power
+  disable, not a host reboot -- because the FT245BM in front is only a FIFO
+  bridge. Tag 0 is a separate endpoint that stays responsive, and an `Open`
+  there clears it; `can_motec` does this automatically. See
+  `docs/motec_utc.md`.
+- **A MoTeC UTC cannot be told its bit rate, and says so.** The protocol
+  (`libs/can_motec`, reverse-engineered -- see `docs/motec_utc.md`) has no known
+  command for it, so `set_bitrate()` FAILS rather than accepting a number it
+  cannot apply, and the backend warns at every open. That is the opposite of
+  the bug the SocketCAN backend had, where the truth was available over netlink
+  and simply never read; here it is unavailable, which is why the answer is a
+  loud refusal instead of a quiet guess. A wrong rate presents as a bus that
+  carries nothing, with no error anywhere.
+- **The MoTeC codec is pinned by captured hardware frames, not by the spec.**
+  `libs/can_motec/tests/golden/utc_frames.h` holds eleven datagrams from a real
+  UTC and every one must re-encode byte-identically. The protocol is
+  unpublished, so a hand-written vector would agree with the parser precisely
+  where both misread it -- the same argument as `libs/gsof`'s golden records.
 - **No `uint8_t` in a reflected config.** yaml-cpp treats `unsigned char` as a
   CHARACTER type: the value 14 is written as the unprintable byte 0x0E and read
   back as a bad conversion, which throws out of the YAML decoder and takes the
@@ -257,7 +285,8 @@ scope/              the time-series visualizer app
 libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
                     canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),
-                    can + can_pcan/can_socketcan/can_trc/can_backends (CAN channels),
+                    can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
+                  (CAN channels) -- docs/motec_utc.md for the MoTeC one,
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
                     mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md,
                     protowire (protobuf reader) + osm (PBF) + map_rules

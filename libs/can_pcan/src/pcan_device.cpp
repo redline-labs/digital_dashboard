@@ -178,9 +178,14 @@ Result<std::shared_ptr<PcanDevice>> PcanDevice::open(libusb_context* context,
         return std::unexpected(from_libusb(rc, "cannot tell the adapter a driver is loaded"));
     }
 
+    // 0xFFFFFFFF is erased flash, not a serial number: PEAK ships these
+    // adapters with the field unprogrammed and printing 4294967295 invites
+    // someone to write it into a config file as 'pcan:4294967295'.
+    const std::string serial = owned->firmware_.serialNumber == 0xFFFFFFFFu
+        ? std::string("unset")
+        : std::to_string(owned->firmware_.serialNumber);
     owned->description_ = fmt::format("{} (serial {}, firmware {})", product_name(productId),
-                                      owned->firmware_.serialNumber,
-                                      owned->firmware_.firmwareVersionString());
+                                      serial, owned->firmware_.firmwareVersionString());
 
     SPDLOG_INFO("[pcan] opened {} interface {}", owned->description_, usbInterface);
 

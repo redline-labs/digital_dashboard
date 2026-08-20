@@ -188,12 +188,21 @@ void append_timing_slow(std::vector<uint8_t>& buffer, uint8_t channel, const Bit
 {
     put_u16(buffer, opcode_channel(channel, Opcode::TimingSlow));
     buffer.push_back(errorWarningLimit);
-    // The jump width and the triple-sampling flag share a byte: width in the
-    // low four bits, sampling in the top one.
-    buffer.push_back(static_cast<uint8_t>((timing.sjw & 0x0F) | (tripleSampling ? 0x80 : 0x00)));
-    buffer.push_back(static_cast<uint8_t>(timing.tseg2 & 0x0F));
-    buffer.push_back(static_cast<uint8_t>(timing.tseg1 & 0x3F));
-    // The device counts the prescaler from zero.
+    // EVERY field is counted from zero, not just the prescaler. A controller
+    // given the un-decremented values runs one time quantum long in each
+    // segment: 1 Mbit/s asked for as brp=2 tseg1=29 tseg2=10 comes out as
+    // 952 kbit/s, which is 4.8% off and therefore cannot hold sync with
+    // anything. The symptom is a bus that transmits nothing, receives nothing
+    // and reports no error, because the controller never wins arbitration.
+    //
+    // The masks are the device's field widths: 7 bits for the jump width and
+    // tseg2, 8 for tseg1, 10 for the prescaler. They were too narrow before,
+    // which truncated a long tseg1 into a completely different bit rate at the
+    // slower bus speeds.
+    buffer.push_back(
+        static_cast<uint8_t>(((timing.sjw - 1) & 0x7F) | (tripleSampling ? 0x80 : 0x00)));
+    buffer.push_back(static_cast<uint8_t>((timing.tseg2 - 1) & 0x7F));
+    buffer.push_back(static_cast<uint8_t>((timing.tseg1 - 1) & 0xFF));
     put_u16(buffer, static_cast<uint16_t>((timing.brp - 1) & 0x03FF));
 }
 
@@ -203,9 +212,12 @@ void append_timing_fast(std::vector<uint8_t>& buffer, uint8_t channel, const Bit
     // No error warning limit in the data phase -- errors are counted in the
     // nominal phase -- so the byte is unused.
     buffer.push_back(0);
-    buffer.push_back(static_cast<uint8_t>(timing.sjw & 0x03));
-    buffer.push_back(static_cast<uint8_t>(timing.tseg2 & 0x07));
-    buffer.push_back(static_cast<uint8_t>(timing.tseg1 & 0x0F));
+    // Counted from zero and masked to the data phase's own field widths --
+    // 4 bits for the jump width and tseg2, 5 for tseg1 -- exactly as the
+    // nominal phase above.
+    buffer.push_back(static_cast<uint8_t>((timing.sjw - 1) & 0x0F));
+    buffer.push_back(static_cast<uint8_t>((timing.tseg2 - 1) & 0x0F));
+    buffer.push_back(static_cast<uint8_t>((timing.tseg1 - 1) & 0x1F));
     put_u16(buffer, static_cast<uint16_t>((timing.brp - 1) & 0x03FF));
 }
 
@@ -228,12 +240,19 @@ void append_options(std::vector<uint8_t>& buffer, uint8_t channel, bool enable, 
 void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel)
 {
     // The 11-bit acceptance filter is a bitmap the device consults before
-    // queueing a frame. Setting every bit is "pass everything", which is what
-    // a bridge wants -- filtering belongs to whoever is reading the topic, and
-    // a filter set here is invisible to them.
-    put_u16(buffer, opcode_channel(channel, Opcode::FilterStd));
-    put_u16(buffer, 0);
-    put_u32(buffer, 0xFFFFFFFF);
+    // queueing a frame, and it is addressed a ROW AT A TIME: 64 rows of 32
+    // identifiers each. "Pass everything" is therefore 64 commands, not one.
+    //
+    // Writing only row 0 -- which is what this did -- passes identifiers
+    // 0x000..0x01F and silently drops the other 2016. Nothing reports it: the
+    // device is working exactly as configured, and a bus whose traffic happens
+    // to live above 0x01F simply looks dead.
+    for (uint16_t row = 0; row < kStdFilterRowCount; ++row)
+    {
+        put_u16(buffer, opcode_channel(channel, Opcode::FilterStd));
+        put_u16(buffer, row);
+        put_u32(buffer, 0xFFFFFFFF);
+    }
 }
 
 void append_led(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t mode)
@@ -244,11 +263,22 @@ void append_led(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t mode)
 
 void finish_command_buffer(std::vector<uint8_t>& buffer, size_t bufferSize)
 {
-    append_command(buffer, 0, Opcode::EndOfCollection);
-    if (buffer.size() < bufferSize)
+    // Eight 0xFF bytes, which is an end-of-collection opcode with every other
+    // bit set too. Written as bytes rather than as a command so it is exactly
+    // what the device is known to accept; a terminator built with channel 0
+    // differs from the reference driver's in the channel nibble, and there is
+    // no way to tell from here whether the firmware looks at it.
+    //
+    // Only fits if there is room. A buffer already full of commands is sent as
+    // it is -- the device stops at the end of the transfer.
+    if (buffer.size() + sizeof(uint64_t) <= bufferSize)
     {
-        buffer.resize(bufferSize, 0);
+        buffer.insert(buffer.end(), sizeof(uint64_t), 0xFF);
     }
+    // Deliberately NOT padded out to bufferSize. The transfer carries the
+    // commands and their terminator and nothing else, which is what the
+    // reference driver sends; padding put 400-odd zero bytes on the wire that
+    // the device had to read as no-op commands.
 }
 
 // ============================================================================

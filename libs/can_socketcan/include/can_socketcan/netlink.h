@@ -67,6 +67,12 @@ inline constexpr uint16_t kIflaInfoData = IFLA_INFO_DATA;
 inline constexpr uint16_t kIflaCanBittiming = IFLA_CAN_BITTIMING;
 inline constexpr uint16_t kIflaCanCtrlMode = IFLA_CAN_CTRLMODE;
 inline constexpr uint16_t kIflaCanDataBittiming = IFLA_CAN_DATA_BITTIMING;
+inline constexpr uint16_t kIflaCanState = IFLA_CAN_STATE;
+inline constexpr uint16_t kIflaCanBerrCounter = IFLA_CAN_BERR_COUNTER;
+inline constexpr uint16_t kIflaCanDataBittimingConst = IFLA_CAN_DATA_BITTIMING_CONST;
+
+inline constexpr uint16_t kRtmGetLink = RTM_GETLINK;
+inline constexpr uint16_t kIflaInfoXstats = IFLA_INFO_XSTATS;
 
 inline constexpr uint32_t kIffUp = IFF_UP;
 
@@ -95,6 +101,12 @@ inline constexpr uint16_t kIflaInfoData = 2;
 inline constexpr uint16_t kIflaCanBittiming = 1;
 inline constexpr uint16_t kIflaCanCtrlMode = 5;
 inline constexpr uint16_t kIflaCanDataBittiming = 9;
+inline constexpr uint16_t kIflaCanState = 4;
+inline constexpr uint16_t kIflaCanBerrCounter = 8;
+inline constexpr uint16_t kIflaCanDataBittimingConst = 10;
+
+inline constexpr uint16_t kRtmGetLink = 18;
+inline constexpr uint16_t kIflaInfoXstats = 3;
 
 inline constexpr uint32_t kIffUp = 0x1;
 
@@ -145,6 +157,78 @@ struct NetlinkAck
 };
 
 Result<NetlinkAck> decode_ack(std::span<const uint8_t> bytes);
+
+// --- asking what the interface actually is ----------------------------------
+//
+// Everything above writes. This reads, and it exists because a backend that
+// only writes reports what it asked for rather than what it got: without
+// CAP_NET_ADMIN every request here is refused, and a channel that believed its
+// own requests published "up at 500 kbit/s" for an interface that was down and
+// unconfigured. A read needs no privileges at all, so the truth is always
+// available -- it just has to be asked for.
+
+// The controller's error state, as the kernel's `enum can_state` numbers it.
+// Named separately from can::BusState because this is a wire encoding: the
+// kernel picked these values and they cannot be reordered to suit us.
+enum class CanState : uint32_t
+{
+    ErrorActive = 0,
+    ErrorWarning = 1,
+    ErrorPassive = 2,
+    BusOff = 3,
+    Stopped = 4,
+    Sleeping = 5,
+};
+
+// What the kernel says, as opposed to what was asked for. Every field is
+// optional in the sense that the kernel omits attributes it has nothing to say
+// about -- an interface that has never been given a bit rate carries no
+// IFLA_CAN_BITTIMING at all, which is different from carrying a zero.
+struct LinkState
+{
+    // From ifinfomsg's flags, not from a CAN attribute: it is the same IFF_UP
+    // that `ip link` shows, and it is the one that decides whether a frame can
+    // move.
+    bool up { false };
+
+    std::optional<uint32_t> nominalBps;
+    std::optional<uint16_t> nominalSamplePointPermille;
+    std::optional<uint32_t> dataBps;
+    std::optional<uint16_t> dataSamplePointPermille;
+
+    // Absent when the kernel sent no IFLA_CAN_CTRLMODE.
+    std::optional<bool> listenOnly;
+    std::optional<bool> fdEnabled;
+
+    // True when the controller advertises a data-phase timing table, which is
+    // the thing that distinguishes an FD controller from a classic one. It is
+    // a property of the hardware and does not change with configuration, so it
+    // answers "can this do FD" where fdEnabled answers "is it doing FD".
+    bool fdCapable { false };
+
+    std::optional<CanState> state;
+
+    std::optional<uint16_t> rxErrorCounter;
+    std::optional<uint16_t> txErrorCounter;
+
+    // From the IFLA_INFO_XSTATS block: cumulative since the interface
+    // appeared, so a bus-off that happened and recovered still shows here
+    // where the instantaneous `state` no longer does.
+    std::optional<uint32_t> busOffCount;
+    std::optional<uint32_t> restartCount;
+};
+
+// An RTM_GETLINK asking about one interface by name. Unprivileged.
+Result<std::vector<uint8_t>> encode_link_query(const std::string& interface, uint32_t sequence);
+
+// Parses the RTM_NEWLINK the kernel answers with. Fails when the reply is
+// malformed or is not about a CAN interface; an attribute that is simply
+// absent is not an error, it is a `nullopt` above.
+//
+// Extra attributes are ignored rather than rejected. The kernel gains them
+// between versions, and a reader that refused an unfamiliar one would stop
+// working on the next kernel for no reason.
+Result<LinkState> decode_link_state(std::span<const uint8_t> bytes);
 
 // --- helpers ---------------------------------------------------------------
 

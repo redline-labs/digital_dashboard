@@ -12,12 +12,15 @@
 
 #if defined(__linux__)
 #include <linux/can.h>
+#include <linux/can/error.h>
 #include <linux/can/netlink.h>
 #include <linux/can/raw.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
+#include <linux/capability.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -157,6 +160,82 @@ Result<void> send_link_request(const LinkRequest& request)
 // Channel
 // ============================================================================
 
+// Whether this process could configure an interface if it wanted to. Reading
+// your own capabilities needs none of them, so this is safe to ask anywhere,
+// and it is what separates "this interface is down and you cannot fix it" from
+// "this interface is down and open() will bring it up".
+//
+// Not the same question as geteuid() == 0: a binary given the capability with
+// `setcap` has it without being root, and a root process in a container may
+// have had it dropped.
+bool have_net_admin()
+{
+    __user_cap_header_struct header {};
+    header.version = _LINUX_CAPABILITY_VERSION_3;
+    header.pid = 0;
+
+    // Two words since version 3; CAP_NET_ADMIN is 12, so it lives in the first.
+    std::array<__user_cap_data_struct, 2> data {};
+    if (::syscall(SYS_capget, &header, data.data()) != 0)
+    {
+        return false;
+    }
+    return (data[CAP_NET_ADMIN >> 5].effective & (1u << (CAP_NET_ADMIN & 31))) != 0;
+}
+
+// The read counterpart of send_link_request. Unprivileged, which is the whole
+// point: when CAP_NET_ADMIN is missing every write above fails and this is the
+// only thing left that can say what the interface really is.
+Result<LinkState> query_link(const std::string& interface)
+{
+    const int fd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0)
+    {
+        return std::unexpected(from_errno(errno, "cannot open a netlink socket"));
+    }
+
+    struct FdGuard
+    {
+        int fd;
+        ~FdGuard() { ::close(fd); }
+    } guard { fd };
+
+    sockaddr_nl address {};
+    address.nl_family = AF_NETLINK;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0)
+    {
+        return std::unexpected(from_errno(errno, "cannot bind the netlink socket"));
+    }
+
+    static std::atomic<uint32_t> nextSequence { 1 };
+    auto message = encode_link_query(interface, nextSequence++);
+    if (!message.has_value())
+    {
+        return std::unexpected(message.error());
+    }
+
+    sockaddr_nl kernel {};
+    kernel.nl_family = AF_NETLINK;
+    const ssize_t sent = ::sendto(fd, message->data(), message->size(), 0,
+                                  reinterpret_cast<sockaddr*>(&kernel), sizeof(kernel));
+    if (sent < 0)
+    {
+        return std::unexpected(from_errno(errno, "cannot send a netlink link query"));
+    }
+
+    // A link reply carries every attribute the kernel has for the interface,
+    // which for a CAN device with its timing tables runs to a couple of
+    // kilobytes. Undersizing this truncates the answer rather than failing it.
+    std::array<uint8_t, 8192> reply {};
+    const ssize_t got = ::recv(fd, reply.data(), reply.size(), 0);
+    if (got < 0)
+    {
+        return std::unexpected(from_errno(errno, "cannot read the netlink reply"));
+    }
+
+    return decode_link_state(std::span(reply.data(), static_cast<size_t>(got)));
+}
+
 class SocketCanChannel : public Channel
 {
 public:
@@ -203,7 +282,11 @@ public:
             data = *solved;
         }
 
-        const bool wasUp = running_;
+        // The interface's actual state, not what this object last asked for:
+        // something else may have brought it up, and the kernel refuses to
+        // retime a running interface with EBUSY rather than by explaining.
+        auto observed = link_state();
+        const bool wasUp = observed.has_value() ? observed->up : running_.load();
         if (wasUp)
         {
             LinkRequest down;
@@ -229,20 +312,62 @@ public:
         }
 
         bitrate_ = bitrate;
+        invalidate_state();
 
         if (wasUp)
         {
             LinkRequest up;
             up.interface = id_.device;
             up.up = true;
-            return send_link_request(up);
+            auto restored = send_link_request(up);
+            invalidate_state();
+            return restored;
         }
         return {};
     }
 
-    Bitrate bitrate() const override { return bitrate_; }
+    // What the kernel says, falling back to what was asked for only when it
+    // has nothing to say -- an interface that has never been given a bit rate
+    // carries no bittiming attribute at all.
+    Bitrate bitrate() const override
+    {
+        auto state = link_state();
+        if (!state.has_value())
+        {
+            return bitrate_;
+        }
 
-    bool supports_fd() const override { return fdFrames_; }
+        Bitrate actual = bitrate_;
+        if (state->nominalBps.has_value())
+        {
+            actual.nominalBps = *state->nominalBps;
+            actual.nominalSamplePointPermille = state->nominalSamplePointPermille.value_or(0);
+        }
+        // Only when FD is actually switched on. A controller keeps its last
+        // data-phase timing after FD is turned off, and reporting that as the
+        // live rate would describe a bus carrying eight-byte frames as if it
+        // were doing 2 Mbit/s.
+        if (state->fdEnabled.value_or(false) && state->dataBps.has_value())
+        {
+            actual.dataBps = *state->dataBps;
+            actual.dataSamplePointPermille = state->dataSamplePointPermille.value_or(0);
+        }
+        else
+        {
+            actual.dataBps = 0;
+        }
+        return actual;
+    }
+
+    // Whether the controller CAN do FD, which is what the name says, rather
+    // than whether this socket asked for FD frames. The two differ on every
+    // FD adapter opened at a classic bit rate, and enumerate() reported the
+    // hardware's answer while this reported the socket's.
+    bool supports_fd() const override
+    {
+        auto state = link_state();
+        return state.has_value() ? state->fdCapable : fdFrames_;
+    }
 
     Result<void> set_listen_only(bool listenOnly) override
     {
@@ -250,7 +375,15 @@ public:
         return set_bitrate(bitrate_);
     }
 
-    bool listen_only() const override { return listenOnly_; }
+    bool listen_only() const override
+    {
+        auto state = link_state();
+        if (state.has_value() && state->listenOnly.has_value())
+        {
+            return *state->listenOnly;
+        }
+        return listenOnly_;
+    }
 
     Result<void> start() override
     {
@@ -262,6 +395,7 @@ public:
         {
             running_ = true;
         }
+        invalidate_state();
         return result;
     }
 
@@ -272,10 +406,15 @@ public:
         down.up = false;
         auto result = send_link_request(down);
         running_ = false;
+        invalidate_state();
         return result;
     }
 
-    bool running() const override { return running_; }
+    bool running() const override
+    {
+        auto state = link_state();
+        return state.has_value() ? state->up : running_.load();
+    }
 
     Result<void> send(const helpers::CanFrame& frame) override
     {
@@ -290,6 +429,13 @@ public:
         // needed for two threads to share it -- which is what makes send()
         // callable while another thread is blocked in receive().
         const ssize_t written = ::write(fd_, buffer.data(), *size);
+
+        // send() is documented safe to call while another thread is in
+        // receive(), and both move these counters. The write itself is atomic
+        // per frame on a CAN_RAW socket and needs no lock; the arithmetic
+        // after it does. The pcan backend has always taken this lock -- this
+        // one was reading and writing the same struct from three threads.
+        std::lock_guard<std::mutex> lock(statsMutex_);
         if (written < 0)
         {
             statistics_.txDropped++;
@@ -328,6 +474,12 @@ public:
         }
 
         size_t count = 0;
+        // Accumulated here and applied once below, so a busy bus does not take
+        // and drop the lock several thousand times a second.
+        uint64_t rxBytes = 0;
+        uint64_t errorFrames = 0;
+        uint64_t busOffs = 0;
+
         while (count < out.size())
         {
             std::array<uint8_t, kFdFrameSize> buffer {};
@@ -380,11 +532,25 @@ public:
 
             if (frame->isError)
             {
-                statistics_.errorFrames++;
+                ++errorFrames;
+                // An error frame's identifier carries the error class bits.
+                // This is the fallback for a kernel whose link reply has no
+                // xstats block; statistics() prefers the kernel's count.
+                if ((frame->id & CAN_ERR_BUSOFF) != 0)
+                {
+                    ++busOffs;
+                }
             }
-            statistics_.rxFrames++;
-            statistics_.rxBytes += frame->len;
+            rxBytes += frame->len;
             out[count++] = *frame;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(statsMutex_);
+            statistics_.rxFrames += count;
+            statistics_.rxBytes += rxBytes;
+            statistics_.errorFrames += errorFrames;
+            statistics_.busOffCount += busOffs;
         }
 
         return count;
@@ -392,8 +558,38 @@ public:
 
     Statistics statistics() const override
     {
-        Statistics copy = statistics_;
-        copy.state = running_ ? BusState::ErrorActive : BusState::Stopped;
+        Statistics copy;
+        {
+            std::lock_guard<std::mutex> lock(statsMutex_);
+            copy = statistics_;
+        }
+
+        auto state = link_state();
+        if (!state.has_value())
+        {
+            copy.state = running_ ? BusState::Unknown : BusState::Stopped;
+            return copy;
+        }
+
+        copy.state = state->state.has_value() ? to_bus_state(*state->state)
+                                              : (state->up ? BusState::Unknown : BusState::Stopped);
+        // The controller's own counters, which is the only place they exist --
+        // nothing on the receive path can see them.
+        if (state->rxErrorCounter.has_value())
+        {
+            copy.rxErrorCounter = clamp_counter(*state->rxErrorCounter);
+        }
+        if (state->txErrorCounter.has_value())
+        {
+            copy.txErrorCounter = clamp_counter(*state->txErrorCounter);
+        }
+        // The kernel counts bus-off events for the lifetime of the interface,
+        // which is strictly better than counting the error frames this socket
+        // happened to be listening for, so it wins where it is available.
+        if (state->busOffCount.has_value())
+        {
+            copy.busOffCount = *state->busOffCount;
+        }
         return copy;
     }
 
@@ -401,6 +597,66 @@ public:
     void set_running(bool running) { running_ = running; }
 
 private:
+    static uint8_t clamp_counter(uint16_t value)
+    {
+        // The controller's counters are 8 bits; the kernel's struct is 16.
+        return static_cast<uint8_t>(value > 255u ? 255u : value);
+    }
+
+    static BusState to_bus_state(CanState state)
+    {
+        switch (state)
+        {
+        case CanState::ErrorActive: return BusState::ErrorActive;
+        case CanState::ErrorWarning: return BusState::ErrorWarning;
+        case CanState::ErrorPassive: return BusState::ErrorPassive;
+        case CanState::BusOff: return BusState::BusOff;
+        case CanState::Stopped: return BusState::Stopped;
+        // Nothing here puts a controller to sleep, but the kernel can report
+        // it, and it is not running when it does.
+        case CanState::Sleeping: return BusState::Stopped;
+        }
+        return BusState::Unknown;
+    }
+
+    // One round trip serves every accessor for a moment. The bridge's status
+    // publish asks five separate questions once a second and each would
+    // otherwise be its own socket, sendto and recv.
+    std::optional<LinkState> link_state() const
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        const auto now = std::chrono::steady_clock::now();
+        if (!cached_.has_value() || now - cachedAt_ >= kStateCacheFor)
+        {
+            auto queried = query_link(id_.device);
+            if (queried.has_value())
+            {
+                cached_ = std::move(*queried);
+                cachedAt_ = now;
+            }
+            else
+            {
+                // Keep whatever was last known rather than dropping to
+                // "unknown" on one failed syscall. A query that has never
+                // worked leaves this nullopt and every accessor falls back to
+                // what was asked for, which is what this class did before it
+                // could read anything at all.
+                SPDLOG_DEBUG("[socketcan] cannot read {}'s state: {}", id_.device,
+                             to_string(queried.error()));
+                cachedAt_ = now;
+            }
+        }
+        return cached_;
+    }
+
+    void invalidate_state()
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        cachedAt_ = {};
+    }
+
+    static constexpr std::chrono::milliseconds kStateCacheFor { 50 };
+
     // The kernel knows the controller's real clock and limits; this library
     // does not have a way to ask for them per interface, so it solves against
     // a permissive set and lets the kernel refuse anything its controller
@@ -436,6 +692,15 @@ private:
     std::atomic<bool> running_ { false };
     bool fdFrames_ { false };
     Statistics statistics_ {};
+
+    // Separate from stateMutex_ on purpose: statistics() does a netlink round
+    // trip under that one, and the receive loop must not wait on a syscall to
+    // record a frame it already has.
+    mutable std::mutex statsMutex_;
+
+    mutable std::mutex stateMutex_;
+    mutable std::optional<LinkState> cached_;
+    mutable std::chrono::steady_clock::time_point cachedAt_ {};
 };
 
 // ============================================================================
@@ -468,10 +733,32 @@ public:
             ChannelInfo info;
             info.id = ChannelId { "socketcan", entry.path().filename().string(), 0 };
             info.description = fmt::format("SocketCAN interface {}", info.id.device);
-            // Whether the controller does FD is in
-            // /sys/class/net/<name>/../ but not consistently, so it is left
-            // for the open to discover rather than guessed at here.
-            info.supportsFd = true;
+
+            // Asked rather than assumed. This used to claim FD for every CAN
+            // interface on the machine, so a classic controller advertised a
+            // capability that only failed at open.
+            auto state = query_link(info.id.device);
+            if (state.has_value())
+            {
+                info.supportsFd = state->fdCapable;
+                // A down interface is not a problem for a process that can
+                // bring it up, which is exactly what open() does. It is a
+                // hard stop for one that cannot, and saying so here beats a
+                // bridge that starts and then carries nothing.
+                if (!state->up && !have_net_admin())
+                {
+                    info.available = false;
+                    info.unavailableReason = fmt::format(
+                        "the interface is down and this process has no CAP_NET_ADMIN to bring "
+                        "it up; 'sudo ip link set {} up type can bitrate <rate>'",
+                        info.id.device);
+                }
+            }
+            else
+            {
+                info.supportsFd = true;
+            }
+
             found.push_back(std::move(info));
         }
 
@@ -540,6 +827,19 @@ public:
             channel->set_fd_frames(true);
         }
 
+        // Error frames are not delivered unless they are asked for: a
+        // CAN_RAW socket's error mask starts empty, so without this the
+        // controller can go bus-off and this socket sees nothing at all. That
+        // made Statistics::errorFrames and the whole isError path dead code.
+        // Best-effort, because losing them costs visibility rather than
+        // traffic.
+        const can_err_mask_t errorMask = CAN_ERR_MASK;
+        if (::setsockopt(fd, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &errorMask, sizeof(errorMask)) < 0)
+        {
+            SPDLOG_DEBUG("[socketcan] {} will not report error frames: {}", id.device,
+                         std::strerror(errno));
+        }
+
         // Kernel arrival timestamps. Best-effort: losing them costs accuracy
         // in the log, not correctness.
         const int stamp = 1;
@@ -575,11 +875,27 @@ public:
             {
                 if (started.error().kind == Error::Kind::PermissionDenied)
                 {
-                    SPDLOG_WARN("[socketcan] cannot bring {} up: {}", id.device,
-                                started.error().message);
                     // The interface may well already be up, in which case
-                    // reading and writing works regardless.
+                    // reading and writing works regardless -- but that has to
+                    // be checked rather than assumed. Believing it was the
+                    // difference between a bridge that says it cannot start
+                    // and one that publishes "up at 500 kbit/s" for a dead
+                    // bus and only mentions the problem in a single warning.
                     channel->set_running(true);
+                    if (!channel->running())
+                    {
+                        return permission_denied(fmt::format(
+                            "{} is down and bringing it up needs CAP_NET_ADMIN. Configure it "
+                            "first with 'sudo ip link set {} up type can bitrate {}'{}, or give "
+                            "this process the capability",
+                            id.device, id.device, options.bitrate.nominalBps,
+                            options.bitrate.fd()
+                                ? fmt::format(" dbitrate {} fd on", options.bitrate.dataBps)
+                                : ""));
+                    }
+                    SPDLOG_WARN("[socketcan] cannot configure {}: {}", id.device,
+                                started.error().message);
+                    SPDLOG_WARN("[socketcan] it is already up, so carrying on with it as it is");
                 }
                 else
                 {

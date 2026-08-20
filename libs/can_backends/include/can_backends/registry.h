@@ -10,6 +10,7 @@
 #define CAN_BACKENDS_REGISTRY_H
 
 #include "can/backend.h"
+#include "can_motec/utc_backend.h"
 #include "can_pcan/pcan_backend.h"
 #include "can_trc/trc_backend.h"
 
@@ -19,10 +20,12 @@ namespace can
 struct DefaultRegistryOptions
 {
     pcan::PcanOptions pcan;
+    motec::MotecOptions motec;
     trc::ReplayOptions trc;
     // Leave a backend out entirely. Useful for a test that wants deterministic
     // behaviour on a machine that happens to have a dongle plugged in.
     bool includePcan { true };
+    bool includeMotec { true };
     bool includeSocketCan { true };
     bool includeVirtual { true };
     bool includeTrc { true };

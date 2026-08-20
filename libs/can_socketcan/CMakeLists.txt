@@ -34,6 +34,10 @@ add_executable(can_socketcan_test
     tests/test_socketcan.cpp
 )
 
+# tests/golden/ holds a netlink reply captured from a real kernel; see the
+# header for how it was taken.
+target_include_directories(can_socketcan_test PRIVATE tests)
+
 target_link_libraries(can_socketcan_test
     PRIVATE
         can_socketcan

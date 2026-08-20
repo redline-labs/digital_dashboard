@@ -112,19 +112,38 @@ void test_command_framing()
     check(batch.size() == 16, "two commands are sixteen bytes");
 
     can::pcan::finish_command_buffer(batch);
-    check(batch.size() == can::pcan::kCommandBufferSize,
-          "the buffer is padded to the size the device reads");
-    check(batch[16] == 0xFF && batch[17] == 0x03,
-          fmt::format("with the end-of-collection marker after the last command: {}",
-                      hex(std::span(batch).subspan(16, 4))));
+    // Eight 0xFF bytes and then nothing. The buffer is NOT padded out to the
+    // full 512: the reference driver sends only the commands and their
+    // terminator, and padding put four hundred zero bytes on the wire for the
+    // device to read as no-op commands.
+    check(batch.size() == 24, fmt::format("two commands plus an eight-byte terminator, got {}",
+                                          batch.size()));
+    check(std::all_of(batch.begin() + 16, batch.end(), [](uint8_t b) { return b == 0xFF; }),
+          fmt::format("terminated with eight 0xFF bytes: {}",
+                      hex(std::span(batch).subspan(16))));
+
+    // A buffer with no room left for a terminator goes as it is rather than
+    // overflowing the size the device reads.
+    std::vector<uint8_t> full;
+    while (full.size() + 8 <= can::pcan::kCommandBufferSize)
+    {
+        can::pcan::append_command(full, 0, Opcode::Nop);
+    }
+    const size_t before = full.size();
+    can::pcan::finish_command_buffer(full);
+    check(full.size() == before && full.size() <= can::pcan::kCommandBufferSize,
+          "a full buffer is not grown past what the device reads");
 }
 
 void test_timing_slow_encoding()
 {
-    // 500 kbit/s at 80 MHz: brp 1, 160 quanta, sample point 87.5% -> tseg1 139,
-    // tseg2 20. That does not fit the nominal segment limits, so the solver
-    // will have picked a longer prescaler; take whatever it gives and check the
-    // encoding round-trips the numbers rather than assuming particular ones.
+    // EVERY segment is counted from zero, not just the prescaler. This was
+    // wrong for sjw, tseg1 and tseg2, and the consequence was not a slightly
+    // off bit rate -- it was a channel that transmitted nothing, received
+    // nothing and reported no error, because a controller 4.8% off cannot hold
+    // sync with anything on the bus. Confirmed against the mainline peak_usb
+    // driver, which encodes sjw-1, phase_seg2-1, prop_seg+phase_seg1-1 and
+    // brp-1, and then against a real PCAN-USB Pro FD.
     auto timing = can::solve_bit_timing(500000, 875, can::pcan::nominal_bit_timing_limits());
     check(timing.has_value(), "500 kbit/s solves for the PCAN FD controller");
     if (!timing.has_value())
@@ -138,14 +157,15 @@ void test_timing_slow_encoding()
 
     check(buffer[0] == 0x04 && buffer[1] == 0x10, "addressed to channel 1, opcode TimingSlow");
     check(buffer[2] == 96, "the error warning limit is carried verbatim");
-    check((buffer[3] & 0x0F) == (timing->sjw & 0x0F), "the jump width is in the low nibble");
+    check((buffer[3] & 0x7F) == ((timing->sjw - 1) & 0x7F),
+          fmt::format("the jump width goes out one less than it is: sjw {} -> {}", timing->sjw,
+                      buffer[3] & 0x7F));
     check((buffer[3] & 0x80) == 0, "and triple sampling is off");
-    check(buffer[4] == (timing->tseg2 & 0x0F), "tseg2");
-    check(buffer[5] == (timing->tseg1 & 0x3F), "tseg1");
+    check(buffer[4] == ((timing->tseg2 - 1) & 0x7F),
+          fmt::format("tseg2 one less: {} -> {}", timing->tseg2, buffer[4]));
+    check(buffer[5] == ((timing->tseg1 - 1) & 0xFF),
+          fmt::format("tseg1 one less: {} -> {}", timing->tseg1, buffer[5]));
 
-    // The device counts the prescaler from zero, so a brp of 1 goes out as 0.
-    // Getting this backwards halves or doubles the bit rate, which is the kind
-    // of bug that looks like a broken cable.
     const uint16_t encodedBrp = static_cast<uint16_t>(buffer[6] | (buffer[7] << 8));
     check(encodedBrp == timing->brp - 1,
           fmt::format("the prescaler is encoded one less than it is: brp {} -> {}", timing->brp,
@@ -154,6 +174,43 @@ void test_timing_slow_encoding()
     std::vector<uint8_t> sampled;
     can::pcan::append_timing_slow(sampled, 0, *timing, 96, true);
     check((sampled[3] & 0x80) != 0, "triple sampling sets the top bit of the jump-width byte");
+
+    // The exact case that failed on hardware: 1 Mbit/s at 80 MHz solves to
+    // brp 2, tseg1 29, tseg2 10. Encoded without the decrement the controller
+    // reads 30 and 11 and runs at 952 kbit/s. These are the bytes a working
+    // adapter accepts.
+    auto mbit = can::solve_bit_timing(1000000, 0, can::pcan::nominal_bit_timing_limits());
+    check(mbit.has_value(), "1 Mbit/s solves");
+    if (mbit.has_value())
+    {
+        std::vector<uint8_t> fast;
+        can::pcan::append_timing_slow(fast, 0, *mbit, 96, false);
+        const unsigned tq = 1u + (fast[5] + 1u) + (fast[4] + 1u);
+        const unsigned brp = static_cast<unsigned>(fast[6] | (fast[7] << 8)) + 1u;
+        const unsigned rate = 80000000u / (brp * tq);
+        check(rate == 1000000,
+              fmt::format("the encoded bytes decode back to 1 Mbit/s, not {}", rate));
+    }
+}
+
+// The field widths are the device's, and they were all too narrow. tseg1 in
+// particular was masked to six bits where the device has eight, so any bit
+// rate whose solver output exceeded 63 quanta was truncated into a completely
+// different rate -- silently, and only at the slower bus speeds.
+void test_timing_field_widths()
+{
+    can::BitTiming wide;
+    wide.brp = 1;
+    wide.tseg1 = 200; // needs eight bits once decremented
+    wide.tseg2 = 100; // needs seven
+    wide.sjw = 100;
+
+    std::vector<uint8_t> buffer;
+    can::pcan::append_timing_slow(buffer, 0, wide, 96, false);
+    check(buffer[3] == 99, fmt::format("a jump width of 100 survives seven bits, got {}",
+                                       buffer[3]));
+    check(buffer[4] == 99, fmt::format("a tseg2 of 100 survives seven bits, got {}", buffer[4]));
+    check(buffer[5] == 199, fmt::format("a tseg1 of 200 survives eight bits, got {}", buffer[5]));
 }
 
 void test_timing_fast_encoding()
@@ -171,13 +228,17 @@ void test_timing_fast_encoding()
     check(buffer[0] == 0x05 && buffer[1] == 0x00, "opcode TimingFast on channel 0");
     check(buffer[2] == 0, "the byte the nominal phase uses for the warning limit is unused");
 
-    // The data phase's fields are narrower. A jump width that fitted the
-    // nominal phase would be truncated here, which is why the solver is given
-    // different limits rather than one set scaled.
-    check((buffer[3] & 0x03) == (timing->sjw & 0x03), "the jump width fits two bits");
-    check(timing->sjw <= 4, "and the solver kept it inside what the data phase allows");
-    check(buffer[4] == (timing->tseg2 & 0x07), "tseg2 fits three bits");
-    check(buffer[5] == (timing->tseg1 & 0x0F), "tseg1 fits four bits");
+    // Counted from zero here too, and to the data phase's own widths: four
+    // bits for the jump width and tseg2, five for tseg1.
+    check((buffer[3] & 0x0F) == ((timing->sjw - 1) & 0x0F),
+          fmt::format("the jump width goes out one less: {} -> {}", timing->sjw, buffer[3]));
+    check(buffer[4] == ((timing->tseg2 - 1) & 0x0F),
+          fmt::format("tseg2 one less: {} -> {}", timing->tseg2, buffer[4]));
+    check(buffer[5] == ((timing->tseg1 - 1) & 0x1F),
+          fmt::format("tseg1 one less: {} -> {}", timing->tseg1, buffer[5]));
+
+    const uint16_t encodedBrp = static_cast<uint16_t>(buffer[6] | (buffer[7] << 8));
+    check(encodedBrp == timing->brp - 1, "and so is the prescaler");
 }
 
 void test_option_and_filter_commands()
@@ -193,11 +254,31 @@ void test_option_and_filter_commands()
     can::pcan::append_options(enabling, 1, true, 0, can::pcan::kOptionCalibrationMessages);
     check(enabling[0] == 0x0B && enabling[1] == 0x10, "enabling uses SetEnableOption on channel 1");
 
+    // The acceptance filter is addressed a ROW at a time: 64 rows of 32
+    // identifiers. One command with an all-ones mask passes 0x000..0x01F and
+    // drops the other 2016 -- which presents as a bus that carries only the
+    // handful of low identifiers and looks, for any real traffic, completely
+    // dead.
     std::vector<uint8_t> filter;
     can::pcan::append_std_filter_pass_all(filter, 0);
-    check(filter.size() == 8, "a filter command is eight bytes");
-    check(filter[4] == 0xFF && filter[5] == 0xFF && filter[6] == 0xFF && filter[7] == 0xFF,
-          "and passing everything sets every bit of the acceptance bitmap");
+    check(filter.size() == 8u * can::pcan::kStdFilterRowCount,
+          fmt::format("passing everything is {} commands, got {} bytes",
+                      can::pcan::kStdFilterRowCount, filter.size()));
+
+    for (uint16_t row = 0; row < can::pcan::kStdFilterRowCount; ++row)
+    {
+        const size_t at = row * 8u;
+        const uint16_t idx = static_cast<uint16_t>(filter[at + 2] | (filter[at + 3] << 8));
+        const bool allOnes = filter[at + 4] == 0xFF && filter[at + 5] == 0xFF
+            && filter[at + 6] == 0xFF && filter[at + 7] == 0xFF;
+        if (idx != row || !allOnes)
+        {
+            check(false, fmt::format("row {} is addressed as {} with mask {}", row, idx,
+                                     allOnes ? "all ones" : "something else"));
+            break;
+        }
+    }
+    check(true, "every acceptance row is addressed with an all-ones mask");
 }
 
 // ============================================================================
@@ -614,6 +695,7 @@ int main()
     test_opcode_channel_packing();
     test_command_framing();
     test_timing_slow_encoding();
+    test_timing_field_widths();
     test_timing_fast_encoding();
     test_option_and_filter_commands();
     test_firmware_info_decoding();

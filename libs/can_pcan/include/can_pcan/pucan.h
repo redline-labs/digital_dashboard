@@ -10,15 +10,35 @@
 // channel index in every record, which is how one USB handle serves up to six
 // CAN channels.
 //
-// PROVENANCE, because it matters for how much you should trust this file: the
-// structures and opcodes below follow the uCAN definitions implemented by the
-// mainline Linux `peak_usb` driver (drivers/net/can/usb/peak_usb/, in
-// particular pucan.h and pcan_usb_fd.c), which is the openly documented
-// description of this protocol. They have NOT been confirmed against hardware
-// in this repository -- there is none attached yet. What that means in practice
-// is that the framing, the field layout and the encode/decode logic here are
-// tested and are almost certainly right in shape, while the specific numeric
-// opcodes are the thing to check first if a real dongle does not answer.
+// PROVENANCE: the structures and opcodes below follow the uCAN definitions
+// implemented by the mainline Linux `peak_usb` driver
+// (drivers/net/can/usb/peak_usb/pcan_usb_fd.c and
+// include/linux/can/dev/peak_canfd.h), which is the openly documented
+// description of this protocol.
+//
+// They have now been confirmed against a PCAN-USB Pro FD (firmware 3.4.4),
+// and the warning that used to be here -- that the numbers were the thing to
+// check first if a real dongle did not answer -- turned out to be exactly
+// right. A real dongle did not answer, and four things were wrong:
+//
+//   Bit timing was encoded without the "counted from zero" decrement on every
+//   field except the prescaler, which asked for 952 kbit/s when 1 Mbit/s was
+//   configured. 4.8% off is far outside what CAN tolerates, so the channel
+//   transmitted nothing, received nothing, and reported no error at all.
+//
+//   The timing field masks were narrower than the device's, so a long tseg1
+//   was truncated into a different bit rate at the slower bus speeds.
+//
+//   The standard acceptance filter was written as one command when it is 64
+//   rows of 32 identifiers, so only identifiers 0x000..0x01F could arrive.
+//
+//   PUCAN_OPTION_ERROR was never enabled, so the device sent no error records
+//   and the error counters, bus state and bus-off count could not move.
+//
+// The lesson worth keeping: every one of those failed SILENTLY. There is no
+// error path in this protocol for "your timing is wrong" -- the controller
+// simply never wins arbitration, and a bus with a working cable, a working
+// dongle and a working driver carries nothing.
 //
 // Everything in this header is free of libusb and of any I/O. That is the point:
 // the parts that are easy to get wrong -- the DLC coding, the flag bits, the
@@ -144,7 +164,9 @@ enum class Opcode : uint16_t
     WriteErrorCounters = 0x00a,
     SetEnableOption = 0x00b,
     ClearDisableOption = 0x00c,
-    RxBarrier = 0x00d,
+    // 0x00d is reserved; the barrier is 0x010. Getting this wrong sends a
+    // command the device does not implement, which it ignores in silence.
+    RxBarrier = 0x010,
 
     // Extensions specific to the PCAN-USB FD family.
     ClockSet = 0x080,
@@ -200,6 +222,19 @@ inline constexpr uint8_t kClock20MHz = 5;
 // messages are the device's own timestamp synchronisation traffic; leaving
 // them on means a stream of records nothing wants.
 inline constexpr uint16_t kOptionCalibrationMessages = 0x8000;
+
+// uCAN option bits, which go in the OTHER mask of the same command. Error
+// reporting is off until it is asked for: without this the device sends no
+// error records at all, so the error counters and every bus state above
+// ErrorActive stay at their initial values no matter what the bus does.
+inline constexpr uint16_t kOptionError = 0x0001;
+inline constexpr uint16_t kOptionBusLoad = 0x0002;
+inline constexpr uint16_t kOptionCanFdNonIso = 0x0004;
+
+// The 11-bit acceptance filter is 64 rows of 32 identifiers. "Pass everything"
+// means writing every row -- one row with an all-ones mask passes identifiers
+// 0..31 and silently drops the other 2016.
+inline constexpr uint16_t kStdFilterRowCount = 64;
 
 // --- received records ------------------------------------------------------
 

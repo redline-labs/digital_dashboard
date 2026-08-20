@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <condition_variable>
 #include <deque>
@@ -123,8 +124,15 @@ public:
         // Pass everything: filtering belongs to whoever reads the topic, and a
         // filter set here would be invisible to them.
         append_std_filter_pass_all(commands, localChannel_);
+        // Error reporting is OFF until asked for. Without this the device
+        // sends no error records at all, so errorFrames, the error counters
+        // and every bus state above ErrorActive stay at their initial values
+        // however badly the bus is behaving -- a silent, permanently healthy
+        // looking channel.
+        append_options(commands, localChannel_, true, kOptionError, 0);
         // The adapter's own timestamp-calibration traffic is of no use to a
-        // bridge and would be a record per frame of overhead.
+        // bridge and would be a record per frame of overhead. Cleared
+        // separately because enabling and disabling are different opcodes.
         append_options(commands, localChannel_, false, 0, kOptionCalibrationMessages);
         append_command(commands, localChannel_,
                        listenOnly_ ? Opcode::ListenOnlyMode : Opcode::NormalMode);
@@ -359,6 +367,68 @@ ChannelLocation locate(uint8_t channel)
                              static_cast<uint8_t>(channel % kChannelsPerInterface) };
 }
 
+// What enumerate() can say about a device without going as far as opening a
+// channel on it. It mirrors the checks in PcanDevice::open() deliberately: the
+// value of ChannelInfo::available is that it answers the same question open()
+// will, and a probe that tested something else would just be a second opinion.
+struct Availability
+{
+    bool available { true };
+    std::string reason;
+    std::string serial;
+};
+
+Availability probe(libusb_device* device, uint8_t usbInterface, const PcanOptions& options)
+{
+    Availability result;
+
+    libusb_device_handle* handle = nullptr;
+    const int rc = libusb_open(device, &handle);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        result.available = false;
+        result.reason = libusb_strerror(static_cast<libusb_error>(rc));
+        if (rc == LIBUSB_ERROR_ACCESS)
+        {
+            result.reason += " -- a udev rule for vendor 0x0c72 is missing";
+        }
+        return result;
+    }
+
+    // Free now that the device is open, and the only way a caller learns the
+    // serial it needs to write 'pcan:<serial>' in a config file.
+    libusb_device_descriptor descriptor {};
+    if (libusb_get_device_descriptor(device, &descriptor) == LIBUSB_SUCCESS
+        && descriptor.iSerialNumber != 0)
+    {
+        std::array<unsigned char, 64> text {};
+        const int length = libusb_get_string_descriptor_ascii(
+            handle, descriptor.iSerialNumber, text.data(), static_cast<int>(text.size()) - 1);
+        if (length > 0)
+        {
+            result.serial.assign(reinterpret_cast<const char*>(text.data()),
+                                 static_cast<size_t>(length));
+        }
+    }
+
+#if defined(__linux__)
+    if (libusb_kernel_driver_active(handle, usbInterface) == 1 && !options.detachKernelDriver)
+    {
+        result.available = false;
+        result.reason = fmt::format(
+            "the kernel's peak_usb driver holds interface {}; use the socketcan backend, or set "
+            "pcan_detach_kernel_driver",
+            usbInterface);
+    }
+#else
+    (void)usbInterface;
+    (void)options;
+#endif
+
+    libusb_close(handle);
+    return result;
+}
+
 class PcanBackend : public Backend
 {
 public:
@@ -444,6 +514,17 @@ public:
                 info.description = fmt::format("{} channel {}", product_name(descriptor.idProduct),
                                                channel);
                 info.supportsFd = true;
+
+                // Costs an open and close per channel, on a path that runs
+                // when a human asks what is attached. Worth it: without this
+                // --list called an adapter held by the kernel driver
+                // available, and the only way to find out otherwise was to
+                // configure a bridge against it and watch it fail.
+                auto probed = probe(list[i], locate(channel).usbInterface, options_);
+                info.available = probed.available;
+                info.unavailableReason = std::move(probed.reason);
+                info.serial = std::move(probed.serial);
+
                 found.push_back(std::move(info));
             }
             ++adapterIndex;

@@ -1,0 +1,43 @@
+# Raw USB access to the CAN dongles, so can_bridge does not have to run as root.
+# See docs/motec_utc.md.
+#
+# Install:
+#   sudo cp nodes/can_bridge/udev/99-can-usb.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Members of "plugdev" get access; adjust GROUP if your distro differs.
+# TAG+="uaccess" additionally grants whoever is logged in at the active seat,
+# which is what makes this work on a desktop without editing groups.
+#
+# ATTR{} rather than ATTRS{}: idVendor exists on the usb_device node, not on its
+# interfaces, and usbfs access is keyed on the device. Matching with ATTRS{}
+# would also fire for every interface and hand out more than intended.
+#
+# NEITHER RULE HELPS SocketCAN. `socketcan:can0` goes through the kernel's CAN
+# stack, where the permission that matters is CAP_NET_ADMIN and not a device
+# node -- see "The other half" in docs/motec_utc.md.
+
+# --- MoTeC UTC --------------------------------------------------------------
+# An FT245BM with MoTeC's own product id in its EEPROM. Nothing in mainline
+# Linux binds to dcd8 -- ftdi_sio ignores it without a new_id write -- so this
+# rule is the only thing standing between the dongle and libusb.
+#
+# Scoped to the product id on purpose. 0403 is FTDI's generic vendor id, shared
+# by a very large number of unrelated serial adapters, and matching the vendor
+# alone would quietly hand out raw access to all of them.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="dcd8", \
+    MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# --- PEAK PCAN-USB FD family ------------------------------------------------
+# 0c72 is PEAK-System's own vendor id and nothing else uses it, so the whole
+# vendor is matched: this covers the PCAN-USB FD (0012), Pro FD (0011), X6
+# (0014) and Chip USB (0013) without a rule each.
+#
+# This grants access; it does NOT free the device. On Linux the in-tree
+# peak_usb driver claims these adapters at plug-in and creates the socketcan
+# interfaces (can0, can1, ...), and it keeps holding them afterwards. So the
+# libusb backend ALSO needs `pcan_detach_kernel_driver: true`, which removes
+# those interfaces for as long as the process runs. On Linux the socketcan
+# backend is usually the better path and needs none of this.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0c72", \
+    MODE="0660", GROUP="plugdev", TAG+="uaccess"

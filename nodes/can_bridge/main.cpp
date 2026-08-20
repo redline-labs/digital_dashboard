@@ -448,8 +448,12 @@ void print_channel_list(const can::Registry& registry)
     {
         if (info.available)
         {
-            SPDLOG_INFO("  {:<24} {}{}", info.id.toString(), info.description,
-                        info.supportsFd ? " [CAN FD]" : "");
+            SPDLOG_INFO("  {:<24} {}{}{}", info.id.toString(), info.description,
+                        info.supportsFd ? " [CAN FD]" : "",
+                        // The index in the id shifts when adapters are
+                        // unplugged; the serial does not, and 'pcan:<serial>'
+                        // is accepted anywhere the index is.
+                        info.serial.empty() ? "" : fmt::format(" [serial {}]", info.serial));
         }
         else
         {

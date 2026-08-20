@@ -13,6 +13,7 @@ target_include_directories(can_backends PUBLIC include)
 target_link_libraries(can_backends
     PUBLIC
         can
+        can_motec
         can_pcan
         can_socketcan
         can_trc

@@ -3,6 +3,7 @@
 #include "can_backends/registry.h"
 
 #include "can/virtual_backend.h"
+#include "can_motec/utc_backend.h"
 #include "can_socketcan/socketcan_backend.h"
 
 namespace can
@@ -18,6 +19,10 @@ Registry make_default_registry(const DefaultRegistryOptions& options)
     if (options.includePcan)
     {
         registry.add(pcan::make_pcan_backend(options.pcan));
+    }
+    if (options.includeMotec)
+    {
+        registry.add(motec::make_motec_backend(options.motec));
     }
     if (options.includeSocketCan)
     {

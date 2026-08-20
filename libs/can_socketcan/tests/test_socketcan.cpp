@@ -16,6 +16,8 @@
 // without complaint. Building it wrong looks exactly like a bit rate that did
 // not take effect.
 
+#include "golden/link_reply.h"
+
 #include "can_socketcan/netlink.h"
 #include "can_socketcan/socketcan_backend.h"
 #include "can_socketcan/socketcan_frame.h"
@@ -25,6 +27,7 @@
 #include <spdlog/spdlog.h>
 
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -407,6 +410,360 @@ void test_availability_is_honest()
 
 } // namespace
 
+
+// ============================================================================
+// Asking the kernel what an interface actually is
+// ============================================================================
+//
+// Unlike the frame tests above, this section names the netlink types often
+// enough that qualifying every one of them buries what is being asserted.
+using namespace can::socketcan;
+
+// A synthetic reply, for the states the captured one cannot show. Built with
+// the same put/pad rules the encoder uses, so a padding mistake here fails
+// loudly rather than quietly agreeing with a matching mistake in the decoder.
+struct ReplyBuilder
+{
+    std::vector<uint8_t> canAttributes;
+    std::vector<uint8_t> xstats;
+    uint32_t flags { 0 };
+    std::string kind { "can" };
+
+    static void put_u16(std::vector<uint8_t>& out, uint16_t value)
+    {
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+        out.push_back(static_cast<uint8_t>(value >> 8));
+    }
+
+    static void put_u32(std::vector<uint8_t>& out, uint32_t value)
+    {
+        put_u16(out, static_cast<uint16_t>(value & 0xFFFF));
+        put_u16(out, static_cast<uint16_t>(value >> 16));
+    }
+
+    static void attribute(std::vector<uint8_t>& out, uint16_t type,
+                          const std::vector<uint8_t>& payload)
+    {
+        put_u16(out, static_cast<uint16_t>(4 + payload.size()));
+        put_u16(out, type);
+        out.insert(out.end(), payload.begin(), payload.end());
+        while (out.size() % 4 != 0)
+        {
+            out.push_back(0);
+        }
+    }
+
+    static std::vector<uint8_t> bittiming(uint32_t bps, uint32_t samplePoint)
+    {
+        std::vector<uint8_t> out;
+        put_u32(out, bps);
+        put_u32(out, samplePoint);
+        for (int i = 0; i < 6; ++i)
+        {
+            put_u32(out, 0);
+        }
+        return out;
+    }
+
+    ReplyBuilder& up(bool value)
+    {
+        flags = value ? 1u : 0u;
+        return *this;
+    }
+
+    ReplyBuilder& nominal(uint32_t bps, uint32_t samplePoint)
+    {
+        attribute(canAttributes, kIflaCanBittiming, bittiming(bps, samplePoint));
+        return *this;
+    }
+
+    ReplyBuilder& data(uint32_t bps, uint32_t samplePoint)
+    {
+        attribute(canAttributes, kIflaCanDataBittiming, bittiming(bps, samplePoint));
+        return *this;
+    }
+
+    ReplyBuilder& fd_capable()
+    {
+        // The const table's contents do not matter; its presence is the signal.
+        attribute(canAttributes, kIflaCanDataBittimingConst, std::vector<uint8_t>(48, 0));
+        return *this;
+    }
+
+    ReplyBuilder& ctrlmode(uint32_t mask, uint32_t set)
+    {
+        std::vector<uint8_t> out;
+        put_u32(out, mask);
+        put_u32(out, set);
+        attribute(canAttributes, kIflaCanCtrlMode, out);
+        return *this;
+    }
+
+    ReplyBuilder& state(uint32_t value)
+    {
+        std::vector<uint8_t> out;
+        put_u32(out, value);
+        attribute(canAttributes, kIflaCanState, out);
+        return *this;
+    }
+
+    ReplyBuilder& berr(uint16_t txerr, uint16_t rxerr)
+    {
+        std::vector<uint8_t> out;
+        put_u16(out, txerr);
+        put_u16(out, rxerr);
+        attribute(canAttributes, kIflaCanBerrCounter, out);
+        return *this;
+    }
+
+    ReplyBuilder& device_stats(uint32_t busOff, uint32_t restarts)
+    {
+        xstats.clear();
+        put_u32(xstats, 0); // bus_error
+        put_u32(xstats, 0); // error_warning
+        put_u32(xstats, 0); // error_passive
+        put_u32(xstats, busOff);
+        put_u32(xstats, 0); // arbitration_lost
+        put_u32(xstats, restarts);
+        return *this;
+    }
+
+    std::vector<uint8_t> build() const
+    {
+        std::vector<uint8_t> linkInfo;
+        std::vector<uint8_t> kindBytes(kind.begin(), kind.end());
+        kindBytes.push_back('\0');
+        attribute(linkInfo, kIflaInfoKind, kindBytes);
+        if (!canAttributes.empty())
+        {
+            attribute(linkInfo, kIflaInfoData, canAttributes);
+        }
+        if (!xstats.empty())
+        {
+            attribute(linkInfo, kIflaInfoXstats, xstats);
+        }
+
+        std::vector<uint8_t> body;
+        body.push_back(0); // family
+        body.push_back(0); // pad
+        put_u16(body, 280); // ARPHRD_CAN
+        put_u32(body, 3);   // index
+        put_u32(body, flags);
+        put_u32(body, 0); // change
+
+        std::vector<uint8_t> nameBytes { 'c', 'a', 'n', '0', '\0' };
+        attribute(body, kIflaIfname, nameBytes);
+        attribute(body, kIflaLinkInfo, linkInfo);
+
+        std::vector<uint8_t> message;
+        put_u32(message, static_cast<uint32_t>(16 + body.size()));
+        put_u16(message, kRtmNewLink);
+        put_u16(message, 0);
+        put_u32(message, 1);
+        put_u32(message, 0);
+        message.insert(message.end(), body.begin(), body.end());
+        return message;
+    }
+};
+
+void test_link_query_structure()
+{
+    auto message = encode_link_query("can0", 7);
+    check(message.has_value(), "a link query for a valid interface encodes");
+    if (!message.has_value())
+    {
+        return;
+    }
+
+    check(get_u32(*message, 0) == message->size(), "the query's length field matches its size");
+    check(get_u16(*message, 4) == kRtmGetLink, "the query is an RTM_GETLINK");
+    // Asking for an acknowledgement as well as an answer would put an
+    // NLMSG_ERROR in front of the link, which the decoder would then report as
+    // a refusal.
+    check((get_u16(*message, 6) & kFlagAck) == 0, "the query does not ask for an acknowledgement");
+    check((get_u16(*message, 6) & kFlagRequest) != 0, "the query is a request");
+    check(get_u32(*message, 8) == 7, "the query carries the sequence it was given");
+    // ifinfomsg's index stays zero: the name attribute is what selects the
+    // interface, and a non-zero index there would select a different one.
+    check(get_u32(*message, 16 + 4) == 0, "the query leaves ifi_index zero");
+    check(get_u16(*message, 32) == 4 + 5, "the name attribute is header plus 'can0\\0'");
+    check(get_u16(*message, 34) == kIflaIfname, "the query names the interface by IFLA_IFNAME");
+}
+
+void test_link_query_rejections()
+{
+    check(!encode_link_query("", 1).has_value(), "an empty interface name is refused");
+    check(!encode_link_query("this-name-is-far-too-long", 1).has_value(),
+          "an over-long interface name is refused");
+    check(!encode_link_query("can0/../etc", 1).has_value(),
+          "an interface name with a slash is refused");
+}
+
+// The captured reply, which is the whole reason this decoder exists: an
+// interface that is down and unconfigured, which the backend used to report as
+// up and running at whatever rate it had asked for.
+void test_real_down_interface_capture()
+{
+    auto state = decode_link_state(
+        std::span(golden::kCan0DownReply, golden::kCan0DownReplySize));
+    check(state.has_value(), "a real kernel link reply decodes");
+    if (!state.has_value())
+    {
+        SPDLOG_ERROR("  {}", to_string(state.error()));
+        return;
+    }
+
+    check(!state->up, "the captured interface reads as down");
+    // The kernel sends no bittiming attribute for an interface that has never
+    // been configured. Absent, not zero -- that distinction is what lets the
+    // channel fall back to the requested rate instead of reporting 0 bit/s.
+    check(!state->nominalBps.has_value(), "an unconfigured interface reports no bit rate");
+    check(!state->dataBps.has_value(), "an unconfigured interface reports no data bit rate");
+    // A PCAN-USB Pro FD. The controller advertises a data-phase timing table
+    // whether or not FD is switched on, which is what makes it the right
+    // signal for "can this do FD".
+    check(state->fdCapable, "the captured PCAN-USB Pro FD reads as FD-capable");
+    check(state->fdEnabled.has_value() && !*state->fdEnabled,
+          "FD is not enabled on the captured interface");
+    check(state->listenOnly.has_value() && !*state->listenOnly,
+          "listen-only is off on the captured interface");
+    check(state->state.has_value() && *state->state == CanState::Stopped,
+          "a down controller reads as stopped");
+    check(state->rxErrorCounter.value_or(0xFFFF) == 0, "the captured rx error counter is zero");
+    check(state->txErrorCounter.value_or(0xFFFF) == 0, "the captured tx error counter is zero");
+    check(state->busOffCount.has_value() && *state->busOffCount == 0,
+          "the captured bus-off count is zero");
+}
+
+// Everything the captured reply cannot show, because the interface behind it
+// could not be brought up on the machine that captured it.
+void test_running_interface_decoding()
+{
+    auto message = ReplyBuilder {}
+                       .up(true)
+                       .nominal(500000, 875)
+                       .data(2000000, 800)
+                       .fd_capable()
+                       // CAN_CTRLMODE_FD | CAN_CTRLMODE_LISTENONLY, both set.
+                       .ctrlmode(0x3F, kCanCtrlModeFd | kCanCtrlModeListenOnly)
+                       .state(1) // CAN_STATE_ERROR_WARNING
+                       .berr(17, 42)
+                       .device_stats(3, 2)
+                       .build();
+
+    auto state = decode_link_state(message);
+    check(state.has_value(), "a running interface's reply decodes");
+    if (!state.has_value())
+    {
+        return;
+    }
+
+    check(state->up, "IFF_UP reads as up");
+    check(state->nominalBps.value_or(0) == 500000, "the nominal bit rate is read back");
+    check(state->nominalSamplePointPermille.value_or(0) == 875, "the sample point is read back");
+    check(state->dataBps.value_or(0) == 2000000, "the data bit rate is read back");
+    check(state->fdEnabled.value_or(false), "CAN_CTRLMODE_FD reads as FD enabled");
+    check(state->listenOnly.value_or(false), "CAN_CTRLMODE_LISTENONLY reads as listen-only");
+    check(state->state.has_value() && *state->state == CanState::ErrorWarning,
+          "CAN_STATE_ERROR_WARNING is read back");
+    // struct can_berr_counter is tx first. Reading them the other way round
+    // gives two plausible numbers that blame the wrong end of the bus.
+    check(state->txErrorCounter.value_or(0) == 17, "the tx error counter comes first");
+    check(state->rxErrorCounter.value_or(0) == 42, "the rx error counter comes second");
+    check(state->busOffCount.value_or(0) == 3, "bus-off count comes from the xstats block");
+    check(state->restartCount.value_or(0) == 2, "restart count comes from the xstats block");
+}
+
+void test_zero_bitrate_is_unset()
+{
+    // A bittiming attribute that is present but carries zero means the
+    // controller has never been timed. Reporting that as "0 bit/s" would make
+    // an unconfigured interface look like a configured one with an absurd rate.
+    auto message = ReplyBuilder {}.up(false).nominal(0, 0).build();
+    auto state = decode_link_state(message);
+    check(state.has_value(), "a zero bittiming still decodes");
+    check(state.has_value() && !state->nominalBps.has_value(),
+          "a zero bit rate reads as unset rather than as zero");
+}
+
+void test_link_state_rejections()
+{
+    // Truncated before the headers are complete.
+    check(!decode_link_state(std::span<const uint8_t>()).has_value(), "an empty reply is refused");
+    check(!decode_link_state(std::span(golden::kCan0DownReply, size_t { 20 })).has_value(),
+          "a reply shorter than nlmsghdr + ifinfomsg is refused");
+
+    // The kernel's refusal, which arrives as an NLMSG_ERROR rather than a link.
+    std::vector<uint8_t> error(24, 0);
+    error[0] = 24;
+    error[4] = 2; // NLMSG_ERROR
+    error[16] = 0xFF;
+    error[17] = 0xFF;
+    error[18] = 0xFF;
+    error[19] = 0xFF; // -1
+    check(!decode_link_state(error).has_value(), "an NLMSG_ERROR reply is refused");
+
+    // A link that is not a CAN interface. Decoding it would report an ethernet
+    // card as a bus that is up and has never gone bus-off.
+    ReplyBuilder ethernet;
+    ethernet.kind = "veth";
+    ethernet.up(true);
+    check(!decode_link_state(ethernet.build()).has_value(), "a non-CAN link reply is refused");
+
+    // A declared length past the end of what arrived.
+    auto truncated = ReplyBuilder {}.up(true).nominal(500000, 875).build();
+    truncated[0] = 0xFF;
+    truncated[1] = 0xFF;
+    check(!decode_link_state(truncated).has_value(),
+          "a reply claiming more bytes than arrived is refused");
+
+    // An attribute inside the CAN block whose length runs off the end. The
+    // walk has to stop at it rather than read past it, and what was decoded
+    // before it has to survive -- dropping the whole reply because its last
+    // attribute was malformed would lose a bit rate that was read correctly.
+    {
+        ReplyBuilder builder;
+        builder.up(true).nominal(500000, 875).fd_capable();
+        // A trailing attribute claiming far more payload than remains.
+        ReplyBuilder::attribute(builder.canAttributes, kIflaCanBerrCounter, { 1, 0, 2, 0 });
+        auto overrun = builder.build();
+        overrun[overrun.size() - 8] = 0xF0;
+        overrun[overrun.size() - 7] = 0xFF;
+
+        auto walked = decode_link_state(overrun);
+        check(walked.has_value(), "a reply with an over-long trailing attribute still decodes");
+        check(walked.has_value() && walked->nominalBps.value_or(0) == 500000,
+              "the attributes before an over-long one are kept");
+        check(walked.has_value() && walked->fdCapable,
+              "and so is the FD capability that preceded it");
+    }
+
+    // An attribute claiming a length shorter than its own 4-byte header. This
+    // is the one that hangs rather than misreads: align4(0) is 0, so a walk
+    // that does not reject it never advances its offset. The assertion is that
+    // this call RETURNS -- if the guard goes, the test times out instead of
+    // failing, which is still a red run.
+    {
+        auto zeroLength = ReplyBuilder {}.up(true).nominal(500000, 875).fd_capable().build();
+        // Blank the length of the link-info attribute in the top-level run.
+        for (size_t i = 32; i + 4 <= zeroLength.size(); i += 4)
+        {
+            if (get_u16(zeroLength, i + 2) == kIflaLinkInfo)
+            {
+                zeroLength[i] = 0;
+                zeroLength[i + 1] = 0;
+                break;
+            }
+        }
+        auto stopped = decode_link_state(zeroLength);
+        // The walk stops before reaching any link info, so no CAN kind is ever
+        // seen and the reply is refused rather than half-read.
+        check(!stopped.has_value(), "a zero-length attribute is refused, not looped on");
+        check(!stopped.has_value() || !stopped->fdCapable,
+              "and nothing past it is decoded");
+    }
+}
+
 int main()
 {
     spdlog::set_level(spdlog::level::info);
@@ -426,6 +783,13 @@ int main()
     test_ack_decoding();
 
     test_availability_is_honest();
+
+    test_link_query_structure();
+    test_link_query_rejections();
+    test_real_down_interface_capture();
+    test_running_interface_decoding();
+    test_zero_bitrate_is_unset();
+    test_link_state_rejections();
 
     if (failures != 0)
     {

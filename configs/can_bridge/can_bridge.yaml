@@ -12,6 +12,14 @@
 # processes cannot share it -- the second open fails. Whatever owns the adapter
 # has to own all of its channels.
 
+# USB dongles (pcan:, motec:) need a udev rule before they can be opened without
+# root; kernel interfaces (socketcan:) need CAP_NET_ADMIN instead. Both:
+#
+#     sudo cp nodes/can_bridge/udev/99-can-usb.rules /etc/udev/rules.d/
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# See "Access" in docs/motec_utc.md.
+
 # One entry per CAN bus.
 channels:
   # The name is what the topics and the set_bitrate service call this bus. It
@@ -25,6 +33,9 @@ channels:
     #   pcan:0             the first PCAN-USB FD adapter, channel 0
     #   pcan:0/1           that same adapter, channel 1
     #   pcan:LSN00123/1    the adapter with that serial, channel 1
+    #   motec:0            the first MoTeC UTC dongle
+    #   motec:serial=56536 the UTC with that serial
+    #   motec:udp=host     a MoTeC network gateway, same protocol over UDP
     #   virtual:bench      an in-process loopback bus, no hardware
     #   trc:/logs/run.trc  a recorded PCAN trace, replayed at its own timing
     #
@@ -35,6 +46,10 @@ channels:
 
     # Arbitration-phase bit rate. Every node on a bus must agree on this.
     bitrate: 500000
+
+    # A MoTeC UTC IGNORES the bit rate below -- it runs at whatever MoTeC's own
+    # tool configured, and the protocol has no command to change or read it. The
+    # node warns at startup; see docs/motec_utc.md.
 
     # CAN FD data-phase rate. Omit, or set 0, for classic CAN -- eight bytes
     # maximum and no bit-rate switching. Setting it asks the adapter for FD,
@@ -63,6 +78,11 @@ channels:
     # 500 kbit/s bus is roughly 4000 frames a second, so this holds a couple of
     # seconds of one. Drops are counted and reported on the status topic; a
     # non-zero count means the capture has holes in it.
+    #
+    # Do not shrink this for a motec: channel. That device hands over records
+    # in batches -- around 60 at once on a busy bus -- and the whole batch is
+    # queued before anything drains it, so a depth below the batch size drops
+    # frames even on a quiet bus. See docs/motec_utc.md.
     # rx_queue_depth: 8192
 
     # publish_rx: false turns off publishing entirely -- for a channel that
