@@ -179,9 +179,10 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
         // feature using integer arithmetic before it costs a string read or an
         // allocation.
         //
-        // Worth knowing before this is cited as an optimisation: it did NOT
-        // move the label pass against a real archive, which map_bench measures
-        // at 476 ms with and without it. See docs/map.md.
+        // Worth a number before this is cited as an optimisation: against the
+        // real SoCal archive the whole label pass is ~2.8 ms a frame for ~450
+        // candidates. This ordering is what keeps that flat as the candidate
+        // list grows with zoom, not a fix for a measured problem.
         if (!wantLine)
         {
             if (feature.rings.front().empty())

@@ -678,29 +678,46 @@ that reads as a slow server rather than as a small cache. With worst-case tiles
 that knowingly exceeds the budget. Memory spent holding the screen is worth more
 than memory saved thrashing it.
 
-## The label pass costs half a second, and always has
+## What a frame costs away from Apple silicon
 
-Measured against the real SoCal archive with `map_bench`: **labels are 476 ms
-median per frame**, against ~5 ms for the entire GPU frame. This is NOT a
-regression from the road-label work — it was measured on an unmodified checkout
-at 475.8 ms and on the current one at 476.7 ms, i.e. the same number.
+The numbers elsewhere in this file were measured on an M-series Metal backend.
+On a Linux box with an Intel UHD 630 through Mesa, measured with `map_bench`
+against the real SoCal archive at the dashboard's own 660x640:
 
-Two things about it are worth knowing before anyone chases it.
+| | this box | M-series (above) |
+|---|---|---|
+| gpu render | 4.83 ms | ~0.4 ms |
+| labels | 2.79 ms | — |
+| whole frame | 8.43 ms | — |
 
-- **`map_bench` hands `paintLabels()` every decoded tile**, all 112 of them,
-  not the visible set. `MapWidget::paintEvent()` builds `labelTiles` only from
-  tiles in `mVisible`, so the widget asks a far smaller question than the bench
-  does. How much of the 476 ms the widget actually pays is **not established**;
-  nobody has profiled the widget itself against a real archive.
-- **`labels.h` quotes 0.88 ms to render one label** and 0.001 ms to gather the
-  candidates. Those figures are per-label and per-tile and are not wrong; what
-  is missing is that the pass scales with the number of tiles handed to it, and
-  the bench hands it all of them.
+**The GPU frame is about twelve times slower, and it is the readback**, exactly
+as the rest of this file warns. Fitted across three viewport sizes -- 0.11,
+0.42 and 1.69 megapixels -- it comes to:
 
-The fix is not obvious from the numbers alone and wants a profiler rather than
-another guess. Two attempts that did NOT move it, both since kept because they
-are right anyway: measuring text instead of rendering it during placement, and
-culling candidates to the viewport during the gather.
+    gpu_frame = 2.44 ms fixed + 3.51 ms per megapixel
+
+Two things separate that from Apple silicon. The per-megapixel term is **seven
+times** the 0.5 ms/Mpx measured on Metal, because `readBackTexture` there is a
+copy inside unified memory while here it crosses the bus from the iGPU. And
+there is a **2.44 ms fixed cost that Metal does not have at all**, which is the
+synchronous `endOffscreenFrame()` pipeline stall: cheap on a tiler with shared
+memory, expensive on Mesa.
+
+The consequence is worth stating plainly, because it inverts the advice above:
+on this hardware the fixed cost dominates at dashboard sizes, so **making the
+viewport smaller buys much less than the M-series numbers suggest** -- halving
+the linear dimensions took 4.83 ms to 2.08 ms, not to a quarter.
+
+**Labels are fine.** 2.79 ms for ~450 candidates and ~25 placed, with the
+render cache hitting every time after the first frame. A single label costs
+1.27 ms to stroke and fill here against the 0.88 ms recorded on macOS, so the
+raster engine is ~1.4x slower and nothing more.
+
+**A benchmarking note, learned the hard way.** `map_bench` is CPU-bound in the
+label pass and GPU-bound in the readback, so two of them running at once report
+each other's contention rather than the frame's cost. Concurrent runs on this
+box produced a label figure of 476 ms -- a hundred and seventy times the real
+one -- and it looked entirely plausible. Run it alone, and check `uptime` first.
 
 ## Things that are load-bearing
 

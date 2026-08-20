@@ -146,10 +146,10 @@ class LabelCache
     // survive collision need pixels. Rendering a label costs 0.88 ms; measuring
     // one is a font-metrics lookup.
     //
-    // This does NOT explain the label pass's cost against a real archive --
-    // see docs/map.md, which measures that at 476 ms both with and without
-    // this change. It is here because asking for pixels to find out a width is
-    // wrong on its own terms, not because it was the fix.
+    // Measured on a real archive the whole label pass is ~2.8 ms a frame, so
+    // this is not load-bearing for performance today; it is here because
+    // asking for pixels in order to find out a width is wrong on its own
+    // terms, and it keeps the cost flat as the candidate list grows.
     const QRectF& measure(const QString& text, const QFont& font);
 
     // Whether a rendered label for `text` is in hand. Exposed so that eviction
