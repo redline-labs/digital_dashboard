@@ -34,6 +34,8 @@
 
 #include "mvt/tile.h"
 
+#include "map/label_candidates.h"
+
 #include "map/projection.h"
 #include "map/style.h"
 
@@ -42,12 +44,12 @@ class QPainter;
 namespace map_widget
 {
 
-// A tile whose `place` layer may carry names. Same shape as the GPU batch, but
-// holding the decoded tile rather than its triangles.
+// A tile that may carry names. Same shape as the GPU batch, but holding the
+// extracted candidates rather than triangles.
 struct LabelTile
 {
     TileId id;
-    std::shared_ptr<const mvt::Tile> tile;
+    std::shared_ptr<const LabelSet> labels;
 };
 
 // Which place classes get a label, and how important each is. A city keeps its

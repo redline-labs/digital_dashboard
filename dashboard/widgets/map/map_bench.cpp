@@ -192,7 +192,7 @@ int main(int argc, char** argv)
     // not pay.
     struct Cached
     {
-        std::shared_ptr<const mvt::Tile> tile;
+        std::shared_ptr<const map_widget::LabelSet> labels;
         std::shared_ptr<const TileGeometry> geometry;
     };
     std::unordered_map<TileId, Cached, TileIdHash> cache;
@@ -235,11 +235,12 @@ int main(int argc, char** argv)
                 ++absent;
                 continue;
             }
-            auto shared = std::make_shared<const mvt::Tile>(std::move(*tile));
             auto geometry =
-                std::make_shared<const TileGeometry>(map_widget::tessellate(*shared, style));
+                std::make_shared<const TileGeometry>(map_widget::tessellate(*tile, style));
+            auto labels =
+                std::make_shared<const map_widget::LabelSet>(map_widget::extractLabels(*tile));
             vertices += geometry->vertices.size();
-            cache.emplace(id, Cached { std::move(shared), std::move(geometry) });
+            cache.emplace(id, Cached { std::move(labels), std::move(geometry) });
             ++decoded;
         }
     }
@@ -328,7 +329,7 @@ int main(int argc, char** argv)
                 continue;
             }
             batches.push_back(GpuBatch { id, found->second.geometry });
-            labelTiles.push_back(LabelTile { id, found->second.tile });
+            labelTiles.push_back(LabelTile { id, found->second.labels });
         }
         ready.add(readyTimer.ms());
 

@@ -866,7 +866,7 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
             }
             batches.push_back(map_widget::GpuBatch { mVisible[s][i], ready[s][i].geometry,
                                                      alphas[s][i] });
-            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].tile });
+            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].labels });
         }
     }
     mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
@@ -887,7 +887,7 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
             if (standInTiles[s][i])
             {
                 labelTiles.push_back(
-                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].tile });
+                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].labels });
             }
         }
     }

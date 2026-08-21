@@ -280,6 +280,18 @@ class GpuRenderer
         QRgb highlightColour { 0 };
         float highlightWidth { 0.0F };
         std::vector<std::uint64_t> highlightIds;
+
+        // Everything except the vectors, which the memo compares in place --
+        // see render(). Kept next to the fields so a new scalar cannot be
+        // added without deciding whether it belongs here.
+        bool scalarsEqual(const FrameKey& other) const
+        {
+            return size == other.size && center == other.center && zoom == other.zoom &&
+                   bearing == other.bearing && widthScale == other.widthScale &&
+                   background == other.background && highlightColour == other.highlightColour &&
+                   highlightWidth == other.highlightWidth &&
+                   layerMinZooms == other.layerMinZooms;
+        }
         // Batch identity, so a tile arriving invalidates the frame. Serials,
         // not addresses -- see TileGeometry::serial.
         std::vector<TileId> ids;

@@ -45,7 +45,7 @@ CachedTile tileOf(std::size_t vertexCount)
     geometry->layerIndexStart[0] = 0;
 
     CachedTile tile;
-    tile.tile = std::make_shared<mvt::Tile>();
+    tile.labels = std::make_shared<map_widget::LabelSet>();
     tile.geometry = std::move(geometry);
     return tile;
 }
@@ -55,7 +55,7 @@ CachedTile tileOf(std::size_t vertexCount)
 CachedTile absentTile()
 {
     CachedTile tile;
-    tile.tile = std::make_shared<mvt::Tile>();
+    tile.labels = std::make_shared<map_widget::LabelSet>();
     tile.geometry = std::make_shared<map_widget::TileGeometry>();
     return tile;
 }

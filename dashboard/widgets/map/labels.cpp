@@ -85,6 +85,8 @@ struct LabelLayerSpec
     // tile it passes through and each one carries the whole name, so without
     // this a single street is labelled a dozen times across the viewport.
     bool oneLabelPerName { false };
+    // Which per-frame gate the extracted candidates answer to.
+    LabelKind kind { LabelKind::Place };
 };
 
 bool roadLabelsEnabled(const MapStyle_t& style, double zoom)
@@ -93,48 +95,34 @@ bool roadLabelsEnabled(const MapStyle_t& style, double zoom)
 }
 
 constexpr std::array<LabelLayerSpec, 3> kLabelLayers { {
-    { "place", placeRank },
-    { "track_label", trackRank },
+    { "place", placeRank, LabelGeometry::Point, nullptr, false, LabelKind::Place },
+    { "track_label", trackRank, LabelGeometry::Point, nullptr, false, LabelKind::Track },
     { "transportation_name", roadRank, LabelGeometry::Line, roadLabelsEnabled,
-      /*oneLabelPerName=*/true },
+      /*oneLabelPerName=*/true, LabelKind::Road },
 } };
 
-// Every labelled point in one source layer of one tile, as screen-space
-// candidates.
-//
-// Gathered rather than placed, because a label's position depends on which
-// labels were already accepted and the order tiles arrive in is decode order --
-// which is not an order anybody chose. With two source layers it matters more
-// than it did with one: a circuit's name and a town's name land in the same
-// place from two different archives, and only one of them can have it.
-void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
-                  const Projection& projection, const QRectF& viewport,
-                  std::vector<Candidate>& candidates)
+// A road too short on screen to hold any name at all is rejected before a
+// candidate is even built. The exact test against the rendered text width
+// still happens at placement.
+constexpr double kShortestWorthNaming = 24.0;
+
+// One source layer's worth of candidates, extracted ONCE at decode time on
+// the worker thread -- everything below is camera-free and never runs again
+// for this tile. Gathered rather than placed even so: a label's position
+// depends on which labels were already accepted, and the order tiles arrive
+// in is decode order, which is not an order anybody chose.
+void extractLayerLabels(const mvt::Tile& tile, const LabelLayerSpec& spec, LabelSet& out)
 {
-    const mvt::Layer* layer = entry.tile->layer(spec.sourceLayer);
+    const mvt::Layer* layer = tile.layer(spec.sourceLayer);
     if (layer == nullptr || layer->extent == 0)
     {
         return;
     }
 
-    const ScreenPoint origin = projection.tileOrigin(entry.id);
-    const double size = projection.tileScreenSize(entry.id.z);
-    const double scale = size / double(layer->extent);
-    // The projection's own rotation terms, not a local re-derivation: three
-    // copies of "which way does the map turn" is two too many.
-    const double cosB = projection.bearingCos();
-    const double sinB = projection.bearingSin();
-
-    // Tile-local to screen. The tile's own axes are rotated with the map even
-    // though the text is not, so an anchor has to go through the same rotation
-    // the GPU applies to the geometry.
-    const auto toScreen = [&](const mvt::Point& p) {
-        const double lx = double(p.x) * scale;
-        const double ly = double(p.y) * scale;
-        return ScreenPoint { origin.x + ((lx * cosB) - (ly * sinB)),
-                             origin.y + ((lx * sinB) + (ly * cosB)) };
-    };
-
+    // Anchors leave here in [0,1] across the tile -- the same camera-free
+    // domain the GPU's vertices use. The paint pass multiplies by the tile's
+    // on-screen size, which is all a similarity transform needs.
+    const double inv = 1.0 / double(layer->extent);
     const bool wantLine = spec.geometry == LabelGeometry::Line;
 
     for (const mvt::Feature& feature : layer->features)
@@ -146,67 +134,43 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
             continue;
         }
 
-        // GEOMETRY FIRST, STRINGS LAST.
-        //
-        // A viewport holds a few dozen labels; the tiles behind it hold tens of
-        // thousands of road features. Everything below is arranged to reject a
-        // feature using integer arithmetic before it costs a string read or an
-        // allocation.
-        //
-        // Worth a number before this is cited as an optimisation: against the
-        // real SoCal archive the whole label pass is ~2.8 ms a frame for ~450
-        // candidates. This ordering is what keeps that flat as the candidate
-        // list grows with zoom, not a fix for a measured problem.
         if (!wantLine)
         {
             if (feature.rings.front().empty())
             {
                 continue;
             }
-            const ScreenPoint at = toScreen(feature.rings.front().front());
-            if (!viewport.contains(QPointF(at.x, at.y)))
-            {
-                continue;
-            }
+            const mvt::Point at = feature.rings.front().front();
+            // name:latin, not name. This archive's tilemaker config emits only
+            // the latin field, and reading `name` returns an empty string for
+            // every place -- a map with no labels and no error anywhere.
+            // map_build writes BOTH spellings for exactly this reason.
             const std::string text = layer->attributeText(feature, "name:latin");
             if (text.empty())
             {
                 continue;
             }
             const LabelRank rank = spec.priority(*layer, feature);
-            candidates.push_back(Candidate { QString::fromStdString(text), at, 0.0,
-                                             spec.oneLabelPerName, rank.tier,
-                                             rank.magnitude });
+            out.push_back(LabelCandidate { QString::fromStdString(text), double(at.x) * inv,
+                                           double(at.y) * inv, 0.0, rank.tier, rank.magnitude,
+                                           spec.kind, spec.oneLabelPerName });
             continue;
         }
 
-        // A line label goes at the MIDDLE OF THE LONGEST PART, measured on
-        // screen.
+        // A line label goes at the MIDDLE OF THE LONGEST PART.
         //
-        // The longest part rather than the first: MVT clips a road into as many
-        // parts as it has crossings of the tile edge, and the first is as often
-        // as not a two-metre stub in a corner. Measured on screen rather than in
-        // tile units so the choice does not change with zoom.
+        // The longest part rather than the first: MVT clips a road into as
+        // many parts as it has crossings of the tile edge, and the first is as
+        // often as not a two-metre stub in a corner. Measured in tile-local
+        // units: the tile-to-screen transform is a similarity, so arc length,
+        // the halfway point along it, and which part is longest are the same
+        // answers computed either side of it.
         //
-        // This is deliberately NOT curved text following the road. That wants a
-        // glyph atlas and per-character placement; a horizontal name at the
-        // middle of the run is most of the value for none of that, and it stays
-        // readable at every bearing -- which is the same reason the whole label
+        // This is deliberately NOT curved text following the road. That wants
+        // a glyph atlas and per-character placement; a horizontal name at the
+        // middle of the run is most of the value for none of that, and it
+        // stays readable at every bearing -- the same reason the whole label
         // pass is upright.
-        // Measured in TILE-LOCAL units and converted once at the end, rather
-        // than projecting every point.
-        //
-        // The tile-to-screen transform is a similarity -- a uniform scale, a
-        // rotation and a translation -- so it multiplies every length by
-        // `scale` and changes no ratio. Arc length, the halfway point along it,
-        // and which part is longest are therefore all the same answers computed
-        // either side of it, and only the anchor has to be projected.
-        //
-        // This is not a micro-optimisation. The label pass runs on EVERY paint,
-        // and `transportation_name` at z14 is hundreds of features of tens of
-        // points each across a dozen tiles: projecting them all, into a vector
-        // allocated per ring, cost more than the entire GPU frame it is drawn
-        // over.
         double bestLocalLength = 0.0;
         mvt::Point bestAnchorLocal {};
         bool haveAnchor = false;
@@ -259,27 +223,6 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
             continue;
         }
 
-        const ScreenPoint at = toScreen(bestAnchorLocal);
-        if (!viewport.contains(QPointF(at.x, at.y)))
-        {
-            continue;
-        }
-
-        // A road too short on screen to hold any name at all is rejected here,
-        // before a name is even read. The exact test against the rendered text
-        // width still happens at placement.
-        constexpr double kShortestWorthNaming = 24.0;
-        const double spanPx = bestLocalLength * scale;
-        if (spanPx < kShortestWorthNaming)
-        {
-            continue;
-        }
-
-        // name:latin, not name. This archive's tilemaker config emits only the
-        // latin field, and reading `name` returns an empty string for every
-        // place -- a map with no labels and no error anywhere. map_build writes
-        // BOTH spellings for exactly this reason, so the track and road layers
-        // are safe either way.
         std::string text = layer->attributeText(feature, "name:latin");
         if (text.empty())
         {
@@ -293,12 +236,29 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
         }
 
         const LabelRank rank = spec.priority(*layer, feature);
-        candidates.push_back(Candidate { QString::fromStdString(text), at, spanPx,
-                                         spec.oneLabelPerName, rank.tier, rank.magnitude });
+        out.push_back(LabelCandidate { QString::fromStdString(text),
+                                       double(bestAnchorLocal.x) * inv,
+                                       double(bestAnchorLocal.y) * inv, bestLocalLength * inv,
+                                       rank.tier, rank.magnitude, spec.kind,
+                                       spec.oneLabelPerName });
     }
 }
 
 } // namespace
+
+LabelSet extractLabels(const mvt::Tile& tile)
+{
+    LabelSet out;
+    // All three layers, unconditionally: the show_* toggles and zoom floors
+    // are the CAMERA's business and are applied per frame in paintLabels().
+    // Extracting everything keeps the worker style-free, so a style edit
+    // never needs a re-extract.
+    for (const LabelLayerSpec& spec : kLabelLayers)
+    {
+        extractLayerLabels(tile, spec, out);
+    }
+    return out;
+}
 
 // map_rules writes a `rank` on every label point, LOW meaning important:
 // country 0, state 1, city 2, town 3, village 4, hamlet 5, suburb 6,
@@ -602,19 +562,51 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     const QRectF viewport(0.0, 0.0, projection.viewportWidth(), projection.viewportHeight());
     const QRectF gatherBounds = viewport.adjusted(-256.0, -64.0, 256.0, 64.0);
 
+    // The road-name gate, evaluated once per frame -- kinds are baked on each
+    // candidate at extraction, so the per-candidate test is one branch.
+    const bool roadsOn = roadLabelsEnabled(style, projection.camera().zoom);
+
     for (const LabelTile& entry : tiles)
     {
-        if (!entry.tile)
+        if (!entry.labels || entry.labels->empty())
         {
             continue;
         }
-        for (const LabelLayerSpec& spec : kLabelLayers)
+
+        // The whole per-frame cost of a tile's labels: one origin, one size,
+        // and per candidate a rotate, a bounds test and a push. Everything
+        // heavier -- attribute walks, string reads, arc lengths -- happened
+        // once, at decode time, on the worker.
+        const ScreenPoint origin = projection.tileOrigin(entry.id);
+        const double size = projection.tileScreenSize(entry.id.z);
+        const double cosB = projection.bearingCos();
+        const double sinB = projection.bearingSin();
+
+        for (const LabelCandidate& candidate : *entry.labels)
         {
-            if (spec.enabled != nullptr && !spec.enabled(style, projection.camera().zoom))
+            if (candidate.kind == LabelKind::Road && !roadsOn)
             {
                 continue;
             }
-            gatherLabels(entry, spec, projection, gatherBounds, candidates);
+            // Tile-local to screen. The tile's own axes are rotated with the
+            // map even though the text is not, so an anchor goes through the
+            // same rotation the GPU applies to the geometry.
+            const double lx = candidate.x * size;
+            const double ly = candidate.y * size;
+            const ScreenPoint at { origin.x + ((lx * cosB) - (ly * sinB)),
+                                   origin.y + ((lx * sinB) + (ly * cosB)) };
+            if (!gatherBounds.contains(QPointF(at.x, at.y)))
+            {
+                continue;
+            }
+            const double spanPx = candidate.spanLocal * size;
+            if (candidate.spanLocal > 0.0 && spanPx < kShortestWorthNaming)
+            {
+                continue;
+            }
+            candidates.push_back(Candidate { candidate.text, at, spanPx,
+                                             candidate.oneLabelPerName, candidate.priority,
+                                             candidate.magnitude });
         }
     }
 

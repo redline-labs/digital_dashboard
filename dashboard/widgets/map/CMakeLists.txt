@@ -206,6 +206,9 @@ target_include_directories(map_test_tile_cache PRIVATE include)
 
 target_link_libraries(map_test_tile_cache
     PRIVATE
+        # Core only: LabelCandidate carries a QString, and the cache weighs
+        # it. Still no QtGui, no zenoh -- the eviction policy stays a unit.
+        Qt6::Core
         mvt
         earcut::earcut
         config_codec

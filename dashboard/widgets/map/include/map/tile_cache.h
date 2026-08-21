@@ -17,30 +17,32 @@
 #include <memory>
 #include <unordered_map>
 
-#include "mvt/tile.h"
-
+#include "map/label_candidates.h"
 #include "map/projection.h"
 #include "map/tessellator.h"
 
 namespace map_widget
 {
 
-// One tile, in both the forms the widget draws from: the triangles for the GPU
-// and the decoded features for the label pass.
+// One tile, in both the forms the widget draws from: the triangles for the
+// GPU and the extracted label candidates for the label pass.
 //
-// Both, because labels are placed on the CPU with viewport-global collision and
-// so cannot be baked per tile the way the geometry is. Keeping the mvt::Tile is
-// what pays for that; see map/labels.h.
+// The decoded mvt::Tile itself is NOT here, deliberately. The label pass was
+// its only consumer after tessellation, and everything camera-free about a
+// label is extracted once at decode time (see map/labels.h) -- so the tile
+// dies on the worker that decoded it, and a dense downtown entry weighs
+// vertices plus a few kilobytes of names instead of vertices plus hundreds of
+// kilobytes of features it would never read again.
 struct CachedTile
 {
-    std::shared_ptr<const mvt::Tile> tile;
+    std::shared_ptr<const LabelSet> labels;
     std::shared_ptr<const TileGeometry> geometry;
     // Roughly what this tile occupies, measured once when it is inserted rather
     // than walked again on every eviction check. Approximate on purpose -- this
     // is a budget, not an allocator.
     std::size_t bytes { 0 };
 
-    explicit operator bool() const { return tile != nullptr; }
+    explicit operator bool() const { return geometry != nullptr; }
 };
 
 // Roughly what a decoded tile occupies, vertices and features together.

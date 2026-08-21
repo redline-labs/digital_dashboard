@@ -480,6 +480,12 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // Same camera, same tiles, same style, same viewport -- so the same
     // pixels. Handing back the frame already in hand skips the draw AND the
     // readback, which together are the whole cost.
+    //
+    // The scalar half of the key is built on the stack; the vector half is
+    // COMPARED IN PLACE against what the memo already holds rather than built
+    // first -- the hit path is every idle repaint, and paying three vector
+    // allocations per frame to conclude "nothing changed" was the memo's
+    // whole cost.
     FrameKey key;
     key.size = size;
     key.center = projection.camera().center;
@@ -497,11 +503,46 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // else happens to invalidate the frame.
     key.highlightColour = highlight.colour.rgba();
     key.highlightWidth = highlight.extraHalfPx;
-    key.highlightIds = highlight.osmWayIds;
     for (std::size_t li = 0; li < kMapLayerCount; ++li)
     {
         key.layerMinZooms[li] = layerMinZoom(static_cast<MapLayer>(li), style);
     }
+
+    const auto batchesMatchKey = [&]() {
+        if (mFrameKey.ids.size() != batches.size())
+        {
+            return false;
+        }
+        for (std::size_t i = 0; i < batches.size(); ++i)
+        {
+            if (!(mFrameKey.ids[i] == batches[i].id) ||
+                mFrameKey.serials[i] !=
+                    (batches[i].geometry ? batches[i].geometry->serial : 0) ||
+                mFrameKey.alphas[i] != quantizeAlpha(batches[i].alpha))
+            {
+                return false;
+            }
+        }
+        return mFrameKey.highlightIds == highlight.osmWayIds;
+    };
+
+    if (mHaveFrame && !mFrame.isNull() && key.scalarsEqual(mFrameKey) && batchesMatchKey())
+    {
+        ++mStats.reused;
+        mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
+        return mFrame;
+    }
+
+    // A miss: refill the stored key's vectors in place, keeping their
+    // capacity across frames.
+    key.highlightIds = std::move(mFrameKey.highlightIds);
+    key.highlightIds.assign(highlight.osmWayIds.begin(), highlight.osmWayIds.end());
+    key.ids = std::move(mFrameKey.ids);
+    key.serials = std::move(mFrameKey.serials);
+    key.alphas = std::move(mFrameKey.alphas);
+    key.ids.clear();
+    key.serials.clear();
+    key.alphas.clear();
     key.ids.reserve(batches.size());
     key.serials.reserve(batches.size());
     key.alphas.reserve(batches.size());
@@ -510,13 +551,6 @@ const QImage& GpuRenderer::render(const Projection& projection,
         key.ids.push_back(batch.id);
         key.serials.push_back(batch.geometry ? batch.geometry->serial : 0);
         key.alphas.push_back(quantizeAlpha(batch.alpha));
-    }
-
-    if (mHaveFrame && key == mFrameKey && !mFrame.isNull())
-    {
-        ++mStats.reused;
-        mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
-        return mFrame;
     }
 
     // Prepared, not submitted. The vertices ride in the same resource update

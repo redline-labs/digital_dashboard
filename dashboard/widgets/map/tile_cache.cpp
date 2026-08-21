@@ -19,34 +19,13 @@ std::size_t approximateBytes(const CachedTile& tile)
         bytes += tile.geometry->vertices.capacity() * sizeof(MapVertex);
     }
 
-    if (tile.tile)
+    if (tile.labels)
     {
-        for (const mvt::Layer& layer : tile.tile->layers)
+        bytes += sizeof(LabelSet) + (tile.labels->capacity() * sizeof(LabelCandidate));
+        for (const LabelCandidate& candidate : *tile.labels)
         {
-            bytes += sizeof(mvt::Layer) + layer.name.capacity();
-            for (const std::string& key : layer.keys)
-            {
-                bytes += sizeof(std::string) + key.capacity();
-            }
-            // The values are a variant; only the string alternative owns
-            // anything worth counting beyond the variant itself.
-            bytes += layer.values.capacity() * sizeof(mvt::Value);
-            for (const mvt::Value& value : layer.values)
-            {
-                if (const auto* text = std::get_if<std::string>(&value))
-                {
-                    bytes += text->capacity();
-                }
-            }
-            for (const mvt::Feature& feature : layer.features)
-            {
-                bytes += sizeof(mvt::Feature);
-                bytes += feature.tags.capacity() * sizeof(std::uint32_t);
-                for (const auto& ring : feature.rings)
-                {
-                    bytes += sizeof(ring) + (ring.capacity() * sizeof(mvt::Point));
-                }
-            }
+            // QString stores UTF-16; capacity is in characters.
+            bytes += std::size_t(candidate.text.capacity()) * sizeof(QChar);
         }
     }
 

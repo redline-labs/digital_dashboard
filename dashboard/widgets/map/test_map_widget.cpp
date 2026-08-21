@@ -465,6 +465,14 @@ mvt::Tile roadNameTile(const std::string& name, const std::string& roadClass,
     return tile;
 }
 
+// What the decode worker does to every arriving tile: candidates out,
+// decoded features gone. The label tests go through it so they exercise the
+// extraction the widget actually runs.
+std::shared_ptr<const map_widget::LabelSet> labelsOf(const mvt::Tile& tile)
+{
+    return std::make_shared<const map_widget::LabelSet>(map_widget::extractLabels(tile));
+}
+
 map_widget::LabelStats placeOnto(const std::vector<map_widget::LabelTile>& tiles,
                                  const MapStyle_t& style, double zoom = 14.0)
 {
@@ -486,7 +494,7 @@ map_widget::LabelStats placeOnto(const std::vector<map_widget::LabelTile>& tiles
 void test_a_road_name_is_placed()
 {
     const map_widget::TileId irvine { 14, 2828, 6562 };
-    const auto tile = std::make_shared<mvt::Tile>(roadNameTile("Main Street", "minor"));
+    const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     const MapStyle_t style;
     const auto stats = placeOnto({ { irvine, tile } }, style);
@@ -497,7 +505,7 @@ void test_a_road_name_is_placed()
 // name, so without dedup one street is labelled once per tile on screen.
 void test_a_road_crossing_several_tiles_is_named_once()
 {
-    const auto tile = std::make_shared<mvt::Tile>(roadNameTile("Main Street", "minor"));
+    const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     std::vector<map_widget::LabelTile> tiles;
     for (std::uint32_t x = 2827; x <= 2829; ++x)
@@ -520,8 +528,8 @@ void test_a_road_crossing_several_tiles_is_named_once()
 void test_a_stub_too_short_for_its_name_is_not_labelled()
 {
     const map_widget::TileId irvine { 14, 2828, 6562 };
-    const auto stub = std::make_shared<mvt::Tile>(
-        roadNameTile("A Very Long Street Name Indeed", "minor", 2048, 2040, 2056));
+    const auto stub =
+        labelsOf(roadNameTile("A Very Long Street Name Indeed", "minor", 2048, 2040, 2056));
 
     const MapStyle_t style;
     const auto stats = placeOnto({ { irvine, stub } }, style);
@@ -533,7 +541,7 @@ void test_a_stub_too_short_for_its_name_is_not_labelled()
 void test_road_labels_respect_their_zoom_floor_and_their_toggle()
 {
     const map_widget::TileId irvine { 14, 2828, 6562 };
-    const auto tile = std::make_shared<mvt::Tile>(roadNameTile("Main Street", "minor"));
+    const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
     check(placeOnto({ { irvine, tile } }, style, 14.0).placed == 1, "drawn at the floor");
@@ -560,11 +568,12 @@ void test_a_numbered_route_falls_back_to_its_ref()
     feature.tags = { 0, 0, 1, 1 };
     layer.features.push_back(std::move(feature));
 
-    auto tile = std::make_shared<mvt::Tile>();
-    tile->layers.push_back(std::move(layer));
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(layer));
 
     const MapStyle_t style;
-    const auto stats = placeOnto({ { map_widget::TileId { 14, 2828, 6562 }, tile } }, style);
+    const auto stats =
+        placeOnto({ { map_widget::TileId { 14, 2828, 6562 }, labelsOf(tile) } }, style);
     check(stats.placed == 1, "an unnamed motorway is labelled with its route number");
 }
 

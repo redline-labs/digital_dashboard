@@ -2,6 +2,8 @@
 
 #include "map/tile_source.h"
 
+#include "map/labels.h"
+
 #include "mvt/decode.h"
 #include "mvt/gzip.h"
 
@@ -313,7 +315,7 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
             // tile so it is not asked for again every frame -- an absent tile
             // re-requested forever is a steady stream of queries for nothing.
             deliver(id,
-                    CachedTile { std::make_shared<const mvt::Tile>(),
+                    CachedTile { std::make_shared<const LabelSet>(),
                                  std::make_shared<const TileGeometry>() },
                     true, false);
             return;
@@ -342,15 +344,16 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
         return;
     }
 
-    auto decoded = std::make_shared<const mvt::Tile>(std::move(*tile));
+    // Tessellated AND label-extracted HERE, on the zenoh thread, not on the
+    // GUI thread when the tile is first drawn. Both are the expensive steps
+    // and both results are reused every frame; doing them on arrival means
+    // the frame that shows a new tile costs the same as the frame before it.
+    // The decoded tile itself dies right here -- the cache keeps only what
+    // the paint pass actually reads.
+    auto geometry = std::make_shared<const TileGeometry>(tessellate(*tile, mStyle));
+    auto labels = std::make_shared<const LabelSet>(extractLabels(*tile));
 
-    // Tessellated HERE, on the zenoh thread, not on the GUI thread when the
-    // tile is first drawn. It is the expensive step by an order of magnitude
-    // and its result is reused every frame; doing it on arrival means the
-    // frame that shows a new tile costs the same as the frame before it.
-    auto geometry = std::make_shared<const TileGeometry>(tessellate(*decoded, mStyle));
-
-    deliver(id, CachedTile { std::move(decoded), std::move(geometry) }, false, false);
+    deliver(id, CachedTile { std::move(labels), std::move(geometry) }, false, false);
 }
 
 void TileSource::failBatch(const std::vector<TileId>& ids)
