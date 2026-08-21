@@ -762,6 +762,241 @@ void test_a_tessellated_road_draws_as_a_continuous_band()
                          " pieces -- a degenerate triangle in a quad shows up here");
 }
 
+// ============================================================================
+// The highlight pass
+// ============================================================================
+
+// A straight primary road across the middle of the viewport, stamped with an
+// OSM way id so the tessellator records the FeatureRange the highlight pass
+// joins on. Shared by every highlight test below.
+std::shared_ptr<const TileGeometry> roadTileWithWayId(const Projection& projection,
+                                                      const TileId& id, const MapStyle_t& style,
+                                                      std::uint64_t wayId)
+{
+    const auto origin = projection.tileOrigin(id);
+    const double tileSize = projection.tileScreenSize(id.z);
+    const double localY = ((kHeight / 2.0) - origin.y) / tileSize;
+    const auto roadY = std::int32_t(std::lround(localY * 4096.0));
+
+    mvt::Layer roads;
+    roads.name = "transportation";
+    roads.extent = 4096;
+    roads.keys = { "class" };
+    roads.values = { mvt::Value(std::in_place_type<std::string>, "primary") };
+    mvt::Feature road;
+    road.type = mvt::GeomType::LineString;
+    road.rings.push_back({ { 0, roadY }, { 2048, roadY }, { 4096, roadY } });
+    road.tags = { 0, 0 };
+    road.hasId = true;
+    road.id = wayId;
+    roads.features.push_back(std::move(road));
+
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(roads));
+    return std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+}
+
+// The row carrying the most non-background pixels -- where the road landed.
+int widestCoveredRow(const QImage& frame, const QColor& background)
+{
+    int row = -1;
+    int widest = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        int run = 0;
+        for (int x = 0; x < frame.width(); ++x)
+        {
+            if (!near(frame.pixelColor(x, y), background, 6))
+            {
+                ++run;
+            }
+        }
+        if (run > widest)
+        {
+            widest = run;
+            row = y;
+        }
+    }
+    return row;
+}
+
+// How many pixels of this column read as the given colour.
+int columnRun(const QImage& frame, int x, const QColor& colour)
+{
+    int run = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        if (near(frame.pixelColor(x, y), colour, 12))
+        {
+            ++run;
+        }
+    }
+    return run;
+}
+
+void test_a_highlighted_road_is_recoloured()
+{
+    // The whole point of the highlight pass: the road the vehicle is on comes
+    // back from the matcher as an OSM way id, map_build stamps that id on the
+    // tile feature, and the pass recolours the geometry already on the GPU.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    style.widths.road_primary = 8.0;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+    const QColor magenta(0xff, 0x00, 0xff);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = roadTileWithWayId(projection, id, style, 42);
+    check(!geometry->roads.empty(), "the way id was recorded for the join");
+
+    const QImage plain =
+        renderer->render(projection, { GpuBatch { id, geometry } }, style, background).copy();
+    const int row = widestCoveredRow(plain, background);
+    check(row >= 0, "the road is on screen");
+    if (row < 0)
+    {
+        return;
+    }
+    check(!near(plain.pixelColor(kWidth / 2, row), magenta, 40),
+          "unhighlighted, the road wears its own colour");
+
+    const QImage lit = renderer
+                           ->render(projection, { GpuBatch { id, geometry } }, style, background,
+                                    GpuRenderer::Highlight { { 42 }, magenta, 0.0F })
+                           .copy();
+    check(near(lit.pixelColor(kWidth / 2, row), magenta, 12),
+          "highlighted by its way id, the road turns the highlight colour");
+}
+
+void test_a_highlight_misses_unknown_way_ids()
+{
+    // An id no tile feature carries must draw nothing extra -- the pass joins
+    // on the sorted road ranges, and a miss is silence, not a stray overlay.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    style.widths.road_primary = 8.0;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+    const QColor magenta(0xff, 0x00, 0xff);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = roadTileWithWayId(projection, id, style, 42);
+
+    const QImage frame = renderer
+                             ->render(projection, { GpuBatch { id, geometry } }, style, background,
+                                      GpuRenderer::Highlight { { 99 }, magenta, 4.0F })
+                             .copy();
+    bool anyMagenta = false;
+    for (int y = 0; y < frame.height() && !anyMagenta; ++y)
+    {
+        for (int x = 0; x < frame.width(); ++x)
+        {
+            if (near(frame.pixelColor(x, y), magenta, 40))
+            {
+                anyMagenta = true;
+                break;
+            }
+        }
+    }
+    check(!anyMagenta, "an unknown way id highlights nothing");
+}
+
+void test_the_highlight_widens_by_extra_half_px()
+{
+    // extraHalfPx is what makes a highlight readable: at exactly the road's
+    // width it vanishes into the road. The extra is added after the zoom
+    // taper, in the highlight's own vertex stage.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    style.widths.road_primary = 8.0;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+    const QColor magenta(0xff, 0x00, 0xff);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = roadTileWithWayId(projection, id, style, 42);
+
+    const QImage flush = renderer
+                             ->render(projection, { GpuBatch { id, geometry } }, style, background,
+                                      GpuRenderer::Highlight { { 42 }, magenta, 0.0F })
+                             .copy();
+    const QImage cased = renderer
+                             ->render(projection, { GpuBatch { id, geometry } }, style, background,
+                                      GpuRenderer::Highlight { { 42 }, magenta, 6.0F })
+                             .copy();
+
+    const int flushRun = columnRun(flush, kWidth / 2, magenta);
+    const int casedRun = columnRun(cased, kWidth / 2, magenta);
+    check(flushRun > 0, "the flush highlight is visible at all");
+    // 6 px of extra half-width is ~12 px more band; ask for most of it so
+    // antialiased edge rows cannot carry the test.
+    check(casedRun >= flushRun + 8,
+          "the cased highlight is measurably wider: " + std::to_string(flushRun) + " -> " +
+              std::to_string(casedRun));
+}
+
+void test_a_changed_highlight_invalidates_the_memo()
+{
+    // The highlight is part of the frame key. Matching on it wrongly freezes
+    // the lit road in place while the vehicle drives off it -- which reads as
+    // the matcher being stuck, not the renderer.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    style.widths.road_primary = 8.0;
+    style.road_width_scale = 2.0;
+    const QColor background(0x16, 0x18, 0x1d);
+    const QColor magenta(0xff, 0x00, 0xff);
+
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = roadTileWithWayId(projection, id, style, 42);
+    const std::vector<GpuBatch> batches { GpuBatch { id, geometry } };
+    const GpuRenderer::Highlight lit { { 42 }, magenta, 4.0F };
+
+    renderer->render(projection, batches, style, background, lit);
+    const std::uint64_t afterFirst = renderer->stats().reused;
+
+    renderer->render(projection, batches, style, background, lit);
+    check(renderer->stats().reused == afterFirst + 1,
+          "an identical highlight is served from the memo");
+
+    renderer->render(projection, batches, style, background,
+                     GpuRenderer::Highlight { { 43 }, magenta, 4.0F });
+    check(renderer->stats().reused == afterFirst + 1, "a different way id redraws");
+
+    renderer->render(projection, batches, style, background,
+                     GpuRenderer::Highlight { { 43 }, magenta, 8.0F });
+    check(renderer->stats().reused == afterFirst + 1, "and so does a wider casing");
+}
+
 // Each tile's indices are TILE-LOCAL, and drawIndexed() is handed that tile's
 // base vertex to add. Get that wrong and every tile draws tile zero's geometry.
 //
@@ -1272,6 +1507,10 @@ int main(int argc, char** argv)
     test_a_normal_width_line_is_unaffected();
     test_a_fill_is_never_faded_by_the_line_floor();
     test_a_tessellated_road_draws_as_a_continuous_band();
+    test_a_highlighted_road_is_recoloured();
+    test_a_highlight_misses_unknown_way_ids();
+    test_the_highlight_widens_by_extra_half_px();
+    test_a_changed_highlight_invalidates_the_memo();
     test_an_overpass_draws_over_the_road_it_crosses();
     test_each_tile_draws_its_own_vertices();
     test_many_tiles_still_render();

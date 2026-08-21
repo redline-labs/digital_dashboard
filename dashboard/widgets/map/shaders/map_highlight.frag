@@ -20,7 +20,8 @@ layout(std140, binding = 0) uniform buf {
     mat4 mvp;
     float pxPerLocal;
     float widthScale;
-    vec2 pad;
+    float fadeAlpha;
+    float extraHalfPx;
     vec4 highlight;
 };
 
@@ -29,5 +30,8 @@ void main() {
     // shader writing an output nothing consumes, and some backends warn or
     // relink around that. Multiplying by zero keeps the interface identical to
     // map.frag's.
-    fragColor = highlight + (vcol * 0.0);
+    //
+    // fadeAlpha, so a highlight rides its tile's crossfade instead of sitting
+    // at full strength over a road that is still fading in.
+    fragColor = vec4(highlight.rgb, highlight.a * fadeAlpha) + (vcol * 0.0);
 }

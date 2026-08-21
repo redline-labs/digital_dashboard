@@ -44,11 +44,14 @@ endfunction()
 
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map.vert mapVert MAP_VERT_HEADER)
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map.frag mapFrag MAP_FRAG_HEADER)
+map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map_highlight.vert mapHighlightVert
+                MAP_HIGHLIGHT_VERT_HEADER)
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map_highlight.frag mapHighlightFrag
                 MAP_HIGHLIGHT_FRAG_HEADER)
 
 add_custom_target(map_widget_shaders
-    DEPENDS ${MAP_VERT_HEADER} ${MAP_FRAG_HEADER} ${MAP_HIGHLIGHT_FRAG_HEADER})
+    DEPENDS ${MAP_VERT_HEADER} ${MAP_FRAG_HEADER} ${MAP_HIGHLIGHT_VERT_HEADER}
+            ${MAP_HIGHLIGHT_FRAG_HEADER})
 
 # ----------------------------------------------------------------- library
 
@@ -64,6 +67,7 @@ add_library(${MAP_WIDGET_LIB} STATIC
     tile_source.cpp
     ${MAP_VERT_HEADER}
     ${MAP_FRAG_HEADER}
+    ${MAP_HIGHLIGHT_VERT_HEADER}
     ${MAP_HIGHLIGHT_FRAG_HEADER}
     include/map/config.h
     include/map/gpu_renderer.h

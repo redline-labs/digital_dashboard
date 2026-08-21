@@ -21,6 +21,7 @@
 
 #include "mapVert_qsb.h"
 #include "mapFrag_qsb.h"
+#include "mapHighlightVert_qsb.h"
 #include "mapHighlightFrag_qsb.h"
 
 namespace map_widget
@@ -260,23 +261,12 @@ bool GpuRenderer::ensureTarget(const QSize& size)
         return false;
     }
 
-    mPipeline.reset(mRhi->newGraphicsPipeline());
     QRhiGraphicsPipeline::TargetBlend blend;
     blend.enable = true;
     blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
     blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
     blend.srcAlpha = QRhiGraphicsPipeline::One;
     blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
-    mPipeline->setTargetBlends({ blend });
-    mPipeline->setTopology(QRhiGraphicsPipeline::Triangles);
-    // No culling: MVT ring winding says exterior-or-hole, not front-or-back,
-    // and earcut emits whatever order the ear clipping produced.
-    mPipeline->setCullMode(QRhiGraphicsPipeline::None);
-    mPipeline->setSampleCount(mSampleCount);
-    mPipeline->setShaderStages(
-        { { QRhiShaderStage::Vertex, loadShader(map_shaders::mapVert, map_shaders::mapVertSize) },
-          { QRhiShaderStage::Fragment,
-            loadShader(map_shaders::mapFrag, map_shaders::mapFragSize) } });
 
     QRhiVertexInputLayout layout;
     layout.setBindings({ { sizeof(MapVertex) } });
@@ -286,32 +276,45 @@ bool GpuRenderer::ensureTarget(const QSize& size)
         { 0, 2, QRhiVertexInputAttribute::Float, offsetof(MapVertex, halfPx) },
         { 0, 3, QRhiVertexInputAttribute::Float4, offsetof(MapVertex, r) },
     });
-    mPipeline->setVertexInputLayout(layout);
-    mPipeline->setShaderResourceBindings(mSrb.get());
-    mPipeline->setRenderPassDescriptor(mPass.get());
-    if (!mPipeline->create())
+
+    // Both pipelines are the same in everything but their shader stages: same
+    // blend, same vertex buffer, same shader resource bindings, and no culling
+    // -- MVT ring winding says exterior-or-hole, not front-or-back, and earcut
+    // emits whatever order the ear clipping produced.
+    const auto makePipeline = [&](QShader vert, QShader frag) {
+        std::unique_ptr<QRhiGraphicsPipeline> pipeline(mRhi->newGraphicsPipeline());
+        pipeline->setTargetBlends({ blend });
+        pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        pipeline->setCullMode(QRhiGraphicsPipeline::None);
+        pipeline->setSampleCount(mSampleCount);
+        pipeline->setShaderStages({ { QRhiShaderStage::Vertex, std::move(vert) },
+                                    { QRhiShaderStage::Fragment, std::move(frag) } });
+        pipeline->setVertexInputLayout(layout);
+        pipeline->setShaderResourceBindings(mSrb.get());
+        pipeline->setRenderPassDescriptor(mPass.get());
+        if (!pipeline->create())
+        {
+            pipeline.reset();
+        }
+        return pipeline;
+    };
+
+    mPipeline = makePipeline(loadShader(map_shaders::mapVert, map_shaders::mapVertSize),
+                             loadShader(map_shaders::mapFrag, map_shaders::mapFragSize));
+    if (!mPipeline)
     {
         SPDLOG_ERROR("[map] GPU pipeline could not be created");
         return false;
     }
 
-    // The highlight pipeline. Identical in every respect but the fragment
-    // stage, and sharing the same shader resource bindings -- so it draws the
-    // same vertex buffer, through the same per-tile uniform, at the same line
-    // width. Only the colour comes from somewhere else.
-    mHighlightPipeline.reset(mRhi->newGraphicsPipeline());
-    mHighlightPipeline->setTargetBlends({ blend });
-    mHighlightPipeline->setTopology(QRhiGraphicsPipeline::Triangles);
-    mHighlightPipeline->setCullMode(QRhiGraphicsPipeline::None);
-    mHighlightPipeline->setSampleCount(mSampleCount);
-    mHighlightPipeline->setShaderStages(
-        { { QRhiShaderStage::Vertex, loadShader(map_shaders::mapVert, map_shaders::mapVertSize) },
-          { QRhiShaderStage::Fragment,
-            loadShader(map_shaders::mapHighlightFrag, map_shaders::mapHighlightFragSize) } });
-    mHighlightPipeline->setVertexInputLayout(layout);
-    mHighlightPipeline->setShaderResourceBindings(mSrb.get());
-    mHighlightPipeline->setRenderPassDescriptor(mPass.get());
-    if (!mHighlightPipeline->create())
+    // The highlight pipeline draws the map's own road geometry again, on top:
+    // its vertex stage widens the line by the uniform's extraHalfPx and its
+    // fragment stage recolours from the uniform. Same bindings, so it reads
+    // the same per-tile uniform slot as the base pass.
+    mHighlightPipeline =
+        makePipeline(loadShader(map_shaders::mapHighlightVert, map_shaders::mapHighlightVertSize),
+                     loadShader(map_shaders::mapHighlightFrag, map_shaders::mapHighlightFragSize));
+    if (!mHighlightPipeline)
     {
         SPDLOG_ERROR("[map] GPU highlight pipeline could not be created");
         return false;
@@ -574,8 +577,12 @@ const QImage& GpuRenderer::render(const Projection& projection,
         const float px = tileSize;
         std::memcpy(slot + (16 * sizeof(float)), &px, sizeof(float));
         std::memcpy(slot + (17 * sizeof(float)), &widthScale, sizeof(float));
-        // Offset 20 floats in: mat4 (16) + pxPerLocal + widthScale + vec2 pad.
-        // std140 aligns a vec4 to 16 bytes, which is where the pad puts it.
+        // Floats 18 and 19: this tile's crossfade and the highlight's extra
+        // half-width. Then the highlight colour at float 20 -- std140 aligns a
+        // vec4 to 16 bytes, which is exactly where the two floats leave it.
+        const float fadeAlpha = 1.0F;
+        std::memcpy(slot + (18 * sizeof(float)), &fadeAlpha, sizeof(float));
+        std::memcpy(slot + (19 * sizeof(float)), &highlight.extraHalfPx, sizeof(float));
         const std::array<float, 4> highlightRgba {
             float(highlight.colour.redF()), float(highlight.colour.greenF()),
             float(highlight.colour.blueF()), float(highlight.colour.alphaF())

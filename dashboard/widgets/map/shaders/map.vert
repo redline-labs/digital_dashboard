@@ -24,9 +24,15 @@ layout(std140, binding = 0) uniform buf {
     // Road widths shrink as you zoom out. A uniform rather than baked into the
     // vertex, so zooming does not invalidate the geometry.
     float widthScale;
-    vec2 pad;
-    // Read only by map_highlight.frag, but declared here because the block
-    // layout has to match across every stage that binds it.
+    // This tile's crossfade, 1.0 once it has settled. Multiplies EVERY alpha,
+    // fills included -- unlike the hairline fade below, which must never touch
+    // a fill. A tile fades in as a whole or the layers shear apart visibly.
+    float fadeAlpha;
+    // Extra half-width for the highlight pass, in screen pixels. Read only by
+    // map_highlight.vert, but declared here because the block layout has to
+    // match across every stage that binds it -- as are the two fields below.
+    float extraHalfPx;
+    // Read only by map_highlight.frag.
     vec4 highlight;
 };
 
@@ -60,6 +66,6 @@ void main() {
     // number of pixels wide at every zoom AND under rotation: the normal is in
     // local units and the matrix rotates it, which preserves its length.
     vec2 p = pos + nrm * (drawnHalf / max(pxPerLocal, 1e-6));
-    vcol = vec4(col.rgb, col.a * fade);
+    vcol = vec4(col.rgb, col.a * fade * fadeAlpha);
     gl_Position = mvp * vec4(p, 0.0, 1.0);
 }
