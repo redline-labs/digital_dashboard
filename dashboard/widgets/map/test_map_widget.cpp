@@ -1115,6 +1115,42 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+void test_a_large_label_is_not_clipped_by_its_image()
+{
+    // The cached image is sized from the text's bounding box plus halo
+    // padding, and the glyphs are drawn by mapping that box onto (pad, pad).
+    // The padding exists so the halo and its antialiasing fade out INSIDE the
+    // image; if a placement term is dropped -- the left bearing was, once --
+    // the ink drifts toward an edge, and the first symptom is a label that
+    // looks shaved on one side. Descenders and an accent probe all four
+    // edges, at a size where every error is pixels rather than fractions.
+    QFont font;
+    font.setPointSizeF(30.0);
+    const QString label = QStringLiteral("\u00C1gjy");
+
+    map_widget::LabelCache cache;
+    const map_widget::LabelCache::Entry& entry =
+        cache.entryFor(label, font, 3.0, QColor("#101216"), QColor("#e8eaed"), 1.0);
+
+    const QImage& image = entry.image;
+    check(!image.isNull(), "a large label renders");
+
+    // No ink may touch the outermost row or column on any side: the padding
+    // exists so the halo and its antialiasing fade out INSIDE the image.
+    bool edgeTouched = false;
+    for (int x = 0; x < image.width(); ++x)
+    {
+        edgeTouched |= qAlpha(image.pixel(x, 0)) != 0;
+        edgeTouched |= qAlpha(image.pixel(x, image.height() - 1)) != 0;
+    }
+    for (int y = 0; y < image.height(); ++y)
+    {
+        edgeTouched |= qAlpha(image.pixel(0, y)) != 0;
+        edgeTouched |= qAlpha(image.pixel(image.width() - 1, y)) != 0;
+    }
+    check(!edgeTouched, "no ink or halo reaches the image edge at 30 pt");
+}
+
 void test_a_cached_label_is_pixel_identical_to_drawing_it_directly()
 {
     // The label pass blits a pre-rendered image instead of stroking and
@@ -1146,7 +1182,10 @@ void test_a_cached_label_is_pixel_identical_to_drawing_it_directly()
         painter.setRenderHint(QPainter::TextAntialiasing, true);
 
         QPainterPath glyphs;
-        glyphs.addText(at.x(), at.y() + metrics.ascent(), font, label);
+        // `at` is the ink box's top left, exactly as paintLabels() places it:
+        // the box the collision pass claims is metrics.boundingRect(), so the
+        // ink must land inside that box, not hang below it from the baseline.
+        glyphs.addText(at.x() - bounds.x(), at.y() - bounds.y(), font, label);
 
         QPen pen(halo);
         pen.setWidthF(kHaloWidth);
@@ -1245,6 +1284,7 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_a_large_label_is_not_clipped_by_its_image();
     test_a_cached_label_is_pixel_identical_to_drawing_it_directly();
 
     spdlog::set_level(spdlog::level::info);

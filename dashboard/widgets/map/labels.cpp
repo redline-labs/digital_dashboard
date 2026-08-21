@@ -577,10 +577,16 @@ const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& 
     into.setRenderHint(QPainter::Antialiasing, true);
     into.setRenderHint(QPainter::TextAntialiasing, true);
 
-    // Same geometry the old inline path used: the glyph origin sits at
-    // (0, ascent) from the placement box's top left, which is `pad` in here.
+    // Place the BOUNDING BOX, not the baseline, at (pad, pad) -- the image was
+    // sized from that box, and it is the box paintLabels() centres and
+    // collides. In practice boundingRect()'s y() is exactly -ascent(), so the
+    // vertical term equals the ascent anchoring an earlier version used; its
+    // x() is the left bearing, up to a pixel and a half, which that version
+    // dropped -- every label sat a hair left of the box it had claimed.
+    // Written as the box-to-box mapping rather than baseline arithmetic so it
+    // stays right even where a glyph overshoots the font's metrics.
     QPainterPath glyphs;
-    glyphs.addText(pad, pad + metrics.ascent(), font, text);
+    glyphs.addText(pad - entry.bounds.x(), pad - entry.bounds.y(), font, text);
 
     // Halo by stroking the glyph outlines rather than drawing the text several
     // times at offsets: one path, one stroke, and the halo is even on every
