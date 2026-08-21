@@ -11,6 +11,7 @@
 #include <mutex>
 #include <vector>
 
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -576,6 +577,26 @@ private:
     std::string description_;
 };
 
+// SOCK_CLOEXEC is a Linux extension. macOS has no atomic equivalent, so the
+// flag goes on in a second call there; the window between the two only matters
+// to a concurrent fork, and nothing in this library forks.
+int socket_cloexec(int domain, int type, int protocol)
+{
+#if defined(SOCK_CLOEXEC)
+    return ::socket(domain, type | SOCK_CLOEXEC, protocol);
+#else
+    const int fd = ::socket(domain, type, protocol);
+    if (fd >= 0 && ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+    {
+        const int failure = errno;
+        ::close(fd);
+        errno = failure;
+        return -1;
+    }
+    return fd;
+#endif
+}
+
 } // namespace
 
 Result<std::shared_ptr<Transport>> open_udp_transport(const std::string& host, uint16_t port)
@@ -605,8 +626,8 @@ Result<std::shared_ptr<Transport>> open_udp_transport(const std::string& host, u
 
     for (addrinfo* candidate = resolved; candidate != nullptr; candidate = candidate->ai_next)
     {
-        const int fd = ::socket(candidate->ai_family, candidate->ai_socktype | SOCK_CLOEXEC,
-                                candidate->ai_protocol);
+        const int fd =
+            socket_cloexec(candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
         if (fd < 0)
         {
             continue;

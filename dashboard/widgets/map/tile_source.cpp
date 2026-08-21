@@ -20,13 +20,6 @@ namespace map_widget
 namespace
 {
 
-// How many decoded tiles to keep. A z14 tile decodes to a few hundred kilobytes
-// of vectors, so this is tens of megabytes at the ceiling -- enough for a
-// viewport, its surroundings, and a couple of zoom levels either side, which is
-// what makes a pinch-zoom instant rather than a refetch.
-constexpr std::size_t kMaxCachedTiles = 256;
-
-
 // How many tiles one request may name.
 //
 // A viewport plus its prefetch ring is a few dozen, so this is normally the
