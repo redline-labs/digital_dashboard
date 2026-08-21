@@ -122,12 +122,20 @@ class TileSource
     // the eviction note below.
     std::vector<CachedTile> ready(const std::vector<TileId>& wanted);
 
+    // What drain() took out of the mailbox: arrivals worth drawing, and
+    // failures worth repainting over. Failures count separately because they
+    // change nothing in the cache but still demand a paint -- the diagnostic
+    // caption ("No reply from map_server") can only appear on one, and with
+    // no position stream there is no other repaint to piggyback on.
+    struct Drained
+    {
+        std::size_t arrived { 0 };
+        std::size_t failed { 0 };
+    };
+
     // Move anything that arrived since the last call out of the mailbox and
-    // into the cache. GUI thread only.
-    //
-    // Returns how many tiles were taken, so the caller can skip a repaint when
-    // the answer is zero.
-    std::size_t drain();
+    // into the cache, and fold failures into their backoffs. GUI thread only.
+    Drained drain();
 
     // Cached AND carrying geometry worth drawing.
     //
@@ -162,6 +170,19 @@ class TileSource
     // archive, every tile back as outOfRange, an empty mailbox and no other
     // reason to redraw.
     bool takeArchiveRangeLearned();
+
+    // When the earliest backed-off tile comes due, or nothing if no wake-up is
+    // needed. The widget arms ONE single-shot timer to the minimum across its
+    // sources; without that timer a failure would wait forever, because
+    // requests are only issued from the paint pass and a failed batch used to
+    // schedule no repaint -- against a server that came up late, the map
+    // stayed on "Waiting for tiles" until something else happened to move it.
+    //
+    // Excludes tiles already in flight (their reply is the wake-up) and tiles
+    // already due (the last paint chose not to ask, so they have left the
+    // viewport; a timer for those would fire, paint, skip them again and
+    // spin). GUI thread only, like drain().
+    std::optional<std::chrono::steady_clock::time_point> nextRetryAt() const;
 
     // Drop everything. Used when the tileset changes under the widget.
     void clear();

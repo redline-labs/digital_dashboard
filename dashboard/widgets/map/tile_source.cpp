@@ -352,7 +352,7 @@ void TileSource::deliver(const TileId& id, CachedTile tile, bool absent, bool fa
     }
 }
 
-std::size_t TileSource::drain()
+TileSource::Drained TileSource::drain()
 {
     std::vector<std::pair<TileId, CachedTile>> arrived;
     std::vector<TileId> failures;
@@ -382,7 +382,31 @@ std::size_t TileSource::drain()
         mCache.insert(id, std::move(tile));
     }
 
-    return arrived.size();
+    return Drained { arrived.size(), failures.size() };
+}
+
+std::optional<std::chrono::steady_clock::time_point> TileSource::nextRetryAt() const
+{
+    const auto now = std::chrono::steady_clock::now();
+    const std::lock_guard<std::mutex> guard(mMutex);
+    std::optional<std::chrono::steady_clock::time_point> due;
+    for (const auto& [id, backoff] : mBackoff)
+    {
+        // Already asked again: its reply (or timeout) is the wake-up.
+        if (mInFlight.contains(id))
+        {
+            continue;
+        }
+        // Due, and the last paint did not ask: the tile has left the viewport.
+        // If it scrolls back in, that paint's request() retries it on the
+        // spot; a timer for it here would fire, paint, skip it and spin.
+        if (backoff.retryAt <= now)
+        {
+            continue;
+        }
+        due = due ? std::min(*due, backoff.retryAt) : backoff.retryAt;
+    }
+    return due;
 }
 
 

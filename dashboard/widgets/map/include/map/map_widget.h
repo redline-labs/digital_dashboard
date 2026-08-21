@@ -48,6 +48,7 @@
 #include <string_view>
 #include <vector>
 
+#include <QTimer>
 #include <QWidget>
 
 #include "dashboard/expression_subscription.h"
@@ -116,6 +117,10 @@ class MapWidget : public QWidget
         // off the vehicle. Also exactly what puts the recentre button on
         // screen -- see recentreCamera().
         bool cameraMoved { false };
+        // True while the retry timer is armed against backed-off tiles. A map
+        // that has settled -- served, failed-and-waiting, or empty -- shows
+        // false; see armRetryTimer().
+        bool retryPending { false };
     };
 
     Status status() const;
@@ -202,6 +207,16 @@ class MapWidget : public QWidget
     // behind before it was rewritten around a mailbox. With it, an idle map
     // costs nothing at all, which a 60 Hz poll would not.
     std::atomic<bool> mDrainPending { false };
+
+    // Re-arm (or stop) mRetryTimer from the sources' backoff state. Called
+    // after every drain and every paint -- the two moments backoff can change.
+    void armRetryTimer();
+
+    // The one thing that repaints a failed map with nothing else going on: a
+    // single-shot timer aimed at the earliest backed-off tile's retry time.
+    // The paint it triggers is what re-issues the request. Never armed unless
+    // something is backing off, so an idle healthy map still costs nothing.
+    QTimer mRetryTimer;
 
     // Parallel to mSources: each picks its own integer zoom from its own
     // archive's range, so a global track layer that stops at z14 and a regional

@@ -1115,6 +1115,45 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+void test_a_failed_map_heals_itself_without_a_position_stream()
+{
+    // The failure that matters in the car: dashboard up, map_server not yet.
+    // With no position stream and no user there is NOTHING that repaints this
+    // widget except itself, and requests are only issued from the paint pass.
+    // So a failed batch must repaint (that paint arms the retry timer), and
+    // the timer's own repaint is what asks again once the backoff expires.
+    //
+    // No manual render() anywhere in this test -- that is the point. Painting
+    // it by hand after the failures fold would arm the timer as a side effect
+    // and mask the failure-repaint this exists to pin. The widget is shown
+    // instead, so its own update() calls reach paintEvent; everything that
+    // happens after show() is the widget's doing.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.zoom = 14.0;
+    config.request_timeout_ms = 150;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+
+    // The expose paint issues the first round. With no server the failures
+    // come back almost at once (no queryable reads as NoReply immediately,
+    // not after the timeout), fold into backoff on the drain -- and the
+    // failure repaint arms the timer.
+    pump(std::chrono::milliseconds(320));
+    const MapWidget::Status afterFailure = widget.status();
+    const std::uint64_t firstRound = afterFailure.tiles.requested;
+    check(firstRound > 0, "the expose paint asks for tiles");
+    check(afterFailure.tiles.backingOff > 0, "with no server they end up backing off");
+    check(afterFailure.retryPending, "and the failure repaint armed the retry timer");
+
+    // Past the 500 ms first retry: the timer repaints, the paint asks again.
+    pump(std::chrono::milliseconds(600));
+    check(widget.status().tiles.requested > firstRound,
+          "the timer repaints on its own and the paint asks again");
+}
+
 void test_a_large_label_is_not_clipped_by_its_image()
 {
     // The cached image is sized from the text's bounding box plus halo
@@ -1284,6 +1323,7 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_a_failed_map_heals_itself_without_a_position_stream();
     test_a_large_label_is_not_clipped_by_its_image();
     test_a_cached_label_is_pixel_identical_to_drawing_it_directly();
 

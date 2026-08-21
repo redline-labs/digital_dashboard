@@ -116,8 +116,14 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
                 bool changed = false;
                 for (const auto& source : mSources)
                 {
-                    const bool drained = source->drain() > 0;
-                    changed = changed || drained || source->takeArchiveRangeLearned();
+                    const auto drained = source->drain();
+                    // Failures repaint too, not just arrivals: the paint is
+                    // what promotes the caption to "No reply from map_server",
+                    // and later, when the backoff timer fires, what asks
+                    // again. Skipping it left a map with no position stream
+                    // stuck on "Waiting for tiles" forever.
+                    changed = changed || drained.arrived > 0 || drained.failed > 0 ||
+                              source->takeArchiveRangeLearned();
                 }
                 if (changed)
                 {
@@ -183,6 +189,12 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         mRecentre->hide();
         connect(mRecentre, &QAbstractButton::clicked, this, &MapWidget::recentreCamera);
     }
+
+    // The retry wake-up. Single-shot and re-armed only while something is
+    // backing off, so a healthy idle map keeps costing nothing. The paint the
+    // timeout triggers is what re-issues the request -- see armRetryTimer().
+    mRetryTimer.setSingleShot(true);
+    connect(&mRetryTimer, &QTimer::timeout, this, qOverload<>(&MapWidget::update));
 
     // No refreshTiles() here on purpose. A widget is constructed at Qt's
     // default 640x480 and sized by its layout afterwards, so fetching now would
@@ -686,6 +698,14 @@ void MapWidget::paintEvent(QPaintEvent* event)
     {
         paintDiagnostic(painter);
     }
+
+    // The ONLY place the retry timer is armed, and it is enough: every drain
+    // that changes a backoff also schedules a paint (failures repaint too,
+    // above), and this paint may itself have retried tiles (in flight now,
+    // their reply is the wake-up) or skipped some (off-viewport, dropped from
+    // the schedule). One site, at the moment the request pass has just run,
+    // cannot be caught with a stale view of what is due.
+    armRetryTimer();
 }
 
 void MapWidget::paintDiagnostic(QPainter& painter)
@@ -820,6 +840,30 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
     }
 }
 
+void MapWidget::armRetryTimer()
+{
+    std::optional<std::chrono::steady_clock::time_point> due;
+    for (const auto& source : mSources)
+    {
+        if (const auto at = source->nextRetryAt())
+        {
+            due = due ? std::min(*due, *at) : *at;
+        }
+    }
+    if (!due)
+    {
+        mRetryTimer.stop();
+        return;
+    }
+
+    // Ceil plus one so the paint lands AFTER retryAt: fire a hair early and
+    // request() still sees the tile as waiting, skips it, and the whole
+    // wake-up was for nothing.
+    const auto wait =
+        std::chrono::ceil<std::chrono::milliseconds>(*due - std::chrono::steady_clock::now());
+    mRetryTimer.start(static_cast<int>(std::max<std::int64_t>(wait.count(), 0)) + 1);
+}
+
 MapWidget::Status MapWidget::status() const
 {
     Status out;
@@ -845,6 +889,7 @@ MapWidget::Status MapWidget::status() const
     out.camera = camera();
     out.cameraMoved = mInteractionCentre.has_value();
     out.gpuReady = (mGpu != nullptr);
+    out.retryPending = mRetryTimer.isActive();
     if (mGpu)
     {
         out.gpu = mGpu->stats();
