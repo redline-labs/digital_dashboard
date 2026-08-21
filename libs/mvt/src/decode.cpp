@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "mvt/decode.h"
 
+#include <algorithm>
+
 #include "mvt/reader.h"
 
 #include <cstring>
@@ -231,6 +233,24 @@ Result<std::vector<std::vector<Point>>> decodeGeometry(Reader reader, GeomType t
             return malformed("feature claims more than " +
                                  std::to_string(kMaxPointsPerFeature) + " points",
                              at);
+        }
+
+        // RESERVE, because this is where the decoder spends its time. A sample
+        // of the widget's tile-load path showed the allocator -- malloc, free,
+        // memset -- outweighing every parsing symbol in it: the points of a
+        // ring were being appended one at a time into a vector that regrew as
+        // it went, once per ring, once per feature, once per tile.
+        //
+        // Bounded twice over, because `count` comes off disk: the cumulative
+        // check above caps it at kMaxPointsPerFeature, and each point costs at
+        // least two bytes of varint, so a truncated tile claiming a huge count
+        // cannot make us reserve more than the bytes that are actually left.
+        // Only for LineTo -- a MoveTo may flush and start a new ring per point.
+        if (id == kLineTo)
+        {
+            const std::size_t possible = std::min<std::size_t>(
+                static_cast<std::size_t>(count), reader.remaining() / 2U);
+            current.reserve(current.size() + possible);
         }
 
         for (std::uint64_t i = 0; i < count; ++i)
