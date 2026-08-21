@@ -234,6 +234,33 @@ void TileSource::request(const std::vector<TileId>& wanted)
                         break;
                 }
 
+                // The one encoding this widget cannot inflate, refused BY
+                // NAME. mvt::inflateIfCompressed sniffs gzip and zlib from
+                // magic bytes, so a zstd blob would fall through to the MVT
+                // decoder and fail as "malformed tile" -- a message that sends
+                // somebody after the tiler when the fix is the archive's
+                // compression. A switch, not an if, so a new wire encoding
+                // has to say here whether the widget handles it.
+                if (outcome == Outcome::Ok)
+                {
+                    switch (result.getEncoding())
+                    {
+                        case ::MapEncoding::IDENTITY:
+                        case ::MapEncoding::GZIP:
+                        case ::MapEncoding::DEFLATE:
+                            break;
+
+                        case ::MapEncoding::ZSTD:
+                            SPDLOG_ERROR("[map] tile {}/{}/{}: archive is "
+                                         "zstd-compressed; this widget inflates "
+                                         "gzip/zlib only -- rebuild the archive "
+                                         "or add zstd support",
+                                         id.z, id.x, id.y);
+                            outcome = Outcome::Failed;
+                            break;
+                    }
+                }
+
                 const auto data = result.getData();
                 deliverResult(id, outcome,
                               std::span<const std::uint8_t>(
