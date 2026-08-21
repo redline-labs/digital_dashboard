@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <variant>
 
 // Teach earcut how to read an mvt::Point, so rings go in without a copy.
@@ -472,7 +473,7 @@ void emitPolyline(std::vector<MapVertex>& out, std::vector<std::uint32_t>& indic
 // exterior ring. Winding is the ONLY thing that says which is which, so the
 // rings have to be regrouped into polygons before they can be triangulated.
 void emitPolygon(std::vector<MapVertex>& out, std::vector<std::uint32_t>& indices,
-                 const std::vector<std::vector<mvt::Point>>& polygon, float sc, const Colour& c)
+                 const std::vector<std::span<const mvt::Point>>& polygon, float sc, const Colour& c)
 {
     if (polygon.empty() || polygon.front().size() < 3)
     {
@@ -488,6 +489,7 @@ void emitPolygon(std::vector<MapVertex>& out, std::vector<std::uint32_t>& indice
     // on the tile worker pool, hence thread_local rather than static.
     thread_local mapbox::detail::Earcut<std::uint32_t> earcut;
     earcut(polygon);
+
     const std::vector<std::uint32_t>& triangles = earcut.indices;
 
     // earcut indexes the rings as if concatenated, and so does the vertex
@@ -669,6 +671,9 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
     out.vertices.reserve(1 << 15);
     out.indices.reserve(1 << 16);
 
+    // Reused across every polygon in the tile: cleared, never reallocated.
+    std::vector<std::span<const mvt::Point>> polygon;
+
     for (std::size_t li = 0; li < kMapLayerCount; ++li)
     {
         out.layerStart[li] = static_cast<std::uint32_t>(out.vertices.size());
@@ -728,7 +733,13 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
                     }
                     // Regroup flat rings into polygons: a new exterior ring
                     // starts a new polygon, everything after it is a hole.
-                    std::vector<std::vector<mvt::Point>> polygon;
+                    // VIEWS, not copies. This used to be a
+                    // vector<vector<Point>> that each ring was push_back'ed
+                    // into: one allocation and a full point copy per ring, per
+                    // feature, on 214k polygons a tile-set. earcut only ever
+                    // reads the rings, and nth<> already teaches it to read an
+                    // mvt::Point directly, so a span is all it needs.
+                    polygon.clear();
                     for (const auto& ring : feature.rings)
                     {
                         if (ring.size() < 3)
@@ -740,7 +751,7 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
                             emitPolygon(out.vertices, out.indices, polygon, sc, colour);
                             polygon.clear();
                         }
-                        polygon.push_back(ring);
+                        polygon.emplace_back(ring.data(), ring.size());
                     }
                     if (!polygon.empty())
                     {
