@@ -133,6 +133,9 @@ class MapWidget : public QWidget
         // animation ticker is running and the GPU memo is deliberately
         // missing; stuck non-zero means a fade that never completes.
         int tilesFading { 0 };
+        // True while a camera ease (wheel zoom or recentre fly-back) is in
+        // flight. Stuck true means an ease that never lands.
+        bool animating { false };
     };
 
     // GUI thread. Replace the set of OSM way ids drawn by the highlight
@@ -243,6 +246,18 @@ class MapWidget : public QWidget
     // done or disabled. First sight of a tile starts its clock.
     float tileFadeAlpha(const map_widget::TileId& id, std::chrono::steady_clock::time_point now);
 
+    // Advance the camera eases to `now`, writing the eased values into the
+    // same mInteractionZoom/mInteractionCentre optionals camera() already
+    // reads -- the precedence rules are untouched. Returns true while an ease
+    // is still in flight. Called at the top of paintEvent, so an ease
+    // progresses exactly as fast as frames are drawn.
+    bool tickAnimations(std::chrono::steady_clock::time_point now);
+
+    // setInteractionCentre without the repaint or the button re-layout --
+    // for callers already inside a paint.
+    void setInteractionCentreQuiet(const map_widget::Coordinate& where);
+    void moveCameraSoThatQuiet(const map_widget::WorldPoint& world, const QPointF& screen);
+
     // The one thing that repaints a failed map with nothing else going on: a
     // single-shot timer aimed at the earliest backed-off tile's retry time.
     // The paint it triggers is what re-issues the request. Never armed unless
@@ -272,11 +287,41 @@ class MapWidget : public QWidget
                        map_widget::TileIdHash>
         mFirstDrawn;
 
-    // Drives repaints while any tile is still fading (and, later, any camera
-    // ease). Single-shot, re-armed at the end of each paint only while
+    // Drives repaints while any tile is still fading or any camera ease is in
+    // flight. Single-shot, re-armed at the end of each paint only while
     // something is animating -- an idle map keeps costing nothing.
     QTimer mAnimationTimer;
     int mLastTilesFading { 0 };
+    bool mAnimating { false };
+
+    // A wheel zoom in flight: the zoom glides from `from` to `to`, and when
+    // `anchored` the grabbed world point is re-solved under the pointer at
+    // every eased step -- the zoom-about-the-pointer property must hold
+    // DURING the ease, not just at its ends. Not anchored while following
+    // the vehicle: there the centre is never written and follow is never
+    // broken, exactly as the instant zoom behaved.
+    struct ZoomEase
+    {
+        double from { 0.0 };
+        double to { 0.0 };
+        map_widget::WorldPoint anchorWorld {};
+        QPointF anchorScreen;
+        bool anchored { false };
+        std::chrono::steady_clock::time_point start;
+    };
+    std::optional<ZoomEase> mZoomEase;
+
+    // A recentre fly-back in flight: the centre glides from where the drag
+    // left it toward the LIVE target -- re-read every tick, so a moving
+    // vehicle is flown TO, not to where it was when the button was pressed.
+    // While it flies, mInteractionCentre stays set (that is what "following
+    // suspended" means); landing resets it and normal follow resumes.
+    struct RecentreEase
+    {
+        map_widget::Coordinate from {};
+        std::chrono::steady_clock::time_point start;
+    };
+    std::optional<RecentreEase> mRecentreEase;
 
     // Parallel to mSources: each picks its own integer zoom from its own
     // archive's range, so a global track layer that stops at z14 and a regional

@@ -774,6 +774,20 @@ void drag(MapWidget& widget, const QPointF& from, const QPointF& to)
     QApplication::sendEvent(&widget, &release);
 }
 
+// Drive a camera ease to completion. Eases advance in paintEvent, and a
+// hidden test widget gets no paints on its own -- so the test paints, the
+// way the ticker would in a shown one.
+void settleCamera(MapWidget& widget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    render(widget);
+    while (widget.status().animating && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        render(widget);
+    }
+}
+
 void scroll(MapWidget& widget, const QPointF& at, int notches)
 {
     // angleDelta only, with a null pixelDelta: that is what a wheel with
@@ -895,6 +909,8 @@ void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
           "which it has");
 
     button->click();
+    // The recentre is a fly-back now, not a teleport; let it land.
+    settleCamera(widget);
 
     check(sameCoordinate(widget.status().camera.center, configured),
           "clicking it puts the camera back on the configured centre");
@@ -923,8 +939,22 @@ void test_the_wheel_zooms_about_the_pointer()
 
     scroll(widget, at, 2);
 
-    check(widget.status().camera.zoom > 12.0, "the wheel zooms in, got " +
-                                                  std::to_string(widget.status().camera.zoom));
+    // Mid-ease: paint once, some of the way in. The anchor property must hold
+    // DURING the glide, not just at its ends -- a zoom that wanders off the
+    // pointer and comes back is worse than one that snaps.
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    render(widget);
+    const double midZoom = widget.status().camera.zoom;
+    check(midZoom > 12.0, "the wheel eases the zoom upward, got " + std::to_string(midZoom));
+    check(widget.status().animating, "and is still easing after one frame");
+    const map_widget::Coordinate midway =
+        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    check(sameCoordinate(before, midway), "the pointer keeps its place mid-ease");
+
+    settleCamera(widget);
+    check(widget.status().camera.zoom == 13.0, "and lands exactly on the target, got " +
+                                                   std::to_string(widget.status().camera.zoom));
+    check(!widget.status().animating, "with the ease finished");
 
     const map_widget::Coordinate after =
         projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
@@ -955,10 +985,19 @@ void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
     const map_widget::Coordinate centre = widget.status().camera.center;
     scroll(widget, QPointF(90.0, 70.0), 2);
 
-    check(widget.status().camera.zoom > 12.0, "the wheel still zooms");
-    check(sameCoordinate(widget.status().camera.center, centre),
-          "about the centre, which does not move");
-    check(!widget.status().cameraMoved, "so following is not suspended");
+    // At EVERY step of the ease, not just at the end: the centre must never
+    // be written while following, or a single wheel notch quietly suspends it.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        render(widget);
+        check(sameCoordinate(widget.status().camera.center, centre),
+              "the centre never moves during the ease");
+        check(!widget.status().cameraMoved, "and following is never suspended");
+    } while (widget.status().animating && std::chrono::steady_clock::now() < deadline);
+
+    check(widget.status().camera.zoom == 13.0, "the wheel still zooms, landing on target");
 
     auto* button = widget.findChild<QAbstractButton*>();
     check(button != nullptr && button->isHidden(),
@@ -984,6 +1023,7 @@ void test_the_wheel_stops_at_the_camera_range_the_layout_allows()
     render(widget);
 
     scroll(widget, QPointF(200.0, 150.0), 40);
+    settleCamera(widget);
     check(widget.status().camera.zoom == 17.0,
           "the wheel reaches the configured maximum, got " +
               std::to_string(widget.status().camera.zoom));
@@ -997,6 +1037,7 @@ void test_the_wheel_stops_at_the_camera_range_the_layout_allows()
               std::to_string(widget.status().tilesVisible));
 
     scroll(widget, QPointF(200.0, 150.0), -80);
+    settleCamera(widget);
     check(widget.status().camera.zoom == 6.0, "and zooming out stops at min_zoom, got " +
                                                   std::to_string(widget.status().camera.zoom));
 }
@@ -1271,6 +1312,82 @@ void test_a_fading_tile_keeps_its_stand_in()
     check(sawStandInUnderFade, "a fading z13 tile keeps its z14 children underneath");
 }
 
+void test_recentre_flies_back_and_lands_following()
+{
+    // The recentre button glides the camera home instead of teleporting it,
+    // and hands control back to Follow Vehicle only on landing.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.zoom = 12.0;
+    config.center_latitude = 33.6866;
+    config.center_longitude = -117.8558;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+    const map_widget::Coordinate home = widget.status().camera.center;
+
+    // Drag away, far enough that mid-flight is unambiguous.
+    drag(widget, QPointF(200.0, 150.0), QPointF(40.0, 30.0));
+    render(widget);
+    const map_widget::Coordinate away = widget.status().camera.center;
+    check(!sameCoordinate(away, home), "the drag moved the camera");
+    check(widget.status().cameraMoved, "and following is suspended");
+
+    auto* button = widget.findChild<QAbstractButton*>();
+    // isHidden(), not isVisible() -- the parent is never shown here.
+    check(button != nullptr && !button->isHidden(), "the recentre button is showing");
+    button->click();
+
+    check(button->isHidden(), "the button hides the moment the fly-back starts");
+
+    // Mid-flight: strictly between the two, still counted as camera-moved.
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    render(widget);
+    const MapWidget::Status midway = widget.status();
+    check(midway.animating, "the fly-back is in flight");
+    check(!sameCoordinate(midway.camera.center, away) &&
+              !sameCoordinate(midway.camera.center, home),
+          "and the camera is strictly between where it was and home");
+
+    settleCamera(widget);
+    const MapWidget::Status landed = widget.status();
+    check(sameCoordinate(landed.camera.center, home), "the camera lands on the target");
+    check(!landed.cameraMoved, "and control is handed back -- following resumes");
+    check(!landed.animating, "with nothing left animating");
+}
+
+void test_a_drag_cancels_the_fly_back()
+{
+    // The grab wins. A hand on the map mid-flight stops the camera where it
+    // is and leaves it suspended -- flying on out from under a drag would
+    // fight the user for the wheel.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    drag(widget, QPointF(200.0, 150.0), QPointF(40.0, 30.0));
+    render(widget);
+    auto* button = widget.findChild<QAbstractButton*>();
+    check(button != nullptr && !button->isHidden(), "dragged away, button showing");
+    button->click();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    render(widget);
+    check(widget.status().animating, "the fly-back is in flight");
+
+    drag(widget, QPointF(100.0, 100.0), QPointF(120.0, 110.0));
+    check(!widget.status().animating, "a drag cancels it on the spot");
+    check(widget.status().cameraMoved, "and the camera stays suspended where the hand put it");
+}
+
 void test_highlight_way_ids_come_out_of_a_horizon()
 {
     // The join the highlight rides on: horizon segment ids collapse to the way
@@ -1381,7 +1498,14 @@ void test_a_failed_map_heals_itself_without_a_position_stream()
     check(afterFailure.retryPending, "and the failure repaint armed the retry timer");
 
     // Past the 500 ms first retry: the timer repaints, the paint asks again.
-    pump(std::chrono::milliseconds(600));
+    // Deadline-polled rather than one fixed wait -- retry plus scheduling
+    // jitter on a loaded machine must not read as the mechanism being broken.
+    const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (widget.status().tiles.requested == firstRound &&
+           std::chrono::steady_clock::now() < retryDeadline)
+    {
+        pump(std::chrono::milliseconds(50));
+    }
     check(widget.status().tiles.requested > firstRound,
           "the timer repaints on its own and the paint asks again");
 }
@@ -1557,6 +1681,8 @@ int main(int argc, char** argv)
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
     test_a_new_tile_fades_in_and_the_ticker_stops();
     test_a_fading_tile_keeps_its_stand_in();
+    test_recentre_flies_back_and_lands_following();
+    test_a_drag_cancels_the_fly_back();
     test_highlight_way_ids_come_out_of_a_horizon();
     test_deferred_counts_only_tiles_that_would_have_been_asked();
     test_a_failed_map_heals_itself_without_a_position_stream();

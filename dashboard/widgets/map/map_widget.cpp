@@ -73,6 +73,28 @@ constexpr double kWheelUnitsPerNotch = 120.0;
 // fingers travel for one notch's worth of zoom.
 constexpr double kTrackpadPixelsPerNotch = 60.0;
 
+// How long the camera eases take. Short for the wheel -- it repeats, and each
+// notch retargets the ease in flight -- and a touch longer for the recentre
+// fly-back, which is a single deliberate gesture.
+constexpr std::chrono::milliseconds kZoomEaseMs { 140 };
+constexpr std::chrono::milliseconds kRecentreEaseMs { 300 };
+
+// Smoothstep: eased at both ends, so a camera move neither jerks off the mark
+// nor lands with a visible stop.
+double easeSmooth(double t)
+{
+    t = std::clamp(t, 0.0, 1.0);
+    return t * t * (3.0 - (2.0 * t));
+}
+
+// 0..1 progress of an ease begun at `start`.
+double easeProgress(std::chrono::steady_clock::time_point start,
+                    std::chrono::steady_clock::time_point now, std::chrono::milliseconds length)
+{
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start);
+    return length.count() <= 0 ? 1.0 : double(elapsed.count()) / double(length.count());
+}
+
 } // namespace
 
 MapWidget::MapWidget(const config_t& config, QWidget* parent) :
@@ -413,7 +435,7 @@ map_widget::Projection MapWidget::interactionProjection() const
     return map_widget::Projection(camera(), width(), height(), devicePixelRatioF());
 }
 
-void MapWidget::setInteractionCentre(const map_widget::Coordinate& where)
+void MapWidget::setInteractionCentreQuiet(const map_widget::Coordinate& where)
 {
     // Clamped and wrapped HERE rather than trusted. A drag past the top of the
     // world produces a latitude Web Mercator has no answer for, and one across
@@ -422,11 +444,16 @@ void MapWidget::setInteractionCentre(const map_widget::Coordinate& where)
     // stops at the poles and runs continuously round the equator.
     mInteractionCentre = map_widget::Coordinate { map_widget::clampLatitude(where.latitude),
                                                   map_widget::wrapLongitude(where.longitude) };
+}
+
+void MapWidget::setInteractionCentre(const map_widget::Coordinate& where)
+{
+    setInteractionCentreQuiet(where);
     layOutRecentreButton();
     update();
 }
 
-void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen)
+void MapWidget::moveCameraSoThatQuiet(const map_widget::WorldPoint& world, const QPointF& screen)
 {
     const map_widget::Projection projection = interactionProjection();
 
@@ -440,8 +467,15 @@ void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPoi
         projection.worldForScreen(map_widget::ScreenPoint { screen.x(), screen.y() });
     const map_widget::WorldPoint centre = map_widget::worldFor(projection.camera().center);
 
-    setInteractionCentre(map_widget::coordinateFor(map_widget::WorldPoint {
+    setInteractionCentreQuiet(map_widget::coordinateFor(map_widget::WorldPoint {
         centre.x + (world.x - under.x), centre.y + (world.y - under.y) }));
+}
+
+void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen)
+{
+    moveCameraSoThatQuiet(world, screen);
+    layOutRecentreButton();
+    update();
 }
 
 void MapWidget::zoomBy(double levels, const QPointF& at)
@@ -471,24 +505,38 @@ void MapWidget::zoomBy(double levels, const QPointF& at)
     // GPS is still coming up must not quietly cancel it, or the map sits on the
     // configured centre forever and the first position to arrive changes
     // nothing.
+    // Eased, not assigned: the zoom glides there over kZoomEaseMs, advanced by
+    // tickAnimations() at the top of each paint. A second notch mid-flight
+    // retargets from the CURRENT eased value -- `wanted` above was already
+    // computed from it -- so repeated scrolling accelerates smoothly instead
+    // of queueing jumps.
     if (!mInteractionCentre.has_value() && mConfig.follow_vehicle)
     {
-        mInteractionZoom = wanted;
+        mZoomEase = ZoomEase { before.camera().zoom, wanted, {}, at, false,
+                               std::chrono::steady_clock::now() };
         update();
         return;
     }
 
     const map_widget::WorldPoint anchor =
         before.worldForScreen(map_widget::ScreenPoint { at.x(), at.y() });
-    mInteractionZoom = wanted;
-    // Reads the new zoom back out of camera(), so this is the scale the map is
-    // about to be drawn at rather than the one it was.
-    moveCameraSoThat(anchor, at);
+    mZoomEase = ZoomEase { before.camera().zoom, wanted, anchor, at, true,
+                           std::chrono::steady_clock::now() };
+    update();
 }
 
 void MapWidget::recentreCamera()
 {
-    mInteractionCentre.reset();
+    if (!mInteractionCentre.has_value())
+    {
+        layOutRecentreButton();
+        update();
+        return;
+    }
+    // Fly back rather than snap: the centre glides toward the live target
+    // (see RecentreEase) and mInteractionCentre is reset only on landing.
+    // The button hides at once -- see layOutRecentreButton().
+    mRecentreEase = RecentreEase { *mInteractionCentre, std::chrono::steady_clock::now() };
     layOutRecentreButton();
     update();
 }
@@ -507,9 +555,12 @@ void MapWidget::layOutRecentreButton()
     const int margin = map_widget::RecentreButton::kMargin;
     mRecentre->setGeometry(width() - size - margin, height() - size - margin, size, size);
 
-    // Shown only when it has something to undo. A button that is always there
-    // is a button that is usually a lie.
-    mRecentre->setVisible(mInteractionCentre.has_value() && width() > (size + (2 * margin)) &&
+    // Shown only when it has something to undo -- a button that is always
+    // there is a button that is usually a lie -- and hidden the moment the
+    // fly-back starts, even though mInteractionCentre technically stays set
+    // until it lands: mid-flight there is nothing left to press for.
+    mRecentre->setVisible(mInteractionCentre.has_value() && !mRecentreEase.has_value() &&
+                          width() > (size + (2 * margin)) &&
                           height() > (size + (2 * margin)));
 }
 
@@ -519,6 +570,16 @@ void MapWidget::mousePressEvent(QMouseEvent* event)
     {
         QWidget::mousePressEvent(event);
         return;
+    }
+
+    // The grab wins: a hand on the map stops whatever the camera was doing
+    // by itself. The zoom stays wherever the ease had gotten it; a cancelled
+    // fly-back leaves the centre where it is, still suspended.
+    mZoomEase.reset();
+    if (mRecentreEase.has_value())
+    {
+        mRecentreEase.reset();
+        layOutRecentreButton();
     }
 
     mDragAnchor = interactionProjection().worldForScreen(
@@ -620,6 +681,68 @@ void MapWidget::onPositionChanged()
     }
 
     update();
+}
+
+bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
+{
+    bool animating = false;
+
+    if (mZoomEase.has_value())
+    {
+        const double t = easeProgress(mZoomEase->start, now, kZoomEaseMs);
+        mInteractionZoom =
+            mZoomEase->from + ((mZoomEase->to - mZoomEase->from) * easeSmooth(t));
+        if (mZoomEase->anchored)
+        {
+            // Re-solved at EVERY eased step: zoom-about-the-pointer is a
+            // property of the whole gesture, not of its endpoints. The world
+            // point grabbed at the first notch stays pinned under the pointer
+            // while the scale glides.
+            moveCameraSoThatQuiet(mZoomEase->anchorWorld, mZoomEase->anchorScreen);
+        }
+        if (t >= 1.0)
+        {
+            mInteractionZoom = mZoomEase->to;
+            mZoomEase.reset();
+        }
+        else
+        {
+            animating = true;
+        }
+    }
+
+    if (mRecentreEase.has_value())
+    {
+        // The LIVE target, re-read each tick: a moving vehicle is flown TO,
+        // not to where it was when the button was pressed.
+        const map_widget::Coordinate target =
+            (mConfig.follow_vehicle && hasPosition())
+                ? map_widget::Coordinate { *mLatitude, *mLongitude }
+                : map_widget::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
+
+        const double t = easeProgress(mRecentreEase->start, now, kRecentreEaseMs);
+        if (t >= 1.0)
+        {
+            // Landed: normal follow resumes, exactly as the instant recentre
+            // used to leave things.
+            mInteractionCentre.reset();
+            mRecentreEase.reset();
+        }
+        else
+        {
+            // Interpolated in world space, where a straight line is straight
+            // on the map -- lerping degrees bends near the poles and across
+            // the date line.
+            const map_widget::WorldPoint a = map_widget::worldFor(mRecentreEase->from);
+            const map_widget::WorldPoint b = map_widget::worldFor(target);
+            const double k = easeSmooth(t);
+            setInteractionCentreQuiet(map_widget::coordinateFor(map_widget::WorldPoint {
+                a.x + ((b.x - a.x) * k), a.y + ((b.y - a.y) * k) }));
+            animating = true;
+        }
+    }
+
+    return animating;
 }
 
 float MapWidget::tileFadeAlpha(const map_widget::TileId& id,
@@ -804,6 +927,10 @@ void MapWidget::paintEvent(QPaintEvent* event)
         return;
     }
 
+    // The camera eases advance HERE, before the projection is built, so this
+    // frame is drawn at the eased camera and tiles are fetched for it.
+    mAnimating = tickAnimations(std::chrono::steady_clock::now());
+
     // Built here rather than only on resize: unlike resizeEvent this is
     // guaranteed to run before anything is drawn, at the size and the ratio
     // actually being painted.
@@ -871,7 +998,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // Never update() from inside a paint -- that is a repaint loop at event
     // rate. The ticker fires ~16 ms later and dies by itself once nothing is
     // fading.
-    if (mLastTilesFading > 0 && !mAnimationTimer.isActive())
+    if ((mLastTilesFading > 0 || mAnimating) && !mAnimationTimer.isActive())
     {
         mAnimationTimer.start();
     }
@@ -1118,6 +1245,7 @@ MapWidget::Status MapWidget::status() const
     out.gpuReady = (mGpu != nullptr);
     out.retryPending = mRetryTimer.isActive();
     out.tilesFading = mLastTilesFading;
+    out.animating = mZoomEase.has_value() || mRecentreEase.has_value();
     if (mGpu)
     {
         out.gpu = mGpu->stats();
