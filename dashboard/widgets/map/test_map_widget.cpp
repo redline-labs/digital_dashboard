@@ -1115,6 +1115,44 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+void test_deferred_counts_only_tiles_that_would_have_been_asked()
+{
+    // A viewport bigger than one request defers its tail to the next paint,
+    // and the deferred counter is how that shows up in status(). It must
+    // count only tiles the cap actually pushed out: the second paint walks
+    // the same list with the first round's tiles skipped -- backing off here,
+    // since with no server they fail on the spot -- and charging skipped
+    // tiles to the cap again made the number read as a viewport permanently
+    // too big when it was filling in normally.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.zoom = 14.0;
+    config.request_timeout_ms = 150;
+
+    // Large enough that the walk wants more than two full requests, so the
+    // cap still bites on the second paint.
+    MapWidget widget(config);
+    widget.resize(6400, 4000);
+
+    render(widget);
+    const MapWidget::Status first = widget.status();
+    check(first.tiles.deferred > 0, "a huge viewport defers part of its first round");
+
+    // Let the first round's failures fold into backoff, but stay inside the
+    // 500 ms first retry so the second paint skips them rather than
+    // re-asking. The widget is never shown, so nothing paints in between.
+    pump(std::chrono::milliseconds(320));
+    check(widget.status().tiles.backingOff > 0, "the first round is backing off");
+
+    render(widget);
+    const MapWidget::Status second = widget.status();
+    const std::uint64_t firstIncrement = first.tiles.deferred;
+    const std::uint64_t secondIncrement = second.tiles.deferred - first.tiles.deferred;
+    check(secondIncrement > 0, "the cap still bites on the second paint");
+    check(secondIncrement < firstIncrement,
+          "but tiles already in flight are not charged to the cap again");
+}
+
 void test_a_failed_map_heals_itself_without_a_position_stream()
 {
     // The failure that matters in the car: dashboard up, map_server not yet.
@@ -1323,6 +1361,7 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_deferred_counts_only_tiles_that_would_have_been_asked();
     test_a_failed_map_heals_itself_without_a_position_stream();
     test_a_large_label_is_not_clipped_by_its_image();
     test_a_cached_label_is_pixel_identical_to_drawing_it_directly();

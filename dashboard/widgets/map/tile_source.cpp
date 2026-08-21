@@ -77,17 +77,6 @@ void TileSource::request(const std::vector<TileId>& wanted)
         const std::lock_guard<std::mutex> guard(mMutex);
         for (const TileId& id : wanted)
         {
-            if (ask.size() >= kMaxTilesPerRequest)
-            {
-                // Not dropped -- deferred. The rest is asked for on the next
-                // paint, at most a frame away, and because the list is ordered
-                // centre-outward what waits is what is furthest from where the
-                // driver is looking. Counted so that a cap which is biting
-                // every single frame is visible rather than inferred from a map
-                // that fills in slowly.
-                mStats.deferred += wanted.size() - ask.size();
-                break;
-            }
             if (mCache.contains(id))
             {
                 continue;
@@ -101,6 +90,24 @@ void TileSource::request(const std::vector<TileId>& wanted)
                 // Due for another go. The entry stays until the retry
                 // succeeds, so a second failure doubles the wait rather than
                 // restarting it.
+            }
+            if (ask.size() >= kMaxTilesPerRequest)
+            {
+                // Not dropped -- deferred. The rest is asked for on the next
+                // paint, at most a frame away, and because the list is ordered
+                // centre-outward what waits is what is furthest from where the
+                // driver is looking. Counted so that a cap which is biting
+                // every single frame is visible rather than inferred from a
+                // map that fills in slowly -- which is why the count keeps
+                // applying the filters above and this one below: a tile that
+                // is cached or already in flight was never going to be asked,
+                // and charging it to the cap made the number read as a
+                // viewport permanently too big when it was not.
+                if (!mInFlight.contains(id))
+                {
+                    ++mStats.deferred;
+                }
+                continue;
             }
             if (!mInFlight.insert(id).second)
             {
