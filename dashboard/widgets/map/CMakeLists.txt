@@ -64,6 +64,7 @@ add_library(${MAP_WIDGET_LIB} STATIC
     tile_source.cpp
     ${MAP_VERT_HEADER}
     ${MAP_FRAG_HEADER}
+    ${MAP_HIGHLIGHT_FRAG_HEADER}
     include/map/config.h
     include/map/gpu_renderer.h
     include/map/labels.h

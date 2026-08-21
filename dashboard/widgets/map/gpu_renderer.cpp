@@ -28,11 +28,9 @@ namespace map_widget
 namespace
 {
 
-// mat4 + two floats + padding, rounded to a std140-friendly size. The stride
-// between tiles is the hardware's uniform alignment, which is larger.
-// mat4 + two floats + vec2 pad + the highlight vec4. Still comfortably inside
-// the 256-byte stride the alignment rounds up to, and inside the 64 KB uniform
-// buffer limit the stricter backends impose.
+// mat4 + two floats + vec2 pad + the highlight vec4. Comfortably inside the
+// 256-byte stride the hardware's uniform alignment rounds up to, and inside
+// the 64 KB uniform buffer limit the stricter backends impose.
 constexpr quint32 kUniformBlockSize = 96;
 
 // Refuse absurd viewports rather than trying to allocate for them.

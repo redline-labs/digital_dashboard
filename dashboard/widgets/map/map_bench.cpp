@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <numbers>
 #include <cstdlib>
 #include <deque>
 #include <memory>
@@ -287,7 +288,7 @@ int main(int argc, char** argv)
     // point: a stationary camera would measure the memoised case, not the
     // driving one.
     constexpr double kMetresPerFix = 25.0;
-    const double degPerMetreLon = 1.0 / (111320.0 * std::cos(kStartLat * 3.14159265358979 / 180.0));
+    const double degPerMetreLon = 1.0 / (111320.0 * std::cos(kStartLat * std::numbers::pi / 180.0));
 
     for (int i = 0; i < frames; ++i)
     {

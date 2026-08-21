@@ -490,22 +490,4 @@ TileSourceStats TileSource::stats() const
     return out;
 }
 
-void TileSource::clear()
-{
-    {
-        const std::lock_guard<std::mutex> guard(mMutex);
-        mMailbox.clear();
-        // In-flight requests are deliberately NOT cleared: their callbacks are
-        // still going to fire, and forgetting them here would let the same tile
-        // be requested again immediately. They land in the mailbox and are
-        // dropped by the next drain into an empty cache, which costs one tile
-        // and no correctness.
-    }
-
-    mCache.clear();
-    // Cleared too: a new tileset is a different question, and the old one's
-    // failures say nothing about it.
-    mBackoff.clear();
-}
-
 } // namespace map_widget

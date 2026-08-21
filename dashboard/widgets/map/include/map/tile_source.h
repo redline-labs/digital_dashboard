@@ -184,8 +184,6 @@ class TileSource
     // spin). GUI thread only, like drain().
     std::optional<std::chrono::steady_clock::time_point> nextRetryAt() const;
 
-    // Drop everything. Used when the tileset changes under the widget.
-    void clear();
 
   private:
     void deliver(const TileId& id, CachedTile tile, bool absent, bool failed);

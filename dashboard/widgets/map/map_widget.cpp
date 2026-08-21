@@ -4,6 +4,8 @@
 
 #include "map/labels.h"
 
+#include "qt_helpers/widget_colors.h"
+
 #include <QFont>
 #include <QMetaObject>
 #include <QMouseEvent>
@@ -16,6 +18,8 @@
 #include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
+
+#include <numbers>
 
 #include <algorithm>
 #include <cmath>
@@ -60,11 +64,6 @@ constexpr double kWheelUnitsPerNotch = 120.0;
 // This is a FEEL constant with no authority behind it: it is how far two
 // fingers travel for one notch's worth of zoom.
 constexpr double kTrackpadPixelsPerNotch = 60.0;
-
-QColor toQColor(const helpers::Color& color)
-{
-    return QColor(QString::fromStdString(color.value()));
-}
 
 } // namespace
 
@@ -184,8 +183,8 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         // than any chrome that would.
         setCursor(Qt::OpenHandCursor);
 
-        mRecentre = new map_widget::RecentreButton(toQColor(mConfig.style.label_text),
-                                                   toQColor(mConfig.style.label_halo), this);
+        mRecentre = new map_widget::RecentreButton(qt_helpers::toQColor(mConfig.style.label_text),
+                                                   qt_helpers::toQColor(mConfig.style.label_halo), this);
         mRecentre->hide();
         connect(mRecentre, &QAbstractButton::clicked, this, &MapWidget::recentreCamera);
     }
@@ -273,45 +272,44 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     mTileWalkTruncated = false;
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
+        // The ARCHIVE's range, reported by the server, NOT the configured one --
+        // which is the camera's business and may legitimately reach past what any
+        // archive holds. Until the first reply lands there is nothing to clamp to,
+        // so the whole span is allowed and at most one batch comes back
+        // outOfRange; from then on the range is known and it cannot happen again.
+        const auto archive = mSources[s]->archiveZoomRange();
+        const std::uint8_t z =
+            archive.has_value()
+                ? projection.tileZoom(archive->min, archive->max)
+                : projection.tileZoom(0, static_cast<std::uint8_t>(map_widget::kMaxTileZoom));
 
-    // The ARCHIVE's range, reported by the server, NOT the configured one --
-    // which is the camera's business and may legitimately reach past what any
-    // archive holds. Until the first reply lands there is nothing to clamp to,
-    // so the whole span is allowed and at most one batch comes back
-    // outOfRange; from then on the range is known and it cannot happen again.
-    const auto archive = mSources[s]->archiveZoomRange();
-    const std::uint8_t z =
-        archive.has_value()
-            ? projection.tileZoom(archive->min, archive->max)
-            : projection.tileZoom(0, static_cast<std::uint8_t>(map_widget::kMaxTileZoom));
+        // Both sets from one walk of the grid. The prefetch ring is requested but
+        // never drawn, which is what keeps mVisible honest about what the paint
+        // pass will look at -- and what status() reports.
+        auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
+        mVisible[s] = std::move(tiles.drawn);
+        mTileWalkTruncated = mTileWalkTruncated || tiles.truncated;
 
-    // Both sets from one walk of the grid. The prefetch ring is requested but
-    // never drawn, which is what keeps mVisible honest about what the paint
-    // pass will look at -- and what status() reports.
-    auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
-    mVisible[s] = std::move(tiles.drawn);
-    mTileWalkTruncated = mTileWalkTruncated || tiles.truncated;
+        // Sorted centre-outward HERE and not in mVisible: the request order decides
+        // which tiles win the in-flight slots, and the draw order must stay stable
+        // or the renderer re-uploads every tile whenever the camera reshuffles it.
+        projection.sortCentreOutward(tiles.withMargin);
 
-    // Sorted centre-outward HERE and not in mVisible: the request order decides
-    // which tiles win the in-flight slots, and the draw order must stay stable
-    // or the renderer re-uploads every tile whenever the camera reshuffles it.
-    projection.sortCentreOutward(tiles.withMargin);
-
-    // The coarse overview goes on the END of the request list, so it can only
-    // ever spend request slots the viewport did not want. A stand-in that
-    // arrives at the cost of the real tile it stands in for is not a saving.
-    const std::uint8_t archiveMin = archive.has_value() ? archive->min : 0;
-    if (z > archiveMin)
-    {
-        const auto overviewZ =
-            static_cast<std::uint8_t>(std::max(int(z) - int(kOverviewZoomDelta), int(archiveMin)));
-        for (const map_widget::TileId& id : projection.visibleTiles(overviewZ, 0))
+        // The coarse overview goes on the END of the request list, so it can only
+        // ever spend request slots the viewport did not want. A stand-in that
+        // arrives at the cost of the real tile it stands in for is not a saving.
+        const std::uint8_t archiveMin = archive.has_value() ? archive->min : 0;
+        if (z > archiveMin)
         {
-            tiles.withMargin.push_back(id);
+            const auto overviewZ =
+                static_cast<std::uint8_t>(std::max(int(z) - int(kOverviewZoomDelta), int(archiveMin)));
+            for (const map_widget::TileId& id : projection.visibleTiles(overviewZ, 0))
+            {
+                tiles.withMargin.push_back(id);
+            }
         }
-    }
 
-    mSources[s]->request(tiles.withMargin);
+        mSources[s]->request(tiles.withMargin);
     }
 }
 
@@ -545,7 +543,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     Q_UNUSED(event);
 
     QPainter painter(this);
-    const QColor background = toQColor(mConfig.style.background);
+    const QColor background = qt_helpers::toQColor(mConfig.style.background);
 
     if (mSources.empty() || width() <= 0 || height() <= 0)
     {
@@ -765,7 +763,7 @@ void MapWidget::paintDiagnostic(QPainter& painter)
     QFont font = painter.font();
     font.setPointSizeF(12.0);
     painter.setFont(font);
-    painter.setPen(toQColor(mConfig.style.label_text));
+    painter.setPen(qt_helpers::toQColor(mConfig.style.label_text));
     painter.drawText(rect(), Qt::AlignCenter, message);
 }
 
@@ -776,7 +774,7 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
         return;
     }
 
-    const QColor markerColor = toQColor(mConfig.marker_color);
+    const QColor markerColor = qt_helpers::toQColor(mConfig.marker_color);
 
     if (mConfig.show_track && mTrack.size() >= 2)
     {
@@ -819,7 +817,7 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
         // exactly right -- the marker's rotation is relative to the map, and
         // the map's is relative to north.
         const double screenHeading = *mHeading - projection.camera().bearing;
-        const double radians = screenHeading * 3.14159265358979323846 / 180.0;
+        const double radians = screenHeading * std::numbers::pi / 180.0;
         const double sin = std::sin(radians);
         const double cos = std::cos(radians);
 
@@ -834,13 +832,13 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
         arrow << rotate(0.0, -radius * 1.4) << rotate(radius * 0.9, radius)
               << rotate(0.0, radius * 0.45) << rotate(-radius * 0.9, radius);
 
-        painter.setPen(QPen(toQColor(mConfig.marker_outline_color), 2.0));
+        painter.setPen(QPen(qt_helpers::toQColor(mConfig.marker_outline_color), 2.0));
         painter.setBrush(markerColor);
         painter.drawPolygon(arrow);
     }
     else
     {
-        painter.setPen(QPen(toQColor(mConfig.marker_outline_color), 2.0));
+        painter.setPen(QPen(qt_helpers::toQColor(mConfig.marker_outline_color), 2.0));
         painter.setBrush(markerColor);
         painter.drawEllipse(centre, radius, radius);
     }

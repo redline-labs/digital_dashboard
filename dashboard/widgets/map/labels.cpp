@@ -6,6 +6,8 @@
 // the same one that decides whose name survives a collision.
 #include "map/tessellator.h"
 
+#include "qt_helpers/widget_colors.h"
+
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -45,34 +47,6 @@ struct Candidate
     // not be settled by which tile decoded first.
     std::uint32_t magnitude { 0 };
 };
-
-// Read a number out of an MVT attribute. The tiler writes rank and population
-// through `builder.number()`, which picks an integer or a double encoding by
-// value, so both have to be accepted here -- reading only one of them yields a
-// silent zero and the old decode-order behaviour back again.
-std::optional<double> attributeNumber(const mvt::Layer& layer, const mvt::Feature& feature,
-                                      std::string_view key)
-{
-    const std::optional<mvt::Value> value = layer.attribute(feature, key);
-    if (!value.has_value())
-    {
-        return std::nullopt;
-    }
-    if (const auto* d = std::get_if<double>(&value.value()))
-    {
-        return *d;
-    }
-    if (const auto* i = std::get_if<std::int64_t>(&value.value()))
-    {
-        return double(*i);
-    }
-    return std::nullopt;
-}
-
-QColor toQColor(const helpers::Color& colour)
-{
-    return QColor(QString::fromStdString(colour.value()));
-}
 
 // Which source layers carry labels, and how each ranks its own.
 //
@@ -146,10 +120,10 @@ void gatherLabels(const LabelTile& entry, const LabelLayerSpec& spec,
     const ScreenPoint origin = projection.tileOrigin(entry.id);
     const double size = projection.tileScreenSize(entry.id.z);
     const double scale = size / double(layer->extent);
-    const double bearing = projection.camera().bearing;
-    const double radians = -bearing * 3.14159265358979323846 / 180.0;
-    const double cosB = std::cos(radians);
-    const double sinB = std::sin(radians);
+    // The projection's own rotation terms, not a local re-derivation: three
+    // copies of "which way does the map turn" is two too many.
+    const double cosB = projection.bearingCos();
+    const double sinB = projection.bearingSin();
 
     // Tile-local to screen. The tile's own axes are rotated with the map even
     // though the text is not, so an anchor has to go through the same rotation
@@ -671,8 +645,8 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     }
     font.setPointSizeF(double(style.label_size));
     painter.setFont(font);
-    const QColor textColour = toQColor(style.label_text);
-    const QColor haloColour = toQColor(style.label_halo);
+    const QColor textColour = qt_helpers::toQColor(style.label_text);
+    const QColor haloColour = qt_helpers::toQColor(style.label_halo);
 
     // A linear scan against accepted boxes. A viewport holds tens of labels,
     // not thousands, so a grid would cost more to maintain than it saves.

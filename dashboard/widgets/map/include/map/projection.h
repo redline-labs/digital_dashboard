@@ -144,6 +144,15 @@ class Projection
     // 1, because every coordinate here is a divisor away from a zero.
     double devicePixelRatio() const { return mDevicePixelRatio; }
 
+    // The rotation this projection applies taking world to screen: cos/sin of
+    // the NEGATED bearing (a bearing of 90, "east is up", turns the map
+    // anticlockwise on screen -- see the constructor). Exposed so the label
+    // pass rotates its anchors with the same terms the geometry uses, instead
+    // of re-deriving them per tile and having three copies that must agree
+    // about which way the map turns.
+    double bearingCos() const { return mCos; }
+    double bearingSin() const { return mSin; }
+
     // Pixels across the whole world at this zoom. The single number that ties
     // world coordinates to screen ones.
     double worldPixels() const { return mWorldPixels; }

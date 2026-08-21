@@ -233,6 +233,14 @@ struct TileGeometry
     bool empty() const { return indices.empty(); }
 };
 
+// Read a number out of an MVT attribute. The tiler writes rank, population
+// and admin_level through `builder.number()`, which picks an integer or a
+// double encoding by value, so both have to be accepted -- reading only one
+// of them yields a silent zero. Shared between the tessellator and the label
+// pass, which were once two byte-identical copies of it.
+std::optional<double> attributeNumber(const mvt::Layer& layer, const mvt::Feature& feature,
+                                      std::string_view key);
+
 TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style);
 
 // How much of the baked-in width to actually use at this zoom. Applied in the

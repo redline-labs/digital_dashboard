@@ -80,39 +80,6 @@ Colour toRgba(const helpers::Color& colour)
     return { hex(1, 2), hex(3, 2), hex(5, 2), 1.f };
 }
 
-// Which source layer and class each of our draw layers is cut from. STRUCTURE
-// only -- widths and zoom thresholds are the user's, and live in MapStyle_t so
-// there is exactly one place their defaults are written down.
-//
-// `aeroway` is an OPEN vocabulary -- map_rules passes the OSM value through as
-// the class rather than bucketing it (libs/map_rules/src/labels.cpp), so the
-// classes seen here are runway, taxiway, apron, aerodrome, helipad and "other".
-// Only the runway is singled out; everything else that is a line is a taxiway
-// for width purposes, which is the safe direction to be wrong in -- a service
-// road drawn at taxiway width is a service road, a taxiway drawn at runway
-// width is a second runway that does not exist.
-// Read a numeric attribute. The tiler's builder.number() picks an integer or a
-// double encoding by value, so both have to be accepted; reading only one of
-// them yields a silent zero.
-std::optional<double> numberOf(const mvt::Layer& layer, const mvt::Feature& feature,
-                               std::string_view key)
-{
-    const std::optional<mvt::Value> value = layer.attribute(feature, key);
-    if (!value.has_value())
-    {
-        return std::nullopt;
-    }
-    if (const auto* d = std::get_if<double>(&value.value()))
-    {
-        return *d;
-    }
-    if (const auto* i = std::get_if<std::int64_t>(&value.value()))
-    {
-        return double(*i);
-    }
-    return std::nullopt;
-}
-
 bool isRunway(const mvt::Layer& layer, const mvt::Feature& feature)
 {
     return layer.attributeTextView(feature, "class") == "runway";
@@ -260,7 +227,7 @@ float boundaryHalfWidth(const mvt::Layer& layer, const mvt::Feature& feature,
                         const MapStyle_t& style)
 {
     const float full = float(style.widths.boundary);
-    const std::optional<double> level = numberOf(layer, feature, "admin_level");
+    const std::optional<double> level = attributeNumber(layer, feature, "admin_level");
     if (!level.has_value())
     {
         // An archive that does not write the attribute keeps the single weight
@@ -521,6 +488,28 @@ void emitPolygon(std::vector<MapVertex>& out, std::vector<std::uint32_t>& indice
 }
 
 } // namespace
+
+// Declared in tessellator.h; see the comment there. attributeRef, not
+// attribute: this runs per feature and the by-value read costs an allocation
+// for every string-typed attribute it touches on the way past.
+std::optional<double> attributeNumber(const mvt::Layer& layer, const mvt::Feature& feature,
+                                      std::string_view key)
+{
+    const mvt::Value* value = layer.attributeRef(feature, key);
+    if (value == nullptr)
+    {
+        return std::nullopt;
+    }
+    if (const auto* d = std::get_if<double>(value))
+    {
+        return *d;
+    }
+    if (const auto* i = std::get_if<std::int64_t>(value))
+    {
+        return double(*i);
+    }
+    return std::nullopt;
+}
 
 std::uint64_t nextSerial()
 {
@@ -784,7 +773,7 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
                                                       : colour;
                     for (const auto& ring : feature.rings)
                     {
-                                                emitPolyline(out.vertices, out.indices, ring, sc, featureHalfPx,
+                        emitPolyline(out.vertices, out.indices, ring, sc, featureHalfPx,
                                      featureColour);
                     }
                     break;
