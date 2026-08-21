@@ -261,6 +261,11 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
     if (width() <= 0 || height() <= 0 || mSources.empty())
     {
         mVisible.clear();
+        // With it goes the truncation flag: it describes the walk that
+        // produced mVisible, and status() reporting "knowingly partial" about
+        // a viewport that no longer exists would send somebody chasing a cap
+        // that is not being hit.
+        mTileWalkTruncated = false;
         return;
     }
 
@@ -545,6 +550,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     if (mSources.empty() || width() <= 0 || height() <= 0)
     {
         mVisible.clear();
+        mTileWalkTruncated = false;
         mLastTilesDrawn = 0;
         mLastTilesStandIn = 0;
         mLastLabelsPlaced = 0;
