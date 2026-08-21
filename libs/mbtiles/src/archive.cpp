@@ -407,6 +407,19 @@ std::unique_ptr<Archive::Reader> Archive::acquire(Error& error) const
         return nullptr;
     }
 
+    // MEMORY-MAP THE ARCHIVE. Without this SQLite assembles every blob out of
+    // its page cache, and a vector tile is not a small blob -- a dense z14 tile
+    // is ~150 KB, spanning dozens of pages. Measured on socal.mbtiles, one
+    // 64-tile batch: 2031 us to read as-is, 564 us with this.
+    //
+    // Read-only, so the usual mmap caveat -- a write through a mapping SQLite
+    // cannot see -- does not apply. The value is a ceiling, not an allocation:
+    // SQLite maps up to this much and falls back to ordinary reads beyond it,
+    // so a 32-bit target simply gets less of the file mapped. A truncated file
+    // reports SIGBUS on access rather than an SQLite error, which is the one
+    // behaviour this trades away.
+    sqlite3_exec(reader->db, "PRAGMA mmap_size=2147483648;", nullptr, nullptr, nullptr);
+
     if (sqlite3_prepare_v2(reader->db, kTileSql, -1, &reader->stmt, nullptr) != SQLITE_OK)
     {
         error = not_an_archive(mPath.string() + ": no usable `tiles` (" +
