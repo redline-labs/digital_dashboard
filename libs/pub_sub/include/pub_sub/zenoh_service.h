@@ -14,6 +14,7 @@
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_payload.h"
+#include "pub_sub/zenoh_payload.h"
 #include "pub_sub/topic_key.h"
 
 #include "spdlog/spdlog.h"
@@ -47,11 +48,12 @@ class ZenohService
             if (auto payloadRef = query.get_payload())
             {
                 const auto& bytes = payloadRef->get();
-                auto v = bytes.as_vector();
-                const WordAlignedPayload aligned(v);
-                if (!aligned.empty())
+                // Borrowed from the sample, not copied out of it -- see
+                // pub_sub/zenoh_payload.h. `bytes` outlives the reader below.
+                const ZenohPayload payload(bytes);
+                if (!payload.empty())
                 {
-                    capnp::FlatArrayMessageReader reader(aligned.words());
+                    capnp::FlatArrayMessageReader reader(payload.words());
                     auto req = reader.template getRoot<RequestT>();
                     // SIZE AND SCHEMA, NEVER THE MESSAGE. This used to log
                     // req.toString().flatten() -- the whole message as text -- and that
@@ -72,7 +74,7 @@ class ZenohService
                     // are debugging changes shape. `inspect call` and `inspect echo`
                     // already decode any message on the bus to JSON on demand, which
                     // is what this line was reaching for and could never be as good at.
-                    SPDLOG_DEBUG("Service '{}' request {} bytes ('{}')", mKeyExpr, v.size(),
+                    SPDLOG_DEBUG("Service '{}' request {} bytes ('{}')", mKeyExpr, bytes.size(),
                                  schema_traits<RequestT>::name);
                     mHandler(req, resp);
                 }

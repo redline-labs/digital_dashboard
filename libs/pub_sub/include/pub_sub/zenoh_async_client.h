@@ -17,6 +17,7 @@
 
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_payload.h"
+#include "pub_sub/zenoh_payload.h"
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/session_manager.h"
 
@@ -158,9 +159,13 @@ class ZenohAsyncClient
                         }
 
                         const zenoh::Sample& sample = reply.get_ok();
-                        const std::vector<std::uint8_t> bytes = sample.get_payload().as_vector();
-                        const WordAlignedPayload aligned(bytes);
-                        if (aligned.empty())
+                        // Borrowed from the sample rather than copied out of it.
+                        // This is the map widget's path, where a reply is a
+                        // 64-tile batch and the copy was megabytes -- see
+                        // pub_sub/zenoh_payload.h. `sample` is alive for this
+                        // whole callback, which is what the borrow requires.
+                        const ZenohPayload payload(sample.get_payload());
+                        if (payload.empty())
                         {
                             SPDLOG_WARN("Reply from '{}' was not a whole number of capnp words",
                                         key);
@@ -168,7 +173,7 @@ class ZenohAsyncClient
                             return;
                         }
 
-                        capnp::FlatArrayMessageReader reader(aligned.words());
+                        capnp::FlatArrayMessageReader reader(payload.words());
                         const ResponseReader response = reader.template getRoot<ResponseT>();
                         state->deliver(Status::Ok, &response);
                     }

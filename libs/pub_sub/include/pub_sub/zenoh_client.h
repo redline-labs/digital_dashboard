@@ -14,6 +14,7 @@
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_payload.h"
+#include "pub_sub/zenoh_payload.h"
 #include "pub_sub/session_manager.h"
 
 #include "spdlog/spdlog.h"
@@ -85,14 +86,15 @@ class ZenohClient
                 if (reply.is_ok())
                 {
                     const auto& sample = reply.get_ok();
-                    auto v = sample.get_payload().as_vector();
-                    const WordAlignedPayload aligned(v);
-                    if (!aligned.empty())
+                    // Borrowed from the sample -- see pub_sub/zenoh_payload.h.
+                    // `sample` outlives the reader and the callback below.
+                    const ZenohPayload payload(sample.get_payload());
+                    if (!payload.empty())
                     {
-                        capnp::FlatArrayMessageReader reader(aligned.words());
+                        capnp::FlatArrayMessageReader reader(payload.words());
                         auto resp = reader.template getRoot<ResponseT>();
-                        SPDLOG_DEBUG("Client '{}' response {} bytes ('{}')", mKeyExpr, v.size(),
-                                     schema_traits<ResponseT>::name);
+                        SPDLOG_DEBUG("Client '{}' response {} bytes ('{}')", mKeyExpr,
+                                     sample.get_payload().size(), schema_traits<ResponseT>::name);
                         on_response(resp);
                         return true;
                     }
