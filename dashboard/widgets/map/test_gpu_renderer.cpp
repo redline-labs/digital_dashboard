@@ -834,6 +834,77 @@ int columnRun(const QImage& frame, int x, const QColor& colour)
     return run;
 }
 
+void test_a_half_faded_tile_blends_with_the_background()
+{
+    // The crossfade rides the per-tile uniform: at alpha 0.5 a solid fill
+    // must come out as an even mix of its colour and the background, with the
+    // vertex buffer untouched.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    const QColor background(0x10, 0x10, 0x10);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = fullTileQuad(MapLayer::Water, 0.2f, 0.4f, 0.8f);
+
+    const QImage solid =
+        renderer->render(projection, { GpuBatch { id, geometry, 1.0F } }, style, background)
+            .copy();
+    const std::uint64_t uploadsAfterSolid = renderer->stats().uploads;
+    const QImage faded =
+        renderer->render(projection, { GpuBatch { id, geometry, 0.5F } }, style, background)
+            .copy();
+    check(renderer->stats().uploads == uploadsAfterSolid,
+          "a fade is a uniform write, never a re-upload");
+
+    const QColor full = solid.pixelColor(kWidth / 2, kHeight / 2);
+    const QColor half = faded.pixelColor(kWidth / 2, kHeight / 2);
+    const auto mix = [](int a, int b) { return (a + b) / 2; };
+    const QColor expected(mix(full.red(), background.red()), mix(full.green(), background.green()),
+                          mix(full.blue(), background.blue()));
+    check(near(half, expected, 8),
+          "half alpha lands halfway between the tile's colour and the background");
+}
+
+void test_fade_state_is_part_of_the_memo_key()
+{
+    // A fading tile makes every frame a fresh picture. Miss it in the key and
+    // the fade freezes on its first frame -- pop-in with extra steps.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    const QColor background(0x10, 0x10, 0x10);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+    const auto geometry = fullTileQuad(MapLayer::Water, 0.2f, 0.4f, 0.8f);
+
+    renderer->render(projection, { GpuBatch { id, geometry, 0.5F } }, style, background);
+    const std::uint64_t afterFirst = renderer->stats().reused;
+
+    renderer->render(projection, { GpuBatch { id, geometry, 0.5F } }, style, background);
+    check(renderer->stats().reused == afterFirst + 1, "an unchanged fade is served from the memo");
+
+    renderer->render(projection, { GpuBatch { id, geometry, 0.6F } }, style, background);
+    check(renderer->stats().reused == afterFirst + 1, "a fade step redraws");
+
+    // Below the quantisation step nothing any pixel could show has changed,
+    // so the memo must hold -- otherwise a slow fade renders at tick rate for
+    // frames that are byte-identical.
+    renderer->render(projection, { GpuBatch { id, geometry, 0.6001F } }, style, background);
+    check(renderer->stats().reused == afterFirst + 2,
+          "a change smaller than the quantisation step does not");
+}
+
 void test_a_highlighted_road_is_recoloured()
 {
     // The whole point of the highlight pass: the road the vehicle is on comes
@@ -1507,6 +1578,8 @@ int main(int argc, char** argv)
     test_a_normal_width_line_is_unaffected();
     test_a_fill_is_never_faded_by_the_line_floor();
     test_a_tessellated_road_draws_as_a_continuous_band();
+    test_a_half_faded_tile_blends_with_the_background();
+    test_fade_state_is_part_of_the_memo_key();
     test_a_highlighted_road_is_recoloured();
     test_a_highlight_misses_unknown_way_ids();
     test_the_highlight_widens_by_extra_half_px();

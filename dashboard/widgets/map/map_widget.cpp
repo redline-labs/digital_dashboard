@@ -27,6 +27,7 @@
 #include <spdlog/spdlog.h>
 
 #include <numbers>
+#include <unordered_set>
 
 #include <algorithm>
 #include <cmath>
@@ -270,6 +271,13 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
     // timeout triggers is what re-issues the request -- see armRetryTimer().
     mRetryTimer.setSingleShot(true);
     connect(&mRetryTimer, &QTimer::timeout, this, qOverload<>(&MapWidget::update));
+
+    // The animation ticker: repaints while a tile is fading in. Single-shot
+    // and re-armed only from the end of a paint that drew a fading tile, so
+    // it dies by itself the frame after the last fade settles.
+    mAnimationTimer.setSingleShot(true);
+    mAnimationTimer.setInterval(16);
+    connect(&mAnimationTimer, &QTimer::timeout, this, qOverload<>(&MapWidget::update));
 
     // No refreshTiles() here on purpose. A widget is constructed at Qt's
     // default 640x480 and sized by its layout afterwards, so fetching now would
@@ -614,6 +622,170 @@ void MapWidget::onPositionChanged()
     update();
 }
 
+float MapWidget::tileFadeAlpha(const map_widget::TileId& id,
+                               std::chrono::steady_clock::time_point now)
+{
+    if (mConfig.tile_fade_ms == 0)
+    {
+        return 1.0F;
+    }
+    const auto [at, inserted] = mFirstDrawn.try_emplace(id, now);
+    if (inserted)
+    {
+        return 0.0F;
+    }
+    const double elapsed =
+        double(std::chrono::duration_cast<std::chrono::milliseconds>(now - at->second).count());
+    const double t = std::clamp(elapsed / double(mConfig.tile_fade_ms), 0.0, 1.0);
+    // Smoothstep: eases both ends, so a fade neither snaps on nor lands with
+    // a visible step at full opacity.
+    return float(t * t * (3.0 - (2.0 * t)));
+}
+
+void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
+                                std::vector<map_widget::LabelTile>& labelTiles)
+{
+    const auto now = std::chrono::steady_clock::now();
+    mLastTilesFading = 0;
+
+    // The stand-in budget is SHARED across sources, and counted against what
+    // every source together already wants to draw. Working it out per source
+    // would let two of them each claim the whole frame's headroom and overrun
+    // kMaxTilesPerFrame, which silently drops whatever came last.
+    std::size_t visibleTotal = 0;
+    for (const auto& ids : mVisible)
+    {
+        visibleTotal += ids.size();
+    }
+    std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > visibleTotal
+                             ? map_widget::GpuRenderer::kMaxTilesPerFrame - visibleTotal
+                             : 0;
+
+    std::vector<std::vector<map_widget::CachedTile>> ready(mSources.size());
+    std::vector<std::vector<float>> alphas(mSources.size());
+    std::vector<std::vector<map_widget::TileId>> standIns(mSources.size());
+    std::vector<std::vector<map_widget::CachedTile>> standInTiles(mSources.size());
+
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
+        ready[s] = mSources[s]->ready(mVisible[s]);
+        alphas[s].resize(mVisible[s].size(), 1.0F);
+
+        // What the cache can put under the gaps while the real tiles are in
+        // flight. See substituteTiles(): without it a zoom blanks the map to
+        // its background for as long as the round trip takes, which reads as a
+        // fault.
+        //
+        // A tile still FADING keeps its stand-in too -- that is the trap in
+        // the crossfade. Treat it as arrived and the ancestor underneath is
+        // dropped the frame the fade starts, so the new tile blends with the
+        // BACKGROUND instead of with the picture it is replacing; the map
+        // flashes dark precisely where it was supposed to ease over. This is
+        // also what carries the half-zoom boundary: the old level is one step
+        // away, well inside the substitution's reach.
+        std::vector<bool> have(mVisible[s].size());
+        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
+        {
+            if (!ready[s][i])
+            {
+                continue;
+            }
+            alphas[s][i] = tileFadeAlpha(mVisible[s][i], now);
+            have[i] = alphas[s][i] >= 1.0F;
+            if (!have[i])
+            {
+                ++mLastTilesFading;
+            }
+        }
+        map_widget::TileSource& source = *mSources[s];
+        standIns[s] = map_widget::substituteTiles(
+            mVisible[s], have, [&source](const map_widget::TileId& id) {
+                return source.drawable(id);
+            },
+            budget);
+        budget -= std::min(budget, standIns[s].size());
+        standInTiles[s] = source.ready(standIns[s]);
+    }
+
+    // Stand-ins FIRST, so they are drawn UNDER within each layer pass and a
+    // real tile that has arrived covers its own ground. They overdraw where an
+    // ancestor spans a tile that did arrive, which is harmless: an ancestor is
+    // the same geography more simply drawn, so the two coincide.
+    //
+    // Every source's stand-ins before any source's real tiles, and not
+    // per-source, because the renderer draws LAYER-major across the whole batch
+    // list -- so within one layer the order here is the only thing deciding
+    // what covers what.
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
+        for (std::size_t i = 0; i < standIns[s].size(); ++i)
+        {
+            if (standInTiles[s][i])
+            {
+                // A stand-in fades on its own clock, keyed by its own id -- an
+                // ancestor that was on screen moments ago at another zoom is
+                // already in mFirstDrawn and draws solid at once.
+                batches.push_back(map_widget::GpuBatch { standIns[s][i],
+                                                         standInTiles[s][i].geometry,
+                                                         tileFadeAlpha(standIns[s][i], now) });
+            }
+        }
+    }
+    mLastTilesStandIn = static_cast<int>(batches.size());
+
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
+        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
+        {
+            if (!ready[s][i])
+            {
+                continue;
+            }
+            batches.push_back(map_widget::GpuBatch { mVisible[s][i], ready[s][i].geometry,
+                                                     alphas[s][i] });
+            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].tile });
+        }
+    }
+    mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
+
+    // Stand-ins label too, but only AFTER every real tile, and that order is
+    // the whole trick. Without them the text blinks out for the frames a zoom
+    // is in flight while the geometry underneath stays -- which is a worse
+    // artefact than the blank map this was all meant to fix.
+    //
+    // Duplicates take care of themselves: a place named by both an ancestor and
+    // the real tile lands at the SAME geographic point and so the same pixels,
+    // and paintLabels() rejects a candidate that collides with one already
+    // placed. Real tiles going in first is what decides which of the two wins.
+    for (std::size_t s = 0; s < mSources.size(); ++s)
+    {
+        for (std::size_t i = 0; i < standIns[s].size(); ++i)
+        {
+            if (standInTiles[s][i])
+            {
+                labelTiles.push_back(
+                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].tile });
+            }
+        }
+    }
+
+    // Fade bookkeeping stays bounded without ever re-fading the visible set:
+    // prune only in bulk, only completed fades, and only when the table has
+    // clearly outgrown any plausible viewport. See the member's comment.
+    constexpr std::size_t kMaxFirstDrawn = 4096;
+    if (mFirstDrawn.size() > kMaxFirstDrawn)
+    {
+        std::unordered_set<map_widget::TileId, map_widget::TileIdHash> onScreen;
+        for (const map_widget::GpuBatch& batch : batches)
+        {
+            onScreen.insert(batch.id);
+        }
+        std::erase_if(mFirstDrawn, [&](const auto& entry) {
+            return !onScreen.contains(entry.first) && tileFadeAlpha(entry.first, now) >= 1.0F;
+        });
+    }
+}
+
 void MapWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
@@ -642,103 +814,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     std::vector<map_widget::GpuBatch> batches;
     std::vector<map_widget::LabelTile> labelTiles;
-
-    // The stand-in budget is SHARED across sources, and counted against what
-    // every source together already wants to draw. Working it out per source
-    // would let two of them each claim the whole frame's headroom and overrun
-    // kMaxTilesPerFrame, which silently drops whatever came last.
-    std::size_t visibleTotal = 0;
-    for (const auto& ids : mVisible)
-    {
-        visibleTotal += ids.size();
-    }
-    std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > visibleTotal
-                             ? map_widget::GpuRenderer::kMaxTilesPerFrame - visibleTotal
-                             : 0;
-
-    std::vector<std::vector<map_widget::CachedTile>> ready(mSources.size());
-    std::vector<std::vector<map_widget::TileId>> standIns(mSources.size());
-    std::vector<std::vector<map_widget::CachedTile>> standInTiles(mSources.size());
-
-    for (std::size_t s = 0; s < mSources.size(); ++s)
-    {
-        ready[s] = mSources[s]->ready(mVisible[s]);
-
-        // What the cache can put under the gaps while the real tiles are in
-        // flight. See substituteTiles(): without it a zoom blanks the map to
-        // its background for as long as the round trip takes, which reads as a
-        // fault.
-        std::vector<bool> have(mVisible[s].size());
-        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
-        {
-            have[i] = static_cast<bool>(ready[s][i]);
-        }
-        map_widget::TileSource& source = *mSources[s];
-        standIns[s] = map_widget::substituteTiles(
-            mVisible[s], have, [&source](const map_widget::TileId& id) {
-                return source.drawable(id);
-            },
-            budget);
-        budget -= std::min(budget, standIns[s].size());
-        standInTiles[s] = source.ready(standIns[s]);
-    }
-
-    // Stand-ins FIRST, so they are drawn UNDER within each layer pass and a
-    // real tile that has arrived covers its own ground. They overdraw where an
-    // ancestor spans a tile that did arrive, which is harmless: an ancestor is
-    // the same geography more simply drawn, so the two coincide.
-    //
-    // Every source's stand-ins before any source's real tiles, and not
-    // per-source, because the renderer draws LAYER-major across the whole batch
-    // list -- so within one layer the order here is the only thing deciding
-    // what covers what.
-    for (std::size_t s = 0; s < mSources.size(); ++s)
-    {
-        for (std::size_t i = 0; i < standIns[s].size(); ++i)
-        {
-            if (standInTiles[s][i])
-            {
-                batches.push_back(
-                    map_widget::GpuBatch { standIns[s][i], standInTiles[s][i].geometry });
-            }
-        }
-    }
-    mLastTilesStandIn = static_cast<int>(batches.size());
-
-    for (std::size_t s = 0; s < mSources.size(); ++s)
-    {
-        for (std::size_t i = 0; i < mVisible[s].size(); ++i)
-        {
-            if (!ready[s][i])
-            {
-                continue;
-            }
-            batches.push_back(map_widget::GpuBatch { mVisible[s][i], ready[s][i].geometry });
-            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].tile });
-        }
-    }
-    mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
-
-    // Stand-ins label too, but only AFTER every real tile, and that order is
-    // the whole trick. Without them the text blinks out for the frames a zoom
-    // is in flight while the geometry underneath stays -- which is a worse
-    // artefact than the blank map this was all meant to fix.
-    //
-    // Duplicates take care of themselves: a place named by both an ancestor and
-    // the real tile lands at the SAME geographic point and so the same pixels,
-    // and paintLabels() rejects a candidate that collides with one already
-    // placed. Real tiles going in first is what decides which of the two wins.
-    for (std::size_t s = 0; s < mSources.size(); ++s)
-    {
-        for (std::size_t i = 0; i < standIns[s].size(); ++i)
-        {
-            if (standInTiles[s][i])
-            {
-                labelTiles.push_back(
-                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].tile });
-            }
-        }
-    }
+    assembleBatches(batches, labelTiles);
 
     if (mGpu)
     {
@@ -791,6 +867,14 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // the schedule). One site, at the moment the request pass has just run,
     // cannot be caught with a stale view of what is due.
     armRetryTimer();
+
+    // Never update() from inside a paint -- that is a repaint loop at event
+    // rate. The ticker fires ~16 ms later and dies by itself once nothing is
+    // fading.
+    if (mLastTilesFading > 0 && !mAnimationTimer.isActive())
+    {
+        mAnimationTimer.start();
+    }
 }
 
 void MapWidget::paintDiagnostic(QPainter& painter)
@@ -1033,6 +1117,7 @@ MapWidget::Status MapWidget::status() const
     out.cameraMoved = mInteractionCentre.has_value();
     out.gpuReady = (mGpu != nullptr);
     out.retryPending = mRetryTimer.isActive();
+    out.tilesFading = mLastTilesFading;
     if (mGpu)
     {
         out.gpu = mGpu->stats();

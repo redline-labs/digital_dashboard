@@ -17,6 +17,10 @@
 #include "map/config.h"
 #include <capnp/message.h>
 
+#include "map_tiles.capnp.h"
+#include "mvt/encode.h"
+#include "pub_sub/zenoh_service.h"
+
 #include "map/highlight_ids.h"
 #include "road_graph/format.h"
 #include "map/map_widget.h"
@@ -1122,6 +1126,151 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+// A one-tile map server, in-process: answers every requested coordinate with
+// the same encoded water quad. What the fade tests need is real arrivals
+// through the real path -- zenoh reply, worker decode, tessellate, drain --
+// because the fade clock starts the first time a tile is DRAWN.
+class FakeTileServer
+{
+  public:
+    explicit FakeTileServer(std::string key)
+    {
+        mvt::Tile tile;
+        mvt::Layer water;
+        water.name = "water";
+        water.extent = 4096;
+        mvt::Feature quad;
+        quad.type = mvt::GeomType::Polygon;
+        quad.rings.push_back({ { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 }, { 0, 0 } });
+        water.features.push_back(std::move(quad));
+        tile.layers.push_back(std::move(water));
+        auto encoded = mvt::encode(tile);
+        check(encoded.has_value(), "the fake server's tile encodes");
+        mBytes = std::move(*encoded);
+
+        mService = std::make_unique<pub_sub::ZenohService<::MapTileRequest, ::MapTileResponse>>(
+            std::move(key), [this](const ::MapTileRequest::Reader& req,
+                                   ::MapTileResponse::Builder& resp) {
+                resp.setStatus(::MapStatus::OK);
+                resp.setMinzoom(10);
+                resp.setMaxzoom(14);
+                auto tiles = resp.initTiles(req.getTiles().size());
+                for (unsigned i = 0; i < req.getTiles().size(); ++i)
+                {
+                    auto result = tiles[i];
+                    result.setCoord(req.getTiles()[i]);
+                    result.setStatus(::MapStatus::OK);
+                    result.setEncoding(::MapEncoding::IDENTITY);
+                    result.setData(::capnp::Data::Reader(mBytes.data(), mBytes.size()));
+                }
+            });
+    }
+
+  private:
+    std::vector<std::uint8_t> mBytes;
+    std::unique_ptr<pub_sub::ZenohService<::MapTileRequest, ::MapTileResponse>> mService;
+};
+
+void test_a_new_tile_fades_in_and_the_ticker_stops()
+{
+    // The crossfade, end to end: a tile that just arrived draws translucent,
+    // the animation ticker repaints the widget on its own until the fade
+    // settles, and then everything goes quiet -- the ticker dies and the GPU
+    // memo takes over again. Stuck tilesFading or a ticker that never stops
+    // are the two ways this feature turns into a battery drain.
+    FakeTileServer server("test/map_fade/tile");
+
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.tile_zenoh_key = "test/map_fade/tile";
+    config.zoom = 14.0;
+    config.tile_fade_ms = 400;
+
+    MapWidget widget(config);
+    widget.resize(256, 256);
+    // Shown, so the ticker's update() reaches paintEvent -- same reasoning as
+    // the heal test.
+    widget.show();
+
+    // Wait for the first arrivals to be DRAWN (not merely cached): the expose
+    // paint requests, replies decode on the workers, the drain repaints.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (widget.status().tilesDrawn == 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        pump(std::chrono::milliseconds(20));
+    }
+    const MapWidget::Status arriving = widget.status();
+    check(arriving.tilesDrawn > 0, "tiles arrive through the fake server");
+    check(arriving.tilesFading > 0, "and draw mid-fade, not popped in");
+
+    // Past the fade, with NO manual paints: the ticker must carry it home.
+    pump(std::chrono::milliseconds(700));
+    const MapWidget::Status settled = widget.status();
+    check(settled.tilesFading == 0, "every fade settles");
+    check(settled.tilesDrawn > 0, "with the tiles still on screen");
+
+    // Quiet: two identical paints in a row are served from the memo, which is
+    // only possible if no alpha is still moving underneath.
+    render(widget);
+    const std::uint64_t reused = widget.status().gpu.reused;
+    render(widget);
+    check(widget.status().gpu.reused == reused + 1,
+          "and the settled frame is served from the memo again");
+}
+
+void test_a_fading_tile_keeps_its_stand_in()
+{
+    // THE trap in the crossfade: a tile that is still fading must keep its
+    // stand-in underneath. Treat "fading" as "arrived" and the ancestor is
+    // dropped the frame the fade starts -- the new tile blends with the
+    // background instead of the picture it replaces, and the map flashes dark
+    // exactly where it was meant to ease over.
+    FakeTileServer server("test/map_fade_standin/tile");
+
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.tile_zenoh_key = "test/map_fade_standin/tile";
+    config.zoom = 14.0;
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.tile_fade_ms = 400;
+
+    MapWidget widget(config);
+    widget.resize(256, 256);
+    widget.show();
+
+    // Settle at z14: tiles arrive, fade, and go quiet.
+    const auto settleDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((widget.status().tilesDrawn == 0 || widget.status().tilesFading > 0) &&
+           std::chrono::steady_clock::now() < settleDeadline)
+    {
+        pump(std::chrono::milliseconds(20));
+    }
+    check(widget.status().tilesDrawn > 0 && widget.status().tilesFading == 0,
+          "the map settles at z14 first");
+
+    // Zoom out a level. The z13 tiles are new: they arrive, and while they
+    // FADE the cached z14 children must stand in underneath.
+    scroll(widget, QPointF(128.0, 128.0), -2);
+    bool sawStandInUnderFade = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        pump(std::chrono::milliseconds(10));
+        const MapWidget::Status status = widget.status();
+        if (status.tilesFading > 0 && status.tilesStandIn > 0)
+        {
+            sawStandInUnderFade = true;
+            break;
+        }
+        if (status.tilesDrawn > 0 && status.tilesFading == 0 && status.camera.zoom < 14.0)
+        {
+            break; // faded out completely without ever showing a stand-in
+        }
+    }
+    check(sawStandInUnderFade, "a fading z13 tile keeps its z14 children underneath");
+}
+
 void test_highlight_way_ids_come_out_of_a_horizon()
 {
     // The join the highlight rides on: horizon segment ids collapse to the way
@@ -1406,6 +1555,8 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_a_new_tile_fades_in_and_the_ticker_stops();
+    test_a_fading_tile_keeps_its_stand_in();
     test_highlight_way_ids_come_out_of_a_horizon();
     test_deferred_counts_only_tiles_that_would_have_been_asked();
     test_a_failed_map_heals_itself_without_a_position_stream();

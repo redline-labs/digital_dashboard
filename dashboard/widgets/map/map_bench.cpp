@@ -425,5 +425,52 @@ int main(int argc, char** argv)
     SPDLOG_INFO("  frames reused {} (expected 0: the camera moves every frame)", stats.reused);
     SPDLOG_INFO("");
 
+    // --- the crossfade scenario -------------------------------------------
+    //
+    // A parked camera with one tile's alpha ramping 0 -> 1: every frame is a
+    // memo miss by design, so this is the animated-frame cost -- the number
+    // that decides whether the synchronous GPU readback needs its own project.
+    // Uploads must NOT climb: a fade is a uniform write, never a re-upload.
+    {
+        Stage fadeStage("fade frame");
+        const Camera camera { Coordinate { kStartLat, kStartLon }, zoom, 0.0 };
+        const Projection projection(camera, width, height, dpr);
+        auto sets = projection.visibleTilesWithMargin(z, 0);
+
+        std::vector<GpuBatch> batches;
+        for (const TileId& id : sets.drawn)
+        {
+            const auto found = cache.find(id);
+            if (found != cache.end())
+            {
+                batches.push_back(GpuBatch { id, found->second.geometry });
+            }
+        }
+        // One unmeasured frame first: this batch set differs from the main
+        // loop's last frame, so its vertices upload once, legitimately. The
+        // invariant under test is that the FADE causes no further uploads.
+        if (!batches.empty())
+        {
+            gpu->render(projection, batches, style, background);
+        }
+        const std::uint64_t uploadsBefore = gpu->stats().uploads;
+        const std::uint64_t reusedBefore = gpu->stats().reused;
+        constexpr int kFadeFrames = 60;
+        for (int i = 0; i < kFadeFrames && !batches.empty(); ++i)
+        {
+            // The LAST tile fades; the rest sit solid, like a viewport where
+            // one tile just arrived.
+            batches.back().alpha = float(i) / float(kFadeFrames - 1);
+            const Timer t;
+            gpu->render(projection, batches, style, background);
+            fadeStage.add(t.ms());
+        }
+        fadeStage.report();
+        SPDLOG_INFO("  fade uploads {} (expected 0: alpha is uniform-only), reused {} "
+                    "(expected 0: every fade frame is a fresh picture)",
+                    gpu->stats().uploads - uploadsBefore, gpu->stats().reused - reusedBefore);
+        SPDLOG_INFO("");
+    }
+
     return 0;
 }

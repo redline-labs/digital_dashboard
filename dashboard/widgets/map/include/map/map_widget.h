@@ -44,7 +44,9 @@
 #include <atomic>
 #include <deque>
 #include <memory>
+#include <chrono>
 #include <mutex>
+#include <unordered_map>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -127,6 +129,10 @@ class MapWidget : public QWidget
         // that has settled -- served, failed-and-waiting, or empty -- shows
         // false; see armRetryTimer().
         bool retryPending { false };
+        // Tiles drawn this frame that are still fading in. Non-zero means the
+        // animation ticker is running and the GPU memo is deliberately
+        // missing; stuck non-zero means a fade that never completes.
+        int tilesFading { 0 };
     };
 
     // GUI thread. Replace the set of OSM way ids drawn by the highlight
@@ -225,6 +231,18 @@ class MapWidget : public QWidget
     // after every drain and every paint -- the two moments backoff can change.
     void armRetryTimer();
 
+    // The whole middle of the paint pass: what is ready, what stands in for
+    // what is not, in the order the layer-major draw loop needs -- every
+    // source's stand-ins first, then every real tile -- and each tile's fade.
+    // Fills `batches` for the GPU and `labelTiles` for the label pass, and
+    // updates the mLastTiles* counters.
+    void assembleBatches(std::vector<map_widget::GpuBatch>& batches,
+                         std::vector<map_widget::LabelTile>& labelTiles);
+
+    // This tile's crossfade at `now`: 0..1, smoothstepped, 1 when the fade is
+    // done or disabled. First sight of a tile starts its clock.
+    float tileFadeAlpha(const map_widget::TileId& id, std::chrono::steady_clock::time_point now);
+
     // The one thing that repaints a failed map with nothing else going on: a
     // single-shot timer aimed at the earliest backed-off tile's retry time.
     // The paint it triggers is what re-issues the request. Never armed unless
@@ -243,6 +261,22 @@ class MapWidget : public QWidget
     std::atomic<bool> mHighlightPending { false };
     // GUI thread only: what the paint pass hands the renderer.
     std::vector<std::uint64_t> mHighlightWayIds;
+
+    // When each tile was FIRST drawn, which is when its fade started. Keyed by
+    // id, not serial: a re-tessellation replaces the pixels, not the ground,
+    // and must not dim the map. Entries are pruned only in bulk (see
+    // paintEvent) so a tile that scrolls out and back does not fade again --
+    // it is the same imagery, and a map that dims on every pan reads as
+    // flicker, not polish.
+    std::unordered_map<map_widget::TileId, std::chrono::steady_clock::time_point,
+                       map_widget::TileIdHash>
+        mFirstDrawn;
+
+    // Drives repaints while any tile is still fading (and, later, any camera
+    // ease). Single-shot, re-armed at the end of each paint only while
+    // something is animating -- an idle map keeps costing nothing.
+    QTimer mAnimationTimer;
+    int mLastTilesFading { 0 };
 
     // Parallel to mSources: each picks its own integer zoom from its own
     // archive's range, so a global track layer that stops at z14 and a regional

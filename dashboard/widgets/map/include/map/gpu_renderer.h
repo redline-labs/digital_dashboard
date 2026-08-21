@@ -69,7 +69,21 @@ struct GpuBatch
 {
     TileId id;
     std::shared_ptr<const TileGeometry> geometry;
+    // This tile's crossfade, 1 once settled. Rides the per-tile uniform (the
+    // shader's fadeAlpha), so a fade costs a uniform write and never touches
+    // the vertex buffer -- uploads must NOT climb during a fade.
+    float alpha { 1.0F };
 };
+
+// One quantisation for the fade, used by BOTH the uniform write and the frame
+// key. If they rounded differently, a frame could be served from the memo
+// while its pixels lag the key by a step -- or re-rendered for a change no
+// pixel can show.
+inline std::uint8_t quantizeAlpha(float alpha)
+{
+    const float clamped = alpha < 0.0F ? 0.0F : (alpha > 1.0F ? 1.0F : alpha);
+    return static_cast<std::uint8_t>(clamped * 255.0F + 0.5F);
+}
 
 class GpuRenderer
 {
@@ -270,6 +284,10 @@ class GpuRenderer
         // not addresses -- see TileGeometry::serial.
         std::vector<TileId> ids;
         std::vector<std::uint64_t> serials;
+        // Quantised fades -- see quantizeAlpha(). A fading tile makes every
+        // frame a fresh picture; when the last fade settles at 255 the key
+        // stabilises and the memo takes over again.
+        std::vector<std::uint8_t> alphas;
 
         bool operator==(const FrameKey&) const = default;
     };

@@ -504,10 +504,12 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
     key.ids.reserve(batches.size());
     key.serials.reserve(batches.size());
+    key.alphas.reserve(batches.size());
     for (const GpuBatch& batch : batches)
     {
         key.ids.push_back(batch.id);
         key.serials.push_back(batch.geometry ? batch.geometry->serial : 0);
+        key.alphas.push_back(quantizeAlpha(batch.alpha));
     }
 
     if (mHaveFrame && key == mFrameKey && !mFrame.isNull())
@@ -580,7 +582,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
         // Floats 18 and 19: this tile's crossfade and the highlight's extra
         // half-width. Then the highlight colour at float 20 -- std140 aligns a
         // vec4 to 16 bytes, which is exactly where the two floats leave it.
-        const float fadeAlpha = 1.0F;
+        const float fadeAlpha = float(quantizeAlpha(batches[i].alpha)) / 255.0F;
         std::memcpy(slot + (18 * sizeof(float)), &fadeAlpha, sizeof(float));
         std::memcpy(slot + (19 * sizeof(float)), &highlight.extraHalfPx, sizeof(float));
         const std::array<float, 4> highlightRgba {

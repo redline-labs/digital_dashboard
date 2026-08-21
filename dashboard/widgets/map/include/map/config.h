@@ -125,6 +125,9 @@ REFLECT_STRUCT(MapConfig_t,
     (MapStyle_t, style, {},
         "Style", "Colours and widths for the map itself"),
 
+    (uint16_t, tile_fade_ms, 150,
+        "Tile Fade (ms)", "How long a newly arrived tile takes to fade in. The old zoom level stays underneath for the duration, so tiles blend in rather than popping. 0 disables the fade"),
+
     (bool, show_status, true,
         "Show Status", "Draw a line of text when no tiles are arriving. Without it, a map_server that is not running looks like an empty map")
 )
@@ -152,6 +155,8 @@ inline std::vector<std::string> validate(MapConfig_t& config)
                                               "request_timeout_ms", notes);
     config_codec::limits::clampInto<double>(config.highlight_extra_width, 0.0, 20.0,
                                             "highlight_extra_width", notes);
+    config_codec::limits::clampInto<uint16_t>(config.tile_fade_ms, 0u, 1000u, "tile_fade_ms",
+                                              notes);
 
     // An inverted camera range would refuse every zoom -- clamp(z, 17, 0) has
     // no answer that satisfies both ends -- so the wheel would do nothing and
