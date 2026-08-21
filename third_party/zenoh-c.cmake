@@ -190,6 +190,29 @@ FetchContent_Declare(
     OVERRIDE_FIND_PACKAGE
 )
 
+# SHARED MEMORY, FOR THE MAP PATH AND NOTHING ELSE SO FAR. zenoh 1.10 can move
+# a large payload between two processes on one host through an SHM pool instead
+# of the socket, and since 1.10 it does so WITHOUT any application code: the
+# `shared-memory` cargo feature plus `transport/shared_memory/transport_optimization`
+# is the whole mechanism. The explicit ShmProvider API is a different thing,
+# needs the unstable API as well, and is not used here.
+#
+# MEASURED, two processes on one host, real map_server answering a real 64-tile
+# MapTileRequest:
+#
+#     9.4 MB reply (downtown block)   4.30 ms -> 2.15 ms, client CPU -72%
+#     888 KB reply                    0.87 ms -> 0.62 ms, client CPU -34%
+#
+# It is not free everywhere, which is why SessionManager raises the size
+# threshold: below roughly 100 KB the pool bookkeeping costs more than the
+# socket copy it saves. On the real carplay video stream (15 KB median frame)
+# turning it on cost 29% more subscriber CPU for no latency gain. See
+# pub_sub/session_manager.cpp.
+#
+# Costs: libzenohc.a grows ~16 MB -> ~19 MB, and each session that actually uses
+# the optimization maps a 16 MB pool.
+set(ZENOHC_BUILD_WITH_SHARED_MEMORY ON CACHE BOOL "" FORCE)
+
 # Configure zenoh-c options
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ZENOHC_BUILD_TESTS OFF CACHE BOOL "" FORCE)

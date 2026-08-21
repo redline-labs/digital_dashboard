@@ -48,6 +48,27 @@ zenoh::Config SessionManager::buildConfig()
     // arrival time alongside it. See pub_sub/timestamp.h.
     config.insert_json5("timestamping", "{\"enabled\": true, \"drop_future_timestamp\": false}");
 
+    // WHICH MESSAGES ARE WORTH SHARED MEMORY. zenoh-c is built with the
+    // `shared-memory` feature (see third_party/zenoh-c.cmake), so any payload at
+    // or above this threshold is copied into an SHM pool and the peer reads it
+    // there instead of off the socket. zenoh's default threshold is 3072 bytes,
+    // which is far too low: the pool bookkeeping is a fixed cost per message and
+    // it does not pay for itself until the payload is large.
+    //
+    // MEASURED on this bus. Map tile replies are 0.9-9.4 MB and gain heavily --
+    // a 9.4 MB batch halves, 4.30 ms to 2.15 ms, with 72% less CPU in the
+    // client. The carplay video stream is a 15 KB median frame, and there the
+    // same mechanism cost 29% MORE subscriber CPU for no latency gain at all.
+    // 256 KB sits between the two with room on both sides: it is above every
+    // video frame the projection produces, keyframes included (183 KB observed),
+    // and below every full tile batch.
+    //
+    // This is a threshold and not an on/off switch because the two live on one
+    // session -- the dashboard subscribes to video and fetches tiles through the
+    // same zenoh session, so the choice has to be made per message size.
+    config.insert_json5("transport/shared_memory/transport_optimization/message_size_threshold",
+                        "262144");
+
     // PUB_SUB_NO_DISCOVERY=1 keeps this session off the machine's bus.
     //
     // Set for every test by cmake/ProjectTest.cmake, and it fixes a hang rather
