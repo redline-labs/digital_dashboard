@@ -479,6 +479,13 @@ public:
         uint64_t rxBytes = 0;
         uint64_t errorFrames = 0;
         uint64_t busOffs = 0;
+        // Frames that would not decode. Counted rather than logged: this is the
+        // per-frame path, and a bus producing malformed frames produces them at
+        // bus rate -- the log line cost more than the decode and buried every
+        // other line in the file. rxDropped already reaches the dashboard
+        // through CanBridgeChannelStatus, which is where a hole in the capture
+        // should be visible anyway.
+        uint64_t undecodable = 0;
 
         while (count < out.size())
         {
@@ -512,7 +519,7 @@ public:
             auto frame = decode_frame(std::span(buffer.data(), static_cast<size_t>(got)));
             if (!frame.has_value())
             {
-                SPDLOG_WARN("[socketcan] {}", to_string(frame.error()));
+                ++undecodable;
                 continue;
             }
 
@@ -551,6 +558,7 @@ public:
             statistics_.rxBytes += rxBytes;
             statistics_.errorFrames += errorFrames;
             statistics_.busOffCount += busOffs;
+            statistics_.rxDropped += undecodable;
         }
 
         return count;

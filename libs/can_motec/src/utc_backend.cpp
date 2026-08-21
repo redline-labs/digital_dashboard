@@ -296,12 +296,9 @@ private:
                 break;
             }
 
-            if (shortCount)
-            {
-                SPDLOG_WARN("[motec] {} transmit acknowledged {} of {} bytes", id_.toString(),
-                            accepted, kRecordSize);
-            }
-
+            // Not logged. This is the per-transmit path, and the txDropped
+            // increment below already says the frame did not make it -- through
+            // the bus status, where it is visible without a log file.
             std::lock_guard<std::mutex> lock(statsMutex_);
             statistics_.txDropped++;
             // send() counted the frame optimistically, because it cannot wait
@@ -325,11 +322,9 @@ private:
         case Code::Filter:
         case Code::Set:
             // Nothing is outstanding once the handshake is done, so anything
-            // here is the device volunteering something. Logged rather than
-            // dropped silently -- it is the sort of thing that would explain a
-            // later failure.
-            SPDLOG_DEBUG("[motec] {} unsolicited {} frame (reqid {})", id_.toString(),
-                         to_string(frame.code()), frame.reqid);
+            // here is the device volunteering something. It used to be logged,
+            // which meant two to_string() calls and a formatted line on the
+            // per-frame receive path for something nothing acts on.
             break;
         }
     }

@@ -94,6 +94,13 @@ private:
 
     std::thread reader_;
     std::atomic<bool> reading_ { false };
+
+    // Counted, not logged. Both of these sit on the per-transfer read path, and
+    // a link that is failing fails every transfer -- which turned a broken
+    // adapter into thousands of identical lines a second, each one costing more
+    // than the read that produced it. Reported once, when the reader stops.
+    std::atomic<uint64_t> readFailures_ { 0 };
+    std::atomic<uint64_t> decodeFailures_ { 0 };
 };
 
 } // namespace can::pcan

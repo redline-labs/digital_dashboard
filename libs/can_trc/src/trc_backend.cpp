@@ -257,9 +257,10 @@ private:
                 case RecordKind::ErrorCounter:
                     break;
                 case RecordKind::Event:
-                    // Text with no frame to put it in.
-                    SPDLOG_DEBUG("[{}] event at {} us: {}", id_.toString(), value.offsetUs,
-                                 value.event);
+                    // Text with no frame to put it in, so there is nothing to
+                    // deliver. Not logged: this is the per-record path of a
+                    // replay, the text is already in the .trc being replayed,
+                    // and id_.toString() per record is not free.
                     continue;
                 case RecordKind::Unsupported:
                     continue;

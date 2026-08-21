@@ -274,6 +274,17 @@ void PcanDevice::stop_reader()
         // rather than needing the transfer cancelled out from under it.
         reader_.join();
     }
+
+    // Said once, here, instead of per transfer in the loop. Zero is the normal
+    // answer and says nothing; anything else is the first thing worth knowing
+    // about a capture that looks wrong.
+    const uint64_t reads = readFailures_.exchange(0, std::memory_order_relaxed);
+    const uint64_t decodes = decodeFailures_.exchange(0, std::memory_order_relaxed);
+    if (reads != 0 || decodes != 0)
+    {
+        SPDLOG_WARN("[pcan] {}: {} failed bulk read(s), {} undecodable transfer(s)",
+                    description_, reads, decodes);
+    }
 }
 
 void PcanDevice::reader_loop()
@@ -299,8 +310,7 @@ void PcanDevice::reader_loop()
         }
         if (rc != LIBUSB_SUCCESS)
         {
-            SPDLOG_WARN("[pcan] bulk read failed: {}",
-                        libusb_strerror(static_cast<libusb_error>(rc)));
+            readFailures_.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
         if (transferred <= 0)
@@ -313,7 +323,7 @@ void PcanDevice::reader_loop()
         {
             // The records before the bad one are still good and are still
             // dispatched below; only the rest of this transfer is lost.
-            SPDLOG_WARN("[pcan] {}", to_string(*decoded.error));
+            decodeFailures_.fetch_add(1, std::memory_order_relaxed);
         }
 
         for (const auto& record : decoded.records)
