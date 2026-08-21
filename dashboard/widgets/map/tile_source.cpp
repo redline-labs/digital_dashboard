@@ -60,7 +60,20 @@ TileSource::TileSource(std::string tilesetName, std::string tileKey, std::uint64
 {
 }
 
-TileSource::~TileSource() = default;
+TileSource::~TileSource()
+{
+    // The client goes FIRST, explicitly. Members destroy in reverse
+    // declaration order, which tears down the mailbox mutex BEFORE mClient --
+    // and destroying the client can drop the last session reference, which
+    // closes the session, which synchronously fires the drop handler of every
+    // query still in flight. That handler is failBatch -> deliver -> lock the
+    // mailbox mutex: a crash at shutdown, in the field as in the tests,
+    // whenever a widget dies with requests outstanding against a slow or
+    // absent server. Resetting the client here runs those handlers while
+    // every member is still alive. (mWorkers is declared before mClient for
+    // the same class of reason -- see the header.)
+    mClient.reset();
+}
 
 void TileSource::request(const std::vector<TileId>& wanted)
 {
