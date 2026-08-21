@@ -324,7 +324,7 @@ bool GpuRenderer::ensureTarget(const QSize& size)
     return true;
 }
 
-bool GpuRenderer::batchesChanged(const std::vector<GpuBatch>& batches) const
+bool GpuRenderer::batchesChanged(std::span<const GpuBatch> batches) const
 {
     if (batches.size() != mUploadedIds.size())
     {
@@ -350,7 +350,7 @@ bool GpuRenderer::batchesChanged(const std::vector<GpuBatch>& batches) const
     return false;
 }
 
-bool GpuRenderer::prepareUpload(const std::vector<GpuBatch>& batches,
+bool GpuRenderer::prepareUpload(std::span<const GpuBatch> batches,
                                 std::vector<MapVertex>& flat,
                                 std::vector<std::uint32_t>& flatIndices)
 {
@@ -464,18 +464,17 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // what is dropped is what is furthest from where the driver is looking.
     // Logged once rather than per frame: at 60 Hz the warning would be the
     // problem.
-    std::vector<GpuBatch> clamped;
-    if (requested.size() > kMaxTilesPerFrame)
+    if (requested.size() > kMaxTilesPerFrame && !mWarnedTileLimit)
     {
-        if (!mWarnedTileLimit)
-        {
-            mWarnedTileLimit = true;
-            SPDLOG_WARN("[map] {} tiles in one frame; drawing the nearest {}", requested.size(),
-                        kMaxTilesPerFrame);
-        }
-        clamped.assign(requested.begin(), requested.begin() + kMaxTilesPerFrame);
+        mWarnedTileLimit = true;
+        SPDLOG_WARN("[map] {} tiles in one frame; drawing the nearest {}", requested.size(),
+                    kMaxTilesPerFrame);
     }
-    const std::vector<GpuBatch>& batches = clamped.empty() ? requested : clamped;
+    // A view, not a copy: the old copy-and-rebind idiom only worked because
+    // kMaxTilesPerFrame is nonzero, and cost a vector of shared_ptrs per
+    // clamped frame besides.
+    const std::span<const GpuBatch> batches(
+        requested.data(), std::min(requested.size(), std::size_t(kMaxTilesPerFrame)));
 
     // Same camera, same tiles, same style, same viewport -- so the same
     // pixels. Handing back the frame already in hand skips the draw AND the
@@ -557,8 +556,10 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // batch as the uniforms below -- uploading them used to open and close an
     // offscreen frame of its own, so a frame that brought in a new tile cost
     // two submissions and two GPU waits instead of one.
-    std::vector<MapVertex> flat;
-    std::vector<std::uint32_t> flatIndices;
+    std::vector<MapVertex>& flat = mFlatScratch;
+    std::vector<std::uint32_t>& flatIndices = mFlatIndexScratch;
+    flat.clear();
+    flatIndices.clear();
     const bool uploading = batchesChanged(batches);
     if (uploading && !prepareUpload(batches, flat, flatIndices))
     {
@@ -572,8 +573,8 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // into the vertices so that widening every road stays a uniform write and
     // does not re-tessellate the city.
     const float widthScale = key.widthScale;
-    std::vector<char> uniforms(std::size_t(mUniformStride) * std::max<std::size_t>(batches.size(), 1),
-                               0);
+    std::vector<char>& uniforms = mUniformScratch;
+    uniforms.assign(std::size_t(mUniformStride) * std::max<std::size_t>(batches.size(), 1), 0);
     for (std::size_t i = 0; i < batches.size(); ++i)
     {
         const TileId& id = batches[i].id;

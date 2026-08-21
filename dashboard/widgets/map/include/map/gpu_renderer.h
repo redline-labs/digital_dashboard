@@ -30,6 +30,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <QByteArray>
@@ -194,12 +195,12 @@ class GpuRenderer
     bool initialise();
     bool ensureTarget(const QSize& size);
     // True when `batches` differ from what is already on the GPU.
-    bool batchesChanged(const std::vector<GpuBatch>& batches) const;
+    bool batchesChanged(std::span<const GpuBatch> batches) const;
     // Works out the per-tile offsets, grows the vertex buffer if it must, and
     // flattens the geometry into `flat`. Does NOT submit: the caller puts the
     // upload in the same resource update batch as the frame's uniforms, so a
     // frame that brings in a new tile is still one submission.
-    bool prepareUpload(const std::vector<GpuBatch>& batches, std::vector<MapVertex>& flat,
+    bool prepareUpload(std::span<const GpuBatch> batches, std::vector<MapVertex>& flat,
                        std::vector<std::uint32_t>& flatIndices);
 
 #if MAP_HAS_VULKAN
@@ -313,6 +314,12 @@ class GpuRenderer
     QByteArray mReadbackData;
     QImage mFrame;
     Stats mStats;
+
+    // Scratch reused across frames -- cleared or overwritten each render,
+    // capacity kept, so a steady repaint allocates nothing here.
+    std::vector<MapVertex> mFlatScratch;
+    std::vector<std::uint32_t> mFlatIndexScratch;
+    std::vector<char> mUniformScratch;
 };
 
 } // namespace map_widget

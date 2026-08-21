@@ -115,6 +115,11 @@ struct Camera
     double zoom { 13.0 };
     // Degrees clockwise from north. The map rotates; the vehicle stays upright.
     double bearing { 0.0 };
+
+    // Exact comparison, deliberately: this asks "are these two copies of each
+    // other", the same question Coordinate's own operator== answers, not "are
+    // they close". The tile-walk memo keys on it.
+    friend bool operator==(const Camera&, const Camera&) = default;
 };
 
 // Everything needed to turn a coordinate into a pixel for one frame.

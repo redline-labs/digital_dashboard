@@ -239,8 +239,7 @@ class MapWidget : public QWidget
     // source's stand-ins first, then every real tile -- and each tile's fade.
     // Fills `batches` for the GPU and `labelTiles` for the label pass, and
     // updates the mLastTiles* counters.
-    void assembleBatches(std::vector<map_widget::GpuBatch>& batches,
-                         std::vector<map_widget::LabelTile>& labelTiles);
+    void assembleBatches();
 
     // This tile's crossfade at `now`: 0..1, smoothstepped, 1 when the fade is
     // done or disabled. First sight of a tile starts its clock.
@@ -286,6 +285,31 @@ class MapWidget : public QWidget
     std::unordered_map<map_widget::TileId, std::chrono::steady_clock::time_point,
                        map_widget::TileIdHash>
         mFirstDrawn;
+
+    // Scratch for the paint pass, reused across frames -- cleared each paint
+    // with capacity kept, so a steady repaint allocates nothing. Written and
+    // read only by assembleBatches()/paintEvent on the GUI thread.
+    std::vector<map_widget::GpuBatch> mBatches;
+    std::vector<map_widget::LabelTile> mLabelTiles;
+    std::vector<std::vector<map_widget::CachedTile>> mReady;
+    std::vector<std::vector<float>> mAlphas;
+    std::vector<std::vector<map_widget::TileId>> mStandIns;
+    std::vector<std::vector<map_widget::CachedTile>> mStandInTiles;
+    std::vector<bool> mHave;
+
+    // The tile-walk memo. refreshTiles() runs on EVERY paint -- fades, eases
+    // and label collision all repaint at a camera that has not moved -- and
+    // the grid walk plus its centre-outward sort is pure recomputation then.
+    // Keyed on exactly the inputs the walk reads: the camera (compared as
+    // copies, not "close"), the viewport, and each source's archive range.
+    // request() is still called every paint from the memoised lists: that is
+    // what re-asks deferred tiles and expired backoffs, and it is already the
+    // cheap early-out.
+    std::optional<map_widget::Camera> mWalkCamera;
+    int mWalkWidth { -1 };
+    int mWalkHeight { -1 };
+    std::vector<std::optional<map_widget::TileSource::ZoomRange>> mWalkRanges;
+    std::vector<std::vector<map_widget::TileId>> mRequestLists;
 
     // Drives repaints while any tile is still fading or any camera ease is in
     // flight. Single-shot, re-armed at the end of each paint only while

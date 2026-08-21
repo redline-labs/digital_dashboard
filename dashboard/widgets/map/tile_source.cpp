@@ -460,9 +460,13 @@ std::optional<std::chrono::steady_clock::time_point> TileSource::nextRetryAt() c
 }
 
 
-std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted)
+void TileSource::ready(const std::vector<TileId>& wanted, std::vector<CachedTile>& out)
 {
-    std::vector<CachedTile> out;
+    // Into the caller's vector, cleared but with its capacity kept: this runs
+    // for every source on every paint, and the paint pass reuses one scratch
+    // vector per source across frames precisely so a steady repaint allocates
+    // nothing.
+    out.clear();
     out.reserve(wanted.size());
 
     for (const TileId& id : wanted)
@@ -472,8 +476,6 @@ std::vector<CachedTile> TileSource::ready(const std::vector<TileId>& wanted)
         const CachedTile* found = mCache.find(id);
         out.push_back(found != nullptr ? *found : CachedTile {});
     }
-
-    return out;
 }
 
 bool TileSource::drawable(const TileId& id)

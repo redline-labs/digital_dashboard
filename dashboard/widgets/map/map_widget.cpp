@@ -369,13 +369,49 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
         // With it goes the truncation flag: it describes the walk that
         // produced mVisible, and status() reporting "knowingly partial" about
         // a viewport that no longer exists would send somebody chasing a cap
-        // that is not being hit.
+        // that is not being hit. The walk memo goes too -- its lists describe
+        // the same dead viewport.
         mTileWalkTruncated = false;
+        mWalkCamera.reset();
+        return;
+    }
+
+    // The memo: same camera, same viewport, same archive ranges -- the same
+    // walk, so its lists are reused and only request() runs. request() must
+    // STILL run every paint: it is what re-asks deferred tiles and expired
+    // backoffs, and it is already the cheap early-out when nothing is due.
+    const bool sameInputs = [&]() {
+        if (!mWalkCamera.has_value() || !(*mWalkCamera == projection.camera()) ||
+            mWalkWidth != width() || mWalkHeight != height() ||
+            mWalkRanges.size() != mSources.size())
+        {
+            return false;
+        }
+        for (std::size_t s = 0; s < mSources.size(); ++s)
+        {
+            if (mWalkRanges[s] != mSources[s]->archiveZoomRange())
+            {
+                return false;
+            }
+        }
+        return true;
+    }();
+    if (sameInputs)
+    {
+        for (std::size_t s = 0; s < mSources.size(); ++s)
+        {
+            mSources[s]->request(mRequestLists[s]);
+        }
         return;
     }
 
     mVisible.assign(mSources.size(), {});
     mTileWalkTruncated = false;
+    mWalkCamera = projection.camera();
+    mWalkWidth = width();
+    mWalkHeight = height();
+    mWalkRanges.assign(mSources.size(), std::nullopt);
+    mRequestLists.resize(mSources.size());
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
         // The ARCHIVE's range, reported by the server, NOT the configured one --
@@ -384,6 +420,7 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
         // so the whole span is allowed and at most one batch comes back
         // outOfRange; from then on the range is known and it cannot happen again.
         const auto archive = mSources[s]->archiveZoomRange();
+        mWalkRanges[s] = archive;
         const std::uint8_t z =
             archive.has_value()
                 ? projection.tileZoom(archive->min, archive->max)
@@ -415,7 +452,8 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
             }
         }
 
-        mSources[s]->request(tiles.withMargin);
+        mRequestLists[s] = std::move(tiles.withMargin);
+        mSources[s]->request(mRequestLists[s]);
     }
 }
 
@@ -765,11 +803,16 @@ float MapWidget::tileFadeAlpha(const map_widget::TileId& id,
     return float(t * t * (3.0 - (2.0 * t)));
 }
 
-void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
-                                std::vector<map_widget::LabelTile>& labelTiles)
+void MapWidget::assembleBatches()
 {
     const auto now = std::chrono::steady_clock::now();
     mLastTilesFading = 0;
+    mBatches.clear();
+    mLabelTiles.clear();
+    mReady.resize(mSources.size());
+    mAlphas.resize(mSources.size());
+    mStandIns.resize(mSources.size());
+    mStandInTiles.resize(mSources.size());
 
     // The stand-in budget is SHARED across sources, and counted against what
     // every source together already wants to draw. Working it out per source
@@ -784,15 +827,10 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
                              ? map_widget::GpuRenderer::kMaxTilesPerFrame - visibleTotal
                              : 0;
 
-    std::vector<std::vector<map_widget::CachedTile>> ready(mSources.size());
-    std::vector<std::vector<float>> alphas(mSources.size());
-    std::vector<std::vector<map_widget::TileId>> standIns(mSources.size());
-    std::vector<std::vector<map_widget::CachedTile>> standInTiles(mSources.size());
-
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        ready[s] = mSources[s]->ready(mVisible[s]);
-        alphas[s].resize(mVisible[s].size(), 1.0F);
+        mSources[s]->ready(mVisible[s], mReady[s]);
+        mAlphas[s].assign(mVisible[s].size(), 1.0F);
 
         // What the cache can put under the gaps while the real tiles are in
         // flight. See substituteTiles(): without it a zoom blanks the map to
@@ -806,28 +844,28 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
         // flashes dark precisely where it was supposed to ease over. This is
         // also what carries the half-zoom boundary: the old level is one step
         // away, well inside the substitution's reach.
-        std::vector<bool> have(mVisible[s].size());
+        mHave.assign(mVisible[s].size(), false);
         for (std::size_t i = 0; i < mVisible[s].size(); ++i)
         {
-            if (!ready[s][i])
+            if (!mReady[s][i])
             {
                 continue;
             }
-            alphas[s][i] = tileFadeAlpha(mVisible[s][i], now);
-            have[i] = alphas[s][i] >= 1.0F;
-            if (!have[i])
+            mAlphas[s][i] = tileFadeAlpha(mVisible[s][i], now);
+            mHave[i] = mAlphas[s][i] >= 1.0F;
+            if (!mHave[i])
             {
                 ++mLastTilesFading;
             }
         }
         map_widget::TileSource& source = *mSources[s];
-        standIns[s] = map_widget::substituteTiles(
-            mVisible[s], have, [&source](const map_widget::TileId& id) {
+        mStandIns[s] = map_widget::substituteTiles(
+            mVisible[s], mHave, [&source](const map_widget::TileId& id) {
                 return source.drawable(id);
             },
             budget);
-        budget -= std::min(budget, standIns[s].size());
-        standInTiles[s] = source.ready(standIns[s]);
+        budget -= std::min(budget, mStandIns[s].size());
+        source.ready(mStandIns[s], mStandInTiles[s]);
     }
 
     // Stand-ins FIRST, so they are drawn UNDER within each layer pass and a
@@ -841,35 +879,35 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
     // what covers what.
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        for (std::size_t i = 0; i < standIns[s].size(); ++i)
+        for (std::size_t i = 0; i < mStandIns[s].size(); ++i)
         {
-            if (standInTiles[s][i])
+            if (mStandInTiles[s][i])
             {
                 // A stand-in fades on its own clock, keyed by its own id -- an
                 // ancestor that was on screen moments ago at another zoom is
                 // already in mFirstDrawn and draws solid at once.
-                batches.push_back(map_widget::GpuBatch { standIns[s][i],
-                                                         standInTiles[s][i].geometry,
-                                                         tileFadeAlpha(standIns[s][i], now) });
+                mBatches.push_back(map_widget::GpuBatch { mStandIns[s][i],
+                                                         mStandInTiles[s][i].geometry,
+                                                         tileFadeAlpha(mStandIns[s][i], now) });
             }
         }
     }
-    mLastTilesStandIn = static_cast<int>(batches.size());
+    mLastTilesStandIn = static_cast<int>(mBatches.size());
 
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
         for (std::size_t i = 0; i < mVisible[s].size(); ++i)
         {
-            if (!ready[s][i])
+            if (!mReady[s][i])
             {
                 continue;
             }
-            batches.push_back(map_widget::GpuBatch { mVisible[s][i], ready[s][i].geometry,
-                                                     alphas[s][i] });
-            labelTiles.push_back(map_widget::LabelTile { mVisible[s][i], ready[s][i].labels });
+            mBatches.push_back(map_widget::GpuBatch { mVisible[s][i], mReady[s][i].geometry,
+                                                     mAlphas[s][i] });
+            mLabelTiles.push_back(map_widget::LabelTile { mVisible[s][i], mReady[s][i].labels });
         }
     }
-    mLastTilesDrawn = static_cast<int>(batches.size()) - mLastTilesStandIn;
+    mLastTilesDrawn = static_cast<int>(mBatches.size()) - mLastTilesStandIn;
 
     // Stand-ins label too, but only AFTER every real tile, and that order is
     // the whole trick. Without them the text blinks out for the frames a zoom
@@ -882,12 +920,12 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
     // placed. Real tiles going in first is what decides which of the two wins.
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
-        for (std::size_t i = 0; i < standIns[s].size(); ++i)
+        for (std::size_t i = 0; i < mStandIns[s].size(); ++i)
         {
-            if (standInTiles[s][i])
+            if (mStandInTiles[s][i])
             {
-                labelTiles.push_back(
-                    map_widget::LabelTile { standIns[s][i], standInTiles[s][i].labels });
+                mLabelTiles.push_back(
+                    map_widget::LabelTile { mStandIns[s][i], mStandInTiles[s][i].labels });
             }
         }
     }
@@ -899,7 +937,7 @@ void MapWidget::assembleBatches(std::vector<map_widget::GpuBatch>& batches,
     if (mFirstDrawn.size() > kMaxFirstDrawn)
     {
         std::unordered_set<map_widget::TileId, map_widget::TileIdHash> onScreen;
-        for (const map_widget::GpuBatch& batch : batches)
+        for (const map_widget::GpuBatch& batch : mBatches)
         {
             onScreen.insert(batch.id);
         }
@@ -939,9 +977,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     // --- 1. geometry, on the GPU -------------------------------------------
 
-    std::vector<map_widget::GpuBatch> batches;
-    std::vector<map_widget::LabelTile> labelTiles;
-    assembleBatches(batches, labelTiles);
+    assembleBatches();
 
     if (mGpu)
     {
@@ -950,7 +986,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
             float(mConfig.highlight_extra_width)
         };
         const QImage& frame =
-            mGpu->render(projection, batches, mConfig.style, background, highlight);
+            mGpu->render(projection, mBatches, mConfig.style, background, highlight);
         if (frame.isNull())
         {
             painter.fillRect(rect(), background);
@@ -975,7 +1011,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
     const map_widget::LabelStats labels =
-        map_widget::paintLabels(painter, projection, labelTiles, mConfig.style, mLabelCache);
+        map_widget::paintLabels(painter, projection, mLabelTiles, mConfig.style, mLabelCache);
     mLastLabelsPlaced = labels.placed;
 
     // --- 3. the vehicle ----------------------------------------------------

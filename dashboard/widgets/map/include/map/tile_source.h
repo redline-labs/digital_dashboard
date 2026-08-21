@@ -113,14 +113,16 @@ class TileSource
     // moved.
     void request(const std::vector<TileId>& wanted);
 
-    // What is available to draw right now, in the order asked for. Tiles that
-    // have not arrived come back default-constructed -- a partially filled map
-    // is the normal state during a pan, not an error.
+    // What is available to draw right now, in the order asked for, written
+    // into `out` (cleared first, capacity kept -- the paint pass reuses its
+    // scratch across frames). Tiles that have not arrived come back
+    // default-constructed -- a partially filled map is the normal state
+    // during a pan, not an error.
     //
     // NOT const: asking for a tile is what marks it as in use, and that is what
     // keeps the cache from evicting the ground the driver is looking at. See
     // the eviction note below.
-    std::vector<CachedTile> ready(const std::vector<TileId>& wanted);
+    void ready(const std::vector<TileId>& wanted, std::vector<CachedTile>& out);
 
     // What drain() took out of the mailbox: arrivals worth drawing, and
     // failures worth repainting over. Failures count separately because they
@@ -160,6 +162,8 @@ class TileSource
     {
         std::uint8_t min { 0 };
         std::uint8_t max { 0 };
+
+        friend bool operator==(const ZoomRange&, const ZoomRange&) = default;
     };
     std::optional<ZoomRange> archiveZoomRange() const;
 
