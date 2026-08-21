@@ -53,7 +53,27 @@ class ZenohService
                 {
                     capnp::FlatArrayMessageReader reader(aligned.words());
                     auto req = reader.template getRoot<RequestT>();
-                    SPDLOG_DEBUG("Received request for key '{}' = {}", mKeyExpr, req.toString().flatten().cStr());
+                    // SIZE AND SCHEMA, NEVER THE MESSAGE. This used to log
+                    // req.toString().flatten() -- the whole message as text -- and that
+                    // is not a debug line you can afford on a data path.
+                    //
+                    // spdlog's SPDLOG_LOGGER_CALL expands straight to logger->log(...)
+                    // with no should_log() test, so every argument is evaluated
+                    // whatever the level is, and patches/spdlog_tweakme.patch sets
+                    // SPDLOG_ACTIVE_LEVEL to TRACE so SPDLOG_DEBUG is compiled in
+                    // rather than preprocessed away. capnp's toString() then walks
+                    // every byte of the message to build a string that gets discarded
+                    // at info level. Measured on a 64-tile map reply: ~99% of this
+                    // handler's CPU, and 81.9 ms of an 82 ms request.
+                    //
+                    // Guarding it with should_log() was the other option and is worse:
+                    // it leaves a --debug run stringifying megabytes per request, so
+                    // the one time you turn debugging on is the one time the thing you
+                    // are debugging changes shape. `inspect call` and `inspect echo`
+                    // already decode any message on the bus to JSON on demand, which
+                    // is what this line was reaching for and could never be as good at.
+                    SPDLOG_DEBUG("Service '{}' request {} bytes ('{}')", mKeyExpr, v.size(),
+                                 schema_traits<RequestT>::name);
                     mHandler(req, resp);
                 }
                 else
@@ -66,8 +86,6 @@ class ZenohService
             {
                 SPDLOG_ERROR("No payload for key '{}'", mKeyExpr);
             }
-
-            SPDLOG_DEBUG("Sending response to key '{}' = {}", mKeyExpr, resp.toString().flatten().cStr());
 
             // Serialize and reply.
             //
@@ -84,6 +102,12 @@ class ZenohService
             // the time reply() returns.
             auto* held = new kj::Array<capnp::word>(capnp::messageToFlatArray(respBuilder));
             const std::size_t bytes = held->size() * sizeof(capnp::word);
+
+            // Logged here rather than next to the request, because this is where the
+            // reply's size is known. See the note above on why it is a size and not
+            // the message.
+            SPDLOG_DEBUG("Service '{}' reply {} bytes ('{}')", mKeyExpr, bytes,
+                         schema_traits<ResponseT>::name);
 
             zenoh::Query::ReplyOptions ropts = zenoh::Query::ReplyOptions::create_default();
             ropts.encoding.emplace(kCapnpEncodingMime);

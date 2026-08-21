@@ -71,7 +71,9 @@ class ZenohClient
             return false;
         }
 
-        SPDLOG_DEBUG("Sent request to key '{}' = {}", mKeyExpr, mRequest.toString().flatten().cStr());
+        // Size and schema, not the message -- see zenoh_service.h for why.
+        SPDLOG_DEBUG("Client '{}' request {} bytes ('{}')", mKeyExpr, reqBytesView.size(),
+                     schema_traits<RequestT>::name);
 
         // Drain replies; pass first OK response to callback
         while (true)
@@ -89,7 +91,8 @@ class ZenohClient
                     {
                         capnp::FlatArrayMessageReader reader(aligned.words());
                         auto resp = reader.template getRoot<ResponseT>();
-                        SPDLOG_DEBUG("Received response from key '{}' = {}", mKeyExpr, resp.toString().flatten().cStr());
+                        SPDLOG_DEBUG("Client '{}' response {} bytes ('{}')", mKeyExpr, v.size(),
+                                     schema_traits<ResponseT>::name);
                         on_response(resp);
                         return true;
                     }
