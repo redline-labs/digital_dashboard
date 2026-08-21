@@ -479,7 +479,16 @@ void emitPolygon(std::vector<MapVertex>& out, std::vector<std::uint32_t>& indice
         return;
     }
 
-    const std::vector<std::uint32_t> triangles = mapbox::earcut<std::uint32_t>(polygon);
+    // REUSED, one per thread. mapbox::earcut<N>(poly) is a convenience wrapper
+    // that constructs a fresh Earcut per call and moves its indices out; the
+    // object owns a node pool and an index vector that then have to be built
+    // again for the next polygon, and a city tile is thousands of polygons.
+    // operator() clears its own state on entry and only allocates the pool when
+    // it is empty, so reuse is what the class is written for. Tessellation runs
+    // on the tile worker pool, hence thread_local rather than static.
+    thread_local mapbox::detail::Earcut<std::uint32_t> earcut;
+    earcut(polygon);
+    const std::vector<std::uint32_t>& triangles = earcut.indices;
 
     // earcut indexes the rings as if concatenated, and so does the vertex
     // buffer: one vertex per ring point, in the same order, and earcut's
@@ -764,7 +773,7 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
                                                       : colour;
                     for (const auto& ring : feature.rings)
                     {
-                        emitPolyline(out.vertices, out.indices, ring, sc, featureHalfPx,
+                                                emitPolyline(out.vertices, out.indices, ring, sc, featureHalfPx,
                                      featureColour);
                     }
                     break;
