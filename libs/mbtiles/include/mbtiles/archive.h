@@ -25,6 +25,8 @@
 #define MBTILES_ARCHIVE_H
 
 #include <cstdint>
+#include <functional>
+#include <span>
 #include <filesystem>
 #include <condition_variable>
 #include <memory>
@@ -81,7 +83,31 @@ class Archive
     // An empty optional means the archive has nothing there, which is the
     // normal answer for most of the tile pyramid and is NOT an error. An Error
     // means the archive itself is broken.
+    //
+    // This form COPIES the tile into a vector. Prefer the borrowing form below
+    // when the bytes are about to be copied somewhere else anyway: for a
+    // 64-tile batch of dense z14 tiles the intermediate vector measured ~460 us,
+    // which was a third of the server's time in serving the request.
     Result<std::optional<Tile>> tile(std::uint8_t z, std::uint32_t x, std::uint32_t y) const;
+
+    // What a borrowing read hands back: the tile's bytes and what they are
+    // compressed with. The span is valid ONLY for the duration of the call.
+    using TileSink = std::function<void(std::span<const std::uint8_t>, Encoding)>;
+
+    // One tile, WITHOUT copying it.
+    //
+    // `sink` is handed a span pointing straight into SQLite's own memory -- into
+    // the memory-mapped archive itself, since the reader sets mmap_size -- and
+    // that span dies when sink returns: the statement is reset and the reader
+    // goes back to the pool immediately afterwards. Copy inside sink if the
+    // bytes must outlive it. Do not stash the span.
+    //
+    // Returns whether a row was there. Absent is not an error (most of the
+    // pyramid is empty) and sink is simply not called. A row whose blob is NULL
+    // or empty DOES call sink, with an empty span: an archive is allowed to
+    // store a zero-length tile for an empty area, and that is a different
+    // answer from having no tile at all.
+    Result<bool> tile(std::uint8_t z, std::uint32_t x, std::uint32_t y, const TileSink& sink) const;
 
     // A TileJSON 2.0.0 document for this archive.
     //

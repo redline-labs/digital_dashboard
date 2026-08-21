@@ -37,7 +37,7 @@ namespace
     return ::MapEncoding::IDENTITY;
 }
 
-void setBlob(capnp::Data::Builder builder, const std::vector<std::uint8_t>& bytes)
+void setBlob(capnp::Data::Builder builder, std::span<const std::uint8_t> bytes)
 {
     if (!bytes.empty())
     {
@@ -196,7 +196,23 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
             continue;
         }
 
-        auto tile = tileset->archive->tile(coord.getZ(), coord.getX(), coord.getY());
+        // BORROWED, NOT COPIED. The sink writes SQLite's bytes straight into the
+        // capnp message; the tile never lands in a vector on the way. For a
+        // 64-tile batch of dense z14 tiles that intermediate vector measured
+        // ~460 us, against ~1.5 ms for the whole request.
+        bool present = false;
+        auto tile = tileset->archive->tile(
+            coord.getZ(), coord.getX(), coord.getY(),
+            [&result, &present, tileset](std::span<const std::uint8_t> bytes,
+                                         mbtiles::Encoding encoding) {
+                present = true;
+                result.setStatus(::MapStatus::OK);
+                result.setEncoding(toWire(encoding));
+                setBlob(result.initData(static_cast<unsigned>(bytes.size())), bytes);
+
+                tileset->served.fetch_add(1, std::memory_order_relaxed);
+                tileset->bytes.fetch_add(bytes.size(), std::memory_order_relaxed);
+            });
         if (!tile)
         {
             const mbtiles::Error& error = tile.error();
@@ -222,7 +238,7 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
             continue;
         }
 
-        if (!tile->has_value())
+        if (!present)
         {
             // The common answer. A client asks for whatever is under the
             // viewport and most of the pyramid is empty, so this is not logged.
@@ -230,14 +246,6 @@ void Services::handleTile(const ::MapTileRequest::Reader& request,
             result.setStatus(::MapStatus::NOT_FOUND);
             continue;
         }
-
-        const mbtiles::Tile& found = **tile;
-        result.setStatus(::MapStatus::OK);
-        result.setEncoding(toWire(found.encoding));
-        setBlob(result.initData(static_cast<unsigned>(found.data.size())), found.data);
-
-        tileset->served.fetch_add(1, std::memory_order_relaxed);
-        tileset->bytes.fetch_add(found.data.size(), std::memory_order_relaxed);
     }
 }
 

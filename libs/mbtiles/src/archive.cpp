@@ -297,7 +297,8 @@ Result<void> Archive::loadMetadata()
     return {};
 }
 
-Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::uint32_t y) const
+Result<bool> Archive::tile(std::uint8_t z, std::uint32_t x, std::uint32_t y,
+                           const TileSink& sink) const
 {
     if (z > kMaxTileZoom)
     {
@@ -346,7 +347,7 @@ Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::
     {
         // No row. Not an error: most of the pyramid is empty.
         sqlite3_reset(reader->stmt);
-        return std::optional<Tile> {};
+        return false;
     }
     if (step != SQLITE_ROW)
     {
@@ -355,21 +356,46 @@ Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::
         return query_error(mPath.string() + ": reading tile: " + message, step);
     }
 
-    Tile tile;
+    std::span<const std::uint8_t> bytes;
     if (sqlite3_column_type(reader->stmt, 0) != SQLITE_NULL)
     {
         const auto* blob = static_cast<const std::uint8_t*>(sqlite3_column_blob(reader->stmt, 0));
-        const int bytes = sqlite3_column_bytes(reader->stmt, 0);
-        if (blob != nullptr && bytes > 0)
+        const int length = sqlite3_column_bytes(reader->stmt, 0);
+        if (blob != nullptr && length > 0)
         {
-            tile.data.assign(blob, blob + bytes);
+            bytes = std::span<const std::uint8_t>(blob, static_cast<std::size_t>(length));
         }
     }
 
-    sqlite3_reset(reader->stmt);
+    // CALLED BEFORE THE RESET, which is the whole contract: sqlite3_reset frees
+    // the statement's result memory, so the span is only a span until then.
+    sink(bytes, sniff(bytes));
 
-    tile.encoding = sniff(tile.data);
-    return std::optional<Tile>(std::move(tile));
+    sqlite3_reset(reader->stmt);
+    return true;
+}
+
+Result<std::optional<Tile>> Archive::tile(std::uint8_t z, std::uint32_t x, std::uint32_t y) const
+{
+    // The copying form, written on top of the borrowing one so the SQL, the
+    // TMS/XYZ flip and the reader pooling live in exactly one place.
+    Tile copied;
+    bool present = false;
+    const Result<bool> found = tile(z, x, y, [&copied, &present](std::span<const std::uint8_t> bytes,
+                                                                Encoding encoding) {
+        present = true;
+        copied.data.assign(bytes.begin(), bytes.end());
+        copied.encoding = encoding;
+    });
+    if (!found)
+    {
+        return std::unexpected(found.error());
+    }
+    if (!present)
+    {
+        return std::optional<Tile> {};
+    }
+    return std::optional<Tile>(std::move(copied));
 }
 
 std::unique_ptr<Archive::Reader> Archive::acquire(Error& error) const
@@ -410,14 +436,15 @@ std::unique_ptr<Archive::Reader> Archive::acquire(Error& error) const
     // MEMORY-MAP THE ARCHIVE. Without this SQLite assembles every blob out of
     // its page cache, and a vector tile is not a small blob -- a dense z14 tile
     // is ~150 KB, spanning dozens of pages. Measured on socal.mbtiles, one
-    // 64-tile batch: 2031 us to read as-is, 564 us with this.
+    // 64-tile batch: 2031 us to read as-is, 564 us with this. It is the single
+    // largest cost in serving a tile request.
     //
-    // Read-only, so the usual mmap caveat -- a write through a mapping SQLite
-    // cannot see -- does not apply. The value is a ceiling, not an allocation:
-    // SQLite maps up to this much and falls back to ordinary reads beyond it,
-    // so a 32-bit target simply gets less of the file mapped. A truncated file
-    // reports SIGBUS on access rather than an SQLite error, which is the one
-    // behaviour this trades away.
+    // Read-only, so the usual mmap caveat -- a write through a mapping that
+    // SQLite cannot see -- does not apply. The value is a ceiling, not an
+    // allocation: SQLite maps up to this much and falls back to ordinary reads
+    // beyond it, so a 32-bit target simply gets less of the file mapped rather
+    // than failing. A truncated or corrupt file reports SIGBUS on access rather
+    // than an SQLite error, which is the one behaviour this trades away.
     sqlite3_exec(reader->db, "PRAGMA mmap_size=2147483648;", nullptr, nullptr, nullptr);
 
     if (sqlite3_prepare_v2(reader->db, kTileSql, -1, &reader->stmt, nullptr) != SQLITE_OK)
