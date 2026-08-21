@@ -428,6 +428,12 @@ const QRectF& LabelCache::measure(const QString& text, const QFont& font)
 
     // Bounded the same way the rendered cache is, and for the same reason: a
     // long drive passes through a great many street names.
+    //
+    // CLEARED, not LRU-evicted, deliberately. measure() runs per candidate
+    // per frame -- tens of thousands of calls with road labels on -- and an
+    // O(n) touch on every hit costs more every single frame than this clear
+    // costs once; the re-measures after it are font-metrics lookups, not the
+    // 0.88 ms renders the entry cache protects.
     constexpr int kMaxMeasured = 4096;
     if (mMeasured.size() >= kMaxMeasured)
     {

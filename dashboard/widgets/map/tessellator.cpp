@@ -135,39 +135,101 @@ struct LayerSpec
     // is what lets the two bridge layers carry roads of every class.
     float (*featureHalfWidth)(const mvt::Layer&, const mvt::Feature&, const MapStyle_t&) { nullptr };
     Colour (*featureColour)(const mvt::Layer&, const mvt::Feature&, const MapStyle_t&) { nullptr };
+
+    // The layer's whole relationship to the style, as pointers to the style's
+    // own members. These five used to be five parallel switches over MapLayer
+    // -- ~250 lines, six edits per new layer, and only the row order was
+    // asserted. One row now carries everything, and a missing field is a
+    // wrong-looking row rather than a switch three functions away.
+    const char* name { "unknown" };
+    helpers::Color MapStyle_t::* colour { nullptr };
+    uint16_t MapDetail_t::* minZoom { nullptr };
+    // Null means a FILL: no width, and the shader ignores halfPx when the
+    // normal is zero. The bridge layers' values are documented fallbacks --
+    // their per-feature hooks above override both width and colour.
+    double MapWidths_t::* halfWidth { nullptr };
+    // Null means always drawn.
+    bool MapStyle_t::* enabled { nullptr };
 };
 
 constexpr std::array<LayerSpec, kMapLayerCount> kSpecs { {
-    { MapLayer::Landcover,      "landcover",      0, true  },
-    { MapLayer::Landuse,        "landuse",        0, true  },
-    { MapLayer::Park,           "park",           0, true  },
-    { MapLayer::AerowaySurface, "aeroway",        0, true  },
-    { MapLayer::Water,          "water",          0, true  },
-    { MapLayer::Waterway,       "waterway",       0, false },
-    { MapLayer::Building,       "building",       0, true  },
-    { MapLayer::AerowayTaxiway, "aeroway",        0, false, isNotRunway },
-    { MapLayer::AerowayRunway,  "aeroway",        0, false, isRunway    },
+    { .layer = MapLayer::Landcover, .sourceLayer = "landcover", .fill = true,
+      .name = "landcover", .colour = &MapStyle_t::landcover, .minZoom = &MapDetail_t::landcover },
+    { .layer = MapLayer::Landuse, .sourceLayer = "landuse", .fill = true,
+      .name = "landuse", .colour = &MapStyle_t::landuse, .minZoom = &MapDetail_t::landuse },
+    { .layer = MapLayer::Park, .sourceLayer = "park", .fill = true,
+      .name = "park", .colour = &MapStyle_t::park, .minZoom = &MapDetail_t::park },
+    { .layer = MapLayer::AerowaySurface, .sourceLayer = "aeroway", .fill = true,
+      .name = "aeroway_surface", .colour = &MapStyle_t::aeroway_surface,
+      .minZoom = &MapDetail_t::aeroway_surface, .enabled = &MapStyle_t::show_aeroways },
+    { .layer = MapLayer::Water, .sourceLayer = "water", .fill = true,
+      .name = "water", .colour = &MapStyle_t::water, .minZoom = &MapDetail_t::water },
+    { .layer = MapLayer::Waterway, .sourceLayer = "waterway",
+      .name = "waterway", .colour = &MapStyle_t::waterway, .minZoom = &MapDetail_t::waterway,
+      .halfWidth = &MapWidths_t::waterway },
+    { .layer = MapLayer::Building, .sourceLayer = "building", .fill = true,
+      .name = "building", .colour = &MapStyle_t::building, .minZoom = &MapDetail_t::building,
+      .enabled = &MapStyle_t::show_buildings },
+    { .layer = MapLayer::AerowayTaxiway, .sourceLayer = "aeroway", .featureFilter = isNotRunway,
+      .name = "aeroway_taxiway", .colour = &MapStyle_t::aeroway_line,
+      .minZoom = &MapDetail_t::aeroway_taxiway, .halfWidth = &MapWidths_t::aeroway_taxiway,
+      .enabled = &MapStyle_t::show_aeroways },
+    { .layer = MapLayer::AerowayRunway, .sourceLayer = "aeroway", .featureFilter = isRunway,
+      .name = "aeroway_runway", .colour = &MapStyle_t::aeroway_line,
+      .minZoom = &MapDetail_t::aeroway_runway, .halfWidth = &MapWidths_t::aeroway_runway,
+      .enabled = &MapStyle_t::show_aeroways },
     // The road network AT GRADE. Bridges are excluded and drawn again above, so
     // a road is in exactly one of the two sets -- drawing it in both would put
     // a copy of every bridge under the traffic it crosses, which is the artefact
     // the bridge layers exist to remove.
-    { MapLayer::RoadMinor,      "transportation", 1, false, isNotBridge },
-    { MapLayer::RoadMajor,      "transportation", 2, false, isNotBridge },
-    { MapLayer::RoadPrimary,    "transportation", 3, false, isNotBridge },
-    { MapLayer::MotorwayCasing, "transportation", 4, false, isNotBridge },
-    { MapLayer::Motorway,       "transportation", 4, false, isNotBridge },
-    { MapLayer::Rail,           "transportation", 5, false, isNotBridge },
-    { MapLayer::RoadBridgeCasing, "transportation", 0, false, isBridge, bridgeCasingHalfWidth,
-      bridgeCasingColour },
-    { MapLayer::RoadBridge,     "transportation", 0, false, isBridge, bridgeHalfWidth,
-      bridgeColour },
-    { MapLayer::Boundary,       "boundary",       0, false, nullptr, boundaryHalfWidth },
+    { .layer = MapLayer::RoadMinor, .sourceLayer = "transportation", .roadClass = 1,
+      .featureFilter = isNotBridge, .name = "road_minor", .colour = &MapStyle_t::road_minor,
+      .minZoom = &MapDetail_t::road_minor, .halfWidth = &MapWidths_t::road_minor },
+    { .layer = MapLayer::RoadMajor, .sourceLayer = "transportation", .roadClass = 2,
+      .featureFilter = isNotBridge, .name = "road_major", .colour = &MapStyle_t::road_major,
+      .minZoom = &MapDetail_t::road_major, .halfWidth = &MapWidths_t::road_major },
+    { .layer = MapLayer::RoadPrimary, .sourceLayer = "transportation", .roadClass = 3,
+      .featureFilter = isNotBridge, .name = "road_primary", .colour = &MapStyle_t::road_primary,
+      .minZoom = &MapDetail_t::road_primary, .halfWidth = &MapWidths_t::road_primary },
+    // The casing shares the motorway's zoom floor: an empty casing with no
+    // fill, or a fill with no casing, both read as a rendering fault.
+    { .layer = MapLayer::MotorwayCasing, .sourceLayer = "transportation", .roadClass = 4,
+      .featureFilter = isNotBridge, .name = "motorway_casing",
+      .colour = &MapStyle_t::motorway_casing, .minZoom = &MapDetail_t::motorway,
+      .halfWidth = &MapWidths_t::motorway_casing },
+    { .layer = MapLayer::Motorway, .sourceLayer = "transportation", .roadClass = 4,
+      .featureFilter = isNotBridge, .name = "motorway", .colour = &MapStyle_t::motorway,
+      .minZoom = &MapDetail_t::motorway, .halfWidth = &MapWidths_t::motorway },
+    { .layer = MapLayer::Rail, .sourceLayer = "transportation", .roadClass = 5,
+      .featureFilter = isNotBridge, .name = "rail", .colour = &MapStyle_t::rail,
+      .minZoom = &MapDetail_t::rail, .halfWidth = &MapWidths_t::rail },
+    // The bridge layers' colour and width are documented FALLBACKS -- the
+    // per-feature hooks borrow each road's own class so the two cannot drift.
+    { .layer = MapLayer::RoadBridgeCasing, .sourceLayer = "transportation",
+      .featureFilter = isBridge, .featureHalfWidth = bridgeCasingHalfWidth,
+      .featureColour = bridgeCasingColour, .name = "road_bridge_casing",
+      .colour = &MapStyle_t::bridge_casing, .minZoom = &MapDetail_t::bridge,
+      .halfWidth = &MapWidths_t::road_minor, .enabled = &MapStyle_t::show_bridges },
+    { .layer = MapLayer::RoadBridge, .sourceLayer = "transportation", .featureFilter = isBridge,
+      .featureHalfWidth = bridgeHalfWidth, .featureColour = bridgeColour, .name = "road_bridge",
+      .colour = &MapStyle_t::road_minor, .minZoom = &MapDetail_t::bridge,
+      .halfWidth = &MapWidths_t::road_minor, .enabled = &MapStyle_t::show_bridges },
+    { .layer = MapLayer::Boundary, .sourceLayer = "boundary",
+      .featureHalfWidth = boundaryHalfWidth, .name = "boundary",
+      .colour = &MapStyle_t::boundary, .minZoom = &MapDetail_t::boundary,
+      .halfWidth = &MapWidths_t::boundary, .enabled = &MapStyle_t::show_boundaries },
     // From the tracks archive rather than the basemap. The source layer names
     // are disjoint from the OpenMapTiles sixteen by construction, which is what
     // lets two archives be drawn through one tessellator without either
-    // shadowing the other.
-    { MapLayer::TrackSurface,   "track",            0, true  },
-    { MapLayer::TrackCentre,    "track_centerline", 0, false },
+    // shadowing the other. The surface is a FILL -- the tarmac, drawn as an
+    // area with the infield cut out as a hole -- so it carries no width.
+    { .layer = MapLayer::TrackSurface, .sourceLayer = "track", .fill = true,
+      .name = "track_surface", .colour = &MapStyle_t::racetrack_surface,
+      .minZoom = &MapDetail_t::racetrack_surface, .enabled = &MapStyle_t::show_racetracks },
+    { .layer = MapLayer::TrackCentre, .sourceLayer = "track_centerline",
+      .name = "track_centre", .colour = &MapStyle_t::racetrack_centre,
+      .minZoom = &MapDetail_t::racetrack_centre, .halfWidth = &MapWidths_t::racetrack_centre,
+      .enabled = &MapStyle_t::show_racetracks },
 } };
 
 // kSpecs is indexed by the ENUM ORDINAL in tessellate(), and nothing else
@@ -184,34 +246,17 @@ static_assert([] {
     return true;
 }(), "kSpecs rows must be in MapLayer order");
 
+// The row for one layer, bounds-checked once so the lookups below stay
+// single lines. kSpecs is asserted to be in enum order.
+const LayerSpec& specFor(MapLayer layer)
+{
+    const auto i = static_cast<std::size_t>(layer);
+    return kSpecs[i < kSpecs.size() ? i : 0];
+}
+
 Colour colourFor(MapLayer layer, const MapStyle_t& style)
 {
-    switch (layer)
-    {
-        case MapLayer::Landcover:      return toRgba(style.landcover);
-        case MapLayer::Landuse:        return toRgba(style.landuse);
-        case MapLayer::Park:           return toRgba(style.park);
-        case MapLayer::AerowaySurface: return toRgba(style.aeroway_surface);
-        case MapLayer::Water:          return toRgba(style.water);
-        case MapLayer::Waterway:       return toRgba(style.waterway);
-        case MapLayer::Building:       return toRgba(style.building);
-        case MapLayer::AerowayTaxiway: return toRgba(style.aeroway_line);
-        case MapLayer::AerowayRunway:  return toRgba(style.aeroway_line);
-        case MapLayer::RoadMinor:      return toRgba(style.road_minor);
-        case MapLayer::RoadMajor:      return toRgba(style.road_major);
-        case MapLayer::RoadPrimary:    return toRgba(style.road_primary);
-        case MapLayer::MotorwayCasing: return toRgba(style.motorway_casing);
-        case MapLayer::Motorway:       return toRgba(style.motorway);
-        case MapLayer::Rail:           return toRgba(style.rail);
-        // Only a fallback: both bridge layers override per feature, because
-        // they carry roads of every class.
-        case MapLayer::RoadBridgeCasing: return toRgba(style.bridge_casing);
-        case MapLayer::RoadBridge:     return toRgba(style.road_minor);
-        case MapLayer::Boundary:       return toRgba(style.boundary);
-        case MapLayer::TrackSurface:   return toRgba(style.racetrack_surface);
-        case MapLayer::TrackCentre:    return toRgba(style.racetrack_centre);
-    }
-    return { 1.f, 0.f, 1.f, 1.f };
+    return toRgba(style.*(specFor(layer).colour));
 }
 
 // A national border is a heavier line than a city limit. map_build writes OSM's
@@ -275,34 +320,8 @@ float bridgeCasingHalfWidth(const mvt::Layer& layer, const mvt::Feature& feature
 
 bool layerEnabled(MapLayer layer, const MapStyle_t& style)
 {
-    switch (layer)
-    {
-        case MapLayer::Building: return style.show_buildings;
-        case MapLayer::Boundary: return style.show_boundaries;
-        case MapLayer::RoadBridgeCasing:
-        case MapLayer::RoadBridge:
-            return style.show_bridges;
-        case MapLayer::AerowaySurface:
-        case MapLayer::AerowayTaxiway:
-        case MapLayer::AerowayRunway:
-            return style.show_aeroways;
-        case MapLayer::TrackSurface:
-        case MapLayer::TrackCentre:
-            return style.show_racetracks;
-        case MapLayer::Landcover:
-        case MapLayer::Landuse:
-        case MapLayer::Park:
-        case MapLayer::Water:
-        case MapLayer::Waterway:
-        case MapLayer::RoadMinor:
-        case MapLayer::RoadMajor:
-        case MapLayer::RoadPrimary:
-        case MapLayer::MotorwayCasing:
-        case MapLayer::Motorway:
-        case MapLayer::Rail:
-            return true;
-    }
-    return true;
+    const LayerSpec& spec = specFor(layer);
+    return spec.enabled == nullptr || style.*(spec.enabled);
 }
 
 bool accepts(const LayerSpec& spec, const mvt::Layer& layer, const mvt::Feature& feature)
@@ -519,92 +538,20 @@ std::uint64_t nextSerial()
 
 const char* to_string(MapLayer layer)
 {
-    switch (layer)
-    {
-        case MapLayer::Landcover:      return "landcover";
-        case MapLayer::Landuse:        return "landuse";
-        case MapLayer::Park:           return "park";
-        case MapLayer::AerowaySurface: return "aeroway_surface";
-        case MapLayer::Water:          return "water";
-        case MapLayer::Waterway:       return "waterway";
-        case MapLayer::Building:       return "building";
-        case MapLayer::AerowayTaxiway: return "aeroway_taxiway";
-        case MapLayer::AerowayRunway:  return "aeroway_runway";
-        case MapLayer::RoadMinor:      return "road_minor";
-        case MapLayer::RoadMajor:      return "road_major";
-        case MapLayer::RoadPrimary:    return "road_primary";
-        case MapLayer::MotorwayCasing: return "motorway_casing";
-        case MapLayer::Motorway:       return "motorway";
-        case MapLayer::Rail:           return "rail";
-        case MapLayer::RoadBridgeCasing: return "road_bridge_casing";
-        case MapLayer::RoadBridge:     return "road_bridge";
-        case MapLayer::Boundary:       return "boundary";
-        case MapLayer::TrackSurface:   return "track_surface";
-        case MapLayer::TrackCentre:    return "track_centre";
-    }
-    return "unknown";
+    return specFor(layer).name;
 }
 
 double layerMinZoom(MapLayer layer, const MapStyle_t& style)
 {
-    switch (layer)
-    {
-        case MapLayer::Landcover:      return double(style.detail.landcover);
-        case MapLayer::Landuse:        return double(style.detail.landuse);
-        case MapLayer::Park:           return double(style.detail.park);
-        case MapLayer::AerowaySurface: return double(style.detail.aeroway_surface);
-        case MapLayer::Water:          return double(style.detail.water);
-        case MapLayer::Waterway:       return double(style.detail.waterway);
-        case MapLayer::Building:       return double(style.detail.building);
-        case MapLayer::AerowayTaxiway: return double(style.detail.aeroway_taxiway);
-        case MapLayer::AerowayRunway:  return double(style.detail.aeroway_runway);
-        case MapLayer::RoadMinor:      return double(style.detail.road_minor);
-        case MapLayer::RoadMajor:      return double(style.detail.road_major);
-        case MapLayer::RoadPrimary:    return double(style.detail.road_primary);
-        case MapLayer::MotorwayCasing: return double(style.detail.motorway);
-        case MapLayer::Motorway:       return double(style.detail.motorway);
-        case MapLayer::Rail:           return double(style.detail.rail);
-        case MapLayer::RoadBridgeCasing:
-        case MapLayer::RoadBridge:     return double(style.detail.bridge);
-        case MapLayer::Boundary:       return double(style.detail.boundary);
-        case MapLayer::TrackSurface:   return double(style.detail.racetrack_surface);
-        case MapLayer::TrackCentre:    return double(style.detail.racetrack_centre);
-    }
-    return 0.0;
+    return double(style.detail.*(specFor(layer).minZoom));
 }
 
 float halfWidthFor(MapLayer layer, const MapStyle_t& style)
 {
-    // Fills carry no width; the shader ignores halfPx when the normal is zero.
-    switch (layer)
-    {
-        case MapLayer::Landcover:
-        case MapLayer::Landuse:
-        case MapLayer::Park:
-        case MapLayer::Water:
-        case MapLayer::AerowaySurface:
-        case MapLayer::Building:       return 0.0f;
-        case MapLayer::Waterway:       return float(style.widths.waterway);
-        case MapLayer::AerowayTaxiway: return float(style.widths.aeroway_taxiway);
-        case MapLayer::AerowayRunway:  return float(style.widths.aeroway_runway);
-        case MapLayer::RoadMinor:      return float(style.widths.road_minor);
-        case MapLayer::RoadMajor:      return float(style.widths.road_major);
-        case MapLayer::RoadPrimary:    return float(style.widths.road_primary);
-        case MapLayer::MotorwayCasing: return float(style.widths.motorway_casing);
-        case MapLayer::Motorway:       return float(style.widths.motorway);
-        case MapLayer::Rail:           return float(style.widths.rail);
-        // Overridden per feature; the layer value only decides whether the
-        // layer is skipped outright, and a bridge layer never should be.
-        case MapLayer::RoadBridgeCasing:
-        case MapLayer::RoadBridge:     return float(style.widths.road_minor);
-        case MapLayer::Boundary:       return float(style.widths.boundary);
-        // The surface is a FILL -- it is the tarmac, drawn as an area with the
-        // infield cut out as a hole -- so it carries no width. The centreline
-        // is a line and does.
-        case MapLayer::TrackSurface:   return 0.0f;
-        case MapLayer::TrackCentre:    return float(style.widths.racetrack_centre);
-    }
-    return 0.0f;
+    // Null means a fill: no width, and the shader ignores halfPx when the
+    // normal is zero.
+    const LayerSpec& spec = specFor(layer);
+    return spec.halfWidth != nullptr ? float(style.widths.*(spec.halfWidth)) : 0.0f;
 }
 
 MapLayer roadLayerFor(int priority)
