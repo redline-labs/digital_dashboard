@@ -2,19 +2,18 @@
 FetchContent_Declare(
     zenoh-cpp
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh-cpp.git
-    GIT_TAG 1.9.0
+    GIT_TAG 1.10.0
     GIT_SHALLOW TRUE
 )
 
 # Configure zenoh-cpp options
 set(ZENOHCXX_ZENOHC ON CACHE BOOL "" FORCE)
 set(ZENOHCXX_ZENOHPICO OFF CACHE BOOL "" FORCE)
-# Both spellings: zenoh-cpp renamed these from BUILD_ to ENABLE_ and the old
-# names are silently ignored, so setting only those left its test suite
-# registered with CTest -- a dozen tests we never build, reported as failures on
-# every `ctest` run.
-set(ZENOHCXX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(ZENOHCXX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+# ENABLE_, not BUILD_. zenoh-cpp renamed these and silently ignores the old
+# spelling, which once left its test suite registered with CTest -- a dozen tests
+# we never build, reported as failures on every `ctest` run. Both spellings were
+# set here for a while; as of 1.10.0 its CMakeLists declares only these two, so
+# the dead names are gone.
 set(ZENOHCXX_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ZENOHCXX_INSTALL OFF CACHE BOOL "" FORCE)
@@ -35,7 +34,7 @@ set(ZENOHCXX_INSTALL OFF CACHE BOOL "" FORCE)
 # writes `#define Z_FEATURE_UNSTABLE_API` into zenoh_configure.h, where both
 # zenoh-c and zenoh-cpp pick it up. Left off deliberately: nothing here needs it
 # (MatchingStatus and declare_background_matching_listener are stable as of
-# zenoh-cpp 1.9), turning it on rebuilds the Rust library from scratch, and the
+# zenoh-cpp 1.10), turning it on rebuilds the Rust library from scratch, and the
 # zero-copy payload access we would want it for is available from the stable
 # Bytes::slice_iter().
 FetchContent_MakeAvailable(zenoh-cpp)
@@ -49,7 +48,7 @@ file(COPY ${zenoh-cpp_SOURCE_DIR}/LICENSE ${zenoh-cpp_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/zenoh-cpp/fetch_info.txt
 "Library: zenoh-cpp
 Repository: https://github.com/eclipse-zenoh/zenoh-cpp.git
-Tag/Version: 1.9.0
+Tag/Version: 1.10.0
 Shallow Clone: TRUE
 Patches Applied: None
 ") 

@@ -2,7 +2,7 @@
 # awkwardness of what follows. zenoh-c is a CMake project, but the library that
 # actually contains the bug is its cargo dependency:
 #
-#     zenoh-c 1.9.0  ->  Cargo.toml: zenoh = { git = ..., branch = "release/1.9.0" }
+#     zenoh-c 1.10.0  ->  Cargo.toml: zenoh = { git = ..., branch = "release/1.10.0" }
 #
 # so there is no FetchContent_Declare to hang a PATCH_COMMAND off. We fetch that
 # crate ourselves, patch it, and point cargo at the result with a path override.
@@ -18,10 +18,13 @@
 # NOT fix it. There is no option to turn this off: a build without it deadlocks.
 #
 # THIS IS A BANDAID WITH AN END DATE. The same one-word change, plus a
-# regression test and the reproducer, is submitted upstream from
-# github.com/ryandavid/zenoh, branch fix/abortable-gossip-autoconnect. Once it
-# lands in a zenoh-c release we take: delete the patch, delete this block, bump
-# the tag. Everything here exists only because the fix is not upstream yet.
+# regression test and the reproducer, is upstream as eclipse-zenoh/zenoh#2733.
+# Once it lands in a zenoh-c release we take: delete the patch, delete this
+# block, bump the tag. Everything here exists only because the fix is not
+# upstream yet. STILL OPEN as of the 1.10.0 bump -- gossip.rs on release/1.10.0
+# and on main is unchanged, so this patch is still load bearing; it applies to
+# 1.10.0 without a rebase (the only 1.9->1.10 change in that file is
+# get_locators() -> get_locators_noloopback(), well away from our hunk).
 #
 # WHY NOT LET CARGO DO THE FETCHING -- `cargo fetch` after zenoh-c is populated,
 # then patch the checkout it downloaded, which needs no second clone, no pinned
@@ -40,7 +43,7 @@
 # A `paths` override is the supported way round it precisely because cargo
 # treats a path source as mutable: edits are noticed and rebuilds happen. The
 # cost is one extra clone of a repo cargo also clones, which is 22 MB.
-set(zenoh_rust_expected_sha 81c6c933b6e41d72a05f04c4442ef57717ddc72b)
+set(zenoh_rust_expected_sha c479f0c1102d7321c2fa83f515bddede92014cce)
 
 # SHALLOW, AT THE BRANCH, THEN VERIFIED AGAINST THE SHA. Cloning the branch
 # shallow is far smaller than a full clone at a bare commit (GIT_SHALLOW cannot
@@ -50,7 +53,7 @@ set(zenoh_rust_expected_sha 81c6c933b6e41d72a05f04c4442ef57717ddc72b)
 FetchContent_Declare(
     zenoh_rust
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh.git
-    GIT_TAG release/1.9.0
+    GIT_TAG release/1.10.0
     GIT_SHALLOW TRUE
     PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/zenoh_abortable_gossip_connect.patch
 )
@@ -63,8 +66,8 @@ execute_process(
 )
 if(NOT zenoh_rust_actual_sha STREQUAL zenoh_rust_expected_sha)
     message(FATAL_ERROR
-            "zenoh: release/1.9.0 is now ${zenoh_rust_actual_sha}, not the "
-            "${zenoh_rust_expected_sha} that zenoh-c 1.9.0's lockfile pins. Cargo would "
+            "zenoh: release/1.10.0 is now ${zenoh_rust_actual_sha}, not the "
+            "${zenoh_rust_expected_sha} that zenoh-c 1.10.0's lockfile pins. Cargo would "
             "still compile the pinned revision while we patched a different one. Check "
             "what moved, re-pin zenoh_rust_expected_sha, and re-check the patch applies.")
 endif()
@@ -182,7 +185,7 @@ message(STATUS "zenoh: patched for the gossip close-deadlock (${zenoh_rust_SOURC
 FetchContent_Declare(
     zenohc
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh-c.git
-    GIT_TAG 1.9.0
+    GIT_TAG 1.10.0
     GIT_SHALLOW TRUE
     OVERRIDE_FIND_PACKAGE
 )
@@ -204,7 +207,7 @@ file(COPY ${zenohc_SOURCE_DIR}/LICENSE ${zenohc_SOURCE_DIR}/README.md
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/zenohc/fetch_info.txt
 "Library: zenoh-c
 Repository: https://github.com/eclipse-zenoh/zenoh-c.git
-Tag/Version: 1.9.0
+Tag/Version: 1.10.0
 Shallow Clone: TRUE
 Patches Applied: patches/zenoh_abortable_gossip_connect.patch, applied to the Rust
                  `zenoh` crate (${zenoh_rust_expected_sha}) and used via a cargo

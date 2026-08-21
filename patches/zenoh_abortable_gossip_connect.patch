@@ -60,8 +60,8 @@ verifies afterwards that the change is actually present -- a patch step that
 fails without stopping the configure would leave us silently building unpatched
 zenoh, which is exactly the sort of thing this patch exists to prevent.
 
-Drop this patch and set REDLINE_PATCH_ZENOH=OFF once an upstream release carries
-an equivalent fix.
+Upstream as eclipse-zenoh/zenoh#2733, still open. Drop this patch, and the block
+in third_party/zenoh-c.cmake that applies it, once a zenoh-c release carries it.
 
 --- a/zenoh/src/net/protocol/gossip.rs
 +++ b/zenoh/src/net/protocol/gossip.rs
