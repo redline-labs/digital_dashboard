@@ -44,7 +44,7 @@ std::string valueToString(const Value& value)
     return {};
 }
 
-std::optional<Value> Layer::attribute(const Feature& feature, std::string_view key) const
+const Value* Layer::attributeRef(const Feature& feature, std::string_view key) const
 {
     // Find the key's index once, then look for it among the feature's tags. The
     // other way round -- resolving every tag to a string and comparing -- is
@@ -53,7 +53,7 @@ std::optional<Value> Layer::attribute(const Feature& feature, std::string_view k
     const auto found = std::find(keys.begin(), keys.end(), key);
     if (found == keys.end())
     {
-        return std::nullopt;
+        return nullptr;
     }
     const auto wanted = static_cast<std::uint32_t>(std::distance(keys.begin(), found));
 
@@ -71,12 +71,33 @@ std::optional<Value> Layer::attribute(const Feature& feature, std::string_view k
         {
             // Also refused at decode time; belt and braces, because the
             // alternative here is an out-of-bounds read.
-            return std::nullopt;
+            return nullptr;
         }
-        return values[valueIndex];
+        return &values[valueIndex];
     }
 
-    return std::nullopt;
+    return nullptr;
+}
+
+std::optional<Value> Layer::attribute(const Feature& feature, std::string_view key) const
+{
+    const Value* found = attributeRef(feature, key);
+    if (found == nullptr)
+    {
+        return std::nullopt;
+    }
+    return *found;
+}
+
+std::string_view Layer::attributeTextView(const Feature& feature, std::string_view key) const
+{
+    const Value* found = attributeRef(feature, key);
+    if (found == nullptr)
+    {
+        return {};
+    }
+    const auto* text = std::get_if<std::string>(found);
+    return (text == nullptr) ? std::string_view {} : std::string_view(*text);
 }
 
 std::string Layer::attributeText(const Feature& feature, std::string_view key) const

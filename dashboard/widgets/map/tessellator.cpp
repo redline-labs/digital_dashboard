@@ -114,7 +114,7 @@ std::optional<double> numberOf(const mvt::Layer& layer, const mvt::Feature& feat
 
 bool isRunway(const mvt::Layer& layer, const mvt::Feature& feature)
 {
-    return layer.attributeText(feature, "class") == "runway";
+    return layer.attributeTextView(feature, "class") == "runway";
 }
 bool isNotRunway(const mvt::Layer& layer, const mvt::Feature& feature)
 {
@@ -126,7 +126,7 @@ bool isNotRunway(const mvt::Layer& layer, const mvt::Feature& feature)
 // written where it says something.
 bool isBridge(const mvt::Layer& layer, const mvt::Feature& feature)
 {
-    return layer.attributeText(feature, "brunnel") == "bridge";
+    return layer.attributeTextView(feature, "brunnel") == "bridge";
 }
 bool isNotBridge(const mvt::Layer& layer, const mvt::Feature& feature)
 {
@@ -277,12 +277,12 @@ float boundaryHalfWidth(const mvt::Layer& layer, const mvt::Feature& feature,
 // class's, borrowed rather than restated so the two cannot drift apart.
 Colour bridgeColour(const mvt::Layer& layer, const mvt::Feature& feature, const MapStyle_t& style)
 {
-    return colourFor(roadLayerFor(roadPriority(layer.attributeText(feature, "class"))), style);
+    return colourFor(roadLayerFor(roadPriority(layer.attributeTextView(feature, "class"))), style);
 }
 
 float bridgeHalfWidth(const mvt::Layer& layer, const mvt::Feature& feature, const MapStyle_t& style)
 {
-    return halfWidthFor(roadLayerFor(roadPriority(layer.attributeText(feature, "class"))), style);
+    return halfWidthFor(roadLayerFor(roadPriority(layer.attributeTextView(feature, "class"))), style);
 }
 
 // The casing is what separates the deck from whatever it crosses. One colour
@@ -347,7 +347,7 @@ bool accepts(const LayerSpec& spec, const mvt::Layer& layer, const mvt::Feature&
     {
         return true;
     }
-    return roadPriority(layer.attributeText(feature, "class")) == spec.roadClass;
+    return roadPriority(layer.attributeTextView(feature, "class")) == spec.roadClass;
 }
 
 // ---------------------------------------------------------------- polylines

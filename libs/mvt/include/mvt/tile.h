@@ -97,7 +97,24 @@ struct Layer
 
     // The common case by a wide margin: OpenMapTiles puts the thing a style
     // switches on in `class`.
+    //
+    // COPIES. Prefer attributeTextView on a per-feature path: this one returns
+    // a std::string by value, and `attribute` above returns an optional<Value>
+    // by value on the way, so a lookup that only wanted to compare against a
+    // literal costs two heap allocations.
     std::string attributeText(const Feature& feature, std::string_view key) const;
+
+    // The same lookup without either allocation: a pointer into this layer's
+    // own `values`, valid for as long as the layer is. Null when the feature
+    // does not carry the key.
+    const Value* attributeRef(const Feature& feature, std::string_view key) const;
+
+    // A view of a STRING-valued attribute, for the overwhelmingly common case
+    // of comparing one against a literal. Empty when the key is absent or its
+    // value is not a string -- a numeric `class` never equalled "runway"
+    // either, so callers that compare see no change in behaviour, and the ones
+    // that need a number already go through `attribute`.
+    std::string_view attributeTextView(const Feature& feature, std::string_view key) const;
 };
 
 struct Tile
