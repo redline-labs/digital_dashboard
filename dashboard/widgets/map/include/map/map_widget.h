@@ -44,12 +44,18 @@
 #include <atomic>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
 
 #include <QTimer>
 #include <QWidget>
+
+namespace pub_sub
+{
+class RawSubscriber;
+}
 
 #include "dashboard/expression_subscription.h"
 #include "dashboard/widget_types.h"
@@ -122,6 +128,13 @@ class MapWidget : public QWidget
         // false; see armRetryTimer().
         bool retryPending { false };
     };
+
+    // GUI thread. Replace the set of OSM way ids drawn by the highlight
+    // pass. This is the seam a route display drops into later: hand it the
+    // route's way ids and the same pass draws them -- today the horizon
+    // subscription below is the only caller. Sorted and deduplicated here,
+    // which is the renderer's contract.
+    void setHighlightWayIds(std::vector<std::uint64_t> ids);
 
     Status status() const;
 
@@ -217,6 +230,19 @@ class MapWidget : public QWidget
     // The paint it triggers is what re-issues the request. Never armed unless
     // something is backing off, so an idle healthy map still costs nothing.
     QTimer mRetryTimer;
+
+    // The matched-road highlight, fed by nodes/map_match's horizon. Decoded
+    // and reduced to way ids on the zenoh thread (see highlight_ids.h); the
+    // GUI thread only swaps the result in. Its OWN coalescing flag, not the
+    // tile gate's -- that handler drains tile sources and must not be
+    // entangled with this one.
+    std::unique_ptr<pub_sub::RawSubscriber> mHighlightSubscription;
+    std::mutex mHighlightMutex;
+    std::vector<std::uint64_t> mHighlightMailbox;
+    bool mHighlightMailboxFresh { false };
+    std::atomic<bool> mHighlightPending { false };
+    // GUI thread only: what the paint pass hands the renderer.
+    std::vector<std::uint64_t> mHighlightWayIds;
 
     // Parallel to mSources: each picks its own integer zoom from its own
     // archive's range, so a global track layer that stops at z14 and a regional

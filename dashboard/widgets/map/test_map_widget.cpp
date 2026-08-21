@@ -15,6 +15,10 @@
 // standing check that this widget does not have that problem.
 
 #include "map/config.h"
+#include <capnp/message.h>
+
+#include "map/highlight_ids.h"
+#include "road_graph/format.h"
 #include "map/map_widget.h"
 #include "map/labels.h"
 
@@ -226,6 +230,9 @@ void test_the_config_describes_itself()
     check(fields.contains("position_schema_type") &&
               fields["position_schema_type"].value("type", "") == "enum",
           "the schema type is offered as an enum the editor can list");
+    check(fields.contains("highlight_zenoh_key") && fields.contains("highlight_color") &&
+              fields.contains("highlight_extra_width"),
+          "the matched-road highlight is configurable");
 }
 
 // ============================================================================
@@ -1115,6 +1122,44 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+void test_highlight_way_ids_come_out_of_a_horizon()
+{
+    // The join the highlight rides on: horizon segment ids collapse to the way
+    // ids map_build stamps on tile features. The matched segment counts, and
+    // so does every SEGMENT profile on the ROOT path -- the road ahead -- but
+    // a side branch's segments must not: lighting them paints the junction.
+    ::capnp::MallocMessageBuilder message;
+    auto horizon = message.initRoot<::MapHorizon>();
+    horizon.setHasPosition(true);
+    horizon.getPosition().getWhere().setSegmentId(road_graph::makeSegmentId(1234, 7));
+    horizon.getPosition().setPathId(5);
+
+    auto paths = horizon.initPaths(2);
+    paths[0].setPathId(5); // the root path is first, by the schema's contract
+    paths[1].setPathId(9);
+
+    auto profiles = horizon.initProfiles(4);
+    profiles[0].setPathId(5);
+    profiles[0].getValue().setSegment(road_graph::makeSegmentId(1234, 8)); // same way, next piece
+    profiles[1].setPathId(5);
+    profiles[1].getValue().setSegment(road_graph::makeSegmentId(777, 0)); // the road ahead
+    profiles[2].setPathId(9);
+    profiles[2].getValue().setSegment(road_graph::makeSegmentId(31337, 0)); // side branch: out
+    profiles[3].setPathId(5);
+    profiles[3].getValue().setRoadName("Jamboree Road"); // not a segment: filtered past
+
+    const auto ids = map_widget::highlightWayIds(message.getRoot<::MapHorizon>().asReader());
+    check(ids == std::vector<std::uint64_t> { 777, 1234 },
+          "sorted, deduplicated, root-path-only way ids");
+
+    // No fix means no highlight -- an empty list, not yesterday's roads.
+    ::capnp::MallocMessageBuilder lost;
+    auto without = lost.initRoot<::MapHorizon>();
+    without.setHasPosition(false);
+    check(map_widget::highlightWayIds(lost.getRoot<::MapHorizon>().asReader()).empty(),
+          "no position, no highlight");
+}
+
 void test_deferred_counts_only_tiles_that_would_have_been_asked()
 {
     // A viewport bigger than one request defers its tail to the next paint,
@@ -1361,6 +1406,7 @@ int main(int argc, char** argv)
     test_a_sized_widget_knows_which_tiles_it_needs();
     test_a_zero_sized_widget_asks_for_nothing();
     test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame();
+    test_highlight_way_ids_come_out_of_a_horizon();
     test_deferred_counts_only_tiles_that_would_have_been_asked();
     test_a_failed_map_heals_itself_without_a_position_stream();
     test_a_large_label_is_not_clipped_by_its_image();

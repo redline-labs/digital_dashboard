@@ -104,6 +104,13 @@ REFLECT_STRUCT(MapConfig_t,
     (std::string, heading_expression, "",
         "Heading Expression", "Expression yielding degrees clockwise from north. Optional"),
 
+    (std::string, highlight_zenoh_key, "",
+        "Highlight Zenoh Key", "Topic carrying the matcher's horizon (MapHorizon), e.g. nodes/map_match/horizon. The matched road ahead lights up in the highlight colour. Way ids only survive in tiles at z13 and deeper, so the highlight quietly disappears when zoomed shallower. Empty disables it"),
+    (helpers::Color, highlight_color, "#00E5FFB0",
+        "Highlight Color", "Colour the matched road is recoloured with"),
+    (double, highlight_extra_width, 2.0,
+        "Highlight Extra Width", "Extra half-width in pixels beyond the road's own, so the highlight reads as a casing rather than vanishing into the road it recolours"),
+
     (helpers::Color, marker_color, "#FF3B30",
         "Marker Color", "Colour of the vehicle marker and its trail"),
     (uint16_t, marker_size, 9,
@@ -143,6 +150,8 @@ inline std::vector<std::string> validate(MapConfig_t& config)
     config_codec::limits::clampInto<double>(config.track_opacity, 0.0, 1.0, "track_opacity", notes);
     config_codec::limits::clampInto<uint16_t>(config.request_timeout_ms, 100u, 30000u,
                                               "request_timeout_ms", notes);
+    config_codec::limits::clampInto<double>(config.highlight_extra_width, 0.0, 20.0,
+                                            "highlight_extra_width", notes);
 
     // An inverted camera range would refuse every zoom -- clamp(z, 17, 0) has
     // no answer that satisfies both ends -- so the wheel would do nothing and

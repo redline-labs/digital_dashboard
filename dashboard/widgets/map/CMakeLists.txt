@@ -107,6 +107,9 @@ target_link_libraries(${MAP_WIDGET_LIB}
         mvt
     PRIVATE
         Qt6::GuiPrivate
+        # Only for road_graph/format.h's constexpr wayOf(): the highlight joins
+        # horizon segment ids back to the way ids stamped on tile features.
+        road_graph
         # Polygon triangulation with holes. See third_party/earcut.cmake.
         earcut::earcut
         spdlog::spdlog
@@ -257,6 +260,7 @@ target_link_libraries(map_test_widget
     PRIVATE
         ${MAP_WIDGET_LIB}
         config_codec
+        road_graph
         spdlog::spdlog
 )
 

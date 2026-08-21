@@ -59,6 +59,11 @@ widgets:
       latitude_expression: "latitudeDeg"
       longitude_expression: "longitudeDeg"
 
+      # The road the matcher says we are on, lit up from the same horizon
+      # topic road_info reads. Way ids only survive in tiles at z13+, so the
+      # highlight quietly disappears on the zoomed-out map below.
+      highlight_zenoh_key: "nodes/map_match/horizon"
+
       marker_color: "#FF3B30"
       marker_size: 9
 

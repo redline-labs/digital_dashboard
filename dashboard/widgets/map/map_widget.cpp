@@ -4,7 +4,14 @@
 
 #include "map/labels.h"
 
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+
+#include "map/highlight_ids.h"
+#include "pub_sub/capnp_payload.h"
+#include "pub_sub/raw_subscriber.h"
 #include "qt_helpers/widget_colors.h"
+#include "road_graph/format.h"
 
 #include <QFont>
 #include <QMetaObject>
@@ -187,6 +194,75 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
                                                    qt_helpers::toQColor(mConfig.style.label_halo), this);
         mRecentre->hide();
         connect(mRecentre, &QAbstractButton::clicked, this, &MapWidget::recentreCamera);
+    }
+
+    if (!mConfig.highlight_zenoh_key.empty())
+    {
+        // RawSubscriber rather than the expression binding: the payload is a
+        // struct and the answer is a LIST of way ids, and
+        // ZenohExpressionSubscriber yields a double.
+        mHighlightSubscription = std::make_unique<pub_sub::RawSubscriber>(
+            mConfig.highlight_zenoh_key,
+            [this](const std::vector<std::uint8_t>& bytes, std::string_view schema) {
+                // ON A ZENOH RX THREAD. Decode into the mailbox and post;
+                // touching Qt here would race the paint.
+                if (schema != "MapHorizon")
+                {
+                    // Decoding against the wrong schema is SILENT -- capnp
+                    // reads the same bytes at different offsets and hands back
+                    // a plausible wrong answer -- so the publisher's own stamp
+                    // is checked rather than trusted.
+                    return;
+                }
+
+                const pub_sub::WordAlignedPayload payload(
+                    reinterpret_cast<const kj::byte*>(bytes.data()), bytes.size());
+                if (payload.empty())
+                {
+                    return;
+                }
+
+                std::vector<std::uint64_t> ids;
+                try
+                {
+                    ::capnp::FlatArrayMessageReader reader(payload.words());
+                    ids = map_widget::highlightWayIds(reader.getRoot<::MapHorizon>());
+                }
+                catch (const kj::Exception&)
+                {
+                    // A malformed message. Dropped: one bad sample must not
+                    // take the widget down, and the next is 100 ms away.
+                    return;
+                }
+
+                {
+                    const std::lock_guard<std::mutex> lock(mHighlightMutex);
+                    mHighlightMailbox = std::move(ids);
+                    mHighlightMailboxFresh = true;
+                }
+                if (mHighlightPending.exchange(true))
+                {
+                    return;
+                }
+                QMetaObject::invokeMethod(
+                    this,
+                    [this]() {
+                        mHighlightPending.store(false);
+                        std::vector<std::uint64_t> ids;
+                        bool fresh = false;
+                        {
+                            const std::lock_guard<std::mutex> lock(mHighlightMutex);
+                            fresh = mHighlightMailboxFresh;
+                            mHighlightMailboxFresh = false;
+                            ids.swap(mHighlightMailbox);
+                        }
+                        if (fresh)
+                        {
+                            setHighlightWayIds(std::move(ids));
+                        }
+                    },
+                    Qt::QueuedConnection);
+            });
     }
 
     // The retry wake-up. Single-shot and re-armed only while something is
@@ -666,7 +742,12 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     if (mGpu)
     {
-        const QImage& frame = mGpu->render(projection, batches, mConfig.style, background);
+        const map_widget::GpuRenderer::Highlight highlight {
+            mHighlightWayIds, qt_helpers::toQColor(mConfig.highlight_color),
+            float(mConfig.highlight_extra_width)
+        };
+        const QImage& frame =
+            mGpu->render(projection, batches, mConfig.style, background, highlight);
         if (frame.isNull())
         {
             painter.fillRect(rect(), background);
@@ -844,6 +925,20 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
     }
 }
 
+void MapWidget::setHighlightWayIds(std::vector<std::uint64_t> ids)
+{
+    // The renderer's contract, enforced at the one door every caller uses:
+    // sorted, so a tile's own sorted road list joins by walking, not searching.
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    if (ids == mHighlightWayIds)
+    {
+        return;
+    }
+    mHighlightWayIds = std::move(ids);
+    update();
+}
+
 void MapWidget::armRetryTimer()
 {
     std::optional<std::chrono::steady_clock::time_point> due;
@@ -867,6 +962,50 @@ void MapWidget::armRetryTimer()
         std::chrono::ceil<std::chrono::milliseconds>(*due - std::chrono::steady_clock::now());
     mRetryTimer.start(static_cast<int>(std::max<std::int64_t>(wait.count(), 0)) + 1);
 }
+
+namespace map_widget
+{
+
+std::vector<std::uint64_t> highlightWayIds(::MapHorizon::Reader horizon)
+{
+    std::vector<std::uint64_t> ids;
+    if (!horizon.getHasPosition())
+    {
+        return ids;
+    }
+    ids.push_back(
+        std::uint64_t(road_graph::wayOf(horizon.getPosition().getWhere().getSegmentId())));
+
+    // The root path is first, by the schema's contract; its id scopes which
+    // profiles are the road AHEAD rather than a side branch -- lighting every
+    // branch would paint the whole junction.
+    const auto paths = horizon.getPaths();
+    if (paths.size() > 0)
+    {
+        const std::uint32_t rootId = paths[0].getPathId();
+        for (const auto profile : horizon.getProfiles())
+        {
+            if (profile.getPathId() != rootId)
+            {
+                continue;
+            }
+            // Filtered, not switched: the schema grows new profile kinds
+            // without breaking this consumer. The deliberate carve-out from
+            // -Wswitch-enum, written into the schema comment.
+            if (profile.getValue().which() != ::HorizonProfile::Value::SEGMENT)
+            {
+                continue;
+            }
+            ids.push_back(std::uint64_t(road_graph::wayOf(profile.getValue().getSegment())));
+        }
+    }
+
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    return ids;
+}
+
+} // namespace map_widget
 
 MapWidget::Status MapWidget::status() const
 {
