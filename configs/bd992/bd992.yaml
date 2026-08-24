@@ -8,10 +8,18 @@
 #
 # Two connections are used. The stream port carries the GSOF reports; the
 # control port carries command and report packets for reading and changing the
-# configuration. WHICH PORT SERVES COMMANDS IS NOT DOCUMENTED in Trimble's ICD
-# -- run `bd992_bridge --probe --config <this file>` to find out, and if it
-# turns out one socket does both, point stream_port and control_port at the
-# same number.
+# configuration.
+#
+# WHETHER ONE SOCKET CAN DO BOTH IS STILL UNKNOWN. Trimble's ICD does not say.
+# A socket configured OUTPUT-ONLY was tried on hardware and, unsurprisingly,
+# never answered a command -- which tests the configuration rather than the
+# receiver. If you want one socket to serve both, configure it for input and
+# output on the receiver and point stream_port and control_port at it.
+#
+# `bd992_bridge --probe --config <this file>` is how to check: it walks the
+# application file indices and prints what each holds. A clean "timeout: no
+# reply from the receiver" on every index means the commands are not reaching a
+# listener, whatever the port number says.
 
 receiver:
   host: 192.168.1.100
@@ -22,7 +30,9 @@ receiver:
   # working.
   stream_port: 5017
 
-  # The socket used for command/report. See the note above.
+  # The socket used for command/report. It must be configured on the receiver to
+  # accept input; whether that can be the same socket as stream_port is the open
+  # question in the note above.
   control_port: 5018
 
   connect_timeout_ms: 2000
@@ -73,7 +83,13 @@ configuration:
   #
   # Record names are the ones in GSOF_RECORD_TABLE
   # (libs/gsof/include/gsof/record_table.h); an unknown name is refused at load
-  # with the full list.
+  # with the full list. Every record type a BD992 was observed to emit is in
+  # that table, so anything the receiver can send can be asked for here.
+  #
+  # This list is what THIS node needs, not everything available. With
+  # port_policy: additive the receiver may be sending more, and it will be
+  # decoded and published either way -- the list only controls what the node
+  # insists on.
   outputs:
     # Time and satellites used. Cheap, and the first thing to look at when a
     # position looks wrong.
@@ -97,6 +113,25 @@ configuration:
 
     # Leap seconds, which is the only way to turn GPS time into UTC.
     - { record: current_time_utc, rate: 1hz }
+
+    # Height above SEA LEVEL, and the geoid model behind it. The only record
+    # that carries one: every other height is above the WGS-84 ellipsoid, and
+    # in southern California the two differ by about 34.5 m.
+    - { record: lat_long_msl_height, rate: 1hz }
+
+    # Satellites, in the form that is not capped at 25. Record 34 truncates
+    # silently once five constellations are in view, which on our own receiver
+    # meant it reported 24 of 31.
+    - { record: all_sv_detailed_page, rate: 1hz }
+
+    # The correction link as the receiver sees it: latency and integrity, which
+    # degrade before the fix does.
+    - { record: receiver_diagnostics, rate: 1hz }
+
+    # Spoof detection. A satellite whose navigation message fails
+    # authentication yields a position that is self-consistent and false, and
+    # nothing else in the stream shows it.
+    - { record: nav_message_auth, rate: 1hz }
 
 publish:
   topic_prefix: nodes/bd992

@@ -12,8 +12,8 @@
 #include "bd992.capnp.h"
 #include "gsof_attitude.capnp.h"
 #include "gsof_common.capnp.h"
-#include "gsof_epoch.capnp.h"
 #include "gsof_ins.capnp.h"
+#include "gsof_integrity.capnp.h"
 #include "gsof_position.capnp.h"
 #include "gsof_satellites.capnp.h"
 #include "gsof_status.capnp.h"
@@ -89,13 +89,83 @@ std::string trimmed(const std::array<char, N>& field)
         case gsof::PositionFixType::LocationRtk:            return ::GsofPositionFixType::LOCATION_RTK;
         case gsof::PositionFixType::OmniStarVbs:            return ::GsofPositionFixType::OMNI_STAR_VBS;
         case gsof::PositionFixType::BeaconDifferential:     return ::GsofPositionFixType::BEACON_DIFFERENTIAL;
+        case gsof::PositionFixType::OmniStarHpXp:           return ::GsofPositionFixType::OMNI_STAR_HP_XP;
+        case gsof::PositionFixType::OmniStarHpG2:           return ::GsofPositionFixType::OMNI_STAR_HP_G2;
+        case gsof::PositionFixType::OmniStarG2:             return ::GsofPositionFixType::OMNI_STAR_G2;
+        case gsof::PositionFixType::SynchronousRtx:         return ::GsofPositionFixType::SYNCHRONOUS_RTX;
+        case gsof::PositionFixType::LowLatencyRtx:          return ::GsofPositionFixType::LOW_LATENCY_RTX;
+        case gsof::PositionFixType::OmniStarMultipleSource: return ::GsofPositionFixType::OMNI_STAR_MULTIPLE_SOURCE;
+        case gsof::PositionFixType::OmniStarL1Only:         return ::GsofPositionFixType::OMNI_STAR_L1_ONLY;
+        case gsof::PositionFixType::InsAutonomous:          return ::GsofPositionFixType::INS_AUTONOMOUS;
+        case gsof::PositionFixType::InsSbas:                return ::GsofPositionFixType::INS_SBAS;
+        case gsof::PositionFixType::InsCodePhaseDgnss:      return ::GsofPositionFixType::INS_CODE_PHASE_DGNSS;
+        case gsof::PositionFixType::InsRtxCodePhase:        return ::GsofPositionFixType::INS_RTX_CODE_PHASE;
+        case gsof::PositionFixType::InsRtxCarrierPhase:     return ::GsofPositionFixType::INS_RTX_CARRIER_PHASE;
+        case gsof::PositionFixType::InsOmniStar:            return ::GsofPositionFixType::INS_OMNI_STAR;
+        case gsof::PositionFixType::InsRtk:                 return ::GsofPositionFixType::INS_RTK;
+        case gsof::PositionFixType::InsDeadReckoning:       return ::GsofPositionFixType::INS_DEAD_RECKONING;
         case gsof::PositionFixType::RtxCodePhase:           return ::GsofPositionFixType::RTX_CODE_PHASE;
+        case gsof::PositionFixType::RtxFastSync:            return ::GsofPositionFixType::RTX_FAST_SYNC;
+        case gsof::PositionFixType::RtxFastLowLatency:      return ::GsofPositionFixType::RTX_FAST_LOW_LATENCY;
         case gsof::PositionFixType::XFillRtx:               return ::GsofPositionFixType::X_FILL_RTX;
+        case gsof::PositionFixType::LowLatencyRtxRangePoint:  return ::GsofPositionFixType::LOW_LATENCY_RTX_RANGE_POINT;
+        case gsof::PositionFixType::SynchronousRtxRangePoint: return ::GsofPositionFixType::SYNCHRONOUS_RTX_RANGE_POINT;
+        case gsof::PositionFixType::LowLatencyRtxViewPoint:   return ::GsofPositionFixType::LOW_LATENCY_RTX_VIEW_POINT;
+        case gsof::PositionFixType::SynchronousRtxViewPoint:  return ::GsofPositionFixType::SYNCHRONOUS_RTX_VIEW_POINT;
+        case gsof::PositionFixType::LowLatencyRtxFieldPoint:  return ::GsofPositionFixType::LOW_LATENCY_RTX_FIELD_POINT;
+        case gsof::PositionFixType::SynchronousRtxFieldPoint: return ::GsofPositionFixType::SYNCHRONOUS_RTX_FIELD_POINT;
+        case gsof::PositionFixType::OmniStarG2Plus:         return ::GsofPositionFixType::OMNI_STAR_G2_PLUS;
+        case gsof::PositionFixType::OmniStarG4Plus:         return ::GsofPositionFixType::OMNI_STAR_G4_PLUS;
+        case gsof::PositionFixType::L1sSlas:                return ::GsofPositionFixType::L1S_SLAS;
+        case gsof::PositionFixType::InsXFillRtx:            return ::GsofPositionFixType::INS_X_FILL_RTX;
+        case gsof::PositionFixType::Clas:                   return ::GsofPositionFixType::CLAS;
+        case gsof::PositionFixType::InsClas:                return ::GsofPositionFixType::INS_CLAS;
+        case gsof::PositionFixType::Has:                    return ::GsofPositionFixType::HAS;
+        case gsof::PositionFixType::InsHas:                 return ::GsofPositionFixType::INS_HAS;
     }
 
-    // The ICD's list runs to 48 with gaps and grows with firmware.
+    // The ICD reserves 34, 35, 45, 46 and 47, and firmware adds to the end.
     // positionFixTypeRaw carries what actually arrived.
     return ::GsofPositionFixType::UNKNOWN;
+}
+
+::GsofNmaSource nmaSource(std::uint8_t raw)
+{
+    switch (static_cast<gsof::NmaSource>(raw))
+    {
+        case gsof::NmaSource::Osnma:  return ::GsofNmaSource::OSNMA;
+        case gsof::NmaSource::RtxNma: return ::GsofNmaSource::RTX_NMA;
+        case gsof::NmaSource::QzNma:  return ::GsofNmaSource::QZ_NMA;
+    }
+
+    return ::GsofNmaSource::UNKNOWN;
+}
+
+::GsofIonoGuardSource ionoGuardSource(std::uint8_t raw)
+{
+    switch (static_cast<gsof::IonoGuardSource>(raw))
+    {
+        case gsof::IonoGuardSource::Unknown:       return ::GsofIonoGuardSource::UNKNOWN;
+        case gsof::IonoGuardSource::RtkBase:       return ::GsofIonoGuardSource::RTK_BASE;
+        case gsof::IonoGuardSource::RoverComputed: return ::GsofIonoGuardSource::ROVER_COMPUTED;
+        case gsof::IonoGuardSource::Rtx:           return ::GsofIonoGuardSource::RTX;
+        case gsof::IonoGuardSource::Invalid:       return ::GsofIonoGuardSource::INVALID;
+    }
+
+    return ::GsofIonoGuardSource::UNKNOWN;
+}
+
+::GsofIonoGuardLevel ionoGuardLevel(std::uint8_t raw)
+{
+    switch (static_cast<gsof::IonoGuardLevel>(raw))
+    {
+        case gsof::IonoGuardLevel::Green:  return ::GsofIonoGuardLevel::GREEN;
+        case gsof::IonoGuardLevel::Yellow: return ::GsofIonoGuardLevel::YELLOW;
+        case gsof::IonoGuardLevel::Orange: return ::GsofIonoGuardLevel::ORANGE;
+        case gsof::IonoGuardLevel::Red:    return ::GsofIonoGuardLevel::RED;
+    }
+
+    return ::GsofIonoGuardLevel::UNKNOWN;
 }
 
 void fillTime(::GsofGpsTime::Builder time, std::uint16_t week, std::uint32_t timeOfWeekMs)
@@ -261,6 +331,75 @@ void fill(::GsofAttitudeInfo::Builder out, const gsof::AttitudeInfo& in)
     out.setMasterSlaveRangeVariance(in.masterSlaveRangeVariance);
 }
 
+void fill(::GsofSvBriefInfo::Builder out, const gsof::SvBriefInfo& in)
+{
+    out.setCount(in.count);
+
+    ::capnp::List<::GsofGpsSvBrief>::Builder list = out.initSatellites(in.count);
+    for (std::size_t i = 0; i < in.count; ++i)
+    {
+        const gsof::SvBriefInfo::Entry& sv = in.satellites[i];
+        ::GsofGpsSvBrief::Builder entry = list[static_cast<unsigned>(i)];
+        entry.setPrn(sv.prn);
+        entry.setFlags1(sv.flags.flags1);
+        entry.setFlags2(sv.flags.flags2);
+        entry.setAboveHorizon(sv.flags.aboveHorizon());
+        entry.setUsedInPosition(sv.flags.usedInPosition());
+        entry.setUsedInRtk(sv.flags.usedInRtk());
+    }
+}
+
+void fill(::GsofSvDetailInfo::Builder out, const gsof::SvDetailInfo& in)
+{
+    out.setCount(in.count);
+
+    ::capnp::List<::GsofGpsSvDetail>::Builder list = out.initSatellites(in.count);
+    for (std::size_t i = 0; i < in.count; ++i)
+    {
+        const gsof::SvDetailInfo::Entry& sv = in.satellites[i];
+        ::GsofGpsSvDetail::Builder entry = list[static_cast<unsigned>(i)];
+        entry.setPrn(sv.prn);
+        entry.setFlags1(sv.flags.flags1);
+        entry.setFlags2(sv.flags.flags2);
+        entry.setAboveHorizon(sv.flags.aboveHorizon());
+        entry.setUsedInPosition(sv.flags.usedInPosition());
+        entry.setUsedInRtk(sv.flags.usedInRtk());
+        entry.setElevationDeg(sv.elevationDeg);
+        entry.setAzimuthDeg(sv.azimuthDeg);
+        entry.setSnrFirstDb(sv.snrFirstDb());
+        entry.setSnrSecondDb(sv.snrSecondDb());
+    }
+}
+
+void fill(::GsofAllSvDetailedPage::Builder out, const gsof::AllSvDetailedPage& in)
+{
+    out.setVersion(in.version);
+    out.setPageNumber(in.pageNumber());
+    out.setTotalPages(in.totalPages());
+    out.setLastPage(in.isLastPage());
+    out.setCount(in.count);
+
+    ::capnp::List<::GsofSvDetail>::Builder list = out.initSatellites(in.count);
+    for (std::size_t i = 0; i < in.count; ++i)
+    {
+        const gsof::SvDetail& sv = in.satellites[i];
+        ::GsofSvDetail::Builder entry = list[static_cast<unsigned>(i)];
+        entry.setPrn(sv.prn);
+        entry.setSystem(svSystem(sv.system));
+        entry.setSystemRaw(sv.system);
+        entry.setFlags1(sv.flags.flags1);
+        entry.setFlags2(sv.flags.flags2);
+        entry.setAboveHorizon(sv.flags.aboveHorizon());
+        entry.setUsedInPosition(sv.flags.usedInPosition());
+        entry.setUsedInRtk(sv.flags.usedInRtk());
+        entry.setElevationDeg(sv.elevationDeg);
+        entry.setAzimuthDeg(sv.azimuthDeg);
+        entry.setSnrFirstDb(sv.snrFirstDb());
+        entry.setSnrSecondDb(sv.snrSecondDb());
+        entry.setSnrThirdDb(sv.snrThirdDb());
+    }
+}
+
 void fill(::GsofAllSvBrief::Builder out, const gsof::AllSvBrief& in)
 {
     out.setCount(in.count);
@@ -379,6 +518,144 @@ void fill(::GsofBasePosition::Builder out, const gsof::BasePosition& in)
     out.setBaseQuality(in.baseQuality);
 }
 
+void fill(::GsofCodePosition::Builder out, const gsof::CodePosition& in)
+{
+    out.setPositionType(in.positionType);
+    fillTime(out.initTime(), in.gpsWeek, in.gpsTimeMs);
+    out.setLatitudeDeg(toDegrees(in.latitudeRad));
+    out.setLongitudeDeg(toDegrees(in.longitudeRad));
+    out.setEllipsoidHeightM(in.heightM);
+    out.setSigmaEastM(in.sigmaEastM);
+    out.setSigmaNorthM(in.sigmaNorthM);
+    out.setSigmaUpM(in.sigmaUpM);
+}
+
+void fill(::GsofLatLongMslHeight::Builder out, const gsof::LatLongMslHeight& in)
+{
+    out.setLatitudeDeg(toDegrees(in.latitudeRad));
+    out.setLongitudeDeg(toDegrees(in.longitudeRad));
+    // ABOVE SEA LEVEL, unlike every other height this node publishes.
+    out.setMslHeightM(in.mslHeightM);
+    out.setGeoidModel(::capnp::Text::Reader(in.model.data(), in.modelLength));
+}
+
+void fill(::GsofReceiverDiagnostics::Builder out, const gsof::ReceiverDiagnostics& in)
+{
+    out.setBaseFlags(in.baseFlags);
+    out.setLinkIntegrity(in.linkIntegrity);
+    out.setLinkIntegrityPercent(in.linkIntegrityPercent());
+    out.setCommonL1Svs(in.commonL1Svs);
+    out.setCommonL2Svs(in.commonL2Svs);
+    out.setDatalinkLatencyS(in.datalinkLatencyS());
+    out.setDiffSvsInUse(in.diffSvsInUse);
+    out.setRtkPositionAgeS(in.rtkPositionAgeS());
+}
+
+void fill(::GsofSecondAntennaSigma::Builder out, const gsof::SecondAntennaSigma& in)
+{
+    out.setRangeRms(in.rangeRms);
+    out.setSigmaEastM(in.sigmaEastM);
+    out.setSigmaNorthM(in.sigmaNorthM);
+    out.setCovarianceEastNorth(in.covarianceEastNorth);
+    out.setSigmaUpM(in.sigmaUpM);
+    out.setSemiMajorM(in.semiMajorM);
+    out.setSemiMinorM(in.semiMinorM);
+    // Degrees on the wire already, as in GsofPositionSigma.
+    out.setOrientationDeg(in.orientationDeg);
+    out.setUnitVariance(in.unitVariance);
+    out.setHasEpochCount(in.hasEpochCount);
+    out.setEpochCount(in.epochCount);
+}
+
+// The masks are little-endian BY BIT -- bit 0 of byte 0 is PRN 1 -- where every
+// scalar in GSOF is big-endian by byte. Expanding to a PRN list here means no
+// consumer has to know that.
+//
+// Gathered into a vector first because a capnp list is sized at init and the
+// count is not known without walking the mask; walking it twice would be the
+// alternative, and this record is at most a few hundred bits.
+std::vector<std::uint8_t> prnsOf(const gsof::NavMessageAuth& in, std::size_t entry, bool wantFailed)
+{
+    std::vector<std::uint8_t> out;
+    const unsigned covered = in.entries[entry].maskBytes * 8u;
+    for (unsigned prn = 1; prn <= covered; ++prn)
+    {
+        const std::uint8_t value = static_cast<std::uint8_t>(prn);
+        if (wantFailed ? in.isFailed(entry, value) : in.isAuthenticated(entry, value))
+        {
+            out.push_back(value);
+        }
+    }
+    return out;
+}
+
+void setPrns(::capnp::List<std::uint8_t>::Builder list, const std::vector<std::uint8_t>& prns)
+{
+    for (std::size_t i = 0; i < prns.size(); ++i)
+    {
+        list.set(static_cast<unsigned>(i), prns[i]);
+    }
+}
+
+void fill(::GsofNavMessageAuth::Builder out, const gsof::NavMessageAuth& in)
+{
+    fillTime(out.initTime(), in.gpsWeek, in.gpsTimeMs);
+    out.setCount(in.count);
+
+    ::capnp::List<::GsofNmaEntry>::Builder list = out.initEntries(in.count);
+    for (std::size_t i = 0; i < in.count; ++i)
+    {
+        const gsof::NavMessageAuth::Entry& source = in.entries[i];
+        ::GsofNmaEntry::Builder entry = list[static_cast<unsigned>(i)];
+        entry.setSource(nmaSource(source.source));
+        entry.setSourceRaw(source.source);
+        entry.setSignalType(source.signalType);
+        entry.setMaskBytes(source.maskBytes);
+
+        const std::vector<std::uint8_t> authenticated = prnsOf(in, i, false);
+        const std::vector<std::uint8_t> failed = prnsOf(in, i, true);
+
+        setPrns(entry.initAuthenticatedPrns(static_cast<unsigned>(authenticated.size())), authenticated);
+        setPrns(entry.initFailedPrns(static_cast<unsigned>(failed.size())), failed);
+    }
+
+    out.setAnyFailed(in.anyFailed());
+}
+
+void fill(::GsofIonoGuardInfo::Builder out, const gsof::IonoGuardInfo& in)
+{
+    fillTime(out.initTime(), in.gpsWeek, in.gpsTimeMs);
+    out.setSource(ionoGuardSource(in.sourceRaw));
+    out.setSourceRaw(in.sourceRaw);
+    out.setGeofenceStatus(in.geofenceStatus);
+    out.setStationActivityLevel(ionoGuardLevel(in.stationActivityLevel));
+    out.setCount(in.count);
+
+    ::capnp::List<::GsofIonoGuardSv>::Builder list = out.initSatellites(in.count);
+    for (std::size_t i = 0; i < in.count; ++i)
+    {
+        const gsof::IonoGuardInfo::Entry& sv = in.satellites[i];
+        ::GsofIonoGuardSv::Builder entry = list[static_cast<unsigned>(i)];
+        entry.setSystem(svSystem(sv.system));
+        entry.setSystemRaw(sv.system);
+        entry.setPrn(sv.prn);
+        entry.setLevel(ionoGuardLevel(sv.metric));
+        entry.setLevelRaw(sv.metric);
+    }
+}
+
+void fill(::GsofIonoGuardSummary::Builder out, const gsof::IonoGuardSummary& in)
+{
+    out.setSource(ionoGuardSource(in.sourceRaw));
+    out.setSourceRaw(in.sourceRaw);
+    out.setGeofenceStatus(in.geofenceStatus);
+    out.setStationActivityLevel(ionoGuardLevel(in.stationActivityLevel));
+    out.setGreenSvs(in.greenSvs);
+    out.setYellowSvs(in.yellowSvs);
+    out.setOrangeSvs(in.orangeSvs);
+    out.setRedSvs(in.redSvs);
+}
+
 void fill(::GsofInsFullNav::Builder out, const gsof::InsFullNav& in)
 {
     fillTime(out.initTime(), in.gpsWeek, in.gpsTimeMs);
@@ -442,16 +719,6 @@ struct Publishers::Impl
 
     std::unique_ptr<pub_sub::ZenohPublisher<::GsofRawRecord>> raw;
 
-    // The epoch being accumulated, and the topic it goes out on.
-    //
-    // Touched only from the reader thread, which is also the only thread that
-    // calls publish() and endTransmission() -- so no lock, for the same reason
-    // the publisher slots need none. Its counts are copied under the mutex at
-    // each transmission so the status path can read them.
-    EpochAccumulator epoch;
-    std::unique_ptr<pub_sub::ZenohPublisher<::GsofEpoch>> epochPublisher;
-    std::uint32_t epochSequence { 0 };
-
     struct Counter
     {
         std::string name;
@@ -464,7 +731,6 @@ struct Publishers::Impl
     mutable std::mutex mutex;
     std::unordered_map<std::uint8_t, Counter> counters;
     std::optional<std::int32_t> serialNumber;
-    Publishers::EpochCounts epochCounts;
 
     void note(std::uint8_t type, const char* name)
     {
@@ -545,12 +811,6 @@ void Publishers::publish(const gsof::RawRecord& record)
             const std::lock_guard<std::mutex> lock(mImpl->mutex);
             mImpl->serialNumber = parsed.serialNumber;
         }
-
-        // Stash what a fused epoch is made of. Nothing is decided here: which
-        // records actually arrived together is only known once the
-        // transmission ends. Records that are not part of an epoch are
-        // ignored, so this needs no filter.
-        mImpl->epoch.add(parsed);
     });
 
     if (visited.has_value())
@@ -586,108 +846,6 @@ void Publishers::publish(const gsof::RawRecord& record)
     mImpl->raw->put();
 
     mImpl->note(record.type, "raw");
-}
-
-void Publishers::endTransmission()
-{
-    Impl& impl = *mImpl;
-
-    // take() clears whatever happens below, so a record can never survive into
-    // the next transmission -- carrying one forward is exactly the stale
-    // heading this message exists to prevent.
-    const std::optional<FusedEpoch> taken = impl.epoch.take();
-
-    {
-        const std::lock_guard<std::mutex> lock(impl.mutex);
-        impl.epochCounts.shape = impl.epoch.counts();
-    }
-
-    if (!taken.has_value())
-    {
-        // Not every transmission is an epoch -- a receiver may send status
-        // records on their own schedule. Counted rather than logged, because
-        // logging it would be a line per transmission at the output rate.
-        return;
-    }
-
-    const FusedEpoch& epoch = *taken;
-
-    if (!impl.epochPublisher)
-    {
-        const std::string key = impl.topicPrefix + "/epoch";
-        impl.epochPublisher = std::make_unique<pub_sub::ZenohPublisher<::GsofEpoch>>(key);
-        SPDLOG_INFO("bd992: publishing fused epochs on {}", key);
-    }
-
-    ::GsofEpoch::Builder out = impl.epochPublisher->fields();
-
-    out.setSequence(impl.epochSequence);
-    ++impl.epochSequence;
-
-    out.setLatitudeDeg(toDegrees(epoch.position.latitudeRad));
-    out.setLongitudeDeg(toDegrees(epoch.position.longitudeRad));
-    out.setEllipsoidHeightM(epoch.position.heightM);
-
-    out.setHasTime(epoch.time.has_value());
-    if (epoch.time.has_value())
-    {
-        fillTime(out.initTime(), epoch.time->gpsWeek, epoch.time->gpsTimeMs);
-        out.setSvsUsed(epoch.time->svsUsed);
-    }
-
-    out.setHasVelocity(epoch.velocity.has_value());
-    if (epoch.velocity.has_value())
-    {
-        out.setVelocityValid(epoch.velocity->isValid());
-        out.setDopplerDerived(epoch.velocity->isDopplerDerived());
-        out.setHorizontalSpeedMps(epoch.velocity->horizontalSpeedMps);
-        out.setHeadingDeg(toDegrees(epoch.velocity->headingRad));
-        out.setVerticalVelocityMps(epoch.velocity->verticalVelocityMps);
-    }
-
-    out.setHasFixType(epoch.fixType.has_value());
-    if (epoch.fixType.has_value())
-    {
-        out.setPositionFixType(fixType(epoch.fixType->positionFixTypeRaw));
-        out.setPositionFixTypeRaw(epoch.fixType->positionFixTypeRaw);
-        out.setRtkFixed(epoch.fixType->isRtkFixed());
-        out.setCorrectionAgeS(epoch.fixType->correctionAgeS);
-    }
-
-    out.setHasSigma(epoch.sigma.has_value());
-    if (epoch.sigma.has_value())
-    {
-        out.setPositionRmsM(epoch.sigma->positionRms);
-        out.setSigmaEastM(epoch.sigma->sigmaEastM);
-        out.setSigmaNorthM(epoch.sigma->sigmaNorthM);
-        out.setSigmaUpM(epoch.sigma->sigmaUpM);
-    }
-
-    impl.epochPublisher->put();
-
-    const std::lock_guard<std::mutex> lock(impl.mutex);
-    if (!epoch.time.has_value())
-    {
-        ++impl.epochCounts.withoutTime;
-    }
-    if (!epoch.velocity.has_value())
-    {
-        ++impl.epochCounts.withoutVelocity;
-    }
-    if (!epoch.fixType.has_value())
-    {
-        ++impl.epochCounts.withoutFixType;
-    }
-    if (!epoch.sigma.has_value())
-    {
-        ++impl.epochCounts.withoutSigma;
-    }
-}
-
-Publishers::EpochCounts Publishers::epochCounts() const
-{
-    const std::lock_guard<std::mutex> lock(mImpl->mutex);
-    return mImpl->epochCounts;
 }
 
 std::vector<Publishers::Seen> Publishers::seen() const

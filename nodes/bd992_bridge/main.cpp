@@ -160,8 +160,10 @@ int runProbe(const NodeConfig& config)
 
     if (found == 0)
     {
-        SPDLOG_ERROR("bd992: no application file could be read. If the connection itself failed, the "
-                     "control port is probably not what receiver.control_port says.");
+        SPDLOG_ERROR("bd992: no application file could be read. A clean timeout on every index "
+                     "means the commands reached no listener -- check that the socket at "
+                     "receiver.control_port is configured on the receiver to accept INPUT, not "
+                     "output only.");
         return 1;
     }
 
@@ -393,12 +395,6 @@ int main(int argc, char** argv)
 
     bd992::StreamClient stream(std::move(factory), options,
                                [&publishers](const gsof::RawRecord& record) { publishers.publish(record); });
-
-    // The transmission boundary is where the fused epoch is published. It is
-    // the only place that knows which records were sent together, and that
-    // grouping is gone by the time anything downstream sees them -- see
-    // schemas/gsof_epoch.capnp.
-    stream.setTransmissionHandler([&publishers]() { publishers.endTransmission(); });
 
     std::ofstream dump;
     if (!dumpPath.empty())

@@ -36,9 +36,10 @@ void test_a_minimal_config_parses_with_defaults()
 
     check(ok, "a config with only a graph path parses");
     check(config.graphPath == "/tmp/socal.graph", "keeping the path");
-    check(config.position.zenohKey == "nodes/bd992/epoch",
-          "and defaulting to the FUSED epoch topic, not a per-record one");
-    check(config.position.schemaType == "GsofEpoch", "with its schema");
+    check(config.position.positionKey == "nodes/bd992/gsof/lat_long_height",
+          "and defaulting to the three GSOF record topics");
+    check(config.position.velocityKey == "nodes/bd992/gsof/velocity", "the velocity one");
+    check(config.position.sigmaKey == "nodes/bd992/gsof/position_sigma", "and the accuracy one");
     check(config.services.horizonKey == "nodes/map_match/horizon", "and the horizon topic");
     check(config.match.beamWidth > 0, "and a usable beam width");
 }
@@ -46,7 +47,7 @@ void test_a_minimal_config_parses_with_defaults()
 void test_the_graph_path_is_required()
 {
     map_match::NodeConfig config;
-    check(!map_match::parse_node_config("position:\n  zenoh_key: a/b\n", config),
+    check(!map_match::parse_node_config("position:\n  position_key: a/b\n", config),
           "a config with no graph is refused");
 }
 
@@ -55,8 +56,9 @@ void test_everything_can_be_overridden()
     const std::string yaml = R"(
 graph: /data/graph.bin
 position:
-  zenoh_key: sensors/gnss
-  schema_type: GsofLatLongHeight
+  position_key: sensors/gnss
+  velocity_key: sensors/gnss_velocity
+  sigma_key: sensors/gnss_sigma
   stale_after_ms: 500
 match:
   search_radius_m: 25.0
@@ -76,21 +78,25 @@ services:
 
     map_match::NodeConfig config;
     check(map_match::parse_node_config(yaml, config), "a fully specified config parses");
-    check(config.position.zenohKey == "sensors/gnss", "the position key");
+    check(config.position.positionKey == "sensors/gnss", "the position key");
+    check(config.position.velocityKey == "sensors/gnss_velocity", "the velocity key");
+    check(config.position.sigmaKey == "sensors/gnss_sigma", "the accuracy key");
     check(config.position.staleAfterMs == 500, "the staleness window");
     check(config.match.beamWidth == 3, "the beam width");
     check(config.match.lookaheadM == 500, "the lookahead");
     check(config.services.horizonKey == "nav/horizon", "and the horizon key");
 }
 
-void test_an_unknown_schema_is_refused()
+void test_the_three_record_topics_must_differ()
 {
-    // The subscriber would decode against nothing and the node would sit silent
-    // forever, which looks exactly like a receiver that is not sending.
+    // Pointing two of them at one key is not a typo the node can survive: the
+    // subscriber would decode a velocity record against the position schema and
+    // hand back a plausible wrong answer, because capnp reads the same bytes at
+    // different offsets rather than failing.
     map_match::NodeConfig config;
     const bool ok = map_match::parse_node_config(
-        "graph: /tmp/g\nposition:\n  schema_type: NotARealSchema\n", config);
-    check(!ok, "a schema name this build does not know is refused");
+        "graph: /tmp/g\nposition:\n  position_key: same/key\n  velocity_key: same/key\n", config);
+    check(!ok, "two record subscriptions on one key are refused");
 }
 
 void test_two_topics_on_one_key_are_refused()
@@ -102,7 +108,7 @@ void test_two_topics_on_one_key_are_refused()
 
     map_match::NodeConfig other;
     const bool alsoOk = map_match::parse_node_config(
-        "graph: /tmp/g\nposition:\n  zenoh_key: same/key\nservices:\n  horizon_key: same/key\n",
+        "graph: /tmp/g\nposition:\n  position_key: same/key\nservices:\n  horizon_key: same/key\n",
         other);
     check(!alsoOk, "and so is publishing onto the topic we subscribe");
 }
@@ -140,7 +146,7 @@ void test_every_problem_is_reported_at_once()
     // The accumulating parse: three mistakes should take one run to fix.
     map_match::NodeConfig config;
     const bool ok = map_match::parse_node_config(
-        "position:\n  schema_type: Nope\nservices:\n  horizon_key: 'bad key'\n", config);
+        "position:\n  position_key: 'bad key'\nservices:\n  horizon_key: 'also bad'\n", config);
     check(!ok, "a config with several problems is refused");
 }
 
@@ -162,7 +168,7 @@ int main()
     test_a_minimal_config_parses_with_defaults();
     test_the_graph_path_is_required();
     test_everything_can_be_overridden();
-    test_an_unknown_schema_is_refused();
+    test_the_three_record_topics_must_differ();
     test_two_topics_on_one_key_are_refused();
     test_a_bad_zenoh_key_is_refused();
     test_an_impossible_sigma_range_is_refused();

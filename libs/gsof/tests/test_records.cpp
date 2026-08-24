@@ -307,6 +307,312 @@ static_assert(kRms.gpsWeek == 2080);
 static_assert(kRms.positionRmsNorthM > 0.0F && kRms.positionRmsNorthM < 10.0F);
 
 // ============================================================================
+// ============================================================================
+// The records added for a BD992: structure, not offsets
+// ============================================================================
+//
+// THESE VECTORS ARE SYNTHETIC AND SAY SO. They are built here, by hand, which
+// means they cannot do the job golden_records.h does -- a vector authored from
+// the same reading of the ICD as the parser agrees with the parser by
+// construction, including where both are wrong, so none of this validates a
+// field OFFSET against reality.
+//
+// What they do validate is the parser's own arithmetic: nested variable
+// lengths, counts that must agree with a record length, a trailing field
+// distinguished only by how long the record is, and a name whose length is the
+// record length minus the fixed part. Those are logic, and logic can be checked
+// against bytes that were written to exercise it.
+//
+// The offset validation for records 13, 14, 28, 48, 62, 70, 74, 91, 92 and 96
+// was done against a live receiver and is NOT in this repository: that capture
+// was taken at a private location and the position is recoverable from it, both
+// from the position records directly and from the satellite azimuths and
+// elevations against the timestamp. Re-capture somewhere neutral to check it in
+// -- libs/gsof/tests/golden/README.md has the procedure, and
+// tools/gen_golden_bd992.py is the generator.
+
+// ---- Record 91: two variable lengths nested ------------------------------
+//
+// The record holds `count` entries and each entry names its own mask size, so
+// an entry is 3 + 2 * maskBytes and no two need be the same length. There is no
+// stride to multiply, and mis-sizing any entry lands the next one's header in
+// the middle of a mask. Three entries of three different widths is the shape
+// that catches it; one entry, or three of equal width, does not.
+constexpr std::array<std::uint8_t, 50> makeNavMessageAuth(bool withFailure)
+{
+    std::array<std::uint8_t, 50> out {};
+    // week 2433, time of week, three entries.
+    out[0] = 0x09; out[1] = 0x81;
+    out[2] = 0x04; out[3] = 0xEC; out[4] = 0xE1; out[5] = 0x28;
+    out[6] = 3;
+
+    // Entry 0: RTX-NMA, signal 0, a four-byte mask. PRN 2 authenticated --
+    // bit 1 of byte 0, because bit 0 is PRN 1.
+    out[7] = 1; out[8] = 0; out[9] = 4;
+    out[10] = 0x02;
+    // out[14..17] is entry 0's failed mask, left clear.
+
+    // Entry 1: OSNMA, signal 4, a five-byte mask. PRN 1 authenticated.
+    out[18] = 0; out[19] = 4; out[20] = 5;
+    out[21] = 0x01;
+    // out[26..30] is entry 1's failed mask, left clear.
+
+    // Entry 2: RTX-NMA, signal 6, an eight-byte mask -- BeiDou needs eight to
+    // reach PRN 63. PRN 44 authenticated: byte 5, bit 3.
+    out[31] = 1; out[32] = 6; out[33] = 8;
+    out[39] = 0x08;
+    if (withFailure)
+    {
+        // PRN 1 FAILED authentication, in entry 2's failed mask.
+        out[42] = 0x01;
+    }
+    return out;
+}
+
+constexpr std::array<std::uint8_t, 50> kNmaClean = makeNavMessageAuth(false);
+constexpr std::array<std::uint8_t, 50> kNmaFailed = makeNavMessageAuth(true);
+
+constexpr NavMessageAuth kNma = *NavMessageAuth::parse(bytes(kNmaClean));
+
+static_assert(kNma.count == 3);
+static_assert(kNma.entries[0].maskBytes == 4);
+static_assert(kNma.entries[1].maskBytes == 5);
+static_assert(kNma.entries[2].maskBytes == 8);
+static_assert(kNma.maskLength == 2 * (4 + 5 + 8), "both masks of all three entries, packed");
+static_assert(kNmaClean.size() == NavMessageAuth::kSize + 3 * 3 + kNma.maskLength,
+              "and the whole record is accounted for -- a mis-sized entry lands elsewhere");
+
+static_assert(kNma.entries[0].source == static_cast<std::uint8_t>(NmaSource::RtxNma));
+static_assert(kNma.entries[1].source == static_cast<std::uint8_t>(NmaSource::Osnma));
+
+// BIT 0 OF BYTE 0 IS PRN 1: the masks are little-endian by bit where every
+// scalar in GSOF is big-endian by byte. Reading them the other way round moves
+// every PRN, and reading the wrong entry's mask moves them between
+// constellations.
+static_assert(kNma.isAuthenticated(0, 2));
+static_assert(!kNma.isAuthenticated(0, 1), "PRN 1 is set in entry 1, not entry 0");
+static_assert(kNma.isAuthenticated(1, 1));
+static_assert(kNma.isAuthenticated(2, 44));
+static_assert(!kNma.isAuthenticated(1, 44), "a five-byte mask cannot even address PRN 44");
+static_assert(!kNma.isAuthenticated(0, 33), "nor a four-byte one PRN 33");
+static_assert(!kNma.isAuthenticated(0, 0), "PRNs are one-based");
+static_assert(!kNma.isAuthenticated(3, 2), "and an entry index past the count is false");
+
+// A failure anywhere is the alarm, and it must not be swamped by the
+// authenticated bits sitting next to it in the same buffer.
+static_assert(!kNma.anyFailed());
+static_assert(NavMessageAuth::parse(bytes(kNmaFailed))->anyFailed());
+static_assert(NavMessageAuth::parse(bytes(kNmaFailed))->isFailed(2, 1));
+static_assert(!NavMessageAuth::parse(bytes(kNmaFailed))->isFailed(0, 1),
+              "the failure belongs to entry 2 alone");
+static_assert(NavMessageAuth::parse(bytes(kNmaFailed))->isAuthenticated(2, 44),
+              "and the authenticated mask beside it is unchanged");
+
+// An entry whose mask runs past the record is refused rather than read.
+constexpr std::array<std::uint8_t, 12> kNmaShort {
+    0x09, 0x81, 0x04, 0xEC, 0xE1, 0x28, 0x01, 0x01, 0x00, 0x08, 0x00, 0x00,
+};
+static_assert(NavMessageAuth::parse(bytes(kNmaShort)).error().kind == ErrorKind::LengthMismatch,
+              "an eight-byte mask in a record with room for two bytes is refused");
+
+// ---- Record 38: the fix type list must stay the ICD's entire -------------
+//
+// This existed as a trimmed subset -- "the values a BD992 in a vehicle can
+// produce" -- and a BD992 in a vehicle produced one of the missing ones inside
+// an hour. The raw byte meant nothing was lost, but a consumer switching on the
+// enum saw Unknown for an ordinary RTX fix. This is the guard against trimming
+// it again.
+constexpr std::array<std::uint8_t, 26> makePositionType(std::uint8_t fixType)
+{
+    std::array<std::uint8_t, 26> out {};
+    out[25] = fixType;
+    return out;
+}
+
+static_assert(PositionType::parse(bytes(makePositionType(33)))->positionFixType() ==
+                  PositionFixType::RtxFastLowLatency,
+              "33 is RTX Fast in Low Latency mode, and was once missing");
+static_assert(PositionType::parse(bytes(makePositionType(19)))->positionFixType() ==
+              PositionFixType::SynchronousRtx);
+static_assert(PositionType::parse(bytes(makePositionType(53)))->positionFixType() ==
+              PositionFixType::InsHas);
+static_assert(PositionType::parse(bytes(makePositionType(9)))->positionFixType() ==
+              PositionFixType::FixedRtk);
+
+// The ICD reserves these, so they must NOT collide with a named value -- an
+// unrecognised type has to read as unrecognised rather than as "no fix".
+static_assert(PositionType::parse(bytes(makePositionType(34)))->positionFixTypeRaw == 34);
+static_assert(PositionType::parse(bytes(makePositionType(34)))->positionFixType() !=
+                  PositionFixType::NoFixOrOld,
+              "a reserved value is not silently flattened onto 0");
+
+// ---- Record 48: paging inside a record ------------------------------------
+//
+// Not the transport paging of transport.h. Several complete, separately framed
+// GSOF 48 records arrive in one transmission, each naming its page in one byte
+// split into two nibbles -- which is exactly the kind of field a parser gets
+// backwards while still producing plausible small numbers.
+constexpr std::array<std::uint8_t, 13> kSvPage {
+    0x01,        // version
+    0x22,        // page 2 of 2: high nibble is the page, low nibble the total
+    0x01,        // one satellite
+    0x09, 0x02, 0x8F, 0x04, 0x3F, 0x00, 0x39, 0x99, 0xA4, 0x00,
+};
+
+constexpr AllSvDetailedPage kPage = *AllSvDetailedPage::parse(bytes(kSvPage));
+
+static_assert(kPage.pageNumber() == 2 && kPage.totalPages() == 2, "high nibble is the page");
+static_assert(kPage.isLastPage());
+static_assert(AllSvDetailedPage::parse(bytes(std::array<std::uint8_t, 3> { 0x01, 0x12, 0x00 }))
+                  ->pageNumber() == 1,
+              "and 0x12 is page 1 of 2, not page 2 of 1");
+static_assert(kPage.count == 1);
+static_assert(kSvPage.size() == AllSvDetailedPage::kSize + AllSvDetailedPage::kEntrySize,
+              "the count and the record length are two statements of the same fact");
+static_assert(kPage.satellites[0].prn == 9);
+static_assert(kPage.satellites[0].elevationDeg == 63 && kPage.satellites[0].azimuthDeg == 57);
+
+// A count the record has no room for is refused, as in records 33 and 34.
+constexpr std::array<std::uint8_t, 5> kPageLies { 0x01, 0x11, 0x09, 0x00, 0x00 };
+static_assert(AllSvDetailedPage::parse(bytes(kPageLies)).error().kind == ErrorKind::LengthMismatch);
+
+// ---- Record 70: a name whose length is the record's ------------------------
+//
+// The geoid model name has no length prefix and no terminator. It runs from
+// byte 26 to the end of the record, so its length is the record length minus
+// 24 -- which means the name cannot be read without trusting the length byte,
+// and a parser that assumed a fixed width would read the wrong thing on any
+// receiver using a different model.
+constexpr std::array<std::uint8_t, 29> kMsl {
+    // Three doubles, then "EGM96" with nothing marking where it starts or ends.
+    0x3F, 0xE2, 0xD3, 0x7F, 0x00, 0x00, 0x00, 0x00,
+    0xC0, 0x00, 0x6C, 0xCD, 0x00, 0x00, 0x00, 0x00,
+    0x40, 0x78, 0x65, 0xF8, 0x00, 0x00, 0x00, 0x00,
+    0x45, 0x47, 0x4D, 0x39, 0x36,
+};
+
+constexpr LatLongMslHeight kMslRecord = *LatLongMslHeight::parse(bytes(kMsl));
+
+static_assert(kMslRecord.modelLength == kMsl.size() - LatLongMslHeight::kSize);
+static_assert(kMslRecord.modelLength == 5);
+static_assert(kMslRecord.model[0] == 'E' && kMslRecord.model[4] == '6');
+
+// The fixed part alone is legal and names no model -- a receiver with no geoid
+// applied is not an error.
+static_assert(LatLongMslHeight::parse(std::span<const std::uint8_t>(kMsl).first(24)).has_value());
+static_assert(
+    LatLongMslHeight::parse(std::span<const std::uint8_t>(kMsl).first(24))->modelLength == 0);
+
+// ---- Record 74: the epoch count that could not be placed -------------------
+//
+// The ICD gives this record 38 body bytes ending in a two-byte epoch count. A
+// real receiver was seen to send 42, with a float where that count should be.
+// Which four bytes moved could not be determined, so the count is reported only
+// at exactly the documented length rather than guessed at.
+constexpr std::array<std::uint8_t, 38> kSecondAntenna = [] {
+    std::array<std::uint8_t, 38> out {};
+    out[36] = 0x00;
+    out[37] = 0x07;   // seven epochs
+    return out;
+}();
+
+static_assert(SecondAntennaSigma::parse(bytes(kSecondAntenna))->hasEpochCount);
+static_assert(SecondAntennaSigma::parse(bytes(kSecondAntenna))->epochCount == 7);
+
+// One byte longer, and the count is ABSENT rather than read from where it used
+// to be. This is the case the tree's usual "a longer record is accepted and its
+// tail ignored" rule gets wrong, which is why this record does not follow it.
+constexpr std::array<std::uint8_t, 42> kSecondAntennaLong = [] {
+    std::array<std::uint8_t, 42> out {};
+    out[36] = 0x42;
+    out[37] = 0x83;   // a float, not a count -- 0x4283 would read as 17027 epochs
+    return out;
+}();
+
+static_assert(SecondAntennaSigma::parse(bytes(kSecondAntennaLong)).has_value(),
+              "the record still parses");
+static_assert(!SecondAntennaSigma::parse(bytes(kSecondAntennaLong))->hasEpochCount,
+              "but says it does not know the epoch count");
+static_assert(SecondAntennaSigma::parse(bytes(kSecondAntennaLong))->epochCount == 0,
+              "rather than reporting 17027 epochs for a one-epoch fix");
+
+// The fields before the disputed tail are read either way.
+static_assert(SecondAntennaSigma::parse(bytes(kSecondAntennaLong))->sigmaEastM == 0.0F);
+
+// ---- Records 13, 14: the GPS-only lists and their strides ------------------
+//
+// Three bytes per satellite and eight, against records 33 and 34's four and
+// ten. Getting a stride wrong reads every satellite after the first from the
+// middle of its predecessor, which produces plausible PRNs and nonsense
+// elevations rather than an error.
+constexpr std::array<std::uint8_t, 7> kGpsBrief { 2, 16, 0x47, 0x00, 4, 0xCF, 0x04 };
+constexpr SvBriefInfo kBrief13 = *SvBriefInfo::parse(bytes(kGpsBrief));
+
+static_assert(kBrief13.count == 2);
+static_assert(kGpsBrief.size() == SvBriefInfo::kSize + 2 * SvBriefInfo::kEntrySize);
+static_assert(kBrief13.satellites[0].prn == 16 && kBrief13.satellites[1].prn == 4,
+              "the second entry starts three bytes in, not four");
+
+constexpr std::array<std::uint8_t, 17> kGpsDetail {
+    2,
+    16, 0x47, 0x00, 46, 0x00, 0x76, 0x57, 0x49,
+    4,  0xCF, 0x04, 53, 0x01, 0x47, 0xA3, 0xAA,
+};
+constexpr SvDetailInfo kDetail14 = *SvDetailInfo::parse(bytes(kGpsDetail));
+
+static_assert(kDetail14.count == 2);
+static_assert(kGpsDetail.size() == SvDetailInfo::kSize + 2 * SvDetailInfo::kEntrySize);
+static_assert(kDetail14.satellites[1].prn == 4, "the second entry starts eight bytes in");
+static_assert(kDetail14.satellites[1].elevationDeg == 53);
+static_assert(kDetail14.satellites[1].azimuthDeg == 327, "big-endian, so 0x0147 and not 0x4701");
+static_assert(kDetail14.satellites[0].snrFirstScaled == 0x57);
+static_assert(kDetail14.satellites[0].snrFirstDb() == 21.75F, "dB times four on the wire");
+
+// ---- Records 92, 96: the empty case, which is the common one ---------------
+//
+// A receiver with no IonoGuard source reports 255 for both source and geofence
+// and a satellite count of zero. That is not an error and not a truncated
+// record: the fixed part is the whole record.
+constexpr std::array<std::uint8_t, 10> kIono {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00,
+};
+static_assert(IonoGuardInfo::parse(bytes(kIono))->source() == IonoGuardSource::Invalid);
+static_assert(IonoGuardInfo::parse(bytes(kIono))->count == 0);
+static_assert(kIono.size() == IonoGuardInfo::kSize, "with no per-satellite block at all");
+
+constexpr std::array<std::uint8_t, 13> kIonoWithSv {
+    0x09, 0x81, 0x04, 0xEC, 0xE1, 0x28, 0x03, 0x00, 0x01, 0x01, 0x05, 0x14, 0x02,
+};
+constexpr IonoGuardInfo kIonoSv = *IonoGuardInfo::parse(bytes(kIonoWithSv));
+static_assert(kIonoSv.source() == IonoGuardSource::Rtx);
+static_assert(kIonoSv.count == 1);
+static_assert(kIonoSv.satellites[0].prn == 20 && kIonoSv.satellites[0].system == 5);
+static_assert(kIonoSv.satellites[0].level() == IonoGuardLevel::Orange);
+
+constexpr std::array<std::uint8_t, 7> kIonoSummary { 0xFF, 0xFF, 0x00, 0x0C, 0x02, 0x01, 0x00 };
+constexpr IonoGuardSummary kSummary = *IonoGuardSummary::parse(bytes(kIonoSummary));
+static_assert(kSummary.source() == IonoGuardSource::Invalid);
+static_assert(kSummary.greenSvs == 12 && kSummary.yellowSvs == 2 && kSummary.orangeSvs == 1);
+static_assert(kSummary.redSvs == 0);
+
+// ---- Record 62: a position record whose fields are offset by one -----------
+//
+// A position-type byte precedes the latitude, so every double in this record
+// sits one byte later than in record 2. That single byte is the whole risk.
+constexpr std::array<std::uint8_t, 43> kCode = [] {
+    std::array<std::uint8_t, 43> out {};
+    out[0] = 2;                                  // position type
+    out[1] = 0x3F; out[2] = 0xE2;                // latitude starts at 1, not 0
+    out[25] = 0x09; out[26] = 0x81;              // week 2433
+    out[27] = 0x04; out[28] = 0xEC;              // time of week
+    return out;
+}();
+
+constexpr CodePosition kCodeRecord = *CodePosition::parse(bytes(kCode));
+static_assert(kCodeRecord.positionType == 2);
+static_assert(kCodeRecord.gpsWeek == 2433, "the week is at 25, after three doubles and the type");
+static_assert(kCodeRecord.latitudeRad != 0.0, "and the latitude began at byte 1");
+
 // Malformed input -- at compile time where the shape allows
 // ============================================================================
 
@@ -468,6 +774,20 @@ void test_iterator_walks_every_record()
     check(it.offset() == payload.size(), "and the whole payload was consumed");
 }
 
+// The lowest wire byte that is not in GSOF_RECORD_TABLE. The ICD's numbering
+// is sparse, so one always exists.
+std::uint8_t first_unmodelled_type()
+{
+    for (unsigned type = 1; type <= 255; ++type)
+    {
+        if (!is_known_record(static_cast<std::uint8_t>(type)))
+        {
+            return static_cast<std::uint8_t>(type);
+        }
+    }
+    return 0;
+}
+
 void test_an_unknown_record_does_not_stop_the_walk()
 {
     // THE case that matters. Enabling one unmodelled message on the receiver
@@ -477,8 +797,13 @@ void test_an_unknown_record_does_not_stop_the_walk()
     payload.push_back(static_cast<std::uint8_t>(golden::kPositionTime.size()));
     payload.insert(payload.end(), golden::kPositionTime.begin(), golden::kPositionTime.end());
 
-    // Record 92, IonoGuard: real, documented, and not in our table.
-    payload.push_back(92);
+    // A type the table does not hold. Found rather than named, because this
+    // test previously named record 92 -- which a live receiver then turned out
+    // to send, so the table grew a row and the test went green for the wrong
+    // reason. There is always an unmodelled type; asking is cheaper than
+    // remembering.
+    const std::uint8_t unmodelled = first_unmodelled_type();
+    payload.push_back(unmodelled);
     payload.push_back(6);
     payload.insert(payload.end(), { 0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11 });
 
@@ -508,7 +833,8 @@ void test_an_unknown_record_does_not_stop_the_walk()
         }
     }
 
-    check(seen == std::vector<std::uint8_t> { 1, 92, 2 }, "the record behind the unknown one is still found");
+    check(seen == std::vector<std::uint8_t> { 1, unmodelled, 2 },
+          "the record behind the unknown one is still found");
     check(unknowns == 1, "exactly one record was unknown");
 }
 
@@ -599,9 +925,11 @@ void test_record_names_and_known_set()
 {
     check(std::string(record_name(RecordType::LatLongHeight)) == "lat_long_height", "records are named");
     check(std::string(record_name(RecordType::AttitudeInfo)) == "attitude_info", "records are named");
+    check(std::string(record_name(RecordType::IonoGuardSummary)) == "ionoguard_summary", "records are named");
     check(is_known_record(27), "record 27 is modelled");
-    check(!is_known_record(92), "record 92 is not");
-    check(!is_known_record(0), "and neither is 0");
+    check(is_known_record(92), "and so is record 92, since a live BD992 was seen to send it");
+    check(!is_known_record(first_unmodelled_type()), "some type is not, by construction");
+    check(!is_known_record(0), "and 0 never is");
 }
 
 } // namespace

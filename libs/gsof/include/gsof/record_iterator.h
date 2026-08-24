@@ -6,9 +6,10 @@
 // share their framing, so it is written once. This header is the GSOF
 // vocabulary over that grammar.
 //
-// Dispatch is a visitor rather than a std::variant. A variant over all 22
-// records would be the size of its largest alternative -- AllSvDetailed, at
-// around 300 bytes -- and every record on the bus would pay for that. The
+// Dispatch is a visitor rather than a std::variant. A variant over every
+// record in the table would be the size of its largest alternative -- around
+// 300 bytes for the detailed satellite lists, and more since records 70 and 91
+// arrived -- and every record on the bus would pay for that. The
 // visitor also happens to be the shape the node wants: one overload per topic.
 
 #ifndef GSOF_RECORD_ITERATOR_H

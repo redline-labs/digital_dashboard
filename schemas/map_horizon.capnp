@@ -197,8 +197,10 @@ struct MapMatchStatus {
   # Empty unless the graph failed to open.
   error @2 :Text;
 
-  # The position topic being consumed, so a wrong key is visible without
-  # reading the YAML.
+  # The topics being consumed, so a wrong key is visible without reading the
+  # YAML. Three of them, joined on the GSOF transmission number: the bridge
+  # publishes one topic per record type and none of the three carries a time,
+  # so the join is the only thing that keeps a heading with its own position.
   positionKey @3 :Text;
 
   fixesReceived @4 :UInt64;
@@ -215,4 +217,17 @@ struct MapMatchStatus {
 
   lastConfidence @9 :UInt8;
   lastSigmaM @10 :Float32;
+
+  velocityKey @11 :Text;
+  sigmaKey @12 :Text;
+
+  # Positions that found no velocity, or no accuracy, recent enough to use.
+  #
+  # The matcher runs on the position record and pairs the other two by arrival
+  # age, so these are how a change to the receiver's output configuration shows
+  # up: disable velocity, or move it to a rate far below position's, and this
+  # climbs instead of the matcher silently falling back to distance alone.
+  # Against a receiver sending all three together, both stay near zero.
+  fixesWithoutVelocity @13 :UInt64;
+  fixesWithoutSigma @14 :UInt64;
 }

@@ -32,7 +32,8 @@ MatcherConfig matcherConfigOf(const MatchConfig& config)
 Services::Services(const NodeConfig& config, const road_graph::Graph& graph) :
     mConfig(config),
     mGraph(graph),
-    mMatcher(graph, matcherConfigOf(config.match))
+    mMatcher(graph, matcherConfigOf(config.match)),
+    mAssembler(std::chrono::milliseconds(config.position.pairWithinMs))
 {
     std::random_device device;
     mSessionNonce = (static_cast<std::uint64_t>(device()) << 32) | device();
@@ -40,16 +41,49 @@ Services::Services(const NodeConfig& config, const road_graph::Graph& graph) :
     mHorizon.emplace(config.services.horizonKey);
     mStatus.emplace(config.services.statusKey);
 
-    mPosition = std::make_unique<pub_sub::ZenohTypedSubscriber<::GsofEpoch>>(
-        config.position.zenohKey, [this](::GsofEpoch::Reader epoch) { onEpoch(epoch); });
+    // The position is the trigger: it is the record the matcher runs on. The
+    // other two are held as latest-known and paired by age -- see
+    // fix_assembler.h.
+    mPosition = std::make_unique<pub_sub::ZenohTypedSubscriber<::GsofLatLongHeight>>(
+        config.position.positionKey, [this](::GsofLatLongHeight::Reader record) {
+            const double lat = record.getLatitudeDeg();
+            const double lon = record.getLongitudeDeg();
+            AssembledFix assembled;
+            {
+                const std::lock_guard<std::mutex> lock(mAssemblerMutex);
+                assembled = mAssembler.onPosition(lat, lon, std::chrono::steady_clock::now());
+            }
+            // Outside the lock: the match is the expensive part, and the record
+            // callbacks must not queue behind each other on it.
+            onFix(assembled);
+        });
 
-    SPDLOG_INFO("[node] matching '{}' -> '{}'", config.position.zenohKey,
-                config.services.horizonKey);
+    mVelocity = std::make_unique<pub_sub::ZenohTypedSubscriber<::GsofVelocity>>(
+        config.position.velocityKey, [this](::GsofVelocity::Reader record) {
+            VelocitySample sample;
+            sample.valid = record.getValid();
+            sample.headingDeg = record.getHeadingDeg();
+            sample.speedMps = record.getHorizontalSpeedMps();
+            const std::lock_guard<std::mutex> lock(mAssemblerMutex);
+            mAssembler.setVelocity(sample, std::chrono::steady_clock::now());
+        });
+
+    mSigma = std::make_unique<pub_sub::ZenohTypedSubscriber<::GsofPositionSigma>>(
+        config.position.sigmaKey, [this](::GsofPositionSigma::Reader record) {
+            const float rms = record.getPositionRms();
+            const std::lock_guard<std::mutex> lock(mAssemblerMutex);
+            mAssembler.setSigma(rms, std::chrono::steady_clock::now());
+        });
+
+    SPDLOG_INFO("[node] matching '{}' (+ '{}', '{}' within {} ms) -> '{}'",
+                config.position.positionKey, config.position.velocityKey, config.position.sigmaKey,
+                config.position.pairWithinMs, config.services.horizonKey);
 }
 
-void Services::onEpoch(const ::GsofEpoch::Reader& epoch)
+void Services::onFix(const AssembledFix& assembled)
 {
-    // ON A ZENOH RX THREAD. Must not block: the receiver keeps sending.
+    // ON A ZENOH RX THREAD, and not necessarily the same one each time. Must
+    // not block: the receiver keeps sending.
     const auto now = std::chrono::steady_clock::now();
 
     // Under the lock because publishStatus() reads both from the main loop.
@@ -78,19 +112,23 @@ void Services::onEpoch(const ::GsofEpoch::Reader& epoch)
     }
 
     Fix fix;
-    fix.lat = road_graph::fromDegrees(epoch.getLatitudeDeg());
-    fix.lon = road_graph::fromDegrees(epoch.getLongitudeDeg());
+    fix.lat = road_graph::fromDegrees(assembled.latitudeDeg);
+    fix.lon = road_graph::fromDegrees(assembled.longitudeDeg);
 
-    if (epoch.getHasVelocity() && epoch.getVelocityValid())
+    // Absent rather than stale. A heading old enough to be from before a turn
+    // is worse than no heading at all: the matcher handles absence by falling
+    // back on distance, and handles a wrong heading by matching confidently
+    // onto the wrong road.
+    if (assembled.hasVelocity && assembled.velocityValid)
     {
-        fix.headingDeg = epoch.getHeadingDeg();
-        fix.speedMps = epoch.getHorizontalSpeedMps();
+        fix.headingDeg = assembled.headingDeg;
+        fix.speedMps = assembled.speedMps;
     }
-    if (epoch.getHasSigma())
+    if (assembled.hasSigma)
     {
         // The receiver's own RMS. This is what makes the matcher behave
         // differently on an RTK fix and on a coasting one -- see matcher.h.
-        fix.sigmaM = epoch.getPositionRmsM();
+        fix.sigmaM = assembled.positionRmsM;
     }
 
     const MatchResult match = mMatcher.update(fix);
@@ -104,6 +142,10 @@ void Services::onEpoch(const ::GsofEpoch::Reader& epoch)
 
     // Rate-limited here rather than in the matcher: the matcher runs at whatever
     // the receiver sends, and the bus sees a fixed rate.
+    //
+    // mLastPublish is touched only here, and onFix() is reached only from the
+    // position subscription -- one zenoh RX thread per subscription, so these
+    // calls never overlap.
     const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastPublish);
     if (since.count() < mConfig.services.horizonIntervalMs)
     {
@@ -216,7 +258,21 @@ void Services::publishStatus()
     out.setGraph("");
     out.setGraphOpen(true);
     out.setError("");
-    out.setPositionKey(mConfig.position.zenohKey);
+    out.setPositionKey(mConfig.position.positionKey);
+    out.setVelocityKey(mConfig.position.velocityKey);
+    out.setSigmaKey(mConfig.position.sigmaKey);
+
+    // How often a position found no fresh velocity or accuracy to pair with.
+    // THIS IS WHERE A RECEIVER RECONFIGURATION BECOMES VISIBLE: move velocity
+    // to a slower rate than position, or turn it off, and these climb instead
+    // of the matcher quietly running on distance alone.
+    FixAssembler::Counts pairing;
+    {
+        const std::lock_guard<std::mutex> lock(mAssemblerMutex);
+        pairing = mAssembler.counts();
+    }
+    out.setFixesWithoutVelocity(pairing.withoutVelocity);
+    out.setFixesWithoutSigma(pairing.withoutSigma);
 
     const Matcher::Counts counts = mMatcher.counts();
     out.setFixesMatched(counts.matched);

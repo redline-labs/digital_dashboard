@@ -12,9 +12,14 @@
 // key/schema table is the reference, and `inspect echo` against both is how a
 // divergence gets noticed.
 //
-// The fused <prefix>/epoch topic is the one that matters: nodes/map_match
-// subscribes to it and to nothing else. The five per-record topics are what a
-// widget bound to a single record expects, and are published alongside.
+// FIVE TOPICS, ONE PER RECORD TYPE, matching the bridge exactly.
+//
+// All five go out together on each tick, which is what a receiver does when
+// those records share an output rate. It is therefore NOT a test of a consumer
+// that has to cope with records arriving at different rates -- on real hardware
+// the accuracy and quality records commonly run slower than position. A
+// consumer that pairs records by arrival age (see nodes/map_match) will see
+// every pairing succeed here and should not be assumed correct on that basis.
 //
 // Everything here runs on the main thread. ZenohPublisher is not thread-safe
 // and nothing else touches these.
@@ -57,7 +62,7 @@ class Publishers
     Publishers(const Publishers&) = delete;
     Publishers& operator=(const Publishers&) = delete;
 
-    // One tick: the fused epoch, and the per-record topics when enabled.
+    // One tick: all five record topics, published back to back.
     void publish(const VehicleState& state, const GpsTime& time);
 
     std::uint32_t sequence() const { return mSequence; }

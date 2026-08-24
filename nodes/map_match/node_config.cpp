@@ -114,8 +114,10 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         }
         else
         {
-            readString(node, "zenoh_key", out.position.zenohKey, context, "position");
-            readString(node, "schema_type", out.position.schemaType, context, "position");
+            readString(node, "position_key", out.position.positionKey, context, "position");
+            readString(node, "velocity_key", out.position.velocityKey, context, "position");
+            readString(node, "sigma_key", out.position.sigmaKey, context, "position");
+            readNumber(node, "pair_within_ms", out.position.pairWithinMs, context, "position");
             readNumber(node, "stale_after_ms", out.position.staleAfterMs, context, "position");
         }
     }
@@ -157,7 +159,9 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         }
     }
 
-    checkKey(out.position.zenohKey, "position.zenoh_key", context);
+    checkKey(out.position.positionKey, "position.position_key", context);
+    checkKey(out.position.velocityKey, "position.velocity_key", context);
+    checkKey(out.position.sigmaKey, "position.sigma_key", context);
     checkKey(out.services.horizonKey, "services.horizon_key", context);
     checkKey(out.services.statusKey, "services.status_key", context);
 
@@ -168,7 +172,9 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     const std::pair<const std::string*, const char*> keys[] = {
         { &out.services.horizonKey, "services.horizon_key" },
         { &out.services.statusKey, "services.status_key" },
-        { &out.position.zenohKey, "position.zenoh_key" },
+        { &out.position.positionKey, "position.position_key" },
+        { &out.position.velocityKey, "position.velocity_key" },
+        { &out.position.sigmaKey, "position.sigma_key" },
     };
     for (std::size_t i = 0; i < std::size(keys); ++i)
     {
@@ -180,14 +186,6 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
                              " are both '" + *keys[i].first + "'");
             }
         }
-    }
-
-    // The schema the position topic carries has to be one this build knows, or
-    // the subscriber would decode against nothing.
-    if (!pub_sub::get_schema(out.position.schemaType).has_value())
-    {
-        context.fail("position.schema_type ('" + out.position.schemaType +
-                     "') is not a schema this build knows");
     }
 
     if (out.match.minSigmaM > out.match.maxSigmaM)

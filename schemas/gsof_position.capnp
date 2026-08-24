@@ -188,3 +188,53 @@ struct GsofPositionType {
   poleWobbleStatus @15 :UInt8;
   poleWobbleDistanceM @16 :Float32;
 }
+
+# GSOF 62. The CODE-ONLY position: the pseudorange solution, before any carrier
+# phase is applied.
+#
+# On a receiver holding an RTK fix this differs from GsofLatLongHeight by
+# decimetres, and the difference is the thing to look at when a fix is
+# suspect -- a large one means the carrier-phase solution has wandered. With no
+# carrier-phase solution the two are identical, because the code position IS
+# the position.
+#
+# Unlike records 2 and 12, this one carries its own time and its own sigmas, so
+# a consumer checking the fix needs nothing else.
+struct GsofCodePosition {
+  # The ICD documents 0..3 and does not name them, so the byte is passed
+  # through rather than turned into an enum this tree would be inventing.
+  positionType @0 :UInt8;
+
+  time @1 :Common.GsofGpsTime;
+
+  latitudeDeg @2 :Float64;
+  longitudeDeg @3 :Float64;
+
+  # Above the WGS-84 ELLIPSOID, like GsofLatLongHeight. For sea level see
+  # GsofLatLongMslHeight.
+  ellipsoidHeightM @4 :Float64;
+
+  sigmaEastM @5 :Float32;
+  sigmaNorthM @6 :Float32;
+  sigmaUpM @7 :Float32;
+}
+
+# GSOF 70. THE ONLY RECORD WHOSE HEIGHT IS ABOVE SEA LEVEL.
+#
+# Every other height a BD992 reports -- records 2, 3, 35, 41, 62 -- is above the
+# WGS-84 ellipsoid. The two differ by tens of metres (about 34.5 m in southern
+# California, with MSL the LARGER), so a display that shows the wrong one is
+# not slightly off, it is a hundred feet off. This is the record to feed an
+# altimeter; GsofLatLongHeight is the one to feed a map.
+struct GsofLatLongMslHeight {
+  latitudeDeg @0 :Float64;
+  longitudeDeg @1 :Float64;
+
+  mslHeightM @2 :Float64;
+
+  # The geoid model the receiver applied, e.g. "EGM96". It has no length prefix
+  # and no terminator on the wire -- it simply runs to the end of the record --
+  # so it is the reason record 70 is variable-length at all. Worth publishing:
+  # two receivers on different models disagree about sea level by metres.
+  geoidModel @3 :Text;
+}

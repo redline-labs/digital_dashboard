@@ -76,11 +76,6 @@ publish:
   # the dashboard map widget, any scope panel -- work with no change at all.
   topic_prefix: nodes/bd992
 
-  # The five per-record topics alongside the fused <prefix>/epoch. The epoch is
-  # what nodes/map_match reads and the only one it reads; these are what a
-  # widget bound to a single GSOF record expects.
-  publish_records: true
-
   rate_hz: 10
 
   # THERE IS NO ELEVATION IN EITHER SOURCE -- route geometry and track

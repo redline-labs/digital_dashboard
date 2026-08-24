@@ -47,3 +47,36 @@ struct GsofAttitudeInfo {
   yawRollCovariance @19 :Float32;
   masterSlaveRangeVariance @20 :Float32;
 }
+
+# GSOF 74. GsofPositionSigma, for the SECOND antenna.
+#
+# Same fields, same units. It is how you tell "the attitude solution is bad"
+# from "both antennas are bad": a heading that will not converge with clean
+# sigmas here is a baseline or multipath problem, and one with sigmas as poor
+# as these is simply a receiver that cannot see the sky.
+#
+# THE EPOCH COUNT IS OPTIONAL, and not because the ICD says so. The ICD gives
+# this record 38 body bytes ending in a two-byte epoch count; the receiver on
+# our bench sent 42, with a float where the count should have been. Which four
+# bytes moved could not be settled, because that receiver had no second antenna
+# and every field but the saturated range RMS read zero. So the count is
+# reported only when the record is exactly the documented length, and
+# hasEpochCount says whether it was. Publishing the bytes at the documented
+# offset regardless would have reported 17027 epochs for a one-epoch fix.
+struct GsofSecondAntennaSigma {
+  rangeRms @0 :Float32;
+
+  sigmaEastM @1 :Float32;
+  sigmaNorthM @2 :Float32;
+  covarianceEastNorth @3 :Float32;
+  sigmaUpM @4 :Float32;
+
+  semiMajorM @5 :Float32;
+  semiMinorM @6 :Float32;
+  orientationDeg @7 :Float32;
+
+  unitVariance @8 :Float32;
+
+  hasEpochCount @9 :Bool;
+  epochCount @10 :UInt16;
+}

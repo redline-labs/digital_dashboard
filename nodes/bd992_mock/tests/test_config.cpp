@@ -36,7 +36,6 @@ void test_an_empty_config_is_all_defaults()
     check(config.services.trackset.empty(), "and so is the trackset");
     check(config.publish.topicPrefix == "nodes/bd992", "publishing on the real bd992 prefix");
     check(config.publish.rateHz == 10, "at 10 Hz");
-    check(config.publish.publishRecords, "with the per-record topics on");
     check(config.publish.positionNoiseM == 0.0, "and no noise, so the car is on the road");
 }
 
@@ -60,7 +59,6 @@ vehicle:
   heading_lookahead_m: 2.0
 publish:
   topic_prefix: nodes/fake_bd992
-  publish_records: false
   rate_hz: 20
   ellipsoid_height_m: 120.0
   position_noise_m: 0.5
@@ -76,7 +74,6 @@ publish:
     check(config.vehicle.cruiseSpeedMps == 44.0, "the cruise speed is kept");
     check(config.vehicle.lateralAccelMps2 == 12.0, "the cornering limit is kept");
     check(config.publish.topicPrefix == "nodes/fake_bd992", "the prefix is kept");
-    check(!config.publish.publishRecords, "the per-record topics can be turned off");
     check(config.publish.rateHz == 20, "the rate is kept");
     check(config.publish.positionNoiseM == 0.5, "the noise is kept");
     check(config.publish.noiseSeed == 42, "and its seed, so a bad run can be repeated");

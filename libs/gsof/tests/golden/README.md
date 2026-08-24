@@ -1,7 +1,10 @@
 # Golden GSOF records
 
-`golden_records.h` is generated. It holds the body of one record of each type
-this library parses, taken from packet captures of real Trimble receivers.
+`golden_records.h` is generated. It holds the body of one record of each type,
+taken from packet captures of real Trimble receivers published by Trimble.
+
+There is no companion capture from our own receiver, and that is deliberate —
+see [A capture of our own](#a-capture-of-our-own) below.
 
 ## Why captures and not hand-written bytes
 
@@ -20,6 +23,46 @@ reading the specification can:
 `tests/test_records.cpp` asserts all three. A transposed field or a flipped
 endianness breaks them immediately, which a self-consistent hand-written vector
 would not.
+
+## A capture of our own
+
+A whole transmission off our own receiver would be worth more than any of the
+above, because it can be checked against ITSELF rather than against the ICD:
+records 2, 3, 62 and 70 describe one position in four coordinate systems,
+record 28's RTK age is record 38's correction age, record 48's pages carry
+record 34's satellites plus the ones it had to truncate, and records 1, 16, 62
+and 91 stamp the same instant through two opposite week/time-of-week orderings.
+Each of those is two parsers agreeing about one physical fact, which no reading
+of the specification can manufacture.
+
+**A GSOF capture is a position fix, so where you take it matters.** Not only
+from the position records — the satellite azimuths and elevations in records 33,
+34 and 48, against the timestamp in record 1, pin the observer down on their
+own. A capture taken at home or at a customer site should not be committed, and
+scrubbing the position records is not enough to make one safe.
+
+So capture somewhere you are content to publish, with the receiver set to emit
+every message type it has and holding a fix:
+
+```bash
+bd992_bridge --config configs/bd992/bd992.yaml --dump-gsof /tmp/bd992.bin
+# ... let it run a few seconds, then Ctrl-C
+
+tools/gen_golden_bd992.py /tmp/bd992.bin "<date>, <place>" > golden_bd992.h
+```
+
+It takes the first two complete transmissions. The second argument is the
+provenance line in the header comment, so put something you are happy to have
+in the repository.
+
+Records 13, 14, 28, 48, 62, 70, 74, 91, 92 and 96 were validated against a live
+receiver this way, but that capture was taken privately and is not checked in.
+What stands in for it in `tests/test_records.cpp` is a set of SYNTHETIC vectors,
+labelled as such, that exercise the parsers' arithmetic — nested variable
+lengths, counts that must agree with a record length, a name whose length is the
+record length minus the fixed part. Those catch a logic error. They cannot catch
+a field offset that is wrong in the same way in both the parser and the vector,
+which is exactly what a real capture is for.
 
 ## Provenance and licence
 
@@ -55,3 +98,5 @@ done
 then run `tools/gen_golden_records.py` (in this directory) against that
 directory. It is not a build dependency: the generated header is checked in,
 and regenerating is only needed when adding a record type.
+
+For a capture from our own receiver, see [A capture of our own](#a-capture-of-our-own).

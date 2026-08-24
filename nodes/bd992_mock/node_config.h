@@ -91,11 +91,6 @@ struct PublishConfig
     // warning in main.cpp about running this alongside bd992_bridge.
     std::string topicPrefix { "nodes/bd992" };
 
-    // The five per-record topics alongside the fused epoch. They cost nothing
-    // and are what a widget bound to a single record expects; the epoch is what
-    // map_match reads.
-    bool publishRecords { true };
-
     std::uint32_t rateHz { 10 };
 
     // There is NO ELEVATION in either source -- route geometry and track

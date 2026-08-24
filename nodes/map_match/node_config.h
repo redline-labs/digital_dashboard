@@ -16,16 +16,26 @@ namespace map_match
 
 struct PositionConfig
 {
-    // The FUSED epoch topic, not a per-record one.
+    // Three GSOF record topics. The position is the trigger; the other two are
+    // held as latest-known and paired by arrival age -- see fix_assembler.h.
     //
-    // A matcher needs position, heading and quality for the SAME instant.
-    // <prefix>/gsof/lat_long_height carries a position and nothing else -- no
-    // time, no velocity -- and pairing it with the velocity topic by arrival
-    // order yields a heading from a different epoch, which is off by however
-    // far the vehicle turned and puts it on the frontage road. See
-    // schemas/gsof_epoch.capnp.
-    std::string zenohKey { "nodes/bd992/epoch" };
-    std::string schemaType { "GsofEpoch" };
+    // Record 38 is deliberately absent: the matcher reads the fix quality it
+    // needs from record 12's RMS, and subscribing to a topic to ignore it would
+    // just be another thing to keep configured.
+    std::string positionKey { "nodes/bd992/gsof/lat_long_height" };
+    std::string velocityKey { "nodes/bd992/gsof/velocity" };
+    std::string sigmaKey { "nodes/bd992/gsof/position_sigma" };
+
+    // How recently a velocity or accuracy record must have arrived to be used
+    // with a position. Not a rate, and not tied to one: records the receiver
+    // sends together arrive microseconds apart and pair with room to spare,
+    // while records on a slower schedule pair when they are fresh and are
+    // reported absent when they are not.
+    //
+    // Set it by how long a heading stays true rather than by the output rate. A
+    // vehicle turning at 10 deg/s moves 2 degrees in 200 ms, which is well
+    // inside the matcher's tolerance; a second would not be.
+    std::uint32_t pairWithinMs { 200 };
 
     // Older than this and the beam is dropped rather than carried: a gap in the
     // stream means the next fix has no trustworthy predecessor, and explaining

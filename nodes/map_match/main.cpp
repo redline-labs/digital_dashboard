@@ -57,7 +57,8 @@ int runCheck(const map_match::NodeConfig& config)
     SPDLOG_INFO("  coverage {:.5f},{:.5f} .. {:.5f},{:.5f}", header.west * 1e-7,
                 header.south * 1e-7, header.east * 1e-7, header.north * 1e-7);
     SPDLOG_INFO("  built at {}", header.builtAtUnixS);
-    SPDLOG_INFO("subscribing '{}' ({})", config.position.zenohKey, config.position.schemaType);
+    SPDLOG_INFO("subscribing '{}', '{}', '{}' -- joined on the GSOF transmission number",
+                config.position.positionKey, config.position.velocityKey, config.position.sigmaKey);
     SPDLOG_INFO("publishing '{}'", config.services.horizonKey);
 
     // Probe: prove a query actually comes back, because a graph that opens and

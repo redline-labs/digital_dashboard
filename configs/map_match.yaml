@@ -18,12 +18,34 @@
 graph: /Users/ryan/Documents/map_data/socal.graph
 
 position:
-  # The FUSED epoch topic. Not <prefix>/gsof/lat_long_height, which carries a
-  # position and nothing else -- no time, no velocity -- so pairing it with the
-  # velocity topic by arrival order gives a heading from a different instant.
-  # See schemas/gsof_epoch.capnp.
-  zenoh_key: nodes/bd992/epoch
-  schema_type: GsofEpoch
+  # Three GSOF record topics from nodes/bd992_bridge. The position record is the
+  # trigger -- a fix is matched when one arrives -- and the other two are held
+  # as latest-known and used only if they arrived recently enough to describe
+  # the same moment.
+  #
+  # ALL THREE MUST COME FROM THE SAME PUBLISHER. Two bridges on one prefix
+  # would interleave.
+  position_key: nodes/bd992/gsof/lat_long_height
+  velocity_key: nodes/bd992/gsof/velocity
+  sigma_key: nodes/bd992/gsof/position_sigma
+
+  # How recently a velocity or accuracy record must have arrived to be paired
+  # with a position.
+  #
+  # This is NOT tied to the receiver's output rates, and deliberately so. The
+  # records a receiver sends together arrive microseconds apart, so they pair
+  # whether the shared rate is 1 Hz or 50 Hz; records on a slower schedule pair
+  # while they are fresh and are reported absent when they are not. That means
+  # changing what the receiver emits, or how often, does not require changing
+  # anything here.
+  #
+  # Set it by how long a heading stays true, not by a rate. A vehicle turning at
+  # 10 deg/s moves 2 degrees in 200 ms, which is inside the matcher's tolerance;
+  # a full second would not be. When it is exceeded the matcher falls back on
+  # distance alone rather than steering by a stale heading, and
+  # nodes/map_match/status counts how often -- which is how a receiver
+  # reconfiguration becomes visible instead of silently degrading the match.
+  pair_within_ms: 200
 
   # A gap longer than this drops the candidate beam. Carrying it across would
   # explain a jump across town as a very long detour, and the matcher would be

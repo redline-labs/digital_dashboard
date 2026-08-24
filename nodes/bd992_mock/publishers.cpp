@@ -8,7 +8,6 @@
 #include <spdlog/spdlog.h>
 
 #include "gsof_common.capnp.h"
-#include "gsof_epoch.capnp.h"
 #include "gsof_position.capnp.h"
 #include "pub_sub/zenoh_publisher.h"
 
@@ -67,7 +66,6 @@ GpsTime gpsTimeFromUnix(double unixSeconds)
 
 struct Publishers::Impl
 {
-    std::unique_ptr<pub_sub::ZenohPublisher<::GsofEpoch>> epoch;
     std::unique_ptr<pub_sub::ZenohPublisher<::GsofPositionTime>> positionTime;
     std::unique_ptr<pub_sub::ZenohPublisher<::GsofLatLongHeight>> latLongHeight;
     std::unique_ptr<pub_sub::ZenohPublisher<::GsofVelocity>> velocity;
@@ -78,15 +76,6 @@ struct Publishers::Impl
 Publishers::Publishers(const PublishConfig& config) :
     mConfig(config), mImpl(std::make_unique<Impl>()), mNoise(config.noiseSeed)
 {
-    const std::string epochKey = mConfig.topicPrefix + "/epoch";
-    mImpl->epoch = std::make_unique<pub_sub::ZenohPublisher<::GsofEpoch>>(epochKey);
-    SPDLOG_INFO("[mock] publishing fused epochs on {}", epochKey);
-
-    if (!mConfig.publishRecords)
-    {
-        return;
-    }
-
     const std::string prefix = mConfig.topicPrefix + "/gsof/";
     mImpl->positionTime =
         std::make_unique<pub_sub::ZenohPublisher<::GsofPositionTime>>(prefix + "position_time");
@@ -119,57 +108,10 @@ void Publishers::publish(const VehicleState& state, const GpsTime& time)
 
     ++mSequence;
 
-    // ---- The fused epoch ---------------------------------------------------
+    // ---- One topic per record type, as the bridge publishes them -----------
     //
     // EVERY FIELD IS SET EVERY TICK. put() re-roots the builder, so a field
-    // left alone is not "unchanged from last time", it is zero -- and a
-    // hasVelocity of false reads downstream as a receiver that stopped sending
-    // record 8.
-    {
-        ::GsofEpoch::Builder out = mImpl->epoch->fields();
-        out.setSequence(mSequence);
-
-        out.setLatitudeDeg(latitudeDeg);
-        out.setLongitudeDeg(longitudeDeg);
-        out.setEllipsoidHeightM(mConfig.ellipsoidHeightM);
-
-        out.setHasTime(true);
-        ::GsofGpsTime::Builder stamp = out.initTime();
-        stamp.setWeek(time.week);
-        stamp.setTimeOfWeekMs(time.timeOfWeekMs);
-        out.setSvsUsed(kSvsUsed);
-
-        out.setHasVelocity(true);
-        // Valid even at a standstill: a stopped vehicle has a speed, and it is
-        // zero. map_match already declines to trust a heading below
-        // heading_valid_above_mps, which is the right place for that judgement.
-        out.setVelocityValid(true);
-        out.setDopplerDerived(true);
-        out.setHorizontalSpeedMps(static_cast<float>(state.speedMps));
-        out.setHeadingDeg(static_cast<float>(state.headingDeg));
-        out.setVerticalVelocityMps(0.0f);
-
-        out.setHasFixType(true);
-        out.setPositionFixType(::GsofPositionFixType::FIXED_RTK);
-        out.setPositionFixTypeRaw(kFixedRtkRaw);
-        out.setRtkFixed(true);
-        out.setCorrectionAgeS(kCorrectionAgeS);
-
-        out.setHasSigma(true);
-        out.setPositionRmsM(kPositionRmsM);
-        out.setSigmaEastM(kSigmaHorizontalM);
-        out.setSigmaNorthM(kSigmaHorizontalM);
-        out.setSigmaUpM(kSigmaUpM);
-
-        mImpl->epoch->put();
-    }
-
-    if (!mConfig.publishRecords)
-    {
-        return;
-    }
-
-    // ---- The per-record topics --------------------------------------------
+    // left alone is not "unchanged from last time", it is zero.
 
     {
         ::GsofPositionTime::Builder out = mImpl->positionTime->fields();

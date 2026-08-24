@@ -27,9 +27,17 @@ enum GsofSvSystem {
   beidou @6;
 }
 
-# How the position was computed. The ICD's list runs to 48 with gaps; the ones
-# a BD992 in a vehicle can produce are named and the rest arrive as
-# `positionFixTypeRaw` on GsofPositionType.
+# How the position was computed: the ICD's list entire, with its own gaps (34,
+# 35, 45, 46, 47 are RESERVED there).
+#
+# This was once the subset "a BD992 in a vehicle can produce". That was a guess,
+# and the first live receiver disproved it inside an hour by reporting
+# rtxFastLowLatency. `positionFixTypeRaw` meant nothing was lost, but a consumer
+# switching on this enum saw `unknown` for an ordinary RTX fix.
+#
+# THE ORDINALS ARE APPEND-ONLY and are not the wire values -- `unknown` is 0 so
+# it is the default, which shifts everything by one. Anything new goes on the
+# end regardless of its ICD number, or already-published data changes meaning.
 enum GsofPositionFixType {
   unknown @0;
   noFixOrOld @1;
@@ -50,6 +58,37 @@ enum GsofPositionFixType {
   beaconDifferential @16;
   rtxCodePhase @17;
   xFillRtx @18;
+  omniStarHpXp @19;
+  omniStarHpG2 @20;
+  omniStarG2 @21;
+  synchronousRtx @22;
+  lowLatencyRtx @23;
+  omniStarMultipleSource @24;
+  omniStarL1Only @25;
+  insAutonomous @26;
+  insSbas @27;
+  insCodePhaseDgnss @28;
+  insRtxCodePhase @29;
+  insRtxCarrierPhase @30;
+  insOmniStar @31;
+  insRtk @32;
+  insDeadReckoning @33;
+  rtxFastSync @34;
+  rtxFastLowLatency @35;
+  lowLatencyRtxRangePoint @36;
+  synchronousRtxRangePoint @37;
+  lowLatencyRtxViewPoint @38;
+  synchronousRtxViewPoint @39;
+  lowLatencyRtxFieldPoint @40;
+  synchronousRtxFieldPoint @41;
+  omniStarG2Plus @42;
+  omniStarG4Plus @43;
+  l1sSlas @44;
+  insXFillRtx @45;
+  clas @46;
+  insClas @47;
+  has @48;
+  insHas @49;
 }
 
 # GPS week plus milliseconds into it, as most records carry time.

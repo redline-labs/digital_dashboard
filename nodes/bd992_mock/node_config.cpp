@@ -46,24 +46,6 @@ void readString(const YAML::Node& parent, const char* key, std::string& out, Con
     out = node.as<std::string>();
 }
 
-void readBool(const YAML::Node& parent, const char* key, bool& out, Context& context,
-              const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node)
-    {
-        return;
-    }
-    try
-    {
-        out = node.as<bool>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + "." + key + " must be true or false");
-    }
-}
-
 template <typename T>
 void readNumber(const YAML::Node& parent, const char* key, T& out, Context& context,
                 const std::string& where)
@@ -175,7 +157,6 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         else
         {
             readString(node, "topic_prefix", out.publish.topicPrefix, context, "publish");
-            readBool(node, "publish_records", out.publish.publishRecords, context, "publish");
             readNumber(node, "rate_hz", out.publish.rateHz, context, "publish");
             readNumber(node, "ellipsoid_height_m", out.publish.ellipsoidHeightM, context,
                        "publish");

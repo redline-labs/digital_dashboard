@@ -299,7 +299,7 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    warnIfAlreadyPublished(config.publish.topicPrefix + "/epoch");
+    warnIfAlreadyPublished(config.publish.topicPrefix + "/gsof/lat_long_height");
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);

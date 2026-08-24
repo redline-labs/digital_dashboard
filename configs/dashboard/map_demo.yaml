@@ -46,16 +46,17 @@ widgets:
       show_track: true
       track_points: 600
 
-      # From nodes/bd992_bridge. Leave the key empty for a static map.
+      # From nodes/bd992_bridge, one topic per GSOF record. Leave the key empty
+      # for a static map.
       #
-      # The FUSED topic, not the per-record one: `<prefix>/epoch` carries the
-      # position with the velocity, time and fix quality that arrived in the
-      # same GSOF transmission. `<prefix>/gsof/lat_long_height` is still
-      # published and would work here, but it carries a position and nothing
-      # else -- and this key is the one anything that also wants heading or
-      # accuracy should use. See schemas/gsof_epoch.capnp.
-      position_zenoh_key: "nodes/bd992/epoch"
-      position_schema_type: "GsofEpoch"
+      # A marker needs a position and nothing else, so the position record is
+      # the whole subscription. Anything that also wants heading or accuracy has
+      # to take the velocity and sigma topics too and decide which values belong
+      # with which position -- see nodes/map_match, which pairs them by arrival
+      # age. A widget bound to one topic cannot, which is why this one does not
+      # rotate with heading.
+      position_zenoh_key: "nodes/bd992/gsof/lat_long_height"
+      position_schema_type: "GsofLatLongHeight"
       latitude_expression: "latitudeDeg"
       longitude_expression: "longitudeDeg"
 

@@ -74,3 +74,37 @@ struct GsofLbandStatus {
   measuredFrequencyValid @20 :UInt8;
   measuredFrequencyHz @21 :Float64;
 }
+
+# GSOF 28. Receiver diagnostics: the correction link, as the receiver sees it.
+#
+# Eleven of its eighteen bytes are RESERVED in the ICD and read zero on real
+# hardware, so what is published is the seven that are not. Two of them restate
+# things other records carry -- rtkPositionAgeS is GsofPositionType's
+# correctionAgeS, diffSvsInUse is GsofPositionTime's svsUsed -- and that
+# redundancy is useful: they come from different parts of the receiver, so a
+# disagreement is a real fault rather than a parse error.
+#
+# The link fields are the ones nothing else reports. A correction stream that is
+# arriving but arriving late shows up here as latency and integrity long before
+# it shows up anywhere else as a degraded fix.
+struct GsofReceiverDiagnostics {
+  baseFlags @0 :UInt8;
+
+  # The raw byte runs 0..255, so a percentage is byte * 100 / 256 -- NOT / 100,
+  # despite the ICD calling the field "link integrity 100". Both are published
+  # so the trap is visible rather than inherited.
+  linkIntegrity @1 :UInt8;
+  linkIntegrityPercent @2 :Float32;
+
+  # Satellites the base and rover both see, per frequency. Zero with no base.
+  commonL1Svs @3 :UInt8;
+  commonL2Svs @4 :UInt8;
+
+  # Tenths of a second on the wire; seconds here.
+  datalinkLatencyS @5 :Float32;
+
+  diffSvsInUse @6 :UInt8;
+
+  # Also tenths on the wire. Equals GsofPositionType.correctionAgeS.
+  rtkPositionAgeS @7 :Float32;
+}

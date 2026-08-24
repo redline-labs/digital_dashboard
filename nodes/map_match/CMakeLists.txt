@@ -51,6 +51,25 @@ target_link_libraries(map_match_test_config
 
 add_project_test(TARGET map_match_test_config LABELS map_match unit)
 
+# Pairing the per-record GSOF topics into one fix. fix_assembler.h is
+# deliberately free of zenoh and capnp so the rule can be tested on its own --
+# every way it can fail produces a plausible wrong answer rather than an error,
+# and would otherwise only be visible as a vehicle matched onto the road beside
+# the one it is on. The cases that matter are the ones a change to the
+# receiver's output rates creates.
+add_executable(map_match_test_fix_assembler
+    tests/test_fix_assembler.cpp
+)
+
+target_include_directories(map_match_test_fix_assembler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(map_match_test_fix_assembler
+    PRIVATE
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_match_test_fix_assembler LABELS map_match unit)
+
 # The matcher and the horizon, driven over a synthetic drive on a graph the test
 # builds. What it pins is the behaviour that is silent when wrong: a heading
 # that decides between parallel roads, a stationary vehicle that must not be
