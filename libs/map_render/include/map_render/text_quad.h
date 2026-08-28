@@ -12,7 +12,7 @@
 #include <QPointF>
 #include <QRectF>
 
-namespace map_widget
+namespace map_render
 {
 
 struct TextQuad
@@ -28,6 +28,6 @@ struct TextQuad
     friend bool operator==(const TextQuad&, const TextQuad&) = default;
 };
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_TEXT_QUAD_H

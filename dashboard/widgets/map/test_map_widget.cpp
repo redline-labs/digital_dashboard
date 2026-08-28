@@ -24,7 +24,7 @@
 #include "map/highlight_ids.h"
 #include "road_graph/format.h"
 #include "map/map_widget.h"
-#include "map/labels.h"
+#include "map_render/labels.h"
 
 #include "config_codec/config_json.h"
 
@@ -248,13 +248,13 @@ void test_place_classes_order_labels_by_importance()
     // Which name survives when two labels collide. The road classification is
     // the tessellator's business and is tested there; this is the label pass's
     // half of the same idea.
-    using map_widget::placePriority;
+    using map_render::placePriority;
 
-    check(placePriority("country") > placePriority("state"), "country beats state");
-    check(placePriority("state") > placePriority("city"), "state beats city");
-    check(placePriority("city") > placePriority("town"), "city beats town");
-    check(placePriority("town") > placePriority("village"), "town beats village");
-    check(placePriority("village") > placePriority("a_class_from_the_future"),
+    check(map_render::placePriority("country") > map_render::placePriority("state"), "country beats state");
+    check(map_render::placePriority("state") > map_render::placePriority("city"), "state beats city");
+    check(map_render::placePriority("city") > map_render::placePriority("town"), "city beats town");
+    check(map_render::placePriority("town") > map_render::placePriority("village"), "town beats village");
+    check(map_render::placePriority("village") > map_render::placePriority("a_class_from_the_future"),
           "and anything known beats a class we do not recognise");
 }
 
@@ -284,10 +284,10 @@ mvt::Layer labelLayerWith(const std::string& name,
     return layer;
 }
 
-map_widget::LabelRank rankOfPlace(const std::vector<std::pair<std::string, mvt::Value>>& attributes)
+map_render::LabelRank rankOfPlace(const std::vector<std::pair<std::string, mvt::Value>>& attributes)
 {
     const mvt::Layer layer = labelLayerWith("place", attributes);
-    return map_widget::placeRank(layer, layer.features.front());
+    return map_render::placeRank(layer, layer.features.front());
 }
 
 // The tiler's own ordering beats the class name, because the class name cannot
@@ -356,7 +356,7 @@ void test_a_place_without_rank_falls_back_to_its_class()
 void test_a_track_ranks_between_a_town_and_a_city()
 {
     const mvt::Layer layer = labelLayerWith("track_label", {});
-    const auto track = map_widget::trackRank(layer, layer.features.front());
+    const auto track = map_render::trackRank(layer, layer.features.front());
 
     check(track.tier > rankOfPlace({ { "rank", mvt::Value(std::int64_t { 3 }) } }).tier,
           "a circuit outranks a town");
@@ -373,8 +373,8 @@ void test_a_longer_circuit_outranks_a_shorter_one()
     const mvt::Layer shortTrack =
         labelLayerWith("track_label", { { "rank", mvt::Value(std::int64_t { 18 }) } });
 
-    const auto big = map_widget::trackRank(longTrack, longTrack.features.front());
-    const auto small = map_widget::trackRank(shortTrack, shortTrack.features.front());
+    const auto big = map_render::trackRank(longTrack, longTrack.features.front());
+    const auto small = map_render::trackRank(shortTrack, shortTrack.features.front());
 
     check(big.tier == small.tier, "both are circuits and share a tier");
     check(big.magnitude > small.magnitude, "the longer circuit keeps its name");
@@ -389,7 +389,7 @@ void test_a_longer_circuit_outranks_a_shorter_one()
 // every frame, which is the one cost this whole design exists to avoid.
 void test_the_atlas_packs_each_glyph_once()
 {
-    map_widget::LabelCache cache;
+    map_render::LabelCache cache;
     const QFont font("Arial", 12);
     const QColor halo(Qt::black);
     const QColor text(Qt::white);
@@ -443,7 +443,7 @@ void test_the_atlas_packs_each_glyph_once()
 // GPU would draw exactly that and no screenshot would say so.
 void test_a_packed_glyph_is_pixel_identical_to_the_one_rasterised()
 {
-    map_widget::LabelCache cache;
+    map_render::LabelCache cache;
     const QFont font("Arial", 16);
     const QColor halo(Qt::black);
     const QColor text(Qt::white);
@@ -451,7 +451,7 @@ void test_a_packed_glyph_is_pixel_identical_to_the_one_rasterised()
     const QRectF uv = cache.atlasEntry(QChar('A'), false, font, 3.0, halo, text, 1.0);
     check(!uv.isNull(), "the character packed");
 
-    const map_widget::LabelCache::Glyph& glyph =
+    const map_render::LabelCache::Glyph& glyph =
         cache.glyphFor(QChar('A'), font, 3.0, halo, text, 1.0);
     const QImage& page = cache.atlas().page();
     const QRect region(int(std::lround(uv.x() * page.width())),
@@ -474,7 +474,7 @@ void test_a_packed_glyph_is_pixel_identical_to_the_one_rasterised()
 // exists to prevent.
 void test_a_style_change_empties_the_atlas()
 {
-    map_widget::LabelCache cache;
+    map_render::LabelCache cache;
     const QFont font("Arial", 12);
 
     cache.atlasEntry(QChar('M'), false, font, 3.0, QColor(Qt::black), QColor(Qt::white), 1.0);
@@ -539,9 +539,9 @@ mvt::Tile roadShapeTile(const std::string& name, const std::string& roadClass,
 // What the decode worker does to every arriving tile: candidates out,
 // decoded features gone. The label tests go through it so they exercise the
 // extraction the widget actually runs.
-std::shared_ptr<const map_widget::LabelSet> labelsOf(const mvt::Tile& tile)
+std::shared_ptr<const map_render::LabelSet> labelsOf(const mvt::Tile& tile)
 {
-    return std::make_shared<const map_widget::LabelSet>(map_widget::extractLabels(tile));
+    return std::make_shared<const map_render::LabelSet>(map_render::extractLabels(tile));
 }
 
 // What a label pass actually put on the canvas, not just how many labels it
@@ -549,7 +549,7 @@ std::shared_ptr<const map_widget::LabelSet> labelsOf(const mvt::Tile& tile)
 // the anchor rotation is only observable in the pixels.
 struct Painted
 {
-    map_widget::LabelStats stats;
+    map_render::LabelStats stats;
     QImage canvas;
 };
 
@@ -560,19 +560,19 @@ struct Painted
 // way up" without a GPU in the loop. It is also an independent check on the
 // geometry: if a quad's corners or its atlas rect were wrong, the GPU would
 // draw exactly the same wrong thing and no screenshot would say so.
-Painted paintOnto(const std::vector<map_widget::LabelTile>& tiles, const MapStyle_t& style,
+Painted paintOnto(const std::vector<map_render::LabelTile>& tiles, const MapStyle_t& style,
                   double zoom = 14.0, double bearing = 0.0)
 {
     Painted out;
     out.canvas = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     out.canvas.fill(Qt::transparent);
 
-    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, zoom, bearing };
-    const map_widget::Projection projection(camera, 800, 600, 1.0);
+    const map_render::Camera camera { { 33.6865966, -117.8557874 }, zoom, bearing };
+    const map_render::Projection projection(camera, 800, 600, 1.0);
 
-    map_widget::LabelCache cache;
-    std::vector<map_widget::TextQuad> quads;
-    out.stats = map_widget::layOutText(projection, tiles, style, cache, 1.0, quads);
+    map_render::LabelCache cache;
+    std::vector<map_render::TextQuad> quads;
+    out.stats = map_render::layOutText(projection, tiles, style, cache, 1.0, quads);
 
     const QImage& page = cache.atlas().page();
     if (page.isNull())
@@ -583,7 +583,7 @@ Painted paintOnto(const std::vector<map_widget::LabelTile>& tiles, const MapStyl
     QPainter painter(&out.canvas);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    for (const map_widget::TextQuad& quad : quads)
+    for (const map_render::TextQuad& quad : quads)
     {
         // The atlas rect is in texture coordinates; the page is what they are
         // a fraction of.
@@ -607,7 +607,7 @@ Painted paintOnto(const std::vector<map_widget::LabelTile>& tiles, const MapStyl
     return out;
 }
 
-map_widget::LabelStats placeOnto(const std::vector<map_widget::LabelTile>& tiles,
+map_render::LabelStats placeOnto(const std::vector<map_render::LabelTile>& tiles,
                                  const MapStyle_t& style, double zoom = 14.0)
 {
     return paintOnto(tiles, style, zoom).stats;
@@ -646,7 +646,7 @@ QRectF inkBounds(const QImage& canvas)
 // then ignored, so a nav map had no street names at all.
 void test_a_road_name_is_placed()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
@@ -669,7 +669,7 @@ void test_a_road_name_is_placed()
 // predict, and nothing else about the label changes.
 void test_the_label_anchor_turns_with_the_map()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
@@ -714,9 +714,9 @@ void test_the_label_anchor_turns_with_the_map()
     // The tile's centre is a fixed world point, so the projection alone says
     // where it lands -- if the label pass and the projection ever disagree
     // about which way the map turns, this is what catches it.
-    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 90.0 };
-    const map_widget::Projection projection(camera, 800, 600, 1.0);
-    const map_widget::ScreenPoint origin = projection.tileOrigin(irvine);
+    const map_render::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 90.0 };
+    const map_render::Projection projection(camera, 800, 600, 1.0);
+    const map_render::ScreenPoint origin = projection.tileOrigin(irvine);
     const double size = projection.tileScreenSize(irvine.z);
     // The road runs the width of the tile at y=2048 of 4096, so its longest
     // run's midpoint is the tile's centre in tile-local units.
@@ -740,7 +740,7 @@ void test_the_label_anchor_turns_with_the_map()
 // reason, and at a NON-central anchor so the two are actually different.
 void test_the_label_anchor_is_right_at_half_a_turn()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     // A short road up in the tile's first quarter: the anchor is nowhere near
     // the tile centre, so reflecting it lands somewhere clearly wrong.
     const auto tile = labelsOf(roadNameTile("Main Street", "minor", 1024, 512, 3072));
@@ -762,9 +762,9 @@ void test_the_label_anchor_is_right_at_half_a_turn()
     // mirrored is test_a_road_label_never_reads_backwards' business.
     check(ink.width() > ink.height(), "and lies along the road, which is horizontal again");
 
-    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 180.0 };
-    const map_widget::Projection projection(camera, 800, 600, 1.0);
-    const map_widget::ScreenPoint origin = projection.tileOrigin(irvine);
+    const map_render::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 180.0 };
+    const map_render::Projection projection(camera, 800, 600, 1.0);
+    const map_render::ScreenPoint origin = projection.tileOrigin(irvine);
     const double size = projection.tileScreenSize(irvine.z);
     const double lx = ((512.0 + 3072.0) / 2.0 / 4096.0) * size;
     const double ly = (1024.0 / 4096.0) * size;
@@ -785,7 +785,7 @@ void test_the_label_anchor_is_right_at_half_a_turn()
 // built on, and the one thing curved road labels must not have cost.
 void test_a_place_name_stays_upright_when_the_map_turns()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     mvt::Tile tile;
     tile.layers.push_back(labelLayerWith(
         "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
@@ -813,7 +813,7 @@ void test_a_place_name_stays_upright_when_the_map_turns()
 // mirrored; the flip is what makes the two identical.
 void test_a_road_label_never_reads_backwards()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
@@ -845,7 +845,7 @@ void test_a_road_label_never_reads_backwards()
 // everything bent".
 void test_a_hairpin_gets_no_label_but_a_gentle_curve_does()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
@@ -884,7 +884,7 @@ void test_a_hairpin_gets_no_label_but_a_gentle_curve_does()
 // would be far wider than tall, and a followed one is roughly square.
 void test_a_road_label_lies_along_a_diagonal_road()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
@@ -915,7 +915,7 @@ void test_a_road_label_lies_along_a_diagonal_road()
 // cost what the string cache was built to avoid.
 void test_the_glyph_tier_renders_an_alphabet_not_a_name_list()
 {
-    map_widget::LabelCache cache;
+    map_render::LabelCache cache;
     QFont font("Arial", 12);
 
     const QColor halo(Qt::black);
@@ -954,12 +954,12 @@ void test_a_road_repeats_its_name_along_itself_but_never_twice_in_one_place()
 {
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
-    std::vector<map_widget::LabelTile> tiles;
+    std::vector<map_render::LabelTile> tiles;
     for (std::uint32_t x = 2827; x <= 2829; ++x)
     {
         for (std::uint32_t y = 6561; y <= 6563; ++y)
         {
-            tiles.push_back({ map_widget::TileId { 14, x, y }, tile });
+            tiles.push_back({ map_render::TileId { 14, x, y }, tile });
         }
     }
 
@@ -1039,7 +1039,7 @@ mvt::Tile waterNameTile(const std::string& name, const std::string& waterClass, 
 
 void test_a_river_is_named_along_itself_and_a_lake_at_a_point()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
@@ -1076,7 +1076,7 @@ void test_a_river_is_named_along_itself_and_a_lake_at_a_point()
 // way that was split. Those must not become blank labels.
 void test_a_nameless_river_segment_claims_no_label()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto nameless = labelsOf(waterNameTile("", "river", true));
     check(nameless->labels.empty(), "a nameless river yields no candidate at all");
 
@@ -1089,7 +1089,7 @@ void test_a_nameless_river_segment_claims_no_label()
 // is the reason water sits below roads rather than beside them.
 void test_a_street_name_outranks_the_river_it_crosses()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
 
     // Both through the middle of the tile, so they compete for the same
     // pixels and exactly one can win.
@@ -1116,7 +1116,7 @@ void test_a_street_name_outranks_the_river_it_crosses()
 // road labels do.
 void test_water_labels_respect_their_zoom_floor_and_their_toggle()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto river = labelsOf(waterNameTile("Santa Ana River", "river", true));
 
     MapStyle_t style;
@@ -1142,18 +1142,18 @@ void test_water_labels_respect_their_zoom_floor_and_their_toggle()
 void test_a_river_outranks_a_stream()
 {
     const mvt::Layer layer = waterNameTile("X", "river", true).layers.front();
-    const map_widget::LabelRank river = map_widget::waterRank(layer, layer.features.front());
+    const map_render::LabelRank river = map_render::waterRank(layer, layer.features.front());
 
     const mvt::Layer streamLayer = waterNameTile("X", "stream", true).layers.front();
-    const map_widget::LabelRank stream =
-        map_widget::waterRank(streamLayer, streamLayer.features.front());
+    const map_render::LabelRank stream =
+        map_render::waterRank(streamLayer, streamLayer.features.front());
 
     check(river.tier == stream.tier, "both are water, so both sit in the same tier");
     check(river.magnitude > stream.magnitude, "but the river carries more weight");
 
     // Below a road, which is the ranking decision worth pinning.
     const mvt::Layer roadLayer = roadNameTile("Y", "minor").layers.front();
-    const map_widget::LabelRank road = map_widget::roadRank(roadLayer, roadLayer.features.front());
+    const map_render::LabelRank road = map_render::roadRank(roadLayer, roadLayer.features.front());
     check(river.tier < road.tier, "and water ranks below any road");
 }
 
@@ -1162,7 +1162,7 @@ void test_a_river_outranks_a_stream()
 // without this each of them claims a label.
 void test_a_stub_too_short_for_its_name_is_not_labelled()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto stub =
         labelsOf(roadNameTile("A Very Long Street Name Indeed", "minor", 2048, 2040, 2056));
 
@@ -1175,7 +1175,7 @@ void test_a_stub_too_short_for_its_name_is_not_labelled()
 // smear and a name labels something the driver cannot see.
 void test_road_labels_respect_their_zoom_floor_and_their_toggle()
 {
-    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const map_render::TileId irvine { 14, 2828, 6562 };
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
@@ -1216,7 +1216,7 @@ void test_a_numbered_route_falls_back_to_its_ref()
     // count that says nothing about either. Repeats have their own tests.
     style.label_repeat_distance = 0;
     const auto stats =
-        placeOnto({ { map_widget::TileId { 14, 2828, 6562 }, labelsOf(tile) } }, style);
+        placeOnto({ { map_render::TileId { 14, 2828, 6562 }, labelsOf(tile) } }, style);
     check(stats.placed == 1, "an unnamed motorway is labelled with its route number");
 }
 
@@ -1234,7 +1234,7 @@ void test_a_road_ranks_between_a_neighbourhood_and_a_locality()
     road.tags = { 0, 0 };
     roads.features.push_back(std::move(road));
 
-    const auto rank = map_widget::roadRank(roads, roads.features.front());
+    const auto rank = map_render::roadRank(roads, roads.features.front());
     check(rank.tier < rankOfPlace({ { "rank", mvt::Value(std::int64_t { 7 }) } }).tier,
           "a street name loses to a neighbourhood");
     check(rank.tier > rankOfPlace({ { "rank", mvt::Value(std::int64_t { 8 }) } }).tier,
@@ -1255,7 +1255,7 @@ void test_a_motorway_name_outranks_a_side_street()
         f.type = mvt::GeomType::LineString;
         f.tags = { 0, 0 };
         layer.features.push_back(std::move(f));
-        return map_widget::roadRank(layer, layer.features.front());
+        return map_render::roadRank(layer, layer.features.front());
     };
 
     check(rankOfRoad("motorway").magnitude > rankOfRoad("primary").magnitude,
@@ -1460,12 +1460,12 @@ void swipe(MapWidget& widget, const QPointF& at, int pixels)
     QApplication::sendEvent(&widget, &event);
 }
 
-map_widget::Projection projectionOf(const MapWidget& widget)
+map_render::Projection projectionOf(const MapWidget& widget)
 {
-    return map_widget::Projection(widget.status().camera, widget.width(), widget.height());
+    return map_render::Projection(widget.status().camera, widget.width(), widget.height());
 }
 
-bool sameCoordinate(const map_widget::Coordinate& a, const map_widget::Coordinate& b)
+bool sameCoordinate(const map_render::Coordinate& a, const map_render::Coordinate& b)
 {
     // A tenth of a microdegree is about a centimetre. The drag arithmetic is
     // exact up to floating point, so this is loose enough to survive the
@@ -1487,7 +1487,7 @@ void test_a_map_that_was_not_asked_to_be_interactive_ignores_the_mouse()
     widget.resize(400, 300);
     render(widget);
 
-    const map_widget::Camera before = widget.status().camera;
+    const map_render::Camera before = widget.status().camera;
     drag(widget, QPointF(120.0, 90.0), QPointF(200.0, 160.0));
     scroll(widget, QPointF(200.0, 150.0), 3);
 
@@ -1521,14 +1521,14 @@ void test_a_drag_keeps_the_grabbed_point_under_the_pointer()
         const QPointF from(120.0, 90.0);
         const QPointF to(190.0, 145.0);
 
-        const map_widget::Coordinate grabbed =
-            projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { from.x(),
+        const map_render::Coordinate grabbed =
+            projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { from.x(),
                                                                                from.y() });
 
         drag(widget, from, to);
 
-        const map_widget::Coordinate under =
-            projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { to.x(), to.y() });
+        const map_render::Coordinate under =
+            projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { to.x(), to.y() });
 
         const std::string at = " (bearing " + std::to_string(int(bearing)) + ")";
         check(sameCoordinate(grabbed, under),
@@ -1564,7 +1564,7 @@ void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
     // code did and the assertion would pass for the wrong reason.
     check(button->isHidden(), "hidden while the camera is still where the layout put it");
 
-    const map_widget::Coordinate configured = widget.status().camera.center;
+    const map_render::Coordinate configured = widget.status().camera.center;
     drag(widget, QPointF(120.0, 90.0), QPointF(220.0, 170.0));
 
     check(!button->isHidden(), "shown once a drag has moved the camera");
@@ -1597,8 +1597,8 @@ void test_the_wheel_zooms_about_the_pointer()
     // anchoring on the centre are the same thing there, and this test would
     // pass on either.
     const QPointF at(90.0, 70.0);
-    const map_widget::Coordinate before =
-        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::Coordinate before =
+        projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { at.x(), at.y() });
 
     scroll(widget, at, 2);
 
@@ -1610,8 +1610,8 @@ void test_the_wheel_zooms_about_the_pointer()
     const double midZoom = widget.status().camera.zoom;
     check(midZoom > 12.0, "the wheel eases the zoom upward, got " + std::to_string(midZoom));
     check(widget.status().animating, "and is still easing after one frame");
-    const map_widget::Coordinate midway =
-        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::Coordinate midway =
+        projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { at.x(), at.y() });
     check(sameCoordinate(before, midway), "the pointer keeps its place mid-ease");
 
     settleCamera(widget);
@@ -1619,8 +1619,8 @@ void test_the_wheel_zooms_about_the_pointer()
                                                    std::to_string(widget.status().camera.zoom));
     check(!widget.status().animating, "with the ease finished");
 
-    const map_widget::Coordinate after =
-        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::Coordinate after =
+        projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { at.x(), at.y() });
     check(sameCoordinate(before, after),
           "and the place under the pointer stays under the pointer while the scale changes");
 }
@@ -1647,8 +1647,8 @@ void test_a_trackpad_swipe_zooms_by_what_the_fingers_asked_for()
     render(widget);
 
     const QPointF at(90.0, 70.0);
-    const map_widget::Coordinate before =
-        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::Coordinate before =
+        projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { at.x(), at.y() });
 
     // 240 px of finger travel, delivered 20 px at a time back to back. At
     // 120 px per notch and half a level per notch that is one whole level.
@@ -1663,8 +1663,8 @@ void test_a_trackpad_swipe_zooms_by_what_the_fingers_asked_for()
     check(std::abs(zoom - 13.0) < 1e-9,
           "240 px of two-finger swipe zooms one whole level, got " + std::to_string(zoom));
 
-    const map_widget::Coordinate after =
-        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::Coordinate after =
+        projectionOf(widget).coordinateForScreen(map_render::ScreenPoint { at.x(), at.y() });
     check(sameCoordinate(before, after),
           "and the place under the fingers stays under the fingers");
 }
@@ -1689,7 +1689,7 @@ void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
     widget.resize(400, 300);
     render(widget);
 
-    const map_widget::Coordinate centre = widget.status().camera.center;
+    const map_render::Coordinate centre = widget.status().camera.center;
     scroll(widget, QPointF(90.0, 70.0), 2);
 
     // At EVERY step of the ease, not just at the end: the centre must never
@@ -1770,7 +1770,7 @@ void test_a_drag_cannot_leave_the_projection()
         drag(widget, QPointF(200.0, 40.0), QPointF(40.0, 260.0));
     }
 
-    const map_widget::Camera camera = widget.status().camera;
+    const map_render::Camera camera = widget.status().camera;
     check(camera.center.latitude <= 85.06 && camera.center.latitude >= -85.06,
           "a drag off the top of the world stops at the Mercator limit, got " +
               std::to_string(camera.center.latitude));
@@ -2034,12 +2034,12 @@ void test_recentre_flies_back_and_lands_following()
     MapWidget widget(config);
     widget.resize(400, 300);
     render(widget);
-    const map_widget::Coordinate home = widget.status().camera.center;
+    const map_render::Coordinate home = widget.status().camera.center;
 
     // Drag away, far enough that mid-flight is unambiguous.
     drag(widget, QPointF(200.0, 150.0), QPointF(40.0, 30.0));
     render(widget);
-    const map_widget::Coordinate away = widget.status().camera.center;
+    const map_render::Coordinate away = widget.status().camera.center;
     check(!sameCoordinate(away, home), "the drag moved the camera");
     check(widget.status().cameraMoved, "and following is suspended");
 
@@ -2232,10 +2232,10 @@ void test_a_large_glyph_is_not_clipped_by_its_image()
     QFont font;
     font.setPointSizeF(30.0);
 
-    map_widget::LabelCache cache;
+    map_render::LabelCache cache;
     for (const QChar ch : QStringLiteral("\u00C1gjy"))
     {
-        const map_widget::LabelCache::Glyph& glyph =
+        const map_render::LabelCache::Glyph& glyph =
             cache.glyphFor(ch, font, 3.0, QColor(Qt::black), QColor(Qt::white), 1.0);
         for (int pass = 0; pass < 2; ++pass)
         {

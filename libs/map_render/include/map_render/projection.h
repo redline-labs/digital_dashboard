@@ -32,7 +32,7 @@
 #include <functional>
 #include <vector>
 
-namespace map_widget
+namespace map_render
 {
 
 // The latitude beyond which Web Mercator is undefined. atan(sinh(pi)) in
@@ -320,6 +320,6 @@ std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
                                     const std::function<bool(const TileId&)>& drawable,
                                     std::size_t budget);
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_PROJECTION_H

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "map/gpu_renderer.h"
+#include "map_render/gpu_renderer.h"
 
 #include <rhi/qrhi.h>
 // The InitParams structs live here rather than in qrhi.h, and each is behind the
@@ -28,7 +28,7 @@
 
 #include <QPainter>
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -960,4 +960,4 @@ const QImage& GpuRenderer::render(const Projection& projection,
     return mFrame;
 }
 
-} // namespace map_widget
+} // namespace map_render

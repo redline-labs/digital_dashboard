@@ -16,7 +16,7 @@
 
 #include "mvt/tile.h"
 
-namespace map_widget
+namespace map_render
 {
 
 // Which label pass a candidate belongs to, deciding its per-frame gate:
@@ -94,6 +94,6 @@ struct LabelSet
 // crosses safely.
 LabelSet extractLabels(const mvt::Tile& tile);
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_LABEL_CANDIDATES_H

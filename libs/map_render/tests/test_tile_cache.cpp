@@ -6,7 +6,7 @@
 // re-fetches, and the map looks like a slow server. These are the checks that
 // tell the two apart.
 
-#include "map/tile_cache.h"
+#include "map_render/tile_cache.h"
 
 #include <spdlog/spdlog.h>
 
@@ -27,16 +27,16 @@ void check(bool condition, const std::string& what)
     }
 }
 
-using map_widget::CachedTile;
-using map_widget::TileCache;
-using map_widget::TileId;
+using map_render::CachedTile;
+using map_render::TileCache;
+using map_render::TileId;
 
 // A tile carrying `vertexCount` vertices, so its weight is predictable, and the
 // indices that make it drawable -- the geometry is indexed, so a tile with
 // vertices and no indices draws nothing.
 CachedTile tileOf(std::size_t vertexCount)
 {
-    auto geometry = std::make_shared<map_widget::TileGeometry>();
+    auto geometry = std::make_shared<map_render::TileGeometry>();
     geometry->vertices.resize(vertexCount);
     geometry->indices.resize(vertexCount);
     geometry->layerStart.fill(static_cast<std::uint32_t>(vertexCount));
@@ -45,7 +45,7 @@ CachedTile tileOf(std::size_t vertexCount)
     geometry->layerIndexStart[0] = 0;
 
     CachedTile tile;
-    tile.labels = std::make_shared<map_widget::LabelSet>();
+    tile.labels = std::make_shared<map_render::LabelSet>();
     tile.geometry = std::move(geometry);
     return tile;
 }
@@ -55,8 +55,8 @@ CachedTile tileOf(std::size_t vertexCount)
 CachedTile absentTile()
 {
     CachedTile tile;
-    tile.labels = std::make_shared<map_widget::LabelSet>();
-    tile.geometry = std::make_shared<map_widget::TileGeometry>();
+    tile.labels = std::make_shared<map_render::LabelSet>();
+    tile.geometry = std::make_shared<map_render::TileGeometry>();
     return tile;
 }
 
@@ -163,7 +163,7 @@ void test_heavy_tiles_are_bounded_by_bytes_before_they_hit_the_count()
     // above the floor -- so here the BYTE bound is the one doing the work, and
     // the cache must settle well short of its 256-tile ceiling.
     constexpr std::size_t kBytesPerTile = 1024u * 1024u;
-    constexpr std::size_t kVertices = kBytesPerTile / sizeof(map_widget::MapVertex);
+    constexpr std::size_t kVertices = kBytesPerTile / sizeof(map_render::MapVertex);
     const std::size_t expected = TileCache::kMaxBytes / kBytesPerTile;
     static_assert(TileCache::kMaxBytes / kBytesPerTile > TileCache::kMinTiles,
                   "this test only exercises the byte bound if it bites above the floor");
@@ -194,7 +194,7 @@ void test_the_byte_bound_never_evicts_below_the_floor()
     // Absurdly heavy: two of these alone blow the whole budget, so a byte
     // bound with no floor would evict down to almost nothing -- including
     // tiles the paint pass is mid-frame on.
-    constexpr std::size_t kVertices = (80u * 1024u * 1024u) / sizeof(map_widget::MapVertex);
+    constexpr std::size_t kVertices = (80u * 1024u * 1024u) / sizeof(map_render::MapVertex);
     for (std::uint32_t i = 0; i < TileCache::kMinTiles + 20; ++i)
     {
         cache.insert(at(i), tileOf(kVertices));

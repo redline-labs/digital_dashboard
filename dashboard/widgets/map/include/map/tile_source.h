@@ -44,11 +44,11 @@
 
 #include "mvt/tile.h"
 
-#include "map/projection.h"
-#include "map/tile_cache.h"
-#include "map/tile_workers.h"
-#include "map/style.h"
-#include "map/tessellator.h"
+#include "map_render/projection.h"
+#include "map_render/tile_cache.h"
+#include "map_render/tile_workers.h"
+#include "map_render/style.h"
+#include "map_render/tessellator.h"
 
 namespace pub_sub
 {
@@ -111,7 +111,7 @@ class TileSource
     // Ask for everything in `wanted` that is not already cached or in flight.
     // Called from the GUI thread on every camera change; cheap when nothing has
     // moved.
-    void request(const std::vector<TileId>& wanted);
+    void request(const std::vector<map_render::TileId>& wanted);
 
     // What is available to draw right now, in the order asked for, written
     // into `out` (cleared first, capacity kept -- the paint pass reuses its
@@ -122,7 +122,7 @@ class TileSource
     // NOT const: asking for a tile is what marks it as in use, and that is what
     // keeps the cache from evicting the ground the driver is looking at. See
     // the eviction note below.
-    void ready(const std::vector<TileId>& wanted, std::vector<CachedTile>& out);
+    void ready(const std::vector<map_render::TileId>& wanted, std::vector<map_render::CachedTile>& out);
 
     // What drain() took out of the mailbox: arrivals worth drawing, and
     // failures worth repainting over. Failures count separately because they
@@ -148,7 +148,7 @@ class TileSource
     // GUI thread only, like ready() -- and, like ready(), asking counts as use.
     // A tile serving as a stand-in is on screen, so it must not be the next
     // thing evicted.
-    bool drawable(const TileId& id);
+    bool drawable(const map_render::TileId& id);
 
     TileSourceStats stats() const;
 
@@ -190,7 +190,7 @@ class TileSource
 
 
   private:
-    void deliver(const TileId& id, CachedTile tile, bool absent, bool failed);
+    void deliver(const map_render::TileId& id, map_render::CachedTile tile, bool absent, bool failed);
     // What the server said about one tile of a batch. Decomposed from the
     // capnp status here rather than passed through, so this header stays free
     // of the generated schema -- the switch that maps MapStatus onto it lives
@@ -211,9 +211,9 @@ class TileSource
     };
 
     // Decode, tessellate and hand one tile to the mailbox. On a zenoh thread.
-    void deliverResult(const TileId& id, Outcome outcome, std::span<const std::uint8_t> bytes);
+    void deliverResult(const map_render::TileId& id, Outcome outcome, std::span<const std::uint8_t> bytes);
     // Mark every tile of a batch failed -- the request itself did not land.
-    void failBatch(const std::vector<TileId>& ids);
+    void failBatch(const std::vector<map_render::TileId>& ids);
 
     std::string mTileset;
     // Read from zenoh threads during tessellation and never written after
@@ -227,7 +227,7 @@ class TileSource
     // reverse declaration order, and the reply callback that dispatches into
     // this pool belongs to the client. A pool torn down while a callback is
     // still inside runAll() joins threads that are mid-job.
-    TileWorkers mWorkers;
+    map_render::TileWorkers mWorkers;
 
     std::unique_ptr<pub_sub::ZenohAsyncClient<::MapTileRequest, ::MapTileResponse>> mClient;
 
@@ -235,12 +235,12 @@ class TileSource
     // only the mailbox and the in-flight set, and is never held across a
     // decode.
     mutable std::mutex mMutex;
-    std::vector<std::pair<TileId, CachedTile>> mMailbox;
+    std::vector<std::pair<map_render::TileId, map_render::CachedTile>> mMailbox;
     // Tiles whose request failed, waiting to be folded into mBackoff by the
     // next drain. Separate from the mailbox because there is nothing to cache
     // -- only the fact of the failure.
-    std::vector<TileId> mFailures;
-    std::unordered_set<TileId, TileIdHash> mInFlight;
+    std::vector<map_render::TileId> mFailures;
+    std::unordered_set<map_render::TileId, map_render::TileIdHash> mInFlight;
     TileSourceStats mStats;
     // Learned from the first reply and unchanged after -- an archive does not
     // grow levels under a running server. Guarded by mMutex because it is
@@ -251,7 +251,7 @@ class TileSource
     // GUI thread only, so no lock. The eviction policy -- least recently used,
     // bounded by both count and bytes -- lives in TileCache, which is testable
     // without a zenoh session.
-    TileCache mCache;
+    map_render::TileCache mCache;
 
     // A failed tile is not cached -- there is nothing to draw -- so without
     // this it is re-requested on the very next paint, forever. Against a
@@ -268,7 +268,7 @@ class TileSource
         unsigned attempts { 0 };
         std::chrono::steady_clock::time_point retryAt;
     };
-    std::unordered_map<TileId, Backoff, TileIdHash> mBackoff;
+    std::unordered_map<map_render::TileId, Backoff, map_render::TileIdHash> mBackoff;
 };
 
 } // namespace map_widget

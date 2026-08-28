@@ -193,7 +193,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   nobody reads as a coordinate bug -- so `mbtiles_test_archive` writes archives
   in TMS and asserts in XYZ. See `docs/map.md`.
 - **The map renderer is ours, and it is on the GPU.** `libs/mvt` decodes Mapbox
-  Vector Tiles, `dashboard/widgets/map` tessellates them and draws them through
+  Vector Tiles, `libs/map_render` tessellates them and draws them through
   **QRhi against an offscreen texture** -- never a `QRhiWidget` or a
   `QOpenGLWidget`, both of which bind to a platform surface that does not exist
   under `QT_QPA_PLATFORM=offscreen`. That distinction is the whole design: a

@@ -12,8 +12,8 @@
 // rules all differ slightly across backends, and asserting on an exact byte
 // would make this test a report on which GPU the CI box has.
 
-#include "map/gpu_renderer.h"
-#include "map/tessellator.h"
+#include "map_render/gpu_renderer.h"
+#include "map_render/tessellator.h"
 
 #include "mvt/tile.h"
 
@@ -42,15 +42,15 @@ void check(bool condition, const std::string& what)
     }
 }
 
-using map_widget::Camera;
-using map_widget::Coordinate;
-using map_widget::GpuBatch;
-using map_widget::GpuRenderer;
-using map_widget::MapLayer;
-using map_widget::MapVertex;
-using map_widget::Projection;
-using map_widget::TileGeometry;
-using map_widget::TileId;
+using map_render::Camera;
+using map_render::Coordinate;
+using map_render::GpuBatch;
+using map_render::GpuRenderer;
+using map_render::MapLayer;
+using map_render::MapVertex;
+using map_render::Projection;
+using map_render::TileGeometry;
+using map_render::TileId;
 
 constexpr int kWidth = 400;
 constexpr int kHeight = 300;
@@ -90,7 +90,7 @@ std::shared_ptr<const TileGeometry> fullTileQuad(MapLayer layer, float r, float 
 
     // Everything before `layer` starts at 0 and everything from it on ends at
     // the full count.
-    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    for (std::size_t i = 0; i <= map_render::kMapLayerCount; ++i)
     {
         geometry->layerStart[i] = (i <= std::size_t(layer)) ? 0U : 4U;
         geometry->layerIndexStart[i] = (i <= std::size_t(layer)) ? 0U : 6U;
@@ -117,7 +117,7 @@ std::shared_ptr<const TileGeometry> fullTileStripe(float halfPx)
                            vertex(1.0f, 1.0f) };
     geometry->indices = { 0, 1, 2, 2, 1, 3 };
 
-    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    for (std::size_t i = 0; i <= map_render::kMapLayerCount; ++i)
     {
         geometry->layerStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 4U;
         geometry->layerIndexStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 6U;
@@ -428,7 +428,7 @@ void test_north_is_up_and_the_image_is_not_flipped()
     half->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
                        vertex(0.0f, 0.5f) };
     half->indices = { 0, 1, 2, 0, 2, 3 };
-    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    for (std::size_t i = 0; i <= map_render::kMapLayerCount; ++i)
     {
         half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 4U;
         half->layerIndexStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
@@ -512,7 +512,7 @@ InkSweep sweepInk(GpuRenderer& renderer, float halfPx)
         const Projection base(Camera { Coordinate { kIrvineLat, kIrvineLon }, 12.0, 0.0 }, kWidth,
                               kHeight);
         const auto centre = base.coordinateForScreen(
-            map_widget::ScreenPoint { kWidth / 2.0, (kHeight / 2.0) + (step * 0.1) });
+            map_render::ScreenPoint { kWidth / 2.0, (kHeight / 2.0) + (step * 0.1) });
         const Projection projection(Camera { centre, 12.0, 0.0 }, kWidth, kHeight);
 
         const QImage& frame = renderer.render(
@@ -703,7 +703,7 @@ void test_a_tessellated_road_draws_as_a_continuous_band()
     tile.layers.push_back(std::move(roads));
 
     const auto geometry =
-        std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+        std::make_shared<const TileGeometry>(map_render::tessellate(tile, style));
     check(geometry->layerIndexCount(MapLayer::RoadPrimary) > 0, "the road tessellated");
 
     const QImage& frame =
@@ -793,7 +793,7 @@ std::shared_ptr<const TileGeometry> roadTileWithWayId(const Projection& projecti
 
     mvt::Tile tile;
     tile.layers.push_back(std::move(roads));
-    return std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+    return std::make_shared<const TileGeometry>(map_render::tessellate(tile, style));
 }
 
 // The row carrying the most non-background pixels -- where the road landed.
@@ -1191,7 +1191,7 @@ void test_an_overpass_draws_over_the_road_it_crosses()
     tile.layers.push_back(std::move(roads));
 
     const auto geometry =
-        std::make_shared<const TileGeometry>(map_widget::tessellate(tile, style));
+        std::make_shared<const TileGeometry>(map_render::tessellate(tile, style));
     check(geometry->layerIndexCount(MapLayer::Motorway) > 0, "the motorway is at grade");
     check(geometry->layerIndexCount(MapLayer::RoadBridge) > 0, "the minor road is on the bridge");
 
@@ -1388,7 +1388,7 @@ void test_a_hidpi_frame_is_rendered_at_device_resolution()
     half->vertices = { vertex(0.0f, 0.0f), vertex(1.0f, 0.0f), vertex(1.0f, 0.5f),
                        vertex(0.0f, 0.5f) };
     half->indices = { 0, 1, 2, 0, 2, 3 };
-    for (std::size_t i = 0; i <= map_widget::kMapLayerCount; ++i)
+    for (std::size_t i = 0; i <= map_render::kMapLayerCount; ++i)
     {
         half->layerStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 4U;
         half->layerIndexStart[i] = (i <= std::size_t(MapLayer::Water)) ? 0U : 6U;
@@ -1520,7 +1520,7 @@ void test_line_widths_stay_logical_pixels()
     const Projection retina(camera, kSize, kSize, 2.0);
 
     const std::vector<GpuBatch> batches {
-        GpuBatch { centreTile(logical), fullTileStripe(map_widget::halfWidthFor(
+        GpuBatch { centreTile(logical), fullTileStripe(map_render::halfWidthFor(
                                             MapLayer::Motorway, style)) }
     };
 

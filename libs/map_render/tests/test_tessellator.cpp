@@ -12,7 +12,7 @@
 // vertex counts are ones a human worked out. libs/mvt's real-tile test is the
 // other half of that argument.
 
-#include "map/tessellator.h"
+#include "map_render/tessellator.h"
 
 #include <spdlog/spdlog.h>
 
@@ -35,10 +35,10 @@ void check(bool condition, const std::string& what)
     }
 }
 
-using map_widget::kMapLayerCount;
-using map_widget::MapLayer;
-using map_widget::MapVertex;
-using map_widget::tessellate;
+using map_render::kMapLayerCount;
+using map_render::MapLayer;
+using map_render::MapVertex;
+using map_render::tessellate;
 
 // --- tiny mvt::Tile builders ------------------------------------------------
 
@@ -126,7 +126,7 @@ mvt::Tile boundaryTile(std::int64_t adminLevel, bool writeLevel = true)
 
 // The widest |normal| in a layer, which is what the shader multiplies by
 // halfPx -- so this is the on-screen weight of the line.
-float halfPxOf(const map_widget::TileGeometry& geometry, MapLayer layer)
+float halfPxOf(const map_render::TileGeometry& geometry, MapLayer layer)
 {
     const auto first = geometry.layerStart[static_cast<std::size_t>(layer)];
     const auto last = geometry.layerStart[static_cast<std::size_t>(layer) + 1];
@@ -180,7 +180,7 @@ std::vector<mvt::Point> squareReversed(int x, int y, int size)
 
 void test_road_classes_reach_the_right_layers()
 {
-    using map_widget::roadPriority;
+    using map_render::roadPriority;
 
     check(roadPriority("motorway") == 4, "motorway is the top road class");
     check(roadPriority("trunk") == 3 && roadPriority("primary") == 3, "trunk and primary");
@@ -461,7 +461,7 @@ void test_style_switches_are_honoured()
 
 void test_per_layer_widths_come_from_the_style()
 {
-    using map_widget::halfWidthFor;
+    using map_render::halfWidthFor;
 
     MapStyle_t style;
     check(halfWidthFor(MapLayer::Motorway, style) > halfWidthFor(MapLayer::RoadMinor, style),
@@ -508,7 +508,7 @@ void test_road_width_scale_is_applied_exactly_once()
 
 void test_detail_thresholds_come_from_the_style()
 {
-    using map_widget::layerMinZoom;
+    using map_render::layerMinZoom;
 
     MapStyle_t style;
     check(layerMinZoom(MapLayer::Building, style) == 13.0, "buildings default to the archive's z13");
@@ -523,7 +523,7 @@ void test_detail_thresholds_come_from_the_style()
 
 void test_width_scale_tapers_with_zoom()
 {
-    using map_widget::widthScaleForZoom;
+    using map_render::widthScaleForZoom;
 
     check(widthScaleForZoom(14.0) > 0.99f, "full width at z14");
     check(widthScaleForZoom(5.0) < 0.2f, "much thinner at z5");
@@ -541,8 +541,8 @@ void test_every_geometry_gets_its_own_serial()
     // eviction is routinely handed straight back by the allocator, so a
     // replacement tile can land on the dead one's address. The serial has to
     // stay unique even then -- which is what the middle of this test pins.
-    const std::uint64_t first = map_widget::TileGeometry {}.serial;
-    const std::uint64_t second = map_widget::TileGeometry {}.serial;
+    const std::uint64_t first = map_render::TileGeometry {}.serial;
+    const std::uint64_t second = map_render::TileGeometry {}.serial;
     check(first != second, "two geometries never share a serial");
     check(second > first, "and serials only go up");
 
@@ -550,10 +550,10 @@ void test_every_geometry_gets_its_own_serial()
     // the first one's address; its serial must still differ.
     std::uintptr_t deadAddress = 0;
     {
-        auto dead = std::make_unique<map_widget::TileGeometry>();
+        auto dead = std::make_unique<map_render::TileGeometry>();
         deadAddress = reinterpret_cast<std::uintptr_t>(dead.get());
     }
-    auto reborn = std::make_unique<map_widget::TileGeometry>();
+    auto reborn = std::make_unique<map_render::TileGeometry>();
     if (reinterpret_cast<std::uintptr_t>(reborn.get()) == deadAddress)
     {
         SPDLOG_INFO("the allocator reused the freed address, as expected");
@@ -619,10 +619,10 @@ void test_a_runway_and_a_taxiway_land_in_different_layers()
 void test_a_runway_is_wider_than_a_taxiway()
 {
     const MapStyle_t style;
-    check(map_widget::halfWidthFor(MapLayer::AerowayRunway, style) >
-              map_widget::halfWidthFor(MapLayer::AerowayTaxiway, style),
+    check(map_render::halfWidthFor(MapLayer::AerowayRunway, style) >
+              map_render::halfWidthFor(MapLayer::AerowayTaxiway, style),
           "the default runway half-width exceeds the taxiway one");
-    check(map_widget::halfWidthFor(MapLayer::AerowaySurface, style) == 0.0f,
+    check(map_render::halfWidthFor(MapLayer::AerowaySurface, style) == 0.0f,
           "the surface is a fill and so carries no width");
 }
 

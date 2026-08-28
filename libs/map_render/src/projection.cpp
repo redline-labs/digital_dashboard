@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "map/projection.h"
+#include "map_render/projection.h"
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <unordered_set>
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -371,4 +371,4 @@ std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
     return out;
 }
 
-} // namespace map_widget
+} // namespace map_render

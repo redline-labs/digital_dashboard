@@ -27,7 +27,7 @@
 #include <thread>
 #include <vector>
 
-namespace map_widget
+namespace map_render
 {
 
 class TileWorkers
@@ -78,6 +78,6 @@ class TileWorkers
     bool mStopping { false };
 };
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_TILE_WORKERS_H

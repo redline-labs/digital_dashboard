@@ -34,15 +34,15 @@
 
 #include "mvt/tile.h"
 
-#include "map/label_candidates.h"
+#include "map_render/label_candidates.h"
 
-#include "map/projection.h"
-#include "map/text_quad.h"
-#include "map/style.h"
+#include "map_render/projection.h"
+#include "map_render/text_quad.h"
+#include "map_render/style.h"
 
 class QPainter;
 
-namespace map_widget
+namespace map_render
 {
 
 // A tile that may carry names. Same shape as the GPU batch, but holding the
@@ -298,6 +298,6 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
                       const MapStyle_t& style, LabelCache& cache, double devicePixelRatio,
                       std::vector<TextQuad>& out);
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_LABELS_H

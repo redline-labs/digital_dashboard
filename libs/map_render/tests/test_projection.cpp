@@ -13,7 +13,7 @@
 // finds a city's worth of roads in it. A wrong projection here would name a
 // tile that is empty ocean.
 
-#include "map/projection.h"
+#include "map_render/projection.h"
 
 #include <spdlog/spdlog.h>
 
@@ -42,15 +42,15 @@ bool near(double a, double b, double tolerance)
     return std::abs(a - b) <= tolerance;
 }
 
-using map_widget::Camera;
-using map_widget::Coordinate;
-using map_widget::Projection;
-using map_widget::ScreenPoint;
-using map_widget::kMaxTileZoom;
-using map_widget::substituteTiles;
-using map_widget::TileId;
-using map_widget::TileIdHash;
-using map_widget::WorldPoint;
+using map_render::Camera;
+using map_render::Coordinate;
+using map_render::Projection;
+using map_render::ScreenPoint;
+using map_render::kMaxTileZoom;
+using map_render::substituteTiles;
+using map_render::TileId;
+using map_render::TileIdHash;
+using map_render::WorldPoint;
 
 constexpr Coordinate kIrvine { 33.6865966, -117.8557874 };
 
@@ -61,24 +61,24 @@ constexpr Coordinate kIrvine { 33.6865966, -117.8557874 };
 void test_the_anchors_of_the_projection()
 {
     // Null island is the middle of the world in both axes.
-    const auto origin = map_widget::worldFor(Coordinate { 0.0, 0.0 });
+    const auto origin = map_render::worldFor(Coordinate { 0.0, 0.0 });
     check(near(origin.x, 0.5, 1e-12), "longitude 0 is world x = 0.5");
     check(near(origin.y, 0.5, 1e-12), "latitude 0 is world y = 0.5");
 
     // The corners. West and north are 0; east and south are 1.
-    const auto northWest = map_widget::worldFor(Coordinate { map_widget::kMaxLatitude, -180.0 });
+    const auto northWest = map_render::worldFor(Coordinate { map_render::kMaxLatitude, -180.0 });
     check(near(northWest.x, 0.0, 1e-12), "longitude -180 is world x = 0");
     check(near(northWest.y, 0.0, 1e-9), "the northern Mercator limit is world y = 0");
 
     const auto southEast =
-        map_widget::worldFor(Coordinate { -map_widget::kMaxLatitude, 179.9999999 });
+        map_render::worldFor(Coordinate { -map_render::kMaxLatitude, 179.9999999 });
     check(southEast.x > 0.999, "longitude +180 is world x = 1");
     check(near(southEast.y, 1.0, 1e-9), "the southern Mercator limit is world y = 1");
 
     // y is NOT linear in latitude -- that is the whole point of Mercator, and
     // a projection that used lat/180 would put everything at the right
     // longitude and the wrong latitude.
-    const auto at45 = map_widget::worldFor(Coordinate { 45.0, 0.0 });
+    const auto at45 = map_render::worldFor(Coordinate { 45.0, 0.0 });
     check(at45.y < 0.5, "45N is north of the equator");
     check(!near(at45.y, 0.5 - (45.0 / 180.0), 1e-3),
           "and is NOT where a linear projection would put it");
@@ -98,8 +98,8 @@ void test_world_coordinates_round_trip()
 
     for (const Coordinate& place : places)
     {
-        const auto world = map_widget::worldFor(place);
-        const auto back = map_widget::coordinateFor(world);
+        const auto world = map_render::worldFor(place);
+        const auto back = map_render::coordinateFor(world);
         check(near(back.latitude, place.latitude, 1e-9),
               "latitude round-trips: " + std::to_string(place.latitude));
         check(near(back.longitude, place.longitude, 1e-9),
@@ -112,25 +112,25 @@ void test_latitude_is_clamped_and_longitude_wraps()
     // Mercator's tan() runs to infinity at the poles. Unclamped, the pole
     // projects to infinity and every subsequent arithmetic yields NaN -- which
     // paints as nothing at all, silently.
-    const auto northPole = map_widget::worldFor(Coordinate { 90.0, 0.0 });
+    const auto northPole = map_render::worldFor(Coordinate { 90.0, 0.0 });
     check(std::isfinite(northPole.y), "the north pole projects to a finite y");
     // To within floating point: kMaxLatitude is a decimal rounding of
     // atan(sinh(pi)), so the projected edge lands a few ulp either side of
     // exactly 0. What matters is that it is bounded, not that it is exact.
     check(northPole.y >= -1e-9 && northPole.y <= 1.0 + 1e-9, "inside the world");
 
-    const auto southPole = map_widget::worldFor(Coordinate { -90.0, 0.0 });
+    const auto southPole = map_render::worldFor(Coordinate { -90.0, 0.0 });
     check(std::isfinite(southPole.y), "the south pole projects to a finite y");
 
-    check(near(map_widget::clampLatitude(90.0), map_widget::kMaxLatitude, 1e-9),
+    check(near(map_render::clampLatitude(90.0), map_render::kMaxLatitude, 1e-9),
           "latitude is clamped to the Mercator limit");
 
     // Longitudes wrap; clamping one would stop a camera dragged past the date
     // line rather than carrying it round.
-    check(near(map_widget::wrapLongitude(-190.0), 170.0, 1e-9), "-190 wraps to 170");
-    check(near(map_widget::wrapLongitude(190.0), -170.0, 1e-9), "190 wraps to -170");
-    check(near(map_widget::wrapLongitude(540.0), -180.0, 1e-9), "540 wraps to -180");
-    check(near(map_widget::wrapLongitude(-117.8557874), -117.8557874, 1e-12),
+    check(near(map_render::wrapLongitude(-190.0), 170.0, 1e-9), "-190 wraps to 170");
+    check(near(map_render::wrapLongitude(190.0), -170.0, 1e-9), "190 wraps to -170");
+    check(near(map_render::wrapLongitude(540.0), -180.0, 1e-9), "540 wraps to -180");
+    check(near(map_render::wrapLongitude(-117.8557874), -117.8557874, 1e-12),
           "a longitude already in range is untouched");
 }
 
@@ -143,7 +143,7 @@ void test_irvine_lands_in_the_expected_tile()
     // THE anchor. 2828/6562 at z14 is the tile libs/mvt pulls out of the real
     // archive and finds 2462 roads in. A projection error here names a tile
     // that is empty water and the map draws nothing, with no error anywhere.
-    const auto world = map_widget::worldFor(kIrvine);
+    const auto world = map_render::worldFor(kIrvine);
     const double side = std::exp2(14.0);
     const auto x = static_cast<std::uint32_t>(std::floor(world.x * side));
     const auto y = static_cast<std::uint32_t>(std::floor(world.y * side));

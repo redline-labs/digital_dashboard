@@ -63,9 +63,9 @@ class RawSubscriber;
 #include "dashboard/widget_types.h"
 
 #include "map/config.h"
-#include "map/gpu_renderer.h"
-#include "map/labels.h"
-#include "map/projection.h"
+#include "map_render/gpu_renderer.h"
+#include "map_render/labels.h"
+#include "map_render/projection.h"
 #include "map/recentre_button.h"
 #include "map/tile_source.h"
 
@@ -115,12 +115,12 @@ class MapWidget : public QWidget
         // False when no QRhi backend could be created. Hard failure: there is
         // no CPU fallback, so the map is background and labels only.
         bool gpuReady { false };
-        map_widget::GpuRenderer::Stats gpu;
+        map_render::GpuRenderer::Stats gpu;
         // Where the map is ACTUALLY looking, which is not always the configured
         // centre: Follow Vehicle moves it, and so does a drag. A screenshot of
         // the wrong place and a screenshot of an archive with no coverage there
         // are the same picture, and this is what tells them apart.
-        map_widget::Camera camera;
+        map_render::Camera camera;
         // True once a drag has moved the camera off the configured centre or
         // off the vehicle. Also exactly what puts the recentre button on
         // screen -- see recentreCamera().
@@ -169,24 +169,24 @@ class MapWidget : public QWidget
     // every start.
     bool hasPosition() const { return mLatitude.has_value() && mLongitude.has_value(); }
 
-    map_widget::Camera camera() const;
+    map_render::Camera camera() const;
     // The camera, the logical viewport and the ratio of whatever is being
     // painted into, as one value. Built per paint rather than kept -- see
     // map/projection.h.
-    map_widget::Projection projectionFor(const QPainter& painter) const;
+    map_render::Projection projectionFor(const QPainter& painter) const;
 
     // The projection the MOUSE works against. Deliberately does not go looking
     // for a paint device -- there is none during an event -- and it does not
     // need one: every coordinate a Projection returns is logical, and the
     // device pixel ratio plays no part in screen<->world at all.
-    map_widget::Projection interactionProjection() const;
+    map_render::Projection interactionProjection() const;
 
     // Move the camera so that `world` ends up under `screen`. ONE primitive for
     // both gestures: a drag is "keep the point you grabbed under the pointer"
     // and a wheel is "keep the point under the pointer where it is while the
     // scale changes", which are the same sentence.
-    void moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen);
-    void setInteractionCentre(const map_widget::Coordinate& where);
+    void moveCameraSoThat(const map_render::WorldPoint& world, const QPointF& screen);
+    void setInteractionCentre(const map_render::Coordinate& where);
     // `ease` is how long the zoom takes to glide to its target. A wheel's
     // detents are discrete and want the glide; a trackpad already sends a
     // smooth stream and passes zero, which lands the zoom on the next tick.
@@ -203,8 +203,8 @@ class MapWidget : public QWidget
     // Takes the frame's projection rather than making its own: the tile set has
     // to be the one the projection handed to the GPU is about to draw, and two
     // projections built independently is how those drift apart.
-    void refreshTiles(const map_widget::Projection& projection);
-    void paintMarker(QPainter& painter, const map_widget::Projection& projection);
+    void refreshTiles(const map_render::Projection& projection);
+    void paintMarker(QPainter& painter, const map_render::Projection& projection);
     void paintDiagnostic(QPainter& painter);
 
     config_t mConfig;
@@ -222,7 +222,7 @@ class MapWidget : public QWidget
     // Null when no backend came up. Checked on every paint rather than once,
     // because a null renderer is a state the widget draws differently rather
     // than a construction failure.
-    std::unique_ptr<map_widget::GpuRenderer> mGpu;
+    std::unique_ptr<map_render::GpuRenderer> mGpu;
 
     // Set on a zenoh thread, cleared on the GUI thread. It is what coalesces a
     // burst of tile replies into ONE repaint: the first arrival posts a queued
@@ -247,7 +247,7 @@ class MapWidget : public QWidget
 
     // This tile's crossfade at `now`: 0..1, smoothstepped, 1 when the fade is
     // done or disabled. First sight of a tile starts its clock.
-    float tileFadeAlpha(const map_widget::TileId& id, std::chrono::steady_clock::time_point now);
+    float tileFadeAlpha(const map_render::TileId& id, std::chrono::steady_clock::time_point now);
 
     // Advance the camera eases to `now`, writing the eased values into the
     // same mInteractionZoom/mInteractionCentre optionals camera() already
@@ -258,8 +258,8 @@ class MapWidget : public QWidget
 
     // setInteractionCentre without the repaint or the button re-layout --
     // for callers already inside a paint.
-    void setInteractionCentreQuiet(const map_widget::Coordinate& where);
-    void moveCameraSoThatQuiet(const map_widget::WorldPoint& world, const QPointF& screen);
+    void setInteractionCentreQuiet(const map_render::Coordinate& where);
+    void moveCameraSoThatQuiet(const map_render::WorldPoint& world, const QPointF& screen);
 
     // The one thing that repaints a failed map with nothing else going on: a
     // single-shot timer aimed at the earliest backed-off tile's retry time.
@@ -286,22 +286,22 @@ class MapWidget : public QWidget
     // paintEvent) so a tile that scrolls out and back does not fade again --
     // it is the same imagery, and a map that dims on every pan reads as
     // flicker, not polish.
-    std::unordered_map<map_widget::TileId, std::chrono::steady_clock::time_point,
-                       map_widget::TileIdHash>
+    std::unordered_map<map_render::TileId, std::chrono::steady_clock::time_point,
+                       map_render::TileIdHash>
         mFirstDrawn;
 
     // Scratch for the paint pass, reused across frames -- cleared each paint
     // with capacity kept, so a steady repaint allocates nothing. Written and
     // read only by assembleBatches()/paintEvent on the GUI thread.
-    std::vector<map_widget::GpuBatch> mBatches;
-    std::vector<map_widget::LabelTile> mLabelTiles;
+    std::vector<map_render::GpuBatch> mBatches;
+    std::vector<map_render::LabelTile> mLabelTiles;
     // The frame's text as quads. Reused rather than rebuilt, like every other
     // per-frame scratch here: the steady repaint allocates nothing.
-    std::vector<map_widget::TextQuad> mTextQuads;
-    std::vector<std::vector<map_widget::CachedTile>> mReady;
+    std::vector<map_render::TextQuad> mTextQuads;
+    std::vector<std::vector<map_render::CachedTile>> mReady;
     std::vector<std::vector<float>> mAlphas;
-    std::vector<std::vector<map_widget::TileId>> mStandIns;
-    std::vector<std::vector<map_widget::CachedTile>> mStandInTiles;
+    std::vector<std::vector<map_render::TileId>> mStandIns;
+    std::vector<std::vector<map_render::CachedTile>> mStandInTiles;
     std::vector<bool> mHave;
 
     // The tile-walk memo. refreshTiles() runs on EVERY paint -- fades, eases
@@ -312,11 +312,11 @@ class MapWidget : public QWidget
     // request() is still called every paint from the memoised lists: that is
     // what re-asks deferred tiles and expired backoffs, and it is already the
     // cheap early-out.
-    std::optional<map_widget::Camera> mWalkCamera;
+    std::optional<map_render::Camera> mWalkCamera;
     int mWalkWidth { -1 };
     int mWalkHeight { -1 };
     std::vector<std::optional<map_widget::TileSource::ZoomRange>> mWalkRanges;
-    std::vector<std::vector<map_widget::TileId>> mRequestLists;
+    std::vector<std::vector<map_render::TileId>> mRequestLists;
 
     // Drives repaints while any tile is still fading or any camera ease is in
     // flight. Single-shot, re-armed at the end of each paint only while
@@ -335,7 +335,7 @@ class MapWidget : public QWidget
     {
         double from { 0.0 };
         double to { 0.0 };
-        map_widget::WorldPoint anchorWorld {};
+        map_render::WorldPoint anchorWorld {};
         QPointF anchorScreen;
         bool anchored { false };
         std::chrono::steady_clock::time_point start;
@@ -350,7 +350,7 @@ class MapWidget : public QWidget
     // suspended" means); landing resets it and normal follow resumes.
     struct RecentreEase
     {
-        map_widget::Coordinate from {};
+        map_render::Coordinate from {};
         std::chrono::steady_clock::time_point start;
     };
     std::optional<RecentreEase> mRecentreEase;
@@ -359,7 +359,7 @@ class MapWidget : public QWidget
     // archive's range, so a global track layer that stops at z14 and a regional
     // basemap that goes deeper are asked for different levels in the same
     // frame.
-    std::vector<std::vector<map_widget::TileId>> mVisible;
+    std::vector<std::vector<map_render::TileId>> mVisible;
 
     std::optional<double> mLatitude;
     std::optional<double> mLongitude;
@@ -376,14 +376,14 @@ class MapWidget : public QWidget
     //     zooms about the CENTRE rather than the pointer, so the vehicle does
     //     not move on screen and there is no reason to stop tracking it --
     //     wanting a closer look is not asking to be left behind.
-    std::optional<map_widget::Coordinate> mInteractionCentre;
+    std::optional<map_render::Coordinate> mInteractionCentre;
     std::optional<double> mInteractionZoom;
 
     // The world point grabbed on mouse-down, held for the whole drag. Fixed at
     // press rather than recomputed per move: chasing a delta between successive
     // move events accumulates the rounding of every one of them, and the map
     // slides out from under the pointer over a long drag.
-    std::optional<map_widget::WorldPoint> mDragAnchor;
+    std::optional<map_render::WorldPoint> mDragAnchor;
 
     // Null unless the map is interactive. Parented to this widget, so the
     // editor's recursive mouse-transparency reaches it in edit mode.
@@ -393,10 +393,10 @@ class MapWidget : public QWidget
     // the moment it arrives; only the camera moves. Keeping degrees meant
     // re-running the Mercator forward transform over the whole trail on every
     // paint to compute a number that had not changed.
-    std::deque<map_widget::WorldPoint> mTrack;
+    std::deque<map_render::WorldPoint> mTrack;
 
     // Glyph outlines for the label pass, kept between frames. See map/labels.h.
-    map_widget::LabelCache mLabelCache;
+    map_render::LabelCache mLabelCache;
 
     // Written by paintEvent, read by status(). Both on the GUI thread.
     int mLastTilesDrawn { 0 };

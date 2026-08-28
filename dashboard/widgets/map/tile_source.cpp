@@ -2,7 +2,7 @@
 
 #include "map/tile_source.h"
 
-#include "map/labels.h"
+#include "map_render/labels.h"
 
 #include "mvt/decode.h"
 #include "mvt/gzip.h"
@@ -77,7 +77,7 @@ TileSource::~TileSource()
     mClient.reset();
 }
 
-void TileSource::request(const std::vector<TileId>& wanted)
+void TileSource::request(const std::vector<map_render::TileId>& wanted)
 {
     const auto now = std::chrono::steady_clock::now();
 
@@ -85,12 +85,12 @@ void TileSource::request(const std::vector<TileId>& wanted)
     // issue a few dozen zenoh queries to fill one screen, each with its own
     // capnp message, its own round trip and its own reply -- and needed a
     // 32-slot in-flight budget to stop a fast pan queuing thousands.
-    std::vector<TileId> ask;
+    std::vector<map_render::TileId> ask;
     ask.reserve(std::min(wanted.size(), kMaxTilesPerRequest));
 
     {
         const std::lock_guard<std::mutex> guard(mMutex);
-        for (const TileId& id : wanted)
+        for (const map_render::TileId& id : wanted)
         {
             if (mCache.contains(id))
             {
@@ -216,7 +216,7 @@ void TileSource::request(const std::vector<TileId>& wanted)
             mWorkers.runAll(tiles.size(), [&](std::size_t i) {
                 const auto result = tiles[static_cast<unsigned>(i)];
                 const auto coord = result.getCoord();
-                const TileId id { coord.getZ(), coord.getX(), coord.getY() };
+                const map_render::TileId id { coord.getZ(), coord.getX(), coord.getY() };
 
                 Outcome outcome = Outcome::Failed;
                 switch (result.getStatus())
@@ -290,7 +290,7 @@ void TileSource::request(const std::vector<TileId>& wanted)
     }
 }
 
-void TileSource::deliverResult(const TileId& id, Outcome outcome,
+void TileSource::deliverResult(const map_render::TileId& id, Outcome outcome,
                                std::span<const std::uint8_t> bytes)
 {
     switch (outcome)
@@ -315,13 +315,13 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
             // tile so it is not asked for again every frame -- an absent tile
             // re-requested forever is a steady stream of queries for nothing.
             deliver(id,
-                    CachedTile { std::make_shared<const LabelSet>(),
-                                 std::make_shared<const TileGeometry>() },
+                    map_render::CachedTile { std::make_shared<const map_render::LabelSet>(),
+                                 std::make_shared<const map_render::TileGeometry>() },
                     true, false);
             return;
 
         case Outcome::Failed:
-            deliver(id, CachedTile {}, false, true);
+            deliver(id, map_render::CachedTile {}, false, true);
             return;
     }
 
@@ -332,7 +332,7 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
     if (!raw)
     {
         SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y, mvt::to_string(raw.error()));
-        deliver(id, CachedTile {}, false, true);
+        deliver(id, map_render::CachedTile {}, false, true);
         return;
     }
 
@@ -340,7 +340,7 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
     if (!tile)
     {
         SPDLOG_ERROR("[map] tile {}/{}/{}: {}", id.z, id.x, id.y, mvt::to_string(tile.error()));
-        deliver(id, CachedTile {}, false, true);
+        deliver(id, map_render::CachedTile {}, false, true);
         return;
     }
 
@@ -350,21 +350,21 @@ void TileSource::deliverResult(const TileId& id, Outcome outcome,
     // the frame that shows a new tile costs the same as the frame before it.
     // The decoded tile itself dies right here -- the cache keeps only what
     // the paint pass actually reads.
-    auto geometry = std::make_shared<const TileGeometry>(tessellate(*tile, mStyle));
-    auto labels = std::make_shared<const LabelSet>(extractLabels(*tile));
+    auto geometry = std::make_shared<const map_render::TileGeometry>(map_render::tessellate(*tile, mStyle));
+    auto labels = std::make_shared<const map_render::LabelSet>(map_render::extractLabels(*tile));
 
-    deliver(id, CachedTile { std::move(labels), std::move(geometry) }, false, false);
+    deliver(id, map_render::CachedTile { std::move(labels), std::move(geometry) }, false, false);
 }
 
-void TileSource::failBatch(const std::vector<TileId>& ids)
+void TileSource::failBatch(const std::vector<map_render::TileId>& ids)
 {
-    for (const TileId& id : ids)
+    for (const map_render::TileId& id : ids)
     {
-        deliver(id, CachedTile {}, false, true);
+        deliver(id, map_render::CachedTile {}, false, true);
     }
 }
 
-void TileSource::deliver(const TileId& id, CachedTile tile, bool absent, bool failed)
+void TileSource::deliver(const map_render::TileId& id, map_render::CachedTile tile, bool absent, bool failed)
 {
     {
         const std::lock_guard<std::mutex> guard(mMutex);
@@ -404,8 +404,8 @@ void TileSource::deliver(const TileId& id, CachedTile tile, bool absent, bool fa
 
 TileSource::Drained TileSource::drain()
 {
-    std::vector<std::pair<TileId, CachedTile>> arrived;
-    std::vector<TileId> failures;
+    std::vector<std::pair<map_render::TileId, map_render::CachedTile>> arrived;
+    std::vector<map_render::TileId> failures;
     {
         const std::lock_guard<std::mutex> guard(mMutex);
         arrived.swap(mMailbox);
@@ -413,7 +413,7 @@ TileSource::Drained TileSource::drain()
     }
 
     const auto now = std::chrono::steady_clock::now();
-    for (const TileId& id : failures)
+    for (const map_render::TileId& id : failures)
     {
         Backoff& backoff = mBackoff[id];
         ++backoff.attempts;
@@ -460,7 +460,7 @@ std::optional<std::chrono::steady_clock::time_point> TileSource::nextRetryAt() c
 }
 
 
-void TileSource::ready(const std::vector<TileId>& wanted, std::vector<CachedTile>& out)
+void TileSource::ready(const std::vector<map_render::TileId>& wanted, std::vector<map_render::CachedTile>& out)
 {
     // Into the caller's vector, cleared but with its capacity kept: this runs
     // for every source on every paint, and the paint pass reuses one scratch
@@ -469,16 +469,16 @@ void TileSource::ready(const std::vector<TileId>& wanted, std::vector<CachedTile
     out.clear();
     out.reserve(wanted.size());
 
-    for (const TileId& id : wanted)
+    for (const map_render::TileId& id : wanted)
     {
         // Asking counts as use, which is what keeps the ground the driver is
         // looking at out of the eviction queue. See TileCache.
-        const CachedTile* found = mCache.find(id);
-        out.push_back(found != nullptr ? *found : CachedTile {});
+        const map_render::CachedTile* found = mCache.find(id);
+        out.push_back(found != nullptr ? *found : map_render::CachedTile {});
     }
 }
 
-bool TileSource::drawable(const TileId& id)
+bool TileSource::drawable(const map_render::TileId& id)
 {
     return mCache.drawable(id);
 }

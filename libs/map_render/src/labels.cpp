@@ -6,7 +6,7 @@
 // camera-free candidates this file places. The split is along the thread
 // boundary: nothing here runs on a decode worker, and nothing there knows what
 // a camera or a painter is.
-#include "map/labels.h"
+#include "map_render/labels.h"
 
 #include "qt_helpers/widget_colors.h"
 
@@ -29,7 +29,7 @@
 #include <optional>
 #include <variant>
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -1086,4 +1086,4 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
     return stats;
 }
 
-} // namespace map_widget
+} // namespace map_render

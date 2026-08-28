@@ -17,11 +17,11 @@
 #include <memory>
 #include <unordered_map>
 
-#include "map/label_candidates.h"
-#include "map/projection.h"
-#include "map/tessellator.h"
+#include "map_render/label_candidates.h"
+#include "map_render/projection.h"
+#include "map_render/tessellator.h"
 
-namespace map_widget
+namespace map_render
 {
 
 // One tile, in both the forms the widget draws from: the triangles for the
@@ -141,6 +141,6 @@ class TileCache
     std::size_t mBytes { 0 };
 };
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_TILE_CACHE_H

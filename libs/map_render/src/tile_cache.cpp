@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "map/tile_cache.h"
+#include "map_render/tile_cache.h"
 
 #include <algorithm>
 #include <string>
 #include <variant>
 
-namespace map_widget
+namespace map_render
 {
 
 std::size_t approximateBytes(const CachedTile& tile)
@@ -135,4 +135,4 @@ void TileCache::clear()
     mBytes = 0;
 }
 
-} // namespace map_widget
+} // namespace map_render

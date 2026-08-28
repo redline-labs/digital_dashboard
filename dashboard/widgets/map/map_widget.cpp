@@ -2,7 +2,7 @@
 
 #include "map/map_widget.h"
 
-#include "map/labels.h"
+#include "map_render/labels.h"
 
 #include <capnp/message.h>
 #include <capnp/serialize.h>
@@ -56,7 +56,7 @@ constexpr int kPrefetchRingTiles = 1;
 // It must stay within substituteTiles()'s reach -- kMaxSubstituteLevelsUp is 5
 // -- or the tiles would be fetched, cached, and never looked at.
 constexpr std::uint8_t kOverviewZoomDelta = 4;
-static_assert(kOverviewZoomDelta <= map_widget::kMaxSubstituteLevelsUp,
+static_assert(kOverviewZoomDelta <= map_render::kMaxSubstituteLevelsUp,
               "an overview deeper than substituteTiles() will look is fetched and never drawn");
 
 // How much of a zoom level one detent of a wheel is worth. A whole level per
@@ -107,7 +107,7 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
     // A failure here is not fatal and must not throw: there is no CPU fallback,
     // but a widget that reports "no GPU" in its own frame is far easier to
     // diagnose than one that refuses to construct and takes the layout with it.
-    mGpu = map_widget::GpuRenderer::create();
+    mGpu = map_render::GpuRenderer::create();
     if (!mGpu)
     {
         SPDLOG_ERROR("[map] no QRhi backend; the map will draw labels and marker only");
@@ -311,9 +311,9 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
 
 MapWidget::~MapWidget() = default;
 
-map_widget::Camera MapWidget::camera() const
+map_render::Camera MapWidget::camera() const
 {
-    map_widget::Camera out;
+    map_render::Camera out;
 
     // Three sources, in this order and not another: where the user dragged to,
     // then the vehicle if follow is on, then the configured centre -- which is
@@ -326,12 +326,12 @@ map_widget::Camera MapWidget::camera() const
     }
     else if (mConfig.follow_vehicle && hasPosition())
     {
-        out.center = map_widget::Coordinate { *mLatitude, *mLongitude };
+        out.center = map_render::Coordinate { *mLatitude, *mLongitude };
     }
     else
     {
         out.center =
-            map_widget::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
+            map_render::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
     }
 
     out.zoom = mInteractionZoom.value_or(mConfig.zoom);
@@ -340,7 +340,7 @@ map_widget::Camera MapWidget::camera() const
     return out;
 }
 
-map_widget::Projection MapWidget::projectionFor(const QPainter& painter) const
+map_render::Projection MapWidget::projectionFor(const QPainter& painter) const
 {
     // LOGICAL size plus the ratio, rather than one or the other. Everything
     // this widget draws with QPainter -- labels, the marker, the trail -- is in
@@ -356,10 +356,10 @@ map_widget::Projection MapWidget::projectionFor(const QPainter& painter) const
     // guarantee that is to ask the same object.
     const double ratio =
         painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0;
-    return map_widget::Projection(camera(), width(), height(), ratio);
+    return map_render::Projection(camera(), width(), height(), ratio);
 }
 
-void MapWidget::refreshTiles(const map_widget::Projection& projection)
+void MapWidget::refreshTiles(const map_render::Projection& projection)
 {
     // CLEARED, not left alone. A widget is constructed at Qt's default size and
     // may then be resized to nothing by a layout that has not run yet; keeping
@@ -426,7 +426,7 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
         const std::uint8_t z =
             archive.has_value()
                 ? projection.tileZoom(archive->min, archive->max)
-                : projection.tileZoom(0, static_cast<std::uint8_t>(map_widget::kMaxTileZoom));
+                : projection.tileZoom(0, static_cast<std::uint8_t>(map_render::kMaxTileZoom));
 
         // Both sets from one walk of the grid. The prefetch ring is requested but
         // never drawn, which is what keeps mVisible honest about what the paint
@@ -448,7 +448,7 @@ void MapWidget::refreshTiles(const map_widget::Projection& projection)
         {
             const auto overviewZ =
                 static_cast<std::uint8_t>(std::max(int(z) - int(kOverviewZoomDelta), int(archiveMin)));
-            for (const map_widget::TileId& id : projection.visibleTiles(overviewZ, 0))
+            for (const map_render::TileId& id : projection.visibleTiles(overviewZ, 0))
             {
                 tiles.withMargin.push_back(id);
             }
@@ -470,32 +470,32 @@ void MapWidget::resizeEvent(QResizeEvent* event)
 
 // ------------------------------------------------------------------- the mouse
 
-map_widget::Projection MapWidget::interactionProjection() const
+map_render::Projection MapWidget::interactionProjection() const
 {
-    return map_widget::Projection(camera(), width(), height(), devicePixelRatioF());
+    return map_render::Projection(camera(), width(), height(), devicePixelRatioF());
 }
 
-void MapWidget::setInteractionCentreQuiet(const map_widget::Coordinate& where)
+void MapWidget::setInteractionCentreQuiet(const map_render::Coordinate& where)
 {
     // Clamped and wrapped HERE rather than trusted. A drag past the top of the
     // world produces a latitude Web Mercator has no answer for, and one across
     // the date line produces a longitude outside [-180, 180) that would project
     // a whole world away. Both functions are the projection's own, so the map
     // stops at the poles and runs continuously round the equator.
-    mInteractionCentre = map_widget::Coordinate { map_widget::clampLatitude(where.latitude),
-                                                  map_widget::wrapLongitude(where.longitude) };
+    mInteractionCentre = map_render::Coordinate { map_render::clampLatitude(where.latitude),
+                                                  map_render::wrapLongitude(where.longitude) };
 }
 
-void MapWidget::setInteractionCentre(const map_widget::Coordinate& where)
+void MapWidget::setInteractionCentre(const map_render::Coordinate& where)
 {
     setInteractionCentreQuiet(where);
     layOutRecentreButton();
     update();
 }
 
-void MapWidget::moveCameraSoThatQuiet(const map_widget::WorldPoint& world, const QPointF& screen)
+void MapWidget::moveCameraSoThatQuiet(const map_render::WorldPoint& world, const QPointF& screen)
 {
-    const map_widget::Projection projection = interactionProjection();
+    const map_render::Projection projection = interactionProjection();
 
     // What is under the pointer NOW, at the camera as it currently stands. The
     // difference between that and where the caller wants it is exactly how far
@@ -503,15 +503,15 @@ void MapWidget::moveCameraSoThatQuiet(const map_widget::WorldPoint& world, const
     // and through worldForScreen(), so it is right under rotation too. A
     // rotated map dragged with a screen-space delta moves off at an angle to
     // the pointer, and that inverse is already written and tested.
-    const map_widget::WorldPoint under =
-        projection.worldForScreen(map_widget::ScreenPoint { screen.x(), screen.y() });
-    const map_widget::WorldPoint centre = map_widget::worldFor(projection.camera().center);
+    const map_render::WorldPoint under =
+        projection.worldForScreen(map_render::ScreenPoint { screen.x(), screen.y() });
+    const map_render::WorldPoint centre = map_render::worldFor(projection.camera().center);
 
-    setInteractionCentreQuiet(map_widget::coordinateFor(map_widget::WorldPoint {
+    setInteractionCentreQuiet(map_render::coordinateFor(map_render::WorldPoint {
         centre.x + (world.x - under.x), centre.y + (world.y - under.y) }));
 }
 
-void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen)
+void MapWidget::moveCameraSoThat(const map_render::WorldPoint& world, const QPointF& screen)
 {
     moveCameraSoThatQuiet(world, screen);
     layOutRecentreButton();
@@ -520,7 +520,7 @@ void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPoi
 
 void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::milliseconds ease)
 {
-    const map_widget::Projection before = interactionProjection();
+    const map_render::Projection before = interactionProjection();
 
     // The CAMERA's range, which is the layout's business and has nothing to do
     // with how deep the archive goes. Asking to be closer than the archive can
@@ -558,8 +558,8 @@ void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::millisecon
         return;
     }
 
-    const map_widget::WorldPoint anchor =
-        before.worldForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    const map_render::WorldPoint anchor =
+        before.worldForScreen(map_render::ScreenPoint { at.x(), at.y() });
     mZoomEase = ZoomEase { before.camera().zoom, wanted, anchor, at, true,
                            std::chrono::steady_clock::now(), ease };
     update();
@@ -623,7 +623,7 @@ void MapWidget::mousePressEvent(QMouseEvent* event)
     }
 
     mDragAnchor = interactionProjection().worldForScreen(
-        map_widget::ScreenPoint { event->position().x(), event->position().y() });
+        map_render::ScreenPoint { event->position().x(), event->position().y() });
     setCursor(Qt::ClosedHandCursor);
     event->accept();
 }
@@ -720,11 +720,11 @@ void MapWidget::onPositionChanged()
         return;
     }
 
-    const map_widget::Coordinate here { *mLatitude, *mLongitude };
+    const map_render::Coordinate here { *mLatitude, *mLongitude };
 
     if (mConfig.show_track && mConfig.track_points > 0)
     {
-        mTrack.push_back(map_widget::worldFor(here));
+        mTrack.push_back(map_render::worldFor(here));
         while (mTrack.size() > mConfig.track_points)
         {
             mTrack.pop_front();
@@ -766,10 +766,10 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
     {
         // The LIVE target, re-read each tick: a moving vehicle is flown TO,
         // not to where it was when the button was pressed.
-        const map_widget::Coordinate target =
+        const map_render::Coordinate target =
             (mConfig.follow_vehicle && hasPosition())
-                ? map_widget::Coordinate { *mLatitude, *mLongitude }
-                : map_widget::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
+                ? map_render::Coordinate { *mLatitude, *mLongitude }
+                : map_render::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
 
         const double t = easeProgress(mRecentreEase->start, now, kRecentreEaseMs);
         if (t >= 1.0)
@@ -784,10 +784,10 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
             // Interpolated in world space, where a straight line is straight
             // on the map -- lerping degrees bends near the poles and across
             // the date line.
-            const map_widget::WorldPoint a = map_widget::worldFor(mRecentreEase->from);
-            const map_widget::WorldPoint b = map_widget::worldFor(target);
+            const map_render::WorldPoint a = map_render::worldFor(mRecentreEase->from);
+            const map_render::WorldPoint b = map_render::worldFor(target);
             const double k = easeSmooth(t);
-            setInteractionCentreQuiet(map_widget::coordinateFor(map_widget::WorldPoint {
+            setInteractionCentreQuiet(map_render::coordinateFor(map_render::WorldPoint {
                 a.x + ((b.x - a.x) * k), a.y + ((b.y - a.y) * k) }));
             animating = true;
         }
@@ -796,7 +796,7 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
     return animating;
 }
 
-float MapWidget::tileFadeAlpha(const map_widget::TileId& id,
+float MapWidget::tileFadeAlpha(const map_render::TileId& id,
                                std::chrono::steady_clock::time_point now)
 {
     if (mConfig.tile_fade_ms == 0)
@@ -836,8 +836,8 @@ void MapWidget::assembleBatches()
     {
         visibleTotal += ids.size();
     }
-    std::size_t budget = map_widget::GpuRenderer::kMaxTilesPerFrame > visibleTotal
-                             ? map_widget::GpuRenderer::kMaxTilesPerFrame - visibleTotal
+    std::size_t budget = map_render::GpuRenderer::kMaxTilesPerFrame > visibleTotal
+                             ? map_render::GpuRenderer::kMaxTilesPerFrame - visibleTotal
                              : 0;
 
     for (std::size_t s = 0; s < mSources.size(); ++s)
@@ -872,8 +872,8 @@ void MapWidget::assembleBatches()
             }
         }
         map_widget::TileSource& source = *mSources[s];
-        mStandIns[s] = map_widget::substituteTiles(
-            mVisible[s], mHave, [&source](const map_widget::TileId& id) {
+        mStandIns[s] = map_render::substituteTiles(
+            mVisible[s], mHave, [&source](const map_render::TileId& id) {
                 return source.drawable(id);
             },
             budget);
@@ -899,7 +899,7 @@ void MapWidget::assembleBatches()
                 // A stand-in fades on its own clock, keyed by its own id -- an
                 // ancestor that was on screen moments ago at another zoom is
                 // already in mFirstDrawn and draws solid at once.
-                mBatches.push_back(map_widget::GpuBatch { mStandIns[s][i],
+                mBatches.push_back(map_render::GpuBatch { mStandIns[s][i],
                                                          mStandInTiles[s][i].geometry,
                                                          tileFadeAlpha(mStandIns[s][i], now) });
             }
@@ -915,9 +915,9 @@ void MapWidget::assembleBatches()
             {
                 continue;
             }
-            mBatches.push_back(map_widget::GpuBatch { mVisible[s][i], mReady[s][i].geometry,
+            mBatches.push_back(map_render::GpuBatch { mVisible[s][i], mReady[s][i].geometry,
                                                      mAlphas[s][i] });
-            mLabelTiles.push_back(map_widget::LabelTile { mVisible[s][i], mReady[s][i].labels });
+            mLabelTiles.push_back(map_render::LabelTile { mVisible[s][i], mReady[s][i].labels });
         }
     }
     mLastTilesDrawn = static_cast<int>(mBatches.size()) - mLastTilesStandIn;
@@ -938,7 +938,7 @@ void MapWidget::assembleBatches()
             if (mStandInTiles[s][i])
             {
                 mLabelTiles.push_back(
-                    map_widget::LabelTile { mStandIns[s][i], mStandInTiles[s][i].labels });
+                    map_render::LabelTile { mStandIns[s][i], mStandInTiles[s][i].labels });
             }
         }
     }
@@ -949,8 +949,8 @@ void MapWidget::assembleBatches()
     constexpr std::size_t kMaxFirstDrawn = 4096;
     if (mFirstDrawn.size() > kMaxFirstDrawn)
     {
-        std::unordered_set<map_widget::TileId, map_widget::TileIdHash> onScreen;
-        for (const map_widget::GpuBatch& batch : mBatches)
+        std::unordered_set<map_render::TileId, map_render::TileIdHash> onScreen;
+        for (const map_render::GpuBatch& batch : mBatches)
         {
             onScreen.insert(batch.id);
         }
@@ -985,7 +985,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // Built here rather than only on resize: unlike resizeEvent this is
     // guaranteed to run before anything is drawn, at the size and the ratio
     // actually being painted.
-    const map_widget::Projection projection = projectionFor(painter);
+    const map_render::Projection projection = projectionFor(painter);
     refreshTiles(projection);
 
     // --- 1. geometry, on the GPU -------------------------------------------
@@ -994,7 +994,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     if (mGpu)
     {
-        const map_widget::GpuRenderer::Highlight highlight {
+        const map_render::GpuRenderer::Highlight highlight {
             mHighlightWayIds, qt_helpers::toQColor(mConfig.highlight_color),
             float(mConfig.highlight_extra_width)
         };
@@ -1003,8 +1003,8 @@ void MapWidget::paintEvent(QPaintEvent* event)
         // Placement and collision stay here -- which labels survive depends on
         // what else is already on screen, across tiles, so it cannot be baked
         // per tile. Only the DRAWING moves, and it was 95% of this pass.
-        const map_widget::LabelStats labels =
-            map_widget::layOutText(projection, mLabelTiles, mConfig.style, mLabelCache,
+        const map_render::LabelStats labels =
+            map_render::layOutText(projection, mLabelTiles, mConfig.style, mLabelCache,
                                    projection.devicePixelRatio(), mTextQuads);
         mLastLabelsPlaced = labels.placed;
         mGpu->setText(mTextQuads, mLabelCache.atlas().page(), mLabelCache.atlas().dirty());
@@ -1114,7 +1114,7 @@ void MapWidget::paintDiagnostic(QPainter& painter)
     painter.drawText(rect(), Qt::AlignCenter, message);
 }
 
-void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& projection)
+void MapWidget::paintMarker(QPainter& painter, const map_render::Projection& projection)
 {
     if (!hasPosition())
     {
@@ -1127,7 +1127,7 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
     {
         QPainterPath path;
         bool started = false;
-        for (const map_widget::WorldPoint& point : mTrack)
+        for (const map_render::WorldPoint& point : mTrack)
         {
             const auto at = projection.screenFor(point);
             const QPointF pixel(at.x, at.y);
@@ -1153,7 +1153,7 @@ void MapWidget::paintMarker(QPainter& painter, const map_widget::Projection& pro
         painter.setOpacity(1.0);
     }
 
-    const auto at = projection.screenFor(map_widget::Coordinate { *mLatitude, *mLongitude });
+    const auto at = projection.screenFor(map_render::Coordinate { *mLatitude, *mLongitude });
     const QPointF centre(at.x, at.y);
     const double radius = static_cast<double>(mConfig.marker_size);
 

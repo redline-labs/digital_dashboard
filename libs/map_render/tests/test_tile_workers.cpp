@@ -6,7 +6,7 @@
 // zenoh session and a server to produce a batch, and a concurrency bug there
 // presents as a tile that occasionally does not arrive.
 
-#include "map/tile_workers.h"
+#include "map_render/tile_workers.h"
 
 #include <spdlog/spdlog.h>
 
@@ -29,7 +29,7 @@ void check(bool condition, const std::string& what)
     }
 }
 
-using map_widget::TileWorkers;
+using map_render::TileWorkers;
 
 // Every index runs, exactly once. A shared claim counter that double-issues an
 // index would decode a tile twice; one that skips would lose it silently, which

@@ -59,6 +59,11 @@ add_subdirectory(road_graph)
 # A segment on the wire. After road_graph and map_rules, whose types it maps,
 # and after schemas, whose vocabulary it maps them to.
 add_subdirectory(map_wire)
+# Vector tiles to pixels: projection, tessellator, GPU renderer, label layout,
+# tile cache. Hoisted out of dashboard/widgets/map so scope can draw a map
+# without reaching into the dashboard's include tree. After mvt, which it
+# decodes tiles with; it knows nothing about where the bytes came from.
+add_subdirectory(map_render)
 # The MOTOTRBO radio protocols: XNL framing and authentication, XCMP commands,
 # the on-air control plane, and the NAI data service codecs. Pure bytes, no
 # I/O -- `xpr` sits above it with the sockets, the same way bd992 sits above

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "map/tessellator.h"
+#include "map_render/tessellator.h"
 
 // earcut.hpp shadows its own members in a dozen places, which our -Werror
 // rejects. Silenced for the header alone rather than for the file: -Wshadow
@@ -33,7 +33,7 @@ struct nth<1, mvt::Point>
 };
 } // namespace mapbox::util
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -756,4 +756,4 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style)
     return out;
 }
 
-} // namespace map_widget
+} // namespace map_render

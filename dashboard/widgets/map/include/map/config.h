@@ -23,7 +23,7 @@
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
-#include "map/style.h"
+#include "map_render/style.h"
 
 REFLECT_STRUCT(MapConfig_t,
     (std::string, tileset, "socal",

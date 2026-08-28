@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "map/tile_workers.h"
+#include "map_render/tile_workers.h"
 
 #include <algorithm>
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -167,4 +167,4 @@ void TileWorkers::runAll(std::size_t count, const std::function<void(std::size_t
     }
 }
 
-} // namespace map_widget
+} // namespace map_render

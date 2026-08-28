@@ -79,7 +79,13 @@ add_subdirectory(third_party)
 # module ever does need the prefix, it says so at compile time with a missing
 # header -- a better failure than silently compiling against the wrong copy of a
 # dependency.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Multimedia)
+# GuiPrivate is found HERE, at the root, rather than only where it is used.
+# It exposes <rhi/qrhi.h> for libs/map_render, and an imported target found in a
+# subdirectory is not visible to sibling scopes -- the dashboard executable
+# links map_render and Qt's dependency walker warns that GuiPrivate "is
+# mentioned as a dependency but not declared". Declaring it at the root is what
+# makes that walk complete.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Multimedia GuiPrivate)
 get_target_property(QT_PLATFORM_INCLUDES Qt6::Platform INTERFACE_INCLUDE_DIRECTORIES)
 foreach(prefix IN LISTS CMAKE_SYSTEM_PREFIX_PATH CMAKE_PREFIX_PATH)
     list(REMOVE_ITEM QT_PLATFORM_INCLUDES "${prefix}/include")

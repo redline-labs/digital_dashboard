@@ -8,16 +8,27 @@ A map on the dash, from a file, with no internet anywhere in the path.
 
 ```
  socal.mbtiles ─► libs/mbtiles ─► nodes/map_server ─► zenoh ─► dashboard/widgets/map
-                  (format only)    map/tile                    TileSource ─► libs/mvt ─► tessellator
-                                   map/catalog                       │                        │
-                                   map/asset                         │                   GpuRenderer (QRhi)
-                                                                     └────────────────►  labels (QPainter)
+                  (format only)    map/tile                    TileSource
+                                   map/catalog                      │
+                                   map/asset                        ▼
+                                                              libs/map_render
+                                                     libs/mvt ─► tessellator ─► GpuRenderer (QRhi)
+                                                                      └───────► labels (glyph atlas)
 ```
 
-Three pieces. `libs/mbtiles` reads the archive. `nodes/map_server` answers zenoh
-queries for tiles, catalogs and assets. `dashboard/widgets/map` fetches tiles,
-decodes them with `libs/mvt`, turns them into triangles, and draws those on the
-GPU.
+Four pieces. `libs/mbtiles` reads the archive. `nodes/map_server` answers zenoh
+queries for tiles, catalogs and assets. `dashboard/widgets/map` is the QWidget
+and the zenoh client that fetches tiles. `libs/map_render` is everything that
+turns a vector tile into pixels — projection, tessellator, GPU renderer, label
+layout, tile cache — and it knows nothing about where the bytes came from.
+
+**That last split is what lets a second app draw a map.** The renderer was
+hoisted out of the widget the same way `libs/config_codec` and `libs/qt_helpers`
+were hoisted out of `dashboard/include/dashboard/` when `scope` was created, and
+for the same reason: a second top-level app must not reach into the first's
+include tree. `dashboard/widgets/map` asks `map_server`; `scope`'s map panel
+reads an `.mbtiles` directly. Neither transport is visible from inside
+`libs/map_render`.
 
 ## Why the renderer is ours
 
@@ -508,7 +519,8 @@ when that 383 MB file is absent so a fresh checkout still passes.
 
 ## Projection
 
-Web Mercator, in `dashboard/widgets/map/projection.h`. World coordinates are
+Web Mercator, in `libs/map_render/include/map_render/projection.h`. World
+coordinates are
 normalised to `[0,1]` so the zoom appears exactly once per conversion.
 
 The anchor for the tests is Irvine at `z14/2828/6562`, worked out by hand from
@@ -794,7 +806,7 @@ picture.
 
 ## The tile cache, and what leaves it
 
-`map/tile_cache.h`, split out of `TileSource` because that class cannot be built
+`map_render/tile_cache.h`, split out of `TileSource` because that class cannot be built
 without a zenoh session and the eviction policy is the part worth testing.
 
 Bounded by **both** a tile count (256) and a byte budget (128 MB), because
@@ -977,8 +989,14 @@ one -- and it looked entirely plausible. Run it alone, and check `uptime` first.
   and read back as a bad conversion, which throws out of the YAML decoder and
   takes the whole layout with it. `min_zoom`/`max_zoom` are `uint16_t` for
   exactly this reason.
-- **The vendored `sqlite3` stays out of the GUI apps.** `libs/mbtiles` is
-  server-side only; the widget never links it, because it asks the node.
+- **The vendored `sqlite3` stays out of the DASHBOARD.** `libs/mbtiles` is not
+  on `dashboard`'s or `editor`'s link line, and must not get there: Qt reaches
+  SQLite through `Qt6::Sql`, which links its own copy, and the two must never
+  meet in one process. The widget has no use for it — it asks the node. `scope`
+  is the deliberate exception: it is a desktop review tool that opens archives
+  itself and links no `Qt6::Sql`. Check with
+  `grep -o sqlite3 build/dashboard/CMakeFiles/dashboard.dir/link.txt`, which
+  must stay empty.
 - **`Qt6::GuiPrivate` is what exposes `<rhi/qrhi.h>`.** QRhi is semi-public in
   Qt 6 — a stable-ish API shipped behind the private headers — and the
   `InitParams` structs live in `<rhi/qrhi_platform.h>`, each behind the feature

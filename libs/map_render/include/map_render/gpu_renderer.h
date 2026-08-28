@@ -85,10 +85,10 @@
 #define MAP_HAS_VULKAN 0
 #endif
 
-#include "map/projection.h"
-#include "map/style.h"
-#include "map/tessellator.h"
-#include "map/text_quad.h"
+#include "map_render/projection.h"
+#include "map_render/style.h"
+#include "map_render/tessellator.h"
+#include "map_render/text_quad.h"
 
 class QOffscreenSurface;
 class QRhi;
@@ -100,7 +100,7 @@ class QRhiTexture;
 class QRhiTextureRenderTarget;
 class QRhiSampler;
 
-namespace map_widget
+namespace map_render
 {
 
 // One tile's worth of geometry, with the id that says where to put it.
@@ -403,6 +403,6 @@ class GpuRenderer
     std::vector<char> mUniformScratch;
 };
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_GPU_RENDERER_H

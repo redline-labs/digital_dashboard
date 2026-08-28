@@ -28,9 +28,9 @@
 
 #include "mvt/tile.h"
 
-#include "map/style.h"
+#include "map_render/style.h"
 
-namespace map_widget
+namespace map_render
 {
 
 // What the vertex shader consumes. Kept to 36 bytes and one layout so the whole
@@ -247,6 +247,6 @@ TileGeometry tessellate(const mvt::Tile& tile, const MapStyle_t& style);
 // shader as a uniform, so zooming never invalidates a tessellation.
 float widthScaleForZoom(double zoom);
 
-} // namespace map_widget
+} // namespace map_render
 
 #endif // MAP_TESSELLATOR_H

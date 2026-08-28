@@ -19,10 +19,10 @@
 // SET changes. If it tracks the frame count, something is invalidating the
 // vertex cache every frame and the whole tessellate-once design is off.
 
-#include "map/gpu_renderer.h"
-#include "map/labels.h"
-#include "map/projection.h"
-#include "map/tessellator.h"
+#include "map_render/gpu_renderer.h"
+#include "map_render/labels.h"
+#include "map_render/projection.h"
+#include "map_render/tessellator.h"
 
 #include "mbtiles/archive.h"
 #include "mvt/decode.h"
@@ -50,16 +50,16 @@
 namespace
 {
 
-using map_widget::Camera;
-using map_widget::Coordinate;
-using map_widget::GpuBatch;
-using map_widget::GpuRenderer;
-using map_widget::LabelTile;
-using map_widget::Projection;
-using map_widget::TileGeometry;
-using map_widget::TileId;
-using map_widget::TileIdHash;
-using map_widget::WorldPoint;
+using map_render::Camera;
+using map_render::Coordinate;
+using map_render::GpuBatch;
+using map_render::GpuRenderer;
+using map_render::LabelTile;
+using map_render::Projection;
+using map_render::TileGeometry;
+using map_render::TileId;
+using map_render::TileIdHash;
+using map_render::WorldPoint;
 
 // Irvine. The bench archive covers Southern California, so anywhere else
 // measures the cost of drawing nothing.
@@ -202,7 +202,7 @@ int main(int argc, char** argv)
     // not pay.
     struct Cached
     {
-        std::shared_ptr<const map_widget::LabelSet> labels;
+        std::shared_ptr<const map_render::LabelSet> labels;
         std::shared_ptr<const TileGeometry> geometry;
     };
     std::unordered_map<TileId, Cached, TileIdHash> cache;
@@ -212,7 +212,7 @@ int main(int argc, char** argv)
     const Projection probe(startCamera, width, height, dpr);
 
     // The whole corridor the camera will drive along, plus a generous margin.
-    const WorldPoint centre = map_widget::worldFor(Coordinate { kStartLat, kStartLon });
+    const WorldPoint centre = map_render::worldFor(Coordinate { kStartLat, kStartLon });
     const double side = std::exp2(double(z));
     const auto centreX = static_cast<std::int64_t>(centre.x * side);
     const auto centreY = static_cast<std::int64_t>(centre.y * side);
@@ -246,9 +246,9 @@ int main(int argc, char** argv)
                 continue;
             }
             auto geometry =
-                std::make_shared<const TileGeometry>(map_widget::tessellate(*tile, style));
+                std::make_shared<const TileGeometry>(map_render::tessellate(*tile, style));
             auto labels =
-                std::make_shared<const map_widget::LabelSet>(map_widget::extractLabels(*tile));
+                std::make_shared<const map_render::LabelSet>(map_render::extractLabels(*tile));
             vertices += geometry->vertices.size();
             cache.emplace(id, Cached { std::move(labels), std::move(geometry) });
             ++decoded;
@@ -293,8 +293,8 @@ int main(int argc, char** argv)
     QImage canvas(int(std::lround(width * dpr)), int(std::lround(height * dpr)),
                   QImage::Format_RGBA8888);
     canvas.setDevicePixelRatio(dpr);
-    map_widget::LabelCache labelCache;
-    std::vector<map_widget::TextQuad> textQuads;
+    map_render::LabelCache labelCache;
+    std::vector<map_render::TextQuad> textQuads;
 
     // ~25 m per fix at 10 Hz is about 90 km/h, and moving every frame is the
     // point: a stationary camera would measure the memoised case, not the
@@ -307,7 +307,7 @@ int main(int argc, char** argv)
         const Coordinate here { kStartLat, kStartLon + (double(i) * kMetresPerFix * degPerMetreLon) };
 
         track.push_back(here);
-        trackWorldPoints.push_back(map_widget::worldFor(here));
+        trackWorldPoints.push_back(map_render::worldFor(here));
         while (track.size() > kTrackPoints)
         {
             track.pop_front();
@@ -348,8 +348,8 @@ int main(int argc, char** argv)
         // the label stage now times placement and collision only -- the draw
         // shows up in `gpu render`.
         const Timer labelTimer;
-        const map_widget::LabelStats placed =
-            map_widget::layOutText(projection, labelTiles, style, labelCache, dpr, textQuads);
+        const map_render::LabelStats placed =
+            map_render::layOutText(projection, labelTiles, style, labelCache, dpr, textQuads);
         labels.add(labelTimer.ms());
         gpu->setText(textQuads, labelCache.atlas().page(), labelCache.atlas().dirty());
         labelCache.atlas().markClean();

@@ -12,13 +12,13 @@
 //
 // map/label_candidates.h is deliberately QtCore-only -- it is what the tile
 // cache stores -- and nothing added here may break that.
-#include "map/label_candidates.h"
+#include "map_render/label_candidates.h"
 
-#include "map/labels.h"
+#include "map_render/labels.h"
 
 // For roadPriority(): the ladder that decides which layer a road is drawn in
 // is the same one that decides whose name survives a collision.
-#include "map/tessellator.h"
+#include "map_render/tessellator.h"
 
 #include <QString>
 
@@ -32,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-namespace map_widget
+namespace map_render
 {
 namespace
 {
@@ -633,4 +633,4 @@ int placePriority(std::string_view className)
 }
 
 
-} // namespace map_widget
+} // namespace map_render
