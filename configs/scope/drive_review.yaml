@@ -1,0 +1,94 @@
+# Reviewing a drive: where the vehicle went, and how fast, against one clock.
+#
+#   ./build/scope/scope --config configs/scope/drive_review.yaml --bag drives/today
+#
+# NOTHING ELSE HAS TO BE RUNNING. The map panel opens the .mbtiles itself --
+# there is no map_server here and no zenoh session for tiles. What it does need
+# is a tileset called 'socal' in your per-user settings:
+#
+#   File ▸ Settings…            (or, headless:)
+#   app_call("scope.settings", {"tilesets": [
+#       {"name": "socal", "path": "/path/to/socal.mbtiles"}]})
+#
+# THE PANEL NAMES A TILESET, NEVER A PATH. That is what keeps this file openable
+# on someone else's machine: the name is here, the path is in their settings.
+# See the Settings section of docs/scope.md.
+#
+# To make a recording to review, with no receiver:
+#
+#   ./build/nodes/map_server/map_server --config configs/map_server.yaml &
+#   ./build/nodes/bd992_mock/bd992_mock --route 33.6866,-117.8558 --to 33.7701,-118.1937 &
+#   ./build/nodes/bag/bag record drives/today -d 60
+#
+# (map_server is for the MOCK, which asks it to route a real road. The scope map
+# panel does not use it.)
+#
+# `dock_state` is empty on purpose, so this file is not tied to a Qt version --
+# which means the two panels arrive TABBED rather than side by side, the way any
+# freshly added panel does. Drag one out and File ▸ Save Workspace if you want
+# the arrangement kept. A hidden tab does not paint, so a map on the inactive
+# tab reports zero tiles drawn until you switch to it.
+
+name: Drive Review
+
+# The trail is the retention window, so this is how much of the drive the map
+# draws at once. Raise it to see a whole lap.
+history_seconds: 300
+window_seconds: 30
+render_rate_hz: 30
+max_capture_bytes: 1073741824
+max_capture_seconds: 1800
+
+panels:
+  - id: where
+    type: map
+    config:
+      title: Where
+      tileset: socal
+
+      # Circuit outlines, from the archive tools/map_build's `tracks` verb
+      # writes. A separate archive on purpose: it is global and rebuilt whenever
+      # new track maps arrive, the basemap is regional. Drop this line if you
+      # have not built one -- a tileset that is not configured is captioned, not
+      # fatal.
+      overlay_tilesets:
+        - tracks
+
+      zoom: 15
+
+      # Both coordinates on ONE topic, which is what lets them pair: the source
+      # stamps one timestamp per message and every binding on it shares that.
+      # Dragging the TOPIC row onto the panel fills both of these in one drop.
+      latitude:
+        zenoh_key: nodes/bd992/gsof/lat_long_height
+        schema_type: GsofLatLongHeight
+        value_expression: latitudeDeg
+      longitude:
+        zenoh_key: nodes/bd992/gsof/lat_long_height
+        schema_type: GsofLatLongHeight
+        value_expression: longitudeDeg
+
+      # The third signal colours the trail along its length -- the view a plot
+      # cannot give you, because a plot says WHEN you were slow and this says
+      # WHERE.
+      color_by:
+        zenoh_key: nodes/bd992/gsof/velocity
+        schema_type: GsofVelocity
+        value_expression: horizontalSpeedMps
+      color_ramp: viridis
+
+  # The same signal as a trace, so the map and the plot are two views of one
+  # window. Click the trail and this jumps with it.
+  - id: speed
+    type: time_series
+    config:
+      title: Speed
+      traces:
+        - zenoh_key: nodes/bd992/gsof/velocity
+          schema_type: GsofVelocity
+          value_expression: horizontalSpeedMps
+          label: speed
+          color: "#4FC3F7"
+          units: m/s
+
+dock_state: ""

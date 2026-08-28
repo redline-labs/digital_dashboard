@@ -592,6 +592,109 @@ void testAnEmptyWorkspaceIsValid()
     std::filesystem::remove(path);
 }
 
+// The map panel's config carries THREE nested sub-structs (the binding triple,
+// three times) plus a nested MapStyle_t and two enums. That combination is what
+// a hand-written codec gets wrong, and the failure is a workspace that loads
+// with a panel bound to nothing.
+void testAMapPanelRoundTripsThroughTheCodec()
+{
+    const std::filesystem::path path = tempPath("scope_map.yaml");
+
+    scope::scope_workspace_t written;
+    written.name = "map";
+
+    scope::panel_entry_t entry;
+    entry.id = "where";
+    entry.type = scope::panel_type_t::map;
+
+    MapPanelConfig_t config;
+    config.title = "Drive";
+    config.tileset = "socal";
+    config.overlay_tilesets = {"tracks"};
+    config.follow_cursor = false;
+    config.click_seeks = false;
+    config.zoom = 15.5;
+    config.color_ramp = map_color_ramp_t::turbo;
+    config.color_autoscale = false;
+    config.color_min = 5.0;
+    config.color_max = 60.0;
+
+    config.latitude.zenoh_key = "nodes/bd992/gsof/lat_long_height";
+    config.latitude.schema_type = pub_sub::schema_type_t::GsofLatLongHeight;
+    config.latitude.value_expression = "latitudeDeg";
+    config.longitude = config.latitude;
+    config.longitude.value_expression = "longitudeDeg";
+    config.color_by.zenoh_key = "nodes/bd992/gsof/velocity";
+    config.color_by.schema_type = pub_sub::schema_type_t::GsofVelocity;
+    config.color_by.value_expression = "horizontalSpeedMps";
+
+    entry.config = config;
+    written.panels.push_back(entry);
+
+    expect(scope::save_workspace(written, path.string()), "a map workspace saves");
+
+    const auto loaded = scope::load_workspace(path.string());
+    expect(loaded.has_value(), "and loads back");
+    if (loaded && loaded->panels.size() == 1)
+    {
+        expect(loaded->panels[0].type == scope::panel_type_t::map, "the panel type survived");
+
+        const auto* map = std::get_if<MapPanelConfig_t>(&loaded->panels[0].config);
+        expect(map != nullptr, "and its config is the map alternative, not monostate");
+        if (map != nullptr)
+        {
+            expect(map->title == "Drive", "the title survived");
+            expect(map->tileset == "socal",
+                   "the tileset NAME survived -- a path here would make the workspace "
+                   "openable only on the machine that wrote it");
+            expect(map->overlay_tilesets.size() == 1 && map->overlay_tilesets[0] == "tracks",
+                   "and so did the overlay list");
+            expect(!map->follow_cursor && !map->click_seeks, "non-default bools survived");
+            expect(map->zoom == 15.5, "the zoom survived");
+            expect(map->color_ramp == map_color_ramp_t::turbo,
+                   "the ramp enum survived BY NAME");
+            expect(!map->color_autoscale && map->color_min == 5.0 && map->color_max == 60.0,
+                   "and the manual colour range with it");
+
+            // The three bindings are the part worth checking one field at a
+            // time: a codec that dropped one would leave a panel that loads
+            // cleanly and draws nothing.
+            expect(map->latitude.value_expression == "latitudeDeg", "latitude survived");
+            expect(map->longitude.value_expression == "longitudeDeg", "longitude survived");
+            expect(map->latitude.zenoh_key == map->longitude.zenoh_key,
+                   "and both kept the one topic they pair on");
+            expect(map->color_by.schema_type == pub_sub::schema_type_t::GsofVelocity,
+                   "the colour binding kept its schema");
+            expect(map->color_by.value_expression == "horizontalSpeedMps", "and its expression");
+        }
+    }
+}
+
+// An inverted colour range divides by zero when a value is mapped onto it and
+// every point comes out the same colour, which reads as a ramp that is not
+// working rather than as a range that is wrong.
+void testTheMapConfigClampsItsRanges()
+{
+    MapPanelConfig_t config;
+    config.center_latitude = 91.0;     // past the Mercator limit: projects to infinity
+    config.min_zoom = 17;              // inverted
+    config.max_zoom = 3;
+    config.click_radius_px = 0.5;      // unhittable
+    config.color_min = 100.0;          // inverted
+    config.color_max = 100.0;
+
+    const std::vector<std::string> notes = validate(config);
+    expect(!notes.empty(), "silly numbers are reported rather than silently kept");
+    expect(config.center_latitude <= 85.06,
+           "a latitude past the Mercator limit is clamped -- past it every later "
+           "arithmetic is NaN and the map paints nothing at all");
+    expect(config.min_zoom < config.max_zoom,
+           "an inverted zoom range is swapped, not left refusing every zoom");
+    expect(config.click_radius_px >= 4.0, "an unhittable click radius is widened");
+    expect(config.color_max > config.color_min,
+           "and an empty colour range is widened rather than dividing by zero");
+}
+
 }  // namespace
 
 int main()
@@ -614,6 +717,8 @@ int main()
     testTheVideoConfigClampsUselessBounds();
     testATablePanelRoundTripsThroughTheCodec();
     testTheTableConfigClampsItsLimits();
+    testAMapPanelRoundTripsThroughTheCodec();
+    testTheMapConfigClampsItsRanges();
     testAPanelWithNoIdLoadsWithAWarning();
     testAnEmptyWorkspaceIsValid();
 

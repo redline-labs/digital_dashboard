@@ -931,6 +931,13 @@ so the panel captions itself and `scope.stats` reports the same string in
 
 Empty means nothing is wrong, which is the assertion worth making.
 
+A ready-made layout is in `configs/scope/drive_review.yaml` — the map and a
+speed trace over one clock:
+
+```bash
+./build/scope/scope --config configs/scope/drive_review.yaml --bag drives/today
+```
+
 ### Driving it
 
 ```python
