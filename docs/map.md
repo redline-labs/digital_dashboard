@@ -865,14 +865,54 @@ silicon:
 - The synchronous stall is ~0.73 ms on Metal against 2.44 ms here.
 
 So the ~0.9 ms frame measured on the M-series is likely nearer 5 ms on an
-Intel-class iGPU, essentially all of it in `endOffscreenFrame()`. **The fix that
-addresses the larger half without a second render path is to stop WAITING**:
-render frame N on a thread of its own and blit whatever finished, so the stall
+Intel-class iGPU, essentially all of it in `endOffscreenFrame()`.
+
+### What that wait is, measured
+
+Not idle. Isolating the steady-state loop (2200 frames minus 200, so 2000
+frames of rendering with startup subtracted) on the M-series box:
+
+| | marginal, 2000 frames |
+|---|---|
+| wall | 1.28 s |
+| user CPU | 1.35 s |
+| sys CPU | 0.37 s |
+| **total CPU** | **1.72 s, i.e. 134% of wall** |
+
+If `endOffscreenFrame()` slept on a fence, CPU time would be *well under* wall
+time -- the GPU stage is 61% of the frame, so around 40% would be expected. It
+is 134%, with 29% of wall in the kernel. So the stall is a spin plus driver
+threads doing real work, and it costs about a core.
+
+**This is measured on Metal/unified memory and may not hold on Mesa.** A 2.44 ms
+fixed cost there could equally be a blocking wait, in which case the trade below
+looks quite different. The same `/usr/bin/time -p` comparison on the target
+answers it in two minutes and is worth doing FIRST.
+
+### What pipelining would and would not fix
+
+Render frame N on a thread of its own and blit whatever finished, so the wait
 overlaps the rest of the frame instead of sitting in front of it. Prototyped and
-measured at -29% on the M-series, where the stall is only 0.73 ms; the same
-change is worth proportionally more wherever the stall is 2.44 ms. The cost is
-one frame of latency on the tile raster, which the marker and the text do not
-share.
+measured at -29% here, where the stall is only 0.73 ms; worth proportionally
+more wherever it is 2.44 ms.
+
+Be clear about what it changes, because "it fixes the spin" is the wrong reading:
+
+- **Latency** -- improves. This is the entire point.
+- **CPU** -- *relocated, not removed*. The spin still burns a core; it burns it
+  on the worker thread where it no longer blocks label placement. Total CPU per
+  frame is roughly unchanged, instantaneous utilisation goes up, wall time goes
+  down. Removing the spin outright needs a non-blocking readback, which the
+  offscreen-frame API does not offer -- that is a swapchain, i.e. QRhiWidget,
+  i.e. the second render path.
+- **GPU** -- unchanged. Same commands, same work.
+- **Memory bandwidth** -- slightly worse, and this is the one to watch on a
+  low-power part. The prototype copied the frame (1.7 MB at 660x640, ~100 MB/s
+  at 60 Hz) to hand the GUI thread a stable image. Avoidable: give the worker
+  two readback buffers and swap pointers rather than copying.
+
+The cost is one frame of latency on the tile raster, which the marker and the
+text do not share -- they are placed at the current camera every frame.
 
 **Labels are fine.** 2.79 ms for ~450 candidates and ~25 placed, with the
 render cache hitting every time after the first frame. A single label costs

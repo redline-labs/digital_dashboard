@@ -165,6 +165,22 @@ messages now state outright:
   `warning` in the screenshot metadata instead of returning a plausible image.
   Note the check is `==`, not `inherits()`, so a SUBCLASS of any of them would
   slip past it silently.
+- **Why `offscreen` and not a virtual display.** `--mcp` sets
+  `QT_QPA_PLATFORM=offscreen` (dashboard/dashboard/main.cpp); without it the app
+  uses the platform's own plugin, so production and the agent loop already run
+  two different configurations. The alternative -- Xvfb plus `xcb`, or `eglfs`
+  on a board -- gives a real GL stack with no monitor, and is how Qt GUI tests
+  normally get a GPU in CI. It is what a `QRhiWidget` would need, since the
+  offscreen plugin refuses `RhiBasedRendering` on every platform.
+
+  It is not adopted because of where the tests run. There is no CI: `ctest` runs
+  on developers' machines, and macOS has no Xvfb, so moving the headless
+  platform would stop the gui tests and the agent loop working there. On a
+  GPU-less Linux runner it would also fall back to llvmpipe and render the map
+  *slower* than offscreen QRhi does today. Revisit if Linux CI ever exists --
+  and note the map is designed so this choice stays open, since its renderer
+  asks the platform for nothing.
+
 - **`GUI_THREAD_BUSY` is an answer, not a bug.** Handlers are posted to the GUI
   thread with a timeout rather than a blocking connection, precisely so that a
   wedged UI can still be diagnosed instead of hanging the caller too.
