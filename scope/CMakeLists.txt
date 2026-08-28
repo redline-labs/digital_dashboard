@@ -68,6 +68,8 @@ add_library(scope_core STATIC
 
     panels/table/table_panel.cpp
     panels/table/include/table/table_panel.h
+
+    panels/map/tile_reader.cpp
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
@@ -77,6 +79,7 @@ target_include_directories(scope_core PUBLIC
     panels/time_series/include
     panels/video/include
     panels/table/include
+    panels/map/include
 )
 
 # libavcodec for software H.264/H.265 decode of the recorded or live video
@@ -125,6 +128,13 @@ target_link_libraries(scope_core PUBLIC
     # never meet a second copy. scope is a desktop review tool that opens
     # archives itself and links no Qt6::Sql, so the two cannot meet here.
     mbtiles
+
+    # Vector tiles to pixels: projection, tessellator, GPU renderer, label
+    # layout, tile cache. Shared with dashboard/widgets/map, which gets the same
+    # pixels from a different place -- it asks nodes/map_server, this reads the
+    # file. Neither transport is visible from inside the library.
+    map_render
+    mvt
 
     spdlog::spdlog
     yaml-cpp::yaml-cpp
@@ -200,6 +210,22 @@ target_link_libraries(scope_test_decimate PRIVATE
 )
 
 add_project_test(TARGET scope_test_decimate LABELS scope unit)
+
+# Tiles read straight off disk, against an archive this test writes itself.
+#
+# Every case is one that draws a plausible map rather than failing: the XYZ/TMS
+# flip (a double flip renders beautifully, mirrored about the equator), absent
+# versus failed, an unopenable archive kept with its reason, and the zoom range
+# known at open.
+add_executable(scope_test_map_tiles
+    tests/test_map_tiles.cpp
+)
+
+target_link_libraries(scope_test_map_tiles PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_map_tiles LABELS scope map unit)
 
 # Per-user settings. Every case in here is one where the wrong behaviour looks
 # like something else -- a first run reported as a broken install, a hand-edit
