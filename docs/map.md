@@ -192,9 +192,10 @@ layer. Three things about them:
   Following the road means the run's geometry has to survive to the paint pass,
   which is why `LabelCandidate` carries a range into a flat arena of tile-local
   points rather than only an anchor. See **Curved road labels** below.
-- **One label per name per viewport.** A road crosses every tile it passes
-  through and each tile carries the whole name, so without this a single street
-  is labelled a dozen times across one screen.
+- **Named repeatedly along itself, never twice in the same place.** A road
+  crosses every tile it passes through and each tile carries the whole name, so
+  without dedup a single street is labelled a dozen times across one screen.
+  See **Repeating a name along its road** below.
 - **A name wider than the road it names is dropped.** This is what stops the
   two-metre stubs MVT leaves in tile corners from each claiming a label.
 
@@ -258,12 +259,56 @@ as two images and every halo is laid down before any fill. One combined sprite
 per glyph would let the next character's opaque halo paint over the previous
 character's text wherever they kern tightly, and the word comes out gnawed.
 
-**Two things that are NOT done, deliberately.** A name is still placed once per
-viewport rather than repeated every 250 px along a freeway the way MapLibre
-does — that is a separate change with its own dedup consequences. And rivers
-are not labelled at all, though `map_build` already emits `water_name` as a
-LineString for exactly this treatment; once roads curve, rivers are a row in
-`kLabelLayers` rather than a project.
+### Repeating a name along its road
+
+A long road carries its name several times, so it is legible wherever the
+driver happens to be looking rather than only at a midpoint that may be off
+screen. `style.label_repeat_distance` (250 px) is the clear road demanded
+between one instance and the next; **0 restores one label per name per
+viewport**, which is what the map did before repeats existed.
+
+The dedup rule changed shape to allow this. It used to be "this name is already
+on screen, drop it"; it is now "this name is already on screen *within
+label_repeat_distance of here*, drop it". The old rule is the new one with the
+distance at infinity, which is why zero still means once per viewport. Without
+any dedup a street is labelled once per tile it crosses -- the failure this has
+always existed to prevent.
+
+Repeats are generated per run and centred on it, so the single-label case is
+exactly the old placement rather than an approximation of it.
+`kMaxRepeatsPerRun` (16) bounds a short name on a long run with the distance
+turned down; without it one feature could claim an unbounded number of
+collision boxes, and the per-frame scan is quadratic in those.
+
+### Water names
+
+`water_name` is the one layer that carries **both shapes**: a lake's name sits
+at a point inside it, a river's runs along the line. `map_build` emits them that
+way deliberately (`extract.cpp`) -- "a point would put 'Santa Ana River' in one
+spot on a watercourse forty miles long" -- so `LabelGeometry::Either` follows
+the feature rather than the layer. Rivers get the same curved treatment and the
+same repeats as roads; lakes are placed and drawn like any other point label,
+upright at every bearing.
+
+Water ranks **below roads**, and below a locality with them. On a map for
+driving, the street you are on outranks the river you are crossing -- and a
+river is a long feature that would otherwise repeat its way across the viewport
+at a road's expense. Among themselves they order by size and permanence: sea,
+lake, river, canal, stream, ditch.
+
+`detail.water_label` is the zoom floor (z14, matching the archive's own) and
+`show_water_labels` is the toggle. They are separate from the road pair on
+purpose; turning street names off leaves the rivers named.
+
+**A nameless river is not a bug.** `map_build` emits river segments with no
+name because the layer carries the geometry a label runs along, and the name may
+live on a parent way that was split. Extraction drops them, as it drops any
+feature with no text.
+
+**Still not done:** the phase-offset trick MapLibre uses to keep repeats at the
+same absolute positions across a parent tile and its overscaled children. Our
+dedup is viewport-global rather than per tile, so the symptom that trick exists
+to prevent does not arise here.
 
 ## Running it
 

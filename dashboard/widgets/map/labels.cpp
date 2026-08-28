@@ -68,6 +68,11 @@ bool roadLabelsEnabled(const MapStyle_t& style, double zoom)
     return style.show_road_labels && zoom >= double(style.detail.road_label);
 }
 
+bool waterLabelsEnabled(const MapStyle_t& style, double zoom)
+{
+    return style.show_water_labels && zoom >= double(style.detail.water_label);
+}
+
 // A road too short on screen to hold any name at all is rejected before a
 // candidate is even built. The exact test against the rendered text width
 // still happens at placement.
@@ -370,6 +375,14 @@ constexpr int kGlyphsPerCollisionBox = 4;
 // a frame. Asked in pixels, almost none of them do.
 constexpr double kStraightEnoughPx = 0.75;
 
+// A ceiling on how many times one run may repeat its name.
+//
+// Only ever reached by a pathological combination -- a very short name on a
+// very long run with the repeat distance turned down -- but without it a
+// single feature could claim an unbounded number of collision boxes and the
+// per-frame scan is quadratic in those.
+constexpr int kMaxRepeatsPerRun = 16;
+
 // One character, placed on the road.
 struct PlacedGlyph
 {
@@ -499,7 +512,8 @@ struct PlacedLabel
 // fallbacks -- a name that does not fit its road drawn anyway is the floating
 // text this pass has always refused to draw.
 std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& walker,
-                                         LabelCache& cache, const QFont& font, double emSize)
+                                         LabelCache& cache, const QFont& font, double emSize,
+                                         double start)
 {
     if (text.isEmpty())
     {
@@ -526,9 +540,10 @@ std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& w
     {
         return std::nullopt;
     }
-
-    // Centred on the run's midpoint, which is where the anchor already is.
-    const double start = (walker.length() - width) / 2.0;
+    if (start < 0.0 || start + width > walker.length())
+    {
+        return std::nullopt;
+    }
 
     // WHICH WAY ROUND. Decided once, from where the first and last characters
     // land, and never per glyph -- flipping glyphs individually scrambles the
@@ -625,6 +640,61 @@ std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& w
     out.centre = middle.has_value() ? middle->point : glyphs.front().at;
     out.glyphs = std::move(glyphs);
     return out;
+}
+
+// Lay `text` along `walker` as many times as it comfortably fits.
+//
+// A long road carries its name several times rather than once, so the name is
+// legible wherever the driver happens to be looking rather than only at a
+// midpoint that may well be off screen. `repeat` is the clear road demanded
+// between one instance and the next; zero asks for a single centred label,
+// which is what the map did before repeats existed.
+//
+// The whole set is centred on the run, so the single-label case is exactly the
+// old placement and not an approximation of it.
+void placeRepeatsAlongRun(const QString& text, const RunWalker& walker, LabelCache& cache,
+                          const QFont& font, double emSize, double repeat,
+                          std::vector<PlacedLabel>& out)
+{
+    out.clear();
+    if (text.isEmpty())
+    {
+        return;
+    }
+
+    double width = 0.0;
+    for (const QChar ch : text)
+    {
+        width += cache.advanceFor(ch, font);
+    }
+    if (width <= 0.0 || width > walker.length())
+    {
+        return;
+    }
+
+    // How many fit, each needing its own width plus a gap before the next.
+    // The trailing gap is not required, hence the `+ repeat` on the numerator.
+    int count = 1;
+    if (repeat > 0.0)
+    {
+        const double stride = width + repeat;
+        count = std::max(1, int(std::floor((walker.length() + repeat) / stride)));
+        count = std::min(count, kMaxRepeatsPerRun);
+    }
+
+    const double stride = width + repeat;
+    const double occupied = (double(count) * width) + (double(count - 1) * repeat);
+    const double leading = (walker.length() - occupied) / 2.0;
+
+    for (int i = 0; i < count; ++i)
+    {
+        std::optional<PlacedLabel> placed =
+            placeAlongRun(text, walker, cache, font, emSize, leading + (double(i) * stride));
+        if (placed.has_value())
+        {
+            out.push_back(std::move(*placed));
+        }
+    }
 }
 
 // The axis-aligned hulls a placed label claims, a few glyphs to a box.
@@ -724,9 +794,10 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     const QRectF viewport(0.0, 0.0, projection.viewportWidth(), projection.viewportHeight());
     const QRectF gatherBounds = viewport.adjusted(-256.0, -64.0, 256.0, 64.0);
 
-    // The road-name gate, evaluated once per frame -- kinds are baked on each
+    // The per-layer gates, evaluated once per frame -- kinds are baked on each
     // candidate at extraction, so the per-candidate test is one branch.
     const bool roadsOn = roadLabelsEnabled(style, projection.camera().zoom);
+    const bool waterOn = waterLabelsEnabled(style, projection.camera().zoom);
 
     // Every road run this frame, projected once, end to end. One arena rather
     // than a vector per candidate: the steady repaint allocates nothing, and
@@ -750,6 +821,10 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
         for (const LabelCandidate& candidate : entry.labels->labels)
         {
             if (candidate.kind == LabelKind::Road && !roadsOn)
+            {
+                continue;
+            }
+            if (candidate.kind == LabelKind::Water && !waterOn)
             {
                 continue;
             }
@@ -838,15 +913,48 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     // everything else on this path.
     std::vector<QRectF> boxes;
     std::vector<const LabelCache::Glyph*> glyphScratch;
-    // Names already placed, for the layers that ask for one label each. A road
-    // crosses every tile it passes through and each tile carries the whole
-    // name, so without this a single street is labelled a dozen times across
-    // one viewport.
+    std::vector<PlacedLabel> placements;
+
+    // Where each name has already been placed.
+    //
+    // A road crosses every tile it passes through and each tile carries the
+    // whole name, so without this a single street is labelled a dozen times
+    // over. But a long road SHOULD carry its name more than once -- just not
+    // twice in the same place -- so this holds positions and rejects a repeat
+    // that lands within `label_repeat_distance` of one already there, rather
+    // than rejecting the name outright.
     //
     // The candidates are already sorted, so the FIRST time a name is seen is
     // its best placement -- biggest road first, and within a road the part with
     // the longest on-screen run.
-    QSet<QString> namesPlaced;
+    const double repeatPx = double(style.label_repeat_distance);
+    QHash<QString, std::vector<QPointF>> namesPlaced;
+
+    // Whether this name is already spoken for at this spot. With the repeat
+    // distance at zero the answer is "anywhere at all", which is one label per
+    // name per viewport -- what the map did before it repeated anything.
+    const auto claimedNearby = [&](const QString& name, const QPointF& at) {
+        const auto found = namesPlaced.constFind(name);
+        if (found == namesPlaced.constEnd())
+        {
+            return false;
+        }
+        if (repeatPx <= 0.0)
+        {
+            return true;
+        }
+        return std::any_of(found->begin(), found->end(), [&](const QPointF& other) {
+            return std::hypot(other.x() - at.x(), other.y() - at.y()) < repeatPx;
+        });
+    };
+
+    // Does this label's claim collide with anything already standing?
+    const auto collides = [&](const std::vector<QRectF>& claims) {
+        return std::any_of(claims.begin(), claims.end(), [&](const QRectF& claim) {
+            return std::any_of(taken.begin(), taken.end(),
+                               [&](const QRectF& other) { return other.intersects(claim); });
+        });
+    };
 
     for (const Candidate& candidate : candidates)
     {
@@ -873,121 +981,143 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
             continue;
         }
 
-        if (candidate.oneLabelPerName && namesPlaced.contains(candidate.text))
-        {
-            continue;
-        }
-
         // Padded, so two labels never end up touching -- text that merely
         // avoids overlapping still reads as one run of words. Half the spacing
         // either side, and half again vertically: lines crowd sooner than
         // columns do.
         const double padX = double(style.label_spacing);
         const double padY = padX / 2.0;
-
-        // A road label is laid ALONG its road, so where it lands and what it
-        // claims are both decided by the run rather than by a box around the
-        // anchor. Done before the collision test and thrown away if it fails,
-        // because the boxes it produces ARE what is collided.
-        std::optional<PlacedLabel> alongRoad;
-        if (candidate.runCount >= 2)
-        {
-            const RunWalker walker(runs.data() + candidate.runBegin, candidate.runCount);
-            alongRoad = placeAlongRun(candidate.text, walker, cache, font, emSize);
-            if (!alongRoad.has_value())
+        const auto pad = [&](std::vector<QRectF>& claims) {
+            for (QRectF& claim : claims)
             {
-                // Too long for its road, or the road kinks under it. Either
-                // way this name does not belong here -- and it may still be
-                // placed from another tile, where more of the road is whole.
+                claim = claim.adjusted(-padX, -padY, padX, padY);
+            }
+        };
+
+        // ---- a point label: one upright name, at its own anchor -----------
+        if (candidate.runCount < 2)
+        {
+            if (candidate.oneLabelPerName && claimedNearby(candidate.text, box.center()))
+            {
+                continue;
+            }
+
+            boxes.clear();
+            boxes.push_back(box);
+            pad(boxes);
+            if (collides(boxes))
+            {
                 ++stats.suppressed;
                 continue;
             }
+            taken.insert(taken.end(), boxes.begin(), boxes.end());
+            if (candidate.oneLabelPerName)
+            {
+                namesPlaced[candidate.text].push_back(box.center());
+            }
+
+            // Only NOW is it worth pixels.
+            const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
+                                                            style.label_halo_width, haloColour,
+                                                            textColour, ratio);
+
+            // Snapped to whole pixels. Blitting at a fractional position makes
+            // Qt resample, and resampled text is visibly soft; half a pixel of
+            // placement error on a place name is not.
+            const QPointF where = box.topLeft() + entry.offset;
+            painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())), entry.image);
+            ++stats.placed;
+            continue;
         }
 
-        boxes.clear();
-        if (!alongRoad.has_value())
+        // ---- a line label: the name laid along its road, perhaps more than
+        // once. Where it lands and what it claims are both decided by the run
+        // rather than by a box around the anchor.
+        const RunWalker walker(runs.data() + candidate.runBegin, candidate.runCount);
+        placeRepeatsAlongRun(candidate.text, walker, cache, font, emSize, repeatPx, placements);
+        if (placements.empty())
         {
-            boxes.push_back(box);
-        }
-        else if (alongRoad->uniformAngle.has_value())
-        {
-            // One box for a straight name, turned the way the name is. Tighter
-            // than a per-character chain would be and cheaper to test.
-            QTransform turn;
-            turn.translate(alongRoad->centre.x(), alongRoad->centre.y());
-            turn.rotateRadians(*alongRoad->uniformAngle);
-            boxes.push_back(turn.mapRect(QRectF(-text.width() / 2.0, -text.height() / 2.0,
-                                                text.width(), text.height())));
-        }
-        else
-        {
-            collisionBoxesFor(alongRoad->glyphs, text.height(), boxes);
-        }
-        for (QRectF& claim : boxes)
-        {
-            claim = claim.adjusted(-padX, -padY, padX, padY);
-        }
-
-        if (std::any_of(boxes.begin(), boxes.end(), [&](const QRectF& claim) {
-                return std::any_of(taken.begin(), taken.end(), [&](const QRectF& other) {
-                    return other.intersects(claim);
-                });
-            }))
-        {
+            // Too long for its road, or the road kinks under it. Either way
+            // this name does not belong here -- and it may still be placed
+            // from another tile, where more of the road is whole.
             ++stats.suppressed;
             continue;
         }
-        taken.insert(taken.end(), boxes.begin(), boxes.end());
-        if (candidate.oneLabelPerName)
-        {
-            namesPlaced.insert(candidate.text);
-        }
 
-        // Only NOW is it worth pixels.
-        if (alongRoad.has_value() && !alongRoad->uniformAngle.has_value())
+        for (const PlacedLabel& along : placements)
         {
-            drawPlacedGlyphs(painter, alongRoad->glyphs, cache, font, style.label_halo_width,
-                             haloColour, textColour, ratio, baselineShift, glyphScratch);
+            if (candidate.oneLabelPerName && claimedNearby(candidate.text, along.centre))
+            {
+                continue;
+            }
+
+            boxes.clear();
+            if (along.uniformAngle.has_value())
+            {
+                // One box for a straight name, turned the way the name is.
+                // Tighter than a per-character chain would be and cheaper to
+                // test.
+                QTransform turn;
+                turn.translate(along.centre.x(), along.centre.y());
+                turn.rotateRadians(*along.uniformAngle);
+                boxes.push_back(turn.mapRect(QRectF(-text.width() / 2.0, -text.height() / 2.0,
+                                                    text.width(), text.height())));
+            }
+            else
+            {
+                collisionBoxesFor(along.glyphs, text.height(), boxes);
+            }
+            pad(boxes);
+
+            if (collides(boxes))
+            {
+                ++stats.suppressed;
+                continue;
+            }
+            taken.insert(taken.end(), boxes.begin(), boxes.end());
+            if (candidate.oneLabelPerName)
+            {
+                namesPlaced[candidate.text].push_back(along.centre);
+            }
+
+            // Only NOW is it worth pixels.
+            if (!along.uniformAngle.has_value())
+            {
+                drawPlacedGlyphs(painter, along.glyphs, cache, font, style.label_halo_width,
+                                 haloColour, textColour, ratio, baselineShift, glyphScratch);
+                ++stats.placed;
+                continue;
+            }
+
+            const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
+                                                            style.label_halo_width, haloColour,
+                                                            textColour, ratio);
+
+            // A straight road's name, turned to lie along it: one blit, from
+            // the same cached image a place name uses. A road running dead
+            // flat across the screen takes the snapped path instead, which is
+            // what keeps the commonest case in a grid city exactly as cheap
+            // and as sharp as it was before any of this followed a road.
+            if (std::abs(*along.uniformAngle) > 1e-6)
+            {
+                painter.save();
+                painter.translate(along.centre);
+                painter.rotate(*along.uniformAngle * 180.0 / std::numbers::pi);
+                painter.drawImage(QPointF((-entry.bounds.width() / 2.0) + entry.offset.x(),
+                                          (-entry.bounds.height() / 2.0) + entry.offset.y()),
+                                  entry.image);
+                painter.restore();
+            }
+            else
+            {
+                const QPointF topLeft(along.centre.x() - (entry.bounds.width() / 2.0),
+                                      along.centre.y() - (entry.bounds.height() / 2.0));
+                const QPointF where = topLeft + entry.offset;
+                painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())),
+                                  entry.image);
+            }
             ++stats.placed;
-            continue;
         }
-
-        const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
-                                                        style.label_halo_width, haloColour,
-                                                        textColour, ratio);
-
-        // A straight road's name, turned to lie along it: one blit, from the
-        // same cached image a place name uses.
-        if (alongRoad.has_value() && std::abs(*alongRoad->uniformAngle) > 1e-6)
-        {
-            painter.save();
-            painter.translate(alongRoad->centre);
-            painter.rotate(*alongRoad->uniformAngle * 180.0 / std::numbers::pi);
-            painter.drawImage(QPointF((-entry.bounds.width() / 2.0) + entry.offset.x(),
-                                      (-entry.bounds.height() / 2.0) + entry.offset.y()),
-                              entry.image);
-            painter.restore();
-            ++stats.placed;
-            continue;
-        }
-
-        // Snapped to whole pixels. Blitting at a fractional position makes Qt
-        // resample, and resampled text is visibly soft; half a pixel of
-        // placement error on a place name is not.
-        //
-        // A road running dead flat across the screen lands here too, and gets
-        // the same snapped blit a place name does -- which is what keeps the
-        // commonest case in a grid city exactly as cheap and as sharp as it
-        // was before any of this followed a road.
-        const QPointF topLeft = alongRoad.has_value()
-                                    ? QPointF(alongRoad->centre.x() - (entry.bounds.width() / 2.0),
-                                              alongRoad->centre.y() -
-                                                  (entry.bounds.height() / 2.0))
-                                    : box.topLeft();
-        const QPointF where = topLeft + entry.offset;
-        painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())), entry.image);
-
-        ++stats.placed;
     }
 
     return stats;

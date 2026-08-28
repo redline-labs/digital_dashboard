@@ -20,13 +20,14 @@ namespace map_widget
 {
 
 // Which label pass a candidate belongs to, deciding its per-frame gate:
-// places and circuit names always draw; road names have a toggle and a zoom
-// floor of their own.
+// places and circuit names always draw; road and water names each have a
+// toggle and a zoom floor of their own.
 enum class LabelKind : std::uint8_t
 {
     Place,
     Track,
     Road,
+    Water,
 };
 
 // One label candidate -- everything about a label that does not depend on the

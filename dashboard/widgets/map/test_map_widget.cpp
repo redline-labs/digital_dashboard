@@ -566,7 +566,11 @@ void test_a_road_name_is_placed()
     const map_widget::TileId irvine { 14, 2828, 6562 };
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
-    const MapStyle_t style;
+    MapStyle_t style;
+    // Repeats off: this test is about whether a street name is drawn at all,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
     const auto stats = placeOnto({ { irvine, tile } }, style);
     check(stats.placed == 1, "the street name is drawn, got " + std::to_string(stats.placed));
 }
@@ -586,6 +590,10 @@ void test_the_label_anchor_turns_with_the_map()
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
+    // Repeats off: this test is about where a single label lands when the map turns,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
     // The halo would put ink outside the text box and blur the comparison.
     style.label_halo_width = 0.0;
 
@@ -656,6 +664,10 @@ void test_the_label_anchor_is_right_at_half_a_turn()
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
+    // Repeats off: this test is about where a single label lands when the map turns,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
 
     const Painted turned = paintOnto({ { irvine, tile } }, style, 14.0, 180.0);
     check(turned.stats.placed == 1, "the label survives half a turn");
@@ -722,6 +734,10 @@ void test_a_road_label_never_reads_backwards()
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
+    // Repeats off: this test is about which way the letters run,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
 
     const auto westToEast = labelsOf(roadNameTile("Main Street", "minor", 2048, 256, 3840));
     const auto eastToWest = labelsOf(roadShapeTile("Main Street", "minor",
@@ -750,6 +766,10 @@ void test_a_hairpin_gets_no_label_but_a_gentle_curve_does()
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
+    // Repeats off: this test is about the curvature test,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
 
     // Out and straight back, a couple of degrees off doubling over itself.
     // Every character would sit on top of another one.
@@ -785,6 +805,10 @@ void test_a_road_label_lies_along_a_diagonal_road()
 
     MapStyle_t style;
     style.label_halo_width = 0.0;
+    // Repeats off: this test is about the angle a name is drawn at,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
 
     const auto flat = labelsOf(roadNameTile("Main Street", "minor", 2048, 256, 3840));
     const auto diagonal = labelsOf(roadShapeTile("Main Street", "minor",
@@ -839,8 +863,11 @@ void test_the_glyph_tier_renders_an_alphabet_not_a_name_list()
 }
 
 // A road crosses every tile it passes through and each tile carries the WHOLE
-// name, so without dedup one street is labelled once per tile on screen.
-void test_a_road_crossing_several_tiles_is_named_once()
+// name, so without dedup one street is labelled once per tile on screen. With
+// repeats it should be labelled several times -- but spread out, never twice
+// in the same place, which is the whole difference between repeating a name
+// and failing to dedup it.
+void test_a_road_repeats_its_name_along_itself_but_never_twice_in_one_place()
 {
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
@@ -853,10 +880,198 @@ void test_a_road_crossing_several_tiles_is_named_once()
         }
     }
 
-    const MapStyle_t style;
-    const auto stats = placeOnto(tiles, style);
-    check(stats.placed == 1,
-          "nine tiles of the same road produce one label, got " + std::to_string(stats.placed));
+    // Repeats off is the old rule, and it still has to hold: this is what
+    // stops a street being named once per tile it happens to cross.
+    MapStyle_t once;
+    once.label_repeat_distance = 0;
+    const auto onceStats = placeOnto(tiles, once);
+    check(onceStats.placed == 1,
+          "with repeats off, nine tiles of one road produce one label, got " +
+              std::to_string(onceStats.placed));
+
+    // On by default, so the name is readable wherever the driver is looking.
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+    style.label_repeat_distance = 250;
+    const Painted painted = paintOnto(tiles, style);
+    check(painted.stats.placed > 1,
+          "with repeats on, the road carries its name more than once, got " +
+              std::to_string(painted.stats.placed));
+
+    // Every instance at least the repeat distance from the last. Read off the
+    // canvas rather than trusted: the three roads run across three rows of
+    // tiles, so the labels form horizontal bands, and two labels closer
+    // together than this would merge into one band of ink.
+    const QRectF ink = inkBounds(painted.canvas);
+    check(!ink.isNull(), "and left ink");
+    check(ink.width() > 250.0,
+          "spread along the road rather than stacked at one point, got width " +
+              std::to_string(ink.width()));
+
+    // Turning the distance up thins them out again -- the knob does what it
+    // says, which a count alone would not show.
+    MapStyle_t sparse;
+    sparse.label_repeat_distance = 4096;
+    const auto sparseStats = placeOnto(tiles, sparse);
+    check(sparseStats.placed <= painted.stats.placed,
+          "a longer repeat distance never produces more labels, got " +
+              std::to_string(sparseStats.placed) + " against " +
+              std::to_string(painted.stats.placed));
+}
+
+// ============================================================================
+// Water names
+// ============================================================================
+
+// `water_name` carries BOTH shapes, which no other label layer does: a lake's
+// name sits at a point inside it, a river's runs along the line. map_build
+// emits them that way on purpose (extract.cpp), and the extractor has to
+// follow the feature rather than the layer.
+mvt::Tile waterNameTile(const std::string& name, const std::string& waterClass, bool asLine)
+{
+    mvt::Layer layer;
+    layer.name = "water_name";
+    layer.extent = 4096;
+    layer.keys = { "name:latin", "class" };
+    layer.values = { mvt::Value(std::in_place_type<std::string>, name),
+                     mvt::Value(std::in_place_type<std::string>, waterClass) };
+
+    mvt::Feature feature;
+    feature.type = asLine ? mvt::GeomType::LineString : mvt::GeomType::Point;
+    if (asLine)
+    {
+        feature.rings.push_back({ { 256, 2048 }, { 3840, 2048 } });
+    }
+    else
+    {
+        feature.rings.push_back({ { 2048, 2048 } });
+    }
+    feature.tags = { 0, 0, 1, 1 };
+    layer.features.push_back(std::move(feature));
+
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(layer));
+    return tile;
+}
+
+void test_a_river_is_named_along_itself_and_a_lake_at_a_point()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+    style.label_repeat_distance = 0;
+
+    // The river runs east-west across the tile, so its name lies flat -- and
+    // the lake's name is drawn upright at its point. At bearing 0 both come
+    // out horizontal, which is why the interesting test is the turned one
+    // below.
+    const auto river = labelsOf(waterNameTile("Santa Ana River", "river", true));
+    const auto riverStats = placeOnto({ { irvine, river } }, style);
+    check(riverStats.placed == 1,
+          "the river is named, got " + std::to_string(riverStats.placed));
+
+    const auto lake = labelsOf(waterNameTile("Irvine Lake", "lake", false));
+    const auto lakeStats = placeOnto({ { irvine, lake } }, style);
+    check(lakeStats.placed == 1, "the lake is named, got " + std::to_string(lakeStats.placed));
+
+    // Turn the map. The river's name must turn with the river; the lake's must
+    // not turn at all, because a lake has no line to follow.
+    const Painted turnedRiver = paintOnto({ { irvine, river } }, style, 14.0, 90.0);
+    const QRectF riverInk = inkBounds(turnedRiver.canvas);
+    check(!riverInk.isNull() && riverInk.height() > riverInk.width(),
+          "a turned river stands its name up with itself");
+
+    const Painted turnedLake = paintOnto({ { irvine, lake } }, style, 14.0, 90.0);
+    const QRectF lakeInk = inkBounds(turnedLake.canvas);
+    check(!lakeInk.isNull() && lakeInk.width() > lakeInk.height(),
+          "but a lake's name stays upright, because a point has no direction");
+}
+
+// map_build deliberately emits NAMELESS river segments, because the layer
+// carries the geometry a label runs along and the name may live on a parent
+// way that was split. Those must not become blank labels.
+void test_a_nameless_river_segment_claims_no_label()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const auto nameless = labelsOf(waterNameTile("", "river", true));
+    check(nameless->labels.empty(), "a nameless river yields no candidate at all");
+
+    MapStyle_t style;
+    const auto stats = placeOnto({ { irvine, nameless } }, style);
+    check(stats.placed == 0, "and nothing is drawn for it");
+}
+
+// A street name must survive a river crossing it. This is the ranking, and it
+// is the reason water sits below roads rather than beside them.
+void test_a_street_name_outranks_the_river_it_crosses()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+
+    // Both through the middle of the tile, so they compete for the same
+    // pixels and exactly one can win.
+    const auto road = labelsOf(roadNameTile("Main Street", "minor", 2048, 256, 3840));
+    const auto river = labelsOf(waterNameTile("Santa Ana River", "river", true));
+
+    MapStyle_t style;
+    style.label_repeat_distance = 0;
+    const auto stats = placeOnto({ { irvine, road }, { irvine, river } }, style);
+    check(stats.placed == 1, "only one of the two fits, got " + std::to_string(stats.placed));
+    check(stats.suppressed >= 1, "and the loser is counted as suppressed");
+
+    // Which one won is the whole point, so it is read off the pixels.
+    MapStyle_t bare;
+    bare.label_halo_width = 0.0;
+    bare.label_repeat_distance = 0;
+    const QRectF both = inkBounds(paintOnto({ { irvine, road }, { irvine, river } }, bare).canvas);
+    const QRectF roadOnly = inkBounds(paintOnto({ { irvine, road } }, bare).canvas);
+    check(std::abs(both.width() - roadOnly.width()) <= 1.0,
+          "and it is the street, not the river -- the ink matches the road drawn alone");
+}
+
+// Water labels answer to their own toggle and their own zoom floor, exactly as
+// road labels do.
+void test_water_labels_respect_their_zoom_floor_and_their_toggle()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const auto river = labelsOf(waterNameTile("Santa Ana River", "river", true));
+
+    MapStyle_t style;
+    style.label_repeat_distance = 0;
+    check(placeOnto({ { irvine, river } }, style).placed == 1, "drawn at the floor");
+
+    MapStyle_t below = style;
+    below.detail.water_label = 15;
+    check(placeOnto({ { irvine, river } }, below).placed == 0, "and not below it");
+
+    MapStyle_t off = style;
+    off.show_water_labels = false;
+    check(placeOnto({ { irvine, river } }, off).placed == 0, "nor with the toggle off");
+
+    // And the road toggle must not reach it -- two layers, two switches.
+    MapStyle_t roadsOff = style;
+    roadsOff.show_road_labels = false;
+    check(placeOnto({ { irvine, river } }, roadsOff).placed == 1,
+          "turning street names off leaves the river named");
+}
+
+// A river beats a stream where they collide, the way a motorway beats a lane.
+void test_a_river_outranks_a_stream()
+{
+    const mvt::Layer layer = waterNameTile("X", "river", true).layers.front();
+    const map_widget::LabelRank river = map_widget::waterRank(layer, layer.features.front());
+
+    const mvt::Layer streamLayer = waterNameTile("X", "stream", true).layers.front();
+    const map_widget::LabelRank stream =
+        map_widget::waterRank(streamLayer, streamLayer.features.front());
+
+    check(river.tier == stream.tier, "both are water, so both sit in the same tier");
+    check(river.magnitude > stream.magnitude, "but the river carries more weight");
+
+    // Below a road, which is the ranking decision worth pinning.
+    const mvt::Layer roadLayer = roadNameTile("Y", "minor").layers.front();
+    const map_widget::LabelRank road = map_widget::roadRank(roadLayer, roadLayer.features.front());
+    check(river.tier < road.tier, "and water ranks below any road");
 }
 
 // A name wider than the road it names reads as text floating over the map.
@@ -881,6 +1096,10 @@ void test_road_labels_respect_their_zoom_floor_and_their_toggle()
     const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
 
     MapStyle_t style;
+    // Repeats off: this test is about the zoom floor and the toggle,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
     check(placeOnto({ { irvine, tile } }, style, 14.0).placed == 1, "drawn at the floor");
     check(placeOnto({ { irvine, tile } }, style, 12.0).placed == 0, "and not below it");
 
@@ -908,7 +1127,11 @@ void test_a_numbered_route_falls_back_to_its_ref()
     mvt::Tile tile;
     tile.layers.push_back(std::move(layer));
 
-    const MapStyle_t style;
+    MapStyle_t style;
+    // Repeats off: this test is about which text a road is labelled with,
+    // and a road long enough to carry its name twice would answer with a
+    // count that says nothing about either. Repeats have their own tests.
+    style.label_repeat_distance = 0;
     const auto stats =
         placeOnto({ { map_widget::TileId { 14, 2828, 6562 }, labelsOf(tile) } }, style);
     check(stats.placed == 1, "an unnamed motorway is labelled with its route number");
@@ -2065,7 +2288,12 @@ int main(int argc, char** argv)
     test_a_hairpin_gets_no_label_but_a_gentle_curve_does();
     test_a_road_label_lies_along_a_diagonal_road();
     test_the_glyph_tier_renders_an_alphabet_not_a_name_list();
-    test_a_road_crossing_several_tiles_is_named_once();
+    test_a_road_repeats_its_name_along_itself_but_never_twice_in_one_place();
+    test_a_river_is_named_along_itself_and_a_lake_at_a_point();
+    test_a_nameless_river_segment_claims_no_label();
+    test_a_street_name_outranks_the_river_it_crosses();
+    test_water_labels_respect_their_zoom_floor_and_their_toggle();
+    test_a_river_outranks_a_stream();
     test_a_stub_too_short_for_its_name_is_not_labelled();
     test_road_labels_respect_their_zoom_floor_and_their_toggle();
     test_a_numbered_route_falls_back_to_its_ref();

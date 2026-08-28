@@ -95,6 +95,14 @@ LabelRank trackRank(const mvt::Layer& layer, const mvt::Feature& feature);
 // roadPriority(), so the bigger road keeps its name.
 LabelRank roadRank(const mvt::Layer& layer, const mvt::Feature& feature);
 
+// The rank of one feature of the basemap's `water_name` layer.
+//
+// Below a road name. On a map that exists to be driven, the street you are on
+// outranks the river you are crossing -- and a river is a long feature that
+// would otherwise repeat its way across the viewport at a road's expense.
+// Ordered among themselves so a river beats a stream and a lake beats a pond.
+LabelRank waterRank(const mvt::Layer& layer, const mvt::Feature& feature);
+
 struct LabelStats
 {
     int placed { 0 };

@@ -50,6 +50,11 @@ enum class LabelGeometry
 {
     Point,
     Line,
+    // Whichever the feature happens to be. `water_name` is the reason: a lake
+    // gives a POINT because its name sits inside it, and a river gives the
+    // LINE because its name is drawn along it. One layer, two shapes, and
+    // map_build says so in as many words (extract.cpp).
+    Either,
 };
 
 struct LabelLayerSpec
@@ -67,11 +72,16 @@ struct LabelLayerSpec
     LabelKind kind { LabelKind::Place };
 };
 
-constexpr std::array<LabelLayerSpec, 3> kLabelLayers { {
+constexpr std::array<LabelLayerSpec, 4> kLabelLayers { {
     { "place", placeRank, LabelGeometry::Point, false, LabelKind::Place },
     { "track_label", trackRank, LabelGeometry::Point, false, LabelKind::Track },
     { "transportation_name", roadRank, LabelGeometry::Line, /*oneLabelPerName=*/true,
       LabelKind::Road },
+    // Rivers and lakes. Deduped by name like roads and for the same reason: a
+    // river runs through every tile it crosses and each one carries the whole
+    // name.
+    { "water_name", waterRank, LabelGeometry::Either, /*oneLabelPerName=*/true,
+      LabelKind::Water },
 } };
 
 // How far a point may be moved to drop it from a run, in tile-local units.
@@ -273,7 +283,6 @@ void extractLayerLabels(const mvt::Tile& tile, const LabelLayerSpec& spec, Label
     // domain the GPU's vertices use. The paint pass multiplies by the tile's
     // on-screen size, which is all a similarity transform needs.
     const double inv = 1.0 / double(layer->extent);
-    const bool wantLine = spec.geometry == LabelGeometry::Line;
 
     // Reused across features rather than rebuilt per road: a dense tile holds
     // hundreds of named ways, and extraction runs on the decode worker where
@@ -285,7 +294,17 @@ void extractLayerLabels(const mvt::Tile& tile, const LabelLayerSpec& spec, Label
     {
         const bool isPoint = feature.type == mvt::GeomType::Point;
         const bool isLine = feature.type == mvt::GeomType::LineString;
-        if (feature.rings.empty() || (wantLine ? !isLine : !isPoint))
+        if (feature.rings.empty() || (!isPoint && !isLine))
+        {
+            continue;
+        }
+
+        // A layer that takes either shape follows the feature; one that asks
+        // for a shape ignores everything else it finds.
+        const bool wantLine = spec.geometry == LabelGeometry::Either
+                                  ? isLine
+                                  : spec.geometry == LabelGeometry::Line;
+        if (wantLine != isLine)
         {
             continue;
         }
@@ -534,6 +553,45 @@ LabelRank roadRank(const mvt::Layer& layer, const mvt::Feature& feature)
 //
 // Returns a value on the same doubled scale placeLayerPriority() uses; only the
 // ORDER is meaningful, never the number.
+// How water bodies rank among themselves. Bigger, more permanent water first:
+// a river is worth more than the ditch beside it, a lake more than a pond.
+int waterPriority(std::string_view className)
+{
+    if (className == "ocean" || className == "sea")
+    {
+        return 6;
+    }
+    if (className == "lake")
+    {
+        return 5;
+    }
+    if (className == "river")
+    {
+        return 4;
+    }
+    if (className == "canal")
+    {
+        return 3;
+    }
+    if (className == "stream")
+    {
+        return 2;
+    }
+    // drain, ditch, and anything the archive has that we do not.
+    return 1;
+}
+
+LabelRank waterRank(const mvt::Layer& layer, const mvt::Feature& feature)
+{
+    // One step below a road, and below a locality with it. See the note in
+    // map/labels.h: on a map for driving, the street you are on outranks the
+    // river you are crossing. Tiers step by two, so there is room underneath.
+    LabelRank out;
+    out.tier = tierForRank(kMaxPlaceRank) - 1;
+    out.magnitude = std::uint32_t(waterPriority(layer.attributeText(feature, "class")));
+    return out;
+}
+
 int placePriority(std::string_view className)
 {
     if (className == "country")

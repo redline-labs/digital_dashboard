@@ -153,6 +153,11 @@ REFLECT_STRUCT(MapDetail_t,
     // something the driver cannot see.
     (uint16_t, road_label, 14,
         "Road Label From", "Lowest zoom that draws street names"),
+    // The archive carries water_name from z14 only (extract.cpp stamps it), so
+    // a lower threshold here draws nothing extra. A water label is detail: at
+    // z12 the lake is four pixels wide.
+    (uint16_t, water_label, 14,
+        "Water Label From", "Lowest zoom that draws river and lake names. The archive's own floor is z14"),
     // The archive only carries `brunnel` from z13 -- below the merge threshold
     // a per-road attribute would split features that should fold together --
     // so a lower threshold here draws nothing extra.
@@ -190,6 +195,7 @@ inline std::vector<std::string> validate(MapDetail_t& detail)
     clamp(detail.aeroway_runway, "detail.aeroway_runway");
     clamp(detail.aeroway_taxiway, "detail.aeroway_taxiway");
     clamp(detail.road_label, "detail.road_label");
+    clamp(detail.water_label, "detail.water_label");
     clamp(detail.bridge, "detail.bridge");
     clamp(detail.boundary, "detail.boundary");
     clamp(detail.racetrack_surface, "detail.racetrack_surface");
@@ -265,6 +271,15 @@ REFLECT_STRUCT(MapStyle_t,
         "Label Halo Width", "Stroke width of the halo in pixels. 0 draws the text bare"),
     (uint16_t, label_spacing, 4,
         "Label Spacing", "Clear space demanded around each label in pixels. Raise it to thin a crowded map"),
+    // NOT label_spacing, which is collision padding. This is how far apart two
+    // instances of the SAME name are allowed to be -- a long road carries its
+    // name several times so the driver can read it wherever they are looking,
+    // rather than once at a midpoint that may be off screen.
+    //
+    // Zero turns repeats off and restores one label per name per viewport,
+    // which is what the map did before repeats existed.
+    (uint16_t, label_repeat_distance, 250,
+        "Label Repeat Distance", "How far apart, in pixels, a road or river repeats its name along itself. 0 names each one only once per screen"),
 
     (double, road_width_scale, 1.0,
         "Road Width", "Multiplier on every width in Widths. Raise it for a display seen at arm's length"),
@@ -280,7 +295,9 @@ REFLECT_STRUCT(MapStyle_t,
     (bool, show_bridges, true,
         "Show Bridges", "Draw bridges above the roads they cross. Off draws every road at grade, so an overpass and the street under it look the same"),
     (bool, show_road_labels, true,
-        "Show Road Labels", "Draw street names. Each road is named once per viewport, laid along the road at the middle of its longest visible run"),
+        "Show Road Labels", "Draw street names. Each road is named along itself, repeating every Label Repeat Distance"),
+    (bool, show_water_labels, true,
+        "Show Water Labels", "Draw river and lake names. A river carries its name along itself; a lake carries it at a point"),
     (bool, show_racetracks, true,
         "Show Racetracks", "Draw race tracks. They come from their own archive, so this does nothing unless one is configured as an overlay tileset"),
 
@@ -302,6 +319,10 @@ inline std::vector<std::string> validate(MapStyle_t& style)
     config_codec::limits::clampInto<double>(style.label_halo_width, 0.0, 12.0,
                                             "label_halo_width", notes);
     config_codec::limits::clampInto<uint16_t>(style.label_spacing, 0u, 64u, "label_spacing", notes);
+    // Up to 4096: a repeat distance longer than any screen is a legitimate way
+    // to ask for one label per name without setting it to zero.
+    config_codec::limits::clampInto<uint16_t>(style.label_repeat_distance, 0u, 4096u,
+                                              "label_repeat_distance", notes);
 
     const std::vector<std::string> widthNotes = validate(style.widths);
     notes.insert(notes.end(), widthNotes.begin(), widthNotes.end());
