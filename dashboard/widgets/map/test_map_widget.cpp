@@ -465,6 +465,30 @@ mvt::Tile roadNameTile(const std::string& name, const std::string& roadClass,
     return tile;
 }
 
+// A `transportation_name` line following whatever shape the caller gives it.
+// Every road fixture above this one is a straight two-point line, which is
+// exactly the geometry a curved-text placement cannot be tested on.
+mvt::Tile roadShapeTile(const std::string& name, const std::string& roadClass,
+                        const std::vector<mvt::Point>& shape)
+{
+    mvt::Layer layer;
+    layer.name = "transportation_name";
+    layer.extent = 4096;
+    layer.keys = { "name:latin", "class" };
+    layer.values = { mvt::Value(std::in_place_type<std::string>, name),
+                     mvt::Value(std::in_place_type<std::string>, roadClass) };
+
+    mvt::Feature feature;
+    feature.type = mvt::GeomType::LineString;
+    feature.rings.push_back(shape);
+    feature.tags = { 0, 0, 1, 1 };
+    layer.features.push_back(std::move(feature));
+
+    mvt::Tile tile;
+    tile.layers.push_back(std::move(layer));
+    return tile;
+}
+
 // What the decode worker does to every arriving tile: candidates out,
 // decoded features gone. The label tests go through it so they exercise the
 // extraction the widget actually runs.
@@ -473,20 +497,66 @@ std::shared_ptr<const map_widget::LabelSet> labelsOf(const mvt::Tile& tile)
     return std::make_shared<const map_widget::LabelSet>(map_widget::extractLabels(tile));
 }
 
-map_widget::LabelStats placeOnto(const std::vector<map_widget::LabelTile>& tiles,
-                                 const MapStyle_t& style, double zoom = 14.0)
+// What a label pass actually put on the canvas, not just how many labels it
+// claims to have placed. The stats say "one label"; the pixels say WHERE, and
+// the anchor rotation is only observable in the pixels.
+struct Painted
+{
+    map_widget::LabelStats stats;
+    QImage canvas;
+};
+
+Painted paintOnto(const std::vector<map_widget::LabelTile>& tiles, const MapStyle_t& style,
+                  double zoom = 14.0, double bearing = 0.0)
 {
     // A QImage painter: no window, no GPU, and exactly the raster engine the
     // real label pass runs on.
-    QImage canvas(800, 600, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(Qt::transparent);
-    QPainter painter(&canvas);
+    Painted out;
+    out.canvas = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+    out.canvas.fill(Qt::transparent);
+    QPainter painter(&out.canvas);
 
-    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, zoom, 0.0 };
+    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, zoom, bearing };
     const map_widget::Projection projection(camera, 800, 600, 1.0);
 
     map_widget::LabelCache cache;
-    return map_widget::paintLabels(painter, projection, tiles, style, cache);
+    out.stats = map_widget::paintLabels(painter, projection, tiles, style, cache);
+    return out;
+}
+
+map_widget::LabelStats placeOnto(const std::vector<map_widget::LabelTile>& tiles,
+                                 const MapStyle_t& style, double zoom = 14.0)
+{
+    return paintOnto(tiles, style, zoom).stats;
+}
+
+// The bounding box of everything drawn. Null if the canvas is empty, which is
+// itself the assertion in a "nothing was placed" test.
+QRectF inkBounds(const QImage& canvas)
+{
+    int minX = canvas.width();
+    int minY = canvas.height();
+    int maxX = -1;
+    int maxY = -1;
+    for (int y = 0; y < canvas.height(); ++y)
+    {
+        for (int x = 0; x < canvas.width(); ++x)
+        {
+            if (qAlpha(canvas.pixel(x, y)) == 0)
+            {
+                continue;
+            }
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
+        }
+    }
+    if (maxX < 0)
+    {
+        return {};
+    }
+    return QRectF(minX, minY, (maxX - minX) + 1, (maxY - minY) + 1);
 }
 
 // The headline gap: `transportation_name` is built, shipped, decoded and was
@@ -499,6 +569,273 @@ void test_a_road_name_is_placed()
     const MapStyle_t style;
     const auto stats = placeOnto({ { irvine, tile } }, style);
     check(stats.placed == 1, "the street name is drawn, got " + std::to_string(stats.placed));
+}
+
+// The anchor rotation at the heart of the label pass -- tile-local axes turn
+// with the map even though the text does not -- had NO test at all: every
+// label test ran at bearing 0.0, where the rotation terms are 1 and 0 and a
+// sign error is invisible. These two pin it before anything moves it.
+//
+// A road along the tile's own X axis, labelled at the middle of the tile. At
+// bearing 0 the tile's axes are the screen's, so the label sits at the tile
+// centre. Turning the map moves that centre to a place trigonometry can
+// predict, and nothing else about the label changes.
+void test_the_label_anchor_turns_with_the_map()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+    const auto tile = labelsOf(roadNameTile("Main Street", "minor"));
+
+    MapStyle_t style;
+    // The halo would put ink outside the text box and blur the comparison.
+    style.label_halo_width = 0.0;
+
+    const Painted north = paintOnto({ { irvine, tile } }, style, 14.0, 0.0);
+    check(north.stats.placed == 1, "the north-up label is placed");
+    const QRectF at0 = inkBounds(north.canvas);
+    check(!at0.isNull(), "and it left ink on the canvas");
+
+    // The SAME camera, turned a quarter turn. The label must move to where the
+    // rotated tile puts its centre -- and must still be drawn upright, which
+    // is the invariant the whole pass rests on: an upright "Main Street" is
+    // far wider than it is tall at every bearing.
+    const Painted east = paintOnto({ { irvine, tile } }, style, 14.0, 90.0);
+    check(east.stats.placed == 1, "the turned label is still placed");
+    const QRectF at90 = inkBounds(east.canvas);
+    check(!at90.isNull(), "and it too left ink");
+
+    // A road label FOLLOWS ITS ROAD, which is the whole point of it. The road
+    // runs along the tile's X axis, so a quarter turn of the map stands it up
+    // on screen -- and the name has to stand up with it. At bearing 0 the same
+    // name is drawn along a horizontal road and is wider than it is tall.
+    check(at0.width() > at0.height(), "the name lies along an east-west road");
+    check(at90.height() > at90.width(),
+          "and stands up with the road when the map turns a quarter, got " +
+              std::to_string(at90.width()) + "x" + std::to_string(at90.height()));
+
+    // Turned, not reflowed: the ink that was wide is now tall by about as
+    // much. A label that had been re-laid out horizontally would keep its old
+    // proportions instead.
+    check(std::abs(at90.height() - at0.width()) <= 4.0 &&
+              std::abs(at90.width() - at0.height()) <= 4.0,
+          "and it is the same name turned, not a differently shaped one");
+
+    // Where "somewhere else" is, computed independently of the label pass.
+    // The tile's centre is a fixed world point, so the projection alone says
+    // where it lands -- if the label pass and the projection ever disagree
+    // about which way the map turns, this is what catches it.
+    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 90.0 };
+    const map_widget::Projection projection(camera, 800, 600, 1.0);
+    const map_widget::ScreenPoint origin = projection.tileOrigin(irvine);
+    const double size = projection.tileScreenSize(irvine.z);
+    // The road runs the width of the tile at y=2048 of 4096, so its longest
+    // run's midpoint is the tile's centre in tile-local units.
+    const double lx = 0.5 * size;
+    const double ly = 0.5 * size;
+    const QPointF expected(origin.x + ((lx * projection.bearingCos()) -
+                                       (ly * projection.bearingSin())),
+                           origin.y + ((lx * projection.bearingSin()) +
+                                       (ly * projection.bearingCos())));
+
+    check(std::abs(at90.center().x() - expected.x()) <= 2.0 &&
+              std::abs(at90.center().y() - expected.y()) <= 2.0,
+          "the turned label sits on the turned anchor, expected (" +
+              std::to_string(expected.x()) + ", " + std::to_string(expected.y()) + ") got (" +
+              std::to_string(at90.center().x()) + ", " + std::to_string(at90.center().y()) + ")");
+}
+
+// Half a turn is the case a sign error survives: it moves the anchor to the
+// point reflected through the tile origin, which a symmetric test cannot tell
+// from the right answer. Checked against the projection directly for that
+// reason, and at a NON-central anchor so the two are actually different.
+void test_the_label_anchor_is_right_at_half_a_turn()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+    // A short road up in the tile's first quarter: the anchor is nowhere near
+    // the tile centre, so reflecting it lands somewhere clearly wrong.
+    const auto tile = labelsOf(roadNameTile("Main Street", "minor", 1024, 512, 3072));
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    const Painted turned = paintOnto({ { irvine, tile } }, style, 14.0, 180.0);
+    check(turned.stats.placed == 1, "the label survives half a turn");
+    const QRectF ink = inkBounds(turned.canvas);
+    check(!ink.isNull(), "and left ink");
+    // Half a turn puts the road back along the screen's X axis, pointing the
+    // other way -- which is the case the upright flip exists for. Wider than
+    // tall means it was laid along the road; that it is READABLE rather than
+    // mirrored is test_a_road_label_never_reads_backwards' business.
+    check(ink.width() > ink.height(), "and lies along the road, which is horizontal again");
+
+    const map_widget::Camera camera { { 33.6865966, -117.8557874 }, 14.0, 180.0 };
+    const map_widget::Projection projection(camera, 800, 600, 1.0);
+    const map_widget::ScreenPoint origin = projection.tileOrigin(irvine);
+    const double size = projection.tileScreenSize(irvine.z);
+    const double lx = ((512.0 + 3072.0) / 2.0 / 4096.0) * size;
+    const double ly = (1024.0 / 4096.0) * size;
+    const QPointF expected(origin.x + ((lx * projection.bearingCos()) -
+                                       (ly * projection.bearingSin())),
+                           origin.y + ((lx * projection.bearingSin()) +
+                                       (ly * projection.bearingCos())));
+
+    check(std::abs(ink.center().x() - expected.x()) <= 2.0 &&
+              std::abs(ink.center().y() - expected.y()) <= 2.0,
+          "the half-turned label sits on the half-turned anchor, expected (" +
+              std::to_string(expected.x()) + ", " + std::to_string(expected.y()) + ") got (" +
+              std::to_string(ink.center().x()) + ", " + std::to_string(ink.center().y()) + ")");
+}
+
+// A place name is NOT a road name. It has no line to follow, so it stays
+// upright at every bearing -- which is the invariant the whole label pass was
+// built on, and the one thing curved road labels must not have cost.
+void test_a_place_name_stays_upright_when_the_map_turns()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+    mvt::Tile tile;
+    tile.layers.push_back(labelLayerWith(
+        "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
+                   { "rank", mvt::Value(std::int64_t { 2 }) } }));
+    const auto labels = labelsOf(tile);
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    for (const double bearing : { 0.0, 45.0, 90.0, 180.0, 270.0 })
+    {
+        const Painted painted = paintOnto({ { irvine, labels } }, style, 14.0, bearing);
+        check(painted.stats.placed == 1,
+              "the town is named at bearing " + std::to_string(bearing));
+        const QRectF ink = inkBounds(painted.canvas);
+        check(ink.width() > ink.height(),
+              "and stays upright -- wider than tall -- at bearing " + std::to_string(bearing));
+    }
+}
+
+// The upright rule, which is what keeps a road label from reading backwards.
+//
+// The same road, described in both directions. A renderer that simply laid the
+// glyphs out in the order the geometry happens to run would draw one of these
+// mirrored; the flip is what makes the two identical.
+void test_a_road_label_never_reads_backwards()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    const auto westToEast = labelsOf(roadNameTile("Main Street", "minor", 2048, 256, 3840));
+    const auto eastToWest = labelsOf(roadShapeTile("Main Street", "minor",
+                                                   { { 3840, 2048 }, { 256, 2048 } }));
+
+    const Painted forward = paintOnto({ { irvine, westToEast } }, style);
+    const Painted backward = paintOnto({ { irvine, eastToWest } }, style);
+
+    check(forward.stats.placed == 1, "the westward road is named");
+    check(backward.stats.placed == 1, "and so is the same road described eastward");
+
+    // Pixel for pixel. The road is the same road and the name is the same
+    // name, so which end the archive happened to start the way at must not be
+    // visible in the output at all.
+    check(forward.canvas == backward.canvas,
+          "a road described backwards is labelled identically -- the text is not mirrored");
+}
+
+// A road that doubles back on itself has nowhere to put a name that a reader
+// could follow. MapLibre rejects these on a sliding window of turn; so do we,
+// and this is the case that separates "rejects a kink" from "rejects
+// everything bent".
+void test_a_hairpin_gets_no_label_but_a_gentle_curve_does()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    // Out and straight back, a couple of degrees off doubling over itself.
+    // Every character would sit on top of another one.
+    const auto hairpin = labelsOf(roadShapeTile(
+        "Mulholland Drive", "minor",
+        { { 512, 2048 }, { 3584, 2048 }, { 3584, 2148 }, { 512, 2148 }, { 512, 2248 } }));
+    const auto hairpinStats = placeOnto({ { irvine, hairpin } }, style);
+    check(hairpinStats.placed == 0,
+          "a hairpin is not labelled, got " + std::to_string(hairpinStats.placed));
+    check(hairpinStats.suppressed >= 1, "and says so as a suppression rather than a silent drop");
+
+    // A long shallow arc across the tile -- exactly what this feature is FOR.
+    // Same name, same length of road, and it must survive.
+    std::vector<mvt::Point> arc;
+    for (int i = 0; i <= 16; ++i)
+    {
+        const double t = double(i) / 16.0;
+        arc.push_back(mvt::Point { std::int32_t(512 + (t * 3072)),
+                                   std::int32_t(2048 - (std::sin(t * 3.14159) * 220.0)) });
+    }
+    const auto curve = labelsOf(roadShapeTile("Mulholland Drive", "minor", arc));
+    const auto curveStats = placeOnto({ { irvine, curve } }, style);
+    check(curveStats.placed == 1,
+          "but a gentle curve is labelled, got " + std::to_string(curveStats.placed));
+}
+
+// The name is drawn ALONG the road, which is the whole feature. On a diagonal
+// road the ink has to be diagonal too: a horizontal label on a 45-degree road
+// would be far wider than tall, and a followed one is roughly square.
+void test_a_road_label_lies_along_a_diagonal_road()
+{
+    const map_widget::TileId irvine { 14, 2828, 6562 };
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    const auto flat = labelsOf(roadNameTile("Main Street", "minor", 2048, 256, 3840));
+    const auto diagonal = labelsOf(roadShapeTile("Main Street", "minor",
+                                                 { { 256, 512 }, { 3840, 3584 } }));
+
+    const QRectF flatInk = inkBounds(paintOnto({ { irvine, flat } }, style).canvas);
+    const Painted painted = paintOnto({ { irvine, diagonal } }, style);
+    check(painted.stats.placed == 1, "the diagonal road is named");
+    const QRectF ink = inkBounds(painted.canvas);
+
+    check(!flatInk.isNull() && !ink.isNull(), "both left ink");
+    check(ink.height() > flatInk.height() * 2.0,
+          "the name climbs with the road rather than lying flat across it, got height " +
+              std::to_string(ink.height()) + " against " + std::to_string(flatInk.height()));
+    check(ink.width() < flatInk.width(),
+          "and takes less width than the same name drawn horizontally");
+}
+
+// The glyph tier is what makes curved text affordable: a label is a row of
+// individually placed characters, and rendering each one every frame would
+// cost what the string cache was built to avoid.
+void test_the_glyph_tier_renders_an_alphabet_not_a_name_list()
+{
+    map_widget::LabelCache cache;
+    QFont font("Arial", 12);
+
+    const QColor halo(Qt::black);
+    const QColor text(Qt::white);
+
+    for (const QChar ch : QString("Main Street"))
+    {
+        cache.glyphFor(ch, font, 3.0, halo, text, 1.0);
+    }
+    // "Main Street" spells nine distinct characters: M a i n space S t r e.
+    const std::size_t afterOne = cache.glyphCount();
+    check(afterOne == 9, "one name interns its own alphabet, got " + std::to_string(afterOne));
+
+    // A second name sharing letters adds only what it introduces.
+    for (const QChar ch : QString("Main Avenue"))
+    {
+        cache.glyphFor(ch, font, 3.0, halo, text, 1.0);
+    }
+    check(cache.glyphCount() > afterOne, "a new name with new letters adds them");
+    check(cache.glyphCount() <= 14,
+          "but reuses the ones it shares, got " + std::to_string(cache.glyphCount()));
+
+    // A style change has to empty this tier as well as the string tier, or
+    // half the alphabet stays in the old colour.
+    cache.glyphFor(QChar('M'), font, 3.0, halo, QColor(Qt::red), 1.0);
+    check(cache.glyphCount() == 1, "a colour change re-keys the glyph tier too, got " +
+                                       std::to_string(cache.glyphCount()));
 }
 
 // A road crosses every tile it passes through and each tile carries the WHOLE
@@ -1721,6 +2058,13 @@ int main(int argc, char** argv)
     test_the_label_cache_evicts_the_least_recently_used();
 
     test_a_road_name_is_placed();
+    test_the_label_anchor_turns_with_the_map();
+    test_the_label_anchor_is_right_at_half_a_turn();
+    test_a_place_name_stays_upright_when_the_map_turns();
+    test_a_road_label_never_reads_backwards();
+    test_a_hairpin_gets_no_label_but_a_gentle_curve_does();
+    test_a_road_label_lies_along_a_diagonal_road();
+    test_the_glyph_tier_renders_an_alphabet_not_a_name_list();
     test_a_road_crossing_several_tiles_is_named_once();
     test_a_stub_too_short_for_its_name_is_not_labelled();
     test_road_labels_respect_their_zoom_floor_and_their_toggle();

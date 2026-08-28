@@ -280,7 +280,7 @@ REFLECT_STRUCT(MapStyle_t,
     (bool, show_bridges, true,
         "Show Bridges", "Draw bridges above the roads they cross. Off draws every road at grade, so an overpass and the street under it look the same"),
     (bool, show_road_labels, true,
-        "Show Road Labels", "Draw street names. Each road is named once per viewport, horizontally, at the middle of its longest visible run"),
+        "Show Road Labels", "Draw street names. Each road is named once per viewport, laid along the road at the middle of its longest visible run"),
     (bool, show_racetracks, true,
         "Show Racetracks", "Draw race tracks. They come from their own archive, so this does nothing unless one is configured as an overlay tileset"),
 

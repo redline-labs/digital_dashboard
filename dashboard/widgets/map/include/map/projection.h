@@ -151,10 +151,11 @@ class Projection
 
     // The rotation this projection applies taking world to screen: cos/sin of
     // the NEGATED bearing (a bearing of 90, "east is up", turns the map
-    // anticlockwise on screen -- see the constructor). Exposed so the label
-    // pass rotates its anchors with the same terms the geometry uses, instead
-    // of re-deriving them per tile and having three copies that must agree
-    // about which way the map turns.
+    // anticlockwise on screen -- see the constructor).
+    //
+    // Prefer tileTransform() to these. They are still here because a test that
+    // predicts where a tile-local point lands has to do the arithmetic itself
+    // or it is only checking the code against itself.
     double bearingCos() const { return mCos; }
     double bearingSin() const { return mSin; }
 
@@ -215,6 +216,44 @@ class Projection
     // scale and offset rather than a full transform per point.
     ScreenPoint tileOrigin(const TileId& id) const;
     double tileScreenSize(std::uint8_t z) const;
+
+    // The whole tile-local -> screen transform for one tile, solved once.
+    //
+    // A tile is square in world space and stays square on screen, so this is a
+    // similarity -- a scale, a rotation and an offset -- and every point in the
+    // tile goes through the same four numbers. Taking it as an object rather
+    // than calling a method per point is the difference between hoisting that
+    // setup out of a loop and repeating it: the label pass projects a road's
+    // whole polyline, not one anchor.
+    //
+    // Tile-local coordinates are [0,1] across the tile, which is the same
+    // camera-free domain the GPU's vertices use and for the same reason.
+    struct TileTransform
+    {
+        ScreenPoint origin;
+        double size { 0.0 };
+        double cos { 1.0 };
+        double sin { 0.0 };
+
+        ScreenPoint map(double lx, double ly) const
+        {
+            const double sx = lx * size;
+            const double sy = ly * size;
+            return ScreenPoint { origin.x + ((sx * cos) - (sy * sin)),
+                                 origin.y + ((sx * sin) + (sy * cos)) };
+        }
+
+        // A DIRECTION rather than a position: rotated and scaled, but not
+        // offset. What an on-screen bearing along a road is derived from.
+        ScreenPoint mapDelta(double dx, double dy) const
+        {
+            const double sx = dx * size;
+            const double sy = dy * size;
+            return ScreenPoint { (sx * cos) - (sy * sin), (sx * sin) + (sy * cos) };
+        }
+    };
+
+    TileTransform tileTransform(const TileId& id) const;
 
   private:
     // The inclusive tile box covering the viewport, before x is wrapped. y is

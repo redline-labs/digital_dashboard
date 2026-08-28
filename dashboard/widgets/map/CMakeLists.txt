@@ -57,6 +57,7 @@ add_custom_target(map_widget_shaders
 
 add_library(${MAP_WIDGET_LIB} STATIC
     gpu_renderer.cpp
+    label_candidates.cpp
     labels.cpp
     map_widget.cpp
     projection.cpp
@@ -71,6 +72,7 @@ add_library(${MAP_WIDGET_LIB} STATIC
     ${MAP_HIGHLIGHT_FRAG_HEADER}
     include/map/config.h
     include/map/gpu_renderer.h
+    include/map/label_candidates.h
     include/map/labels.h
     include/map/map_widget.h
     include/map/projection.h

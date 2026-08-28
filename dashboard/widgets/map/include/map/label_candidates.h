@@ -53,12 +53,44 @@ struct LabelCandidate
     std::uint32_t magnitude { 0 };
     LabelKind kind { LabelKind::Place };
     bool oneLabelPerName { false };
+
+    // The run itself, as a range into LabelSet::path. Empty for a point label.
+    //
+    // A road's name is drawn ALONG the road, so the label pass needs the
+    // shape and not just a point on it. Held as a range into one flat arena
+    // rather than a vector per candidate: a tile's labels are built once and
+    // read many times, and this is one allocation instead of hundreds.
+    std::uint32_t pathBegin { 0 };
+    std::uint32_t pathCount { 0 };
 };
 
-using LabelSet = std::vector<LabelCandidate>;
+// One point of a run, tile-local in [0,1].
+//
+// Float, not double: [0,1] in float resolves to about 6e-8, which is three
+// orders of magnitude finer than a z14 tile's own 1/4096 quantum, so this
+// discards nothing the archive ever carried and halves the arena.
+struct LocalPoint
+{
+    float x { 0.0F };
+    float y { 0.0F };
+};
 
-// Everything label-worthy in one decoded tile. Runs on the decode worker,
-// off the GUI thread; QString is a value type and crosses safely.
+// Everything label-worthy in one decoded tile.
+//
+// A struct rather than a bare vector because line labels carry geometry: the
+// candidates and the flat arena their runs point into travel together and
+// have the same lifetime.
+struct LabelSet
+{
+    std::vector<LabelCandidate> labels;
+    std::vector<LocalPoint> path;
+
+    bool empty() const { return labels.empty(); }
+    std::size_t size() const { return labels.size(); }
+};
+
+// Runs on the decode worker, off the GUI thread; QString is a value type and
+// crosses safely.
 LabelSet extractLabels(const mvt::Tile& tile);
 
 } // namespace map_widget

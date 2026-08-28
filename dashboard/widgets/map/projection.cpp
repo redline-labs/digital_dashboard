@@ -174,6 +174,11 @@ ScreenPoint Projection::tileOrigin(const TileId& id) const
                                   static_cast<double>(id.y) / side });
 }
 
+Projection::TileTransform Projection::tileTransform(const TileId& id) const
+{
+    return TileTransform { tileOrigin(id), tileScreenSize(id.z), mCos, mSin };
+}
+
 Projection::TileBounds Projection::tileBounds(std::uint8_t z, int marginTiles) const
 {
     const double side = std::exp2(static_cast<double>(z));

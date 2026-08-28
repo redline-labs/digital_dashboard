@@ -13,6 +13,7 @@
 //
 //   map_bench --tiles ~/Documents/map_data/socal.mbtiles
 //   map_bench --tiles ... --width 2560 --height 1440 --dpr 2
+//   map_bench --tiles ... --bearing 30      # the label stage's expensive case
 //
 // The number to watch is `uploads`: it should climb only when the visible tile
 // SET changes. If it tracks the frame count, something is invalidating the
@@ -160,6 +161,15 @@ int main(int argc, char** argv)
     // shows up in `gpu render` is the whole question behind drawing the map at
     // the resolution the screen has.
     const double dpr = std::atof(argumentAfter(argc, argv, "--dpr", "1").c_str());
+    // The camera's bearing, which the label stage is far more sensitive to
+    // than anything else here.
+    //
+    // At bearing 0 most roads in a grid city run straight across the screen,
+    // and a straight road's name is one blit of a cached string. Turn the map
+    // and the same names are laid out character by character along their
+    // roads. Measuring only at 0 reports the cheap path and misses the cost of
+    // the feature entirely.
+    const double bearing = std::atof(argumentAfter(argc, argv, "--bearing", "0").c_str());
 
     if (tilesPath.empty())
     {
@@ -198,7 +208,7 @@ int main(int argc, char** argv)
     std::unordered_map<TileId, Cached, TileIdHash> cache;
 
     const auto z = static_cast<std::uint8_t>(zoom);
-    const Camera startCamera { Coordinate { kStartLat, kStartLon }, zoom, 0.0 };
+    const Camera startCamera { Coordinate { kStartLat, kStartLon }, zoom, bearing };
     const Projection probe(startCamera, width, height, dpr);
 
     // The whole corridor the camera will drive along, plus a generous margin.
@@ -248,8 +258,8 @@ int main(int argc, char** argv)
 
     SPDLOG_INFO("");
     SPDLOG_INFO("archive    {}", tilesPath);
-    SPDLOG_INFO("viewport   {}x{} logical at z{:.1f}, {}x device pixel ratio", width, height,
-                zoom, dpr);
+    SPDLOG_INFO("viewport   {}x{} logical at z{:.1f}, {}x device pixel ratio, bearing {:.0f}",
+                width, height, zoom, dpr, bearing);
     SPDLOG_INFO("backend    {} ({}x MSAA)", gpu->backendName().toStdString(),
                 gpu->stats().sampleCount);
     SPDLOG_INFO("tiles      {} decoded, {} absent, {} vertices, {:.0f} ms to load+tessellate",
@@ -305,7 +315,7 @@ int main(int argc, char** argv)
 
         const Timer frameTimer;
 
-        const Camera camera { here, zoom, 0.0 };
+        const Camera camera { here, zoom, bearing };
         const Projection projection(camera, width, height, dpr);
 
         // Exactly what the widget does: the drawn set in its stable order, and
@@ -434,7 +444,7 @@ int main(int argc, char** argv)
     // Uploads must NOT climb: a fade is a uniform write, never a re-upload.
     {
         Stage fadeStage("fade frame");
-        const Camera camera { Coordinate { kStartLat, kStartLon }, zoom, 0.0 };
+        const Camera camera { Coordinate { kStartLat, kStartLon }, zoom, bearing };
         const Projection projection(camera, width, height, dpr);
         auto sets = projection.visibleTilesWithMargin(z, 0);
 

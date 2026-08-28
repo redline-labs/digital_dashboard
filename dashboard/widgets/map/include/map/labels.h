@@ -130,6 +130,53 @@ class LabelCache
         QPointF offset;
     };
 
+    // One character, rendered twice: the halo and the fill, as separate
+    // images.
+    //
+    // TWO images and not one, which is the whole trap in drawing curved text
+    // this way. A road label is a row of individually rotated glyphs, blitted
+    // one after another. If each were a finished halo-plus-text sprite, the
+    // next glyph's opaque halo would paint over the previous glyph's TEXT
+    // wherever the two overlap -- which is everywhere they kern tightly -- and
+    // the word comes out gnawed. So every halo is laid down first, then every
+    // fill on top.
+    //
+    // Point labels do not need this and do not pay for it: they are horizontal
+    // and keep the whole-string entry above, which is one blit and stays
+    // pixel-snapped.
+    struct Glyph
+    {
+        QImage halo;
+        QImage fill;
+        // Where the pen sits -- the glyph's origin on its baseline -- inside
+        // those two images, measured from their top left.
+        QPointF pen;
+        // How far the pen moves for this character. Layout advances only, with
+        // no kerning: a curved label positions each glyph on its own piece of
+        // road, so there is no pair for a kerning table to be about.
+        double advance { 0.0 };
+    };
+
+    // The glyph tier. Keyed on the SAME font/halo/colour/ratio key as the
+    // string tier and cleared with it, so a style change cannot leave half the
+    // alphabet in the old colours.
+    //
+    // Far more reusable than the string tier it sits beside: a drive through a
+    // thousand street names still only ever touches an alphabet.
+    const Glyph& glyphFor(QChar ch, const QFont& font, double haloWidth,
+                          const QColor& haloColour, const QColor& textColour,
+                          double devicePixelRatio);
+
+    // How far the pen moves for one character, WITHOUT rendering it.
+    //
+    // The same split as measure() against entryFor(), and load-bearing for the
+    // same reason. Laying a name along a road needs an advance per character
+    // for every candidate on screen -- hundreds of them -- while only the two
+    // dozen that survive collision ever need pixels. Rendering the alphabet in
+    // order to find out how wide a name is measured 4.7 ms a frame against
+    // 0.6 ms; this is the difference.
+    double advanceFor(QChar ch, const QFont& font);
+
     // `font`, the halo width and the two colours are all baked into the image,
     // so they form the cache key; a change to any of them empties it.
     //
@@ -164,7 +211,13 @@ class LabelCache
         mEntries.clear();
         mOrder.clear();
         mMeasured.clear();
+        mGlyphs.clear();
     }
+
+    // How many characters the glyph tier is holding. Exposed for the same
+    // reason size() is: it is the only way a test can tell "rendered once and
+    // reused" from "rendered every frame".
+    std::size_t glyphCount() const { return static_cast<std::size_t>(mGlyphs.size()); }
 
   private:
     // Move `text` to the most-recently-used end. Called on every hit, so that
@@ -172,13 +225,40 @@ class LabelCache
     // viewport is still showing.
     void touch(const QString& text);
 
-    QString mKey;
+    // Everything baked into a rendered image. Compared by value, and
+    // deliberately NOT via QFont::key(): that builds and formats a QString,
+    // and this is checked once per CHARACTER of every candidate on screen --
+    // thousands of times a frame. Formatting a key to discover that nothing
+    // changed cost 4 ms a frame, which was the whole label budget.
+    struct StyleKey
+    {
+        QFont font;
+        double haloWidth { 0.0 };
+        QRgb haloColour { 0 };
+        QRgb textColour { 0 };
+        double devicePixelRatio { 1.0 };
+
+        friend bool operator==(const StyleKey&, const StyleKey&) = default;
+    };
+
+    // Re-key the image tiers together, emptying them if anything changed.
+    void rekey(const StyleKey& key);
+    // The metric tiers depend on the font alone: a colour change does not move
+    // a glyph, and re-measuring the alphabet because the halo got wider is
+    // work for nothing.
+    void refont(const QFont& font);
+
+    StyleKey mKey;
     QHash<QString, Entry> mEntries;
+    QHash<char32_t, Glyph> mGlyphs;
     // Measurements, keyed by text within the current font. Far cheaper to hold
     // than rendered images, and needed for every candidate rather than every
     // placed label.
-    QString mMeasureKey;
+    QFont mMeasureFont;
+    bool mHaveMeasureFont { false };
     QHash<QString, QRectF> mMeasured;
+    // Advances, within the same font key as mMeasured and cleared with it.
+    QHash<char32_t, double> mAdvances;
     // Least recently used first. Parallel to mEntries and holding the same
     // keys; the two are only ever changed together.
     QList<QString> mOrder;

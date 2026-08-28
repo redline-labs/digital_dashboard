@@ -35,10 +35,7 @@ up and then removed. Two findings killed it:
 
 A vector tile is protobuf with a command-encoded geometry stream. That turned
 out to be a smaller thing to own than the consequences of not owning it. What
-the replacement gives up: **no 3D** — see below — no GL style documents, and
-labels that do not follow road curves — street names are placed horizontally at
-the middle of a road's longest visible run, which is most of the value for none
-of the glyph-atlas machinery.
+the replacement gives up: **no 3D** — see below — and no GL style documents.
 
 What it gains, beyond working offscreen: **no glyph PBFs**. `QPainter` has
 fonts, so there is no font pipeline, no sprite sheet, and no "the map has no
@@ -90,11 +87,12 @@ What pitch actually costs, in order:
    sub-pixel. The fix is to expand in clip space after projection, which wants
    the viewport size as one more uniform — worth doing regardless, since it
    decouples road width from tile size.
-3. **Labels.** `paintLabels()` places anchors as `tileOrigin + local * scale`
-   with a hand-rolled bearing rotation — a 2D similarity assumption. Each anchor
-   has to go through the full matrix instead; the code gets *shorter*. The new
-   problem is that mixed-zoom tiles show the same place twice, so label dedup
-   becomes real work.
+3. **Labels.** `Projection::tileTransform()` is a 2D similarity — a scale, a
+   rotation and an offset. Under perspective each point has to go through the
+   full matrix instead; the transform object is already the seam for that, so
+   it is one implementation rather than one per call site. The new problem is
+   that mixed-zoom tiles show the same place twice, so label dedup becomes real
+   work.
 4. **`screenFor()` has to be allowed to fail.** Points behind the camera or
    above the horizon have no screen position. Four call sites, but the vehicle
    trail also needs clipping against the horizon or it draws garbage.
@@ -184,12 +182,16 @@ the bench archive still labels.
 **Road names** come from `transportation_name`, and are the one line-placed
 layer. Three things about them:
 
-- **Horizontal, at the middle of the longest visible run.** Not curved text
-  following the road: that wants a glyph atlas and per-character placement, and
-  a horizontal name is most of the value and stays readable at every bearing —
-  the same argument the whole label pass rests on. The longest run rather than
-  the first, because MVT clips a road into as many parts as it has crossings of
-  the tile edge and the first is as often as not a stub in a corner.
+- **Laid along the road, at the middle of the longest visible run.** The
+  longest run rather than the first, because MVT clips a road into as many
+  parts as it has crossings of the tile edge and the first is as often as not a
+  stub in a corner — and the pieces one way was clipped into are merged back
+  together before "longest" is decided, so a road that leaves the tile and
+  returns is one run rather than two fragments.
+
+  Following the road means the run's geometry has to survive to the paint pass,
+  which is why `LabelCandidate` carries a range into a flat arena of tile-local
+  points rather than only an anchor. See **Curved road labels** below.
 - **One label per name per viewport.** A road crosses every tile it passes
   through and each tile carries the whole name, so without this a single street
   is labelled a dozen times across one screen.
@@ -204,6 +206,64 @@ the layer a road is DRAWN in and the weight its name carries cannot drift apart.
 
 `detail.road_label` is the zoom floor, z14 by default, and `show_road_labels`
 turns them off outright.
+
+### Curved road labels
+
+A road name is laid out **character by character along the road**, each glyph
+rotated to the road's bearing where it sits. Three rules govern it:
+
+- **Always upright.** The direction is decided once per label, from where the
+  first and last characters land: if the name would read right-to-left across
+  the screen, the same run is walked from the other end and every glyph turned
+  180°. Never per glyph — flipping glyphs individually scrambles the word. This
+  is what lets road labels rotate at all without breaking the rule the rest of
+  the pass keeps: place names still never rotate, at any bearing.
+- **Rejected where the road kinks.** The sum of the turn between consecutive
+  characters, over any window of about 0.6 em of road, may not exceed 45°
+  (MapLibre's `text-max-angle` default, and its reasoning). A sliding window
+  rather than a per-glyph limit is the whole trick: a per-glyph threshold
+  passes a spiral made of shallow steps and rejects one kink in an otherwise
+  straight road.
+- **Collision by several boxes, not one.** The axis-aligned hull of a diagonal
+  word is mostly empty space and evicts neighbours it never touched, so a
+  curved label claims one box per four characters. Straight labels still claim
+  a single rotated box.
+
+**The cost, and the one thing that controls it.** A straight name is one blit
+of the cached whole-string image, exactly as before. A curved one is a rotated
+blit *per character, twice* — halo pass then fill pass — and a rotated
+`drawImage` measured about 4 µs. So which side of "straight" a label falls on
+is worth roughly fifteen-fold, and `kStraightEnoughPx` is where that is decided.
+
+It is asked in **pixels of deviation from the chord**, not in degrees, because
+the question is "would drawing this as one straight image look different?" An
+angle threshold gets it wrong in both directions: half a degree is invisible on
+a short name and obvious on a long one, and real roads wander by fractions of a
+degree constantly without looking bent. Asked in degrees at half a degree, two
+thirds of the road labels in Irvine — a grid city — came out "curved".
+
+Measured on the SoCal archive at 660x640, z14, M-series:
+
+| | before | after |
+|---|---|---|
+| labels | 0.58 ms | 2.31 ms |
+| whole frame | 1.34 ms | 3.1 ms |
+
+24 labels placed, of which 13 genuinely curve. Bearing makes almost no
+difference — a rotated straight road is still one blit — which is why
+`map_bench` grew a `--bearing` flag but the number it reports barely moves.
+
+**The halo must be a separate pass over the whole label.** Each glyph is cached
+as two images and every halo is laid down before any fill. One combined sprite
+per glyph would let the next character's opaque halo paint over the previous
+character's text wherever they kern tightly, and the word comes out gnawed.
+
+**Two things that are NOT done, deliberately.** A name is still placed once per
+viewport rather than repeated every 250 px along a freeway the way MapLibre
+does — that is a separate change with its own dedup consequences. And rivers
+are not labelled at all, though `map_build` already emits `water_name` as a
+LineString for exactly this treatment; once roads curve, rivers are a row in
+`kLabelLayers` rather than a project.
 
 ## Running it
 
@@ -712,6 +772,12 @@ the linear dimensions took 4.83 ms to 2.08 ms, not to a quarter.
 render cache hitting every time after the first frame. A single label costs
 1.27 ms to stroke and fill here against the 0.88 ms recorded on macOS, so the
 raster engine is ~1.4x slower and nothing more.
+
+Those figures predate curved road labels, which cost about 1.7 ms more on the
+M-series box — see **Curved road labels** above. Nothing has re-measured them
+on this hardware; if the ~1.4x holds, expect the label stage nearer 5 ms here,
+which is why `kStraightEnoughPx` is the first knob to reach for on a slow
+raster engine.
 
 **A benchmarking note, learned the hard way.** `map_bench` is CPU-bound in the
 label pass and GPU-bound in the readback, so two of them running at once report

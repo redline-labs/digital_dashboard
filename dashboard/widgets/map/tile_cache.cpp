@@ -21,8 +21,14 @@ std::size_t approximateBytes(const CachedTile& tile)
 
     if (tile.labels)
     {
-        bytes += sizeof(LabelSet) + (tile.labels->capacity() * sizeof(LabelCandidate));
-        for (const LabelCandidate& candidate : *tile.labels)
+        bytes += sizeof(LabelSet);
+        bytes += tile.labels->labels.capacity() * sizeof(LabelCandidate);
+        // The runs the road labels are drawn along. Counted because a dense
+        // tile's roads carry far more geometry than their names do, and a
+        // budget that missed it would hold hundreds of tiles it had sized as
+        // if they were only text.
+        bytes += tile.labels->path.capacity() * sizeof(LocalPoint);
+        for (const LabelCandidate& candidate : tile.labels->labels)
         {
             // QString stores UTF-16; capacity is in characters.
             bytes += std::size_t(candidate.text.capacity()) * sizeof(QChar);

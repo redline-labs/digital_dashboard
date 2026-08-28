@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-
+//
+// Placing and drawing labels. The GUI THREAD's half of the label pass.
+//
+// Its other half is label_candidates.cpp, which turns a decoded tile into the
+// camera-free candidates this file places. The split is along the thread
+// boundary: nothing here runs on a decode worker, and nothing there knows what
+// a camera or a painter is.
 #include "map/labels.h"
-
-// For roadPriority(): the ladder that decides which layer a road is drawn in is
-// the same one that decides whose name survives a collision.
-#include "map/tessellator.h"
 
 #include "qt_helpers/widget_colors.h"
 
@@ -17,11 +19,13 @@
 #include <QPen>
 #include <QRectF>
 #include <QSet>
+#include <QTransform>
 #include <QString>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <optional>
 #include <variant>
 
@@ -46,6 +50,10 @@ struct Candidate
     // length for a circuit. Two cities competing for the same pixels should
     // not be settled by which tile decoded first.
     std::uint32_t magnitude { 0 };
+    // The road's run, projected to screen, as a range into the frame's arena.
+    // Empty for a point label, which is placed at a point and drawn upright.
+    std::uint32_t runBegin { 0 };
+    std::uint32_t runCount { 0 };
 };
 
 // Which source layers carry labels, and how each ranks its own.
@@ -55,352 +63,17 @@ struct Candidate
 // the same viewport from two different archives. They compete for the same
 // screen space and are placed by one pass, which is the whole reason the
 // candidates are gathered before any of them is drawn.
-// Tiers step by TWO, not one, so that a layer can sit exactly half way between
-// two of them. The track layer is the reason: it is documented as ranking
-// between a town and a city, and on a unit scale there is no such number.
-constexpr int kPlaceTierStep = 2;
-
-// Point labels sit AT a coordinate; line labels sit along one. The difference
-// is not cosmetic -- a road's name has to be placed from geometry that may be
-// forty miles long and clipped into a dozen tiles, and the same name then turns
-// up once per tile it crosses.
-enum class LabelGeometry
-{
-    Point,
-    Line,
-};
-
-struct LabelLayerSpec
-{
-    const char* sourceLayer;
-    LabelRank (*priority)(const mvt::Layer&, const mvt::Feature&);
-    LabelGeometry geometry { LabelGeometry::Point };
-    // Whether this layer draws at all, at this camera zoom. Null means always
-    // -- which is right for places, whose own archive minzoom is the only
-    // sensible floor.
-    bool (*enabled)(const MapStyle_t&, double zoom) { nullptr };
-    // Place at most one label per distinct name. Only lines need it: a place
-    // name appears once, in one tile, and duplicates from a stand-in ancestor
-    // land on the same pixels and lose the collision test. A road crosses every
-    // tile it passes through and each one carries the whole name, so without
-    // this a single street is labelled a dozen times across the viewport.
-    bool oneLabelPerName { false };
-    // Which per-frame gate the extracted candidates answer to.
-    LabelKind kind { LabelKind::Place };
-};
-
 bool roadLabelsEnabled(const MapStyle_t& style, double zoom)
 {
     return style.show_road_labels && zoom >= double(style.detail.road_label);
 }
-
-constexpr std::array<LabelLayerSpec, 3> kLabelLayers { {
-    { "place", placeRank, LabelGeometry::Point, nullptr, false, LabelKind::Place },
-    { "track_label", trackRank, LabelGeometry::Point, nullptr, false, LabelKind::Track },
-    { "transportation_name", roadRank, LabelGeometry::Line, roadLabelsEnabled,
-      /*oneLabelPerName=*/true, LabelKind::Road },
-} };
 
 // A road too short on screen to hold any name at all is rejected before a
 // candidate is even built. The exact test against the rendered text width
 // still happens at placement.
 constexpr double kShortestWorthNaming = 24.0;
 
-// One source layer's worth of candidates, extracted ONCE at decode time on
-// the worker thread -- everything below is camera-free and never runs again
-// for this tile. Gathered rather than placed even so: a label's position
-// depends on which labels were already accepted, and the order tiles arrive
-// in is decode order, which is not an order anybody chose.
-void extractLayerLabels(const mvt::Tile& tile, const LabelLayerSpec& spec, LabelSet& out)
-{
-    const mvt::Layer* layer = tile.layer(spec.sourceLayer);
-    if (layer == nullptr || layer->extent == 0)
-    {
-        return;
-    }
-
-    // Anchors leave here in [0,1] across the tile -- the same camera-free
-    // domain the GPU's vertices use. The paint pass multiplies by the tile's
-    // on-screen size, which is all a similarity transform needs.
-    const double inv = 1.0 / double(layer->extent);
-    const bool wantLine = spec.geometry == LabelGeometry::Line;
-
-    for (const mvt::Feature& feature : layer->features)
-    {
-        const bool isPoint = feature.type == mvt::GeomType::Point;
-        const bool isLine = feature.type == mvt::GeomType::LineString;
-        if (feature.rings.empty() || (wantLine ? !isLine : !isPoint))
-        {
-            continue;
-        }
-
-        if (!wantLine)
-        {
-            if (feature.rings.front().empty())
-            {
-                continue;
-            }
-            const mvt::Point at = feature.rings.front().front();
-            // name:latin, not name. This archive's tilemaker config emits only
-            // the latin field, and reading `name` returns an empty string for
-            // every place -- a map with no labels and no error anywhere.
-            // map_build writes BOTH spellings for exactly this reason.
-            const std::string text = layer->attributeText(feature, "name:latin");
-            if (text.empty())
-            {
-                continue;
-            }
-            const LabelRank rank = spec.priority(*layer, feature);
-            out.push_back(LabelCandidate { QString::fromStdString(text), double(at.x) * inv,
-                                           double(at.y) * inv, 0.0, rank.tier, rank.magnitude,
-                                           spec.kind, spec.oneLabelPerName });
-            continue;
-        }
-
-        // A line label goes at the MIDDLE OF THE LONGEST PART.
-        //
-        // The longest part rather than the first: MVT clips a road into as
-        // many parts as it has crossings of the tile edge, and the first is as
-        // often as not a two-metre stub in a corner. Measured in tile-local
-        // units: the tile-to-screen transform is a similarity, so arc length,
-        // the halfway point along it, and which part is longest are the same
-        // answers computed either side of it.
-        //
-        // This is deliberately NOT curved text following the road. That wants
-        // a glyph atlas and per-character placement; a horizontal name at the
-        // middle of the run is most of the value for none of that, and it
-        // stays readable at every bearing -- the same reason the whole label
-        // pass is upright.
-        double bestLocalLength = 0.0;
-        mvt::Point bestAnchorLocal {};
-        bool haveAnchor = false;
-
-        for (const auto& ring : feature.rings)
-        {
-            if (ring.size() < 2)
-            {
-                continue;
-            }
-
-            double length = 0.0;
-            for (std::size_t i = 1; i < ring.size(); ++i)
-            {
-                length += std::hypot(double(ring[i].x) - double(ring[i - 1].x),
-                                     double(ring[i].y) - double(ring[i - 1].y));
-            }
-            if (length <= bestLocalLength)
-            {
-                continue;
-            }
-
-            // Walk to the halfway point by arc length.
-            const double half = length / 2.0;
-            double travelled = 0.0;
-            mvt::Point anchor = ring.front();
-            for (std::size_t i = 1; i < ring.size(); ++i)
-            {
-                const double dx = double(ring[i].x) - double(ring[i - 1].x);
-                const double dy = double(ring[i].y) - double(ring[i - 1].y);
-                const double segment = std::hypot(dx, dy);
-                if (travelled + segment >= half)
-                {
-                    const double t = segment > 0.0 ? (half - travelled) / segment : 0.0;
-                    anchor = mvt::Point { std::int32_t(std::lround(double(ring[i - 1].x) + (dx * t))),
-                                          std::int32_t(std::lround(double(ring[i - 1].y) + (dy * t))) };
-                    break;
-                }
-                travelled += segment;
-                anchor = ring[i];
-            }
-
-            bestLocalLength = length;
-            bestAnchorLocal = anchor;
-            haveAnchor = true;
-        }
-
-        if (!haveAnchor || bestLocalLength <= 0.0)
-        {
-            continue;
-        }
-
-        std::string text = layer->attributeText(feature, "name:latin");
-        if (text.empty())
-        {
-            // A numbered route with no name still has something to say, and
-            // map_build emits it into this layer for exactly that reason.
-            text = layer->attributeText(feature, "ref");
-        }
-        if (text.empty())
-        {
-            continue;
-        }
-
-        const LabelRank rank = spec.priority(*layer, feature);
-        out.push_back(LabelCandidate { QString::fromStdString(text),
-                                       double(bestAnchorLocal.x) * inv,
-                                       double(bestAnchorLocal.y) * inv, bestLocalLength * inv,
-                                       rank.tier, rank.magnitude, spec.kind,
-                                       spec.oneLabelPerName });
-    }
-}
-
 } // namespace
-
-LabelSet extractLabels(const mvt::Tile& tile)
-{
-    LabelSet out;
-    // All three layers, unconditionally: the show_* toggles and zoom floors
-    // are the CAMERA's business and are applied per frame in paintLabels().
-    // Extracting everything keeps the worker style-free, so a style edit
-    // never needs a re-extract.
-    for (const LabelLayerSpec& spec : kLabelLayers)
-    {
-        extractLayerLabels(tile, spec, out);
-    }
-    return out;
-}
-
-// map_rules writes a `rank` on every label point, LOW meaning important:
-// country 0, state 1, city 2, town 3, village 4, hamlet 5, suburb 6,
-// neighbourhood 7, locality 8 (libs/map_rules/src/classification.cpp).
-//
-// Preferred over the class name because it is the tiler's own ordering and
-// stays right when a class is added upstream. The class is the fallback, for
-// archives built before rank was written -- the bench archive is one, which is
-// why this cannot simply require the attribute.
-constexpr std::int64_t kMaxPlaceRank = 8;
-
-int tierForRank(std::int64_t rank)
-{
-    return kPlaceTierStep * int(kMaxPlaceRank - std::clamp(rank, std::int64_t { 0 }, kMaxPlaceRank));
-}
-
-LabelRank placeRank(const mvt::Layer& layer, const mvt::Feature& feature)
-{
-    LabelRank out;
-
-    const std::optional<double> rank = attributeNumber(layer, feature, "rank");
-    out.tier = rank.has_value() ? tierForRank(std::int64_t(*rank))
-                                : placePriority(layer.attributeText(feature, "class"));
-
-    const std::optional<double> population = attributeNumber(layer, feature, "population");
-    if (population.has_value() && *population > 0.0)
-    {
-        out.magnitude = std::uint32_t(std::clamp(*population, 0.0, 1.0e8));
-
-        // The city/town line is drawn by local convention and moves by an order
-        // of magnitude between countries, so a large town must be able to
-        // outrank a small city rather than lose to it on the tag alone.
-        //
-        // The SAME thresholds map_rules already uses to promote a place's
-        // minZoom (classification.cpp). Promoting the zoom but not the rank is
-        // what produced a 400 000-strong town drawn from z6 and then labelled
-        // beneath a city of 3 000.
-        //
-        // Upward only, for map_rules' reason: a city tagged with a small
-        // population is far more often a stale tag than a tiny city.
-        const int cityTier = tierForRank(2);
-        const int townTier = tierForRank(3);
-        if (out.magnitude >= 200'000)
-        {
-            out.tier = std::max(out.tier, cityTier);
-        }
-        else if (out.magnitude >= 50'000)
-        {
-            out.tier = std::max(out.tier, townTier);
-        }
-    }
-
-    return out;
-}
-
-LabelRank trackRank(const mvt::Layer& layer, const mvt::Feature& feature)
-{
-    // Between a town and a city, which is the HALF step the doubled tier scale
-    // exists to express. A circuit is a landmark worth seeing from a distance,
-    // and it is the reason the driver is looking at this part of the map -- but
-    // it must not push a city name off a country view.
-    LabelRank out;
-    out.tier = tierForRank(3) + 1;
-
-    // map_build writes a length-derived rank on every circuit: 0 for the
-    // longest, 20 for the shortest (tools/map_build/tracks.cpp). Inverted here
-    // because magnitude sorts high-first, and used rather than ignored so that
-    // where two circuits collide the bigger one keeps its name -- the sense is
-    // easy to invert and the result is a map that labels the kart track and
-    // hides Spa.
-    constexpr double kMaxTrackRank = 20.0;
-    const std::optional<double> rank = attributeNumber(layer, feature, "rank");
-    out.magnitude =
-        std::uint32_t(kMaxTrackRank - std::clamp(rank.value_or(kMaxTrackRank), 0.0, kMaxTrackRank));
-    return out;
-}
-
-LabelRank roadRank(const mvt::Layer& layer, const mvt::Feature& feature)
-{
-    // Between a neighbourhood and a locality.
-    //
-    // Below every settlement worth the name, because a street name must not
-    // push a town off the map -- and above `locality`, because at the zooms a
-    // road label appears at, the street you are on is worth more than the name
-    // of a road junction three miles away.
-    LabelRank out;
-    out.tier = tierForRank(kMaxPlaceRank) + 1;
-
-    // Among roads, the bigger road wins the collision. roadPriority() is the
-    // tessellator's own ladder -- motorway 4, trunk/primary 3, secondary 2,
-    // minor 1, rail 5 -- reused rather than restated so the layer a road is
-    // DRAWN in and the weight its name carries cannot drift apart.
-    out.magnitude = std::uint32_t(roadPriority(layer.attributeText(feature, "class")));
-    return out;
-}
-
-// The fallback for an archive whose label points carry no `rank`. Kept in step
-// with map_rules' own table (classification.cpp) so that the two agree about
-// which is the bigger place, and expressed through tierForRank() rather than as
-// its own ladder of literals so they cannot drift apart.
-//
-// Returns a value on the same doubled scale placeLayerPriority() uses; only the
-// ORDER is meaningful, never the number.
-int placePriority(std::string_view className)
-{
-    if (className == "country")
-    {
-        return tierForRank(0);
-    }
-    if (className == "state" || className == "province")
-    {
-        return tierForRank(1);
-    }
-    if (className == "city")
-    {
-        return tierForRank(2);
-    }
-    if (className == "town")
-    {
-        return tierForRank(3);
-    }
-    if (className == "village")
-    {
-        return tierForRank(4);
-    }
-    if (className == "hamlet")
-    {
-        return tierForRank(5);
-    }
-    if (className == "suburb" || className == "quarter")
-    {
-        return tierForRank(6);
-    }
-    if (className == "neighbourhood")
-    {
-        return tierForRank(7);
-    }
-    // Everything unlisted, `locality` included, sorts last rather than
-    // vanishing: an unknown class is a place we have no opinion about, not a
-    // place that is not there.
-    return tierForRank(kMaxPlaceRank);
-}
 
 void LabelCache::touch(const QString& text)
 {
@@ -412,14 +85,25 @@ void LabelCache::touch(const QString& text)
     mOrder.append(text);
 }
 
+double LabelCache::advanceFor(QChar ch, const QFont& font)
+{
+    refont(font);
+
+    const char32_t code = ch.unicode();
+    if (const auto found = mAdvances.constFind(code); found != mAdvances.constEnd())
+    {
+        return *found;
+    }
+
+    // Never evicted: this is an alphabet, and an alphabet does not grow with
+    // the driving the way a list of street names does.
+    const QFontMetricsF metrics(font);
+    return *mAdvances.insert(code, metrics.horizontalAdvance(QString(ch)));
+}
+
 const QRectF& LabelCache::measure(const QString& text, const QFont& font)
 {
-    const QString key = font.key();
-    if (key != mMeasureKey)
-    {
-        mMeasureKey = key;
-        mMeasured.clear();
-    }
+    refont(font);
 
     if (const auto found = mMeasured.constFind(text); found != mMeasured.constEnd())
     {
@@ -444,23 +128,117 @@ const QRectF& LabelCache::measure(const QString& text, const QFont& font)
     return *mMeasured.insert(text, metrics.boundingRect(text));
 }
 
+void LabelCache::rekey(const StyleKey& key)
+{
+    // Everything baked into the images is part of the key. Getting this wrong
+    // would hand back a label in the previous style, which reads as the style
+    // change not having applied.
+    //
+    // ONE key for both image tiers. A glyph and a whole string are rendered
+    // from the same font in the same two colours, so a change that invalidates
+    // one invalidates the other; keeping two keys would only create the state
+    // where half the alphabet is stale.
+    if (key == mKey)
+    {
+        return;
+    }
+    mKey = key;
+    mEntries.clear();
+    mOrder.clear();
+    mGlyphs.clear();
+}
+
+void LabelCache::refont(const QFont& font)
+{
+    if (mHaveMeasureFont && font == mMeasureFont)
+    {
+        return;
+    }
+    mMeasureFont = font;
+    mHaveMeasureFont = true;
+    mMeasured.clear();
+    mAdvances.clear();
+}
+
+const LabelCache::Glyph& LabelCache::glyphFor(QChar ch, const QFont& font, double haloWidth,
+                                              const QColor& haloColour, const QColor& textColour,
+                                              double devicePixelRatio)
+{
+    rekey(StyleKey { font, haloWidth, haloColour.rgba(), textColour.rgba(), devicePixelRatio });
+
+    const char32_t key = ch.unicode();
+    if (const auto found = mGlyphs.constFind(key); found != mGlyphs.constEnd())
+    {
+        return *found;
+    }
+
+    // NOT evicted, unlike the string tier. That one is bounded by how many
+    // place names a drive goes past; this one is bounded by how many distinct
+    // characters a map's names are spelled with, which is an alphabet and does
+    // not grow with the driving.
+    const QFontMetricsF metrics(font);
+    const QString one(ch);
+
+    Glyph glyph;
+    glyph.advance = metrics.horizontalAdvance(one);
+
+    // The ink box, relative to the pen on the baseline. y() is negative for
+    // anything with an ascender, which is why the pen is recovered from the
+    // box rather than assumed to be at its top left.
+    const QRectF ink = metrics.boundingRect(one);
+    const double pad = std::ceil(haloWidth / 2.0) + 2.0;
+    glyph.pen = QPointF(pad - ink.x(), pad - ink.y());
+
+    const double ratio = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
+    const QSize size(int(std::ceil((ink.width() + (2.0 * pad)) * ratio)),
+                     int(std::ceil((ink.height() + (2.0 * pad)) * ratio)));
+
+    // A space, and anything else with no ink, has a real advance and an empty
+    // box. Null images draw nothing and the walk steps over them.
+    if (size.width() <= 0 || size.height() <= 0)
+    {
+        return *mGlyphs.insert(key, std::move(glyph));
+    }
+
+    QPainterPath outline;
+    outline.addText(glyph.pen, font, one);
+
+    if (haloWidth > 0.0)
+    {
+        glyph.halo = QImage(size, QImage::Format_ARGB32_Premultiplied);
+        glyph.halo.setDevicePixelRatio(ratio);
+        glyph.halo.fill(Qt::transparent);
+        QPainter into(&glyph.halo);
+        into.setRenderHint(QPainter::Antialiasing, true);
+        // Stroked, not drawn several times at offsets: one path, one stroke,
+        // and the halo is even on every side. The offset trick leaves the
+        // corners thin.
+        QPen pen(haloColour);
+        pen.setWidthF(haloWidth);
+        pen.setJoinStyle(Qt::RoundJoin);
+        into.setPen(pen);
+        into.setBrush(Qt::NoBrush);
+        into.drawPath(outline);
+    }
+
+    glyph.fill = QImage(size, QImage::Format_ARGB32_Premultiplied);
+    glyph.fill.setDevicePixelRatio(ratio);
+    glyph.fill.fill(Qt::transparent);
+    {
+        QPainter into(&glyph.fill);
+        into.setRenderHint(QPainter::Antialiasing, true);
+        into.setPen(Qt::NoPen);
+        into.fillPath(outline, textColour);
+    }
+
+    return *mGlyphs.insert(key, std::move(glyph));
+}
+
 const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& font,
                                               double haloWidth, const QColor& haloColour,
                                               const QColor& textColour, double devicePixelRatio)
 {
-    // Everything baked into the image is part of the key. Getting this wrong
-    // would hand back a label in the previous style, which reads as the style
-    // change not having applied.
-    const QString key = font.key() + QChar('|') + QString::number(haloWidth) + QChar('|') +
-                        haloColour.name(QColor::HexArgb) + QChar('|') +
-                        textColour.name(QColor::HexArgb) + QChar('|') +
-                        QString::number(devicePixelRatio);
-    if (key != mKey)
-    {
-        mKey = key;
-        mEntries.clear();
-        mOrder.clear();
-    }
+    rekey(StyleKey { font, haloWidth, haloColour.rgba(), textColour.rgba(), devicePixelRatio });
 
     if (const auto found = mEntries.constFind(text); found != mEntries.constEnd())
     {
@@ -548,6 +326,384 @@ const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& 
     return *mEntries.insert(text, std::move(entry));
 }
 
+// ---------------------------------------------------------------- curved text
+
+// How far the text may turn, in total, within one window of its own length.
+//
+// MapLibre's `text-max-angle` default, and for its reason: a label has to be
+// rejected where the road kinks under it, but a long gentle curve is exactly
+// what this feature is FOR and must not be rejected. Summing turn over a
+// sliding window separates those two; a per-glyph threshold cannot, because it
+// passes a spiral made of shallow steps and fails a single kink in an
+// otherwise straight road.
+constexpr double kMaxLabelTurn = 45.0 * (std::numbers::pi / 180.0);
+
+// The window that turn is summed over, as a fraction of the font's em.
+// MapLibre uses three fifths of a glyph's width; the same idea, expressed in
+// the one length the font hands us directly.
+constexpr double kTurnWindowEms = 0.6;
+
+// How many glyphs share one collision box.
+//
+// One box per label is hopeless for text on a diagonal -- the axis-aligned
+// hull of a rotated word is mostly empty space, and it evicts neighbours that
+// never touched it. One box per GLYPH is exact but multiplies the collision
+// scan by the length of every name. Four is the knee: the hull of four
+// characters is tight enough that the empty corners are smaller than the
+// padding `label_spacing` already adds.
+constexpr int kGlyphsPerCollisionBox = 4;
+
+// How far a character may sit off the straight line through the label's two
+// ends before the label counts as curved, in pixels.
+//
+// The question this answers is "would drawing this name as one straight image
+// look different?", so it is asked in PIXELS and not in degrees. An angle
+// threshold gets it wrong in both directions: half a degree of bend is
+// invisible on a short name and obvious on a long one, and real roads wander
+// by a fraction of a degree constantly without ever looking bent.
+//
+// It matters a great deal which side of this a label falls. A straight label
+// is one blit of a cached image; a curved one is a rotated blit per character,
+// twice over for the halo, and a rotated blit measured about 7 us. Asked in
+// degrees at half a degree, two thirds of the road labels in Irvine -- a grid
+// city of straight streets -- came out "curved" and the label pass cost 3.4 ms
+// a frame. Asked in pixels, almost none of them do.
+constexpr double kStraightEnoughPx = 0.75;
+
+// One character, placed on the road.
+struct PlacedGlyph
+{
+    QChar ch;
+    // The centre of the character's own advance, on the text's centre line --
+    // not its baseline. Text is centred ACROSS the road, so the road runs
+    // through the middle of the letters rather than under their feet.
+    QPointF at;
+    double angle { 0.0 };
+    double advance { 0.0 };
+};
+
+// A polyline, walked by arc length.
+//
+// Holds no geometry of its own: the run lives in the frame's arena and this is
+// the cursor over it. Distances are screen pixels, because the run was
+// projected before any of this ran -- which is what makes the glyph spacing
+// right rather than merely proportional.
+class RunWalker
+{
+  public:
+    RunWalker(const ScreenPoint* points, std::size_t count) : mPoints(points), mCount(count)
+    {
+        mLength = 0.0;
+        for (std::size_t i = 1; i < mCount; ++i)
+        {
+            mLength += std::hypot(mPoints[i].x - mPoints[i - 1].x,
+                                  mPoints[i].y - mPoints[i - 1].y);
+        }
+    }
+
+    double length() const { return mLength; }
+
+    struct At
+    {
+        QPointF point;
+        double angle { 0.0 };
+    };
+
+    // Where the run is `distance` along, and which way it points there.
+    //
+    // `reversed` walks from the far end with pi added to the angle, which is
+    // how a label that would read right-to-left is turned around: the same
+    // road, travelled the other way, so the letters come out in order and the
+    // right way up. See placeAlongRun().
+    std::optional<At> at(double distance, bool reversed) const
+    {
+        if (mCount < 2 || distance < 0.0 || distance > mLength)
+        {
+            return std::nullopt;
+        }
+        const double target = reversed ? mLength - distance : distance;
+
+        double travelled = 0.0;
+        for (std::size_t i = 1; i < mCount; ++i)
+        {
+            const double dx = mPoints[i].x - mPoints[i - 1].x;
+            const double dy = mPoints[i].y - mPoints[i - 1].y;
+            const double segment = std::hypot(dx, dy);
+            if (segment <= 0.0)
+            {
+                continue;
+            }
+            if (travelled + segment >= target)
+            {
+                const double t = (target - travelled) / segment;
+                double angle = std::atan2(dy, dx);
+                if (reversed)
+                {
+                    angle += std::numbers::pi;
+                }
+                return At { QPointF(mPoints[i - 1].x + (dx * t), mPoints[i - 1].y + (dy * t)),
+                            angle };
+            }
+            travelled += segment;
+        }
+
+        // Ran off the end through floating-point drift rather than through
+        // being asked for something off the run. Answer with the last segment
+        // rather than dropping a label for a rounding error.
+        const double dx = mPoints[mCount - 1].x - mPoints[mCount - 2].x;
+        const double dy = mPoints[mCount - 1].y - mPoints[mCount - 2].y;
+        double angle = std::atan2(dy, dx);
+        if (reversed)
+        {
+            angle += std::numbers::pi;
+        }
+        const ScreenPoint& endPoint = reversed ? mPoints[0] : mPoints[mCount - 1];
+        return At { QPointF(endPoint.x, endPoint.y), angle };
+    }
+
+  private:
+    const ScreenPoint* mPoints;
+    std::size_t mCount;
+    double mLength { 0.0 };
+};
+
+// The signed difference between two angles, wrapped into [-pi, pi].
+double angleDelta(double from, double to)
+{
+    double delta = std::fmod((to - from) + (3.0 * std::numbers::pi), 2.0 * std::numbers::pi);
+    return delta - std::numbers::pi;
+}
+
+// A label laid out on a road.
+struct PlacedLabel
+{
+    std::vector<PlacedGlyph> glyphs;
+    // Where the middle of the text sits, and which way it points there.
+    QPointF centre;
+    // Set when every character came out at the same angle -- which is to say
+    // the road is straight under the name, which most roads at most zooms are.
+    //
+    // This is the difference between one blit and one per character, and it is
+    // worth having: laying a name out character by character measured 4.7 ms a
+    // frame against 0.58 ms for the cached whole-string image it replaced,
+    // because a rotated blit of a small image is not free and a name is a
+    // dozen of them, twice over for the halo. Curved text costs that; straight
+    // text must not, and nearly all text is straight.
+    std::optional<double> uniformAngle;
+};
+
+// Lay `text` along `walker`, centred on the run's midpoint.
+//
+// Returns nothing when the label does not belong on this road: it is longer
+// than the road, or the road turns too hard under it. Both are rejections, not
+// fallbacks -- a name that does not fit its road drawn anyway is the floating
+// text this pass has always refused to draw.
+std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& walker,
+                                         LabelCache& cache, const QFont& font, double emSize)
+{
+    if (text.isEmpty())
+    {
+        return std::nullopt;
+    }
+
+    // ADVANCES, not pixels. Every road name on screen is laid out here --
+    // hundreds a frame -- and only the couple of dozen that survive collision
+    // are ever drawn. Rendering the alphabet to find out how wide a name is
+    // costs the whole label budget; see LabelCache::advanceFor.
+    std::vector<PlacedGlyph> glyphs;
+    glyphs.reserve(std::size_t(text.size()));
+    double width = 0.0;
+    for (const QChar ch : text)
+    {
+        const double advance = cache.advanceFor(ch, font);
+        glyphs.push_back(PlacedGlyph { ch, {}, 0.0, advance });
+        width += advance;
+    }
+
+    // The exact test the approximate one at gather time stands in for: a name
+    // wider than the road it names reads as text floating over the map.
+    if (width <= 0.0 || width > walker.length())
+    {
+        return std::nullopt;
+    }
+
+    // Centred on the run's midpoint, which is where the anchor already is.
+    const double start = (walker.length() - width) / 2.0;
+
+    // WHICH WAY ROUND. Decided once, from where the first and last characters
+    // land, and never per glyph -- flipping glyphs individually scrambles the
+    // word. If the text would run right-to-left across the screen, the same
+    // road is walked from the other end instead, which puts the letters in
+    // order and the right way up at every bearing.
+    //
+    // Only the two ends are needed to answer it, so it costs two walks and not
+    // a whole layout. MapLibre decides it the same way and for the same
+    // reason.
+    const std::optional<RunWalker::At> firstEnd = walker.at(start + (glyphs.front().advance / 2.0),
+                                                            false);
+    const std::optional<RunWalker::At> lastEnd =
+        walker.at(start + width - (glyphs.back().advance / 2.0), false);
+    if (!firstEnd.has_value() || !lastEnd.has_value())
+    {
+        return std::nullopt;
+    }
+    const bool reversed = firstEnd->point.x() > lastEnd->point.x();
+
+    // Where along the run each character's centre sits, kept so the turn
+    // window below can be measured in arc length rather than in characters --
+    // a window of "three glyphs" means different things for an I and a W.
+    std::vector<double> centres(glyphs.size(), 0.0);
+
+    double travelled = start;
+    for (std::size_t i = 0; i < glyphs.size(); ++i)
+    {
+        centres[i] = travelled + (glyphs[i].advance / 2.0);
+        const std::optional<RunWalker::At> at = walker.at(centres[i], reversed);
+        if (!at.has_value())
+        {
+            return std::nullopt;
+        }
+        glyphs[i].at = at->point;
+        glyphs[i].angle = at->angle;
+        travelled += glyphs[i].advance;
+    }
+
+    // The curvature test, over a window that slides along the label: the sum
+    // of the turns between consecutive characters, for every stretch of road
+    // one window long. A long gentle curve keeps every window's sum small; a
+    // kink puts all of its turn inside one window and fails.
+    const double window = std::max(1.0, kTurnWindowEms * emSize);
+    double turn = 0.0;
+    std::size_t oldest = 0;
+    for (std::size_t i = 1; i < glyphs.size(); ++i)
+    {
+        turn += std::abs(angleDelta(glyphs[i - 1].angle, glyphs[i].angle));
+        while (oldest + 1 < i && centres[i] - centres[oldest] > window)
+        {
+            turn -= std::abs(angleDelta(glyphs[oldest].angle, glyphs[oldest + 1].angle));
+            ++oldest;
+        }
+        if (turn > kMaxLabelTurn)
+        {
+            return std::nullopt;
+        }
+    }
+
+    PlacedLabel out;
+
+    // Straight, if every character sits within a fraction of a pixel of the
+    // line through the two ends -- which is exactly the line a single blit
+    // would put them on.
+    //
+    // Measured against that chord rather than between neighbours: a long
+    // shallow arc turns imperceptibly at every step and leaves its ends well
+    // off the chord, and drawing that as one image would visibly lift the name
+    // off the road at both ends.
+    const QPointF from = glyphs.front().at;
+    const QPointF to = glyphs.back().at;
+    const QPointF along = to - from;
+    const double span = std::hypot(along.x(), along.y());
+    double worst = 0.0;
+    if (span > 0.0)
+    {
+        for (const PlacedGlyph& glyph : glyphs)
+        {
+            const QPointF off = glyph.at - from;
+            // Distance to the chord: the cross product over its length.
+            worst = std::max(worst, std::abs(((off.x() * along.y()) - (off.y() * along.x()))) /
+                                        span);
+        }
+    }
+    if (worst <= kStraightEnoughPx)
+    {
+        // The chord's own angle, not the first character's: over a very
+        // slightly bent run the chord is what the single image will lie on.
+        out.uniformAngle = std::atan2(along.y(), along.x());
+    }
+
+    const std::optional<RunWalker::At> middle = walker.at(start + (width / 2.0), reversed);
+    out.centre = middle.has_value() ? middle->point : glyphs.front().at;
+    out.glyphs = std::move(glyphs);
+    return out;
+}
+
+// The axis-aligned hulls a placed label claims, a few glyphs to a box.
+void collisionBoxesFor(const std::vector<PlacedGlyph>& glyphs, double height,
+                       std::vector<QRectF>& out)
+{
+    for (std::size_t i = 0; i < glyphs.size(); i += kGlyphsPerCollisionBox)
+    {
+        const std::size_t last = std::min(glyphs.size(), i + kGlyphsPerCollisionBox);
+        QRectF box;
+        for (std::size_t j = i; j < last; ++j)
+        {
+            // The character's own quad, turned the way the character is, then
+            // reduced to the box that contains it.
+            QTransform turn;
+            turn.translate(glyphs[j].at.x(), glyphs[j].at.y());
+            turn.rotateRadians(glyphs[j].angle);
+            const QRectF local(-glyphs[j].advance / 2.0, -height / 2.0, glyphs[j].advance, height);
+            const QRectF hull = turn.mapRect(local);
+            box = box.isNull() ? hull : box.united(hull);
+        }
+        if (!box.isNull())
+        {
+            out.push_back(box);
+        }
+    }
+}
+
+// Blit a placed label: every halo, then every fill.
+//
+// The two passes are not an optimisation and cannot be merged. See
+// LabelCache::Glyph -- one pass would let each character's halo paint over the
+// previous character's text.
+void drawPlacedGlyphs(QPainter& painter, const std::vector<PlacedGlyph>& glyphs,
+                      LabelCache& cache, const QFont& font, double haloWidth,
+                      const QColor& haloColour, const QColor& textColour, double ratio,
+                      double baselineShift, std::vector<const LabelCache::Glyph*>& scratch)
+{
+    // Looked up once and held, rather than once per pass: the lookup builds a
+    // style key and the two passes want the same entries.
+    scratch.clear();
+    scratch.reserve(glyphs.size());
+    for (const PlacedGlyph& placed : glyphs)
+    {
+        scratch.push_back(
+            &cache.glyphFor(placed.ch, font, haloWidth, haloColour, textColour, ratio));
+    }
+
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        for (std::size_t i = 0; i < glyphs.size(); ++i)
+        {
+            const LabelCache::Glyph& glyph = *scratch[i];
+            const QImage& image = pass == 0 ? glyph.halo : glyph.fill;
+            if (image.isNull())
+            {
+                continue;
+            }
+
+            // setWorldTransform rather than save/translate/rotate/restore:
+            // QPainter::save copies the entire painter state -- pen, brush,
+            // clip, every render hint -- and a curved name does this once per
+            // character per pass. Setting the matrix outright touches one
+            // field.
+            QTransform place;
+            place.translate(glyphs[i].at.x(), glyphs[i].at.y());
+            place.rotateRadians(glyphs[i].angle);
+            // From the centre of the advance on the text's centre line, back
+            // to where the pen belongs: half an advance left, and down by
+            // however far the baseline sits below that centre line.
+            place.translate(-glyphs[i].advance / 2.0, baselineShift);
+            painter.setWorldTransform(place);
+            painter.drawImage(QPointF(-glyph.pen.x(), -glyph.pen.y()), image);
+        }
+    }
+
+    painter.setWorldTransform(QTransform());
+}
+
 LabelStats paintLabels(QPainter& painter, const Projection& projection,
                        const std::vector<LabelTile>& tiles, const MapStyle_t& style,
                        LabelCache& cache)
@@ -572,6 +728,11 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     // candidate at extraction, so the per-candidate test is one branch.
     const bool roadsOn = roadLabelsEnabled(style, projection.camera().zoom);
 
+    // Every road run this frame, projected once, end to end. One arena rather
+    // than a vector per candidate: the steady repaint allocates nothing, and
+    // this is the only new per-frame storage the curved labels need.
+    std::vector<ScreenPoint> runs;
+
     for (const LabelTile& entry : tiles)
     {
         if (!entry.labels || entry.labels->empty())
@@ -579,28 +740,23 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
             continue;
         }
 
-        // The whole per-frame cost of a tile's labels: one origin, one size,
-        // and per candidate a rotate, a bounds test and a push. Everything
-        // heavier -- attribute walks, string reads, arc lengths -- happened
-        // once, at decode time, on the worker.
-        const ScreenPoint origin = projection.tileOrigin(entry.id);
-        const double size = projection.tileScreenSize(entry.id.z);
-        const double cosB = projection.bearingCos();
-        const double sinB = projection.bearingSin();
+        // The whole per-frame cost of a tile's labels: one transform solved,
+        // and per candidate a map, a bounds test and a push. Everything
+        // heavier -- attribute walks, string reads, arc lengths, simplifying
+        // the run -- happened once, at decode time, on the worker.
+        const Projection::TileTransform transform = projection.tileTransform(entry.id);
+        const double size = transform.size;
 
-        for (const LabelCandidate& candidate : *entry.labels)
+        for (const LabelCandidate& candidate : entry.labels->labels)
         {
             if (candidate.kind == LabelKind::Road && !roadsOn)
             {
                 continue;
             }
-            // Tile-local to screen. The tile's own axes are rotated with the
-            // map even though the text is not, so an anchor goes through the
-            // same rotation the GPU applies to the geometry.
-            const double lx = candidate.x * size;
-            const double ly = candidate.y * size;
-            const ScreenPoint at { origin.x + ((lx * cosB) - (ly * sinB)),
-                                   origin.y + ((lx * sinB) + (ly * cosB)) };
+            // The tile's own axes are rotated with the map even though a place
+            // name is not, so an anchor goes through the same transform the
+            // GPU applies to the geometry.
+            const ScreenPoint at = transform.map(candidate.x, candidate.y);
             if (!gatherBounds.contains(QPointF(at.x, at.y)))
             {
                 continue;
@@ -610,9 +766,26 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
             {
                 continue;
             }
-            candidates.push_back(Candidate { candidate.text, at, spanPx,
-                                             candidate.oneLabelPerName, candidate.priority,
-                                             candidate.magnitude });
+
+            Candidate out { candidate.text,          at,
+                            spanPx,                  candidate.oneLabelPerName,
+                            candidate.priority,      candidate.magnitude };
+
+            // A line label carries its road with it. Projected here, where the
+            // tile's transform is already in hand, rather than at placement
+            // where it would have to be found again per candidate.
+            if (candidate.pathCount >= 2)
+            {
+                out.runBegin = std::uint32_t(runs.size());
+                out.runCount = candidate.pathCount;
+                for (std::uint32_t i = 0; i < candidate.pathCount; ++i)
+                {
+                    const LocalPoint& point = entry.labels->path[candidate.pathBegin + i];
+                    runs.push_back(transform.map(double(point.x), double(point.y)));
+                }
+            }
+
+            candidates.push_back(std::move(out));
         }
     }
 
@@ -646,9 +819,25 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     const QColor textColour = qt_helpers::toQColor(style.label_text);
     const QColor haloColour = qt_helpers::toQColor(style.label_halo);
 
+    const double ratio =
+        painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0;
+
+    const QFontMetricsF metrics(font);
+    // Text is centred ACROSS the road, so the road runs through the middle of
+    // the letters rather than under their feet. This is how far the baseline
+    // sits below that centre line.
+    const double baselineShift = (metrics.ascent() - metrics.descent()) / 2.0;
+    const double emSize = metrics.height();
+
     // A linear scan against accepted boxes. A viewport holds tens of labels,
     // not thousands, so a grid would cost more to maintain than it saves.
+    // A road label contributes several boxes rather than one -- see
+    // collisionBoxesFor() -- which is still a few hundred, not thousands.
     std::vector<QRectF> taken;
+    // What the candidate being tested claims. Reused rather than rebuilt, like
+    // everything else on this path.
+    std::vector<QRectF> boxes;
+    std::vector<const LabelCache::Glyph*> glyphScratch;
     // Names already placed, for the layers that ask for one label each. A road
     // crosses every tile it passes through and each tile carries the whole
     // name, so without this a single street is labelled a dozen times across
@@ -695,29 +884,107 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
         // columns do.
         const double padX = double(style.label_spacing);
         const double padY = padX / 2.0;
-        const QRectF padded = box.adjusted(-padX, -padY, padX, padY);
-        if (std::any_of(taken.begin(), taken.end(),
-                        [&](const QRectF& other) { return other.intersects(padded); }))
+
+        // A road label is laid ALONG its road, so where it lands and what it
+        // claims are both decided by the run rather than by a box around the
+        // anchor. Done before the collision test and thrown away if it fails,
+        // because the boxes it produces ARE what is collided.
+        std::optional<PlacedLabel> alongRoad;
+        if (candidate.runCount >= 2)
+        {
+            const RunWalker walker(runs.data() + candidate.runBegin, candidate.runCount);
+            alongRoad = placeAlongRun(candidate.text, walker, cache, font, emSize);
+            if (!alongRoad.has_value())
+            {
+                // Too long for its road, or the road kinks under it. Either
+                // way this name does not belong here -- and it may still be
+                // placed from another tile, where more of the road is whole.
+                ++stats.suppressed;
+                continue;
+            }
+        }
+
+        boxes.clear();
+        if (!alongRoad.has_value())
+        {
+            boxes.push_back(box);
+        }
+        else if (alongRoad->uniformAngle.has_value())
+        {
+            // One box for a straight name, turned the way the name is. Tighter
+            // than a per-character chain would be and cheaper to test.
+            QTransform turn;
+            turn.translate(alongRoad->centre.x(), alongRoad->centre.y());
+            turn.rotateRadians(*alongRoad->uniformAngle);
+            boxes.push_back(turn.mapRect(QRectF(-text.width() / 2.0, -text.height() / 2.0,
+                                                text.width(), text.height())));
+        }
+        else
+        {
+            collisionBoxesFor(alongRoad->glyphs, text.height(), boxes);
+        }
+        for (QRectF& claim : boxes)
+        {
+            claim = claim.adjusted(-padX, -padY, padX, padY);
+        }
+
+        if (std::any_of(boxes.begin(), boxes.end(), [&](const QRectF& claim) {
+                return std::any_of(taken.begin(), taken.end(), [&](const QRectF& other) {
+                    return other.intersects(claim);
+                });
+            }))
         {
             ++stats.suppressed;
             continue;
         }
-        taken.push_back(padded);
+        taken.insert(taken.end(), boxes.begin(), boxes.end());
         if (candidate.oneLabelPerName)
         {
             namesPlaced.insert(candidate.text);
         }
 
         // Only NOW is it worth pixels.
-        const LabelCache::Entry& entry =
-            cache.entryFor(candidate.text, font, style.label_halo_width, haloColour, textColour,
-                           painter.device() != nullptr ? painter.device()->devicePixelRatioF()
-                                                       : 1.0);
+        if (alongRoad.has_value() && !alongRoad->uniformAngle.has_value())
+        {
+            drawPlacedGlyphs(painter, alongRoad->glyphs, cache, font, style.label_halo_width,
+                             haloColour, textColour, ratio, baselineShift, glyphScratch);
+            ++stats.placed;
+            continue;
+        }
+
+        const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
+                                                        style.label_halo_width, haloColour,
+                                                        textColour, ratio);
+
+        // A straight road's name, turned to lie along it: one blit, from the
+        // same cached image a place name uses.
+        if (alongRoad.has_value() && std::abs(*alongRoad->uniformAngle) > 1e-6)
+        {
+            painter.save();
+            painter.translate(alongRoad->centre);
+            painter.rotate(*alongRoad->uniformAngle * 180.0 / std::numbers::pi);
+            painter.drawImage(QPointF((-entry.bounds.width() / 2.0) + entry.offset.x(),
+                                      (-entry.bounds.height() / 2.0) + entry.offset.y()),
+                              entry.image);
+            painter.restore();
+            ++stats.placed;
+            continue;
+        }
 
         // Snapped to whole pixels. Blitting at a fractional position makes Qt
         // resample, and resampled text is visibly soft; half a pixel of
         // placement error on a place name is not.
-        const QPointF where = box.topLeft() + entry.offset;
+        //
+        // A road running dead flat across the screen lands here too, and gets
+        // the same snapped blit a place name does -- which is what keeps the
+        // commonest case in a grid city exactly as cheap and as sharp as it
+        // was before any of this followed a road.
+        const QPointF topLeft = alongRoad.has_value()
+                                    ? QPointF(alongRoad->centre.x() - (entry.bounds.width() / 2.0),
+                                              alongRoad->centre.y() -
+                                                  (entry.bounds.height() / 2.0))
+                                    : box.topLeft();
+        const QPointF where = topLeft + entry.offset;
         painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())), entry.image);
 
         ++stats.placed;
