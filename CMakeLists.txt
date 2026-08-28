@@ -119,6 +119,15 @@ add_compile_options(
     #-Wsign-conversion
     -Wuninitialized
     -Wmissing-field-initializers
+    # -Wmissing-field-initializers means two different things. Both compilers
+    # apply it to positional aggregate initialization; only GCC also applies it
+    # to C++20 DESIGNATED initializers, where a member left out has to have a
+    # default member initializer or it warns. Clang split that half off into its
+    # own flag (clang 18+) and leaves it off, so a designated initializer that
+    # skips a defaultless member compiles silently here and is a -Werror stop on
+    # a Linux build. Turn clang's half back on rather than find out on the other
+    # machine. GCC does not know the spelling, hence the guard.
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wmissing-designated-field-initializers>
     #$<$<COMPILE_LANGUAGE:CXX>:-Wno-volatile>
 
     -Wshadow
