@@ -70,6 +70,7 @@
 
 #include <QByteArray>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QString>
 #include <QtGui/qtguiglobal.h>
 
@@ -244,6 +245,14 @@ class GpuRenderer
 
     bool initialise();
     bool ensureTarget(const QSize& size);
+    // Device pixels (Y down from the top-left of the image we want back) ->
+    // clip, for `size`. EVERY pass must start from this, because two things
+    // vary per backend and neither one alone settles which way up a pass comes
+    // out: whether the framebuffer's Y runs up, and whether the backend's
+    // clipSpaceCorrMatrix() negates Y. Vulkan is the one that does both, so a
+    // pass that consults only isYUpInFramebuffer() agrees with Metal and
+    // OpenGL and comes out mirrored on Vulkan alone.
+    QMatrix4x4 screenToClip(const QSize& size) const;
     // True when `batches` differ from what is already on the GPU.
     bool batchesChanged(std::span<const GpuBatch> batches) const;
     // Works out the per-tile offsets, grows the vertex buffer if it must, and
@@ -280,7 +289,9 @@ class GpuRenderer
     QSize mSize;
     int mSampleCount { 1 };
     // OpenGL reads back bottom-up, every other backend top-down. Baked into
-    // the projection instead of flipping the image afterwards.
+    // the projection instead of flipping the image afterwards. Read it through
+    // screenToClip() rather than directly -- on its own it is only half the
+    // answer.
     bool mYUpInFramebuffer { false };
     // Bytes between one tile's uniform block and the next. The hardware's
     // minimum alignment, not sizeof(the struct).

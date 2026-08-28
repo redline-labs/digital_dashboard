@@ -13,17 +13,15 @@ layout(location = 1) in vec2 uv;
 layout(location = 0) out vec2 vuv;
 
 layout(std140, binding = 0) uniform buf {
-    // Viewport in device pixels. Screen pixels -> clip is the whole transform.
-    vec2 viewport;
-    // 1.0 when the framebuffer's Y runs down the screen, -1.0 when it runs up.
-    // Same question the map pass answers with its ortho box.
-    float yFlip;
-    float pad;
+    // Screen pixels -> clip. Built by GpuRenderer::screenToClip(), which is
+    // also where the map pass starts, so the two cannot disagree about which
+    // way up the frame is. Hand-rolling this from the viewport size and a sign
+    // is what put the labels upside down on Vulkan: the backend's Y convention
+    // is two questions, not one, and only this matrix answers both.
+    mat4 clip;
 };
 
 void main() {
     vuv = uv;
-    vec2 ndc = vec2(pos.x / viewport.x * 2.0 - 1.0,
-                    (pos.y / viewport.y * 2.0 - 1.0) * yFlip);
-    gl_Position = vec4(ndc, 0.0, 1.0);
+    gl_Position = clip * vec4(pos, 0.0, 1.0);
 }

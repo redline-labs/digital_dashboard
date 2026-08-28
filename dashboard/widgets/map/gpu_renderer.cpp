@@ -358,8 +358,9 @@ bool GpuRenderer::ensureTarget(const QSize& size)
     }
     if (!mGlyphUniform)
     {
+        // One mat4: screen pixels -> clip.
         mGlyphUniform.reset(
-            mRhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+            mRhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
         if (!mGlyphUniform->create())
         {
             return false;
@@ -533,6 +534,34 @@ bool GpuRenderer::prepareUpload(std::span<const GpuBatch> batches,
     return true;
 }
 
+QMatrix4x4 GpuRenderer::screenToClip(const QSize& size) const
+{
+    // Two independent per-backend facts, and both have to be applied.
+    //
+    // clipSpaceCorrMatrix() carries the backend's depth convention and, on
+    // Vulkan alone, a Y negation -- Vulkan is the only backend whose NDC Y runs
+    // down. isYUpInFramebuffer() is a different question: which end of the
+    // image row zero is, true on OpenGL and false everywhere else. A pass that
+    // consults only the second agrees with Metal and OpenGL and comes out
+    // mirrored on Vulkan, which is why both live here and nowhere else.
+    //
+    // The framebuffer flip is folded into the ortho box rather than applied to
+    // the image afterwards: a QImage::flipped() copies the whole frame, while
+    // swapping the box costs nothing and produces the same pixels. Winding is
+    // not a concern -- the pipeline does not cull, because MVT ring order means
+    // exterior-or-hole rather than front-or-back.
+    QMatrix4x4 m = mRhi->clipSpaceCorrMatrix();
+    if (mYUpInFramebuffer)
+    {
+        m.ortho(0.0F, float(size.width()), 0.0F, float(size.height()), -1.0F, 1.0F);
+    }
+    else
+    {
+        m.ortho(0.0F, float(size.width()), float(size.height()), 0.0F, -1.0F, 1.0F);
+    }
+    return m;
+}
+
 const QImage& GpuRenderer::render(const Projection& projection,
                                   const std::vector<GpuBatch>& requested, const MapStyle_t& style,
                                   const QColor& background, const Highlight& highlight)
@@ -692,21 +721,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
         // origin, the map's rotation, and local [0,1] -> pixels. tileOrigin()
         // already carries the rotation and the date-line wrap, so the rotation
         // here only orients the tile's own axes.
-        QMatrix4x4 mvp = mRhi->clipSpaceCorrMatrix();
-        // The framebuffer flip, done HERE rather than on the image that comes
-        // back. OpenGL reads back bottom-up and everything else top-down; a
-        // QImage::flipped() afterwards copies the whole frame to fix it, while
-        // swapping the ortho box costs nothing and produces the same pixels.
-        // Winding is not a concern -- the pipeline does not cull, because MVT
-        // ring order means exterior-or-hole rather than front-or-back.
-        if (mYUpInFramebuffer)
-        {
-            mvp.ortho(0.0f, float(size.width()), 0.0f, float(size.height()), -1.0f, 1.0f);
-        }
-        else
-        {
-            mvp.ortho(0.0f, float(size.width()), float(size.height()), 0.0f, -1.0f, 1.0f);
-        }
+        QMatrix4x4 mvp = screenToClip(size);
         mvp.translate(float(origin.x * ratio), float(origin.y * ratio));
         if (projection.camera().bearing != 0.0)
         {
@@ -792,11 +807,11 @@ const QImage& GpuRenderer::render(const Projection& projection,
             mAtlasDirty = false;
         }
         updates->updateDynamicBuffer(mGlyphVertexBuffer.get(), 0, bytes, mGlyphScratch.data());
-        // Screen pixels -> clip. The Y term matches the ortho box the map pass
-        // builds, so text lands the same way up as the geometry under it.
-        const float uniform[4] = { float(size.width()), float(size.height()),
-                                   mYUpInFramebuffer ? 1.0F : -1.0F, 0.0F };
-        updates->updateDynamicBuffer(mGlyphUniform.get(), 0, 16, uniform);
+        // The SAME matrix the map pass starts from, so text cannot land a
+        // different way up from the geometry under it. The quads are already in
+        // device pixels, so there is nothing further to place.
+        const QMatrix4x4 textClip = screenToClip(size);
+        updates->updateDynamicBuffer(mGlyphUniform.get(), 0, 64, textClip.constData());
     }
 
     cb->beginPass(mTarget.get(), background, { 1.0f, 0 }, updates);
