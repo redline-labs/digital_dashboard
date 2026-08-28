@@ -350,7 +350,7 @@ map_widget::Projection MapWidget::projectionFor(const QPainter& painter) const
     // rendering at half resolution without it.
     //
     // Read off the PAINT DEVICE rather than the widget, because that is where
-    // paintLabels() reads it from. The two passes have to agree on the ratio or
+    // layOutText() reads it from. The two passes have to agree on the ratio or
     // this bug comes straight back in the other direction -- text rendered for
     // a ratio the geometry underneath was not drawn at -- and the only way to
     // guarantee that is to ask the same object.
@@ -929,7 +929,7 @@ void MapWidget::assembleBatches()
     //
     // Duplicates take care of themselves: a place named by both an ancestor and
     // the real tile lands at the SAME geographic point and so the same pixels,
-    // and paintLabels() rejects a candidate that collides with one already
+    // and layOutText() rejects a candidate that collides with one already
     // placed. Real tiles going in first is what decides which of the two wins.
     for (std::size_t s = 0; s < mSources.size(); ++s)
     {
@@ -998,6 +998,18 @@ void MapWidget::paintEvent(QPaintEvent* event)
             mHighlightWayIds, qt_helpers::toQColor(mConfig.highlight_color),
             float(mConfig.highlight_extra_width)
         };
+        // --- 1a. text, placed on the CPU and drawn with the frame ---------
+        //
+        // Placement and collision stay here -- which labels survive depends on
+        // what else is already on screen, across tiles, so it cannot be baked
+        // per tile. Only the DRAWING moves, and it was 95% of this pass.
+        const map_widget::LabelStats labels =
+            map_widget::layOutText(projection, mLabelTiles, mConfig.style, mLabelCache,
+                                   projection.devicePixelRatio(), mTextQuads);
+        mLastLabelsPlaced = labels.placed;
+        mGpu->setText(mTextQuads, mLabelCache.atlas().page(), mLabelCache.atlas().dirty());
+        mLabelCache.atlas().markClean();
+
         const QImage& frame =
             mGpu->render(projection, mBatches, mConfig.style, background, highlight);
         if (frame.isNull())
@@ -1018,16 +1030,10 @@ void MapWidget::paintEvent(QPaintEvent* event)
         painter.fillRect(rect(), background);
     }
 
-    // --- 2. labels, on the CPU ---------------------------------------------
+    // --- 2. the vehicle ----------------------------------------------------
 
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
-
-    const map_widget::LabelStats labels =
-        map_widget::paintLabels(painter, projection, mLabelTiles, mConfig.style, mLabelCache);
-    mLastLabelsPlaced = labels.placed;
-
-    // --- 3. the vehicle ----------------------------------------------------
 
     paintMarker(painter, projection);
 

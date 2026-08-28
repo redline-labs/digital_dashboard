@@ -277,7 +277,7 @@ int main(int argc, char** argv)
     Stage visible("visible tiles");
     Stage ready("gather batches");
     Stage render("gpu render");
-    Stage labels("labels");
+    Stage labels("labels (place only)");
     Stage trackCoord("track (Coordinate)");
     Stage trackWorld("track (WorldPoint)");
     Stage frame("WHOLE FRAME");
@@ -294,6 +294,7 @@ int main(int argc, char** argv)
                   QImage::Format_RGBA8888);
     canvas.setDevicePixelRatio(dpr);
     map_widget::LabelCache labelCache;
+    std::vector<map_widget::TextQuad> textQuads;
 
     // ~25 m per fix at 10 Hz is about 90 km/h, and moving every frame is the
     // point: a stationary camera would measure the memoised case, not the
@@ -343,6 +344,16 @@ int main(int argc, char** argv)
         }
         ready.add(readyTimer.ms());
 
+        // Text is placed on the CPU and drawn by the GPU with the tiles, so
+        // the label stage now times placement and collision only -- the draw
+        // shows up in `gpu render`.
+        const Timer labelTimer;
+        const map_widget::LabelStats placed =
+            map_widget::layOutText(projection, labelTiles, style, labelCache, dpr, textQuads);
+        labels.add(labelTimer.ms());
+        gpu->setText(textQuads, labelCache.atlas().page(), labelCache.atlas().dirty());
+        labelCache.atlas().markClean();
+
         const Timer renderTimer;
         const QImage& gpuFrame = gpu->render(projection, batches, style, background);
         render.add(renderTimer.ms());
@@ -355,10 +366,7 @@ int main(int argc, char** argv)
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-        const Timer labelTimer;
-        const map_widget::LabelStats placed =
-            map_widget::paintLabels(painter, projection, labelTiles, style, labelCache);
-        labels.add(labelTimer.ms());
+
         (void)placed;
 
         // Both track projections, side by side, so the cost of the change is

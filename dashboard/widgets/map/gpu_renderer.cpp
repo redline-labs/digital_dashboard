@@ -23,6 +23,10 @@
 #include "mapFrag_qsb.h"
 #include "mapHighlightVert_qsb.h"
 #include "mapHighlightFrag_qsb.h"
+#include "glyphVert_qsb.h"
+#include "glyphFrag_qsb.h"
+
+#include <QPainter>
 
 namespace map_widget
 {
@@ -66,6 +70,17 @@ QShader loadShader(const unsigned char* bytes, std::size_t size)
 }
 
 } // namespace
+
+void GpuRenderer::setText(std::vector<TextQuad> quads, const QImage& atlasPage,
+                          bool atlasDirty)
+{
+    mTextQuads = std::move(quads);
+    if (atlasDirty)
+    {
+        mAtlasPage = atlasPage;
+        mAtlasDirty = true;
+    }
+}
 
 std::unique_ptr<GpuRenderer> GpuRenderer::create()
 {
@@ -320,6 +335,89 @@ bool GpuRenderer::ensureTarget(const QSize& size)
         return false;
     }
 
+    // ---- PROTOTYPE glyph pipeline ---------------------------------------
+    if (!mGlyphSampler)
+    {
+        mGlyphSampler.reset(mRhi->newSampler(QRhiSampler::Linear, QRhiSampler::Linear,
+                                             QRhiSampler::None, QRhiSampler::ClampToEdge,
+                                             QRhiSampler::ClampToEdge));
+        if (!mGlyphSampler->create())
+        {
+            SPDLOG_ERROR("[map] glyph sampler could not be created");
+            return false;
+        }
+    }
+    if (!mGlyphTexture)
+    {
+        mGlyphTexture.reset(mRhi->newTexture(QRhiTexture::RGBA8, QSize(1024, 1024), 1));
+        if (!mGlyphTexture->create())
+        {
+            SPDLOG_ERROR("[map] glyph atlas texture could not be created");
+            return false;
+        }
+    }
+    if (!mGlyphUniform)
+    {
+        mGlyphUniform.reset(
+            mRhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+        if (!mGlyphUniform->create())
+        {
+            return false;
+        }
+    }
+    if (!mGlyphSrb)
+    {
+        mGlyphSrb.reset(mRhi->newShaderResourceBindings());
+        mGlyphSrb->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage, mGlyphUniform.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage, mGlyphTexture.get(),
+                mGlyphSampler.get()),
+        });
+        if (!mGlyphSrb->create())
+        {
+            return false;
+        }
+    }
+
+    QRhiVertexInputLayout glyphLayout;
+    glyphLayout.setBindings({ { 4 * sizeof(float) } });
+    glyphLayout.setAttributes({
+        { 0, 0, QRhiVertexInputAttribute::Float2, 0 },
+        { 0, 1, QRhiVertexInputAttribute::Float2, 2 * sizeof(float) },
+    });
+
+    mGlyphPipeline.reset(mRhi->newGraphicsPipeline());
+    {
+        // The atlas holds premultiplied pixels, so the blend is One /
+        // OneMinusSrcAlpha rather than SrcAlpha -- multiplying by alpha twice
+        // is what makes atlas text look thin and grey.
+        QRhiGraphicsPipeline::TargetBlend glyphBlend;
+        glyphBlend.enable = true;
+        glyphBlend.srcColor = QRhiGraphicsPipeline::One;
+        glyphBlend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        glyphBlend.srcAlpha = QRhiGraphicsPipeline::One;
+        glyphBlend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        mGlyphPipeline->setTargetBlends({ glyphBlend });
+        mGlyphPipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        mGlyphPipeline->setCullMode(QRhiGraphicsPipeline::None);
+        mGlyphPipeline->setSampleCount(mSampleCount);
+        mGlyphPipeline->setShaderStages(
+            { { QRhiShaderStage::Vertex,
+                loadShader(map_shaders::glyphVert, map_shaders::glyphVertSize) },
+              { QRhiShaderStage::Fragment,
+                loadShader(map_shaders::glyphFrag, map_shaders::glyphFragSize) } });
+        mGlyphPipeline->setVertexInputLayout(glyphLayout);
+        mGlyphPipeline->setShaderResourceBindings(mGlyphSrb.get());
+        mGlyphPipeline->setRenderPassDescriptor(mPass.get());
+        if (!mGlyphPipeline->create())
+        {
+            SPDLOG_ERROR("[map] glyph pipeline could not be created");
+            return false;
+        }
+    }
+
     mSize = size;
     return true;
 }
@@ -525,7 +623,13 @@ const QImage& GpuRenderer::render(const Projection& projection,
         return mFrameKey.highlightIds == highlight.osmWayIds;
     };
 
-    if (mHaveFrame && !mFrame.isNull() && key.scalarsEqual(mFrameKey) && batchesMatchKey())
+    // Text, compared in place for the same reason the batch vectors are: the
+    // hit path is every idle repaint, and building a copy to conclude "nothing
+    // changed" is the one cost the memo cannot afford.
+    const auto textMatchesKey = [&]() { return mFrameKey.text == mTextQuads; };
+
+    if (mHaveFrame && !mFrame.isNull() && key.scalarsEqual(mFrameKey) && batchesMatchKey() &&
+        textMatchesKey())
     {
         ++mStats.reused;
         mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
@@ -536,6 +640,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // capacity across frames.
     key.highlightIds = std::move(mFrameKey.highlightIds);
     key.highlightIds.assign(highlight.osmWayIds.begin(), highlight.osmWayIds.end());
+    key.text = mTextQuads;
     key.ids = std::move(mFrameKey.ids);
     key.serials = std::move(mFrameKey.serials);
     key.alphas = std::move(mFrameKey.alphas);
@@ -649,6 +754,51 @@ const QImage& GpuRenderer::render(const Projection& projection,
                                      quint32(mUniformStride * batches.size()), uniforms.data());
     }
 
+    // ---- text, prepared alongside the tiles ------------------------------
+    quint32 glyphVertexCount = 0;
+    if (!mTextQuads.empty() && mGlyphPipeline)
+    {
+        mGlyphScratch.clear();
+        mGlyphScratch.reserve(mTextQuads.size() * 6 * 4);
+        for (const TextQuad& q : mTextQuads)
+        {
+            const QPointF uvs[4] = { q.uv.topLeft(), q.uv.topRight(), q.uv.bottomRight(),
+                                     q.uv.bottomLeft() };
+            const int order[6] = { 0, 1, 2, 0, 2, 3 };
+            for (const int i : order)
+            {
+                mGlyphScratch.push_back(float(q.corners[i].x()));
+                mGlyphScratch.push_back(float(q.corners[i].y()));
+                mGlyphScratch.push_back(float(uvs[i].x()));
+                mGlyphScratch.push_back(float(uvs[i].y()));
+            }
+        }
+        glyphVertexCount = quint32(mTextQuads.size() * 6);
+
+        const quint32 bytes = quint32(mGlyphScratch.size() * sizeof(float));
+        if (!mGlyphVertexBuffer || mGlyphVertexBuffer->size() < bytes)
+        {
+            mGlyphVertexBuffer.reset(mRhi->newBuffer(QRhiBuffer::Dynamic,
+                                                     QRhiBuffer::VertexBuffer,
+                                                     std::max<quint32>(bytes, 256u * 1024u)));
+            mGlyphVertexBuffer->create();
+        }
+        if (mAtlasDirty && !mAtlasPage.isNull())
+        {
+            // The whole page, once, whenever it grew. A glyph set is an
+            // alphabet, so this settles in the first frames of a drive and
+            // then never fires again.
+            updates->uploadTexture(mGlyphTexture.get(), mAtlasPage);
+            mAtlasDirty = false;
+        }
+        updates->updateDynamicBuffer(mGlyphVertexBuffer.get(), 0, bytes, mGlyphScratch.data());
+        // Screen pixels -> clip. The Y term matches the ortho box the map pass
+        // builds, so text lands the same way up as the geometry under it.
+        const float uniform[4] = { float(size.width()), float(size.height()),
+                                   mYUpInFramebuffer ? 1.0F : -1.0F, 0.0F };
+        updates->updateDynamicBuffer(mGlyphUniform.get(), 0, 16, uniform);
+    }
+
     cb->beginPass(mTarget.get(), background, { 1.0f, 0 }, updates);
 
     int draws = 0;
@@ -736,6 +886,20 @@ const QImage& GpuRenderer::render(const Projection& projection,
             }
         }
     }
+    // Text last, inside the same pass: a second pass would have to clear or
+    // load the target, and drawing here is both cheaper and correctly ordered
+    // over every tile.
+    if (glyphVertexCount > 0)
+    {
+        cb->setGraphicsPipeline(mGlyphPipeline.get());
+        cb->setViewport({ 0.0f, 0.0f, float(size.width()), float(size.height()) });
+        cb->setShaderResources(mGlyphSrb.get());
+        const QRhiCommandBuffer::VertexInput glyphInput(mGlyphVertexBuffer.get(), 0);
+        cb->setVertexInput(0, 1, &glyphInput);
+        cb->draw(glyphVertexCount);
+        ++draws;
+    }
+
     cb->endPass();
 
     QRhiReadbackResult readback;

@@ -105,7 +105,8 @@ are only worth it once pitch exists.
 
 ## How it draws
 
-The geometry is on the GPU; the text is not.
+The geometry and the text are both on the GPU; where each one GOES is
+decided on the CPU.
 
 A QPainter-only renderer was built first and measured at **241 ms per frame**
 (4 fps) on four z14 tiles — 14 440 features, 96 822 vertices — of which
@@ -153,10 +154,31 @@ Four things in that path are worth knowing before changing it:
   change rebuilds the widget, so the style is fixed for a `TileSource`'s life.
   If that ever stops being true, the geometry cache needs a style revision.
 
-**Labels stay on the CPU**, and not for want of speed: they must *not* rotate
-with the map (rotating text is unreadable at every bearing but north), and their
-collision is viewport-global rather than per tile, so they cannot be baked into
-the per-tile geometry the GPU caches. `map/labels.h` carries the argument.
+**Label PLACEMENT stays on the CPU; label DRAWING does not.** Which labels
+survive depends on what else is already on screen, across tiles, so collision is
+viewport-global and cannot be baked into the per-tile geometry the GPU caches --
+that argument still holds and `map/labels.h` still carries it. Placement and
+collision cost 0.12 ms a frame.
+
+Drawing them was the other 2.33 ms -- 95% of the pass -- and that is now a
+vertex buffer of textured quads sampled from a glyph atlas, drawn last inside
+the same offscreen pass as the tiles. Measured: +0.07 ms on the GPU, one extra
+draw call, and the whole frame fell from 3.15 ms to 0.93 ms.
+
+The atlas holds **what QPainter rasterised**, so this is a transport change
+rather than a second text renderer. QPainter is still the font stack; there are
+still no glyph PBFs, no font pipeline, and no way for the map to come up with no
+labels and nothing saying why. Two consequences worth knowing:
+
+- **Every character is placed individually, always.** The old code drew a
+  straight label as one blit and only a bent one glyph by glyph. That split
+  existed solely because a rotated CPU blit costs ~4 us; a quad costs nothing
+  worth splitting for, so `kStraightEnoughPx` and the whole-string image cache
+  are gone.
+- **Text is part of the frame's identity.** Two frames can agree on every tile
+  and still be different pictures, so the quads are compared by the memo
+  alongside the tile serials. Without that a parked vehicle would hold a stale
+  frame whose labels had moved.
 
 Shaders are baked by `qsb` at build time into a header of bytes
 (`cmake/EmbedBinary.cmake`) rather than a `.qrc`. A resource that fails to
@@ -230,11 +252,16 @@ rotated to the road's bearing where it sits. Three rules govern it:
   curved label claims one box per four characters. Straight labels still claim
   a single rotated box.
 
-**The cost, and the one thing that controls it.** A straight name is one blit
-of the cached whole-string image, exactly as before. A curved one is a rotated
-blit *per character, twice* — halo pass then fill pass — and a rotated
-`drawImage` measured about 4 µs. So which side of "straight" a label falls on
-is worth roughly fifteen-fold, and `kStraightEnoughPx` is where that is decided.
+**What `kStraightEnoughPx` decides now.** It picks the shape of a label's
+collision footprint: one turned rectangle for a straight name, a chain of hulls
+for a curved one. It used to decide much more -- on the CPU a straight name was
+one blit and a curved one a rotated blit per character, worth roughly
+fifteen-fold -- but on the GPU every character is a quad either way.
+
+It is asked in **pixels of deviation from the chord**, not degrees, because the
+question is whether one rectangle would describe where the text actually is. An
+angle threshold gets that wrong in both directions: half a degree is invisible
+on a short name and obvious on a long one.
 
 It is asked in **pixels of deviation from the chord**, not in degrees, because
 the question is "would drawing this as one straight image look different?" An
@@ -653,7 +680,7 @@ Three things worth knowing:
   the text blink out for the frames a zoom was in flight while the geometry
   underneath stayed, which is a worse artefact than the blank map this was meant
   to fix. Duplicates take care of themselves: a place named by both an ancestor
-  and the real tile lands on the same pixels, and `paintLabels()` rejects a
+  and the real tile lands on the same pixels, and `layOutText()` rejects a
   candidate colliding with one already placed, so real tiles going in first
   decides which wins. Measured through a z11→z12 transition: 18 labels during,
   18 after, in the same positions.
@@ -795,6 +822,10 @@ against the real SoCal archive at the dashboard's own 660x640:
 | labels | 2.79 ms | — |
 | whole frame | 8.43 ms | — |
 
+Those figures predate BOTH curved labels and the glyph atlas. On the M-series
+box the same frame is now 0.93 ms with text on the GPU, against 3.15 ms with it
+on the CPU; nothing has re-measured the Mesa box.
+
 **The GPU frame is about twelve times slower, and it is the readback**, exactly
 as the rest of this file warns. Fitted across three viewport sizes -- 0.11,
 0.42 and 1.69 megapixels -- it comes to:
@@ -821,8 +852,24 @@ raster engine is ~1.4x slower and nothing more.
 Those figures predate curved road labels, which cost about 1.7 ms more on the
 M-series box — see **Curved road labels** above. Nothing has re-measured them
 on this hardware; if the ~1.4x holds, expect the label stage nearer 5 ms here,
-which is why `kStraightEnoughPx` is the first knob to reach for on a slow
-raster engine.
+
+
+**The `gpu render` stage measures the CPU's state as much as the GPU's.**
+`endOffscreenFrame()` is a synchronous round trip, and how long it takes depends
+on what the CPU was doing just before it. Measured, with the GPU work held
+identical and only unrelated CPU work varying between frames:
+
+| CPU between frames | gpu render |
+|---|---|
+| idle | 0.37 ms |
+| ~2 ms of work | 0.57 ms |
+
+Interleaved over four pairs; the busy figure is stable to 0.006 ms while the
+idle one wanders between 0.36 and 0.59 ms, which is what an idle core dropping
+into a low-power state looks like. So moving text off the CPU made the *same*
+GPU work measure faster, and a stage-by-stage comparison across a change that
+alters CPU load is not apples to apples. **Trust WHOLE FRAME**; it is both the
+number that matters and much the steadier of the two.
 
 **A benchmarking note, learned the hard way.** `map_bench` is CPU-bound in the
 label pass and GPU-bound in the readback, so two of them running at once report

@@ -384,60 +384,107 @@ void test_a_longer_circuit_outranks_a_shorter_one()
 // The cache used to CLEAR at its ceiling. A label costs 0.88 ms to render, so
 // a viewport holding forty of them paid two dropped frames on the frame that
 // crossed the threshold -- and again on any frame that crossed back.
-void test_the_label_cache_evicts_rather_than_clearing()
+// The atlas packs each character once, per halo-or-fill, and hands back the
+// same placement thereafter. A page that grew every frame would be re-uploaded
+// every frame, which is the one cost this whole design exists to avoid.
+void test_the_atlas_packs_each_glyph_once()
 {
     map_widget::LabelCache cache;
-    const QFont font;
+    const QFont font("Arial", 12);
     const QColor halo(Qt::black);
     const QColor text(Qt::white);
 
-    // Fill past the ceiling. The exact ceiling is the cache's business; what
-    // matters is that it stops growing and does not empty.
-    for (int i = 0; i < 700; ++i)
-    {
-        cache.entryFor(QString::number(i), font, 3.0, halo, text, 1.0);
-    }
+    const QRectF first = cache.atlasEntry(QChar('M'), false, font, 3.0, halo, text, 1.0);
+    check(!first.isNull(), "a character is packed on first sight");
+    check(cache.atlas().dirty(), "and the page is marked for upload");
 
-    check(cache.size() > 1, "the cache did not empty itself when it filled up");
-    check(cache.size() <= 512, "and it is still bounded");
+    cache.atlas().markClean();
+    const QRectF again = cache.atlasEntry(QChar('M'), false, font, 3.0, halo, text, 1.0);
+    check(again == first, "the second ask returns the same placement");
+    check(!cache.atlas().dirty(), "and does not dirty the page");
+
+    // Halo and fill are different shapes -- the halo is the stroked outline
+    // and is wider -- so they are separate entries, not one reused twice.
+    const QRectF haloRect = cache.atlasEntry(QChar('M'), true, font, 3.0, halo, text, 1.0);
+    check(!haloRect.isNull() && haloRect != first,
+          "a character's halo is packed separately from its fill");
+
+    // A whole name interns its own alphabet and nothing more: asking for the
+    // same name again packs nothing, however many characters it repeats.
+    for (const QChar ch : QString("Main Street"))
+    {
+        cache.atlasEntry(ch, false, font, 3.0, halo, text, 1.0);
+    }
+    const std::size_t afterName = cache.atlas().glyphs();
+    check(afterName < 11, "a name shorter than its own length is packed, got " +
+                              std::to_string(afterName));
+
+    cache.atlas().markClean();
+    for (const QChar ch : QString("Main Street"))
+    {
+        cache.atlasEntry(ch, false, font, 3.0, halo, text, 1.0);
+    }
+    check(cache.atlas().glyphs() == afterName, "the same name a second time packs nothing new");
+    check(!cache.atlas().dirty(), "and does not dirty the page");
+
+    // A name sharing letters adds only what it introduces.
+    for (const QChar ch : QString("Main Avenue"))
+    {
+        cache.atlasEntry(ch, false, font, 3.0, halo, text, 1.0);
+    }
+    check(cache.atlas().glyphs() > afterName, "a new name with new letters adds them");
+    check(cache.atlas().glyphs() <= afterName + 4,
+          "but reuses the ones it shares, got " + std::to_string(cache.atlas().glyphs()) +
+              " against " + std::to_string(afterName));
 }
 
-// Eviction has to drop what left the screen, not what is on it. A plain FIFO
-// evicts the label you are looking at while keeping ones you drove past.
-//
-// The scenario is the smallest one that tells the two apart: fill the cache
-// exactly, hit the OLDEST entry so a least-recently-used policy promotes it,
-// then force one eviction. LRU drops the runner-up; FIFO drops the entry that
-// was just used.
-void test_the_label_cache_evicts_the_least_recently_used()
+// What is IN the atlas has to be what QPainter drew, pixel for pixel. If the
+// packing were off by a row, or the uv rect described the wrong region, the
+// GPU would draw exactly that and no screenshot would say so.
+void test_a_packed_glyph_is_pixel_identical_to_the_one_rasterised()
 {
     map_widget::LabelCache cache;
-    const QFont font;
+    const QFont font("Arial", 16);
     const QColor halo(Qt::black);
     const QColor text(Qt::white);
-    const auto get = [&](const QString& what) {
-        cache.entryFor(what, font, 3.0, halo, text, 1.0);
-    };
 
-    const QString onScreen = QStringLiteral("Irvine");
-    get(onScreen);
-    while (cache.size() < 512)
-    {
-        get(QString::number(cache.size()));
-    }
-    check(cache.contains(onScreen), "the oldest entry is present before the eviction");
+    const QRectF uv = cache.atlasEntry(QChar('A'), false, font, 3.0, halo, text, 1.0);
+    check(!uv.isNull(), "the character packed");
 
-    // The viewport is still showing it, so it is asked for again -- which is
-    // exactly what a stationary map does every frame.
-    get(onScreen);
+    const map_widget::LabelCache::Glyph& glyph =
+        cache.glyphFor(QChar('A'), font, 3.0, halo, text, 1.0);
+    const QImage& page = cache.atlas().page();
+    const QRect region(int(std::lround(uv.x() * page.width())),
+                       int(std::lround(uv.y() * page.height())),
+                       glyph.fill.width(), glyph.fill.height());
+    const QImage packed = page.copy(region);
 
-    // One more name arrives, so something has to go.
-    get(QStringLiteral("a name that has not been seen before"));
-
-    check(cache.contains(onScreen),
-          "the label the viewport is still asking for survived; a FIFO would have dropped it");
+    check(packed.size() == glyph.fill.size(), "the region is the glyph's size");
+    // Converted to one format before comparing: the page is premultiplied and
+    // the glyph image carries a device pixel ratio, and QImage::operator==
+    // takes both into account.
+    check(packed.convertToFormat(QImage::Format_ARGB32) ==
+              glyph.fill.convertToFormat(QImage::Format_ARGB32),
+          "and holds exactly the pixels QPainter rasterised");
 }
 
+// A style change has to empty the atlas with the glyph images it holds. Left
+// alone it would draw the new frame's text out of the old style's page, which
+// is precisely the "the style change did not apply" symptom the cache key
+// exists to prevent.
+void test_a_style_change_empties_the_atlas()
+{
+    map_widget::LabelCache cache;
+    const QFont font("Arial", 12);
+
+    cache.atlasEntry(QChar('M'), false, font, 3.0, QColor(Qt::black), QColor(Qt::white), 1.0);
+    check(cache.atlas().glyphs() == 1, "one character packed");
+
+    cache.atlasEntry(QChar('M'), false, font, 3.0, QColor(Qt::black), QColor(Qt::red), 1.0);
+    check(cache.atlas().glyphs() == 1,
+          "a colour change re-packs rather than reusing, got " +
+              std::to_string(cache.atlas().glyphs()));
+}
 
 // ============================================================================
 // Road labels
@@ -506,21 +553,57 @@ struct Painted
     QImage canvas;
 };
 
+// Lay the frame's text out and draw the quads it produced, in software.
+//
+// The widget hands these quads to the GPU; here they are rasterised with
+// QPainter instead, which is what lets a test say "the name landed HERE, this
+// way up" without a GPU in the loop. It is also an independent check on the
+// geometry: if a quad's corners or its atlas rect were wrong, the GPU would
+// draw exactly the same wrong thing and no screenshot would say so.
 Painted paintOnto(const std::vector<map_widget::LabelTile>& tiles, const MapStyle_t& style,
                   double zoom = 14.0, double bearing = 0.0)
 {
-    // A QImage painter: no window, no GPU, and exactly the raster engine the
-    // real label pass runs on.
     Painted out;
     out.canvas = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     out.canvas.fill(Qt::transparent);
-    QPainter painter(&out.canvas);
 
     const map_widget::Camera camera { { 33.6865966, -117.8557874 }, zoom, bearing };
     const map_widget::Projection projection(camera, 800, 600, 1.0);
 
     map_widget::LabelCache cache;
-    out.stats = map_widget::paintLabels(painter, projection, tiles, style, cache);
+    std::vector<map_widget::TextQuad> quads;
+    out.stats = map_widget::layOutText(projection, tiles, style, cache, 1.0, quads);
+
+    const QImage& page = cache.atlas().page();
+    if (page.isNull())
+    {
+        return out;
+    }
+
+    QPainter painter(&out.canvas);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    for (const map_widget::TextQuad& quad : quads)
+    {
+        // The atlas rect is in texture coordinates; the page is what they are
+        // a fraction of.
+        const QRectF src(quad.uv.x() * page.width(), quad.uv.y() * page.height(),
+                         quad.uv.width() * page.width(), quad.uv.height() * page.height());
+        QPolygonF from;
+        from << src.topLeft() << src.topRight() << src.bottomRight() << src.bottomLeft();
+        QPolygonF to;
+        to << quad.corners[0] << quad.corners[1] << quad.corners[2] << quad.corners[3];
+
+        QTransform place;
+        if (!QTransform::quadToQuad(from, to, place))
+        {
+            continue;
+        }
+        painter.save();
+        painter.setTransform(place);
+        painter.drawImage(src.topLeft(), page, src);
+        painter.restore();
+    }
     return out;
 }
 
@@ -2134,119 +2217,48 @@ void test_a_failed_map_heals_itself_without_a_position_stream()
           "the timer repaints on its own and the paint asks again");
 }
 
-void test_a_large_label_is_not_clipped_by_its_image()
+void test_a_large_glyph_is_not_clipped_by_its_image()
 {
-    // The cached image is sized from the text's bounding box plus halo
-    // padding, and the glyphs are drawn by mapping that box onto (pad, pad).
+    // Each glyph image is sized from the character's bounding box plus halo
+    // padding, and the outline is drawn by mapping that box onto (pad, pad).
     // The padding exists so the halo and its antialiasing fade out INSIDE the
     // image; if a placement term is dropped -- the left bearing was, once --
-    // the ink drifts toward an edge, and the first symptom is a label that
-    // looks shaved on one side. Descenders and an accent probe all four
-    // edges, at a size where every error is pixels rather than fractions.
+    // the ink drifts toward an edge, and the first symptom is text that looks
+    // shaved on one side. Now that every character is packed into an atlas,
+    // clipped ink would be baked into the page and drawn that way forever.
+    //
+    // A descender and an accent probe all four edges, at a size where every
+    // error is pixels rather than fractions.
     QFont font;
     font.setPointSizeF(30.0);
-    const QString label = QStringLiteral("\u00C1gjy");
 
     map_widget::LabelCache cache;
-    const map_widget::LabelCache::Entry& entry =
-        cache.entryFor(label, font, 3.0, QColor("#101216"), QColor("#e8eaed"), 1.0);
-
-    const QImage& image = entry.image;
-    check(!image.isNull(), "a large label renders");
-
-    // No ink may touch the outermost row or column on any side: the padding
-    // exists so the halo and its antialiasing fade out INSIDE the image.
-    bool edgeTouched = false;
-    for (int x = 0; x < image.width(); ++x)
+    for (const QChar ch : QStringLiteral("\u00C1gjy"))
     {
-        edgeTouched |= qAlpha(image.pixel(x, 0)) != 0;
-        edgeTouched |= qAlpha(image.pixel(x, image.height() - 1)) != 0;
-    }
-    for (int y = 0; y < image.height(); ++y)
-    {
-        edgeTouched |= qAlpha(image.pixel(0, y)) != 0;
-        edgeTouched |= qAlpha(image.pixel(image.width() - 1, y)) != 0;
-    }
-    check(!edgeTouched, "no ink or halo reaches the image edge at 30 pt");
-}
+        const map_widget::LabelCache::Glyph& glyph =
+            cache.glyphFor(ch, font, 3.0, QColor(Qt::black), QColor(Qt::white), 1.0);
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const QImage& image = pass == 0 ? glyph.halo : glyph.fill;
+            check(!image.isNull(), "the character rasterised");
+            const std::string what =
+                std::string(pass == 0 ? "halo" : "fill") + " of '" + std::string(1, ch.toLatin1());
 
-void test_a_cached_label_is_pixel_identical_to_drawing_it_directly()
-{
-    // The label pass blits a pre-rendered image instead of stroking and
-    // filling the glyph outlines every frame -- 0.88 ms per label down to
-    // 0.014 ms. That is only a legitimate trade if the pixels are the same,
-    // and "the halo looks a bit different" is not something a screenshot
-    // review reliably catches.
-    QFont font;
-    font.setPointSizeF(12.0);
-    const QColor halo("#101216");
-    const QColor text("#e8eaed");
-    constexpr double kHaloWidth = 3.0;
-    const QString label = QStringLiteral("Santa Ana");
-
-    const QFontMetricsF metrics(font);
-    const QRectF bounds = metrics.boundingRect(label);
-
-    // Somewhere with room for the halo on every side.
-    const QPointF at(20.0, 20.0);
-    const QSize canvasSize(static_cast<int>(std::ceil(bounds.width())) + 60,
-                           static_cast<int>(std::ceil(bounds.height())) + 60);
-
-    // What the code used to do, inline.
-    QImage direct(canvasSize, QImage::Format_ARGB32_Premultiplied);
-    direct.fill(Qt::transparent);
-    {
-        QPainter painter(&direct);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::TextAntialiasing, true);
-
-        QPainterPath glyphs;
-        // `at` is the ink box's top left, exactly as paintLabels() places it:
-        // the box the collision pass claims is metrics.boundingRect(), so the
-        // ink must land inside that box, not hang below it from the baseline.
-        glyphs.addText(at.x() - bounds.x(), at.y() - bounds.y(), font, label);
-
-        QPen pen(halo);
-        pen.setWidthF(kHaloWidth);
-        pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pen);
-        painter.setBrush(Qt::NoBrush);
-        painter.drawPath(glyphs);
-
-        painter.setPen(Qt::NoPen);
-        painter.fillPath(glyphs, text);
-    }
-
-    // What it does now.
-    QImage blitted(canvasSize, QImage::Format_ARGB32_Premultiplied);
-    blitted.fill(Qt::transparent);
-    {
-        map_widget::LabelCache cache;
-        QPainter painter(&blitted);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::TextAntialiasing, true);
-
-        const map_widget::LabelCache::Entry& entry =
-            cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
-        painter.drawImage(at + entry.offset, entry.image);
-
-        check(cache.size() == 1, "one render is cached");
-        // A second ask must not re-render, and must land in the same place.
-        const map_widget::LabelCache::Entry& again =
-            cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
-        check(&again == &entry, "and the second ask reuses it");
-        check(again.bounds == entry.bounds, "with the same bounds for placement");
-    }
-
-    check(direct == blitted,
-          "a blitted label is pixel-identical to stroking and filling it inline");
-
-    // A style change must not serve stale pixels.
-    {
-        map_widget::LabelCache cache;
-        cache.entryFor(label, font, kHaloWidth, halo, text, 1.0);
-        cache.entryFor(label, font, kHaloWidth, halo, QColor("#ff0000"), 1.0);
-        check(cache.size() == 1, "changing a colour empties the cache rather than reusing it");
+            // Every edge row and column must be empty: ink touching one means
+            // the glyph was drawn too close to the boundary and has been cut.
+            bool edgeInk = false;
+            for (int x = 0; x < image.width(); ++x)
+            {
+                edgeInk = edgeInk || qAlpha(image.pixel(x, 0)) != 0 ||
+                          qAlpha(image.pixel(x, image.height() - 1)) != 0;
+            }
+            for (int y = 0; y < image.height(); ++y)
+            {
+                edgeInk = edgeInk || qAlpha(image.pixel(0, y)) != 0 ||
+                          qAlpha(image.pixel(image.width() - 1, y)) != 0;
+            }
+            check(!edgeInk, what + "' fades out inside its image rather than at the edge");
+        }
     }
 }
 
@@ -2277,8 +2289,9 @@ int main(int argc, char** argv)
     test_a_place_without_rank_falls_back_to_its_class();
     test_a_track_ranks_between_a_town_and_a_city();
     test_a_longer_circuit_outranks_a_shorter_one();
-    test_the_label_cache_evicts_rather_than_clearing();
-    test_the_label_cache_evicts_the_least_recently_used();
+    test_the_atlas_packs_each_glyph_once();
+    test_a_packed_glyph_is_pixel_identical_to_the_one_rasterised();
+    test_a_style_change_empties_the_atlas();
 
     test_a_road_name_is_placed();
     test_the_label_anchor_turns_with_the_map();
@@ -2323,8 +2336,7 @@ int main(int argc, char** argv)
     test_highlight_way_ids_come_out_of_a_horizon();
     test_deferred_counts_only_tiles_that_would_have_been_asked();
     test_a_failed_map_heals_itself_without_a_position_stream();
-    test_a_large_label_is_not_clipped_by_its_image();
-    test_a_cached_label_is_pixel_identical_to_drawing_it_directly();
+    test_a_large_glyph_is_not_clipped_by_its_image();
 
     spdlog::set_level(spdlog::level::info);
 

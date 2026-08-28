@@ -52,6 +52,7 @@
 #include "map/projection.h"
 #include "map/style.h"
 #include "map/tessellator.h"
+#include "map/text_quad.h"
 
 class QOffscreenSurface;
 class QRhi;
@@ -61,6 +62,7 @@ class QRhiRenderPassDescriptor;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QRhiTextureRenderTarget;
+class QRhiSampler;
 
 namespace map_widget
 {
@@ -153,6 +155,19 @@ class GpuRenderer
     {
         return render(projection, batches, style, background, Highlight {});
     }
+
+    // The frame's text, as quads into `atlasPage`.
+    //
+    // Drawn last and inside the SAME pass as the tiles, so it lands over every
+    // one of them without a second pass having to clear or reload the target.
+    // The page is re-uploaded only when `atlasDirty` -- a glyph set is an
+    // alphabet, so that settles within the first frames of a drive and then
+    // never fires again.
+    //
+    // Text is part of the frame's identity: two frames with the same camera
+    // and the same tiles but different labels are different pictures, so the
+    // quads are compared by the memo like everything else.
+    void setText(std::vector<TextQuad> quads, const QImage& atlasPage, bool atlasDirty);
 
     struct Stats
     {
@@ -297,6 +312,12 @@ class GpuRenderer
         // not addresses -- see TileGeometry::serial.
         std::vector<TileId> ids;
         std::vector<std::uint64_t> serials;
+        // The frame's text. Labels move with the camera and appear and vanish
+        // with collision, so two frames can agree on every tile and still be
+        // different pictures. Compared rather than hashed: a viewport holds a
+        // few hundred quads, and an exact compare is both cheaper than it
+        // looks and impossible to get subtly wrong.
+        std::vector<TextQuad> text;
         // Quantised fades -- see quantizeAlpha(). A fading tile makes every
         // frame a fresh picture; when the last fade settles at 255 the key
         // stabilises and the memo takes over again.
@@ -317,6 +338,20 @@ class GpuRenderer
 
     // Scratch reused across frames -- cleared or overwritten each render,
     // capacity kept, so a steady repaint allocates nothing here.
+    // The text pass. One pipeline, one atlas page, one dynamic vertex buffer
+    // rewritten every frame -- the quads move with the camera, so there is nothing
+    // to cache between frames the way tile geometry is cached.
+    std::unique_ptr<QRhiGraphicsPipeline> mGlyphPipeline;
+    std::unique_ptr<QRhiShaderResourceBindings> mGlyphSrb;
+    std::unique_ptr<QRhiBuffer> mGlyphVertexBuffer;
+    std::unique_ptr<QRhiBuffer> mGlyphUniform;
+    std::unique_ptr<QRhiTexture> mGlyphTexture;
+    std::unique_ptr<QRhiSampler> mGlyphSampler;
+    std::vector<float> mGlyphScratch;
+    std::vector<TextQuad> mTextQuads;
+    QImage mAtlasPage;
+    bool mAtlasDirty { false };
+
     std::vector<MapVertex> mFlatScratch;
     std::vector<std::uint32_t> mFlatIndexScratch;
     std::vector<char> mUniformScratch;

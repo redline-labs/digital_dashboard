@@ -37,6 +37,7 @@
 #include "map/label_candidates.h"
 
 #include "map/projection.h"
+#include "map/text_quad.h"
 #include "map/style.h"
 
 class QPainter;
@@ -126,32 +127,14 @@ struct LabelStats
 class LabelCache
 {
   public:
-    struct Entry
-    {
-        // Text and halo, on transparency, padded so the halo is not clipped.
-        QImage image;
-        // The UNPADDED text rect. Placement and collision use this, so adding
-        // padding for the halo does not make labels claim more space than they
-        // did.
-        QRectF bounds;
-        // Where to blit, relative to the placement box's top left.
-        QPointF offset;
-    };
-
     // One character, rendered twice: the halo and the fill, as separate
     // images.
     //
-    // TWO images and not one, which is the whole trap in drawing curved text
-    // this way. A road label is a row of individually rotated glyphs, blitted
-    // one after another. If each were a finished halo-plus-text sprite, the
-    // next glyph's opaque halo would paint over the previous glyph's TEXT
-    // wherever the two overlap -- which is everywhere they kern tightly -- and
-    // the word comes out gnawed. So every halo is laid down first, then every
-    // fill on top.
-    //
-    // Point labels do not need this and do not pay for it: they are horizontal
-    // and keep the whole-string entry above, which is one blit and stays
-    // pixel-snapped.
+    // TWO images and not one. Each is packed into the atlas as its own entry,
+    // and every halo in a label is drawn before any of its fills -- if a
+    // character's halo landed after its neighbour's fill it would paint over
+    // it, which is the gnawed-looking text the CPU path had to lay down in two
+    // passes to avoid.
     struct Glyph
     {
         QImage halo;
@@ -160,16 +143,61 @@ class LabelCache
         // those two images, measured from their top left.
         QPointF pen;
         // How far the pen moves for this character. Layout advances only, with
-        // no kerning: a curved label positions each glyph on its own piece of
+        // no kerning: a label positions each character on its own piece of
         // road, so there is no pair for a kerning table to be about.
         double advance { 0.0 };
     };
 
-    // The glyph tier. Keyed on the SAME font/halo/colour/ratio key as the
-    // string tier and cleared with it, so a style change cannot leave half the
-    // alphabet in the old colours.
+    // The page every glyph is packed into, and where each one landed.
     //
-    // Far more reusable than the string tier it sits beside: a drive through a
+    // It lives here, beside the rasteriser that fills it, rather than in the
+    // renderer that samples it: the atlas holds what QPainter drew, so the
+    // text on screen is the SAME text it always was. That is what makes this a
+    // transport change rather than a second text renderer -- there is still no
+    // font pipeline, no glyph PBFs, and no way for the map to come up with no
+    // labels and nothing saying why.
+    class Atlas
+    {
+      public:
+        // Where `image` sits in the page, packing it on first sight. A null
+        // rect means the page is full.
+        QRectF add(const QImage& image);
+        const QImage& page() const { return mPage; }
+        // True once anything has been packed since the last upload.
+        bool dirty() const { return mDirty; }
+        void markClean() { mDirty = false; }
+        std::size_t glyphs() const { return mUsed; }
+        void clear();
+
+      private:
+        // One page, never grown. 1024x1024 holds an alphabet many times over
+        // at dashboard sizes, and a second page would mean a second draw call
+        // and a texture switch for something no map has been observed to need.
+        static constexpr int kSide = 1024;
+        QImage mPage;
+        // Shelf packing: a row at a time, left to right, a new row when the
+        // current one will not take the next glyph. Glyphs are all much of a
+        // height, so a rectangle packer would recover very little.
+        int mShelfY { 0 };
+        int mShelfX { 0 };
+        int mShelfHeight { 0 };
+        std::size_t mUsed { 0 };
+        bool mDirty { false };
+    };
+
+    Atlas& atlas() { return mAtlas; }
+
+    // Where this character sits in the atlas, packing it if it is new. One
+    // entry per (character, halo-or-fill).
+    QRectF atlasEntry(QChar ch, bool halo, const QFont& font, double haloWidth,
+                      const QColor& haloColour, const QColor& textColour,
+                      double devicePixelRatio);
+
+    // The glyph tier. Keyed on the same font/halo/colour/ratio key the atlas
+    // is cleared with, so a style change cannot leave half the alphabet in the
+    // old colours.
+    //
+    // Far more reusable than a whole-string cache would be: a drive past a
     // thousand street names still only ever touches an alphabet.
     const Glyph& glyphFor(QChar ch, const QFont& font, double haloWidth,
                           const QColor& haloColour, const QColor& textColour,
@@ -177,7 +205,7 @@ class LabelCache
 
     // How far the pen moves for one character, WITHOUT rendering it.
     //
-    // The same split as measure() against entryFor(), and load-bearing for the
+    // The same split as measure() against the atlas, and load-bearing for the
     // same reason. Laying a name along a road needs an advance per character
     // for every candidate on screen -- hundreds of them -- while only the two
     // dozen that survive collision ever need pixels. Rendering the alphabet in
@@ -192,11 +220,6 @@ class LabelCache
     // rehash and an eviction may remove, and either can move what is already
     // held -- so use the entry and let go of it, which is what the paint loop
     // does.
-    const Entry& entryFor(const QString& text, const QFont& font, double haloWidth,
-                          const QColor& haloColour, const QColor& textColour,
-                          double devicePixelRatio);
-
-    std::size_t size() const { return static_cast<std::size_t>(mEntries.size()); }
     // The text's bounding box, WITHOUT rendering it.
     //
     // Placement needs a size for every candidate, but only the handful that
@@ -209,15 +232,8 @@ class LabelCache
     // terms, and it keeps the cost flat as the candidate list grows.
     const QRectF& measure(const QString& text, const QFont& font);
 
-    // Whether a rendered label for `text` is in hand. Exposed so that eviction
-    // policy is testable: "still cached after 600 other names went past" is the
-    // only observable difference between dropping the oldest and dropping the
-    // one the viewport is still showing.
-    bool contains(const QString& text) const { return mEntries.contains(text); }
     void clear()
     {
-        mEntries.clear();
-        mOrder.clear();
         mMeasured.clear();
         mGlyphs.clear();
     }
@@ -228,11 +244,6 @@ class LabelCache
     std::size_t glyphCount() const { return static_cast<std::size_t>(mGlyphs.size()); }
 
   private:
-    // Move `text` to the most-recently-used end. Called on every hit, so that
-    // eviction drops a label that has left the screen rather than one the
-    // viewport is still showing.
-    void touch(const QString& text);
-
     // Everything baked into a rendered image. Compared by value, and
     // deliberately NOT via QFont::key(): that builds and formats a QString,
     // and this is checked once per CHARACTER of every candidate on screen --
@@ -257,8 +268,10 @@ class LabelCache
     void refont(const QFont& font);
 
     StyleKey mKey;
-    QHash<QString, Entry> mEntries;
     QHash<char32_t, Glyph> mGlyphs;
+    Atlas mAtlas;
+    // Atlas placements, keyed by character and by which of its two images.
+    QHash<std::uint32_t, QRectF> mAtlasEntries;
     // Measurements, keyed by text within the current font. Far cheaper to hold
     // than rendered images, and needed for every candidate rather than every
     // placed label.
@@ -267,14 +280,23 @@ class LabelCache
     QHash<QString, QRectF> mMeasured;
     // Advances, within the same font key as mMeasured and cleared with it.
     QHash<char32_t, double> mAdvances;
-    // Least recently used first. Parallel to mEntries and holding the same
-    // keys; the two are only ever changed together.
-    QList<QString> mOrder;
 };
 
-LabelStats paintLabels(QPainter& painter, const Projection& projection,
-                       const std::vector<LabelTile>& tiles, const MapStyle_t& style,
-                       LabelCache& cache);
+// Place the frame's labels and hand them back as textured quads.
+//
+// Nothing is drawn here. Placement and collision stay on the CPU -- which
+// labels survive depends on what else is already on screen, across tiles, so
+// it cannot be baked per tile and cannot sensibly move to the GPU -- but the
+// drawing does not: it was 95% of this pass (2.33 ms of 2.45 ms, measured),
+// and as quads it is one draw call and about 0.07 ms.
+//
+// Every character is placed individually, including the ones in a dead
+// straight name. The old code had a shortcut that drew a straight label as one
+// blit; it existed only because a rotated CPU blit costs ~4 us, and on the GPU
+// it buys nothing.
+LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>& tiles,
+                      const MapStyle_t& style, LabelCache& cache, double devicePixelRatio,
+                      std::vector<TextQuad>& out);
 
 } // namespace map_widget
 

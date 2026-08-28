@@ -80,16 +80,6 @@ constexpr double kShortestWorthNaming = 24.0;
 
 } // namespace
 
-void LabelCache::touch(const QString& text)
-{
-    const auto at = std::find(mOrder.begin(), mOrder.end(), text);
-    if (at != mOrder.end())
-    {
-        mOrder.erase(at);
-    }
-    mOrder.append(text);
-}
-
 double LabelCache::advanceFor(QChar ch, const QFont& font)
 {
     refont(font);
@@ -148,8 +138,6 @@ void LabelCache::rekey(const StyleKey& key)
         return;
     }
     mKey = key;
-    mEntries.clear();
-    mOrder.clear();
     mGlyphs.clear();
 }
 
@@ -163,6 +151,89 @@ void LabelCache::refont(const QFont& font)
     mHaveMeasureFont = true;
     mMeasured.clear();
     mAdvances.clear();
+}
+
+void LabelCache::Atlas::clear()
+{
+    mPage = QImage();
+    mShelfX = 0;
+    mShelfY = 0;
+    mShelfHeight = 0;
+    mUsed = 0;
+    mDirty = false;
+}
+
+QRectF LabelCache::Atlas::add(const QImage& image)
+{
+    if (image.isNull())
+    {
+        return {};
+    }
+    if (mPage.isNull())
+    {
+        mPage = QImage(kSide, kSide, QImage::Format_RGBA8888_Premultiplied);
+        mPage.fill(Qt::transparent);
+    }
+
+    // A pixel of gutter around every glyph. Without it a rotated quad's
+    // bilinear sample reaches past its own edge and picks up whatever was
+    // packed beside it -- a faint fringe that is invisible until the map turns
+    // and then follows the text around.
+    constexpr int kGutter = 1;
+    const int w = image.width() + (2 * kGutter);
+    const int h = image.height() + (2 * kGutter);
+    if (w > kSide || h > kSide)
+    {
+        return {};
+    }
+    if (mShelfX + w > kSide)
+    {
+        mShelfY += mShelfHeight;
+        mShelfX = 0;
+        mShelfHeight = 0;
+    }
+    if (mShelfY + h > kSide)
+    {
+        // Full. The caller drops the glyph rather than drawing a wrong one;
+        // see atlasEntry().
+        return {};
+    }
+
+    QPainter into(&mPage);
+    into.setCompositionMode(QPainter::CompositionMode_Source);
+    into.drawImage(QPoint(mShelfX + kGutter, mShelfY + kGutter), image);
+    into.end();
+
+    const QRectF uv(double(mShelfX + kGutter) / kSide, double(mShelfY + kGutter) / kSide,
+                    double(image.width()) / kSide, double(image.height()) / kSide);
+    mShelfX += w;
+    mShelfHeight = std::max(mShelfHeight, h);
+    ++mUsed;
+    mDirty = true;
+    return uv;
+}
+
+QRectF LabelCache::atlasEntry(QChar ch, bool halo, const QFont& font, double haloWidth,
+                              const QColor& haloColour, const QColor& textColour,
+                              double devicePixelRatio)
+{
+    // glyphFor() re-keys both tiers on a style change, which empties
+    // mAtlasEntries with them -- so a lookup here can never return a placement
+    // into a page that has since been cleared.
+    const Glyph& glyph =
+        glyphFor(ch, font, haloWidth, haloColour, textColour, devicePixelRatio);
+    const QImage& image = halo ? glyph.halo : glyph.fill;
+    if (image.isNull())
+    {
+        return {};
+    }
+
+    const std::uint32_t key = (std::uint32_t(ch.unicode()) << 1) | (halo ? 1u : 0u);
+    if (const auto found = mAtlasEntries.constFind(key); found != mAtlasEntries.constEnd())
+    {
+        return *found;
+    }
+    return *mAtlasEntries.insert(key, mAtlas.add(image));
 }
 
 const LabelCache::Glyph& LabelCache::glyphFor(QChar ch, const QFont& font, double haloWidth,
@@ -239,98 +310,6 @@ const LabelCache::Glyph& LabelCache::glyphFor(QChar ch, const QFont& font, doubl
     return *mGlyphs.insert(key, std::move(glyph));
 }
 
-const LabelCache::Entry& LabelCache::entryFor(const QString& text, const QFont& font,
-                                              double haloWidth, const QColor& haloColour,
-                                              const QColor& textColour, double devicePixelRatio)
-{
-    rekey(StyleKey { font, haloWidth, haloColour.rgba(), textColour.rgba(), devicePixelRatio });
-
-    if (const auto found = mEntries.constFind(text); found != mEntries.constEnd())
-    {
-        touch(text);
-        return *found;
-    }
-
-    // A long drive through many named places would otherwise grow this without
-    // bound.
-    //
-    // EVICTED ONE AT A TIME, least recently used first, rather than cleared.
-    // Clearing is a cliff: a label costs 0.88 ms to render, so a viewport
-    // holding forty of them pays about 35 ms -- two dropped frames -- in the
-    // single frame that crosses the threshold, and it pays it again on any
-    // frame that crosses back. Evicting the oldest costs one render for one
-    // label that had left the screen anyway.
-    //
-    // The list scan is O(n) in 512 entries and runs a few dozen times a frame.
-    // That is thousands of pointer comparisons against a 0.88 ms render, so
-    // the bookkeeping an O(1) LRU would need buys nothing measurable.
-    constexpr int kMaxEntries = 512;
-    while (mEntries.size() >= kMaxEntries && !mOrder.isEmpty())
-    {
-        mEntries.remove(mOrder.takeFirst());
-    }
-    mOrder.append(text);
-
-    const QFontMetricsF metrics(font);
-
-    Entry entry;
-    entry.bounds = metrics.boundingRect(text);
-
-    // Room for the halo, which straddles the outline, plus a pixel for the
-    // antialiasing to fade into. Without it the stroke is clipped at the edges
-    // and the label looks bitten.
-    //
-    // A WHOLE number of pixels, because the blit position is rounded to whole
-    // pixels too -- see below. A fractional offset would make Qt resample the
-    // image and the text would come out soft.
-    const double pad = std::ceil(haloWidth / 2.0) + 2.0;
-    entry.offset = QPointF(-pad, -pad);
-
-    const double width = entry.bounds.width() + (2.0 * pad);
-    const double height = entry.bounds.height() + (2.0 * pad);
-    const double ratio = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
-
-    entry.image = QImage(QSize(static_cast<int>(std::ceil(width * ratio)),
-                               static_cast<int>(std::ceil(height * ratio))),
-                         QImage::Format_ARGB32_Premultiplied);
-    entry.image.setDevicePixelRatio(ratio);
-    entry.image.fill(Qt::transparent);
-
-    QPainter into(&entry.image);
-    into.setRenderHint(QPainter::Antialiasing, true);
-    into.setRenderHint(QPainter::TextAntialiasing, true);
-
-    // Place the BOUNDING BOX, not the baseline, at (pad, pad) -- the image was
-    // sized from that box, and it is the box paintLabels() centres and
-    // collides. In practice boundingRect()'s y() is exactly -ascent(), so the
-    // vertical term equals the ascent anchoring an earlier version used; its
-    // x() is the left bearing, up to a pixel and a half, which that version
-    // dropped -- every label sat a hair left of the box it had claimed.
-    // Written as the box-to-box mapping rather than baseline arithmetic so it
-    // stays right even where a glyph overshoots the font's metrics.
-    QPainterPath glyphs;
-    glyphs.addText(pad - entry.bounds.x(), pad - entry.bounds.y(), font, text);
-
-    // Halo by stroking the glyph outlines rather than drawing the text several
-    // times at offsets: one path, one stroke, and the halo is even on every
-    // side. The offset trick leaves the corners thin.
-    if (haloWidth > 0.0)
-    {
-        QPen halo(haloColour);
-        halo.setWidthF(haloWidth);
-        halo.setJoinStyle(Qt::RoundJoin);
-        into.setPen(halo);
-        into.setBrush(Qt::NoBrush);
-        into.drawPath(glyphs);
-    }
-
-    into.setPen(Qt::NoPen);
-    into.fillPath(glyphs, textColour);
-    into.end();
-
-    return *mEntries.insert(text, std::move(entry));
-}
-
 // ---------------------------------------------------------------- curved text
 
 // How far the text may turn, in total, within one window of its own length.
@@ -361,18 +340,20 @@ constexpr int kGlyphsPerCollisionBox = 4;
 // How far a character may sit off the straight line through the label's two
 // ends before the label counts as curved, in pixels.
 //
-// The question this answers is "would drawing this name as one straight image
-// look different?", so it is asked in PIXELS and not in degrees. An angle
-// threshold gets it wrong in both directions: half a degree of bend is
-// invisible on a short name and obvious on a long one, and real roads wander
-// by a fraction of a degree constantly without ever looking bent.
+// This decides the SHAPE OF THE COLLISION FOOTPRINT, and nothing else. A
+// straight name claims one rectangle turned the way the name is; a curved one
+// claims a chain of axis-aligned hulls, a few characters to a box, because the
+// axis-aligned hull of a whole curved word is mostly empty space and would
+// evict neighbours it never touched.
 //
-// It matters a great deal which side of this a label falls. A straight label
-// is one blit of a cached image; a curved one is a rotated blit per character,
-// twice over for the halo, and a rotated blit measured about 7 us. Asked in
-// degrees at half a degree, two thirds of the road labels in Irvine -- a grid
-// city of straight streets -- came out "curved" and the label pass cost 3.4 ms
-// a frame. Asked in pixels, almost none of them do.
+// It used to decide far more: with text on the CPU, a straight label was one
+// blit and a curved one was a rotated blit per character at ~4 us each, so
+// which side of this a label fell on was worth roughly fifteen-fold. On the
+// GPU every character is a quad either way and that difference is gone.
+//
+// Asked in PIXELS rather than degrees because the question is "would one
+// rectangle describe where this text actually is?" -- and half a degree of
+// bend is invisible on a short name and obvious on a long one.
 constexpr double kStraightEnoughPx = 0.75;
 
 // A ceiling on how many times one run may repeat its name.
@@ -723,61 +704,67 @@ void collisionBoxesFor(const std::vector<PlacedGlyph>& glyphs, double height,
     }
 }
 
-// Blit a placed label: every halo, then every fill.
+// Turn a placed label into quads: every halo first, then every fill.
 //
-// The two passes are not an optimisation and cannot be merged. See
-// LabelCache::Glyph -- one pass would let each character's halo paint over the
-// previous character's text.
-void drawPlacedGlyphs(QPainter& painter, const std::vector<PlacedGlyph>& glyphs,
-                      LabelCache& cache, const QFont& font, double haloWidth,
-                      const QColor& haloColour, const QColor& textColour, double ratio,
-                      double baselineShift, std::vector<const LabelCache::Glyph*>& scratch)
+// The two passes are not an optimisation and cannot be merged. Each character
+// is packed with its halo and its fill as separate atlas entries, and if a
+// character's halo were drawn after its neighbour's fill it would paint over
+// it -- the same gnawed-looking text the CPU path had to lay down in two
+// passes to avoid.
+void emitQuads(const std::vector<PlacedGlyph>& glyphs, LabelCache& cache, const QFont& font,
+               double haloWidth, const QColor& haloColour, const QColor& textColour,
+               double ratio, double baselineShift, std::vector<TextQuad>& out)
 {
-    // Looked up once and held, rather than once per pass: the lookup builds a
-    // style key and the two passes want the same entries.
-    scratch.clear();
-    scratch.reserve(glyphs.size());
-    for (const PlacedGlyph& placed : glyphs)
-    {
-        scratch.push_back(
-            &cache.glyphFor(placed.ch, font, haloWidth, haloColour, textColour, ratio));
-    }
-
     for (int pass = 0; pass < 2; ++pass)
     {
-        for (std::size_t i = 0; i < glyphs.size(); ++i)
+        const bool halo = pass == 0;
+        for (const PlacedGlyph& placed : glyphs)
         {
-            const LabelCache::Glyph& glyph = *scratch[i];
-            const QImage& image = pass == 0 ? glyph.halo : glyph.fill;
-            if (image.isNull())
+            const QRectF uv = cache.atlasEntry(placed.ch, halo, font, haloWidth, haloColour,
+                                               textColour, ratio);
+            if (uv.isNull())
             {
+                // No ink (a space), or the page is full. Either way there is
+                // nothing to draw and nothing to say about it.
                 continue;
             }
+            const LabelCache::Glyph& glyph =
+                cache.glyphFor(placed.ch, font, haloWidth, haloColour, textColour, ratio);
+            const QImage& image = halo ? glyph.halo : glyph.fill;
 
-            // setWorldTransform rather than save/translate/rotate/restore:
-            // QPainter::save copies the entire painter state -- pen, brush,
-            // clip, every render hint -- and a curved name does this once per
-            // character per pass. Setting the matrix outright touches one
-            // field.
+            // From the centre of the character's advance on the text's centre
+            // line, back to where the pen belongs: half an advance left, and
+            // down by however far the baseline sits below that centre line.
             QTransform place;
-            place.translate(glyphs[i].at.x(), glyphs[i].at.y());
-            place.rotateRadians(glyphs[i].angle);
-            // From the centre of the advance on the text's centre line, back
-            // to where the pen belongs: half an advance left, and down by
-            // however far the baseline sits below that centre line.
-            place.translate(-glyphs[i].advance / 2.0, baselineShift);
-            painter.setWorldTransform(place);
-            painter.drawImage(QPointF(-glyph.pen.x(), -glyph.pen.y()), image);
+            place.translate(placed.at.x(), placed.at.y());
+            place.rotateRadians(placed.angle);
+            place.translate(-placed.advance / 2.0, baselineShift);
+
+            // The glyph's own box, in LOGICAL pixels -- its atlas image was
+            // rasterised at the device ratio, so its size in logical pixels is
+            // that divided back out.
+            const QRectF box(-glyph.pen.x(), -glyph.pen.y(), image.width() / ratio,
+                             image.height() / ratio);
+
+            TextQuad quad;
+            // Device pixels, because that is the space the frame is rendered
+            // in. Multiplying after the transform keeps the rotation in
+            // logical space where the placement was computed.
+            quad.corners[0] = place.map(box.topLeft()) * ratio;
+            quad.corners[1] = place.map(box.topRight()) * ratio;
+            quad.corners[2] = place.map(box.bottomRight()) * ratio;
+            quad.corners[3] = place.map(box.bottomLeft()) * ratio;
+            quad.uv = uv;
+            out.push_back(quad);
         }
     }
-
-    painter.setWorldTransform(QTransform());
 }
 
-LabelStats paintLabels(QPainter& painter, const Projection& projection,
-                       const std::vector<LabelTile>& tiles, const MapStyle_t& style,
-                       LabelCache& cache)
+LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>& tiles,
+                      const MapStyle_t& style, LabelCache& cache, double devicePixelRatio,
+                      std::vector<TextQuad>& out)
 {
+    out.clear();
     LabelStats stats;
     if (!style.show_labels)
     {
@@ -842,7 +829,7 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
                 continue;
             }
 
-            Candidate out { candidate.text,          at,
+            Candidate gathered { candidate.text,          at,
                             spanPx,                  candidate.oneLabelPerName,
                             candidate.priority,      candidate.magnitude };
 
@@ -851,8 +838,8 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
             // where it would have to be found again per candidate.
             if (candidate.pathCount >= 2)
             {
-                out.runBegin = std::uint32_t(runs.size());
-                out.runCount = candidate.pathCount;
+                gathered.runBegin = std::uint32_t(runs.size());
+                gathered.runCount = candidate.pathCount;
                 for (std::uint32_t i = 0; i < candidate.pathCount; ++i)
                 {
                     const LocalPoint& point = entry.labels->path[candidate.pathBegin + i];
@@ -860,7 +847,7 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
                 }
             }
 
-            candidates.push_back(std::move(out));
+            candidates.push_back(std::move(gathered));
         }
     }
 
@@ -884,18 +871,16 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
                          return a.spanPx > b.spanPx;
                      });
 
-    QFont font = painter.font();
+    QFont font;
     if (!style.label_font.empty())
     {
         font.setFamily(QString::fromStdString(style.label_font));
     }
     font.setPointSizeF(double(style.label_size));
-    painter.setFont(font);
     const QColor textColour = qt_helpers::toQColor(style.label_text);
     const QColor haloColour = qt_helpers::toQColor(style.label_halo);
 
-    const double ratio =
-        painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0;
+    const double ratio = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
 
     const QFontMetricsF metrics(font);
     // Text is centred ACROSS the road, so the road runs through the middle of
@@ -912,7 +897,9 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
     // What the candidate being tested claims. Reused rather than rebuilt, like
     // everything else on this path.
     std::vector<QRectF> boxes;
-    std::vector<const LabelCache::Glyph*> glyphScratch;
+    // Reused across candidates: a point label's characters are laid out here
+    // before being turned into quads.
+    std::vector<PlacedGlyph> placedScratch;
     std::vector<PlacedLabel> placements;
 
     // Where each name has already been placed.
@@ -1016,16 +1003,22 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
                 namesPlaced[candidate.text].push_back(box.center());
             }
 
-            // Only NOW is it worth pixels.
-            const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
-                                                            style.label_halo_width, haloColour,
-                                                            textColour, ratio);
-
-            // Snapped to whole pixels. Blitting at a fractional position makes
-            // Qt resample, and resampled text is visibly soft; half a pixel of
-            // placement error on a place name is not.
-            const QPointF where = box.topLeft() + entry.offset;
-            painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())), entry.image);
+            // A point label has no line to follow, so its characters are laid
+            // out along the box it just claimed. It stays upright at every
+            // bearing, which is the invariant the whole pass was built on and
+            // the one thing curved road labels did not cost.
+            placedScratch.clear();
+            double pen = box.left();
+            for (const QChar ch : candidate.text)
+            {
+                const double advance = cache.advanceFor(ch, font);
+                placedScratch.push_back(
+                    PlacedGlyph { ch, QPointF(pen + (advance / 2.0), box.center().y()), 0.0,
+                                  advance });
+                pen += advance;
+            }
+            emitQuads(placedScratch, cache, font, style.label_halo_width, haloColour,
+                      textColour, ratio, baselineShift, out);
             ++stats.placed;
             continue;
         }
@@ -1080,42 +1073,12 @@ LabelStats paintLabels(QPainter& painter, const Projection& projection,
                 namesPlaced[candidate.text].push_back(along.centre);
             }
 
-            // Only NOW is it worth pixels.
-            if (!along.uniformAngle.has_value())
-            {
-                drawPlacedGlyphs(painter, along.glyphs, cache, font, style.label_halo_width,
-                                 haloColour, textColour, ratio, baselineShift, glyphScratch);
-                ++stats.placed;
-                continue;
-            }
-
-            const LabelCache::Entry& entry = cache.entryFor(candidate.text, font,
-                                                            style.label_halo_width, haloColour,
-                                                            textColour, ratio);
-
-            // A straight road's name, turned to lie along it: one blit, from
-            // the same cached image a place name uses. A road running dead
-            // flat across the screen takes the snapped path instead, which is
-            // what keeps the commonest case in a grid city exactly as cheap
-            // and as sharp as it was before any of this followed a road.
-            if (std::abs(*along.uniformAngle) > 1e-6)
-            {
-                painter.save();
-                painter.translate(along.centre);
-                painter.rotate(*along.uniformAngle * 180.0 / std::numbers::pi);
-                painter.drawImage(QPointF((-entry.bounds.width() / 2.0) + entry.offset.x(),
-                                          (-entry.bounds.height() / 2.0) + entry.offset.y()),
-                                  entry.image);
-                painter.restore();
-            }
-            else
-            {
-                const QPointF topLeft(along.centre.x() - (entry.bounds.width() / 2.0),
-                                      along.centre.y() - (entry.bounds.height() / 2.0));
-                const QPointF where = topLeft + entry.offset;
-                painter.drawImage(QPointF(std::round(where.x()), std::round(where.y())),
-                                  entry.image);
-            }
+            // Every character, individually. The old path drew a straight
+            // label as one blit and only a bent one glyph by glyph; that
+            // split existed solely because a rotated CPU blit costs about
+            // 4 us, and a quad costs nothing worth splitting for.
+            emitQuads(along.glyphs, cache, font, style.label_halo_width, haloColour,
+                      textColour, ratio, baselineShift, out);
             ++stats.placed;
         }
     }

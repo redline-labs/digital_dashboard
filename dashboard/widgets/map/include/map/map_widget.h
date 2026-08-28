@@ -295,6 +295,9 @@ class MapWidget : public QWidget
     // read only by assembleBatches()/paintEvent on the GUI thread.
     std::vector<map_widget::GpuBatch> mBatches;
     std::vector<map_widget::LabelTile> mLabelTiles;
+    // The frame's text as quads. Reused rather than rebuilt, like every other
+    // per-frame scratch here: the steady repaint allocates nothing.
+    std::vector<map_widget::TextQuad> mTextQuads;
     std::vector<std::vector<map_widget::CachedTile>> mReady;
     std::vector<std::vector<float>> mAlphas;
     std::vector<std::vector<map_widget::TileId>> mStandIns;

@@ -441,7 +441,7 @@ LabelSet extractLabels(const mvt::Tile& tile)
 {
     LabelSet out;
     // All three layers, unconditionally: the show_* toggles and zoom floors
-    // are the CAMERA's business and are applied per frame in paintLabels().
+    // are the CAMERA's business and are applied per frame in layOutText().
     // Extracting everything keeps the worker style-free, so a style edit
     // never needs a re-extract.
     for (const LabelLayerSpec& spec : kLabelLayers)

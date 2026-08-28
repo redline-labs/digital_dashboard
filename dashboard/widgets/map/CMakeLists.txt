@@ -48,10 +48,12 @@ map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map_highlight.vert mapHighli
                 MAP_HIGHLIGHT_VERT_HEADER)
 map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/map_highlight.frag mapHighlightFrag
                 MAP_HIGHLIGHT_FRAG_HEADER)
+map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/glyph.vert glyphVert GLYPH_VERT_HEADER)
+map_bake_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/glyph.frag glyphFrag GLYPH_FRAG_HEADER)
 
 add_custom_target(map_widget_shaders
     DEPENDS ${MAP_VERT_HEADER} ${MAP_FRAG_HEADER} ${MAP_HIGHLIGHT_VERT_HEADER}
-            ${MAP_HIGHLIGHT_FRAG_HEADER})
+            ${MAP_HIGHLIGHT_FRAG_HEADER} ${GLYPH_VERT_HEADER} ${GLYPH_FRAG_HEADER})
 
 # ----------------------------------------------------------------- library
 
@@ -70,6 +72,8 @@ add_library(${MAP_WIDGET_LIB} STATIC
     ${MAP_FRAG_HEADER}
     ${MAP_HIGHLIGHT_VERT_HEADER}
     ${MAP_HIGHLIGHT_FRAG_HEADER}
+    ${GLYPH_VERT_HEADER}
+    ${GLYPH_FRAG_HEADER}
     include/map/config.h
     include/map/gpu_renderer.h
     include/map/label_candidates.h
@@ -145,6 +149,7 @@ target_link_libraries(map_bench
 )
 
 set_target_properties(map_bench PROPERTIES AUTOMOC ON)
+
 
 # ------------------------------------------------------------------- tests
 
