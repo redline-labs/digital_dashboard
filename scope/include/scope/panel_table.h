@@ -24,6 +24,7 @@
 #define SCOPE_PANEL_TABLE(X)        \
     X(time_series, TimeSeriesPanel) \
     X(video, VideoPanel)            \
-    X(table, TablePanel)
+    X(table, TablePanel)            \
+    X(map, MapPanel)
 
 #endif  // SCOPE_PANEL_TABLE_H_

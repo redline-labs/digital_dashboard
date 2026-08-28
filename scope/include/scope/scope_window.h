@@ -265,6 +265,12 @@ class ScopeWindow : public QMainWindow
   private:
     void buildMenuBar();
 
+    // Hand the per-user settings to a panel that wants them, and to every panel
+    // that already exists. See the note at the definition for why this is a
+    // cast rather than a Panel virtual.
+    void applySettingsTo(Panel& panel);
+    void applySettingsToPanels();
+
     // The central area: the offline landing screen and the "no panels yet"
     // hint, which are two different messages and used to be one label.
     //

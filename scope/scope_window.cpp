@@ -9,6 +9,8 @@
 #include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
 #include "scope/settings_dialog.h"
+
+#include "map_panel/map_panel.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -301,6 +303,11 @@ QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, co
     ++next_panel_ordinal_;
 
     panel->setTimeBase(time_base_.get());
+
+    // Before the dock, so a map panel opens its archives once rather than
+    // opening none and reopening them on the next settings change. A panel that
+    // does not care never learns this happened -- see applySettingsToPanels().
+    applySettingsTo(*panel);
 
     auto* dock = new PanelDock(panel->title(), this);
     // MANDATORY. restoreState() silently drops any dock it cannot name, so a
@@ -2007,6 +2014,27 @@ void ScopeWindow::loadSettings(const QString& path)
                 path.toStdString());
 }
 
+void ScopeWindow::applySettingsTo(Panel& panel)
+{
+    // A qobject_cast rather than a Panel virtual, and that is the deliberate
+    // choice: settings are one panel type's concern -- where map archives live
+    // -- and putting them on the interface every panel shares would be the
+    // opposite of what SCOPE_PANEL_TABLE exists for. A second panel that wanted
+    // settings would earn a virtual; one does not.
+    if (auto* map = qobject_cast<MapPanel*>(&panel))
+    {
+        map->setSettings(settings_);
+    }
+}
+
+void ScopeWindow::applySettingsToPanels()
+{
+    for (const PanelEntry& entry : panels_)
+    {
+        applySettingsTo(*entry.panel);
+    }
+}
+
 bool ScopeWindow::setSettings(const scope_settings_t& settings)
 {
     settings_ = settings;
@@ -2019,6 +2047,11 @@ bool ScopeWindow::setSettings(const scope_settings_t& settings)
         SPDLOG_WARN("Settings: {}", note);
         statusBar()->showMessage(QString::fromStdString(note), 8000);
     }
+
+    // Panels opened their archives when they were built, so the answer to
+    // "where is 'socal'" has just changed underneath them. Without this the
+    // dialog appears to do nothing until the workspace is reloaded.
+    applySettingsToPanels();
 
     if (settings_path_.isEmpty())
     {

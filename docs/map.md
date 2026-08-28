@@ -30,6 +30,11 @@ include tree. `dashboard/widgets/map` asks `map_server`; `scope`'s map panel
 reads an `.mbtiles` directly. Neither transport is visible from inside
 `libs/map_render`.
 
+`scope`'s map panel is documented in [docs/scope.md](scope.md): it draws a whole
+retention window as a trail rather than following a live vehicle, puts a marker
+on the shared time cursor, and lets a click on the trail move that cursor. It
+reads its archives with `scope::TileReader` and never opens a session for tiles.
+
 ## Why the renderer is ours
 
 An off-the-shelf Qt map widget was the obvious choice, and one was built, wired

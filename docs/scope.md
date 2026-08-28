@@ -790,6 +790,181 @@ no removable signals"* about a binding that was plainly there.
 kind it is. `scope_test_panels` drives both over **every** entry in
 `availablePanelTypes()`, so the next panel cannot reintroduce the hole.
 
+## The map panel
+
+Where the vehicle went, under the shared clock.
+
+```bash
+./build/scope/scope --bag drives/2026-08-28
+# File ▸ Settings… to point 'socal' at an .mbtiles, then
+# Panels ▸ Add ▸ Map, and drag the nodes/bd992/gsof/lat_long_height TOPIC onto it
+```
+
+A plot answers *what was the speed at this moment*. A map coloured by speed
+answers *where on the lap was I slow*, which is the question a plot is worst at
+and the reason to want one beside it.
+
+### No map_server, and no zenoh session for tiles
+
+The dashboard's map widget asks `nodes/map_server` over the bus. This one opens
+the `.mbtiles` itself. Nothing has to be running: `scope --bag` and a path in
+Settings is the whole setup.
+
+That also removes a trap. Two `map_server`s on one zenoh key both answer and the
+client takes whichever is first, so a screenshot has previously "proved" the
+wrong archive rendered. Scope opens no session for tiles, so a screenshot here
+is evidence about the file named in Settings and nothing else.
+
+What IS shared with the dashboard is everything that turns a vector tile into
+pixels — projection, tessellator, GPU renderer, label layout, tile cache. That
+is `libs/map_render`, hoisted out of `dashboard/widgets/map` for exactly this.
+The panel itself — camera, tile selection, paint driver, config, interaction —
+is its own, the same call `scope/panels/video/video_decoder` made against
+`CarPlayWidget`'s decoder.
+
+The local path is simpler than the served one in three ways, and each is a whole
+mechanism that does not exist here: no backoff or retry timer (a read succeeds,
+is absent, or fails — there is no server that might come up later), no
+zoom-range learning (`minzoom`/`maxzoom` is known when the file opens), and no
+`outOfRange` (the panel clamps before asking, so such a coordinate is never
+formed).
+
+### It takes a topic, or three fields
+
+Dropping the position **topic** fills latitude and longitude in one go, from a
+small table of `{schema → lat field, lon field}` covering `GsofLatLongHeight`,
+`GsofLatLongMslHeight`, `GsofCodePosition`, `GsofInsFullNav` and
+`CarPlayLocation`. A schema not in that table is **declined at the drop** rather
+than bound and then silently drawing nothing.
+
+Field drops fill the first empty role — latitude, then longitude, then colour —
+and `bindingLabels()` names the role, because unlike a plot's traces these three
+are not interchangeable and "remove the second one" would otherwise be a guess.
+
+**Longitude must be on the same topic as latitude**, and a drop from elsewhere is
+refused. Every position schema in this tree carries the pair on one message, and
+the source stamps one timestamp per message which every binding on it shares —
+that shared timestamp is the only thing they pair on. A longitude from another
+topic would bind cleanly and then draw nothing.
+
+### Pairing, and the counter that explains an empty map
+
+Positions are built by matching a latitude and a longitude **at the same
+instant**, never by index. Index pairing skews the whole track the moment one
+binding is added after the other, or one sample is dropped — and the line is
+still a line, over the wrong roads.
+
+`scope.stats` reports `paired_points` alongside `unpaired_latitude` and
+`unpaired_longitude`, and that pair of numbers is the whole diagnostic: thousands
+of latitudes with zero paired points means the two signals are not on one topic.
+On screen that is an empty panel, indistinguishable from no data at all.
+
+### The trail is the retention window
+
+Not the whole recording: exactly what the plots hold, `history_seconds`, ending
+at the playhead. Raising `history_seconds` is how you see a whole lap at once.
+
+The stretch inside the current view is drawn solid and wider; everything else is
+dimmed to `track_opacity`. **That band is the only thing on screen relating the
+map to the time base** — without it the panel is a picture beside the plots
+rather than a view of the same window.
+
+### The marker reads the shared instant
+
+The cursor when there is one, otherwise the view's right edge — which is the
+source's clock live and the playhead on a recording. Identical to the table's
+rule, and it must stay identical or the marker and the table row disagree about
+the same moment. `marker_t` reports it, because a marker drawn for the wrong
+instant looks exactly like a correct one.
+
+### Clicking the track moves the shared cursor
+
+The reason a map belongs in a review tool, and the one direction the dashboard
+widget has no equivalent of. A click within `click_radius_px` of the drawn track
+moves the **shared** cursor to that point, so every plot, table and video frame
+jumps to that corner.
+
+A press either grabs the track or the map, decided once at press time and not
+revisited — a drag that changed its mind halfway feels like a bug. Clicks away
+from the track pan instead. A drag is bracketed with `setInteracting()`, or a
+mouse-move would refill every signal's whole retention window per event.
+
+If the point is outside `[view_begin, view_end]` the panel also seeks: on a
+recorded source the view's right edge *is* the playhead, so a cursor parked
+outside the window would mark an instant no plot is drawing.
+
+Nearest rather than first-within-radius, because a lap crosses itself and two
+points sit under the pointer — picking whichever came first in the buffer seeks
+to the wrong lap, and both are on the track, so nothing about the result looks
+wrong.
+
+### Colouring the trail
+
+Bind a third signal and the trail takes a ramp along its length. `viridis` by
+default (perceptually uniform, colour-blind safe, dark at the low end — which
+matters on a dark basemap), `turbo` for spotting extremes, `gray` for when the
+map underneath is already carrying colour.
+
+The colour at each point is the newest sample **at or before** it, held rather
+than interpolated: an interpolated value is a number nothing published, and on a
+corner it paints a speed the car never did.
+
+`color_autoscale` fits the ramp to the range actually present; a constant signal
+gets a widened range rather than a division by zero, which would paint NaN and
+therefore nothing.
+
+### Diagnosing an empty panel
+
+Every one of these is a different fault and on screen they are the same picture,
+so the panel captions itself and `scope.stats` reports the same string in
+`diagnostic`:
+
+| Message | Means |
+|---|---|
+| `Tileset 'socal' is not configured — File ▸ Settings…` | the name in the panel config is not in Settings |
+| `'socal' could not be opened: …` | it is configured, and the archive will not open |
+| `No position bound — drag a position topic onto this panel` | nothing to draw |
+| `Latitude and longitude never share a timestamp` | they are on different topics |
+| `No GPU backend` | QRhi found none; trail and marker still draw |
+| `Reading tiles…` | requests are out, nothing back yet |
+| `No coverage here in 'socal'` | tiles arrived and the archive is empty here |
+
+Empty means nothing is wrong, which is the assertion worth making.
+
+### Driving it
+
+```python
+app_call("scope.settings", {"tilesets": [
+    {"name": "socal", "path": "/Users/ryan/Documents/map_data/socal.mbtiles"}]})
+app_call("scope.open_recording", {"path": "/tmp/drive"})
+scope_add_panel(type="map", id="map1")
+app_call("scope.panel_set_config", {"panel": "map1", "config": {"tileset": "socal"}})
+# Topic-level: fills latitude AND longitude.
+scope_add_signal(panel="map1", zenoh_key="nodes/bd992/gsof/lat_long_height", field="")
+
+app_call("scope.stats", {"panel": "map1"})
+#   paired_points > 0 with unpaired_* == 0   -- the track is real
+#   tiles_decoded > 0                        -- the archive is being read
+#   diagnostic == ""                         -- nothing is being captioned
+```
+
+`input_click` on the panel is what exercises the seek. Note that **Follow Cursor
+moves the camera after the first click**, so a series of clicks at fixed
+coordinates lands on a shifted map — pin the camera first when asserting on more
+than one:
+
+```python
+app_call("scope.panel_set_config", {"panel": "map1", "config": {
+    "follow_cursor": False, "center_latitude": 33.6853,
+    "center_longitude": -117.8561, "zoom": 15.5}})
+input_click(target="…/scope::MapPanel", x=400, y=170)
+app_call("scope.time_base", {})     # cursor moved to that point's time
+```
+
+The target has to be the **panel**, not its dock: the dock carries the panel's
+`objectName`, so `target="map1"` resolves to the dock and a click lands on its
+title bar. `ui_snapshot` gives the panel's path.
+
 ## Discovery
 
 Topics appear in the picker **as soon as a node starts**, whether or not it has
@@ -1133,6 +1308,18 @@ ctest --test-dir build -R scope --output-on-failure
 - `scope_test_decimate` (unit) — column reduction against a brute-force
   reference over random windows. Every way this can be wrong looks like data
   rather than like a bug.
+- `scope_test_settings` (unit) — the per-user settings codec: a missing file is
+  defaults, a malformed one is not overwritten, byte stability, and the name
+  checks.
+- `scope_test_map_track` (unit) — pairing by timestamp, the unpaired counters,
+  colour held rather than interpolated, pixel thinning and the hit test. Every
+  case here DRAWS SOMETHING when it is wrong, which is why none of it is left to
+  a screenshot.
+- `scope_test_map_tiles` (unit) — `TileReader` against archives it writes
+  itself: the XYZ/TMS flip (a double flip renders beautifully, mirrored about
+  the equator), absent versus failed, an unopenable archive, and the zoom range
+  at open. Also reads the real socal archive when present, and skips loudly when
+  not.
 - `scope_test_workspace` (unit) — the codec, weighted towards hand-edited files
   that are wrong in the usual ways.
 - `scope_test_recorded_source` (unit) — scrubbing, over a stub provider with

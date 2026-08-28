@@ -70,6 +70,9 @@ add_library(scope_core STATIC
     panels/table/include/table/table_panel.h
 
     panels/map/tile_reader.cpp
+    panels/map/track_builder.cpp
+    panels/map/map_panel.cpp
+    panels/map/include/map_panel/map_panel.h
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
@@ -210,6 +213,22 @@ target_link_libraries(scope_test_decimate PRIVATE
 )
 
 add_project_test(TARGET scope_test_decimate LABELS scope unit)
+
+# Turning two signals into a line on a map, and finding a point on it.
+#
+# Every case draws SOMETHING when it is wrong: pairing by index skews the track
+# over the wrong roads, interpolating the colour paints a speed nothing
+# published, and a wrong hit test seeks somewhere else -- which reads as a
+# mis-aimed mouse rather than as a bug.
+add_executable(scope_test_map_track
+    tests/test_map_track.cpp
+)
+
+target_link_libraries(scope_test_map_track PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_map_track LABELS scope map unit)
 
 # Tiles read straight off disk, against an archive this test writes itself.
 #
