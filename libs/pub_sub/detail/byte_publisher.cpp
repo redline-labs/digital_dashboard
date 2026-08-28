@@ -127,12 +127,12 @@ void BytePublisher::put(kj::Array<capnp::word> payload)
     // finally the buffer -- at the right time rather than at the end of this
     // function. The uint8_t* the deleter is handed is ignored: it only ever
     // aliases memory the captured array owns.
-    auto owner = std::make_shared<kj::Array<capnp::word>>(kj::mv(payload));
-    const auto bytes = owner->asBytes();
+    auto buffer = std::make_shared<kj::Array<capnp::word>>(kj::mv(payload));
+    const auto bytes = buffer->asBytes();
     auto* const ptr = reinterpret_cast<std::uint8_t*>(const_cast<kj::byte*>(bytes.begin()));
     const std::size_t len = bytes.size();
 
-    auto deleter = [owner = std::move(owner)](std::uint8_t*) noexcept {
+    auto deleter = [owner = std::move(buffer)](std::uint8_t*) noexcept {
         // Nothing to do: `owner` is destroyed with this lambda, freeing the
         // buffer.
     };
@@ -161,7 +161,7 @@ bool BytePublisher::hasSubscribers() const
     return impl_->publisher->get_matching_status().matching;
 }
 
-void BytePublisher::onSubscriberPresenceChanged(std::function<void(bool present)> handler)
+void BytePublisher::onSubscriberPresenceChanged(std::function<void(bool present)> on_change)
 {
     if (impl_->publisher == nullptr)
     {
@@ -169,7 +169,7 @@ void BytePublisher::onSubscriberPresenceChanged(std::function<void(bool present)
     }
 
     impl_->publisher->declare_background_matching_listener(
-        [handler = std::move(handler), key = impl_->keyexpr](const zenoh::MatchingStatus& status) {
+        [handler = std::move(on_change), key = impl_->keyexpr](const zenoh::MatchingStatus& status) {
             // This frame sits on zenoh's Rust FFI boundary; letting anything
             // unwind past it aborts the process.
             try

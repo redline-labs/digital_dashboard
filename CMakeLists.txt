@@ -131,6 +131,17 @@ add_compile_options(
     #$<$<COMPILE_LANGUAGE:CXX>:-Wno-volatile>
 
     -Wshadow
+    # Same split as the designated-initializer flag above. GCC's -Wshadow counts
+    # a lambda's local as shadowing an enclosing function's local even when the
+    # lambda does not capture it; clang parks that case in its own flag and
+    # leaves it off, so the shadow only surfaces on a Linux build.
+    #
+    # This one is STRICTER than GCC, not equal to it: clang also flags the
+    # `[x = std::move(x)]` init-capture, which GCC accepts and which is
+    # perfectly ordinary. There is no way to ask clang for only the first half,
+    # so the tree spells those captures with distinct names instead. If that
+    # ever costs more than it catches, this line is the thing to delete.
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wshadow-uncaptured-local>
     #-Wlogical-op
 
     #-Wsuggest-final-types

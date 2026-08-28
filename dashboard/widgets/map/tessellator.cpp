@@ -114,13 +114,6 @@ float boundaryHalfWidth(const mvt::Layer& layer, const mvt::Feature& feature,
 
 struct LayerSpec
 {
-    // Every member carries a default, INCLUDING the four that every row below
-    // sets by hand. That is not for the rows' benefit -- it is what stops
-    // -Wmissing-field-initializers from firing on the designated initializers.
-    // GCC warns for a designated field left out unless the member has a default
-    // member initializer; clang does not warn by default at all, which is how a
-    // tree that is clean here breaks a Linux build. The root CMakeLists turns
-    // clang's -Wmissing-designated-field-initializers on so the two agree.
     MapLayer layer {};
     const char* sourceLayer { nullptr };
     int roadClass { 0 };    // 0 when the source layer is the whole filter

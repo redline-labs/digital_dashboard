@@ -273,17 +273,17 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
                     this,
                     [this]() {
                         mHighlightPending.store(false);
-                        std::vector<std::uint64_t> ids;
+                        std::vector<std::uint64_t> drained;
                         bool fresh = false;
                         {
                             const std::lock_guard<std::mutex> lock(mHighlightMutex);
                             fresh = mHighlightMailboxFresh;
                             mHighlightMailboxFresh = false;
-                            ids.swap(mHighlightMailbox);
+                            drained.swap(mHighlightMailbox);
                         }
                         if (fresh)
                         {
-                            setHighlightWayIds(std::move(ids));
+                            setHighlightWayIds(std::move(drained));
                         }
                     },
                     Qt::QueuedConnection);

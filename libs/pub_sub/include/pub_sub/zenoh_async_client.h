@@ -127,14 +127,14 @@ class ZenohAsyncClient
 
         const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
         const kj::ArrayPtr<const kj::byte> view = words.asBytes();
-        std::vector<std::uint8_t> payload(view.size());
-        std::memcpy(payload.data(), view.begin(), view.size());
+        std::vector<std::uint8_t> request_bytes(view.size());
+        std::memcpy(request_bytes.data(), view.begin(), view.size());
 
         try
         {
             zenoh::Session::GetOptions options = zenoh::Session::GetOptions::create_default();
             options.timeout_ms = mTimeoutMs;
-            options.payload.emplace(std::move(payload));
+            options.payload.emplace(std::move(request_bytes));
             options.encoding.emplace(kCapnpEncodingMime);
             options.encoding->set_schema(std::string(schema_traits<RequestT>::name));
 
