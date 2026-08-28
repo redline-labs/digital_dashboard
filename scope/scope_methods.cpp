@@ -5,6 +5,7 @@
 #include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
 #include "scope/scope_window.h"
+#include "scope/settings.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -1051,6 +1052,79 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             return json{{"applied", true},
                         {"type", panelTypeName(panel)},
                         {"config", variantToJson(panelConfigOf(panel))}};
+        },
+        agent_control::AgentServer::MethodKind::kMutating);
+
+    // ---------------------------------------------------------------- settings
+
+    // Read with no params, write with {"tilesets": [{"name":..., "path":...}]}.
+    //
+    // The HEADLESS path, and the one every test uses. File ▸ Settings… is a
+    // second front end onto the same ScopeWindow::setSettings(); a modal dialog
+    // under --mcp has nobody to dismiss it.
+    //
+    // Writing replaces the whole list rather than merging: a caller that wanted
+    // to remove a tileset has no way to say so through a merge, and a partial
+    // write that silently kept an old entry is the kind of thing that shows up
+    // later as a map drawn from the wrong archive.
+    server.registerMethod(
+        "scope.settings",
+        [win](const json& params) -> MethodResult {
+            const auto tilesets = params.find("tilesets");
+            if (tilesets != params.end())
+            {
+                if (!tilesets->is_array())
+                {
+                    return std::unexpected(badParams("'tilesets' must be an array."));
+                }
+
+                scope_settings_t updated;
+                for (const json& entry : *tilesets)
+                {
+                    if (!entry.is_object())
+                    {
+                        return std::unexpected(
+                            badParams("Each tileset must be an object with 'name' and 'path'."));
+                    }
+                    const auto name = entry.find("name");
+                    const auto path = entry.find("path");
+                    if (name == entry.end() || !name->is_string() || path == entry.end() ||
+                        !path->is_string())
+                    {
+                        return std::unexpected(
+                            badParams("Each tileset needs 'name' and 'path' (both strings)."));
+                    }
+                    scope_tileset_t tileset;
+                    tileset.name = name->get<std::string>();
+                    tileset.path = path->get<std::string>();
+                    updated.tilesets.push_back(std::move(tileset));
+                }
+
+                if (!win->setSettings(updated))
+                {
+                    return std::unexpected(internalError(
+                        "Failed to write '" + win->settingsFilePath().toStdString() + "'."));
+                }
+            }
+
+            json tileset_list = json::array();
+            for (const scope_tileset_t& tileset : win->settings().tilesets)
+            {
+                tileset_list.push_back({{"name", tileset.name}, {"path", tileset.path}});
+            }
+
+            // The notes are the useful half of a read: a duplicate or unnamed
+            // tileset is not an error but it does mean a panel will not find
+            // what it asked for, and nothing else reports that.
+            json notes = json::array();
+            for (const std::string& note : checkTilesets(win->settings()))
+            {
+                notes.push_back(note);
+            }
+
+            return json{{"path", win->settingsFilePath().toStdString()},
+                        {"tilesets", std::move(tileset_list)},
+                        {"notes", std::move(notes)}};
         },
         agent_control::AgentServer::MethodKind::kMutating);
 

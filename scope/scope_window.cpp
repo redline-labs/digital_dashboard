@@ -8,6 +8,7 @@
 #include "scope/panel.h"
 #include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
+#include "scope/settings_dialog.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -1420,6 +1421,13 @@ void ScopeWindow::buildMenuBar()
 
     file_menu->addSeparator();
 
+    QAction* settings = file_menu->addAction(tr("Se&ttings…"));
+    settings->setObjectName("action_settings");
+    settings->setShortcut(QKeySequence::Preferences);
+    connect(settings, &QAction::triggered, this, [this]() { (void)settingsDialog(); });
+
+    file_menu->addSeparator();
+
     QAction* quit = file_menu->addAction(tr("&Quit"));
     quit->setObjectName("action_quit");
     quit->setShortcut(QKeySequence::Quit);
@@ -1990,6 +1998,56 @@ void ScopeWindow::refreshDensity()
     density_end_ = end;
     density_computed_at_ms_ = now_ms;
 }
+
+void ScopeWindow::loadSettings(const QString& path)
+{
+    settings_path_ = path;
+    settings_ = load_settings(path.toStdString());
+    SPDLOG_INFO("Settings: {} tileset(s) from '{}'.", settings_.tilesets.size(),
+                path.toStdString());
+}
+
+bool ScopeWindow::setSettings(const scope_settings_t& settings)
+{
+    settings_ = settings;
+
+    for (const std::string& note : checkTilesets(settings_))
+    {
+        // Reported, not refused. One bad row must not cost the user the
+        // archives that are fine, and the map panel says on its own face when
+        // the tileset it wants is not there.
+        SPDLOG_WARN("Settings: {}", note);
+        statusBar()->showMessage(QString::fromStdString(note), 8000);
+    }
+
+    if (settings_path_.isEmpty())
+    {
+        // Only when nothing chose one, which main() always does.
+        settings_path_ = QString::fromStdString(settingsPath());
+    }
+
+    return save_settings(settings_, settings_path_.toStdString());
+}
+
+bool ScopeWindow::settingsDialog()
+{
+    if (headless_)
+    {
+        // Nobody to dismiss it. `scope.settings` is the headless path and does
+        // the same work.
+        SPDLOG_WARN("Refusing to open the settings dialog while headless; use scope.settings.");
+        return false;
+    }
+
+    SettingsDialog dialog(settings_, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return false;
+    }
+
+    return setSettings(dialog.settings());
+}
+
 
 }  // namespace scope
 

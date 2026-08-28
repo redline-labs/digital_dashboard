@@ -37,6 +37,12 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
             ("online", "Attach to the bus and start capturing at startup. Scope is OFFLINE by "
                        "default and does not open a zenoh session without this.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            // Takes a required value, so the implicit-value trap the
+            // unmatched-argument check below exists for does not apply: this
+            // one does consume `--settings /tmp/s.yaml`.
+            ("settings", "Path to the per-user settings file. Omit to use the platform's "
+                         "config location.",
+                cxxopts::value<std::string>())
             ("debug", "Enable debug logging.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("mcp", "Enable the agent control interface on a unix socket, and run headless "
@@ -81,6 +87,11 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
         if (result.count("bag") != 0)
         {
             parsed.bag_path = result["bag"].as<std::string>();
+        }
+
+        if (result.count("settings") != 0)
+        {
+            parsed.settings_path = result["settings"].as<std::string>();
         }
 
         parsed.start_online = result["online"].as<bool>();

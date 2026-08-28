@@ -874,6 +874,87 @@ The rule is checked at all three points a key enters the system:
 Subscribers get a weaker rule, since they may wildcard and discovery itself
 subscribes to `**`.
 
+## Settings
+
+A workspace says *what to show*. Settings say *where things are on this
+machine*. The two are separate files, and the dividing line is worth stating
+plainly because getting it wrong is what makes a shared workspace stop opening:
+
+| | Workspace | Settings |
+|---|---|---|
+| holds | panels, bindings, layout | map archive paths |
+| lives in | `configs/scope/`, wherever you point `--config` | the platform's per-user config location |
+| meant to be | committed, shared, opened on someone else's laptop | never shared; it is about one computer |
+
+**A map panel names a tileset, never a path.** `tileset: socal` is what a
+workspace carries; settings say that `socal` is
+`/Users/ryan/Documents/map_data/socal.mbtiles`. Put a path in a workspace and it
+opens nowhere but the machine that wrote it.
+
+Where the file lives:
+
+```
+Linux   ~/.config/redline/scope/scope.yaml
+macOS   ~/Library/Preferences/redline/scope/scope.yaml
+```
+
+From `QStandardPaths::AppConfigLocation`, so it follows whatever the platform
+says. `--settings <path>` overrides it — which is not a convenience: without it
+every `ctest` run and every `--mcp` run would read and write the *developer's*
+real settings, so a test that adds a tileset would leave it behind and one that
+clears them would take the user's away.
+
+```yaml
+tilesets:
+  - name: socal
+    path: /Users/ryan/Documents/map_data/socal.mbtiles
+  - name: tracks
+    path: /Users/ryan/Documents/map_data/tracks.mbtiles
+```
+
+Three behaviours are deliberate, and each is a case where the obvious
+alternative fails quietly:
+
+- **A missing file is not an error.** It is a first run. Nothing is written
+  until something changes — an app that creates a file merely by starting is
+  surprising, and reporting a problem on a clean machine trains people to ignore
+  the report.
+- **A malformed file is a warning plus defaults, and is NOT overwritten.** A
+  hand-edit with a typo in it is worth more than the empty file that would
+  replace it. You see the warning and your file is still there.
+- **Writes go through a temporary and a rename.** A truncated settings file
+  reads back as "no tilesets configured", which is indistinguishable from a user
+  who configured none.
+
+A duplicate name, a name containing `/`, an unnamed entry and an entry with no
+path are all reported rather than refused — as log lines, in the dialog, and in
+`scope.settings`'s `notes`. `nodes/map_server` refuses the same four at startup;
+it can afford to, because it has nothing else to do, and here the equivalent
+would be an app that will not open.
+
+### Editing them
+
+**File ▸ Settings…** lists name, path and status. The status column is the point
+rather than decoration: it opens the archive and reports either `z0–14 pbf` or
+the actual reason it could not, which is the same question `map_server --check`
+exists to answer. "Cannot open" is one sentence for a typo, a permissions
+problem and a file that is not an archive, and those are three different fixes.
+
+Headlessly, and this is what every test uses:
+
+```
+app_call("scope.settings", {})                     # read
+app_call("scope.settings", {"tilesets": [
+    {"name": "socal", "path": "/Users/ryan/Documents/map_data/socal.mbtiles"}]})
+```
+
+Writing replaces the whole list rather than merging — a caller that wanted to
+*remove* a tileset has no way to say so through a merge, and a partial write
+that silently kept an old entry shows up later as a map drawn from the wrong
+archive. The dialog is a second front end onto the same
+`ScopeWindow::setSettings()`; it refuses to open under `--mcp`, where a modal has
+nobody to dismiss it.
+
 ## Workspaces
 
 YAML in `configs/scope/`, built from `REFLECT_STRUCT`, so it is hand-editable
@@ -914,6 +995,7 @@ Everything in `docs/agent_control.md` applies; scope registers `ui.*`,
 | `scope.stats` | what each panel has RECEIVED, whatever kind it is |
 | `scope.describe_stats` | what fields `scope.stats` will return for that panel |
 | `scope.save` / `scope.load` | workspaces |
+| `scope.settings` | the per-user tileset list: read with no params, replace with `tilesets` |
 | `scope.source` | `mode` (online/offline), `kind` (live/recorded/empty), and `decodes_pending` |
 | `scope.set_mode` | `{"mode": "online"}` attaches to the bus and starts capturing; `"offline"` detaches and lands on the capture |
 | `scope.open_recording` | open a bag directory — implies offline |

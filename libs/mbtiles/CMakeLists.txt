@@ -10,8 +10,12 @@ project(mbtiles)
 #
 # That last part is not just tidiness. Qt reaches SQLite through Qt6::Sql, which
 # links its own copy; keeping this library -- and the amalgamation vendored in
-# third_party/sqlite3.cmake -- out of the GUI apps keeps the two from ever
+# third_party/sqlite3.cmake -- out of the DASHBOARD keeps the two from ever
 # meeting. The widget has no use for either: it asks the server.
+#
+# `scope` is the deliberate exception. It is a desktop review tool that opens
+# archives itself rather than asking a node, and it links no Qt6::Sql, so the
+# two copies cannot meet there. See scope/CMakeLists.txt and docs/scope.md.
 add_library(mbtiles STATIC
     src/archive.cpp
     src/writer.cpp

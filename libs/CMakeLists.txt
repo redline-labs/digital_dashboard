@@ -34,8 +34,9 @@ add_subdirectory(gsof)
 # which it links; nothing in `gsof` may depend on this.
 add_subdirectory(bd992)
 # The mbtiles 1.3 format: an SQLite file full of map tiles. Pure file reading,
-# no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The GUI
-# apps must not link this; see the note in its CMakeLists.
+# no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The
+# dashboard must not link this, and scope deliberately does; see the note in
+# its CMakeLists.
 add_subdirectory(mbtiles)
 # The race-track catalogue, which lives in extra tables INSIDE an .mbtiles.
 # After mbtiles, whose Archive must stay unable to see it and whose Writer

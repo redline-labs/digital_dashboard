@@ -34,6 +34,8 @@ add_library(scope_core STATIC
     overview_strip.cpp
     scope_window.cpp
     workspace.cpp
+    settings.cpp
+    settings_dialog.cpp
     scope_methods.cpp
     command_line_args.cpp
 
@@ -48,6 +50,7 @@ add_library(scope_core STATIC
     include/scope/signal_browser.h
     include/scope/add_signal_dialog.h
     include/scope/overview_strip.h
+    include/scope/settings_dialog.h
 
     # Panels. One directory per type, mirroring dashboard/widgets/ -- but built
     # into scope_core rather than into a library each, because there is no
@@ -115,6 +118,13 @@ target_link_libraries(scope_core PUBLIC
     qt_helpers
     reflection
     helpers
+
+    # Map archives, read straight off disk. THE DELIBERATE EXCEPTION to
+    # "the vendored sqlite3 stays out of the GUI apps" (docs/map.md): that rule
+    # protects the dashboard, which reaches SQLite through Qt6::Sql and must
+    # never meet a second copy. scope is a desktop review tool that opens
+    # archives itself and links no Qt6::Sql, so the two cannot meet here.
+    mbtiles
 
     spdlog::spdlog
     yaml-cpp::yaml-cpp
@@ -190,6 +200,20 @@ target_link_libraries(scope_test_decimate PRIVATE
 )
 
 add_project_test(TARGET scope_test_decimate LABELS scope unit)
+
+# Per-user settings. Every case in here is one where the wrong behaviour looks
+# like something else -- a first run reported as a broken install, a hand-edit
+# with a typo silently replaced by an empty file, a duplicate name drawing a map
+# from the wrong archive.
+add_executable(scope_test_settings
+    tests/test_settings.cpp
+)
+
+target_link_libraries(scope_test_settings PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_settings LABELS scope unit)
 
 # The workspace codec, including a byte-stability round trip over every shipped
 # workspace. A codec that round-trips semantically but reorders keys turns every

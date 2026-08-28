@@ -1,6 +1,7 @@
 #include "pub_sub/node_identity.h"
 #include "scope/command_line_args.h"
 #include "scope/scope_methods.h"
+#include "scope/settings.h"
 #include "scope/scope_window.h"
 
 #include "agent_control/log_sink.h"
@@ -73,9 +74,21 @@ int main(int argc, char** argv)
     // invisible on the bus entirely. See pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("scope");
 
+    // Set BEFORE QStandardPaths is asked anything: it builds the per-user
+    // config path out of these, so settingsPath() would otherwise resolve
+    // somewhere generic and the settings a user saved would not be found on the
+    // next run. See scope/settings.h.
+    QCoreApplication::setOrganizationName("redline");
+    QCoreApplication::setApplicationName("scope");
+
     QApplication app(argc, argv);
 
     scope::ScopeWindow window;
+
+    // Before the workspace: a map panel opens its archives as it is built, and
+    // it looks them up by name in these.
+    window.loadSettings(QString::fromStdString(
+        args->settings_path.empty() ? scope::settingsPath() : args->settings_path));
 
     // From the same flag that chose the offscreen platform. A modal dialog in a
     // headless run has nobody to dismiss it, so the window has to know not to

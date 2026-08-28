@@ -2,6 +2,7 @@
 #define SCOPE_SCOPE_WINDOW_H_
 
 #include "scope/panel_registry.h"
+#include "scope/settings.h"
 #include "scope/panel_types.h"
 #include "scope/workspace.h"
 
@@ -211,6 +212,30 @@ class ScopeWindow : public QMainWindow
     double historySeconds() const { return history_seconds_; }
     void setHistorySeconds(double seconds);
 
+    // Per-user settings: map archives on this machine, by the name a panel
+    // refers to them by. See scope/settings.h for why these are NOT in the
+    // workspace.
+    //
+    // Held by the window rather than read from disk where they are needed, so
+    // that a headless run and a test can drive them through one path
+    // (setSettings / scope.settings) without touching the developer's real
+    // file. settingsFilePath() is empty only if nothing set one.
+    const scope_settings_t& settings() const { return settings_; }
+
+    // Replaces the settings and writes them. Existing map panels re-open their
+    // archives, because the answer to "where is 'socal'" has just changed --
+    // without that a panel keeps drawing from the archive it opened at
+    // construction, and the settings dialog looks like it did nothing.
+    bool setSettings(const scope_settings_t& settings);
+
+    // Loads from `path` and remembers it as where a later setSettings() writes.
+    // A missing file is not an error: see load_settings().
+    void loadSettings(const QString& path);
+    QString settingsFilePath() const { return settings_path_; }
+
+    // The dialog. False when the user cancelled, which is not an error.
+    bool settingsDialog();
+
     // No modal dialog may be raised while this is set, because there is nobody
     // to dismiss it -- under --mcp the window is driven headlessly and a
     // QFileDialog or a QMessageBox would hang the process with no diagnostic at
@@ -419,6 +444,9 @@ class ScopeWindow : public QMainWindow
     double history_seconds_ = TimeSeriesPanel::kDefaultHistorySeconds;
 
     bool headless_ = false;
+
+    scope_settings_t settings_;
+    QString settings_path_;
     bool dirty_ = false;
 };
 

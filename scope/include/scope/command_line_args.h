@@ -29,6 +29,15 @@ struct CommandLineArgs
     // source, so asking for both asks for two different things.
     bool start_online = false;
 
+    // Where per-user settings live. Empty means scope::settingsPath(), the
+    // platform's config location.
+    //
+    // NOT a convenience. Without it, every ctest run and every MCP-driven run
+    // would read and write the developer's real settings file -- a test that
+    // adds a tileset would leave it there, and one that clears them would take
+    // the user's away. Tests pass a path under their own temporary directory.
+    std::string settings_path;
+
     bool debug_enabled = false;
 
     // Set only when --mcp was given; always a concrete path by then.
