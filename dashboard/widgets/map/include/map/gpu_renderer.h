@@ -2,21 +2,45 @@
 //
 // The map, drawn by the GPU, headless.
 //
-// Deliberately NOT a QRhiWidget and NOT a QOpenGLWidget. Both bind to a
-// surface owned by the platform plugin, and under QT_QPA_PLATFORM=offscreen
-// there is no such surface: `QOpenGLContext::create()` returns false and
-// QRhiWidget reports "QRhi is not supported on this platform" and hands back a
-// null map. That would make the map invisible to ui_screenshot and to every
-// `gui` test, and it is the constraint the whole design is built around.
+// Deliberately NOT a QRhiWidget and NOT a QOpenGLWidget, for ONE reason: under
+// QT_QPA_PLATFORM=offscreen neither comes up. QOpenGLContext::create() returns
+// false, and QRhiWidget reports "QRhi is not supported on this platform" and
+// draws nothing -- which would make the map invisible to ui_screenshot and to
+// every `gui` test. That is the constraint the whole design is built around.
+//
+// Two things about that are easy to get wrong, and were:
+//
+//   * It is NOT that QRhiWidget captures as black. MEASURED on Qt 6.11/cocoa:
+//     its content DOES come back through a parent's QWidget::grab(), and a
+//     child widget over it composites correctly on top. Qt composites
+//     render-to-texture widgets itself. Capture is not the problem; headless
+//     is.
+//   * It is NOT a surface-binding problem either. QRhiWidget is gated on the
+//     platform integration advertising RHI-based rendering, and bails before
+//     it ever picks a backend -- setApi(Api::Null) fails offscreen just as
+//     setApi(Api::OpenGL) does. Driving QRhi against a texture we allocate
+//     ourselves asks the platform for nothing, which is why it works.
+//
+// Both verified on macOS. The Linux offscreen plugin can be built with GLX/EGL
+// support, so a Linux target may not be gated the same way -- if that turns out
+// to be true, the trade-off below is worth re-opening on that hardware.
 //
 // Driving QRhi directly against an offscreen texture has no such dependency:
 // Metal, Vulkan and D3D do not need a window to render into a texture. The
 // frame is read back into a QImage and blitted by the widget's QPainter.
 //
-// That readback is what the frame costs, and it is linear in pixels: about
-// 0.5 ms per megapixel of the TARGET on an M-series Metal backend, so a
-// 660x640 widget is ~0.4 ms and the same widget at a device pixel ratio of 2 is
-// ~1.0 ms. Multisampling is not the cost -- forcing sampleCount to 1 moves a
+// The GPU stage is dominated by the synchronous round trip, not by the drawing
+// and not, on unified memory, by the readback. Measured on an M-series Metal
+// backend at 660x640: 0.88 ms total, of which the readback is only ~0.15 ms --
+// deleting it entirely still leaves 0.73 ms of waiting. It is linear in pixels
+// on top of that, about 0.5 ms per megapixel of the TARGET, so the same widget
+// at a device pixel ratio of 2 is ~1.3 ms.
+//
+// DO NOT carry those proportions to other hardware. On unified memory a
+// readback is a copy in shared RAM; on a discrete or low-power integrated GPU
+// it crosses a bus. docs/map.md records 2.44 ms fixed + 3.51 ms/Mpx on an Intel
+// UHD 630 through Mesa -- seven times the per-pixel cost and a fixed stall
+// three times larger. On that class of hardware the readback IS the frame. Multisampling is not the cost -- forcing sampleCount to 1 moves a
 // 5120x2880 frame by under a millisecond -- which is why the sample count is
 // taken as high as the hardware offers and the SIZE is the thing to think
 // about. Measure with map_bench --width/--height/--dpr.

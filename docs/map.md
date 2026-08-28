@@ -835,7 +835,7 @@ as the rest of this file warns. Fitted across three viewport sizes -- 0.11,
 Two things separate that from Apple silicon. The per-megapixel term is **seven
 times** the 0.5 ms/Mpx measured on Metal, because `readBackTexture` there is a
 copy inside unified memory while here it crosses the bus from the iGPU. And
-there is a **2.44 ms fixed cost that Metal does not have at all**, which is the
+there is a **2.44 ms fixed cost far larger than Metal's**, which is the
 synchronous `endOffscreenFrame()` pipeline stall: cheap on a tiler with shared
 memory, expensive on Mesa.
 
@@ -843,6 +843,26 @@ The consequence is worth stating plainly, because it inverts the advice above:
 on this hardware the fixed cost dominates at dashboard sizes, so **making the
 viewport smaller buys much less than the M-series numbers suggest** -- halving
 the linear dimensions took 4.83 ms to 2.08 ms, not to a quarter.
+
+**This is the box the design should be judged on, not the Mac.** Since text
+moved to the GPU the label pass is ~0.15 ms everywhere, so on Intel the frame is
+now almost entirely the GPU stage -- and that stage is almost entirely waiting
+and copying rather than drawing. Two numbers that do not transfer from Apple
+silicon:
+
+- On unified memory the readback is ~0.15 ms of a 0.88 ms stage. On the UHD 630
+  it is ~1.5 ms at 660x640 and grows at 3.51 ms/Mpx.
+- The synchronous stall is ~0.73 ms on Metal against 2.44 ms here.
+
+So the ~0.9 ms frame measured on the M-series is likely nearer 5 ms on an
+Intel-class iGPU, essentially all of it in `endOffscreenFrame()`. **The fix that
+addresses the larger half without a second render path is to stop WAITING**:
+render frame N on a thread of its own and blit whatever finished, so the stall
+overlaps the rest of the frame instead of sitting in front of it. Prototyped and
+measured at -29% on the M-series, where the stall is only 0.73 ms; the same
+change is worth proportionally more wherever the stall is 2.44 ms. The cost is
+one frame of latency on the tile raster, which the marker and the text do not
+share.
 
 **Labels are fine.** 2.79 ms for ~450 candidates and ~25 placed, with the
 render cache hitting every time after the first frame. A single label costs

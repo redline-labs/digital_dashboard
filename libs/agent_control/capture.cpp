@@ -18,17 +18,33 @@ namespace agent_control
 namespace
 {
 
-// Classes whose contents are composited by the GPU or the window system rather
-// than drawn into Qt's backing store. QWidget::grab() renders the backing store,
-// so anything in this list captures as a black or empty rectangle.
+// Classes whose contents may not reach the image QWidget::grab() produces.
 //
-// This matters here specifically: the CarPlay widget used to be a QVideoWidget
-// and was reverted to a QImage blit (commit 4d143ae) for z-ordering reasons.
-// That revert is the only reason screenshots of the video work at all. If it is
-// ever undone, screenshots would silently start returning black -- and
-// WA_NativeWindow reads FALSE on those widgets, so the obvious runtime check
-// does not detect it. Hence a class-name check, and a warning in the metadata
-// rather than a plausible-looking black image.
+// The reason differs by class, and the distinction is worth stating because the
+// obvious one is WRONG for most of this list:
+//
+//   * QVideoWidget is a NATIVE widget -- the window system composites it, Qt
+//     never sees the pixels, and grab() genuinely returns black. This is the
+//     case that matters here: the CarPlay widget used to be one and was
+//     reverted to a QImage blit (commit 4d143ae) for z-ordering. That revert is
+//     the only reason video screenshots work.
+//
+//   * QOpenGLWidget, QQuickWidget and QRhiWidget are RENDER-TO-TEXTURE widgets,
+//     which Qt composites itself. MEASURED on Qt 6.11/cocoa: a QRhiWidget's
+//     content DOES come back through a parent's grab(), and a child widget over
+//     it composites correctly on top. All three also expose grabFramebuffer().
+//     So on a real display they are not a capture problem at all.
+//
+//     They are still listed because of how THIS process runs. Under
+//     QT_QPA_PLATFORM=offscreen -- which is every agent-control session and
+//     every gui test -- the platform reports no RHI support, so such a widget
+//     never initialises and draws nothing. Empty, rather than black, but just
+//     as useless in a screenshot. (Verified on macOS; the Linux offscreen
+//     plugin can be built with GL support, where this may not hold.)
+//
+// WA_NativeWindow reads FALSE on all of them, so the obvious runtime check does
+// not detect any of this. Hence a class-name check, and a warning in the
+// metadata rather than a plausible-looking empty image.
 bool isNonBackingStoreClass(const QString& class_name)
 {
     return class_name == QLatin1String("QVideoWidget") ||

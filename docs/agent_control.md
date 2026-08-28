@@ -145,14 +145,26 @@ messages now state outright:
 
 ## Gotchas worth knowing
 
-- **Screenshots work only because rendering goes through Qt's backing store.**
-  `QWidget::grab()` renders the backing store, so a `QVideoWidget`,
-  `QOpenGLWidget` or `QRhiWidget` captures as black. The CarPlay widget was
-  reverted from `QVideoWidget` to a `QImage` blit (commit `4d143ae`) for
-  z-ordering, and that revert is the only reason video screenshots work.
-  `WA_NativeWindow` reads FALSE on those widgets so it cannot be used to detect
-  the problem; `capture.cpp` class-checks the subtree and puts a `warning` in the
-  screenshot metadata instead of returning a plausible black image.
+- **Screenshots need rendering to reach Qt's backing store — but not every GPU
+  widget breaks that, and the common belief here was wrong.** Measured on
+  Qt 6.11/cocoa: a `QRhiWidget`'s content **does** come back through a parent's
+  `QWidget::grab()`, and a child widget over it composites correctly on top.
+  `QRhiWidget`, `QOpenGLWidget` and `QQuickWidget` are render-to-texture widgets
+  that Qt composites itself, and all three expose `grabFramebuffer()`.
+
+  What genuinely captures black is a **native** widget such as `QVideoWidget`,
+  where the window system composites and Qt never sees the pixels. The CarPlay
+  widget was reverted from `QVideoWidget` to a `QImage` blit (commit `4d143ae`)
+  for z-ordering, and that revert is the only reason video screenshots work.
+
+  The render-to-texture classes are still on `capture.cpp`'s list because of how
+  this process runs: under `QT_QPA_PLATFORM=offscreen` the platform reports no
+  RHI support, so such a widget never initialises and draws nothing at all.
+  `WA_NativeWindow` reads FALSE on all of them, so the obvious runtime check
+  detects none of this; `capture.cpp` class-checks the subtree and puts a
+  `warning` in the screenshot metadata instead of returning a plausible image.
+  Note the check is `==`, not `inherits()`, so a SUBCLASS of any of them would
+  slip past it silently.
 - **`GUI_THREAD_BUSY` is an answer, not a bug.** Handlers are posted to the GUI
   thread with a timeout rather than a blocking connection, precisely so that a
   wedged UI can still be diagnosed instead of hanging the caller too.
