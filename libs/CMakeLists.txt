@@ -59,6 +59,14 @@ add_subdirectory(road_graph)
 # A segment on the wire. After road_graph and map_rules, whose types it maps,
 # and after schemas, whose vocabulary it maps them to.
 add_subdirectory(map_wire)
+# The MOTOTRBO radio protocols: XNL framing and authentication, XCMP commands,
+# the on-air control plane, and the NAI data service codecs. Pure bytes, no
+# I/O -- `xpr` sits above it with the sockets, the same way bd992 sits above
+# gsof. Nothing here may depend on that.
+add_subdirectory(mototrbo)
+# The radio itself: TCP, the XNL session state machine, and the typed queries
+# a node needs. After `mototrbo`, which it links.
+add_subdirectory(xpr)
 # The MSEL Master Relay protocol. Links the generated dbc_msel_master_relay,
 # which is only declared later in dbcs/ -- that subdirectory has to follow this
 # one, because the generator it calls is defined in libs/dbc_parser. The forward

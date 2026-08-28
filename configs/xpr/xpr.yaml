@@ -1,0 +1,58 @@
+# A Motorola MOTOTRBO radio (validated against an XPR 5550) over its USB link.
+#
+# The radio is a USB-RNDIS network adapter, not a serial device: plugging it in
+# brings up an Ethernet interface, the radio answers on 192.168.10.1, and
+# control is a TCP session to port 8002. Nothing here uses libusb -- the OS
+# network stack does the USB part. If `ping 192.168.10.1` does not answer, the
+# problem is the interface, not this file.
+#
+# `xpr_bridge --probe --config <this file>` is the first thing to run: it
+# connects, prints what the radio calls itself and which channel it is on, and
+# exits without publishing anything.
+
+radio:
+  # The radio's own address. Configurable on the radio; this is the default
+  # Motorola's own tooling uses.
+  host: 192.168.10.1
+
+  # 8002 is the plaintext XNL port and the primary path. Port 8003 is an
+  # OPTIONAL secure session which is closed on the radio this was validated
+  # against, and is not implemented here.
+  port: 8002
+
+  connect_timeout_ms: 2000
+
+  # How long a query waits for its answer. This is a deadline for the whole
+  # exchange rather than a budget per frame, so a radio pushing display
+  # broadcasts cannot stretch it.
+  reply_timeout_ms: 2000
+
+  # Tried in order, then the last repeats. Nothing sleeps on these: a failed
+  # attempt schedules the next one, so the node keeps serving while the radio
+  # is unplugged.
+  reconnect_backoff_ms: [250, 500, 1000, 2000, 5000]
+
+control:
+  # Gates the set_channel service. OFF by default, and deliberately so: this
+  # moves the radio off the channel whoever is carrying it is listening to.
+  # Everything else this node does is read-only -- it reads no codeplug, keys
+  # no transmitter, and sends no tuning command.
+  allow_channel_change: false
+
+publish:
+  topic_prefix: nodes/xpr
+
+  # Defaults to <topic_prefix>/status.
+  # status_key: nodes/xpr/status
+
+  status_interval_ms: 1000
+
+  # Mirror the radio's own four display lines. Worth leaving on: the channel
+  # NAMES live in the codeplug, which this node does not read, so the display
+  # is the only place a name can be had at all.
+  publish_display: true
+
+  # Publish the broadcasts this build does not decode, as bytes, on
+  # <prefix>/broadcast. On by default: a radio emitting something we have never
+  # seen is otherwise indistinguishable from one that has gone quiet.
+  publish_unknown_broadcasts: true
