@@ -806,6 +806,17 @@ void scroll(MapWidget& widget, const QPointF& at, int notches)
     QApplication::sendEvent(&widget, &event);
 }
 
+void swipe(MapWidget& widget, const QPointF& at, int pixels)
+{
+    // pixelDelta set: that is what a trackpad sends, and it is the branch a
+    // two-finger gesture takes. angleDelta is filled in too, because a real
+    // trackpad reports both -- which is exactly why the widget must prefer
+    // the pixels.
+    QWheelEvent event(at, at, QPoint(0, pixels), QPoint(0, pixels * 2), Qt::NoButton,
+                      Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(&widget, &event);
+}
+
 map_widget::Projection projectionOf(const MapWidget& widget)
 {
     return map_widget::Projection(widget.status().camera, widget.width(), widget.height());
@@ -969,6 +980,50 @@ void test_the_wheel_zooms_about_the_pointer()
         projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
     check(sameCoordinate(before, after),
           "and the place under the pointer stays under the pointer while the scale changes");
+}
+
+void test_a_trackpad_swipe_zooms_by_what_the_fingers_asked_for()
+{
+    // The bug this pins: a trackpad's pixelDelta arrives as a stream every few
+    // milliseconds, and each event used to restart the shared 140 ms ease from
+    // wherever the last one had reached. easeSmooth() is flat at t=0, so an
+    // ease restarted 8 ms in never travelled more than about 1% of its span
+    // and a long swipe moved the zoom by a fraction of a level. Dragging felt
+    // fluid because it eases nothing; only the zoom was slow.
+    //
+    // So: send a stream the way a trackpad does, with no time to ease between
+    // events, and require that the whole gesture arrives.
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.follow_vehicle = false;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(400, 300);
+    render(widget);
+
+    const QPointF at(90.0, 70.0);
+    const map_widget::Coordinate before =
+        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+
+    // 240 px of finger travel, delivered 20 px at a time back to back. At
+    // 120 px per notch and half a level per notch that is one whole level.
+    for (int i = 0; i < 12; ++i)
+    {
+        swipe(widget, at, 20);
+        render(widget);
+    }
+    settleCamera(widget);
+
+    const double zoom = widget.status().camera.zoom;
+    check(std::abs(zoom - 13.0) < 1e-9,
+          "240 px of two-finger swipe zooms one whole level, got " + std::to_string(zoom));
+
+    const map_widget::Coordinate after =
+        projectionOf(widget).coordinateForScreen(map_widget::ScreenPoint { at.x(), at.y() });
+    check(sameCoordinate(before, after),
+          "and the place under the fingers stays under the fingers");
 }
 
 void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
@@ -1682,6 +1737,7 @@ int main(int argc, char** argv)
     test_a_drag_keeps_the_grabbed_point_under_the_pointer();
     test_the_recentre_button_appears_with_the_pan_and_undoes_it();
     test_the_wheel_zooms_about_the_pointer();
+    test_a_trackpad_swipe_zooms_by_what_the_fingers_asked_for();
     test_the_wheel_does_not_stop_the_map_following_the_vehicle();
     test_the_wheel_stops_at_the_camera_range_the_layout_allows();
     test_a_drag_cannot_leave_the_projection();

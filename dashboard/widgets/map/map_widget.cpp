@@ -70,8 +70,10 @@ constexpr double kWheelUnitsPerNotch = 120.0;
 
 // A trackpad sends pixels instead, continuously and in much smaller amounts.
 // This is a FEEL constant with no authority behind it: it is how far two
-// fingers travel for one notch's worth of zoom.
-constexpr double kTrackpadPixelsPerNotch = 60.0;
+// fingers travel for one notch's worth of zoom. At 120 px -- and half a level
+// per notch -- a zoom level costs a deliberate 240 px of swipe, which is about
+// as far as two fingers comfortably travel in one go.
+constexpr double kTrackpadPixelsPerNotch = 120.0;
 
 // How long the camera eases take. Short for the wheel -- it repeats, and each
 // notch retargets the ease in flight -- and a touch longer for the recentre
@@ -516,7 +518,7 @@ void MapWidget::moveCameraSoThat(const map_widget::WorldPoint& world, const QPoi
     update();
 }
 
-void MapWidget::zoomBy(double levels, const QPointF& at)
+void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::milliseconds ease)
 {
     const map_widget::Projection before = interactionProjection();
 
@@ -551,7 +553,7 @@ void MapWidget::zoomBy(double levels, const QPointF& at)
     if (!mInteractionCentre.has_value() && mConfig.follow_vehicle)
     {
         mZoomEase = ZoomEase { before.camera().zoom, wanted, {}, at, false,
-                               std::chrono::steady_clock::now() };
+                               std::chrono::steady_clock::now(), ease };
         update();
         return;
     }
@@ -559,7 +561,7 @@ void MapWidget::zoomBy(double levels, const QPointF& at)
     const map_widget::WorldPoint anchor =
         before.worldForScreen(map_widget::ScreenPoint { at.x(), at.y() });
     mZoomEase = ZoomEase { before.camera().zoom, wanted, anchor, at, true,
-                           std::chrono::steady_clock::now() };
+                           std::chrono::steady_clock::now(), ease };
     update();
 }
 
@@ -663,7 +665,8 @@ void MapWidget::wheelEvent(QWheelEvent* event)
     // its pixels are the finer signal. angleDelta is what a wheel with detents
     // sends and is all it sends.
     const QPoint pixels = event->pixelDelta();
-    const double notches = !pixels.isNull()
+    const bool trackpad = !pixels.isNull();
+    const double notches = trackpad
                                ? (static_cast<double>(pixels.y()) / kTrackpadPixelsPerNotch)
                                : (static_cast<double>(event->angleDelta().y()) /
                                   kWheelUnitsPerNotch);
@@ -673,7 +676,17 @@ void MapWidget::wheelEvent(QWheelEvent* event)
         return;
     }
 
-    zoomBy(notches * kZoomPerWheelNotch, event->position());
+    // The ease is for DETENTS. A wheel notch is a discrete jump that would
+    // snap without it, and they arrive far enough apart that each one gets to
+    // finish. A trackpad is the opposite: it sends a continuous stream every
+    // few milliseconds, and each event restarts the ease from the value the
+    // last one had reached. easeSmooth() is flat at t=0 -- deliberately, that
+    // is what makes a notch start gently -- so an ease that is restarted at
+    // 8 ms into its 140 ms never gets past the first 1% of its travel, and the
+    // gesture delivers a hundredth of the zoom the fingers asked for. The
+    // stream is already smooth; ease it over nothing and let each delta land.
+    zoomBy(notches * kZoomPerWheelNotch, event->position(),
+           trackpad ? std::chrono::milliseconds { 0 } : kZoomEaseMs);
     event->accept();
 }
 
@@ -727,7 +740,7 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
 
     if (mZoomEase.has_value())
     {
-        const double t = easeProgress(mZoomEase->start, now, kZoomEaseMs);
+        const double t = easeProgress(mZoomEase->start, now, mZoomEase->length);
         mInteractionZoom =
             mZoomEase->from + ((mZoomEase->to - mZoomEase->from) * easeSmooth(t));
         if (mZoomEase->anchored)

@@ -187,7 +187,11 @@ class MapWidget : public QWidget
     // scale changes", which are the same sentence.
     void moveCameraSoThat(const map_widget::WorldPoint& world, const QPointF& screen);
     void setInteractionCentre(const map_widget::Coordinate& where);
-    void zoomBy(double levels, const QPointF& at);
+    // `ease` is how long the zoom takes to glide to its target. A wheel's
+    // detents are discrete and want the glide; a trackpad already sends a
+    // smooth stream and passes zero, which lands the zoom on the next tick.
+    // See wheelEvent().
+    void zoomBy(double levels, const QPointF& at, std::chrono::milliseconds ease);
     // Drop the pan and go back to the vehicle, or to the configured centre when
     // there is no vehicle to follow. Does NOT touch the zoom: the user chose
     // that separately and asking to be recentred is not asking to be zoomed
@@ -332,6 +336,7 @@ class MapWidget : public QWidget
         QPointF anchorScreen;
         bool anchored { false };
         std::chrono::steady_clock::time_point start;
+        std::chrono::milliseconds length { 0 };
     };
     std::optional<ZoomEase> mZoomEase;
 
