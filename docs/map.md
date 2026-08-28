@@ -33,6 +33,16 @@ up and then removed. Two findings killed it:
 - It cost **7 GB of recursive submodules and 42 minutes of configure** to find
   that out, on every fresh checkout.
 
+  Worth being precise about, because two plausible readings are both wrong. It
+  is not that such a widget captures as black -- measured on Qt 6.11/cocoa, a
+  `QRhiWidget`'s content comes back through `QWidget::grab()` and a child
+  composites over it correctly, which the Qt docs also state. And it is not
+  fixable by choosing a backend: the gate is
+  `QOffscreenIntegration::hasCapability` returning `RhiBasedRendering: false`,
+  which the Linux X11/GLX variant does not lift. The escape hatch is to stop
+  using the offscreen plugin -- Xvfb plus `xcb`, or `eglfs` on the target board
+  -- which is how Qt GUI tests normally get a GPU in CI.
+
 A vector tile is protobuf with a command-encoded geometry stream. That turned
 out to be a smaller thing to own than the consequences of not owning it. What
 the replacement gives up: **no 3D** — see below — and no GL style documents.

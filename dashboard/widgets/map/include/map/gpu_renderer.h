@@ -15,15 +15,26 @@
 //     child widget over it composites correctly on top. Qt composites
 //     render-to-texture widgets itself. Capture is not the problem; headless
 //     is.
-//   * It is NOT a surface-binding problem either. QRhiWidget is gated on the
-//     platform integration advertising RHI-based rendering, and bails before
-//     it ever picks a backend -- setApi(Api::Null) fails offscreen just as
-//     setApi(Api::OpenGL) does. Driving QRhi against a texture we allocate
-//     ourselves asks the platform for nothing, which is why it works.
+//   * It is NOT a surface-binding problem either, and it is not about the
+//     backend: QRhiWidget is gated on the platform integration advertising
+//     RhiBasedRendering and bails before it ever picks one, so
+//     setApi(Api::Null) fails offscreen exactly as setApi(Api::OpenGL) does.
+//     Driving QRhi against a texture we allocate ourselves asks the platform
+//     for nothing, which is why it works.
 //
-// Both verified on macOS. The Linux offscreen plugin can be built with GLX/EGL
-// support, so a Linux target may not be gated the same way -- if that turns out
-// to be true, the trade-off below is worth re-opening on that hardware.
+// The gate is in the OFFSCREEN PLUGIN, not in QRhiWidget, and it is absolute:
+// QOffscreenIntegration::hasCapability returns `case RhiBasedRendering: return
+// false`, and the Linux X11/GLX variant overrides only OpenGL and
+// ThreadedOpenGL, letting RhiBasedRendering fall through to that same false.
+// So no platform, Linux included, gets a QRhiWidget under
+// QT_QPA_PLATFORM=offscreen.
+//
+// What DOES work headless is not the offscreen plugin at all: a virtual display
+// -- Xvfb with the xcb plugin, or eglfs on an embedded target -- gives a real
+// GL stack with no monitor attached, and QRhiWidget comes up normally there.
+// That is the standard way Qt GUI tests get a GPU in CI. It is a live option
+// for a Linux dashboard, where production and CI could share it; it is not one
+// for macOS development, which is why this renderer still exists.
 //
 // Driving QRhi directly against an offscreen texture has no such dependency:
 // Metal, Vulkan and D3D do not need a window to render into a texture. The
