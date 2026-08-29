@@ -55,27 +55,51 @@ struct is_struct_vector<std::vector<T, A>> : reflection::is_reflected_struct<T>
 {
 };
 
-// A human-readable name for one element of a vector<struct> list: the first
-// non-empty string field, which for a trace or a row is its label or its
-// expression -- what a person would call it. "entry N" when nothing is set yet.
+// A human-readable name for one element of a vector<struct> list: the label
+// when one is set, the expression otherwise, and only then any other string
+// field -- because every trace on one topic shares its zenoh_key, and a list
+// where every row reads "vehicle/engine/rpm" names nothing. "entry N" when
+// nothing at all is set yet.
 template <typename Item>
 QString elementLabel(const Item& item, std::size_t index)
 {
     QString label;
+    QString expression;
+    QString fallback;
     reflection::visit_fields<const Item>(
         item,
-        [&label](std::string_view /*name*/, const auto& field, std::string_view /*type*/)
+        [&](std::string_view name, const auto& field, std::string_view /*type*/)
         {
             using F = std::decay_t<decltype(field)>;
             if constexpr (std::is_same_v<F, std::string>)
             {
-                if (label.isEmpty() && !field.empty())
+                if (field.empty())
+                {
+                    return;
+                }
+                if (name == "label")
                 {
                     label = QString::fromStdString(field);
                 }
+                else if (name == "value_expression")
+                {
+                    expression = QString::fromStdString(field);
+                }
+                else if (fallback.isEmpty())
+                {
+                    fallback = QString::fromStdString(field);
+                }
             }
         });
-    return label.isEmpty() ? QObject::tr("entry %1").arg(index + 1) : label;
+    if (!label.isEmpty())
+    {
+        return label;
+    }
+    if (!expression.isEmpty())
+    {
+        return expression;
+    }
+    return fallback.isEmpty() ? QObject::tr("entry %1").arg(index + 1) : fallback;
 }
 
 // Builds form rows for one reflected struct. The widgets write straight into
@@ -131,6 +155,12 @@ struct FormBuilder
                 }
                 else if constexpr (reflection::is_reflected_struct<F>::value)
                 {
+                    // The group carries the row's FRIENDLY label; the raw field
+                    // name ("latitude") reads like a bug next to labelled rows.
+                    if (auto* box = qobject_cast<QGroupBox*>(editor))
+                    {
+                        box->setTitle(label);
+                    }
                     form->addRow(editor);
                 }
                 else
@@ -274,12 +304,13 @@ struct FormBuilder
         auto* pick = new QPushButton(QObject::tr("…"), row);
         pick->setFixedWidth(28);
 
-        const auto swatch = [edit]()
+        const auto swatch = [edit, pick]()
         {
+            // The picker button doubles as the swatch. A border-left on the
+            // line edit was the first try; the platform style ignores it.
             const QColor colour(edit->text());
-            edit->setStyleSheet(colour.isValid()
-                                    ? QStringLiteral("border-left: 6px solid %1;")
-                                          .arg(colour.name())
+            pick->setStyleSheet(colour.isValid()
+                                    ? QStringLiteral("background-color: %1;").arg(colour.name())
                                     : QString());
         };
         QObject::connect(edit, &QLineEdit::textChanged, parent,
@@ -348,6 +379,10 @@ struct FormBuilder
 
         auto* list = new QListWidget(left);
         list->setObjectName("config_list");
+        // Bounded, so the Add/Remove buttons and the selected element's form
+        // stay on screen instead of below the scroll fold of a tall list.
+        list->setMaximumHeight(220);
+        list->setMaximumWidth(200);
         auto* buttons = new QWidget(left);
         auto* buttons_layout = new QHBoxLayout(buttons);
         buttons_layout->setContentsMargins(0, 0, 0, 0);
