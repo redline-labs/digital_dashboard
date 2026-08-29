@@ -88,9 +88,9 @@ class TileReader
     TileReader(const TileReader&) = delete;
     TileReader& operator=(const TileReader&) = delete;
 
-    bool ok() const { return mArchive != nullptr; }
-    const std::string& error() const { return mError; }
-    const std::string& path() const { return mPath; }
+    bool ok() const { return archive_ != nullptr; }
+    const std::string& error() const { return error_; }
+    const std::string& path() const { return path_; }
 
     // What the archive holds, known at open. Meaningless when !ok().
     struct ZoomRange
@@ -98,7 +98,7 @@ class TileReader
         std::uint8_t min { 0 };
         std::uint8_t max { 0 };
     };
-    ZoomRange zoomRange() const { return mZoomRange; }
+    ZoomRange zoomRange() const { return zoom_range_; }
 
     // Ask for everything in `wanted` that is not already cached or queued.
     // GUI thread; cheap when nothing has moved.
@@ -132,39 +132,39 @@ class TileReader
     // thread.
     void serve(const std::vector<map_render::TileId>& batch);
 
-    std::string mPath;
-    std::string mError;
+    std::string path_;
+    std::string error_;
     // Read from the reader thread and from TileWorkers during tessellation,
     // never written after construction, so no lock.
-    MapStyle_t mStyle;
-    std::function<void()> mOnTilesReady;
-    ZoomRange mZoomRange;
+    MapStyle_t style_;
+    std::function<void()> on_tiles_ready_;
+    ZoomRange zoom_range_;
 
     // mbtiles::Archive is thread-safe over a capped pool of read-only
     // connections, so the worker threads can read through it directly.
-    std::unique_ptr<mbtiles::Archive> mArchive;
+    std::unique_ptr<mbtiles::Archive> archive_;
 
     // DECLARED BEFORE THE THREAD, so it is destroyed AFTER it -- members go in
     // reverse declaration order, and a pool torn down while the reader thread
     // is still inside runAll() joins threads that are mid-job.
-    map_render::TileWorkers mWorkers;
+    map_render::TileWorkers workers_;
 
-    mutable std::mutex mMutex;
-    std::condition_variable mWake;
-    std::deque<std::vector<map_render::TileId>> mQueue;
-    std::vector<std::pair<map_render::TileId, map_render::CachedTile>> mMailbox;
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    std::deque<std::vector<map_render::TileId>> queue_;
+    std::vector<std::pair<map_render::TileId, map_render::CachedTile>> mailbox_;
     // Queued or being served. Kept so a repeated request during a pan does not
     // re-queue the same tile every frame.
-    std::unordered_set<map_render::TileId, map_render::TileIdHash> mInFlight;
-    bool mStopping { false };
-    TileReaderStats mStats;
+    std::unordered_set<map_render::TileId, map_render::TileIdHash> in_flight_;
+    bool stopping_ { false };
+    TileReaderStats stats_;
 
     // GUI thread only; no lock.
-    map_render::TileCache mCache;
+    map_render::TileCache cache_;
 
     // LAST. The thread's loop touches every member above, so it must not start
     // until they are constructed and must be joined before they are destroyed.
-    std::thread mThread;
+    std::thread thread_;
 };
 
 }  // namespace scope

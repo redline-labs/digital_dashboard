@@ -28,39 +28,39 @@ constexpr std::size_t kMaxTilesPerBatch = 64;
 }  // namespace
 
 TileReader::TileReader(std::string path, MapStyle_t style, std::function<void()> onTilesReady)
-    : mPath(std::move(path)), mStyle(std::move(style)), mOnTilesReady(std::move(onTilesReady))
+    : path_(std::move(path)), style_(std::move(style)), on_tiles_ready_(std::move(onTilesReady))
 {
-    auto archive = mbtiles::Archive::open(mPath);
+    auto archive = mbtiles::Archive::open(path_);
     if (!archive)
     {
         // Kept, not thrown. A panel needs to say WHY there is no map, and
         // "configured but unreadable" is a different sentence from "not
         // configured" -- collapsing them makes a permissions problem look like
         // a typo.
-        mError = mbtiles::to_string(archive.error());
-        SPDLOG_ERROR("[map] {}: {}", mPath, mError);
+        error_ = mbtiles::to_string(archive.error());
+        SPDLOG_ERROR("[map] {}: {}", path_, error_);
         return;
     }
 
-    mArchive = std::make_unique<mbtiles::Archive>(std::move(*archive));
+    archive_ = std::make_unique<mbtiles::Archive>(std::move(*archive));
 
-    const mbtiles::Metadata& meta = mArchive->metadata();
-    mZoomRange = {meta.minzoom, meta.maxzoom};
+    const mbtiles::Metadata& meta = archive_->metadata();
+    zoom_range_ = {meta.minzoom, meta.maxzoom};
 
-    mThread = std::thread([this]() { readerLoop(); });
+    thread_ = std::thread([this]() { readerLoop(); });
 }
 
 TileReader::~TileReader()
 {
     {
-        std::lock_guard<std::mutex> lock(mMutex);
-        mStopping = true;
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopping_ = true;
     }
-    mWake.notify_all();
+    wake_.notify_all();
 
-    if (mThread.joinable())
+    if (thread_.joinable())
     {
-        mThread.join();
+        thread_.join();
     }
 }
 
@@ -75,7 +75,7 @@ void TileReader::request(const std::vector<map_render::TileId>& wanted)
     batch.reserve(std::min(wanted.size(), kMaxTilesPerBatch));
 
     {
-        std::lock_guard<std::mutex> lock(mMutex);
+        std::lock_guard<std::mutex> lock(mutex_);
         for (const map_render::TileId& id : wanted)
         {
             // contains() rather than drawable(): an absent tile is cached with
@@ -84,17 +84,17 @@ void TileReader::request(const std::vector<map_render::TileId>& wanted)
             // this of the whole viewport plus its prefetch ring every paint,
             // and treating that as use would protect exactly the speculative
             // tiles that should be evicted first.
-            if (mCache.contains(id) || mInFlight.contains(id))
+            if (cache_.contains(id) || in_flight_.contains(id))
             {
                 continue;
             }
-            mInFlight.insert(id);
+            in_flight_.insert(id);
             batch.push_back(id);
-            ++mStats.requested;
+            ++stats_.requested;
 
             if (batch.size() == kMaxTilesPerBatch)
             {
-                mQueue.push_back(std::move(batch));
+                queue_.push_back(std::move(batch));
                 batch.clear();
                 batch.reserve(kMaxTilesPerBatch);
             }
@@ -102,16 +102,16 @@ void TileReader::request(const std::vector<map_render::TileId>& wanted)
 
         if (!batch.empty())
         {
-            mQueue.push_back(std::move(batch));
+            queue_.push_back(std::move(batch));
         }
 
-        if (mQueue.empty())
+        if (queue_.empty())
         {
             return;
         }
     }
 
-    mWake.notify_one();
+    wake_.notify_one();
 }
 
 void TileReader::ready(const std::vector<map_render::TileId>& wanted,
@@ -121,7 +121,7 @@ void TileReader::ready(const std::vector<map_render::TileId>& wanted,
     out.reserve(wanted.size());
     for (const map_render::TileId& id : wanted)
     {
-        const map_render::CachedTile* tile = mCache.find(id);
+        const map_render::CachedTile* tile = cache_.find(id);
         out.push_back(tile != nullptr ? *tile : map_render::CachedTile{});
     }
 }
@@ -130,13 +130,13 @@ std::size_t TileReader::drain()
 {
     std::vector<std::pair<map_render::TileId, map_render::CachedTile>> arrived;
     {
-        std::lock_guard<std::mutex> lock(mMutex);
-        arrived.swap(mMailbox);
+        std::lock_guard<std::mutex> lock(mutex_);
+        arrived.swap(mailbox_);
     }
 
     for (auto& [id, tile] : arrived)
     {
-        mCache.insert(id, std::move(tile));
+        cache_.insert(id, std::move(tile));
     }
 
     return arrived.size();
@@ -144,16 +144,16 @@ std::size_t TileReader::drain()
 
 bool TileReader::drawable(const map_render::TileId& id)
 {
-    return mCache.drawable(id);
+    return cache_.drawable(id);
 }
 
 TileReaderStats TileReader::stats() const
 {
-    std::lock_guard<std::mutex> lock(mMutex);
-    TileReaderStats out = mStats;
-    out.cached = mCache.size();
-    out.cachedBytes = mCache.bytes();
-    out.inFlight = mInFlight.size();
+    std::lock_guard<std::mutex> lock(mutex_);
+    TileReaderStats out = stats_;
+    out.cached = cache_.size();
+    out.cachedBytes = cache_.bytes();
+    out.inFlight = in_flight_.size();
     return out;
 }
 
@@ -163,21 +163,21 @@ void TileReader::readerLoop()
     {
         std::vector<map_render::TileId> batch;
         {
-            std::unique_lock<std::mutex> lock(mMutex);
-            mWake.wait(lock, [this]() { return mStopping || !mQueue.empty(); });
-            if (mStopping)
+            std::unique_lock<std::mutex> lock(mutex_);
+            wake_.wait(lock, [this]() { return stopping_ || !queue_.empty(); });
+            if (stopping_)
             {
                 return;
             }
-            batch = std::move(mQueue.front());
-            mQueue.pop_front();
+            batch = std::move(queue_.front());
+            queue_.pop_front();
         }
 
         serve(batch);
 
-        if (mOnTilesReady)
+        if (on_tiles_ready_)
         {
-            mOnTilesReady();
+            on_tiles_ready_();
         }
     }
 }
@@ -190,14 +190,14 @@ void TileReader::serve(const std::vector<map_render::TileId>& batch)
     // Blocking parallel-for, exactly as TileSource uses it for a zenoh reply:
     // this thread had all of this work to do serially anyway, and blocking here
     // keeps every borrowed buffer alive for the duration of the job.
-    mWorkers.runAll(batch.size(), [&](std::size_t i) {
+    workers_.runAll(batch.size(), [&](std::size_t i) {
         const map_render::TileId& id = batch[i];
 
         // The BORROWING overload: the sink is handed SQLite's bytes directly and
         // they are decoded in place, so a tile never lands in an intermediate
         // vector on the way. The span is valid only inside the callback.
         bool present = false;
-        auto read = mArchive->tile(
+        auto read = archive_->tile(
             id.z, id.x, id.y,
             [&](std::span<const std::uint8_t> bytes, mbtiles::Encoding /*encoding*/) {
                 present = true;
@@ -217,7 +217,7 @@ void TileReader::serve(const std::vector<map_render::TileId>& batch)
 
                 map_render::CachedTile cached;
                 cached.geometry = std::make_shared<const map_render::TileGeometry>(
-                    map_render::tessellate(*tile, mStyle));
+                    map_render::tessellate(*tile, style_));
                 cached.labels = std::make_shared<const map_render::LabelSet>(
                     map_render::extractLabels(*tile));
                 cached.bytes = map_render::approximateBytes(cached);
@@ -227,7 +227,7 @@ void TileReader::serve(const std::vector<map_render::TileId>& batch)
         if (!read)
         {
             outcomes[i] = 2;
-            SPDLOG_ERROR("[map] {} {}/{}/{}: {}", mPath, id.z, id.x, id.y,
+            SPDLOG_ERROR("[map] {} {}/{}/{}: {}", path_, id.z, id.x, id.y,
                          mbtiles::to_string(read.error()));
             return;
         }
@@ -241,21 +241,21 @@ void TileReader::serve(const std::vector<map_render::TileId>& batch)
     });
 
     {
-        std::lock_guard<std::mutex> lock(mMutex);
+        std::lock_guard<std::mutex> lock(mutex_);
         for (std::size_t i = 0; i < batch.size(); ++i)
         {
-            mInFlight.erase(batch[i]);
+            in_flight_.erase(batch[i]);
 
             switch (outcomes[i])
             {
                 case 0:
-                    ++mStats.decoded;
+                    ++stats_.decoded;
                     break;
                 case 1:
-                    ++mStats.absent;
+                    ++stats_.absent;
                     break;
                 default:
-                    ++mStats.failed;
+                    ++stats_.failed;
                     break;
             }
 
@@ -265,7 +265,7 @@ void TileReader::serve(const std::vector<map_render::TileId>& batch)
             // transient read error permanent for the life of the panel.
             if (outcomes[i] != 2)
             {
-                mMailbox.emplace_back(batch[i], std::move(results[i]));
+                mailbox_.emplace_back(batch[i], std::move(results[i]));
             }
         }
     }
