@@ -1378,6 +1378,30 @@ void testTheWindowAddsAndRemovesPanels()
     expect(!window.removePanel(first), "removing it again fails cleanly");
 }
 
+void testTheDockTitleFollowsARename()
+{
+    // The dock's title was set once at creation, so renaming a panel through
+    // the Configure dialog or scope.panel_set_config left the old text on the
+    // tab -- the one place a panel's name is actually read.
+    scope::ScopeWindow window;
+    const QString id = window.addPanel(scope::panel_type_t::time_series, "plot");
+    scope::ScopeWindow::PanelEntry* entry = window.findPanel(id);
+    expect(entry != nullptr, "the panel exists");
+    if (entry == nullptr)
+    {
+        return;
+    }
+    expect(entry->dock->windowTitle() == entry->panel->title(),
+           "the dock starts with the panel's title");
+
+    TimeSeriesPanelConfig_t cfg;
+    cfg.title = "Engine";
+    expect(scope::applyPanelConfig(*entry->panel, scope::panel_config_variant_t{cfg}),
+           "the rename applied");
+    expect(entry->dock->windowTitle() == QStringLiteral("Engine"),
+           "and the dock's title followed it");
+}
+
 void testEveryDockHasAnObjectName()
 {
     // Load-bearing. restoreState() silently drops any dock it cannot name, so a
@@ -2969,6 +2993,7 @@ int main(int argc, char** argv)
     testEveryPanelKindCanGiveABindingBack();
 
     testTheWindowAddsAndRemovesPanels();
+    testTheDockTitleFollowsARename();
     testEveryDockHasAnObjectName();
     testAnExplicitPanelIdIsHonoured();
     testAddingAnUnknownPanelTypeFails();

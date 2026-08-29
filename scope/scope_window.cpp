@@ -411,6 +411,13 @@ QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, co
     // routes in -- a drop, the context menu, the agent interface, the dialog.
     connect(entry.panel, &Panel::configChanged, this, [this]() { markDirty(); });
 
+    // The dock's title bar follows the panel's title. It was set once at
+    // creation, so renaming a panel through the Configure dialog (or
+    // scope.panel_set_config) left the old text on the tab.
+    Panel* const added_panel = entry.panel;
+    connect(added_panel, &Panel::configChanged, dock,
+            [dock, added_panel]() { dock->setWindowTitle(added_panel->title()); });
+
     panels_.push_back(entry);
     updateEmptyHint();
     markDirty();
