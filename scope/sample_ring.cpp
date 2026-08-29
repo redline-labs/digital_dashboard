@@ -54,24 +54,7 @@ bool StagingRing::full() const
 
 std::size_t StagingRing::drain(std::vector<Sample>& out)
 {
-    const std::size_t head = head_.load(std::memory_order_acquire);
-    std::size_t tail = tail_.load(std::memory_order_relaxed);
-
-    std::size_t count = 0;
-    while (tail != head)
-    {
-        out.push_back(slots_[tail]);
-        if (++tail == slots_.size())
-        {
-            tail = 0;
-        }
-        ++count;
-    }
-
-    // Release: the reads above are done before the producer may reuse the
-    // slots this frees.
-    tail_.store(tail, std::memory_order_release);
-    return count;
+    return drainEach([&out](const Sample& sample) { out.push_back(sample); });
 }
 
 // ---------------------------------------------------------------- SampleHistory
@@ -154,7 +137,6 @@ SignalBuffer::SignalBuffer(double history_seconds,
     staging_(staging_capacity),
     history_(max_points)
 {
-    scratch_.reserve(staging_capacity);
 }
 
 void SignalBuffer::push(const Sample& sample)
@@ -164,12 +146,10 @@ void SignalBuffer::push(const Sample& sample)
 
 std::size_t SignalBuffer::drain(double now)
 {
-    scratch_.clear();
-    const std::size_t moved = staging_.drain(scratch_);
-    for (const Sample& sample : scratch_)
-    {
-        history_.append(sample);
-    }
+    // Straight from the ring into the history -- no intermediate vector, no
+    // copy per sample beyond the one the hand-off requires.
+    const std::size_t moved = staging_.drainEach([this](const Sample& sample)
+                                                 { history_.append(sample); });
     received_ += moved;
 
     if (history_seconds_ > 0.0)
@@ -185,9 +165,7 @@ void SignalBuffer::clear()
     // seek and would land in the history on the next drain, one sample at a
     // time, out of order with the window that was just loaded -- which is
     // precisely the non-decreasing-time violation lowerBound() cannot survive.
-    scratch_.clear();
-    (void)staging_.drain(scratch_);
-    scratch_.clear();
+    (void)staging_.drainEach([](const Sample&) {});
 
     history_.clear();
 }

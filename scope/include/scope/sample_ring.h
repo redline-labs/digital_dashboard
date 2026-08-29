@@ -59,6 +59,33 @@ class StagingRing
     // how many were appended.
     std::size_t drain(std::vector<Sample>& out);
 
+    // Consumer thread only. Visits everything available in order and returns
+    // how many were visited. What SignalBuffer::drain uses: appending straight
+    // into the history removes the intermediate copy (and the scratch vector)
+    // the out-parameter form needs.
+    template <typename Visit>
+    std::size_t drainEach(Visit&& visit)
+    {
+        const std::size_t head = head_.load(std::memory_order_acquire);
+        std::size_t tail = tail_.load(std::memory_order_relaxed);
+
+        std::size_t count = 0;
+        while (tail != head)
+        {
+            visit(slots_[tail]);
+            if (++tail == slots_.size())
+            {
+                tail = 0;
+            }
+            ++count;
+        }
+
+        // Release: the reads above are done before the producer may reuse the
+        // slots this frees.
+        tail_.store(tail, std::memory_order_release);
+        return count;
+    }
+
     // Either thread. Monotonic.
     std::uint64_t dropped() const { return dropped_.load(std::memory_order_relaxed); }
 
@@ -209,9 +236,6 @@ class SignalBuffer
     StagingRing staging_;
     SampleHistory history_;
     std::uint64_t received_ = 0;
-
-    // Scratch for drain(), kept so a 30 Hz drain does not allocate.
-    std::vector<Sample> scratch_;
 };
 
 }  // namespace scope
