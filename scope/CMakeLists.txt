@@ -362,6 +362,13 @@ add_project_test(TARGET scope_test_time_base LABELS scope unit)
 # itself on a machine without one.
 qt_add_executable(scope_test_panels
     tests/test_panels.cpp
+    tests/test_panels_registry.cpp
+    tests/test_panels_plot.cpp
+    tests/test_panels_table.cpp
+    tests/test_panels_window.cpp
+    tests/test_panels_gestures.cpp
+    tests/test_panels_chrome.cpp
+    tests/test_panels_map.cpp
 )
 
 target_link_libraries(scope_test_panels PRIVATE
