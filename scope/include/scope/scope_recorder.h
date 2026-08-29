@@ -106,6 +106,14 @@ class CaptureProvider : public RecordedProvider
 
   private:
     const CaptureBuffer* buffer_;
+
+    // topics() derives its answer from a full walk of the retained deque, and
+    // scope.source calls it unconditionally -- so the walk is keyed on the
+    // buffer's revision, exactly as the signal browser keys its polling.
+    // Mutable because caching does not change the observable answer. GUI
+    // thread only, like every other read through this provider.
+    mutable std::vector<TopicInfo> cached_topics_;
+    mutable std::uint64_t cached_topics_revision_ = ~0ull;
 };
 
 }  // namespace scope

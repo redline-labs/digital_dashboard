@@ -149,21 +149,15 @@ json describePanel(const ScopeWindow::PanelEntry& entry)
     }
     out["bindings"] = std::move(bindings);
 
+    // The plot's traces, served from the reflected codec rather than a
+    // hand-written per-field block -- this was the last qobject_cast in the
+    // RPC layer, and the hand copy had already drifted (it never learned
+    // right_axis or display). Kept under the historical "traces" key because
+    // callers read it; every OTHER panel's full config is one
+    // scope.panel_get_config away, which serves the same reflected JSON.
     if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
     {
-        json traces = json::array();
-        for (const signal_binding_t& binding : plot->getConfig().traces)
-        {
-            json trace;
-            trace["zenoh_key"] = binding.zenoh_key;
-            trace["schema_type"] = std::string(reflection::enum_to_string(binding.schema_type));
-            trace["value_expression"] = binding.value_expression;
-            trace["label"] = binding.label;
-            trace["units"] = binding.units;
-            trace["color"] = binding.color.value();
-            traces.push_back(std::move(trace));
-        }
-        out["traces"] = std::move(traces);
+        out["traces"] = config_codec::toJson(plot->getConfig().traces);
     }
 
     return out;
@@ -702,6 +696,14 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                         badParams("'cursor' must be a number or null."));
                 }
             }
+
+            // Any mover above only PARKED its seek (they coalesce to the
+            // render tick); apply it now so this response describes the state
+            // the caller just asked for. Without this, {"seek": 10}'s own
+            // reply showed the position from before the seek -- correct on the
+            // NEXT call thanks to the dispatcher's flush, but confusing for an
+            // agent reading the reply it is holding.
+            time_base.flushSeek();
 
             const SourceCaps caps = time_base.source().caps();
             json out;

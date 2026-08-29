@@ -219,6 +219,16 @@ void CaptureProvider::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
 
 std::vector<TopicInfo> CaptureProvider::topics() const
 {
+    // Keyed on the buffer's revision: the walk below is O(retained) and this
+    // is called per scope.source RPC, while the answer only changes when the
+    // buffer does. Reviewing a capture means the recorder is stopped, so in
+    // practice the walk runs once.
+    const std::uint64_t revision = buffer_->revision();
+    if (revision == cached_topics_revision_)
+    {
+        return cached_topics_;
+    }
+
     // Derived from what is retained, not from a directory: a topic whose
     // messages have all been evicted is genuinely no longer reviewable, and
     // listing it would offer a binding that can only produce an empty trace.
@@ -236,6 +246,9 @@ std::vector<TopicInfo> CaptureProvider::topics() const
     {
         out.push_back(TopicInfo{key, schema, true});
     }
+
+    cached_topics_ = out;
+    cached_topics_revision_ = revision;
     return out;
 }
 
