@@ -30,6 +30,8 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cmath>
 #include <functional>
 #include <span>
@@ -162,6 +164,95 @@ class SlowProvider : public StubProvider
                               });
     }
 };
+
+// A provider whose FIRST pass blocks until released, so a test can guarantee
+// jobs pile up in the worker's queue while a pass is in flight -- the only way
+// to assert batching deterministically. Binding is on the GUI thread and the
+// worker races it; without the gate, "bind three, count passes" could see
+// anywhere from one to three passes and prove nothing.
+class GatedProvider : public StubProvider
+{
+  public:
+    GatedProvider() : StubProvider(50, 100'000'000ull) {}
+
+    void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
+                 const std::function<bool(const bag::BagMessage&)>& visit) override
+    {
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            ++started_;
+            started_cv_.notify_all();
+            gate_cv_.wait(lock, [this]() { return open_; });
+        }
+        StubProvider::forEach(t0_ns, t1_ns, visit);
+    }
+
+    // Block until `count` passes have STARTED (and are parked at the gate).
+    void waitForStarts(int count)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        started_cv_.wait(lock, [this, count]() { return started_ >= count; });
+    }
+
+    void openGate()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            open_ = true;
+        }
+        gate_cv_.notify_all();
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable gate_cv_;
+    std::condition_variable started_cv_;
+    bool open_ = false;
+    int started_ = 0;
+};
+
+bool waitForDecode(scope::RecordedSource& source);
+
+void testQueuedDecodesShareOnePass()
+{
+    // Opening an N-trace workspace over a bag used to cost N full passes over
+    // the file, serialized. Jobs queued while a pass is in flight must now be
+    // batched into ONE follow-up pass: bind A (the worker starts a pass and
+    // parks at the gate), bind B and C on two different expressions (queued),
+    // open the gate -- pass one serves A, pass two serves B AND C together.
+    auto provider = std::make_unique<GatedProvider>();
+    GatedProvider* gated = provider.get();
+    scope::RecordedSource source(std::move(provider));
+
+    auto a = std::make_shared<scope::SignalBuffer>(60.0, 1000, 4096);
+    auto b = std::make_shared<scope::SignalBuffer>(60.0, 1000, 4096);
+    auto c = std::make_shared<scope::SignalBuffer>(60.0, 1000, 4096);
+
+    source.bind(rpmKey(), a);
+    gated->waitForStarts(1);  // the worker is inside pass one, parked
+
+    source.bind(rpmKey(), b);
+    scope::SignalKey doubled = rpmKey();
+    doubled.value_expression = "rpm * 2";
+    source.bind(doubled, c);
+
+    gated->openGate();
+    expect(waitForDecode(source), "batch: every decode finished");
+
+    expect(gated->passes.load() == 2,
+           "batch: three bindings cost TWO passes -- one in flight, one batch (" +
+               std::to_string(gated->passes.load()) + ")");
+
+    // The batched bindings decoded real data, each through its OWN expression.
+    source.seek(source.caps().t_end);
+    expect(!b->history().empty(), "batch: the second binding has samples");
+    expect(!c->history().empty(), "batch: the third binding has samples");
+    if (!b->history().empty() && !c->history().empty())
+    {
+        expect(c->history().newest().v == b->history().newest().v * 2.0,
+               "batch: each binding was evaluated through its own expression");
+    }
+}
 
 // ------------------------------------------------------- the raw / video path
 //
@@ -847,6 +938,7 @@ int main()
     testAnEmptyRecordingIsSurvivable();
     testReleaseIsIdempotent();
     testDestructionMidDecodeReturnsPromptly();
+    testQueuedDecodesShareOnePass();
     testAMismatchedSchemaIsNotDecoded();
 
     testRawBindingIndexesWithoutHoldingPayloads();

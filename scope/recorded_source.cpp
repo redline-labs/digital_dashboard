@@ -326,10 +326,50 @@ struct RecordedSource::Impl
                    : 0.0;
     }
 
-    // The full decode pass for one signal. Runs on the worker thread.
-    void decode(const std::shared_ptr<RecordedBinding>& binding)
+    // ONE pass over the recording serving EVERY queued whole-recording job:
+    // all pending signal decodes and raw indexes together. Runs on the worker
+    // thread.
+    //
+    // This used to be one full pass PER binding, serialized -- so opening an
+    // eight-trace workspace over a bag read (and, for a torn part, re-scanned)
+    // the whole file eight times. The per-message cost of dispatching to
+    // several bindings is a map lookup; the per-pass cost of a multi-gigabyte
+    // mcap is I/O and decompression, and that is what a batch amortizes.
+    void decodeBatch(const std::vector<Job>& batch)
     {
-        std::vector<Sample> decoded;
+        struct SignalWork
+        {
+            std::shared_ptr<RecordedBinding> binding;
+            std::vector<Sample> decoded;
+        };
+        struct RawWork
+        {
+            std::shared_ptr<RecordedRawBinding> binding;
+            std::vector<RecordedRawBinding::IndexEntry> built;
+        };
+
+        std::vector<SignalWork> signal_work;
+        std::vector<RawWork> raw_work;
+        // Key -> the work items bound to it, so a message costs one ordered
+        // lookup rather than a string compare against every binding.
+        // std::map with std::less<>, because BagMessage::key is a view and a
+        // transparent comparator avoids a per-message std::string.
+        std::map<std::string, std::vector<std::size_t>, std::less<>> signals_by_key;
+        std::map<std::string, std::vector<std::size_t>, std::less<>> raw_by_key;
+
+        for (const Job& job : batch)
+        {
+            if (job.kind == Job::Kind::DecodeSignal)
+            {
+                signals_by_key[job.signal->key.zenoh_key].push_back(signal_work.size());
+                signal_work.push_back(SignalWork{job.signal, {}});
+            }
+            else
+            {
+                raw_by_key[job.raw->zenoh_key].push_back(raw_work.size());
+                raw_work.push_back(RawWork{job.raw, {}});
+            }
+        }
 
         provider->forEach(
             t_begin_ns, t_end_ns,
@@ -338,18 +378,6 @@ struct RecordedSource::Impl
                 if (stopping.load(std::memory_order_relaxed))
                 {
                     return false;
-                }
-                if (message.key != binding->key.zenoh_key)
-                {
-                    return true;
-                }
-
-                // Recorded with a different schema than the binding expects.
-                // Skipped rather than decoded: capnp will happily read these
-                // bytes against the wrong schema and produce a number.
-                if (!message.schema.empty() && message.schema != binding->expected_schema)
-                {
-                    return true;
                 }
 
                 // log_time, not publish_time. log_time is the recorder's own
@@ -362,76 +390,86 @@ struct RecordedSource::Impl
                 const double t =
                     static_cast<double>(message.log_time_ns - t_begin_ns) / kNanosPerSecond;
 
-                // A span, so nothing is copied. nullopt drops the sample rather
-                // than pushing zero: a gap in the line is honest, a spike that
-                // never happened is not.
-                if (const std::optional<double> value =
-                        binding->evaluator->evaluateToDouble(message.payload))
+                if (const auto found = signals_by_key.find(message.key);
+                    found != signals_by_key.end())
                 {
-                    decoded.push_back(Sample{t, *value});
+                    for (const std::size_t i : found->second)
+                    {
+                        RecordedBinding& binding = *signal_work[i].binding;
+
+                        // Recorded with a different schema than the binding
+                        // expects. Skipped rather than decoded: capnp will
+                        // happily read these bytes against the wrong schema
+                        // and produce a number.
+                        if (!message.schema.empty() &&
+                            message.schema != binding.expected_schema)
+                        {
+                            continue;
+                        }
+
+                        // A span, so nothing is copied. nullopt drops the
+                        // sample rather than pushing zero: a gap in the line is
+                        // honest, a spike that never happened is not.
+                        if (const std::optional<double> value =
+                                binding.evaluator->evaluateToDouble(message.payload))
+                        {
+                            signal_work[i].decoded.push_back(Sample{t, *value});
+                        }
+                    }
                 }
+
+                if (const auto found = raw_by_key.find(message.key); found != raw_by_key.end())
+                {
+                    for (const std::size_t i : found->second)
+                    {
+                        RecordedRawBinding& binding = *raw_work[i].binding;
+
+                        // Same rule as the numeric path: a message recorded
+                        // under a different schema is skipped rather than
+                        // handed over. A decoder fed the wrong stream produces
+                        // a plausible mess, not an error.
+                        if (!message.schema.empty() &&
+                            message.schema != binding.expected_schema)
+                        {
+                            continue;
+                        }
+
+                        RecordedRawBinding::IndexEntry entry;
+                        entry.t = t;
+                        entry.bytes = static_cast<std::uint32_t>(message.payload.size());
+                        if (binding.classify)
+                        {
+                            entry.flags = binding.classify(message.payload);
+                        }
+                        raw_work[i].built.push_back(entry);
+                    }
+                }
+
                 return true;
             });
 
         const std::lock_guard<std::mutex> guard(mutex);
-        binding->samples = std::move(decoded);
-        binding->ready = true;
+        for (SignalWork& item : signal_work)
+        {
+            item.binding->samples = std::move(item.decoded);
+            item.binding->ready = true;
 
-        // Cleared so the next refill rebuilds the window from scratch. The
-        // buffer is empty at this point and `filled_to` describes a vector that
-        // did not exist when it was last set.
-        binding->filled = false;
-        binding->filled_to = 0;
-    }
+            // Cleared so the next refill rebuilds the window from scratch. The
+            // buffer is empty at this point and `filled_to` describes a vector
+            // that did not exist when it was last set.
+            item.binding->filled = false;
+            item.binding->filled_to = 0;
+        }
+        for (RawWork& item : raw_work)
+        {
+            item.binding->index = std::move(item.built);
+            item.binding->ready = true;
 
-    // One pass over the recording building the payload-free index. Runs on the
-    // worker thread, exactly like decode() and for the same reason.
-    void indexRaw(const std::shared_ptr<RecordedRawBinding>& binding)
-    {
-        std::vector<RecordedRawBinding::IndexEntry> built;
-
-        provider->forEach(t_begin_ns, t_end_ns,
-                          [&](const bag::BagMessage& message) -> bool
-                          {
-                              if (stopping.load(std::memory_order_relaxed))
-                              {
-                                  return false;
-                              }
-                              if (message.key != binding->zenoh_key)
-                              {
-                                  return true;
-                              }
-
-                              // Same rule as the numeric path: a message
-                              // recorded under a different schema is skipped
-                              // rather than handed over. A decoder fed the wrong
-                              // stream produces a plausible mess, not an error.
-                              if (!message.schema.empty() &&
-                                  message.schema != binding->expected_schema)
-                              {
-                                  return true;
-                              }
-
-                              RecordedRawBinding::IndexEntry entry;
-                              entry.t = static_cast<double>(message.log_time_ns - t_begin_ns) /
-                                        kNanosPerSecond;
-                              entry.bytes = static_cast<std::uint32_t>(message.payload.size());
-                              if (binding->classify)
-                              {
-                                  entry.flags = binding->classify(message.payload);
-                              }
-                              built.push_back(entry);
-                              return true;
-                          });
-
-        const std::lock_guard<std::mutex> guard(mutex);
-        binding->index = std::move(built);
-        binding->ready = true;
-
-        // The window that was loaded, if any, described an index that did not
-        // exist when it was recorded.
-        binding->loaded = false;
-        binding->staged_ready = false;
+            // The window that was loaded, if any, described an index that did
+            // not exist when it was recorded.
+            item.binding->loaded = false;
+            item.binding->staged_ready = false;
+        }
     }
 
     // Load the payloads for ONE GOP: from the seek point at `want_start` up to
@@ -607,6 +645,7 @@ struct RecordedSource::Impl
         for (;;)
         {
             Job job;
+            std::vector<Job> batch;
             {
                 std::unique_lock<std::mutex> lock(mutex);
                 work.wait(lock, [this]() { return stopping || !queue.empty(); });
@@ -616,28 +655,43 @@ struct RecordedSource::Impl
                 }
                 job = queue.front();
                 queue.pop_front();
+
+                // A whole-recording job takes EVERY other queued whole-
+                // recording job with it, so N bindings queued together cost
+                // one pass instead of N. Window loads stay solo -- they are
+                // bounded reads of one GOP and must not wait behind a batch
+                // that grew while one was queued.
+                if (job.kind != Job::Kind::LoadWindow)
+                {
+                    batch.push_back(job);
+                    for (auto it = queue.begin(); it != queue.end();)
+                    {
+                        if (it->kind != Job::Kind::LoadWindow)
+                        {
+                            batch.push_back(*it);
+                            it = queue.erase(it);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
+                }
             }
 
-            switch (job.kind)
+            if (batch.empty())
             {
-                case Job::Kind::DecodeSignal:
-                    decode(job.signal);
-                    break;
-
-                case Job::Kind::IndexRaw:
-                    indexRaw(job.raw);
-                    break;
-
-                case Job::Kind::LoadWindow:
-                    loadWindow(job.raw);
-                    break;
+                loadWindow(job.raw);
+                continue;
             }
+
+            decodeBatch(batch);
 
             // Only the whole-recording passes are counted -- see `pending`.
-            if (job.kind != Job::Kind::LoadWindow)
+            // The whole batch at once: every binding in it just became ready.
             {
                 const std::lock_guard<std::mutex> guard(mutex);
-                --pending;
+                pending -= batch.size();
             }
         }
     }
