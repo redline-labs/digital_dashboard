@@ -26,11 +26,13 @@ namespace scope
 
 class DataSource;
 class LiveZenohSource;
+class OverviewController;
 class OverviewStrip;
 class Panel;
 class ScopeRecorder;
 class SignalBrowser;
 class TimeBase;
+class TransportBar;
 
 // The scope's top-level window.
 //
@@ -303,29 +305,15 @@ class ScopeWindow : public QMainWindow
     void buildNavigationActions();
 
     // Show the control set the current source's caps() call for, and hide the
-    // other. Both are built once, at startup, because a toolbar rebuilt on
-    // every source change would lose the object names the agent interface
-    // addresses -- and re-creating widgets to change their visibility is how a
-    // toolbar ends up with two Pause buttons.
+    // other -- delegating the widget half to transport_bar_. Both control sets
+    // are built once, at startup, because a toolbar rebuilt on every source
+    // change would lose the object names the agent interface addresses.
     void applySourceCaps();
 
-    // Per-frame refresh of the overview strip and the position readout.
+    // Per-frame refresh of the transport controls, the source chip and the
+    // overview strip. The bodies live in TransportBar and OverviewController;
+    // this is the entry the time-base connections and the mode paths call.
     void updateTransport();
-
-    // Push the strip's marks -- extent, view, cursor, playhead, retained band.
-    // Cheap, so it runs every frame. The histogram behind them does NOT; see
-    // refreshDensity().
-    void updateOverview();
-
-    // Recompute the strip's background histogram, at most every
-    // kDensityIntervalMs and only when something it depends on has moved.
-    //
-    // THE THROTTLE IS LOAD-BEARING, not a tuning knob. CaptureBuffer::revision()
-    // bumps on every push and every eviction -- thousands a second on a busy bus
-    // -- so a revision check alone would recompute every frame, walking millions
-    // of entries while holding the mutex the zenoh RX thread needs to push. That
-    // does not merely cost the consumer; it stalls the producer.
-    void refreshDensity();
 
     void updateEmptyHint();
 
@@ -403,9 +391,6 @@ class ScopeWindow : public QMainWindow
     QDockWidget* browser_dock_ = nullptr;
 
     QLabel* empty_hint_ = nullptr;
-    QToolButton* pause_button_ = nullptr;
-    QDoubleSpinBox* window_spin_ = nullptr;
-    QLabel* cursor_label_ = nullptr;
 
     // The mode control: ONE button for one bit of state, checked when online.
     //
@@ -437,29 +422,20 @@ class ScopeWindow : public QMainWindow
     // owns the widget's place in the bar, and hiding that is what removes the
     // widget AND the separator space around it -- hiding the widget alone
     // leaves a gap where it was.
-    std::vector<QAction*> live_controls_;
-    std::vector<QAction*> review_controls_;
-
-    QToolButton* play_button_ = nullptr;
-    QComboBox* rate_combo_ = nullptr;
-    QLabel* transport_status_ = nullptr;
-
     // Replaced `transport_scrubber`, a QSlider. The name could not be kept: an
     // agent that clicked it and then set a value would be driving a widget that
     // is not a slider any more, and would fail in a way that looks like a
-    // broken app rather than a renamed one.
+    // broken app rather than a renamed one. Created by TransportBar::build();
+    // held here because it is window chrome both controllers share.
     OverviewStrip* overview_ = nullptr;
 
-    // Reused across recomputations so a running strip allocates nothing.
-    std::vector<std::uint32_t> density_;
-
-    // The cache keys: bucket count (a resize recomputes at once) and the clock
-    // (everything else waits for the 500 ms throttle; a source swap zeroes the
-    // clock to force a recompute). Deliberately NOT the range -- on a live
-    // source the range's end is now() and never compares equal, which silently
-    // defeated the throttle. See refreshDensity().
-    int density_buckets_ = 0;
-    std::int64_t density_computed_at_ms_ = 0;
+    // The window's two extracted layers: the bottom bar's widgets and the
+    // overview's density cache. Friends rather than interfaces -- they are
+    // this window's own machinery in separate files, not reusable components.
+    std::unique_ptr<TransportBar> transport_bar_;
+    std::unique_ptr<OverviewController> overview_controller_;
+    friend class TransportBar;
+    friend class OverviewController;
 
     // Set while the transport bar is being updated FROM the time base, so the
     // widgets' own valueChanged signals do not turn a refresh into a seek. The

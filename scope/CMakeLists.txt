@@ -33,6 +33,8 @@ add_library(scope_core STATIC
     add_signal_dialog.cpp
     panel_config_dialog.cpp
     overview_strip.cpp
+    overview_controller.cpp
+    transport_bar.cpp
     scope_window.cpp
     workspace.cpp
     settings.cpp
