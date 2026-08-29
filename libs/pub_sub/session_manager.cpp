@@ -164,6 +164,12 @@ std::string SessionManager::zid()
     }
 }
 
+bool SessionManager::isOpen()
+{
+    const std::lock_guard<std::mutex> guard(mutex_);
+    return !weak_session_.expired();
+}
+
 void SessionManager::shutdown()
 {
     std::lock_guard<std::mutex> lk(mutex_);

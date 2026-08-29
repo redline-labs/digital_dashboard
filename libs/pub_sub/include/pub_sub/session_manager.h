@@ -37,6 +37,12 @@ class SessionManager
     // already up, because a zid without a session does not exist.
     static std::string zid();
 
+    // Whether a session is currently open, WITHOUT opening one. For tests and
+    // diagnostics asserting a process has not joined the bus -- scope's
+    // "offline opens no zenoh session" claim is checkable only through this,
+    // because every other accessor opens a session as a side effect.
+    static bool isOpen();
+
     // Close and reset the shared session (useful for tests/shutdown)
     static void shutdown();
 
