@@ -40,6 +40,10 @@ add_library(scope_core STATIC
     settings.cpp
     settings_dialog.cpp
     scope_methods.cpp
+    scope_methods_panels.cpp
+    scope_methods_time.cpp
+    scope_methods_source.cpp
+    scope_methods_config.cpp
     command_line_args.cpp
 
     # Headers carrying Q_OBJECT have to be listed as sources, because AUTOMOC
