@@ -47,6 +47,7 @@
 #include <memory>
 #include <utility>
 #include <string>
+#include <unistd.h>
 
 namespace
 {
@@ -1874,6 +1875,17 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
           "and once the backoff expires it asks again");
 }
 
+// A per-process key, so two instances of this binary can share the zenoh bus.
+// ctest runs the same executable twice (map_test_widget and _hidpi), and with
+// a FIXED key both FakeTileServers answered the same queries -- whichever
+// replied first won, so the HiDPI run could be served the other process's
+// server. That was the one intermittent failure in the suite, and it only
+// appeared under -j or a full serial run with unlucky timing.
+std::string uniqueKey(const char* base)
+{
+    return std::string(base) + "/" + std::to_string(::getpid());
+}
+
 // A one-tile map server, in-process: answers every requested coordinate with
 // the same encoded water quad. What the fade tests need is real arrivals
 // through the real path -- zenoh reply, worker decode, tessellate, drain --
@@ -1926,11 +1938,12 @@ void test_a_new_tile_fades_in_and_the_ticker_stops()
     // settles, and then everything goes quiet -- the ticker dies and the GPU
     // memo takes over again. Stuck tilesFading or a ticker that never stops
     // are the two ways this feature turns into a battery drain.
-    FakeTileServer server("test/map_fade/tile");
+    const std::string tile_key = uniqueKey("test/map_fade/tile");
+    FakeTileServer server(tile_key);
 
     MapConfig_t config;
     config.position_zenoh_key.clear();
-    config.tile_zenoh_key = "test/map_fade/tile";
+    config.tile_zenoh_key = tile_key;
     config.zoom = 14.0;
     config.tile_fade_ms = 400;
 
@@ -1973,11 +1986,12 @@ void test_a_fading_tile_keeps_its_stand_in()
     // dropped the frame the fade starts -- the new tile blends with the
     // background instead of the picture it replaces, and the map flashes dark
     // exactly where it was meant to ease over.
-    FakeTileServer server("test/map_fade_standin/tile");
+    const std::string tile_key = uniqueKey("test/map_fade_standin/tile");
+    FakeTileServer server(tile_key);
 
     MapConfig_t config;
     config.position_zenoh_key.clear();
-    config.tile_zenoh_key = "test/map_fade_standin/tile";
+    config.tile_zenoh_key = tile_key;
     config.zoom = 14.0;
     config.interactive = true;
     config.follow_vehicle = false;
