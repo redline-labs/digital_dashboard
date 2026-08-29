@@ -249,7 +249,6 @@ class MapPanel : public Panel
     std::vector<std::vector<map_render::CachedTile>> ready_;
     std::vector<std::vector<map_render::TileId>> stand_ins_;
     std::vector<std::vector<map_render::CachedTile>> stand_in_tiles_;
-    std::vector<bool> have_;
     std::vector<map_render::GpuBatch> batches_;
     std::vector<map_render::LabelTile> label_tiles_;
     std::vector<map_render::TextQuad> text_quads_;

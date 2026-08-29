@@ -300,12 +300,12 @@ void Projection::sortCentreOutward(std::vector<TileId>& tiles) const
 }
 
 std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
-                                    const std::vector<bool>& have,
+                                    const std::function<bool(std::size_t)>& have,
                                     const std::function<bool(const TileId&)>& drawable,
                                     std::size_t budget)
 {
     std::vector<TileId> out;
-    if (budget == 0 || wanted.size() != have.size() || !drawable)
+    if (budget == 0 || !have || !drawable)
     {
         return out;
     }
@@ -314,7 +314,7 @@ std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
 
     for (std::size_t i = 0; i < wanted.size() && out.size() < budget; ++i)
     {
-        if (have[i])
+        if (have(i))
         {
             // The real thing is here. Nothing to stand in for, and adding one
             // anyway would draw the same ground twice for no reason.

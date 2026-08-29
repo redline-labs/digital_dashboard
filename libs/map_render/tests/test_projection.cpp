@@ -48,6 +48,14 @@ using map_render::Projection;
 using map_render::ScreenPoint;
 using map_render::kMaxTileZoom;
 using map_render::substituteTiles;
+
+// The old signature took a vector<bool>; the predicate is what callers hold
+// naturally. These adapt the tests' literals.
+std::function<bool(std::size_t)> haveOf(std::vector<bool> flags)
+{
+    return [held = std::move(flags)](std::size_t i) { return held[i]; };
+}
+const auto haveNone = [](std::size_t) { return false; };
 using map_render::TileId;
 using map_render::TileIdHash;
 using map_render::WorldPoint;
@@ -313,7 +321,7 @@ void test_a_four_level_overview_stands_in_for_ground_never_visited()
     // Only the overview, four levels down: 2828 >> 4 == 176, 6562 >> 4 == 410.
     cache.add(10, 176, 410);
 
-    const auto out = substituteTiles(wanted, { false, false, false, false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 1,
           "one overview tile covers the whole viewport, got " + std::to_string(out.size()));
     check(contains(out, 10, 176, 410), "and it is the z10 ancestor the prefetch asked for");
@@ -327,12 +335,12 @@ void test_the_substitute_walk_reaches_five_levels_and_no_further()
 
     FakeCache atTheLimit;
     atTheLimit.add(9, 2828 >> 5, 6562 >> 5);
-    check(substituteTiles(wanted, { false }, atTheLimit.predicate(), 64).size() == 1,
+    check(substituteTiles(wanted, haveNone, atTheLimit.predicate(), 64).size() == 1,
           "five levels up is still found");
 
     FakeCache pastTheLimit;
     pastTheLimit.add(8, 2828 >> 6, 6562 >> 6);
-    check(substituteTiles(wanted, { false }, pastTheLimit.predicate(), 64).empty(),
+    check(substituteTiles(wanted, haveNone, pastTheLimit.predicate(), 64).empty(),
           "six is not, which is why the overview delta may not grow past five");
 }
 
@@ -344,7 +352,7 @@ void test_nothing_stands_in_for_a_tile_that_arrived()
     FakeCache cache;
     cache.add(13, 1414, 3281);
 
-    const auto out = substituteTiles(wanted, { true, true }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveOf({ true, true }), cache.predicate(), 64);
     check(out.empty(), "a fully arrived set needs no stand-ins");
 }
 
@@ -358,7 +366,7 @@ void test_one_ancestor_covers_a_tile_and_its_siblings()
     FakeCache cache;
     cache.add(13, 1414, 3281);
 
-    const auto out = substituteTiles(wanted, { false, false, false, false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 1, "four missing siblings share one ancestor, got " +
                                std::to_string(out.size()));
     check(contains(out, 13, 1414, 3281), "and it is their parent");
@@ -373,7 +381,7 @@ void test_the_nearest_ancestor_wins()
     cache.add(13, 1414, 3281);
     cache.add(12, 707, 1640);
 
-    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 1 && contains(out, 13, 1414, 3281),
           "the parent is used rather than the grandparent");
 }
@@ -390,7 +398,7 @@ void test_a_deeper_cache_stands_in_when_there_is_no_ancestor()
     cache.add(14, 2828, 6563);
     cache.add(14, 2829, 6563);
 
-    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 4, "all four children stand in, got " + std::to_string(out.size()));
     check(contains(out, 14, 2828, 6562) && contains(out, 14, 2829, 6563),
           "and they are the right ones");
@@ -404,7 +412,7 @@ void test_a_partial_deeper_cache_still_helps()
     FakeCache cache;
     cache.add(14, 2828, 6562);
 
-    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 1 && contains(out, 14, 2828, 6562),
           "the one cached child is drawn rather than nothing");
 }
@@ -418,7 +426,7 @@ void test_an_ancestor_beats_descendants()
     cache.add(14, 2828, 6562);
     cache.add(14, 2829, 6562);
 
-    const auto out = substituteTiles(wanted, { false }, cache.predicate(), 64);
+    const auto out = substituteTiles(wanted, haveNone, cache.predicate(), 64);
     check(out.size() == 1 && contains(out, 12, 707, 1640),
           "the ancestor is preferred, got " + std::to_string(out.size()) + " tiles");
 }
@@ -458,11 +466,11 @@ void test_the_budget_is_not_exceeded()
         }
 
         const std::string path = viaAncestor ? " (ancestors)" : " (descendants)";
-        const auto out = substituteTiles(wanted, have, cache.predicate(), 7);
+        const auto out = substituteTiles(wanted, haveOf(have), cache.predicate(), 7);
         check(out.size() <= 7, "the cap holds" + path + ", got " + std::to_string(out.size()));
         check(!out.empty(), "and it did not give up entirely" + path);
 
-        check(substituteTiles(wanted, have, cache.predicate(), 0).empty(),
+        check(substituteTiles(wanted, haveOf(have), cache.predicate(), 0).empty(),
               "a budget of zero yields nothing rather than one" + path);
     }
 }
@@ -479,7 +487,7 @@ void test_the_edges_of_the_pyramid_do_not_overflow()
     // that every id proposed names a level that EXISTS.
     const auto anything = [](const TileId&) { return true; };
 
-    for (const TileId& id : substituteTiles({ TileId { 0, 0, 0 } }, { false }, anything, 64))
+    for (const TileId& id : substituteTiles({ TileId { 0, 0, 0 } }, haveNone, anything, 64))
     {
         check(id.z <= kMaxTileZoom,
               "nothing above z0 is proposed -- an unguarded walk up wraps to z255, got z" +
@@ -490,7 +498,7 @@ void test_the_edges_of_the_pyramid_do_not_overflow()
     // walk up succeeds at the first try and the code below it never runs.
     const auto onlyImpossiblyDeep = [](const TileId& id) { return id.z > kMaxTileZoom; };
     for (const TileId& id :
-         substituteTiles({ TileId { kMaxTileZoom, 5, 5 } }, { false }, onlyImpossiblyDeep, 64))
+         substituteTiles({ TileId { kMaxTileZoom, 5, 5 } }, haveNone, onlyImpossiblyDeep, 64))
     {
         check(id.z <= kMaxTileZoom,
               "and nothing deeper than the projection goes, got z" + std::to_string(id.z));
@@ -499,13 +507,16 @@ void test_the_edges_of_the_pyramid_do_not_overflow()
 
 void test_a_mismatched_call_is_refused_rather_than_read_off_the_end()
 {
+    // The length-mismatch case the vector<bool> signature had is gone by
+    // construction -- a predicate cannot be the wrong length. What remains
+    // refusable is a missing predicate on either side.
     FakeCache cache;
     cache.add(13, 1414, 3281);
     const std::vector<TileId> wanted { { 14, 2828, 6562 }, { 14, 2829, 6562 } };
 
-    check(substituteTiles(wanted, { false }, cache.predicate(), 64).empty(),
-          "a have[] of the wrong length yields nothing rather than an overrun");
-    check(substituteTiles(wanted, { false, false }, nullptr, 64).empty(),
+    check(substituteTiles(wanted, nullptr, cache.predicate(), 64).empty(),
+          "a missing have predicate yields nothing rather than a crash");
+    check(substituteTiles(wanted, haveNone, nullptr, 64).empty(),
           "and so does a missing cache predicate");
 }
 

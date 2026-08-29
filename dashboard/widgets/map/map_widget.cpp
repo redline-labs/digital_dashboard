@@ -873,7 +873,8 @@ void MapWidget::assembleBatches()
         }
         map_widget::TileSource& source = *mSources[s];
         mStandIns[s] = map_render::substituteTiles(
-            mVisible[s], mHave, [&source](const map_render::TileId& id) {
+            mVisible[s], [this](std::size_t i) { return mHave[i]; },
+            [&source](const map_render::TileId& id) {
                 return source.drawable(id);
             },
             budget);

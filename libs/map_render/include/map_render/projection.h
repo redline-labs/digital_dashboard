@@ -302,10 +302,14 @@ inline constexpr int kMaxSubstituteLevelsUp = 5;
 // and a tile drawn at a zoom other than its own needs no special handling --
 // tileOrigin() and tileScreenSize() place it correctly from its own id.
 //
-// `have[i]` says whether wanted[i] has arrived. `drawable` answers whether some
-// OTHER tile is cached and has geometry worth drawing -- not the same question
-// as "is it cached", because an absent tile is cached too, with nothing in it,
-// so that it is not asked for again.
+// `have(i)` says whether wanted[i] has arrived -- a predicate rather than a
+// vector<bool>, because every caller already holds that answer in its own
+// per-tile state and was rebuilding a parallel bool vector per frame just to
+// feed this. A predicate also removes the length-mismatch failure class the
+// vector had. `drawable` answers whether some OTHER tile is cached and has
+// geometry worth drawing -- not the same question as "is it cached", because
+// an absent tile is cached too, with nothing in it, so that it is not asked
+// for again.
 //
 // Ancestors are preferred over descendants: one covers a tile and its three
 // siblings, so it is one draw call for four. Descendants are the zoom-OUT case,
@@ -316,7 +320,7 @@ inline constexpr int kMaxSubstituteLevelsUp = 5;
 // lose their slots to stand-ins. What is dropped when the cap bites is the end
 // of the row-major order, i.e. the bottom right of the viewport.
 std::vector<TileId> substituteTiles(const std::vector<TileId>& wanted,
-                                    const std::vector<bool>& have,
+                                    const std::function<bool(std::size_t)>& have,
                                     const std::function<bool(const TileId&)>& drawable,
                                     std::size_t budget);
 

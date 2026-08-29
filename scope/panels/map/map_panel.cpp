@@ -834,15 +834,9 @@ void MapPanel::assembleBatches()
     {
         readers_[s]->ready(visible_[s], ready_[s]);
 
-        have_.assign(visible_[s].size(), false);
-        for (std::size_t i = 0; i < visible_[s].size(); ++i)
-        {
-            have_[i] = static_cast<bool>(ready_[s][i]);
-        }
-
         TileReader& reader = *readers_[s];
         stand_ins_[s] = map_render::substituteTiles(
-            visible_[s], have_,
+            visible_[s], [this, s](std::size_t i) { return static_cast<bool>(ready_[s][i]); },
             [&reader](const map_render::TileId& id) { return reader.drawable(id); }, budget);
         budget -= std::min(budget, stand_ins_[s].size());
         reader.ready(stand_ins_[s], stand_in_tiles_[s]);
