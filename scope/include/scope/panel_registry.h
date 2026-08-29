@@ -37,8 +37,8 @@
 //
 //   2. Add one line to SCOPE_PANEL_TABLE in scope/panel_table.h.
 //
-//   3. Add its .cpp and its Q_OBJECT header to scope_core's sources in
-//      scope/CMakeLists.txt, and its include/ to the include directories.
+//   3. Add one scope_add_panel(<dir> <sources...>) call in
+//      scope/CMakeLists.txt -- list any Q_OBJECT header among the sources.
 //
 // Everything else follows: the enum, the config variant, default_panel_config(),
 // the Panels menu, the YAML decoder, and what the agent interface will accept.

@@ -54,37 +54,49 @@ add_library(scope_core STATIC
     include/scope/settings_dialog.h
     include/scope/panel_config_dialog.h
 
-    # Panels. One directory per type, mirroring dashboard/widgets/ -- but built
-    # into scope_core rather than into a library each, because there is no
-    # equivalent of the widget palette's dynamic registration to serve and the
-    # panel table is resolved at compile time anyway.
-    panels/time_series/time_series_panel.cpp
-    panels/time_series/include/time_series/time_series_panel.h
-
-    panels/video/video_panel.cpp
-    panels/video/video_decoder.cpp
-    panels/video/video_decode_worker.cpp
-    panels/video/video_scrubber.cpp
-    panels/video/include/video/video_panel.h
-    panels/video/include/video/video_scrubber.h
-
-    panels/table/table_panel.cpp
-    panels/table/include/table/table_panel.h
-
-    panels/map/tile_reader.cpp
-    panels/map/track_builder.cpp
-    panels/map/map_panel.cpp
-    panels/map/include/map_panel/map_panel.h
 )
 
 set_target_properties(scope_core PROPERTIES AUTOMOC ON)
 
-target_include_directories(scope_core PUBLIC
-    include
-    panels/time_series/include
-    panels/video/include
-    panels/table/include
-    panels/map/include
+target_include_directories(scope_core PUBLIC include)
+
+# One call registers a panel: its sources (INCLUDING any Q_OBJECT header --
+# AUTOMOC only finds a header listed as a target source, and leaving one out
+# fails as a missing staticMetaObject at link time) and its include/ directory.
+# This used to be two separate edits in this file, and it was the one manual,
+# error-prone step in the add-a-panel recipe panel_registry.h documents.
+function(scope_add_panel dir)
+    foreach(src IN LISTS ARGN)
+        target_sources(scope_core PRIVATE panels/${dir}/${src})
+    endforeach()
+    target_include_directories(scope_core PUBLIC panels/${dir}/include)
+endfunction()
+
+# Panels. One directory per type, mirroring dashboard/widgets/ -- but built
+# into scope_core rather than into a library each, because there is no
+# equivalent of the widget palette's dynamic registration to serve and the
+# panel table is resolved at compile time anyway.
+scope_add_panel(time_series
+    time_series_panel.cpp
+    include/time_series/time_series_panel.h
+)
+scope_add_panel(video
+    video_panel.cpp
+    video_decoder.cpp
+    video_decode_worker.cpp
+    video_scrubber.cpp
+    include/video/video_panel.h
+    include/video/video_scrubber.h
+)
+scope_add_panel(table
+    table_panel.cpp
+    include/table/table_panel.h
+)
+scope_add_panel(map
+    tile_reader.cpp
+    track_builder.cpp
+    map_panel.cpp
+    include/map_panel/map_panel.h
 )
 
 # libavcodec for software H.264/H.265 decode of the recorded or live video
