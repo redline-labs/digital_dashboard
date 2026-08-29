@@ -1,5 +1,8 @@
 #include "pub_sub/detail/byte_subscriber.h"
 
+#include <array>
+#include <vector>
+
 #include "pub_sub/session_manager.h"
 #include "pub_sub/timestamp.h"
 #include "pub_sub/topic_key.h"
@@ -51,7 +54,33 @@ class ZenohSampleMeta final : public SampleMeta
         // is the publisher's -- zenoh stamps at the source when timestamping is
         // enabled there, and a router only fills in for samples that arrive
         // without one.
-        return stamp->get_id().to_string();
+        //
+        // CACHED PER RX THREAD, keyed on the raw 16 bytes. Id::to_string()
+        // goes through Rust's formatter and allocates, and a `**` capture
+        // called it for every message on the bus -- tens of thousands of
+        // times a second to re-format the handful of session ids a bus
+        // actually has. thread_local so the cache needs no lock on the one
+        // path that must never take one; zenoh delivers a subscriber's
+        // callbacks from more than one RX thread.
+        const std::array<std::uint8_t, 16>& id = stamp->get_id().bytes();
+
+        thread_local std::vector<std::pair<std::array<std::uint8_t, 16>, std::string>> cache;
+        for (const auto& [key, text] : cache)
+        {
+            if (key == id)
+            {
+                return text;
+            }
+        }
+
+        std::string text = stamp->get_id().to_string();
+        // Bounded: a runaway set of ids (which would take a bus of hundreds of
+        // sessions) degrades to the old per-message formatting, not to growth.
+        if (cache.size() < 64)
+        {
+            cache.emplace_back(id, text);
+        }
+        return text;
     }
 
   private:
