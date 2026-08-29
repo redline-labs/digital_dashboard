@@ -1,5 +1,6 @@
 #include "time_series/time_series_panel.h"
 
+#include "scope/bound_signal_list.h"
 #include "scope/data_source.h"
 #include "scope/state_names.h"
 #include "scope/time_base.h"
@@ -103,19 +104,6 @@ const QColor& stateColor(std::size_t ordinal)
     return palette[ordinal % palette.size()];
 }
 
-// Do these two traces name THE SAME SIGNAL? The binding triple and nothing else:
-// a colour, a label, a units suffix, an axis or a display mode is presentation,
-// and changing one must not cost the trace its history.
-//
-// The same triple SignalKey is built from, deliberately -- this is the identity
-// the source issues a handle against, so two traces that compare equal here are
-// two the source cannot tell apart.
-bool sameSignal(const signal_binding_t& lhs, const signal_binding_t& rhs)
-{
-    return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
-           lhs.value_expression == rhs.value_expression;
-}
-
 }  // namespace
 
 // One plotted signal: its configuration, where its samples land, and the handle
@@ -181,14 +169,7 @@ TimeSeriesPanel::~TimeSeriesPanel()
 
 void TimeSeriesPanel::releaseAll()
 {
-    for (const std::unique_ptr<Trace>& trace : traces_)
-    {
-        if (trace->handle != kInvalidSignal)
-        {
-            source_->release(trace->handle);
-        }
-    }
-    traces_.clear();
+    releaseBoundSignals(traces_, *source_);
 }
 
 void TimeSeriesPanel::applyPresentation(Trace& trace) const
@@ -210,89 +191,20 @@ void TimeSeriesPanel::applyPresentation(Trace& trace) const
 
 std::unique_ptr<TimeSeriesPanel::Trace> TimeSeriesPanel::makeTrace(const signal_binding_t& binding)
 {
-    auto trace = std::make_unique<Trace>();
-    trace->binding = binding;
-    trace->buffer =
-        std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal, kStagingCapacity);
-
-    SignalKey key;
-    key.zenoh_key = binding.zenoh_key;
-    key.schema_type = binding.schema_type;
-    key.value_expression = binding.value_expression;
-
-    trace->handle = source_->bind(key, trace->buffer);
-    trace->bound = trace->handle != kInvalidSignal;
-
-    // Resolved here rather than at paint time: it reads the schema registry
-    // and builds a JSON description, which is fine once per binding and
-    // absurd at 30 Hz.
-    trace->states = resolveStateNames(binding.schema_type, binding.value_expression);
+    auto trace = makeBoundSignal<Trace>(*source_, binding, history_seconds_,
+                                        kMaxPointsPerSignal, kStagingCapacity, cfg_.title);
     applyPresentation(*trace);
-
-    if (!trace->bound)
-    {
-        // Already logged in detail by the evaluator; this says which panel.
-        SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", cfg_.title,
-                    binding.value_expression, binding.zenoh_key);
-    }
-
     return trace;
 }
 
-// Bring traces_ into line with cfg_.traces, KEEPING THE BUFFER OF EVERY TRACE
-// THAT IS STILL THERE.
-//
-// This used to rebuild all of them, which threw away the history of traces that
-// had not changed -- so adding a signal blanked every line already on the plot
-// and started them again from that instant. On a paused view they did not come
-// back at all, because the window is frozen over a stretch the new buffers have
-// nothing for. Reported against the table panel, which shows it as every cell
-// reading "--"; the same code here shows it as the plot going empty.
-//
-// This is also what the class header has always PROMISED -- "signals that are
-// unchanged keep their history rather than being torn down and restarted" --
-// while the implementation did the opposite.
-//
-// Identity is the binding triple: the same triple SignalKey is built from, so
-// two traces that compare equal are two the source cannot tell apart. A colour,
-// a label, a units suffix, an axis or a display mode is presentation, and
-// changing one keeps everything and re-reads only those fields.
+// Bring traces_ into line with cfg_.traces, keeping the buffer of every trace
+// that is still there. The rule and the data-loss story it prevents live in
+// bound_signal_list.h -- the table panel had the identical bug, fixed twice.
 void TimeSeriesPanel::syncTraces()
 {
-    std::vector<std::unique_ptr<Trace>> previous;
-    previous.swap(traces_);
-    traces_.reserve(cfg_.traces.size());
-
-    for (const signal_binding_t& binding : cfg_.traces)
-    {
-        // Moved out of `previous` when claimed, so the entry goes null and a
-        // second trace naming the same signal cannot steal this one's buffer
-        // and leave two traces sharing it.
-        const auto match = std::find_if(previous.begin(), previous.end(),
-                                        [&binding](const std::unique_ptr<Trace>& trace) {
-                                            return trace && sameSignal(trace->binding, binding);
-                                        });
-
-        if (match == previous.end())
-        {
-            traces_.push_back(makeTrace(binding));
-            continue;
-        }
-
-        std::unique_ptr<Trace> trace = std::move(*match);
-        trace->binding = binding;  // Presentation may have changed; the signal did not.
-        applyPresentation(*trace);
-        traces_.push_back(std::move(trace));
-    }
-
-    // Whatever was not claimed is genuinely gone, and its subscription with it.
-    for (const std::unique_ptr<Trace>& leftover : previous)
-    {
-        if (leftover && leftover->handle != kInvalidSignal)
-        {
-            source_->release(leftover->handle);
-        }
-    }
+    syncBoundSignals(traces_, cfg_.traces, *source_,
+                     [this](const signal_binding_t& binding) { return makeTrace(binding); },
+                     [this](Trace& trace) { applyPresentation(trace); });
 
     // Maintained here so plotRect() -- called per paint and per gesture -- can
     // read it instead of scanning the config every time.

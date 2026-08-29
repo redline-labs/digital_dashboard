@@ -1,5 +1,6 @@
 #include "table/table_panel.h"
 
+#include "scope/bound_signal_list.h"
 #include "scope/data_source.h"
 #include "scope/time_base.h"
 #include "scope/value_format.h"
@@ -70,19 +71,6 @@ const QColor kValue("#E0E4EA");
 const QColor kUnbound("#8A6060");
 const QColor kStale("#D08A50");
 const QColor kEmptyHint("#5A6270");
-
-// Do these two rows name THE SAME SIGNAL? The binding triple and nothing else:
-// a label, a format, a units suffix or a decimal count are presentation, and
-// changing one must not cost the row its history.
-//
-// The same triple SignalKey is built from, deliberately -- this is the identity
-// the source issues a handle against, so two rows that compare equal here are
-// two rows the source cannot tell apart.
-bool sameSignal(const table_row_t& lhs, const table_row_t& rhs)
-{
-    return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
-           lhs.value_expression == rhs.value_expression;
-}
 
 // How long ago, at a width a glance can compare. Milliseconds below a second
 // because that is the range a healthy bus lives in, and minutes above one
@@ -158,14 +146,7 @@ TablePanel::~TablePanel()
 
 void TablePanel::releaseAll()
 {
-    for (const std::unique_ptr<Row>& row : rows_)
-    {
-        if (row->handle != kInvalidSignal)
-        {
-            source_->release(row->handle);
-        }
-    }
-    rows_.clear();
+    releaseBoundSignals(rows_, *source_);
 }
 
 void TablePanel::applyFormat(Row& row) const
@@ -187,87 +168,20 @@ void TablePanel::applyFormat(Row& row) const
 
 std::unique_ptr<TablePanel::Row> TablePanel::makeRow(const table_row_t& binding)
 {
-    auto row = std::make_unique<Row>();
-    row->binding = binding;
-    row->buffer =
-        std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal, kStagingCapacity);
-
-    SignalKey key;
-    key.zenoh_key = binding.zenoh_key;
-    key.schema_type = binding.schema_type;
-    key.value_expression = binding.value_expression;
-
-    row->handle = source_->bind(key, row->buffer);
-    row->bound = row->handle != kInvalidSignal;
-
-    // Resolved here rather than at paint time: it reads the schema registry and
-    // builds a JSON description, which is fine once per binding and absurd at
-    // 30 Hz.
-    row->states = resolveStateNames(binding.schema_type, binding.value_expression);
+    auto row = makeBoundSignal<Row>(*source_, binding, history_seconds_, kMaxPointsPerSignal,
+                                    kStagingCapacity, cfg_.title);
     applyFormat(*row);
-
-    if (!row->bound)
-    {
-        // Already logged in detail by the evaluator; this says which panel.
-        SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", cfg_.title,
-                    binding.value_expression, binding.zenoh_key);
-    }
-
     return row;
 }
 
-// Bring rows_ into line with cfg_.rows, KEEPING THE BUFFER OF EVERY ROW THAT IS
-// STILL THERE.
-//
-// This used to rebuild all of them, and that was a data-loss bug rather than an
-// inefficiency. Adding a signal gave every OTHER row a brand-new empty buffer,
-// so their history was gone -- and while the view is paused the readout instant
-// is frozen in the past, where the new buffers have nothing. Every row in the
-// table read "--", the panel looked dead, and resuming only fixed it from the
-// resume point forwards because the history covering everything before it had
-// been thrown away. Nothing logged it, because from the panel's point of view it
-// had just bound successfully.
-//
-// Identity is the binding triple (see sameSignal). A row whose label, units,
-// format or decimals changed is the same subscription with different
-// presentation, so it keeps everything and only re-reads those fields.
+// Bring rows_ into line with cfg_.rows, keeping the buffer of every row that
+// is still there. The rule and the data-loss story it prevents live in
+// bound_signal_list.h -- the plot had the identical bug, fixed twice.
 void TablePanel::syncRows()
 {
-    std::vector<std::unique_ptr<Row>> previous;
-    previous.swap(rows_);
-    rows_.reserve(cfg_.rows.size());
-
-    for (const table_row_t& binding : cfg_.rows)
-    {
-        // Moved out of `previous` when claimed, so the entry goes null and a
-        // second row naming the same signal -- which only a hand-edited
-        // workspace can produce -- gets its own binding rather than stealing
-        // this one's buffer and leaving two rows sharing it.
-        const auto match = std::find_if(previous.begin(), previous.end(),
-                                        [&binding](const std::unique_ptr<Row>& row) {
-                                            return row && sameSignal(row->binding, binding);
-                                        });
-
-        if (match == previous.end())
-        {
-            rows_.push_back(makeRow(binding));
-            continue;
-        }
-
-        std::unique_ptr<Row> row = std::move(*match);
-        row->binding = binding;  // Presentation may have changed; the signal did not.
-        applyFormat(*row);
-        rows_.push_back(std::move(row));
-    }
-
-    // Whatever was not claimed is genuinely gone, and its subscription with it.
-    for (const std::unique_ptr<Row>& leftover : previous)
-    {
-        if (leftover && leftover->handle != kInvalidSignal)
-        {
-            source_->release(leftover->handle);
-        }
-    }
+    syncBoundSignals(rows_, cfg_.rows, *source_,
+                     [this](const table_row_t& binding) { return makeRow(binding); },
+                     [this](Row& row) { applyFormat(row); });
 
     clampScroll();
     update();
