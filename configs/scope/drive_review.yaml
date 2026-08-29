@@ -23,11 +23,11 @@
 # (map_server is for the MOCK, which asks it to route a real road. The scope map
 # panel does not use it.)
 #
-# `dock_state` is empty on purpose, so this file is not tied to a Qt version --
-# which means the two panels arrive TABBED rather than side by side, the way any
-# freshly added panel does. Drag one out and File ▸ Save Workspace if you want
-# the arrangement kept. A hidden tab does not paint, so a map on the inactive
-# tab reports zero tiles drawn until you switch to it.
+# `dock_state` is empty on purpose, so this file is not tied to a Qt version.
+# The two panels arrive SPLIT (the second panel always does); a third would tab
+# with the second. Rearrange and File ▸ Save Workspace if you want a different
+# layout kept. A hidden tab does not paint, so a map on an inactive tab reports
+# zero tiles drawn until you switch to it.
 
 name: Drive Review
 

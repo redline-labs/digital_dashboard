@@ -31,6 +31,7 @@ add_library(scope_core STATIC
     panel_registry.cpp
     signal_browser.cpp
     add_signal_dialog.cpp
+    panel_config_dialog.cpp
     overview_strip.cpp
     scope_window.cpp
     workspace.cpp
@@ -51,6 +52,7 @@ add_library(scope_core STATIC
     include/scope/add_signal_dialog.h
     include/scope/overview_strip.h
     include/scope/settings_dialog.h
+    include/scope/panel_config_dialog.h
 
     # Panels. One directory per type, mirroring dashboard/widgets/ -- but built
     # into scope_core rather than into a library each, because there is no

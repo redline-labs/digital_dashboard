@@ -256,21 +256,19 @@ SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalB
     return binding->handle;
 }
 
-SignalHandle LiveZenohSource::bindRaw(const std::string& zenoh_key,
-                                      pub_sub::schema_type_t schema,
-                                      std::shared_ptr<RawBuffer> into,
-                                      RawClassifier classify)
+RawHandle LiveZenohSource::bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
+                                   std::shared_ptr<RawBuffer> into, RawClassifier classify)
 {
     if (zenoh_key.empty() || !into)
     {
         SPDLOG_ERROR("Refusing to bind a raw stream with an empty key or buffer.");
-        return kInvalidSignal;
+        return kInvalidRaw;
     }
 
     KeySubscription* const subscription = impl_->ensureSubscription(zenoh_key);
     if (subscription == nullptr)
     {
-        return kInvalidSignal;
+        return kInvalidRaw;
     }
 
     auto binding = std::make_shared<RawBinding>();
@@ -287,7 +285,7 @@ SignalHandle LiveZenohSource::bindRaw(const std::string& zenoh_key,
 
     SPDLOG_DEBUG("Bound raw stream {} to '{}' ({}).", binding->handle, zenoh_key,
                  binding->schema_name);
-    return binding->handle;
+    return RawHandle{binding->handle};
 }
 
 KeySubscription* LiveZenohSource::Impl::ensureSubscription(const std::string& key)
@@ -434,8 +432,9 @@ void LiveZenohSource::release(SignalHandle handle)
     impl_->handle_keys.erase(entry);
 }
 
-void LiveZenohSource::releaseRaw(SignalHandle handle)
+void LiveZenohSource::releaseRaw(RawHandle raw_handle)
 {
+    const std::uint64_t handle = raw_handle.value;
     const auto entry = impl_->handle_keys.find(handle);
     if (entry == impl_->handle_keys.end())
     {

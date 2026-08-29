@@ -90,6 +90,7 @@ class MapPanel : public Panel
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
     std::vector<QString> bindingLabels() const override;
+    std::size_t unboundBindingCount() const override;
     bool removeBinding(std::size_t index) override;
     void setTimeBase(TimeBase* time_base) override;
     void setHistorySeconds(double seconds) override;
@@ -188,7 +189,11 @@ class MapPanel : public Panel
 
     QColor colorForValue(double value) const;
     // The range the ramp spans: the data's own when autoscaling, else the
-    // configured pair. Returns false when there is nothing to scale.
+    // configured pair. Returns false when there is nothing to scale. O(1): the
+    // autoscale extremes are cached by rebuildTrack(), because this is called
+    // once per drawn SEGMENT and a scan of track_ here made paintTrack
+    // O(segments x points) -- millions of point visits per frame to recompute a
+    // constant.
     bool colorRange(double& low, double& high) const;
 
     config_t cfg_;
@@ -225,6 +230,18 @@ class MapPanel : public Panel
     std::vector<track::Point> track_;
     std::vector<track::Point> thinned_;
     track::BuildStats track_stats_;
+
+    // The autoscale extremes of track_'s colour values, computed once per
+    // rebuildTrack(). false when no point carries a colour.
+    bool track_color_valid_ = false;
+    double track_color_low_ = 0.0;
+    double track_color_high_ = 1.0;
+
+    // What the track was last built from and where the shared instant last
+    // was, so onFrame() can skip the rebuild and the repaint when neither
+    // moved. See onFrame().
+    std::uint64_t track_signature_ = 0;
+    double last_frame_readout_ = 0.0;
 
     // Paint scratch, kept across frames for the same reason.
     std::vector<std::vector<map_render::TileId>> visible_;

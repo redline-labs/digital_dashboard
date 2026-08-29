@@ -200,17 +200,30 @@ inline panel_config_variant_t panelConfigOf(const Panel& panel)
     return out;
 }
 
+// Run a config through its panel type's ADL validate() hook, clamping it into
+// range and logging each note. Defined beside createPanel(), which uses the
+// same hook.
+panel_config_variant_t clampPanelConfig(panel_config_variant_t config);
+
 // Push a configuration back into a panel. False when the variant's alternative
 // does not match the panel's kind -- a caller that mixed them up gets a definite
 // no rather than a panel that ignored it.
+//
+// CLAMPED FIRST, exactly as createPanel() clamps before construction. This is
+// the path scope.panel_set_config (and the config dialog) takes; unclamped, an
+// out-of-range value applied here lived in the panel, was written to the
+// workspace by save, and was only clamped back on the NEXT load -- so
+// save/load/save was not a fixed point and the same file described two
+// different windows depending on which path produced it.
 inline bool applyPanelConfig(Panel& panel, const panel_config_variant_t& config)
 {
+    const panel_config_variant_t checked = clampPanelConfig(config);
     bool applied = false;
 
 #define SCOPE_PANEL_APPLY_CONFIG(enum_name, panel_class)                       \
     if (auto* p = qobject_cast<panel_class*>(&panel))                          \
     {                                                                          \
-        if (const auto* cfg = std::get_if<typename panel_class::config_t>(&config)) \
+        if (const auto* cfg = std::get_if<typename panel_class::config_t>(&checked)) \
         {                                                                      \
             p->applyConfig(*cfg);                                              \
             applied = true;                                                    \

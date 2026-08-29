@@ -9,7 +9,10 @@
 // which is exactly the coverage you lose first and miss most.
 
 #include "scope/data_source.h"
+
+#include "pub_sub/session_manager.h"
 #include "scope/overview_strip.h"
+#include "scope/panel_config_dialog.h"
 #include "scope/panel_registry.h"
 #include "scope/scope_window.h"
 #include "scope/signal_browser.h"
@@ -28,6 +31,11 @@
 
 #include "config_codec/config_json.h"
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QPushButton>
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
@@ -95,18 +103,18 @@ class StubSource : public scope::DataSource
     // The raw seam, stubbed the same way and for the same reason. A video panel
     // binding successfully is what the panel layer cares about; what arrives is
     // the source's problem and is covered elsewhere.
-    scope::SignalHandle bindRaw(const std::string& zenoh_key,
-                                pub_sub::schema_type_t schema,
-                                std::shared_ptr<scope::RawBuffer> into,
-                                scope::RawClassifier classify) override
+    scope::RawHandle bindRaw(const std::string& zenoh_key,
+                             pub_sub::schema_type_t schema,
+                             std::shared_ptr<scope::RawBuffer> into,
+                             scope::RawClassifier classify) override
     {
         static_cast<void>(classify);
         bound_raw.push_back({zenoh_key, schema});
         raw_buffers.push_back(std::move(into));
-        return next_handle++;
+        return scope::RawHandle{next_handle++};
     }
 
-    void releaseRaw(scope::SignalHandle handle) override { released_raw.push_back(handle); }
+    void releaseRaw(scope::RawHandle handle) override { released_raw.push_back(handle); }
 
     double now() const override { return 100.0; }
 
@@ -118,7 +126,7 @@ class StubSource : public scope::DataSource
 
     std::vector<std::pair<std::string, pub_sub::schema_type_t>> bound_raw;
     std::vector<std::shared_ptr<scope::RawBuffer>> raw_buffers;
-    std::vector<scope::SignalHandle> released_raw;
+    std::vector<scope::RawHandle> released_raw;
 
     scope::SignalHandle next_handle = 1;
 };
@@ -137,6 +145,10 @@ class SeekableStub : public StubSource
         caps.t_end = 120.0;
         return caps;
     }
+
+    void seek(double t) override { seeks.push_back(t); }
+
+    std::vector<double> seeks;
 };
 
 scope::BindingCandidate numericField()
@@ -407,7 +419,7 @@ void testVideoPanelReleasesBeforeRepointing()
 
     expect(video->addBinding(videoTopic()), "a stream is bound on the first source");
     expect(first.bound_raw.size() == 1, "the first source issued a raw handle");
-    const scope::SignalHandle issued = first.next_handle - 1;
+    const scope::RawHandle issued{first.next_handle - 1};
 
     video->rebindTo(second);
 
@@ -469,6 +481,39 @@ void testValidateClampsBeforeConstruction()
                "an oversized window is clamped before the panel sees it");
         expect(plot->getConfig().y_min < plot->getConfig().y_max,
                "an inverted Y range is ordered before the panel sees it");
+    }
+}
+
+void testApplyConfigClampsLikeALoad()
+{
+    // The OTHER path into a live panel: scope.panel_set_config (and the config
+    // dialog) go through applyPanelConfig, which used to skip validate()
+    // entirely. An out-of-range config applied there lived in the panel, was
+    // saved to the workspace, and was only clamped back on the next load -- so
+    // save/load/save was not a fixed point.
+    StubSource source;
+    std::unique_ptr<scope::Panel> panel =
+        scope::createPanel(TimeSeriesPanelConfig_t{}, source);
+    expect(panel != nullptr, "the panel constructed");
+    if (panel == nullptr)
+    {
+        return;
+    }
+
+    TimeSeriesPanelConfig_t bad;
+    bad.window_seconds = 1e9;  // Far beyond the cap.
+    bad.y_min = 100.0;         // Inverted range.
+    bad.y_max = 0.0;
+    expect(scope::applyPanelConfig(*panel, scope::panel_config_variant_t{bad}),
+           "the config was applied");
+
+    auto* plot = qobject_cast<scope::TimeSeriesPanel*>(panel.get());
+    if (plot != nullptr)
+    {
+        expect(plot->getConfig().window_seconds <= 24.0 * 60.0 * 60.0,
+               "applyPanelConfig clamps an oversized window exactly as a load would");
+        expect(plot->getConfig().y_min < plot->getConfig().y_max,
+               "applyPanelConfig orders an inverted Y range exactly as a load would");
     }
 }
 
@@ -2193,49 +2238,55 @@ void testClickingOutsideTheRegionCentresTheView()
     expect(std::abs((end - begin) - 20.0) < 0.5, "keeping the span");
 }
 
-void testTheStripBracketsItsDragForCoalescing()
+void testAStripDragCoalescesToOneSeek()
 {
-    // The window uses this to hold TimeBase::setInteracting() for the drag, so
-    // the seeks a drag generates coalesce to one per frame. Without the pair,
-    // every mouse-move refills a whole retention window per bound signal.
+    // The strip's viewRequested lands in TimeBase::setView, and seeks coalesce
+    // to flushSeek() unconditionally -- so however many mouse-moves a drag
+    // emits, the source refills its retention window once per render tick, not
+    // once per event.
     std::unique_ptr<scope::OverviewStrip> strip(readyStrip());
 
-    std::vector<bool> interactions;
-    QObject::connect(strip.get(), &scope::OverviewStrip::interactionChanged,
-                     [&](bool active) { interactions.push_back(active); });
+    SeekableStub source;
+    scope::TimeBase time_base(source);
+    QObject::connect(strip.get(), &scope::OverviewStrip::viewRequested, &time_base,
+                     &scope::TimeBase::setView);
 
+    source.seeks.clear();
     mouse(strip.get(), QEvent::MouseButtonPress, QPointF(500.0, 20.0), Qt::LeftButton,
           Qt::LeftButton);
-    mouse(strip.get(), QEvent::MouseMove, QPointF(520.0, 20.0), Qt::NoButton, Qt::LeftButton);
-    mouse(strip.get(), QEvent::MouseButtonRelease, QPointF(520.0, 20.0), Qt::LeftButton,
+    for (int x = 505; x <= 600; x += 5)
+    {
+        mouse(strip.get(), QEvent::MouseMove, QPointF(x, 20.0), Qt::NoButton, Qt::LeftButton);
+    }
+    mouse(strip.get(), QEvent::MouseButtonRelease, QPointF(600.0, 20.0), Qt::LeftButton,
           Qt::NoButton);
 
-    expect(interactions.size() == 2 && interactions[0] && !interactions[1],
-           "a drag brackets itself with exactly one true and one false");
+    expect(source.seeks.empty(), "no seek reaches the source during the drag");
+    time_base.flushSeek();
+    expect(source.seeks.size() == 1, "the render tick's flush applies exactly one");
 }
 
-void testTheScrubberBracketsItsDragForCoalescing()
+void testTheScrubberDragCoalescesThroughTheTimeBase()
 {
-    // The video panel's own seek bar, held to the same rule as the overview
-    // strip and for exactly the same reason: the panel uses this pair to hold
-    // TimeBase::setInteracting() for the drag, and without it every mouse-move
-    // is a separate seek -- 60 to 125 a second, each one a file read on a
-    // recorded source.
-    //
-    // The assertion is the COUNT, not merely that both were emitted. One `true`
-    // per move would still bracket the drag and would still stutter.
+    // The video panel's own seek bar. Its seekRequested lands in
+    // TimeBase::seek, and coalescing happens there unconditionally -- so a
+    // drag's 60-125 events a second become one source seek per flush, each of
+    // which is a file read on a recorded source.
     scope::VideoScrubber scrubber;
     scrubber.resize(400, 18);
     scrubber.setExtent(0.0, 100.0);
     scrubber.setSeekable(true);
 
-    std::vector<bool> interactions;
+    SeekableStub source;
+    scope::TimeBase time_base(source);
+    QObject::connect(&scrubber, &scope::VideoScrubber::seekRequested, &time_base,
+                     &scope::TimeBase::seek);
+
     std::vector<double> seeks;
-    QObject::connect(&scrubber, &scope::VideoScrubber::interactionChanged,
-                     [&](bool active) { interactions.push_back(active); });
     QObject::connect(&scrubber, &scope::VideoScrubber::seekRequested,
                      [&](double t) { seeks.push_back(t); });
 
+    source.seeks.clear();
     mouse(&scrubber, QEvent::MouseButtonPress, QPointF(100.0, 9.0), Qt::LeftButton,
           Qt::LeftButton);
     for (int x = 110; x <= 200; x += 10)
@@ -2245,11 +2296,12 @@ void testTheScrubberBracketsItsDragForCoalescing()
     mouse(&scrubber, QEvent::MouseButtonRelease, QPointF(200.0, 9.0), Qt::LeftButton,
           Qt::NoButton);
 
-    expect(interactions.size() == 2 && interactions[0] && !interactions[1],
-           "scrubber: a drag brackets itself with exactly one true and one false");
     expect(seeks.size() > 2, "scrubber: the drag really did emit many seeks");
     expect(!seeks.empty() && seeks.back() > seeks.front(),
            "scrubber: dragging right moves the requested time forward");
+    expect(source.seeks.empty(), "scrubber: none of them reached the source mid-drag");
+    time_base.flushSeek();
+    expect(source.seeks.size() == 1, "scrubber: the flush applies exactly one");
 
     // A scrubber over a live source has nothing to seek to, so it must not
     // pretend. A bar that looks draggable and does nothing reads as broken.
@@ -2508,7 +2560,114 @@ void testDirtyTracking()
            "the saved workspace loads");
     expect(!window.isDirty(), "a freshly loaded workspace is clean");
 
+    // Navigation is looking, not editing. The dirty flag used to be wired to
+    // TimeBase::changed, which fires on every pan, zoom and playback tick -- so
+    // playing a recording prompted "save changes?" at close for changes the
+    // user never made.
+    window.timeBase().panBy(-1.0);
+    window.timeBase().zoomAt(window.timeBase().viewEnd() - 1.0, 0.5);
+    window.timeBase().seek(window.timeBase().viewEnd() - 2.0);
+    expect(!window.isDirty(), "panning, zooming and seeking do not dirty the workspace");
+
+    window.timeBase().setWindowSeconds(window.timeBase().windowSeconds() + 5.0);
+    expect(window.isDirty(),
+           "the explicit window-span setter DOES dirty it -- that value is persisted");
+
     std::filesystem::remove(path);
+}
+
+void testTheConfigDialogEditsARealPanel()
+{
+    // The reflection-driven dialog is the first GUI route to the reflected
+    // configs; before it, right_axis / colours / formats / the map tileset were
+    // agent-only. The property worth pinning: a widget edit lands in the PANEL
+    // through the same clamped applyPanelConfig path the RPC uses.
+    StubSource source;
+    std::unique_ptr<scope::Panel> panel =
+        scope::createPanel(TimeSeriesPanelConfig_t{}, source);
+    expect(panel != nullptr, "dialog: the panel constructed");
+    if (panel == nullptr)
+    {
+        return;
+    }
+
+    scope::scope_settings_t settings;
+    scope::scope_tileset_t tileset;
+    tileset.name = "socal";
+    settings.tilesets.push_back(tileset);
+
+    scope::PanelConfigDialog dialog(*panel, settings);
+
+    auto* autoscale = dialog.findChild<QCheckBox*>("config_field_autoscale_y");
+    expect(autoscale != nullptr, "dialog: the autoscale editor exists, named by its field");
+    auto* window = dialog.findChild<QDoubleSpinBox*>("config_field_window_seconds");
+    expect(window != nullptr, "dialog: the window editor exists");
+    if (autoscale == nullptr || window == nullptr)
+    {
+        return;
+    }
+
+    autoscale->setChecked(false);
+    window->setValue(1e9);  // far beyond the clamp
+
+    auto* buttons = dialog.findChild<QDialogButtonBox*>("config_dialog_buttons");
+    expect(buttons != nullptr, "dialog: the button box exists");
+    if (buttons == nullptr)
+    {
+        return;
+    }
+    buttons->button(QDialogButtonBox::Apply)->click();
+
+    auto* plot = qobject_cast<scope::TimeSeriesPanel*>(panel.get());
+    expect(plot != nullptr && !plot->getConfig().autoscale_y,
+           "dialog: the checkbox edit reached the panel");
+    expect(plot != nullptr && plot->getConfig().window_seconds <= 24.0 * 60.0 * 60.0,
+           "dialog: the edit went through the CLAMPED path, same as the RPC");
+
+    // The map panel's tileset renders as a combo fed from settings -- the fix
+    // for the panel that could be added from the GUI and never configured.
+    std::unique_ptr<scope::Panel> map =
+        scope::createPanel(MapPanelConfig_t{}, source);
+    expect(map != nullptr, "dialog: the map panel constructed");
+    if (map != nullptr)
+    {
+        scope::PanelConfigDialog map_dialog(*map, settings);
+        auto* combo = map_dialog.findChild<QComboBox*>("config_field_tileset");
+        expect(combo != nullptr, "dialog: the tileset editor is a combo");
+        if (combo != nullptr)
+        {
+            expect(combo->findText("socal") >= 0,
+                   "dialog: it offers the machine's configured tilesets");
+            combo->setCurrentText("socal");
+            auto* map_buttons =
+                map_dialog.findChild<QDialogButtonBox*>("config_dialog_buttons");
+            if (map_buttons != nullptr)
+            {
+                map_buttons->button(QDialogButtonBox::Apply)->click();
+            }
+            auto* map_panel = qobject_cast<scope::MapPanel*>(map.get());
+            expect(map_panel != nullptr && map_panel->getConfig().tileset == "socal",
+                   "dialog: the tileset choice reached the map panel");
+        }
+    }
+}
+
+void testOfflineOpensNoZenohSession()
+{
+    // "Offline opens no zenoh session at all" is a claim about the PROCESS, and
+    // it used to be false twice: main() constructed a NodeIdentity at startup
+    // (which opens the shared session), and the recorder's TopicDirectory kept
+    // a liveliness subscription up for the whole offline session. Everything a
+    // window does offline must leave the session manager untouched.
+    expect(!pub_sub::SessionManager::isOpen(),
+           "no zenoh session is open before any window exists");
+
+    scope::ScopeWindow window;
+    window.addPanel(scope::panel_type_t::time_series, "plot");
+    window.addPanel(scope::panel_type_t::table, "table");
+
+    expect(!pub_sub::SessionManager::isOpen(),
+           "an offline window with panels never opened a zenoh session");
 }
 
 void testHeadlessNeverBlocksOnADialog()
@@ -2777,11 +2936,12 @@ int main(int argc, char** argv)
     testDefaultConfigMatchesTheType();
     testCreatingAnUnknownPanelReturnsNull();
     testValidateClampsBeforeConstruction();
+    testApplyConfigClampsLikeALoad();
     testEveryPanelTypeServesItsConfigAndStats();
     testBindingAcceptanceIsMirrored();
     testTheDecoderIsFedTheAccessUnitNotTheEnvelope();
     testVideoPanelReleasesBeforeRepointing();
-    testTheScrubberBracketsItsDragForCoalescing();
+    testTheScrubberDragCoalescesThroughTheTimeBase();
     testTheWorkspaceKeepsAVideoPanelsConfig();
 
     testAPlotAcceptsOnlyNumericFields();
@@ -2821,7 +2981,7 @@ int main(int argc, char** argv)
     testTheStripBodyDragPansWithoutZooming();
     testTheStripKeepsTheGrabOffset();
     testClickingOutsideTheRegionCentresTheView();
-    testTheStripBracketsItsDragForCoalescing();
+    testAStripDragCoalescesToOneSeek();
     testTheStripReplacedTheScrubber();
 
     testTheToolbarReusesTheMenusActions();
@@ -2853,6 +3013,8 @@ int main(int argc, char** argv)
     testHistorySecondsReachesThePanels();
     testRetentionIsClampedNotRefused();
     testDirtyTracking();
+    testTheConfigDialogEditsARealPanel();
+    testOfflineOpensNoZenohSession();
     testHeadlessNeverBlocksOnADialog();
 
     testATopicLevelPositionDropFillsBothCoordinates();

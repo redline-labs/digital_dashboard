@@ -62,8 +62,29 @@ class CaptureBuffer
     // handing out references instead of copying a gigabyte of payloads: the
     // provider that reads this decodes one signal per pass and copies only the
     // samples it produces.
+    //
+    // The lock is RELEASED AND RETAKEN periodically inside the walk, so a full
+    // decode pass no longer starves the RX thread's push() or the transport
+    // bar's stat reads for its whole duration. Consequence: a message pushed or
+    // evicted mid-pass may or may not be visited -- the same weak snapshot a
+    // bag growing under a reader gives. References handed to the callback are
+    // still valid only for that call.
+    // The visitor returns true to continue, false to stop the walk early.
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                 const std::function<void(const bag::QueuedMessage&)>& visit) const;
+                 const std::function<bool(const bag::QueuedMessage&)>& visit) const;
+
+    // Every transport-bar number in ONE lock acquisition. The bar reads four of
+    // these per render tick; taking the mutex once instead of four times is
+    // less contention against the RX thread for the same answer.
+    struct Stats
+    {
+        std::size_t messages = 0;
+        std::size_t bytes = 0;
+        std::uint64_t evicted = 0;
+        std::uint64_t revision = 0;
+        double retained_span_seconds = 0.0;
+    };
+    Stats stats() const;
 
     // [first, last] log_time of what is retained, in nanoseconds since the UNIX
     // epoch. {0, 0} when empty.

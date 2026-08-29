@@ -126,8 +126,14 @@ struct BindingCandidate
 //
 // Panels are QWidgets and live inside QDockWidgets; the dock is the chrome and
 // this is the content. A panel does not own a timer -- TimeBase drives every
-// panel from one -- and does not talk to the DataSource directly; the window
-// binds signals on its behalf and hands it buffers.
+// panel from one.
+//
+// A panel OWNS ITS BINDINGS against a DataSource it holds: it calls bind() and
+// release() itself, and rebindTo() is how the window moves it onto a new
+// source (release against the issuer first, then repoint). This header used to
+// claim the window bound on the panel's behalf; no panel ever worked that way,
+// and a contract stated stricter than it is enforced teaches the next
+// implementer a shape the tree will reject.
 class Panel : public QWidget
 {
     Q_OBJECT
@@ -163,6 +169,14 @@ class Panel : public QWidget
     // Drop binding `index`. False when there is no such binding, which is a
     // clean no rather than an error.
     virtual bool removeBinding(std::size_t index) = 0;
+
+    // How many of this panel's bindings the CURRENT source declined -- an
+    // expression that did not compile, a topic the recording does not contain.
+    // What the "N of M signals are not in this recording" summary counts, on
+    // every panel kind: the old qobject_cast<TimeSeriesPanel*> silently counted
+    // nothing for a table, map or video panel. Known at bind time, so it does
+    // not wait on any decode.
+    virtual std::size_t unboundBindingCount() const { return 0; }
 
     // The shared clock. Panels connect to its frame() to drain and repaint, and
     // read viewBegin()/viewEnd()/cursor() from it. Must outlive the panel.

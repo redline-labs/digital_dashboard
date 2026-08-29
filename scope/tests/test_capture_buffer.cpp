@@ -62,7 +62,11 @@ std::size_t countRetained(const scope::CaptureBuffer& buffer)
 {
     std::size_t seen = 0;
     buffer.forEach(0, std::numeric_limits<std::uint64_t>::max(),
-                   [&seen](const bag::QueuedMessage&) { ++seen; });
+                   [&seen](const bag::QueuedMessage&)
+                   {
+                       ++seen;
+                       return true;
+                   });
     return seen;
 }
 
@@ -90,6 +94,7 @@ void testRetainsInOrder()
                            ordered = false;
                        }
                        last = seen.log_time_ns;
+                       return true;
                    });
     expect(ordered, "messages come back oldest first");
 
@@ -109,13 +114,21 @@ void testRangeQuery()
 
     std::size_t in_range = 0;
     buffer.forEach(kBase + 10'000'000ull, kBase + 19'000'000ull,
-                   [&in_range](const bag::QueuedMessage&) { ++in_range; });
+                   [&in_range](const bag::QueuedMessage&)
+                   {
+                       ++in_range;
+                       return true;
+                   });
     expect(in_range == 10,
            "a range is closed at both ends, like BagReader's (" + std::to_string(in_range) + ")");
 
     std::size_t past_end = 0;
     buffer.forEach(kBase + 1'000'000'000ull, std::numeric_limits<std::uint64_t>::max(),
-                   [&past_end](const bag::QueuedMessage&) { ++past_end; });
+                   [&past_end](const bag::QueuedMessage&)
+                   {
+                       ++past_end;
+                       return true;
+                   });
     expect(past_end == 0, "a range past the end returns nothing, not everything");
 }
 
@@ -260,6 +273,7 @@ void testEvictsByBytes()
                        {
                            oldest_retained = seen.log_time_ns;
                        }
+                       return true;
                    });
     expect(oldest_retained > kBase,
            "the OLDEST are evicted -- a capture keeps the newest, because that is what "
@@ -448,6 +462,7 @@ void testProducerAndConsumerUnderThreads()
                                always_ordered = false;
                            }
                            last = seen.log_time_ns;
+                           return true;
                        });
         (void)buffer.spanNanos();
         (void)buffer.retainedSpanSeconds();

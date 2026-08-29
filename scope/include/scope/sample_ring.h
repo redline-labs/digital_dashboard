@@ -101,9 +101,18 @@ class SampleHistory
     std::size_t capacity() const { return slots_.size(); }
 
     // `index` is logical: 0 is the oldest retained sample, size()-1 the newest.
+    // Compare-and-subtract, not %: with index < size <= slots, head_ + index is
+    // under twice the capacity, and this operator sits under every decimation,
+    // autoscale and track-build loop -- a runtime integer division per sample
+    // access is a measurable fraction of a core at those rates.
     const Sample& operator[](std::size_t index) const
     {
-        return slots_[(head_ + index) % slots_.size()];
+        std::size_t at = head_ + index;
+        if (at >= slots_.size())
+        {
+            at -= slots_.size();
+        }
+        return slots_[at];
     }
 
     const Sample& oldest() const { return (*this)[0]; }
@@ -150,8 +159,9 @@ class SignalBuffer
     // retention limits. `now` is the current time on the source's clock, and is
     // what the time-based trim measures back from -- passed in rather than read
     // here so that a paused or seeking view does not silently discard the data
-    // it is looking at.
-    void drain(double now);
+    // it is looking at. Returns how many samples moved, so a render tick can
+    // skip repainting a panel nothing arrived for.
+    std::size_t drain(double now);
 
     // GUI thread. Drops everything, staged and retained.
     //

@@ -417,6 +417,19 @@ std::vector<QString> MapPanel::bindingLabels() const
     return labels;
 }
 
+std::size_t MapPanel::unboundBindingCount() const
+{
+    std::size_t unbound = 0;
+    for (const Signal* signal : {&latitude_, &longitude_, &color_})
+    {
+        if (!signal->binding.zenoh_key.empty() && !signal->bound)
+        {
+            ++unbound;
+        }
+    }
+    return unbound;
+}
+
 bool MapPanel::removeBinding(std::size_t index)
 {
     // Indexed over what bindingLabels() returned, i.e. the BOUND roles only.
@@ -628,6 +641,9 @@ bool MapPanel::readingAtCursor() const
 
 void MapPanel::onFrame()
 {
+    // Draining is NOT optional, visible or not: the staging rings are bounded,
+    // and a hidden tab that stopped draining would overflow them and count
+    // drops against a perfectly healthy stream.
     for (Signal* signal : {&latitude_, &longitude_, &color_})
     {
         if (signal->buffer)
@@ -636,13 +652,50 @@ void MapPanel::onFrame()
         }
     }
 
+    std::size_t tiles_arrived = 0;
     for (auto& reader : readers_)
     {
-        reader->drain();
+        tiles_arrived += reader->drain();
     }
 
-    rebuildTrack();
-    update();
+    // Rebuild the track only when what it is built FROM moved. The signature is
+    // buffer identity (a rebind is a new buffer) plus received() and size()
+    // (replaceHistory and drain move received; an empty refill still changes
+    // size). Parked over a recording, this skips a full re-pair and Mercator
+    // projection of every point, per frame, to reproduce the identical track.
+    std::uint64_t signature = 0;
+    const auto mix = [&signature](std::uint64_t v)
+    { signature ^= v + 0x9e3779b97f4a7c15ull + (signature << 6) + (signature >> 2); };
+    for (const Signal* signal : {&latitude_, &longitude_, &color_})
+    {
+        mix(reinterpret_cast<std::uintptr_t>(signal->buffer.get()));
+        if (signal->buffer)
+        {
+            mix(signal->buffer->received());
+            mix(signal->buffer->history().size());
+        }
+    }
+
+    const bool track_changed = signature != track_signature_;
+    if (track_changed)
+    {
+        track_signature_ = signature;
+        rebuildTrack();
+    }
+
+    // The marker rides the shared instant, so a view or cursor move needs a
+    // repaint even with the track unchanged.
+    const double readout = time_base_ != nullptr ? readoutTime() : 0.0;
+    const bool time_moved = readout != last_frame_readout_;
+    last_frame_readout_ = readout;
+
+    // Everything else that changes the picture -- a config apply, a camera
+    // drag, a resize, a click -- already calls update() at its own site; the
+    // render tick only needs to repaint what arrived through it.
+    if (track_changed || tiles_arrived > 0 || time_moved)
+    {
+        update();
+    }
 }
 
 void MapPanel::rebuildTrack()
@@ -651,12 +704,30 @@ void MapPanel::rebuildTrack()
     {
         track_.clear();
         track_stats_ = {};
+        track_color_valid_ = false;
         return;
     }
 
     track_stats_ =
         track::build(latitude_.buffer->history(), longitude_.buffer->history(),
                      color_.buffer ? &color_.buffer->history() : nullptr, track_);
+
+    // The colour extremes, ONCE per rebuild. colorRange() used to scan track_
+    // itself, and it is called per drawn segment -- recomputing this constant
+    // cost more than everything else in paintTrack() put together.
+    track_color_valid_ = false;
+    for (const track::Point& point : track_)
+    {
+        if (!point.has_color)
+        {
+            continue;
+        }
+        track_color_low_ = track_color_valid_ ? std::min(track_color_low_, point.color)
+                                              : point.color;
+        track_color_high_ = track_color_valid_ ? std::max(track_color_high_, point.color)
+                                               : point.color;
+        track_color_valid_ = true;
+    }
 }
 
 // ---------------------------------------------------------------- the camera
@@ -900,27 +971,22 @@ bool MapPanel::colorRange(double& low, double& high) const
         return high > low;
     }
 
-    bool any = false;
-    for (const track::Point& point : track_)
+    if (!track_color_valid_)
     {
-        if (!point.has_color)
-        {
-            continue;
-        }
-        low = any ? std::min(low, point.color) : point.color;
-        high = any ? std::max(high, point.color) : point.color;
-        any = true;
+        return false;
     }
+    low = track_color_low_;
+    high = track_color_high_;
 
     // A constant signal has no range to scale onto. Widening it puts every
     // point at the ramp's midpoint, which is honest -- the alternative divides
     // by zero and paints NaN, which paints nothing.
-    if (any && !(high > low))
+    if (!(high > low))
     {
         low -= 0.5;
         high += 0.5;
     }
-    return any;
+    return true;
 }
 
 QColor MapPanel::colorForValue(double value) const
@@ -967,6 +1033,16 @@ void MapPanel::paintTrack(QPainter& painter, const map_render::Projection& proje
 
     painter.save();
 
+    // ONE pen, mutated only when the colour or width actually changes. A fresh
+    // QPen per segment is a heap allocation each, several hundred per frame,
+    // and on an un-ramped track every one of them is identical.
+    QPen pen(flat);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    QColor pen_colour;
+    double pen_width = -1.0;
+    bool pen_set = false;
+
     // Segment by segment rather than one path, because both the opacity and the
     // colour change along it. A single QPainterPath can carry neither.
     for (std::size_t i = 1; i < thinned_.size(); ++i)
@@ -986,11 +1062,16 @@ void MapPanel::paintTrack(QPainter& painter, const map_render::Projection& proje
         }
         colour.setAlphaF(in_view ? 1.0F : static_cast<float>(cfg_.track_opacity));
 
-        QPen pen(colour);
-        pen.setWidthF(in_view ? cfg_.view_track_width : cfg_.track_width);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pen);
+        const double width = in_view ? cfg_.view_track_width : cfg_.track_width;
+        if (!pen_set || colour != pen_colour || width != pen_width)
+        {
+            pen.setColor(colour);
+            pen.setWidthF(width);
+            painter.setPen(pen);
+            pen_colour = colour;
+            pen_width = width;
+            pen_set = true;
+        }
         painter.drawLine(QPointF(a.x, a.y), QPointF(b.x, b.y));
     }
 
@@ -1171,10 +1252,6 @@ void MapPanel::mousePressEvent(QMouseEvent* event)
                 track::nearest(thinned_, projection, screen, cfg_.click_radius_px))
         {
             gesture_ = Gesture::Scrubbing;
-            // Brackets the drag so seeks coalesce to one per render tick.
-            // Without it a mouse-move refills every signal's whole retention
-            // window, per event.
-            time_base_->setInteracting(true);
             const double t = thinned_[*hit].t;
             time_base_->setCursor(t);
             // Outside the window the cursor would mark an instant no plot is
@@ -1234,10 +1311,6 @@ void MapPanel::mouseMoveEvent(QMouseEvent* event)
 
 void MapPanel::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (gesture_ == Gesture::Scrubbing && time_base_ != nullptr)
-    {
-        time_base_->setInteracting(false);
-    }
     gesture_ = Gesture::None;
     Panel::mouseReleaseEvent(event);
 }

@@ -73,11 +73,6 @@ class VideoScrubber : public QWidget
     // means -- this never touches the time base itself.
     void seekRequested(double t);
 
-    // Pressed or released, so the panel can coalesce the seeks a drag makes into
-    // one per render tick. Without this a drag emits 60-125 of them a second and
-    // each one is a buffer refill.
-    void interactionChanged(bool active);
-
     // Hovering moves the same shared cursor the plots set.
     void cursorRequested(std::optional<double> t);
 

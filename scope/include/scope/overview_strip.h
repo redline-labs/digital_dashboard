@@ -48,7 +48,10 @@ class OverviewStrip : public QWidget
     // histogram is recomputed on a throttle. Drawing the cached counts against
     // the range they were counted over keeps a stale histogram in the right
     // PLACE rather than smeared across a range it never described.
-    void setDensity(std::vector<std::uint32_t> counts, double t0, double t1);
+    // By reference: the window passes its retained vector every refresh, and
+    // taking it by value deep-copied width x 4 bytes per call. Compared before
+    // repainting, like every other setter here.
+    void setDensity(const std::vector<std::uint32_t>& counts, double t0, double t1);
 
     void setView(double begin, double end);
 
@@ -79,9 +82,6 @@ class OverviewStrip : public QWidget
     // that means -- the strip never touches the time base itself, so there is
     // one place where a view change turns into a seek.
     void viewRequested(double begin, double end);
-
-    // Pressed or released, so the window can coalesce the seeks a drag makes.
-    void interactionChanged(bool active);
 
     // Hovering the strip moves the same shared cursor the panels set.
     void cursorRequested(std::optional<double> t);

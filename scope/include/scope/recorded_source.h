@@ -30,6 +30,10 @@ class RecordedProvider
     virtual ~RecordedProvider() = default;
 
     // Visit every message with `t0_ns <= log_time <= t1_ns`, in log_time order.
+    // The visitor returns true to continue and FALSE TO STOP THE WALK -- which
+    // is what lets a teardown abort a whole-recording pass instead of waiting
+    // for it, and it matters because ~RecordedSource joins the worker from the
+    // GUI thread.
     //
     // Called once per bound signal, on a background thread, never per frame.
     // That is a requirement rather than an observation: BagReader::forEach
@@ -38,7 +42,7 @@ class RecordedProvider
     // from a slider it would re-open files thirty times a second and re-scan a
     // torn recording every one of them.
     virtual void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                         const std::function<void(const bag::BagMessage&)>& visit) = 0;
+                         const std::function<bool(const bag::BagMessage&)>& visit) = 0;
 
     // What the recording contains, from its index -- not by reading messages.
     virtual std::vector<TopicInfo> topics() const = 0;
@@ -89,7 +93,7 @@ class BagFileProvider : public RecordedProvider
     const std::vector<std::string>& problems() const;
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                 const std::function<void(const bag::BagMessage&)>& visit) override;
+                 const std::function<bool(const bag::BagMessage&)>& visit) override;
     std::vector<TopicInfo> topics() const override;
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const override;
 
@@ -158,10 +162,9 @@ class RecordedSource : public DataSource
     // position. Both run on the same worker thread, so a scrub never reads a
     // file from the render tick. A scrub that stays inside the loaded window
     // reads nothing at all.
-    SignalHandle bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
-                         std::shared_ptr<RawBuffer> into,
-                         RawClassifier classify = {}) override;
-    void releaseRaw(SignalHandle handle) override;
+    RawHandle bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
+                      std::shared_ptr<RawBuffer> into, RawClassifier classify = {}) override;
+    void releaseRaw(RawHandle handle) override;
 
     double now() const override;
 

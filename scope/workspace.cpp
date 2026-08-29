@@ -5,7 +5,11 @@
 
 #include <spdlog/spdlog.h>
 
-#include <fstream>
+#include <QSaveFile>
+#include <QString>
+
+#include <algorithm>
+#include <map>
 #include <type_traits>
 
 namespace scope
@@ -86,6 +90,87 @@ std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root)
                               "A panel with no 'id' cannot be matched to the saved dock "
                               "arrangement, so it will be placed by default."});
         }
+
+        // Keys this entry does not have, then the CONFIG walked against the
+        // panel type's own reflected struct -- unknown keys, wrong types, bad
+        // colours, recursively through the trace/row lists. The settings codec
+        // had this from day one ("a misspelt key is otherwise silently ignored
+        // and the setting simply never takes effect"); the workspace, with
+        // thirty more fields across four panel types, did not.
+        for (const auto& pair : entry)
+        {
+            const std::string key = pair.first.as<std::string>("");
+            if (key != "type" && key != "id" && key != "config")
+            {
+                issues.push_back({config_codec::Issue::Severity::warning, path + "." + key,
+                                  "Unknown key '" + key + "'; a panel entry has 'type', 'id' "
+                                  "and 'config'."});
+            }
+        }
+
+        if (entry["config"])
+        {
+            std::visit(
+                [&](const auto& sample)
+                {
+                    using cfg_t = std::decay_t<decltype(sample)>;
+                    if constexpr (!std::is_same_v<cfg_t, std::monostate>)
+                    {
+                        config_codec::detail::validateStruct<cfg_t>(
+                            entry["config"], path + ".config", issues);
+                    }
+                },
+                default_panel_config(*type));
+        }
+    }
+
+    // Top-level keys the workspace struct does not have -- `autoscale_y` at
+    // the wrong level, a leftover from an older format. Silently discarded by
+    // the decoder otherwise.
+    {
+        const std::vector<std::string> known =
+            config_codec::detail::fieldNames<scope_workspace_t>();
+        for (const auto& pair : root)
+        {
+            const std::string key = pair.first.as<std::string>("");
+            if (std::find(known.begin(), known.end(), key) == known.end())
+            {
+                issues.push_back({config_codec::Issue::Severity::warning, key,
+                                  "Unknown key '" + key + "'; it will be ignored."});
+            }
+        }
+    }
+
+    // Duplicate ids produce the SAME symptom as a missing one -- restoreState()
+    // matches docks by objectName and cannot resolve two docks sharing it -- but
+    // with even less to see: both panels construct, one steals the other's
+    // place, and nothing logs. The file is hand-editable, so a copied block
+    // with the id left unchanged is an ordinary mistake.
+    {
+        std::map<std::string, std::size_t> first_seen;
+        for (std::size_t i = 0; i < panels.size(); ++i)
+        {
+            const YAML::Node entry = panels[i];
+            if (!entry.IsMap() || !entry["id"])
+            {
+                continue;
+            }
+            const std::string id = entry["id"].as<std::string>("");
+            if (id.empty())
+            {
+                continue;
+            }
+            const auto [it, inserted] = first_seen.emplace(id, i);
+            if (!inserted)
+            {
+                issues.push_back(
+                    {config_codec::Issue::Severity::warning,
+                     "panels[" + std::to_string(i) + "].id",
+                     "Duplicate panel id '" + id + "' (also panels[" +
+                         std::to_string(it->second) +
+                         "]); the saved dock arrangement cannot tell them apart."});
+            }
+        }
     }
 
     // Refused outright rather than warned about. Every way a key can be wrong
@@ -103,8 +188,17 @@ std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root)
     return issues;
 }
 
-std::optional<scope_workspace_t> load_workspace(const std::string& path)
+std::optional<scope_workspace_t> load_workspace(const std::string& path,
+                                                std::vector<std::string>* notes)
 {
+    const auto note = [notes](std::string text)
+    {
+        if (notes != nullptr)
+        {
+            notes->push_back(std::move(text));
+        }
+    };
+
     try
     {
         const YAML::Node root = YAML::LoadFile(path);
@@ -127,6 +221,7 @@ std::optional<scope_workspace_t> load_workspace(const std::string& path)
             {
                 SPDLOG_WARN("{}: {}", where, issue.message);
             }
+            note(issue.path.empty() ? issue.message : issue.path + ": " + issue.message);
         }
 
         if (fatal)
@@ -140,11 +235,13 @@ std::optional<scope_workspace_t> load_workspace(const std::string& path)
     catch (const YAML::BadFile&)
     {
         SPDLOG_ERROR("Could not open workspace '{}'.", path);
+        note("Could not open the file.");
         return std::nullopt;
     }
     catch (const YAML::Exception& e)
     {
         SPDLOG_ERROR("Could not parse workspace '{}': {}", path, e.what());
+        note(std::string("Could not parse the file: ") + e.what());
         return std::nullopt;
     }
 }
@@ -156,22 +253,23 @@ bool save_workspace(const scope_workspace_t& workspace, const std::string& path)
         YAML::Emitter emitter;
         emitter << YAML::convert<scope_workspace_t>::encode(workspace);
 
-        // Checked at open AND after writing. A stream that opened fine can
-        // still fail on a full disk, and a save that reports success while
-        // leaving a truncated file is how a layout gets lost.
-        std::ofstream out(path);
-        if (!out)
+        // QSaveFile: a temporary plus a rename, exactly as the settings codec
+        // writes. A plain ofstream that failed mid-write on a full disk left a
+        // TRUNCATED workspace behind -- and the workspace is the more valuable
+        // of the two files.
+        QSaveFile out(QString::fromStdString(path));
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Text))
         {
-            SPDLOG_ERROR("Could not open '{}' for writing.", path);
+            SPDLOG_ERROR("Could not open '{}' for writing: {}", path,
+                         out.errorString().toStdString());
             return false;
         }
 
-        out << emitter.c_str() << "\n";
-        out.close();
-
-        if (!out)
+        const std::string text = std::string(emitter.c_str()) + "\n";
+        if (out.write(text.data(), static_cast<qint64>(text.size())) < 0 || !out.commit())
         {
-            SPDLOG_ERROR("Failed while writing '{}'.", path);
+            SPDLOG_ERROR("Failed while writing '{}': {}", path,
+                         out.errorString().toStdString());
             return false;
         }
 

@@ -22,8 +22,10 @@ namespace scope
 //
 // The transport bar renders from DataSource::caps(): Follow/Pause for a live
 // source, or playback controls for a seekable one. Panels ask the time base
-// what the view window is; none of them learns which kind of source is behind
-// it. The overview strip is fed the same numbers and is likewise unaware.
+// what the view window is. A panel that needs to know whether the source is
+// seekable reads caps() -- the video panel's scrubber and the map's seek-on-
+// click do -- but never the concrete TYPE; caps() is the vocabulary. The
+// overview strip is fed plain numbers and knows nothing at all.
 //
 // THE VIEW WINDOW IS EXPLICIT. It used to be derived -- a right edge pinned to
 // the source's clock, minus a span -- which is exactly the model that cannot be
@@ -151,24 +153,25 @@ class TimeBase : public QObject
     // current span. Turning it off leaves the window exactly where it is.
     void setFollowing(bool on);
 
-    // Held for the duration of a drag, so the seeks a gesture generates are
-    // coalesced to one per render tick.
+    // Apply the pending seek now, if there is one.
     //
-    // A drag emits a mouse-move per pass of the event loop -- 60 to 125 a
-    // second -- and on a recorded source every view change is a seek, which
-    // refills a WHOLE retention window per bound signal
-    // (SignalBuffer::replaceHistory). Eight traces of a 1 kHz signal over the
-    // default 300 s retention is 2.4 million samples rebuilt per event, and the
-    // drag stutters in proportion to how much history is retained -- which is
-    // the opposite of what retaining more should cost.
+    // A gesture emits an event per pass of the event loop -- 60 to 125 a second
+    // -- and on a recorded source every view change is a seek, which refills a
+    // WHOLE retention window per bound signal (SignalBuffer::replaceHistory).
+    // Eight traces of a 1 kHz signal over the default 300 s retention is 2.4
+    // million samples rebuilt per event.
     //
-    // Outside an interaction a seek is applied immediately, so a caller that
-    // sets the view and then reads sample_stats -- the agent interface, a test
-    // -- sees the buffers it asked for rather than the ones from before. This is
-    // the same distinction QSlider::isSliderDown() draws, and the transport bar
-    // already relies on it.
-    bool interacting() const { return interacting_; }
-    void setInteracting(bool on);
+    // So seeks are coalesced to the render tick UNCONDITIONALLY: every view
+    // change parks a pending seek, and the tick applies the latest one before
+    // the frame is drawn. The bracketing this replaces (setInteracting) only
+    // covered drags, so a wheel zoom -- 60-120 events a second on a trackpad --
+    // refilled every bound signal's whole retention window per event.
+    //
+    // A caller that sets the view and must read settled buffers IN THE SAME
+    // TICK calls flushSeek() first. The agent dispatcher does this before
+    // every scope.* method, so the "set the view, read sample_stats" loop
+    // observes exactly the buffers it asked for; nothing else needs to.
+    void flushSeek();
 
     // Where the hover cursor is, if anywhere. Shared across panels: one cursor
     // at one instant, read out by every panel that has data there.
@@ -208,8 +211,12 @@ class TimeBase : public QObject
     // The window, the mode or the rate changed: panels should rescale.
     void changed();
 
-    // The source was replaced. The transport bar re-reads caps() from it.
-    void sourceChanged();
+    // A property the WORKSPACE persists changed: window span, render rate, or
+    // retention. This -- not changed() -- is what marks the workspace dirty.
+    // changed() also fires on every pan, zoom and playback tick, and a dirty
+    // flag wired to it meant playing a recording prompted "save changes?" for
+    // changes the user never made.
+    void persistentChanged();
 
     // One tick of the render timer. Panels drain their buffers and repaint.
     void frame();
@@ -224,11 +231,6 @@ class TimeBase : public QObject
     // follow_, no stopping playback. What the render tick uses to carry a
     // following window forward, and what setFollowing(true) uses to snap it.
     void applyView(double begin, double end);
-
-    // Hand the view's right edge to a seekable source, unless it is already
-    // there. Called immediately outside an interaction and once per render tick
-    // during one -- see setInteracting().
-    void flushSeek();
 
     // A pointer, not a reference, because it is reseated: entering review over
     // a recording swaps the whole source out from under the window.
@@ -246,9 +248,6 @@ class TimeBase : public QObject
     double view_end_ = 0.0;
 
     bool follow_ = true;
-
-    // A drag is in progress, so seeks coalesce to the render tick.
-    bool interacting_ = false;
 
     // The right edge a seekable source has not been told about yet.
     std::optional<double> pending_seek_;

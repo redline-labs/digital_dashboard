@@ -43,9 +43,11 @@ TimeBase::TimeBase(DataSource& source, QObject* parent) : QObject(parent), sourc
 {
     timer_.setObjectName("scope_render_timer");
     connect(&timer_, &QTimer::timeout, this, [this]() {
-        // Whatever the drag in progress asked for, once, before the source is
-        // ticked -- so a frame is drawn from buffers that already hold the
-        // position the view is claiming. See setInteracting().
+        // Whatever the gestures since the last tick asked for, ONCE, before the
+        // source is ticked -- so a frame is drawn from buffers that already
+        // hold the position the view is claiming. This is the whole seek
+        // coalescing mechanism: however many wheel events or drag moves landed
+        // in the last 33 ms, the retention window refills once.
         flushSeek();
 
         // The source first: a playing recorded source advances its position and
@@ -103,7 +105,12 @@ void TimeBase::setSource(DataSource& source)
     view_end_ = source_->now();
     pending_seek_.reset();
 
-    emit sourceChanged();
+    // The rate is a POSITION-like thing, not a preference like the span: a
+    // fresh source starts at 1.0x (RecordedSource's own default), and a 20x
+    // left over from the previous recording would make this object report a
+    // rate the source is not honouring until the next setRate().
+    rate_ = 1.0;
+
     emit changed();
     emit cursorMoved();
 }
@@ -117,6 +124,8 @@ void TimeBase::setWindowSeconds(double seconds)
                     kMaxWindowSeconds, clamped);
     }
 
+    const bool span_changed = clamped != window_seconds_;
+
     // Zoom about the RIGHT edge. "Show me the last N seconds" is what this
     // control has always meant, and it is the one zoom that should NOT stop a
     // live view from following -- widening the window while tailing the bus is
@@ -126,9 +135,15 @@ void TimeBase::setWindowSeconds(double seconds)
     {
         applyView(end - clamped, end);
         emit changed();
-        return;
     }
-    setView(end - clamped, end);
+    else
+    {
+        setView(end - clamped, end);
+    }
+    if (span_changed)
+    {
+        emit persistentChanged();
+    }
 }
 
 void TimeBase::setRenderRateHz(int hz)
@@ -146,6 +161,7 @@ void TimeBase::setRenderRateHz(int hz)
     render_rate_hz_ = clamped;
     restartTimer();
     emit changed();
+    emit persistentChanged();
 }
 
 // ----------------------------------------------------------------- the view
@@ -261,11 +277,10 @@ void TimeBase::applyView(double begin, double end)
     // second, and playback would stall while looking like it was running.
     if (source_->caps().seekable && std::abs(view_end_ - source_->now()) > kSeekEpsilon)
     {
+        // Parked, not applied: the render tick (or an agent dispatch) flushes
+        // it. Applying it here made every wheel event a full refill of every
+        // bound signal's retention window.
         pending_seek_ = view_end_;
-        if (!interacting_)
-        {
-            flushSeek();
-        }
     }
 }
 
@@ -281,23 +296,6 @@ void TimeBase::flushSeek()
     if (source_->caps().seekable)
     {
         source_->seek(t);
-    }
-}
-
-void TimeBase::setInteracting(bool on)
-{
-    if (on == interacting_)
-    {
-        return;
-    }
-    interacting_ = on;
-
-    // Ending an interaction applies whatever the last frame of the drag left
-    // outstanding. Without this, a drag that finished between two render ticks
-    // would leave the buffers one position behind where the view says it is.
-    if (!interacting_)
-    {
-        flushSeek();
     }
 }
 
@@ -389,6 +387,7 @@ void TimeBase::setRetentionSeconds(double seconds)
     // what the buffers still answer for.
     applyView(viewBegin(), viewEnd());
     emit changed();
+    emit persistentChanged();
 }
 
 void TimeBase::setFollowing(bool on)

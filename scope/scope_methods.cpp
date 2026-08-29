@@ -9,6 +9,7 @@
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
+#include "table/table_panel.h"
 #include "time_series/time_series_panel.h"
 
 #include "agent_control/error.h"
@@ -200,9 +201,30 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 {
     ScopeWindow* const win = &window;
 
+    // Every scope.* method runs behind a flushSeek(). Seeks coalesce to the
+    // render tick (TimeBase::flushSeek), which is right for gestures and wrong
+    // for an agent that sets the view and immediately reads sample_stats -- it
+    // would see the buffers from BEFORE its own seek, up to a frame stale.
+    // Flushing in the dispatcher rather than per-method means no method can be
+    // forgotten, and a flush with nothing pending is one branch.
+    const auto registerFlushed =
+        [&server, win](std::string name, agent_control::AgentServer::Method handler,
+                       agent_control::AgentServer::MethodKind kind =
+                           agent_control::AgentServer::MethodKind::kReadOnly)
+    {
+        server.registerMethod(std::move(name),
+                              [win, fn = std::move(handler)](const nlohmann::json& params)
+                                  -> MethodResult
+                              {
+                                  win->timeBase().flushSeek();
+                                  return fn(params);
+                              },
+                              kind);
+    };
+
     // ------------------------------------------------------------ composition
 
-    server.registerMethod(
+    registerFlushed(
         "scope.panels",
         [win](const json& /*params*/) -> MethodResult {
             json panels = json::array();
@@ -221,7 +243,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             return json{{"panels", std::move(panels)}, {"available_types", std::move(types)}};
         });
 
-    server.registerMethod(
+    registerFlushed(
         "scope.add_panel",
         [win](const json& params) -> MethodResult {
             const auto type_name = params.find("type");
@@ -265,7 +287,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
-    server.registerMethod(
+    registerFlushed(
         "scope.remove_panel",
         [win](const json& params) -> MethodResult {
             const auto entry = panelFrom(*win, params);
@@ -280,7 +302,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // ----------------------------------------------------------------- signals
 
-    server.registerMethod(
+    registerFlushed(
         "scope.browser",
         [win](const json& /*params*/) -> MethodResult {
             json candidates = json::array();
@@ -300,7 +322,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                  "has ever published. An empty list means no publisher is running."}};
         });
 
-    server.registerMethod(
+    registerFlushed(
         "scope.add_signal",
         [win](const json& params) -> MethodResult {
             const auto entry = panelFrom(*win, params);
@@ -418,7 +440,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
-    server.registerMethod(
+    registerFlushed(
         "scope.remove_signal",
         [win](const json& params) -> MethodResult {
             const auto entry = panelFrom(*win, params);
@@ -452,7 +474,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // logic and the drop handler, which is where the behaviour worth testing
     // lives; only the few lines inside exec() are left uncovered. Same
     // arrangement, and the same reasoning, as editor.palette_drag.
-    server.registerMethod(
+    registerFlushed(
         "scope.browser_drag",
         [win](const json& params) -> MethodResult {
             const auto entry = panelFrom(*win, params);
@@ -505,7 +527,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // -------------------------------------------------------------- time base
 
-    server.registerMethod(
+    registerFlushed(
         "scope.time_base",
         [win](const json& params) -> MethodResult {
             TimeBase& time_base = win->timeBase();
@@ -733,7 +755,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // same reason sample_stats is the thing to reach for before a picture. The
     // bucket sum against scope.capture's `messages` is the assertion worth
     // making.
-    server.registerMethod("scope.density", [win](const json& params) -> MethodResult {
+    registerFlushed("scope.density", [win](const json& params) -> MethodResult {
         std::size_t buckets = 200;
         if (const auto requested = params.find("buckets");
             requested != params.end() && requested->is_number_unsigned())
@@ -745,8 +767,11 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             return std::unexpected(badParams("'buckets' must be at least 1."));
         }
 
-        TimeBase& time_base = win->timeBase();
-        const auto [begin, end] = time_base.availableRange();
+        // The strip's own range, from the same function refreshDensity() uses.
+        // NOT availableRange(): that is deliberately unfloored, so for the
+        // first history_seconds of a live session the two disagreed and this
+        // method reported a histogram the strip was not drawing.
+        const auto [begin, end] = win->densityRange();
 
         // Through the window, NOT straight to the source: a live source cannot
         // answer and the recorder can, and this method exists to check what the
@@ -770,7 +795,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // ------------------------------------------------------------------ source
 
-    server.registerMethod("scope.source", [win](const json& /*params*/) -> MethodResult {
+    registerFlushed("scope.source", [win](const json& /*params*/) -> MethodResult {
         const SourceCaps caps = win->source().caps();
 
         json out;
@@ -810,7 +835,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         return out;
     });
 
-    server.registerMethod(
+    registerFlushed(
         "scope.open_recording",
         [win](const json& params) -> MethodResult {
             const auto path = params.find("path");
@@ -847,7 +872,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // that still said go_live would get the new behaviour under the old name --
     // which is the failure that looks like a broken app rather than a renamed
     // one, and is exactly what the transport_scrubber rename avoided.
-    server.registerMethod(
+    registerFlushed(
         "scope.set_mode",
         [win](const json& params) -> MethodResult {
             const auto mode = params.find("mode");
@@ -888,7 +913,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // ----------------------------------------------------------------- capture
 
-    server.registerMethod("scope.capture", [win](const json& /*params*/) -> MethodResult {
+    registerFlushed("scope.capture", [win](const json& /*params*/) -> MethodResult {
         ScopeRecorder* const recorder = win->recorder();
 
         // Not an error. A window that has never been online has no recorder at
@@ -921,7 +946,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
             {"evicted_bytes", buffer.evictedBytes()}};
     });
 
-    server.registerMethod(
+    registerFlushed(
         "scope.review_capture",
         [win](const json& /*params*/) -> MethodResult {
             if (!win->reviewCapture())
@@ -939,7 +964,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
-    server.registerMethod(
+    registerFlushed(
         "scope.save_recording",
         [win](const json& params) -> MethodResult {
             const auto path = params.find("path");
@@ -964,7 +989,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // ------------------------------------------------------------------ config
 
-    server.registerMethod("scope.panel_get_config", [win](const json& params) -> MethodResult {
+    registerFlushed("scope.panel_get_config", [win](const json& params) -> MethodResult {
         const auto entry = panelFrom(*win, params);
         if (!entry)
         {
@@ -976,7 +1001,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                     {"config", variantToJson(panelConfigOf(*entry.value()->panel))}};
     });
 
-    server.registerMethod("scope.panel_describe_config",
+    registerFlushed("scope.panel_describe_config",
                           [win](const json& params) -> MethodResult {
                               const auto entry = panelFrom(*win, params);
                               if (!entry)
@@ -994,7 +1019,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                                    describeVariant(panelConfigOf(*entry.value()->panel))}};
                           });
 
-    server.registerMethod(
+    registerFlushed(
         "scope.panel_set_config",
         [win](const json& params) -> MethodResult {
             const auto entry = panelFrom(*win, params);
@@ -1067,7 +1092,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // to remove a tileset has no way to say so through a merge, and a partial
     // write that silently kept an old entry is the kind of thing that shows up
     // later as a map drawn from the wrong archive.
-    server.registerMethod(
+    registerFlushed(
         "scope.settings",
         [win](const json& params) -> MethodResult {
             const auto tilesets = params.find("tilesets");
@@ -1130,7 +1155,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
 
     // --------------------------------------------------------------- workspace
 
-    server.registerMethod(
+    registerFlushed(
         "scope.save",
         [win](const json& params) -> MethodResult {
             const auto path = params.find("path");
@@ -1149,7 +1174,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
         },
         agent_control::AgentServer::MethodKind::kMutating);
 
-    server.registerMethod(
+    registerFlushed(
         "scope.load",
         [win](const json& params) -> MethodResult {
             const auto path = params.find("path");
@@ -1193,7 +1218,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // prevent, in the one file that should never need to know how many panel
     // kinds there are.
 
-    server.registerMethod("scope.stats", [win](const json& params) -> MethodResult {
+    registerFlushed("scope.stats", [win](const json& params) -> MethodResult {
         const auto wanted = params.find("panel");
         if (wanted != params.end() && !wanted->is_string())
         {
@@ -1220,7 +1245,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // has to guess them from a sample that happens to be populated -- and a
     // count that is legitimately absent looks identical to a field that does not
     // exist.
-    server.registerMethod("scope.describe_stats", [win](const json& params) -> MethodResult {
+    registerFlushed("scope.describe_stats", [win](const json& params) -> MethodResult {
         const auto entry = panelFrom(*win, params);
         if (!entry)
         {
@@ -1240,7 +1265,7 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
     // builds its JSON by hand instead of going through the reflected codec: the
     // reflected form always emits every field, which is the better answer for a
     // new caller and a silently different one for an old.
-    server.registerMethod("scope.sample_stats", [win](const json& params) -> MethodResult {
+    registerFlushed("scope.sample_stats", [win](const json& params) -> MethodResult {
         json panels = json::array();
 
         for (const ScopeWindow::PanelEntry& entry : win->panels())
@@ -1251,33 +1276,59 @@ void registerScopeMethods(agent_control::AgentServer& server, ScopeWindow& windo
                 continue;
             }
 
-            auto* plot = qobject_cast<TimeSeriesPanel*>(entry.panel);
-            if (plot == nullptr)
-            {
-                continue;
-            }
-
             // Not `signals`: Qt's moc defines that as a macro expanding to
             // `public:`, so even a local of that name is a syntax error.
             json signal_list = json::array();
-            for (const trace_stats_t& stats : plot->stats().traces)
+
+            if (auto* plot = qobject_cast<TimeSeriesPanel*>(entry.panel))
             {
-                json out;
-                out["label"] = stats.label;
-                out["bound"] = stats.bound;
-                out["retained"] = stats.retained;
-                out["received"] = stats.received;
-                out["dropped"] = stats.dropped;
-                out["has_data"] = stats.has_data;
-                if (stats.has_data)
+                for (const trace_stats_t& stats : plot->stats().traces)
                 {
-                    out["t_first"] = stats.t_first;
-                    out["t_last"] = stats.t_last;
-                    out["min"] = stats.min;
-                    out["max"] = stats.max;
-                    out["last"] = stats.last;
+                    json out;
+                    out["label"] = stats.label;
+                    out["bound"] = stats.bound;
+                    out["retained"] = stats.retained;
+                    out["received"] = stats.received;
+                    out["dropped"] = stats.dropped;
+                    out["has_data"] = stats.has_data;
+                    if (stats.has_data)
+                    {
+                        out["t_first"] = stats.t_first;
+                        out["t_last"] = stats.t_last;
+                        out["min"] = stats.min;
+                        out["max"] = stats.max;
+                        out["last"] = stats.last;
+                    }
+                    signal_list.push_back(std::move(out));
                 }
-                signal_list.push_back(std::move(out));
+            }
+            else if (auto* table = qobject_cast<TablePanel*>(entry.panel))
+            {
+                // A table's rows are the same kind of signal a plot's traces
+                // are, and this method is the first debugging verb the docs
+                // reach for -- a panel it skips looks like a panel receiving
+                // nothing. Video and map keep their richer, shape-specific
+                // stats under scope.stats.
+                for (const row_stats_t& stats : table->stats().rows)
+                {
+                    json out;
+                    out["label"] = stats.label;
+                    out["bound"] = stats.bound;
+                    out["retained"] = stats.retained;
+                    out["received"] = stats.received;
+                    out["dropped"] = stats.dropped;
+                    out["has_data"] = stats.has_value;
+                    if (stats.has_value)
+                    {
+                        out["t_last"] = stats.sample_t;
+                        out["last"] = stats.value;
+                    }
+                    signal_list.push_back(std::move(out));
+                }
+            }
+            else
+            {
+                continue;
             }
 
             panels.push_back(json{{"panel", entry.id.toStdString()}, {"signals", std::move(signal_list)}});

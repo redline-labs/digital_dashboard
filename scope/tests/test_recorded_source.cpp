@@ -84,7 +84,7 @@ class StubProvider : public scope::RecordedProvider
     }
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                 const std::function<void(const bag::BagMessage&)>& visit) override
+                 const std::function<bool(const bag::BagMessage&)>& visit) override
     {
         ++passes;
 
@@ -102,7 +102,10 @@ class StubProvider : public scope::RecordedProvider
             message.payload = payloads_[i];
             message.log_time_ns = log_time;
             message.publish_time_ns = log_time;
-            visit(message);
+            if (!visit(message))
+            {
+                return;
+            }
         }
     }
 
@@ -138,6 +141,27 @@ scope::SignalKey rpmKey()
     key.value_expression = "rpm";
     return key;
 }
+
+// A provider whose forEach is slow enough that a decode pass is guaranteed to
+// still be running when the source is destroyed. Each message costs ~1 ms, so a
+// full pass is ~2 s -- and the destructor finishing far faster than that is the
+// assertion.
+class SlowProvider : public StubProvider
+{
+  public:
+    SlowProvider() : StubProvider(2000, 1'000'000ull) {}
+
+    void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
+                 const std::function<bool(const bag::BagMessage&)>& visit) override
+    {
+        StubProvider::forEach(t0_ns, t1_ns,
+                              [&visit](const bag::BagMessage& message)
+                              {
+                                  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                                  return visit(message);
+                              });
+    }
+};
 
 // ------------------------------------------------------- the raw / video path
 //
@@ -175,7 +199,7 @@ class GopProvider : public scope::RecordedProvider
     }
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                 const std::function<void(const bag::BagMessage&)>& visit) override
+                 const std::function<bool(const bag::BagMessage&)>& visit) override
     {
         ++passes;
         for (std::size_t i = 0; i < payloads_.size(); ++i)
@@ -192,7 +216,10 @@ class GopProvider : public scope::RecordedProvider
             message.payload = payloads_[i];
             message.log_time_ns = log_time;
             message.publish_time_ns = log_time;
-            visit(message);
+            if (!visit(message))
+            {
+                return;
+            }
         }
     }
 
@@ -570,7 +597,7 @@ class WrongSchemaProvider : public scope::RecordedProvider
     WrongSchemaProvider() : payload_(rpmPayload(4200)) {}
 
     void forEach(std::uint64_t, std::uint64_t,
-                 const std::function<void(const bag::BagMessage&)>& visit) override
+                 const std::function<bool(const bag::BagMessage&)>& visit) override
     {
         for (int i = 0; i < 10; ++i)
         {
@@ -580,7 +607,10 @@ class WrongSchemaProvider : public scope::RecordedProvider
             message.payload = payload_;
             message.log_time_ns = kBase + static_cast<std::uint64_t>(i) * 100'000'000ull;
             message.publish_time_ns = message.log_time_ns;
-            visit(message);
+            if (!visit(message))
+            {
+                return;
+            }
         }
     }
 
@@ -593,6 +623,27 @@ class WrongSchemaProvider : public scope::RecordedProvider
   private:
     std::vector<std::uint8_t> payload_;
 };
+
+void testDestructionMidDecodeReturnsPromptly()
+{
+    // setSource() destroys the old source ON THE GUI THREAD, so ~RecordedSource
+    // joining a whole-recording pass is a UI hang for as long as the pass runs.
+    // The visit callback returns false once `stopping` is set and the provider
+    // stops the walk -- so a destructor over SlowProvider (~2 s for a full
+    // pass) must come back in a small fraction of that.
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        scope::RecordedSource source(std::make_unique<SlowProvider>());
+        auto buffer = std::make_shared<scope::SignalBuffer>(5.0, 1000, 4096);
+        source.bind(rpmKey(), buffer);
+
+        // Let the pass genuinely start before tearing down.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+    expect(elapsed < std::chrono::milliseconds(500),
+           "destroying a source mid-decode aborts the pass rather than finishing it");
+}
 
 void testAMismatchedSchemaIsNotDecoded()
 {
@@ -625,10 +676,10 @@ void testRawBindingIndexesWithoutHoldingPayloads()
     scope::RecordedSource source(std::move(provider));
 
     auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
-    const scope::SignalHandle handle = source.bindRaw(
+    const scope::RawHandle handle = source.bindRaw(
         "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, buffer, classifyGop);
 
-    expect(handle != scope::kInvalidSignal, "raw: the binding was accepted");
+    expect(handle != scope::kInvalidRaw, "raw: the binding was accepted");
     expect(waitForDecode(source), "raw: the index pass finished");
     expect(raw_provider->passes.load() >= 1, "raw: the index cost one pass over the recording");
 
@@ -764,9 +815,9 @@ void testReleasingRawClearsThePendingCount()
     auto first = std::make_shared<scope::RawBuffer>(0.0, 0);
     auto second = std::make_shared<scope::RawBuffer>(0.0, 0);
 
-    const scope::SignalHandle a = source.bindRaw(
+    const scope::RawHandle a = source.bindRaw(
         "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, first, classifyGop);
-    const scope::SignalHandle b = source.bindRaw(
+    const scope::RawHandle b = source.bindRaw(
         "nodes/carplay/video", pub_sub::schema_type_t::CarPlayVideo, second, classifyGop);
 
     source.releaseRaw(a);
@@ -795,6 +846,7 @@ int main()
 
     testAnEmptyRecordingIsSurvivable();
     testReleaseIsIdempotent();
+    testDestructionMidDecodeReturnsPromptly();
     testAMismatchedSchemaIsNotDecoded();
 
     testRawBindingIndexesWithoutHoldingPayloads();

@@ -127,6 +127,25 @@ later is a change to that field and to the toolbar, and to nothing else. Pick
 one that is in the default font on every platform: a missing glyph renders as a
 blank box, which reads as a broken button rather than a plain one.
 
+**Configuring a panel is right-click ▸ Configure…** — one reflection-driven
+dialog for every panel kind, built from the same `REFLECT_STRUCT` metadata
+`scope.panel_describe_config` serves, so the next panel type gets a form with
+no UI code. It applies through the same clamped path `scope.panel_set_config`
+takes, so editing a colour or an axis never discards a trace's history, and an
+out-of-range value shows its clamped self after Apply. The map panel's
+`tileset` renders as a combo of the names configured in Settings — which is
+what closed the old dead end where a map added from the GUI could never be
+pointed at an archive.
+
+**The dock's X removes the panel** — the same thing the context menu's Close
+panel does. Qt's default merely HID the widget: still bound, still draining at
+the render rate, saved hidden into `dock_state`, with no View-menu entry to
+bring it back.
+
+**The second panel splits below the first; the third tabs.** Two tabs can never
+show the shared cursor, which is the whole point of a second panel — and a
+hidden tab does not paint, so its stats read zero and it looks broken.
+
 **Picking a signal knows nothing about panel types.** The browser produces a
 `BindingCandidate`, the drag carries it, the dialog returns it, and every panel
 answers the same two questions: `acceptsBinding()` and `addBinding()`. A
@@ -261,7 +280,11 @@ frame stale, silently.
 | drag | pan |
 | shift + drag | rubber-band a range, zoom to it |
 | double-click | fit all, and give autoscale back |
-| `+` `-` `0` `←` `→` `space` | the same things from the keyboard, anywhere in the window |
+| `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | zoom in / out / fit, anywhere in the window |
+| `←` `→` `space` | pan back / pan forward / follow-or-play — except while the signal tree has focus, where they navigate the tree |
+
+All six live in the **View menu**, which is where their shortcuts are
+discoverable; the menu entries and the shortcuts are the same `QAction`s.
 
 `following` is the one flag underneath `Mode{Live, Paused}`: it means *the right
 edge is being driven by something other than the user* — the source's clock on a
@@ -290,16 +313,20 @@ recording. It would look like data, not like a bug. `setView()` therefore seeks
 to its right edge, and `seek()` moves the whole window so its right edge lands
 where it was told.
 
-**Seeks coalesce during a drag.** A drag emits a mouse-move per pass of the
-event loop — 60 to 125 a second — and each seek refills a whole retention window
-per bound signal. Eight traces of a 1 kHz signal over the default 300 s
-retention is 2.4 million samples rebuilt per event, so the drag would stutter in
-proportion to how much history is retained, which is the opposite of what
-retaining more should cost. `TimeBase::setInteracting()` holds the seeks to one
-per render tick for the duration of the drag. Outside an interaction a seek
-applies immediately, so a caller that sets the view and then reads
-`sample_stats` sees the buffers it asked for — the same distinction
-`QSlider::isSliderDown()` draws.
+**Seeks coalesce to the render tick, unconditionally.** A gesture — drag OR
+wheel — emits an event per pass of the event loop, 60 to 125 a second, and each
+seek refills a whole retention window per bound signal. Eight traces of a 1 kHz
+signal over the default 300 s retention is 2.4 million samples rebuilt per
+event. Every view change therefore only PARKS a pending seek; the render tick's
+`flushSeek()` applies the latest one before the frame is drawn, so however many
+events landed in the last 33 ms, the buffers refill once. (This replaced a
+drag-only `setInteracting()` bracket, which left wheel zoom paying the
+per-event refill.)
+
+The agent interface still sees settled buffers: the method dispatcher calls
+`flushSeek()` before EVERY `scope.*` method, so "set the view, then read
+`sample_stats`" observes exactly the buffers it asked for, with no per-method
+list to keep in sync.
 
 ## The overview strip
 
@@ -508,8 +535,11 @@ silently check nothing.
 ## Drawing
 
 Traces are reduced to one min/max span per pixel column
-(`scope/include/scope/decimate.h`), so a frame costs the width of the widget
-rather than the size of the history. The vertical span per column is what keeps
+(`scope/include/scope/decimate.h`): the samples inside the window are walked
+once (a binary search finds the left edge, so retained history outside the
+window costs nothing) and the DRAW CALLS are bounded by the width of the
+widget. The autoscale is derived from the same columns, so one pass serves
+both. The vertical span per column is what keeps
 spikes visible through decimation — "every Nth sample" deletes exactly the
 extremes you opened a scope to see — and the first/last values are what join
 columns so a smooth signal does not draw as a comb.
@@ -1093,6 +1123,11 @@ tilesets:
   - name: tracks
     path: /Users/ryan/Documents/map_data/tracks.mbtiles
 ```
+
+The same file carries the per-machine conveniences — `recent_workspaces` and
+`recent_recordings` (the File menu's Recent submenus), `last_directory` (where
+the file dialogs open), and `window_geometry` — because each is a fact about
+this machine, which is exactly the dividing line above. All are safe to delete.
 
 Three behaviours are deliberate, and each is a case where the obvious
 alternative fails quietly:

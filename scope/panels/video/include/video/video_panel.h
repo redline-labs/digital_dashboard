@@ -87,6 +87,7 @@ class VideoPanel : public Panel
     // still virtual calls rather than a special case in the window: a panel that
     // holds exactly one binding is not a panel that holds none.
     std::vector<QString> bindingLabels() const override;
+    std::size_t unboundBindingCount() const override;
     bool removeBinding(std::size_t index) override;
 
     void setTimeBase(TimeBase* time_base) override;
@@ -142,7 +143,7 @@ class VideoPanel : public Panel
     config_t cfg_;
     DataSource* source_;
 
-    SignalHandle handle_ = kInvalidSignal;
+    RawHandle handle_ = kInvalidRaw;
     std::shared_ptr<RawBuffer> buffer_;
 
     TimeBase* time_base_ = nullptr;

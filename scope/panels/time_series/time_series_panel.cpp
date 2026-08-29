@@ -12,8 +12,6 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
-#include <QResizeEvent>
 #include <QWheelEvent>
 
 #include <spdlog/spdlog.h>
@@ -74,6 +72,20 @@ double niceStep(double rough)
     return 10.0 * magnitude;
 }
 
+// The fixed palette, parsed once. QColor("#RRGGBB") goes through a string
+// parser; a dozen of these per paintEvent at 30 Hz is pure waste.
+const QColor kBackground("#14161A");
+const QColor kFrame("#3A4048");
+const QColor kForeground("#E0E4EA");
+const QColor kGridLine("#232830");
+const QColor kGridLabel("#8A94A6");
+const QColor kLaneRowFill("#181B20");
+const QColor kLaneTextDark("#0B0D10");
+const QColor kLegendMuted("#5A6270");
+const QColor kLegendBound("#C8CEDA");
+const QColor kLegendUnbound("#8A6060");
+const QColor kDefaultTrace("#4FC3F7");
+
 // Height of one state lane, and the gap between the plot and the first of them.
 constexpr double kLaneHeight = 20.0;
 constexpr double kLaneGap = 6.0;
@@ -131,6 +143,15 @@ struct TimeSeriesPanel::Trace
     // showing an empty trace that looks like a quiet signal.
     bool bound = false;
 
+    // This trace's per-column reduction of the drawn window, refreshed once per
+    // paint and kept across frames so a 30 Hz redraw allocates nothing. The
+    // autoscale is derived from these SAME columns -- the column partition
+    // covers the window exactly, so min over columns equals min over samples --
+    // which is what lets one pass serve both instead of the two full scans this
+    // used to cost.
+    std::vector<ColumnStats> columns;
+    std::size_t filled = 0;
+
     QString displayLabel() const
     {
         if (!binding.label.empty())
@@ -172,7 +193,7 @@ void TimeSeriesPanel::releaseAll()
 
 void TimeSeriesPanel::applyPresentation(Trace& trace) const
 {
-    trace.color = qt_helpers::toQColor(trace.binding.color, QColor("#4FC3F7"));
+    trace.color = qt_helpers::toQColor(trace.binding.color, kDefaultTrace);
     switch (trace.binding.display)
     {
         case trace_display_t::automatic:
@@ -272,6 +293,12 @@ void TimeSeriesPanel::syncTraces()
             source_->release(leftover->handle);
         }
     }
+
+    // Maintained here so plotRect() -- called per paint and per gesture -- can
+    // read it instead of scanning the config every time.
+    has_right_axis_ = std::any_of(cfg_.traces.begin(), cfg_.traces.end(),
+                                  [](const signal_binding_t& binding)
+                                  { return binding.right_axis; });
 
     update();
 }
@@ -404,6 +431,13 @@ std::vector<QString> TimeSeriesPanel::bindingLabels() const
     return labels;
 }
 
+std::size_t TimeSeriesPanel::unboundBindingCount() const
+{
+    return static_cast<std::size_t>(std::count_if(traces_.begin(), traces_.end(),
+                                                  [](const std::unique_ptr<Trace>& trace)
+                                                  { return !trace->bound; }));
+}
+
 bool TimeSeriesPanel::removeBinding(std::size_t index)
 {
     if (index >= cfg_.traces.size())
@@ -452,12 +486,31 @@ void TimeSeriesPanel::onFrame()
     // paint reads. It happens even while paused: the view freezes, the data
     // does not, so unpausing shows what arrived meanwhile rather than a gap.
     const double now = time_base_->source().now();
+    std::size_t moved = 0;
     for (const std::unique_ptr<Trace>& trace : traces_)
     {
-        trace->buffer->drain(now);
+        moved += trace->buffer->drain(now);
     }
 
-    update();
+    // Repaint only when the picture can differ: samples arrived, or the shared
+    // window/cursor moved (a following live edge moves every tick; a paused
+    // review does not). A parked view of a recording used to re-decimate and
+    // re-autoscale every trace 30 times a second to redraw identical pixels.
+    // Every other cause of change -- a config apply, a gesture, a resize --
+    // already calls update() at its own site.
+    const double view_end = time_base_->viewEnd();
+    const double view_begin = time_base_->viewBegin();
+    const std::optional<double> cursor = time_base_->cursor();
+    const bool view_moved = view_end != last_frame_end_ || view_begin != last_frame_begin_ ||
+                            cursor != last_frame_cursor_;
+    last_frame_end_ = view_end;
+    last_frame_begin_ = view_begin;
+    last_frame_cursor_ = cursor;
+
+    if (moved > 0 || view_moved)
+    {
+        update();
+    }
 }
 
 TimeSeriesPanel::stats_t TimeSeriesPanel::stats() const
@@ -506,11 +559,11 @@ QRectF TimeSeriesPanel::plotRect() const
 
     // The right gutter only exists when something is scaled against the right
     // axis, so a single-axis plot gets the full width rather than a permanent
-    // empty strip.
-    const bool needs_right = std::any_of(cfg_.traces.begin(), cfg_.traces.end(),
-                                         [](const signal_binding_t& binding)
-                                         { return binding.right_axis; });
-    const double right = needs_right ? kRightAxisGutter : kRightGutter;
+    // empty strip. has_right_axis_ is maintained by syncTraces() -- this is
+    // called several times per paint and from every gesture, so the any_of it
+    // used to run here was recomputed constantly for an answer that changes
+    // only with the config.
+    const double right = has_right_axis_ ? kRightAxisGutter : kRightGutter;
 
     QRectF area(kLeftGutter, kTopGutter, w - kLeftGutter - right,
                 h - kTopGutter - kBottomGutter - lanesHeight());
@@ -569,7 +622,7 @@ void TimeSeriesPanel::paintLanes(QPainter& painter, const QRectF& lanes)
         const QRectF row(lanes.left(), top, lanes.width(), kLaneHeight);
         top += kLaneHeight;
 
-        painter.fillRect(row, QColor("#181B20"));
+        painter.fillRect(row, kLaneRowFill);
 
         const SampleHistory& history = trace->buffer->history();
         if (history.empty())
@@ -596,8 +649,15 @@ void TimeSeriesPanel::paintLanes(QPainter& painter, const QRectF& lanes)
             const double value = history[index].v;
             const double run_begin = history[index].t;
 
+            // Bounded by drawn_end_ like the outer loop: the run straddling the
+            // right edge is clamped to drawn_end_ below anyway, and without the
+            // bound this walked to the end of RETAINED history -- with the view
+            // parked in the past, that is every sample between the window and
+            // the live edge, scanned per lane per frame, for pixels that never
+            // draw.
             std::size_t next = index + 1;
-            while (next < history.size() && history[next].v == value)
+            while (next < history.size() && history[next].t <= drawn_end_ &&
+                   history[next].v == value)
             {
                 ++next;
             }
@@ -626,18 +686,18 @@ void TimeSeriesPanel::paintLanes(QPainter& painter, const QRectF& lanes)
             const QString label = trace->states.label(value);
             if (band.width() > metrics.horizontalAdvance(label) + 8.0)
             {
-                painter.setPen(QColor("#0B0D10"));
+                painter.setPen(kLaneTextDark);
                 painter.drawText(band, Qt::AlignCenter, label);
             }
         }
 
         // The channel's own name, over the band rather than in the left gutter:
         // the gutter belongs to the value axis, and a lane has no value axis.
-        painter.setPen(QColor("#E0E4EA"));
+        painter.setPen(kForeground);
         painter.drawText(row.adjusted(6.0, 0.0, 0.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft,
                          trace->displayLabel());
 
-        painter.setPen(QPen(QColor("#3A4048"), 1.0));
+        painter.setPen(QPen(kFrame, 1.0));
         painter.drawRect(row);
     }
 }
@@ -681,16 +741,18 @@ void TimeSeriesPanel::computeYRange(double& y_min, double& y_max, bool right_axi
             continue;
         }
 
-        const SampleHistory& history = trace->buffer->history();
-        const std::size_t start = history.lowerBound(drawn_begin_);
-        for (std::size_t i = start; i < history.size(); ++i)
+        // From the decimation columns, not the samples: decimateTraces() has
+        // already reduced the window, and each column's min/max covers every
+        // sample in it, so this is the same answer for the width of the widget
+        // rather than the size of the window.
+        for (const ColumnStats& stats : trace->columns)
         {
-            if (history[i].t > drawn_end_)
+            if (!stats.has_data)
             {
-                break;
+                continue;
             }
-            y_min = std::min(y_min, history[i].v);
-            y_max = std::max(y_max, history[i].v);
+            y_min = std::min(y_min, stats.min);
+            y_max = std::max(y_max, stats.max);
         }
     }
 
@@ -724,9 +786,20 @@ void TimeSeriesPanel::computeYRange(double& y_min, double& y_max, bool right_axi
 
 // -------------------------------------------------------------------- painting
 
-void TimeSeriesPanel::resizeEvent(QResizeEvent* event)
+void TimeSeriesPanel::decimateTraces(const QRectF& area)
 {
-    Panel::resizeEvent(event);
+    const std::size_t columns = static_cast<std::size_t>(std::max(1.0, area.width()));
+    for (const std::unique_ptr<Trace>& trace : traces_)
+    {
+        if (!trace->bound || trace->lane)
+        {
+            trace->filled = 0;
+            trace->columns.clear();
+            continue;
+        }
+        trace->filled = decimateMinMax(trace->buffer->history(), drawn_begin_, drawn_end_,
+                                       columns, trace->columns);
+    }
 }
 
 void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
@@ -751,24 +824,22 @@ void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
         drawn_begin_ = -cfg_.window_seconds;
     }
 
-    computeYRange(drawn_y_min_, drawn_y_max_, /*right_axis=*/false);
+    decimateTraces(area);
 
-    has_right_axis_ = std::any_of(cfg_.traces.begin(), cfg_.traces.end(),
-                                  [](const signal_binding_t& binding)
-                                  { return binding.right_axis; });
+    computeYRange(drawn_y_min_, drawn_y_max_, /*right_axis=*/false);
     if (has_right_axis_)
     {
         computeYRange(drawn_y2_min_, drawn_y2_max_, /*right_axis=*/true);
     }
 
-    painter.fillRect(rect(), QColor("#14161A"));
+    painter.fillRect(rect(), kBackground);
 
     if (cfg_.show_grid)
     {
         paintGrid(painter, area, drawn_y_min_, drawn_y_max_);
     }
 
-    painter.setPen(QPen(QColor("#3A4048"), 1.0));
+    painter.setPen(QPen(kFrame, 1.0));
     painter.drawRect(area);
 
     paintTraces(painter, area);
@@ -786,7 +857,7 @@ void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
         const QRectF band(x0, area.top(), x1 - x0, area.height());
 
         painter.fillRect(band, QColor(224, 228, 234, 40));
-        painter.setPen(QPen(QColor("#E0E4EA"), 1.0));
+        painter.setPen(QPen(kForeground, 1.0));
         painter.drawLine(QPointF(x0, area.top()), QPointF(x0, area.bottom()));
         painter.drawLine(QPointF(x1, area.top()), QPointF(x1, area.bottom()));
     }
@@ -799,8 +870,8 @@ void TimeSeriesPanel::paintEvent(QPaintEvent* /*event*/)
 
 void TimeSeriesPanel::paintGrid(QPainter& painter, const QRectF& area, double y_min, double y_max)
 {
-    const QPen grid_pen(QColor("#232830"), 1.0);
-    const QPen label_pen(QColor("#8A94A6"), 1.0);
+    const QPen grid_pen(kGridLine, 1.0);
+    const QPen label_pen(kGridLabel, 1.0);
     const QFontMetricsF metrics(painter.font());
 
     // Vertical axis.
@@ -876,8 +947,6 @@ void TimeSeriesPanel::paintTraces(QPainter& painter, const QRectF& area)
         return;
     }
 
-    const std::size_t columns = static_cast<std::size_t>(std::max(1.0, area.width()));
-
     painter.save();
     painter.setClipRect(area);
 
@@ -900,9 +969,7 @@ void TimeSeriesPanel::paintTraces(QPainter& painter, const QRectF& area)
             continue;
         }
 
-        const std::size_t filled =
-            decimateMinMax(trace->buffer->history(), drawn_begin_, drawn_end_, columns, columns_);
-        if (filled == 0)
+        if (trace->filled == 0)
         {
             continue;
         }
@@ -921,9 +988,9 @@ void TimeSeriesPanel::paintTraces(QPainter& painter, const QRectF& area)
         double previous_x = 0.0;
         double previous_last = 0.0;
 
-        for (std::size_t i = 0; i < columns_.size(); ++i)
+        for (std::size_t i = 0; i < trace->columns.size(); ++i)
         {
-            const ColumnStats& stats = columns_[i];
+            const ColumnStats& stats = trace->columns[i];
             if (!stats.has_data)
             {
                 continue;
@@ -968,7 +1035,7 @@ void TimeSeriesPanel::paintCursor(QPainter& painter, const QRectF& area)
     }
 
     const double x = area.left() + (t - drawn_begin_) / span * area.width();
-    painter.setPen(QPen(QColor("#E0E4EA"), 1.0, Qt::DashLine));
+    painter.setPen(QPen(kForeground, 1.0, Qt::DashLine));
     painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
 }
 
@@ -976,7 +1043,7 @@ void TimeSeriesPanel::paintLegend(QPainter& painter)
 {
     if (traces_.empty())
     {
-        painter.setPen(QColor("#5A6270"));
+        painter.setPen(kLegendMuted);
         painter.drawText(rect(), Qt::AlignCenter,
                          tr("No signals.\nDrag one here from the browser."));
         return;
@@ -1012,7 +1079,16 @@ void TimeSeriesPanel::paintLegend(QPainter& painter)
         {
             text += tr("  (unbound)");
         }
-        else
+        else if (trace->buffer->dropped() > 0)
+        {
+            // The one counter that means the trace is LYING about the data --
+            // samples arrived and were thrown away, so gaps and flat spots may
+            // be the drop, not the signal. It was agent-only (sample_stats)
+            // before; a GUI user could not tell a decimated-but-honest trace
+            // from a lossy one.
+            text += tr("  (! %1 dropped)").arg(trace->buffer->dropped());
+        }
+        if (trace->bound)
         {
             const SampleHistory& history = trace->buffer->history();
             if (history.empty())
@@ -1044,7 +1120,7 @@ void TimeSeriesPanel::paintLegend(QPainter& painter)
             }
         }
 
-        painter.setPen(trace->bound ? QColor("#C8CEDA") : QColor("#8A6060"));
+        painter.setPen(trace->bound ? kLegendBound : kLegendUnbound);
         painter.drawText(QPointF(x + 14.0, y), text);
         y += line_height;
     }
@@ -1072,10 +1148,6 @@ void TimeSeriesPanel::mouseMoveEvent(QMouseEvent* event)
             drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Band : Drag::Pan;
             if (drag_ == Drag::Pan)
             {
-                // Coalesce the seeks this generates. On a recording every view
-                // change refills a whole retention window per signal, and a
-                // drag emits one of these per pass of the event loop.
-                time_base_->setInteracting(true);
                 setCursor(Qt::ClosedHandCursor);
             }
             else
@@ -1160,10 +1232,6 @@ void TimeSeriesPanel::mouseReleaseEvent(QMouseEvent* event)
 
     if (time_base_ != nullptr)
     {
-        // Applies whatever the drag left outstanding, so the buffers match the
-        // window before the next frame rather than one tick later.
-        time_base_->setInteracting(false);
-
         if (was == Drag::Band)
         {
             const double lo = std::min(band_begin_, band_end_);

@@ -1,4 +1,3 @@
-#include "pub_sub/node_identity.h"
 #include "scope/command_line_args.h"
 #include "scope/scope_methods.h"
 #include "scope/settings.h"
@@ -68,11 +67,11 @@ int main(int argc, char** argv)
 
     spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
 
-    // Announce this process so tools can put a name to the session id that
-    // appears on every topic it advertises and every sample it stamps. This
-    // app subscribes but never publishes, so without it the process is
-    // invisible on the bus entirely. See pub_sub/node_identity.h.
-    pub_sub::NodeIdentity node_identity("scope");
+    // NodeIdentity is NOT declared here. Constructing it opens a zenoh session
+    // (SessionManager::getOrCreate), and scope starts OFFLINE -- a process that
+    // joined the bus at startup would make "Offline" a label rather than a
+    // fact. ScopeWindow::goOnline() announces the process the first time it
+    // actually attaches. See pub_sub/node_identity.h and docs/scope.md.
 
     // Set BEFORE QStandardPaths is asked anything: it builds the per-user
     // config path out of these, so settingsPath() would otherwise resolve

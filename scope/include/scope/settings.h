@@ -38,7 +38,15 @@ REFLECT_STRUCT(scope_tileset_t,
 
 REFLECT_STRUCT(scope_settings_t,
     (std::vector<scope_tileset_t>, tilesets, {},
-        "Tilesets", "Map archives on this machine, by the name panels refer to them by")
+        "Tilesets", "Map archives on this machine, by the name panels refer to them by"),
+    (std::vector<std::string>, recent_workspaces, {},
+        "Recent Workspaces", "Most recent first. Per-user because a path on this machine is"),
+    (std::vector<std::string>, recent_recordings, {},
+        "Recent Recordings", "Most recent first, same rule"),
+    (std::string, last_directory, "",
+        "Last Directory", "Where the file dialogs open. Convenience, safe to delete"),
+    (std::string, window_geometry, "",
+        "Window Geometry", "QWidget::saveGeometry() as base64. Opaque; safe to delete")
 )
 
 // Where settings live when --settings was not given:
@@ -57,7 +65,11 @@ std::string settingsPath();
 // cannot be parsed is a warning plus defaults, and is deliberately NOT
 // overwritten until the user changes something: a hand-edit with a typo in it
 // is worth more than the empty file that would replace it.
-scope_settings_t load_settings(const std::string& path);
+// `problem`, when given, receives a one-line human-readable reason when an
+// EXISTING file could not be used (malformed, or refused by validation) -- the
+// case a user should hear about, because the Settings dialog then shows an
+// empty table that reads as "never configured". A missing file sets nothing.
+scope_settings_t load_settings(const std::string& path, std::string* problem = nullptr);
 
 // Writes via a temporary and renames, so an interrupted write cannot leave a
 // truncated file behind. A half-written settings file reads as "no tilesets

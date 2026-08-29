@@ -169,11 +169,14 @@ class ScopeWindow : public QMainWindow
     bool densityFor(double begin, double end, std::size_t buckets,
                     std::vector<std::uint32_t>& out);
 
-  signals:
-    // The source was replaced. The transport bar rebuilds from caps().
-    void sourceChanged();
-
-  public:
+    // The [begin, end] the overview strip's histogram is computed over -- the
+    // recording's extent when seekable, and [max(now - history, 0), now] live.
+    // ONE function, used by refreshDensity() AND scope.density: the RPC exists
+    // to check the strip, and for the first history_seconds of a live session
+    // the two used to use different ranges (the RPC took availableRange(),
+    // which is deliberately unfloored), so every bucket boundary disagreed in
+    // exactly the window where you'd be checking.
+    std::pair<double, double> densityRange() const;
 
     const QString& workspacePath() const { return workspace_path_; }
     void setWorkspacePath(QString path) { workspace_path_ = std::move(path); }
@@ -341,6 +344,28 @@ class ScopeWindow : public QMainWindow
     void updateWindowTitle();
     QString uniqueId(panel_type_t type) const;
 
+    // A summary on the status bar, plus (when a human is present) a details
+    // box. Errors that only reached the log left File > Open Workspace looking
+    // identical to success -- and a "permanent" status message is destroyed by
+    // the next transient one, so anything durable goes through here.
+    void reportProblems(const QString& summary, const std::vector<std::string>& notes);
+
+    // Write settings_ back to settings_path_, if there is one. Recents and
+    // window geometry ride the per-user settings file -- they are facts about
+    // this machine, exactly the dividing line settings.h documents.
+    void persistSettings();
+
+    // Push `path` to the front of a recents list (deduplicated, capped) and
+    // remember its directory as where the file dialogs open next.
+    void noteRecent(std::vector<std::string>& list, const QString& path);
+
+    // DECLARED BEFORE source_, so it is destroyed AFTER it: a RecordedSource
+    // over a CaptureProvider holds a pointer into this recorder's buffer, and
+    // its destructor joins a worker thread that may still be reading it. The
+    // last-declared member is destroyed first, so the recorder must come
+    // first here or ~ScopeWindow frees the buffer under that worker.
+    std::unique_ptr<ScopeRecorder> recorder_;
+
     // The INTERFACE, not the concrete live type. Holding LiveZenohSource here
     // was what blocked recorded playback: everything above this line already
     // spoke DataSource, and only the member's type said otherwise.
@@ -348,15 +373,18 @@ class ScopeWindow : public QMainWindow
 
     std::unique_ptr<TimeBase> time_base_;
 
-    // Declared AFTER source_ so it outlives it: a RecordedSource over a
-    // CaptureProvider holds a pointer into this recorder's buffer, and members
-    // are destroyed in reverse declaration order.
-    std::unique_ptr<ScopeRecorder> recorder_;
+    // The CaptureBuffer revision at the last successful save -- a WATERMARK,
+    // not a latch. A bool that latched true at the first save meant everything
+    // captured AFTER that save was discarded without a prompt, which is exactly
+    // the loss the prompt exists to prevent. Tracked separately from the
+    // workspace's dirty flag because they are lost differently: a workspace can
+    // be re-made by hand, a capture cannot be re-made at all.
+    std::uint64_t capture_saved_revision_ = 0;
 
-    // Has anything been captured that is not on disk? Tracked separately from
-    // the workspace's dirty flag because they are lost differently: a workspace
-    // can be re-made by hand, a capture cannot be re-made at all.
-    bool capture_saved_ = false;
+    // True when the capture holds messages newer than the last save (or never
+    // saved at all). The question confirmDiscardCapture() and the "(unsaved)"
+    // suffix both ask, answered in one place.
+    bool captureUnsaved() const;
 
     // What the offline source is, for the top bar's chip: a bag's directory
     // name and duration, or empty when the source is the capture or nothing.
@@ -425,12 +453,12 @@ class ScopeWindow : public QMainWindow
     // Reused across recomputations so a running strip allocates nothing.
     std::vector<std::uint32_t> density_;
 
-    // What the cached histogram was computed from, so refreshDensity() can tell
-    // whether anything it depends on has actually moved.
-    std::uint64_t density_revision_ = 0;
+    // The cache keys: bucket count (a resize recomputes at once) and the clock
+    // (everything else waits for the 500 ms throttle; a source swap zeroes the
+    // clock to force a recompute). Deliberately NOT the range -- on a live
+    // source the range's end is now() and never compares equal, which silently
+    // defeated the throttle. See refreshDensity().
     int density_buckets_ = 0;
-    double density_begin_ = 0.0;
-    double density_end_ = 0.0;
     std::int64_t density_computed_at_ms_ = 0;
 
     // Set while the transport bar is being updated FROM the time base, so the

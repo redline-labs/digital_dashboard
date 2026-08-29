@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -45,19 +46,17 @@ const std::vector<std::string>& BagFileProvider::problems() const
 }
 
 void BagFileProvider::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                              const std::function<void(const bag::BagMessage&)>& visit)
+                              const std::function<bool(const bag::BagMessage&)>& visit)
 {
     if (!reader_->isValid())
     {
         return;
     }
 
-    reader_->forEach(t0_ns, t1_ns,
-                     [&visit](const bag::BagMessage& message)
-                     {
-                         visit(message);
-                         return true;
-                     });
+    // Straight through: BagReader::forEach already stops on false, which is
+    // what lets a teardown abort a pass over a large bag instead of decoding
+    // the rest of it into a source that is being destroyed.
+    reader_->forEach(t0_ns, t1_ns, visit);
 }
 
 std::vector<TopicInfo> BagFileProvider::topics() const
@@ -303,7 +302,14 @@ struct RecordedSource::Impl
 
     std::deque<Job> queue;
     std::condition_variable work;
-    bool stopping = false;
+
+    // Atomic because the whole-recording passes poll it per message WITHOUT the
+    // lock. The destructor joins the worker; before this was checked inside
+    // decode()/indexRaw(), destroying a source mid-pass blocked the GUI thread
+    // (setSource destroys the old source there) until a full scan of the
+    // recording finished. Once set, the visit callback returns false and the
+    // provider stops the walk.
+    std::atomic<bool> stopping{false};
 
     // Counts the two WHOLE-RECORDING passes only, which is what decodesPending()
     // means and what a test waits on. A window load is a bounded read of one
@@ -327,11 +333,15 @@ struct RecordedSource::Impl
 
         provider->forEach(
             t_begin_ns, t_end_ns,
-            [&](const bag::BagMessage& message)
+            [&](const bag::BagMessage& message) -> bool
             {
+                if (stopping.load(std::memory_order_relaxed))
+                {
+                    return false;
+                }
                 if (message.key != binding->key.zenoh_key)
                 {
-                    return;
+                    return true;
                 }
 
                 // Recorded with a different schema than the binding expects.
@@ -339,7 +349,7 @@ struct RecordedSource::Impl
                 // bytes against the wrong schema and produce a number.
                 if (!message.schema.empty() && message.schema != binding->expected_schema)
                 {
-                    return;
+                    return true;
                 }
 
                 // log_time, not publish_time. log_time is the recorder's own
@@ -360,6 +370,7 @@ struct RecordedSource::Impl
                 {
                     decoded.push_back(Sample{t, *value});
                 }
+                return true;
             });
 
         const std::lock_guard<std::mutex> guard(mutex);
@@ -380,11 +391,15 @@ struct RecordedSource::Impl
         std::vector<RecordedRawBinding::IndexEntry> built;
 
         provider->forEach(t_begin_ns, t_end_ns,
-                          [&](const bag::BagMessage& message)
+                          [&](const bag::BagMessage& message) -> bool
                           {
+                              if (stopping.load(std::memory_order_relaxed))
+                              {
+                                  return false;
+                              }
                               if (message.key != binding->zenoh_key)
                               {
-                                  return;
+                                  return true;
                               }
 
                               // Same rule as the numeric path: a message
@@ -394,7 +409,7 @@ struct RecordedSource::Impl
                               if (!message.schema.empty() &&
                                   message.schema != binding->expected_schema)
                               {
-                                  return;
+                                  return true;
                               }
 
                               RecordedRawBinding::IndexEntry entry;
@@ -406,6 +421,7 @@ struct RecordedSource::Impl
                                   entry.flags = binding->classify(message.payload);
                               }
                               built.push_back(entry);
+                              return true;
                           });
 
         const std::lock_guard<std::mutex> guard(mutex);
@@ -498,15 +514,19 @@ struct RecordedSource::Impl
         std::uint64_t bytes = 0;
 
         provider->forEach(from_ns, to_ns,
-                          [&](const bag::BagMessage& message)
+                          [&](const bag::BagMessage& message) -> bool
                           {
+                              if (stopping.load(std::memory_order_relaxed))
+                              {
+                                  return false;
+                              }
                               if (message.key != key)
                               {
-                                  return;
+                                  return true;
                               }
                               if (!message.schema.empty() && message.schema != schema)
                               {
-                                  return;
+                                  return true;
                               }
 
                               RawMessage out;
@@ -519,6 +539,7 @@ struct RecordedSource::Impl
                               }
                               bytes += out.payload.size();
                               loaded.push_back(std::move(out));
+                              return true;
                           });
 
         const std::lock_guard<std::mutex> guard(mutex);
@@ -953,15 +974,13 @@ SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBu
     return binding->handle;
 }
 
-SignalHandle RecordedSource::bindRaw(const std::string& zenoh_key,
-                                     pub_sub::schema_type_t schema,
-                                     std::shared_ptr<RawBuffer> into,
-                                     RawClassifier classify)
+RawHandle RecordedSource::bindRaw(const std::string& zenoh_key, pub_sub::schema_type_t schema,
+                                  std::shared_ptr<RawBuffer> into, RawClassifier classify)
 {
     if (zenoh_key.empty() || !into)
     {
         SPDLOG_ERROR("Refusing to bind a raw stream with an empty key or buffer.");
-        return kInvalidSignal;
+        return kInvalidRaw;
     }
 
     auto binding = std::make_shared<RecordedRawBinding>();
@@ -982,14 +1001,14 @@ SignalHandle RecordedSource::bindRaw(const std::string& zenoh_key,
 
     SPDLOG_DEBUG("Bound recorded raw stream {} to '{}' ({}); indexing.", binding->handle,
                  zenoh_key, binding->expected_schema);
-    return binding->handle;
+    return RawHandle{binding->handle};
 }
 
-void RecordedSource::releaseRaw(SignalHandle handle)
+void RecordedSource::releaseRaw(RawHandle handle)
 {
     const std::lock_guard<std::mutex> guard(impl_->mutex);
 
-    const auto found = impl_->raw_bindings.find(handle);
+    const auto found = impl_->raw_bindings.find(handle.value);
     if (found == impl_->raw_bindings.end())
     {
         return;

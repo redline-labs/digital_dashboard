@@ -11,6 +11,7 @@
 #include <chrono>
 #include <limits>
 #include <map>
+#include <vector>
 
 namespace scope
 {
@@ -41,7 +42,22 @@ struct ScopeRecorder::Impl
     // snapshots it: a topic advertised for the whole session and never
     // published is a fact only liveliness can supply, and one that cannot be
     // recovered from a file full of messages afterwards.
-    pub_sub::TopicDirectory directory;
+    //
+    // A unique_ptr because stop() DROPS it. "Offline" means no zenoh
+    // subscriptions at all, and this directory's liveliness watch is a
+    // subscription -- keeping it up for the whole offline session would make
+    // offline a label rather than a fact. What saveTo() needs survives in
+    // `advertised` below.
+    //
+    // While online this duplicates LiveZenohSource's directory (two watches on
+    // the same key space). Accepted: wiring the source's directory into the
+    // recorder would couple the two objects for the life of both, to save one
+    // near-free liveliness subscription.
+    std::unique_ptr<pub_sub::TopicDirectory> directory;
+
+    // The advertisement snapshot taken at stop(), so a capture reviewed and
+    // saved offline still records its silent topics.
+    std::vector<pub_sub::DirectoryEntry> advertised;
 
     std::atomic<std::uint64_t> received{0};
 
@@ -54,6 +70,8 @@ ScopeRecorder::ScopeRecorder(std::size_t max_bytes, double max_seconds) :
     impl_(std::make_unique<Impl>(max_bytes, max_seconds))
 {
     Impl* const impl = impl_.get();
+
+    impl_->directory = std::make_unique<pub_sub::TopicDirectory>();
 
     impl_->subscriber = std::make_unique<pub_sub::RawSubscriber>(
         "**", pub_sub::RawSubscriber::InfoHandler(
@@ -97,11 +115,20 @@ bool ScopeRecorder::isValid() const
 
 void ScopeRecorder::stop()
 {
-    // The subscriber only. Its destructor joins the in-flight callbacks, so
+    // Snapshot what liveliness knew BEFORE dropping the watch: saveTo() records
+    // silent topics from this, and after the directory is gone there is nothing
+    // to ask.
+    if (impl_->directory != nullptr)
+    {
+        impl_->advertised = impl_->directory->snapshot();
+        impl_->directory.reset();
+    }
+
+    // The subscriber goes too. Its destructor joins the in-flight callbacks, so
     // after this line nothing is pushing into `buffer` -- which is what makes it
     // safe for a CaptureProvider to be handed a pointer to it and read from the
     // GUI thread without the mutex being contended by an RX thread that no
-    // longer exists.
+    // longer exists. The BUFFER stays; see the header.
     impl_->subscriber.reset();
 }
 
@@ -134,7 +161,10 @@ bool ScopeRecorder::saveTo(const std::string& directory) const
 
     // Advertisements first, so a topic that was advertised for the whole
     // session and never published is recorded as silent rather than absent.
-    for (const pub_sub::DirectoryEntry& entry : impl_->directory.snapshot())
+    // Live from the directory while capturing; from the stop() snapshot after.
+    const std::vector<pub_sub::DirectoryEntry> advertised =
+        impl_->directory != nullptr ? impl_->directory->snapshot() : impl_->advertised;
+    for (const pub_sub::DirectoryEntry& entry : advertised)
     {
         writer.noteAdvertised(entry.key, entry.schema);
     }
@@ -143,13 +173,12 @@ bool ScopeRecorder::saveTo(const std::string& directory) const
     impl_->buffer.forEach(0, std::numeric_limits<std::uint64_t>::max(),
                           [&](const bag::QueuedMessage& message)
                           {
-                              if (!ok)
-                              {
-                                  return;
-                              }
                               ok = writer.write(message.key, message.schema, message.payload,
                                                 message.log_time_ns, message.publish_time_ns,
                                                 message.origin_zid);
+                              // Stop at the first failed write -- the rest
+                              // would fail the same way.
+                              return ok;
                           });
 
     // Recorded as the bag's dropped_messages, because from the file's point of
@@ -168,7 +197,7 @@ CaptureProvider::CaptureProvider(const CaptureBuffer& buffer) : buffer_(&buffer)
 }
 
 void CaptureProvider::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                              const std::function<void(const bag::BagMessage&)>& visit)
+                              const std::function<bool(const bag::BagMessage&)>& visit)
 {
     buffer_->forEach(t0_ns, t1_ns,
                      [&visit](const bag::QueuedMessage& queued)
@@ -184,7 +213,7 @@ void CaptureProvider::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
                          message.log_time_ns = queued.log_time_ns;
                          message.publish_time_ns =
                              queued.publish_time_ns.value_or(queued.log_time_ns);
-                         visit(message);
+                         return visit(message);
                      });
 }
 
@@ -196,7 +225,10 @@ std::vector<TopicInfo> CaptureProvider::topics() const
     std::map<std::string, std::string> by_key;
     buffer_->forEach(0, std::numeric_limits<std::uint64_t>::max(),
                      [&by_key](const bag::QueuedMessage& message)
-                     { by_key.emplace(message.key, message.schema); });
+                     {
+                         by_key.emplace(message.key, message.schema);
+                         return true;
+                     });
 
     std::vector<TopicInfo> out;
     out.reserve(by_key.size());

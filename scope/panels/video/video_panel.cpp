@@ -99,14 +99,6 @@ VideoPanel::VideoPanel(const config_t& cfg, DataSource& source, double history_s
                     time_base_->seek(t);
                 }
             });
-    connect(scrubber_, &VideoScrubber::interactionChanged, this,
-            [this](bool active)
-            {
-                if (time_base_ != nullptr)
-                {
-                    time_base_->setInteracting(active);
-                }
-            });
     connect(scrubber_, &VideoScrubber::cursorRequested, this,
             [this](std::optional<double> t)
             {
@@ -217,6 +209,13 @@ std::vector<QString> VideoPanel::bindingLabels() const
     return {QString::fromStdString(cfg_.zenoh_key)};
 }
 
+std::size_t VideoPanel::unboundBindingCount() const
+{
+    // One stream, bound or not: a configured key the source declined is the
+    // panel's single unbound binding.
+    return (!cfg_.zenoh_key.empty() && handle_ == kInvalidRaw) ? 1 : 0;
+}
+
 bool VideoPanel::removeBinding(std::size_t index)
 {
     return index == 0 && removeStream();
@@ -254,7 +253,7 @@ void VideoPanel::bindStream()
     handle_ = source_->bindRaw(cfg_.zenoh_key, pub_sub::schema_type_t::CarPlayVideo, buffer_,
                                &VideoPanel::classify);
 
-    if (handle_ == kInvalidSignal)
+    if (handle_ == kInvalidRaw)
     {
         // A definite no, surfaced in the overlay and in stats().bound rather
         // than left as a panel that simply never shows anything -- which is
@@ -273,11 +272,11 @@ void VideoPanel::releaseStream()
     // AGAINST THE SOURCE THAT ISSUED IT, before any repoint. A handle means
     // nothing to a source that did not issue it, and rebindTo() below relies on
     // this being called while source_ is still the old one.
-    if (handle_ != kInvalidSignal && source_ != nullptr)
+    if (handle_ != kInvalidRaw && source_ != nullptr)
     {
         source_->releaseRaw(handle_);
     }
-    handle_ = kInvalidSignal;
+    handle_ = kInvalidRaw;
     buffer_.reset();
 }
 
@@ -698,7 +697,7 @@ VideoPanel::stats_t VideoPanel::stats() const
 {
     stats_t out;
     out.zenoh_key = cfg_.zenoh_key;
-    out.bound = handle_ != kInvalidSignal;
+    out.bound = handle_ != kInvalidRaw;
 
     const VideoDecodeWorker::Snapshot decoding = worker_.snapshot();
     const VideoDecoder::Stats& decoded = decoding.stats;

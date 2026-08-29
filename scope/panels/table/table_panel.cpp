@@ -409,6 +409,13 @@ std::vector<QString> TablePanel::bindingLabels() const
     return labels;
 }
 
+std::size_t TablePanel::unboundBindingCount() const
+{
+    return static_cast<std::size_t>(std::count_if(rows_.begin(), rows_.end(),
+                                                  [](const std::unique_ptr<Row>& row)
+                                                  { return !row->bound; }));
+}
+
 bool TablePanel::removeBinding(std::size_t index)
 {
     if (index >= cfg_.rows.size())
@@ -460,12 +467,26 @@ void TablePanel::onFrame()
     // the readout reads. It happens even while paused: the view freezes, the
     // data does not.
     const double now = time_base_->source().now();
+    std::size_t moved = 0;
     for (const std::unique_ptr<Row>& row : rows_)
     {
-        row->buffer->drain(now);
+        moved += row->buffer->drain(now);
     }
 
-    update();
+    // Same rule as the plot: repaint when samples arrived or the readout
+    // instant moved (the age column also ages against now, so a live tick
+    // always repaints -- now advances). A paused review with nothing arriving
+    // redraws nothing.
+    const double readout = now;
+    const std::optional<double> cursor = time_base_->cursor();
+    const bool instant_moved = readout != last_frame_now_ || cursor != last_frame_cursor_;
+    last_frame_now_ = readout;
+    last_frame_cursor_ = cursor;
+
+    if (moved > 0 || instant_moved)
+    {
+        update();
+    }
 }
 
 // ------------------------------------------------------------------- readings

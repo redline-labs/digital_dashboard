@@ -18,7 +18,11 @@ StagingRing::StagingRing(std::size_t capacity) :
 bool StagingRing::push(const Sample& sample)
 {
     const std::size_t head = head_.load(std::memory_order_relaxed);
-    const std::size_t next = (head + 1) % slots_.size();
+    std::size_t next = head + 1;
+    if (next == slots_.size())
+    {
+        next = 0;
+    }
 
     // Acquire: everything the consumer did before publishing this tail is
     // visible, so the slot we are about to write is genuinely free.
@@ -40,7 +44,11 @@ bool StagingRing::push(const Sample& sample)
 bool StagingRing::full() const
 {
     const std::size_t head = head_.load(std::memory_order_relaxed);
-    const std::size_t next = (head + 1) % slots_.size();
+    std::size_t next = head + 1;
+    if (next == slots_.size())
+    {
+        next = 0;
+    }
     return next == tail_.load(std::memory_order_acquire);
 }
 
@@ -53,7 +61,10 @@ std::size_t StagingRing::drain(std::vector<Sample>& out)
     while (tail != head)
     {
         out.push_back(slots_[tail]);
-        tail = (tail + 1) % slots_.size();
+        if (++tail == slots_.size())
+        {
+            tail = 0;
+        }
         ++count;
     }
 
@@ -73,14 +84,22 @@ void SampleHistory::append(const Sample& sample)
 {
     if (size_ < slots_.size())
     {
-        slots_[(head_ + size_) % slots_.size()] = sample;
+        std::size_t at = head_ + size_;
+        if (at >= slots_.size())
+        {
+            at -= slots_.size();
+        }
+        slots_[at] = sample;
         ++size_;
         return;
     }
 
     // Full: overwrite the oldest and move the window along.
     slots_[head_] = sample;
-    head_ = (head_ + 1) % slots_.size();
+    if (++head_ == slots_.size())
+    {
+        head_ = 0;
+    }
 }
 
 std::size_t SampleHistory::lowerBound(double t_min) const
@@ -112,7 +131,11 @@ void SampleHistory::trimOlderThan(double t_min)
     {
         return;
     }
-    head_ = (head_ + drop) % slots_.size();
+    head_ += drop;
+    if (head_ >= slots_.size())
+    {
+        head_ -= slots_.size();
+    }
     size_ -= drop;
 }
 
@@ -139,7 +162,7 @@ void SignalBuffer::push(const Sample& sample)
     staging_.push(sample);
 }
 
-void SignalBuffer::drain(double now)
+std::size_t SignalBuffer::drain(double now)
 {
     scratch_.clear();
     const std::size_t moved = staging_.drain(scratch_);
@@ -153,6 +176,7 @@ void SignalBuffer::drain(double now)
     {
         history_.trimOlderThan(now - history_seconds_);
     }
+    return moved;
 }
 
 void SignalBuffer::clear()

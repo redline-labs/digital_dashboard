@@ -1,6 +1,7 @@
 #include "scope/scope_window.h"
 
 #include "scope/add_signal_dialog.h"
+#include "scope/panel_config_dialog.h"
 #include "scope/data_source.h"
 #include "scope/empty_source.h"
 #include "scope/live_zenoh_source.h"
@@ -11,6 +12,7 @@
 #include "scope/settings_dialog.h"
 
 #include "map_panel/map_panel.h"
+#include "pub_sub/node_identity.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -42,6 +44,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 
 namespace scope
@@ -67,7 +70,27 @@ class PanelDock : public QDockWidget
         setAcceptDrops(true);
     }
 
+    // The X in the dock's corner. Qt's default HIDES the widget: the panel
+    // stayed bound, kept draining at the render rate, was saved hidden into
+    // dock_state, and there was no View-menu entry to bring it back -- a blank
+    // grey window with no way out. Routed to ScopeWindow::removePanel instead,
+    // which is what the context menu's "Close panel" already does.
+    std::function<void()> on_close_requested;
+
+    // A drop the panel refused used to vanish without a trace -- which reads as
+    // a failed drag, when the real answer is usually "already bound".
+    std::function<void(const QString&)> on_drop_refused;
+
   protected:
+    void closeEvent(QCloseEvent* event) override
+    {
+        event->ignore();
+        if (on_close_requested)
+        {
+            on_close_requested();
+        }
+    }
+
     void dragEnterEvent(QDragEnterEvent* event) override
     {
         if (accepts(event->mimeData()))
@@ -93,9 +116,23 @@ class PanelDock : public QDockWidget
         }
 
         auto* panel = qobject_cast<Panel*>(widget());
-        if (panel != nullptr && panel->addBinding(candidate))
+        if (panel == nullptr)
+        {
+            return;
+        }
+        if (panel->addBinding(candidate))
         {
             event->acceptProposedAction();
+            return;
+        }
+        if (on_drop_refused)
+        {
+            // The drag only reached here because acceptsBinding() said yes, so
+            // a refusal at addBinding() is almost always a duplicate.
+            on_drop_refused(QStringLiteral("%1 is already on this panel (or could not be bound).")
+                                .arg(QString::fromStdString(candidate.field_name.empty()
+                                                                ? candidate.zenoh_key
+                                                                : candidate.field_name)));
         }
     }
 
@@ -171,10 +208,15 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
     // when there is no mouse, which is every headless run.
     connect(browser_, &SignalBrowser::candidateActivated, this,
             [this](const BindingCandidate& candidate) {
+                bool would_accept = false;
                 for (const PanelEntry& entry : panels_)
                 {
-                    if (entry.panel->acceptsBinding(candidate) &&
-                        entry.panel->addBinding(candidate))
+                    if (!entry.panel->acceptsBinding(candidate))
+                    {
+                        continue;
+                    }
+                    would_accept = true;
+                    if (entry.panel->addBinding(candidate))
                     {
                         statusBar()->showMessage(
                             tr("Added %1 to %2")
@@ -183,12 +225,23 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
                         return;
                     }
                 }
-                statusBar()->showMessage(tr("No panel accepted that signal."), 3000);
+                // Two different answers, not one. A panel that would take this
+                // kind of candidate but declined the add almost always already
+                // has it -- "no panel accepted" was factually wrong there.
+                statusBar()->showMessage(
+                    would_accept ? tr("Every panel that takes that signal already has it.")
+                                 : tr("No panel accepted that signal."),
+                    3000);
             });
 
-    // The window length and the render rate are both saved in the workspace, so
-    // changing either means the file on disk no longer describes the window.
-    connect(time_base_.get(), &TimeBase::changed, this, [this]() { markDirty(); });
+    // Only the PERSISTED properties dirty the workspace: window span, render
+    // rate, retention -- the things save would write differently. NOT
+    // TimeBase::changed, which also fires on every pan, zoom, seek and playback
+    // tick; wired there, playing a recording prompted "save changes?" at close
+    // for changes the user never made. A zoom gesture that alters the span via
+    // setView() does not dirty either -- the explicit spin-box/agent setter is
+    // the act of changing the workspace, a gesture is the act of looking.
+    connect(time_base_.get(), &TimeBase::persistentChanged, this, [this]() { markDirty(); });
 
     buildNavigationActions();
     buildMenuBar();
@@ -259,8 +312,12 @@ void ScopeWindow::setSource(std::unique_ptr<DataSource> next)
     // holds a handle on it.
     source_ = std::move(next);
 
+    // The direct call IS the mechanism. A sourceChanged() signal used to be
+    // emitted here too, documented as what rebuilt the transport bar -- and
+    // nothing anywhere connected to it. Deleted rather than kept: a signal
+    // that describes a wiring that does not exist teaches the next maintainer
+    // the wrong architecture.
     applySourceCaps();
-    emit sourceChanged();
 }
 
 // ---------------------------------------------------------------------- panels
@@ -314,17 +371,27 @@ QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, co
     // workspace would come back missing panels with nothing logged.
     dock->setObjectName(panel_id);
     dock->setWidget(panel.get());
+    dock->on_close_requested = [this, panel_id]() { removePanel(panel_id); };
+    dock->on_drop_refused = [this](const QString& why)
+    { statusBar()->showMessage(why, 4000); };
 
     PanelEntry entry;
     entry.id = panel_id;
     entry.panel = panel.release();  // Owned by the dock from here.
     entry.dock = dock;
 
-    // Right by default, and tabbed with an existing panel rather than shrinking
-    // everything: a fifth panel added to a four-way split is unreadable, and
-    // splitting is one drag away for anyone who wants it.
+    // Right by default. The SECOND panel splits below the first -- the whole
+    // point of this app is panels sharing one cursor, and two tabs can never
+    // show that; a hidden tab does not even paint, so its stats read zero and
+    // it looks broken. From the THIRD panel on, tab with the previous one: a
+    // fifth panel added to a four-way split is unreadable, and splitting is one
+    // drag away for anyone who wants it.
     addDockWidget(Qt::RightDockWidgetArea, dock);
-    if (!panels_.empty())
+    if (panels_.size() == 1)
+    {
+        splitDockWidget(panels_.back().dock, dock, Qt::Vertical);
+    }
+    else if (panels_.size() >= 2)
     {
         tabifyDockWidget(panels_.back().dock, dock);
         dock->raise();
@@ -375,6 +442,17 @@ ScopeWindow::PanelEntry* ScopeWindow::findPanel(const QString& id)
 
 void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
 {
+    // Same rule as every other modal path: a menu.exec() or dialog raised
+    // headlessly has nobody to dismiss it and hangs the process with no log
+    // line. Not currently reachable from the agent interface, but this was the
+    // one hole in an otherwise complete policy.
+    if (headless_)
+    {
+        SPDLOG_WARN("Refusing to raise a panel context menu headlessly. Use scope.add_signal / "
+                    "scope.remove_signal / scope.remove_panel.");
+        return;
+    }
+
     PanelEntry* entry = findPanel(panel_id);
     if (entry == nullptr)
     {
@@ -383,6 +461,9 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
 
     QMenu menu(this);
     menu.setObjectName("panel_context_menu");
+
+    QAction* configure = menu.addAction(tr("Configure…"));
+    configure->setObjectName("action_panel_configure");
 
     QAction* add = menu.addAction(tr("Add signal…"));
     add->setObjectName("action_panel_add_signal");
@@ -411,6 +492,17 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
     QAction* chosen = menu.exec(entry->panel->mapToGlobal(at));
     if (chosen == nullptr)
     {
+        return;
+    }
+
+    if (chosen == configure)
+    {
+        // The whole reflected config, every panel kind, one dialog. Before
+        // this, right_axis, trace colours, table formats and the map tileset
+        // were reachable only through YAML or the agent socket -- and a map
+        // panel added from the GUI was a dead end.
+        PanelConfigDialog dialog(*entry->panel, settings_, this);
+        dialog.exec();
         return;
     }
 
@@ -523,8 +615,13 @@ void ScopeWindow::buildCentralArea()
 
     // ------------------------------------------------------------ no panels
 
-    empty_hint_ =
-        new QLabel(tr("No panels yet.\n\nAdd one from Panels ▸ Add, or press Ctrl+N."), central);
+    // The shortcut rendered by the platform, not hardcoded: QKeySequence::New
+    // is Cmd+N on macOS, and a hint telling a Mac user to press Ctrl+N is
+    // wrong in the one place a hint has to be right.
+    empty_hint_ = new QLabel(
+        tr("No panels yet.\n\nAdd one from Panels ▸ Add, or press %1.")
+            .arg(QKeySequence(QKeySequence::New).toString(QKeySequence::NativeText)),
+        central);
     empty_hint_->setObjectName("empty_hint");
     empty_hint_->setAlignment(Qt::AlignCenter);
     empty_hint_->setWordWrap(true);
@@ -639,19 +736,32 @@ bool ScopeWindow::saveWorkspace(const QString& path)
 {
     if (!save_workspace(toWorkspace(), path.toStdString()))
     {
+        // Said in the GUI, not only the log. A silent save failure used to
+        // leave the dirty marker in the title with no explanation -- and inside
+        // confirmDiscardChanges() it made the window refuse to close with
+        // nothing saying why.
+        reportProblems(tr("Could not save %1").arg(path),
+                                {"The file could not be written. Check the path and free "
+                                 "space; the details are in the log."});
         return false;
     }
     workspace_path_ = path;
     markClean();
+    noteRecent(settings_.recent_workspaces, path);
     statusBar()->showMessage(tr("Saved %1").arg(path), 3000);
     return true;
 }
 
 bool ScopeWindow::loadWorkspace(const QString& path)
 {
-    const std::optional<scope_workspace_t> workspace = load_workspace(path.toStdString());
+    std::vector<std::string> notes;
+    const std::optional<scope_workspace_t> workspace = load_workspace(path.toStdString(), &notes);
     if (!workspace)
     {
+        // The dialog path used to swallow this bool, so File > Open Workspace
+        // on a bad file closed the picker and did NOTHING -- identical to
+        // success from the user's chair, except the panels had not changed.
+        reportProblems(tr("Could not load %1").arg(path), notes);
         return false;
     }
 
@@ -680,6 +790,7 @@ bool ScopeWindow::loadWorkspace(const QString& path)
     time_base_->setWindowSeconds(workspace->window_seconds);
     time_base_->setRenderRateHz(workspace->render_rate_hz);
 
+    std::size_t skipped = 0;
     for (const panel_entry_t& entry : workspace->panels)
     {
         if (entry.type == panel_type_t::unknown)
@@ -687,6 +798,7 @@ bool ScopeWindow::loadWorkspace(const QString& path)
             // Already reported with its path by validate_workspace. Skipping is
             // the right outcome -- a workspace one panel short beats one that
             // silently grew a panel it does not name.
+            ++skipped;
             continue;
         }
         addPanelFromConfig(entry.config, QString::fromStdString(entry.id));
@@ -707,18 +819,62 @@ bool ScopeWindow::loadWorkspace(const QString& path)
                         "written by a different Qt version. The panels are all here, arranged "
                         "by default.",
                         path.toStdString());
+            notes.push_back("The saved dock arrangement could not be restored (probably a "
+                            "different Qt version wrote it); the panels are arranged by "
+                            "default.");
         }
     }
 
     workspace_path_ = path;
     workspace_name_ = QString::fromStdString(workspace->name);
+    noteRecent(settings_.recent_workspaces, path);
+
+    if (skipped > 0)
+    {
+        // The window does NOT match the file: saving from here would silently
+        // drop the panels this build cannot construct. Left dirty so the title
+        // says so, and said out loud so nobody saves over them unknowingly.
+        notes.push_back(std::to_string(skipped) +
+                        " panel(s) of unknown type were skipped. Saving this workspace from "
+                        "this build will DROP them from the file.");
+        reportProblems(tr("Loaded %1, with problems").arg(path), notes);
+        return true;
+    }
 
     // A freshly loaded workspace is clean, whatever the adds above marked. Same
     // rule as the editor's loadConfigFrom(): the window now matches the file.
     markClean();
 
-    statusBar()->showMessage(tr("Loaded %1").arg(path), 3000);
+    if (!notes.empty())
+    {
+        reportProblems(tr("Loaded %1, with warnings").arg(path), notes);
+    }
+    else
+    {
+        statusBar()->showMessage(tr("Loaded %1").arg(path), 3000);
+    }
     return true;
+}
+
+void ScopeWindow::reportProblems(const QString& summary, const std::vector<std::string>& notes)
+{
+    statusBar()->showMessage(summary, 8000);
+
+    if (headless_ || notes.empty())
+    {
+        // Everything is already in the log; a modal raised headlessly has
+        // nobody to dismiss it.
+        return;
+    }
+
+    QString details;
+    for (const std::string& line : notes)
+    {
+        details += QString::fromStdString(line) + QChar('\n');
+    }
+    QMessageBox box(QMessageBox::Warning, tr("Scope"), summary, QMessageBox::Ok, this);
+    box.setInformativeText(details.trimmed());
+    box.exec();
 }
 
 // ------------------------------------------------------------------- recordings
@@ -731,6 +887,17 @@ bool ScopeWindow::isOnline() const
 bool ScopeWindow::hasCapture() const
 {
     return recorder_ != nullptr && recorder_->buffer().size() > 0;
+}
+
+bool ScopeWindow::captureUnsaved() const
+{
+    if (!hasCapture())
+    {
+        return false;
+    }
+    // Anything pushed (or evicted -- eviction only happens on a push) since the
+    // watermark means the file on disk no longer holds this session.
+    return recorder_->buffer().revision() != capture_saved_revision_;
 }
 
 bool ScopeWindow::openRecording(const QString& directory)
@@ -781,22 +948,15 @@ bool ScopeWindow::openRecording(const QString& directory)
     // How many of the workspace's signals this recording does not contain.
     // Surfaced rather than left as empty traces: an unbound signal and a signal
     // that was recorded but never published draw identically, and only one of
-    // them is worth chasing.
+    // them is worth chasing. Through Panel's own interface -- this used to cast
+    // to TimeSeriesPanel, so a table, map or video panel's missing signals were
+    // silently not counted.
     std::size_t unbound = 0;
     std::size_t total = 0;
     for (const PanelEntry& entry : panels_)
     {
-        if (const auto* plot = qobject_cast<const TimeSeriesPanel*>(entry.panel))
-        {
-            for (const trace_stats_t& stats : plot->stats().traces)
-            {
-                ++total;
-                if (!stats.bound)
-                {
-                    ++unbound;
-                }
-            }
-        }
+        total += entry.panel->bindingLabels().size();
+        unbound += entry.panel->unboundBindingCount();
     }
 
     QString summary = tr("Reviewing %1 (%2 s)").arg(directory).arg(duration, 0, 'f', 1);
@@ -806,22 +966,32 @@ bool ScopeWindow::openRecording(const QString& directory)
                        .arg(unbound)
                        .arg(total);
     }
+
     if (!problems.empty())
     {
-        summary += tr(" -- %n problem(s) with the recording", nullptr,
-                      static_cast<int>(problems.size()));
         for (const std::string& problem : problems)
         {
             SPDLOG_WARN("{}: {}", directory.toStdString(), problem);
         }
+        // A details box, not only a status line: a status-bar message -- even a
+        // "permanent" one -- is REPLACED by the next transient message ("Added
+        // rpm to plot1") and then gone. A torn part or a drop count changes how
+        // every gap in every trace should be read, so it must survive the first
+        // bind.
+        reportProblems(summary + tr(" -- %n problem(s) with the recording", nullptr,
+                                    static_cast<int>(problems.size())),
+                       problems);
     }
-
-    // The status BAR, not the transport label: that one is owned by
-    // updateTransport() and rewritten every frame with the capture's state.
-    statusBar()->showMessage(summary, 0);
+    else
+    {
+        // The status BAR, not the transport label: that one is owned by
+        // updateTransport() and rewritten every frame with the capture's state.
+        statusBar()->showMessage(summary, 0);
+    }
 
     SPDLOG_INFO("Reviewing '{}': {:.1f}s, {} problem(s).", directory.toStdString(), duration,
                 problems.size());
+    noteRecent(settings_.recent_recordings, directory);
     return true;
 }
 
@@ -862,6 +1032,12 @@ bool ScopeWindow::saveCaptureTo(const QString& directory)
         return false;
     }
 
+    // Read BEFORE the save. A message arriving while saveTo() walks the buffer
+    // may or may not land in the file; marking the watermark afterwards would
+    // count it as saved either way. Taken first, an in-flight message keeps the
+    // capture "unsaved", which errs on the side of prompting.
+    const std::uint64_t revision_at_save = recorder_->buffer().revision();
+
     if (!recorder_->saveTo(directory.toStdString()))
     {
         SPDLOG_ERROR("Failed to save the capture to '{}'.", directory.toStdString());
@@ -869,7 +1045,7 @@ bool ScopeWindow::saveCaptureTo(const QString& directory)
         return false;
     }
 
-    capture_saved_ = true;
+    capture_saved_revision_ = revision_at_save;
     statusBar()->showMessage(tr("Saved the capture to %1").arg(directory), 5000);
     SPDLOG_INFO("Saved {} captured message(s) to '{}'.", recorder_->buffer().size(),
                 directory.toStdString());
@@ -886,7 +1062,8 @@ bool ScopeWindow::saveCaptureDialog()
     }
 
     // A directory, because a bag is one.
-    const QString path = QFileDialog::getExistingDirectory(this, tr("Save Recording"));
+    const QString path = QFileDialog::getExistingDirectory(
+        this, tr("Save Recording"), QString::fromStdString(settings_.last_directory));
     return path.isEmpty() ? false : saveCaptureTo(path);
 }
 
@@ -902,7 +1079,8 @@ bool ScopeWindow::openRecordingDialog()
     // A directory, not a file. A bag is a directory -- metadata.yaml plus the
     // rolled parts -- and a file picker pointed at one .mcap would offer the
     // user a part rather than the recording.
-    const QString path = QFileDialog::getExistingDirectory(this, tr("Open Recording"));
+    const QString path = QFileDialog::getExistingDirectory(
+        this, tr("Open Recording"), QString::fromStdString(settings_.last_directory));
     return path.isEmpty() ? false : openRecording(path);
 }
 
@@ -924,6 +1102,16 @@ bool ScopeWindow::goOnline()
 
     source_label_.clear();
 
+    // Announce this process on the bus, once, the first time it actually joins
+    // it. Constructing this any earlier (it used to live in main()) opens a
+    // zenoh session in a window that is supposed to be offline. Tools can put
+    // a name to the session id from here on; a scope that never goes online is
+    // genuinely invisible on the bus, which is the honest answer. A function
+    // local static so it lives until process exit -- the identity token should
+    // not flap when the user toggles offline and back.
+    static const pub_sub::NodeIdentity node_identity("scope");
+    (void)node_identity;
+
     // The source FIRST, then the recorder, and the order is load-bearing. The
     // old source may be a RecordedSource over a CaptureProvider pointing into
     // the recorder's buffer; setSource() destroys it only after every panel has
@@ -937,7 +1125,9 @@ bool ScopeWindow::goOnline()
     // screen -- which is exactly what you do not need after the fact.
     recorder_ = std::make_unique<ScopeRecorder>(static_cast<std::size_t>(capture_max_bytes_),
                                                 capture_max_seconds_);
-    capture_saved_ = false;
+    // A fresh buffer starts at revision 0 with nothing in it; the first push
+    // moves it past the watermark and the capture reads as unsaved.
+    capture_saved_revision_ = recorder_->buffer().revision();
 
     if (!recorder_->isValid())
     {
@@ -1003,8 +1193,9 @@ bool ScopeWindow::openWorkspaceDialog()
         return false;
     }
 
-    const QString path = QFileDialog::getOpenFileName(this, tr("Open Workspace"), QString(),
-                                                      tr("Workspaces (*.yaml *.yml)"));
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Open Workspace"), QString::fromStdString(settings_.last_directory),
+        tr("Workspaces (*.yaml *.yml)"));
     return path.isEmpty() ? false : loadWorkspace(path);
 }
 
@@ -1019,7 +1210,8 @@ bool ScopeWindow::saveWorkspaceDialog()
                         "headlessly. Use scope.save with a path.");
             return false;
         }
-        path = QFileDialog::getSaveFileName(this, tr("Save Workspace"), QString(),
+        path = QFileDialog::getSaveFileName(this, tr("Save Workspace"),
+                                            QString::fromStdString(settings_.last_directory),
                                             tr("Workspaces (*.yaml *.yml)"));
     }
     return path.isEmpty() ? false : saveWorkspace(path);
@@ -1054,7 +1246,7 @@ void ScopeWindow::updateWindowTitle()
 
 bool ScopeWindow::confirmDiscardCapture(const QString& action)
 {
-    if (capture_saved_ || !hasCapture())
+    if (!captureUnsaved())
     {
         return true;
     }
@@ -1130,6 +1322,17 @@ void ScopeWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+
+    // Geometry is a per-machine convenience, so it rides the settings file --
+    // and only when it actually changed, honouring "nothing is written until
+    // something changes".
+    const std::string geometry = saveGeometry().toBase64().toStdString();
+    if (!headless_ && geometry != settings_.window_geometry)
+    {
+        settings_.window_geometry = geometry;
+        persistSettings();
+    }
+
     QMainWindow::closeEvent(event);
 }
 
@@ -1381,6 +1584,26 @@ void ScopeWindow::buildMenuBar()
     save->setShortcut(QKeySequence::Save);
     connect(save, &QAction::triggered, this, [this]() { (void)saveWorkspaceDialog(); });
 
+    // Rebuilt each time it opens, from the settings' list -- so it is never
+    // stale and never needs invalidating from the half-dozen places a recent
+    // entry can be added.
+    QMenu* recent_workspaces = file_menu->addMenu(tr("Open &Recent Workspace"));
+    recent_workspaces->setObjectName("menu_recent_workspaces");
+    connect(recent_workspaces, &QMenu::aboutToShow, this, [this, recent_workspaces]() {
+        recent_workspaces->clear();
+        for (const std::string& entry : settings_.recent_workspaces)
+        {
+            const QString path = QString::fromStdString(entry);
+            recent_workspaces->addAction(path, this, [this, path]() {
+                if (confirmDiscardChanges(tr("opening another workspace")))
+                {
+                    (void)loadWorkspace(path);
+                }
+            });
+        }
+        recent_workspaces->setEnabled(!settings_.recent_workspaces.empty());
+    });
+
     file_menu->addSeparator();
 
     // Checkable rather than a Go Online / Go Offline pair, for the same reason
@@ -1411,6 +1634,19 @@ void ScopeWindow::buildMenuBar()
     open_recording->setObjectName("action_open_recording");
     connect(open_recording, &QAction::triggered, this,
             [this]() { (void)openRecordingDialog(); });
+
+    QMenu* recent_recordings = file_menu->addMenu(tr("Recent Recor&dings"));
+    recent_recordings->setObjectName("menu_recent_recordings");
+    connect(recent_recordings, &QMenu::aboutToShow, this, [this, recent_recordings]() {
+        recent_recordings->clear();
+        for (const std::string& entry : settings_.recent_recordings)
+        {
+            const QString path = QString::fromStdString(entry);
+            recent_recordings->addAction(path, this,
+                                         [this, path]() { (void)openRecording(path); });
+        }
+        recent_recordings->setEnabled(!settings_.recent_recordings.empty());
+    });
 
     QAction* review = file_menu->addAction(tr("Re&view Session Capture"));
     review->setObjectName("action_review_capture");
@@ -1475,6 +1711,20 @@ void ScopeWindow::buildMenuBar()
     show_browser->setObjectName("action_view_browser");
     show_browser->setText(tr("&Signals"));
     view_menu->addAction(show_browser);
+
+    // The navigation actions, which exist since buildNavigationActions() but
+    // used to live only as window shortcuts -- six bindings with no menu entry,
+    // no tooltip and no other way to discover them. The menu is where a
+    // shortcut is FOUND; the same QActions, so there is nothing to drift.
+    view_menu->addSeparator();
+    for (const char* name : {"action_zoom_in", "action_zoom_out", "action_zoom_fit",
+                             "action_pan_back", "action_pan_forward", "action_toggle_follow"})
+    {
+        if (QAction* action = findChild<QAction*>(name))
+        {
+            view_menu->addAction(action);
+        }
+    }
 }
 
 namespace
@@ -1532,8 +1782,6 @@ void ScopeWindow::buildTransportBar()
             time_base_->setView(begin, end);
         }
     });
-    connect(overview_, &OverviewStrip::interactionChanged, this,
-            [this](bool active) { time_base_->setInteracting(active); });
     connect(overview_, &OverviewStrip::cursorRequested, this,
             [this](std::optional<double> t) { time_base_->setCursor(t); });
 
@@ -1682,6 +1930,17 @@ void ScopeWindow::applySourceCaps()
         play_button_->setChecked(false);
     }
 
+    // The time base reset its rate to 1.0x on the swap; the combo has to
+    // follow, or it shows a multiplier the source is not honouring.
+    if (rate_combo_ != nullptr)
+    {
+        const int one_x = rate_combo_->findData(1.0);
+        if (one_x >= 0)
+        {
+            rate_combo_->setCurrentIndex(one_x);
+        }
+    }
+
     // Driven from the SOURCE rather than from the click that changed it, so a
     // swap made by the agent interface, by --bag at startup, by an open that
     // failed or by a transition the user cancelled leaves the control saying
@@ -1813,18 +2072,34 @@ void ScopeWindow::updateTransport()
     if (transport_status_ != nullptr)
     {
         QString state;
+
+        // Decodes still running over a freshly opened recording. Without this,
+        // opening a bag with an eight-trace workspace shows eight empty plots
+        // for as long as the decode takes -- indistinguishable from a bag that
+        // does not contain those signals. The agent reads the same fact from
+        // scope.source's decodes_pending; this is the human's copy.
+        if (const auto* recorded = dynamic_cast<const RecordedSource*>(source_.get()))
+        {
+            if (const std::size_t pending = recorded->decodesPending(); pending > 0)
+            {
+                state += tr("  ⏳ decoding %n signal(s)…", nullptr, static_cast<int>(pending));
+            }
+        }
+
         if (recorder_ != nullptr)
         {
-            const CaptureBuffer& capture = recorder_->buffer();
-            state = isOnline() ? tr("  ⏺ %1 s captured").arg(capture.retainedSpanSeconds(), 0,
-                                                             'f', 0)
-                               : tr("  ⏹ %1 s captured").arg(capture.retainedSpanSeconds(), 0,
-                                                             'f', 0);
-            if (const std::uint64_t evicted = capture.evicted(); evicted > 0)
+            // One lock acquisition for all four numbers. This runs per render
+            // tick, and taking the capture's mutex four separate times was four
+            // chances per frame to contend with the RX thread for one answer.
+            const CaptureBuffer::Stats capture = recorder_->buffer().stats();
+            state += isOnline()
+                         ? tr("  ⏺ %1 s captured").arg(capture.retained_span_seconds, 0, 'f', 0)
+                         : tr("  ⏹ %1 s captured").arg(capture.retained_span_seconds, 0, 'f', 0);
+            if (capture.evicted > 0)
             {
-                state += tr(", %1 evicted").arg(evicted);
+                state += tr(", %1 evicted").arg(capture.evicted);
             }
-            if (!capture_saved_ && capture.size() > 0)
+            if (capture.messages > 0 && capture.revision != capture_saved_revision_)
             {
                 state += tr(" (unsaved)");
             }
@@ -1848,9 +2123,19 @@ void ScopeWindow::updateTransport()
     // stopped scrolling.
     if (pause_button_ != nullptr)
     {
+        // Labelled with the STATE it is in, exactly like the mode toggle and
+        // for the documented reason: a checkable control named for its action
+        // has to be read together with its checked state to know which way
+        // round it is, and half the people reading it get that wrong. This one
+        // said "Pause" while following and "Follow" while paused -- the label
+        // and the checkmark moving in opposite directions.
         const bool following = time_base_->following();
         pause_button_->setChecked(!following);
-        pause_button_->setText(following ? tr("Pause") : tr("Follow"));
+        pause_button_->setText(following ? tr("▶ Following") : tr("⏸ Paused"));
+        pause_button_->setToolTip(following
+                                      ? tr("The view is scrolling with the source. Click to "
+                                           "freeze it.")
+                                      : tr("The view is frozen. Click to follow again."));
     }
 
     updateOverview();
@@ -1941,6 +2226,23 @@ bool ScopeWindow::densityFor(double begin, double end, std::size_t buckets,
     return true;
 }
 
+std::pair<double, double> ScopeWindow::densityRange() const
+{
+    const SourceCaps caps = source_->caps();
+    if (caps.seekable)
+    {
+        return {caps.t_begin, caps.t_end};
+    }
+
+    // Floored at the source's epoch for a LIVE source, and only here: the
+    // capture can only be counted from the moment it started, so asking for
+    // counts before that would label the histogram with a range it was never
+    // counted over. The view itself is deliberately not floored -- see
+    // TimeBase::availableRange().
+    const double now = source_->now();
+    return {std::max(now - history_seconds_, 0.0), now};
+}
+
 void ScopeWindow::refreshDensity()
 {
     if (overview_ == nullptr)
@@ -1953,31 +2255,28 @@ void ScopeWindow::refreshDensity()
     // widget has room to show.
     const int buckets = std::max(overview_->width(), 1);
 
-    const SourceCaps caps = source_->caps();
-    const double now = source_->now();
-
-    // Floored at the source's epoch for a LIVE source, and only here: the
-    // capture can only be counted from the moment it started, so asking for
-    // counts before that would label the histogram with a range it was never
-    // counted over. The view itself is deliberately not floored -- see
-    // TimeBase::availableRange().
-    const double begin = caps.seekable ? caps.t_begin : std::max(now - history_seconds_, 0.0);
-    const double end = caps.seekable ? caps.t_end : now;
+    const auto [begin, end] = densityRange();
 
     const std::int64_t now_ms = QDateTime::currentMSecsSinceEpoch();
 
     // Two triggers, and each covers what the other cannot.
     //
-    // `moved` catches a resize or a source swap, where the cached counts
-    // describe a range that is no longer on screen -- those must be redrawn at
-    // once, not up to half a second later.
+    // `moved` catches a RESIZE, where the cached counts have the wrong number
+    // of buckets and must be redrawn at once. A source swap forces a recompute
+    // by zeroing density_computed_at_ms_ in applySourceCaps().
     //
     // `due` covers a capture growing under the strip. The buffer's revision is
     // useless as a cache key here (it bumps on every push, thousands a second),
     // so the clock is what bounds the work. A bag recomputes on this tick too
     // and costs nothing: its answer comes from a handful of part records.
-    const bool moved =
-        buckets != density_buckets_ || begin != density_begin_ || end != density_end_;
+    //
+    // DELIBERATELY NOT comparing begin/end: on a live source `end` is now(),
+    // which is fresh every call, so a range comparison is always "moved" and
+    // the throttle never fires -- which put the O(retained) walk under the RX
+    // thread's mutex at the render rate, the exact thing the 500 ms interval
+    // exists to prevent. The strip drawing a histogram up to half a second old
+    // behind a moving edge is the accepted trade.
+    const bool moved = buckets != density_buckets_;
     const bool due = now_ms - density_computed_at_ms_ >= kDensityIntervalMs;
 
     if (!moved && !due)
@@ -1993,25 +2292,69 @@ void ScopeWindow::refreshDensity()
         // recording that is no longer on screen.
         overview_->setDensity({}, begin, end);
         density_buckets_ = buckets;
-        density_begin_ = begin;
-        density_end_ = end;
         density_computed_at_ms_ = now_ms;
         return;
     }
 
     overview_->setDensity(density_, begin, end);
     density_buckets_ = buckets;
-    density_begin_ = begin;
-    density_end_ = end;
     density_computed_at_ms_ = now_ms;
 }
 
 void ScopeWindow::loadSettings(const QString& path)
 {
     settings_path_ = path;
-    settings_ = load_settings(path.toStdString());
+    std::string problem;
+    settings_ = load_settings(path.toStdString(), &problem);
     SPDLOG_INFO("Settings: {} tileset(s) from '{}'.", settings_.tilesets.size(),
                 path.toStdString());
+
+    if (!problem.empty())
+    {
+        // The file layer already refuses to overwrite a malformed file; this is
+        // the UI half of the same protection. Silent, the next thing the user
+        // saw was an EMPTY Settings dialog -- which reads as "I never
+        // configured it", exactly the confusion the atomic write exists to
+        // prevent.
+        statusBar()->showMessage(tr("Settings: %1").arg(QString::fromStdString(problem)), 0);
+    }
+
+    if (!settings_.window_geometry.empty())
+    {
+        // Restore failure is silent and costs nothing: the default geometry is
+        // what a first run gets anyway.
+        (void)restoreGeometry(QByteArray::fromBase64(
+            QByteArray::fromStdString(settings_.window_geometry)));
+    }
+}
+
+void ScopeWindow::persistSettings()
+{
+    if (settings_path_.isEmpty())
+    {
+        return;
+    }
+    if (!save_settings(settings_, settings_path_.toStdString()))
+    {
+        SPDLOG_WARN("Could not persist settings to '{}'.", settings_path_.toStdString());
+    }
+}
+
+void ScopeWindow::noteRecent(std::vector<std::string>& list, const QString& path)
+{
+    constexpr std::size_t kMaxRecent = 8;
+
+    const std::string entry = QFileInfo(path).absoluteFilePath().toStdString();
+    std::erase(list, entry);
+    list.insert(list.begin(), entry);
+    if (list.size() > kMaxRecent)
+    {
+        list.resize(kMaxRecent);
+    }
+
+    settings_.last_directory =
+        QFileInfo(path).absoluteDir().absolutePath().toStdString();
+    persistSettings();
 }
 
 void ScopeWindow::applySettingsTo(Panel& panel)

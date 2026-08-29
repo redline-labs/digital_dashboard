@@ -86,23 +86,55 @@ void CaptureBuffer::evictLocked()
 }
 
 void CaptureBuffer::forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                            const std::function<void(const bag::QueuedMessage&)>& visit) const
+                            const std::function<bool(const bag::QueuedMessage&)>& visit) const
 {
-    const std::lock_guard<std::mutex> guard(mutex_);
+    // The lock is DROPPED and retaken every kChunk messages. A decode pass over
+    // a 1 GiB capture visits millions of entries, and one lock_guard around the
+    // whole walk starves everything else that needs this mutex for the duration
+    // -- the RX thread's push() while capturing, and the transport bar's stat
+    // reads at the render rate while reviewing. Between chunks the cursor is
+    // re-found by binary search on log_time (arrival order is non-decreasing),
+    // and a chunk only breaks at a TIMESTAMP BOUNDARY so the resume point
+    // `last_t + 1` can neither skip nor revisit a message. Messages pushed or
+    // evicted mid-pass are seen or missed exactly as a bag growing underneath
+    // a reader would be.
+    constexpr std::size_t kChunk = 1024;
 
-    for (const bag::QueuedMessage& message : messages_)
+    std::uint64_t resume_from = t0_ns;
+    while (true)
     {
-        if (message.log_time_ns < t0_ns)
+        const std::lock_guard<std::mutex> guard(mutex_);
+
+        auto it = std::lower_bound(messages_.begin(), messages_.end(), resume_from,
+                                   [](const bag::QueuedMessage& message, std::uint64_t t)
+                                   { return message.log_time_ns < t; });
+
+        std::size_t visited = 0;
+        std::uint64_t last_t = 0;
+        for (; it != messages_.end(); ++it)
         {
-            continue;
+            if (it->log_time_ns > t1_ns)
+            {
+                // Arrival order, so nothing later can be in range either.
+                return;
+            }
+            if (visited >= kChunk && it->log_time_ns != last_t)
+            {
+                break;
+            }
+            if (!visit(*it))
+            {
+                return;
+            }
+            last_t = it->log_time_ns;
+            ++visited;
         }
-        if (message.log_time_ns > t1_ns)
+
+        if (it == messages_.end())
         {
-            // Messages are pushed in arrival order, so nothing later can be in
-            // range either.
-            break;
+            return;
         }
-        visit(message);
+        resume_from = last_t + 1;
     }
 }
 
@@ -118,17 +150,20 @@ void CaptureBuffer::density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_
     const std::uint64_t span = t1_ns - t0_ns;
 
     const std::lock_guard<std::mutex> guard(mutex_);
-    for (const bag::QueuedMessage& message : messages_)
+
+    // Binary search to the range's start rather than skipping message by
+    // message: the deque is in arrival order and random-access, so the walk is
+    // O(range + log retained). Counting a 300 s window out of a 1800 s
+    // retention linearly would spend five sixths of the lock hold skipping.
+    auto it = std::lower_bound(messages_.begin(), messages_.end(), t0_ns,
+                               [](const bag::QueuedMessage& message, std::uint64_t t)
+                               { return message.log_time_ns < t; });
+    for (; it != messages_.end(); ++it)
     {
-        if (message.log_time_ns < t0_ns)
-        {
-            continue;
-        }
+        const bag::QueuedMessage& message = *it;
         if (message.log_time_ns > t1_ns)
         {
-            // Arrival order, so nothing later can be in range either -- the
-            // same early exit forEach() takes, and the reason this is O(range)
-            // rather than O(retained) for a narrow window.
+            // Arrival order, so nothing later can be in range either.
             break;
         }
 
@@ -150,6 +185,24 @@ void CaptureBuffer::density(std::uint64_t t0_ns, std::uint64_t t1_ns, std::size_
         }
         ++out[bucket];
     }
+}
+
+CaptureBuffer::Stats CaptureBuffer::stats() const
+{
+    const std::lock_guard<std::mutex> guard(mutex_);
+
+    Stats out;
+    out.messages = messages_.size();
+    out.bytes = bytes_;
+    out.evicted = evicted_;
+    out.revision = revision_;
+    if (messages_.size() >= 2)
+    {
+        out.retained_span_seconds =
+            static_cast<double>(messages_.back().log_time_ns - messages_.front().log_time_ns) /
+            kNanosPerSecond;
+    }
+    return out;
 }
 
 std::pair<std::uint64_t, std::uint64_t> CaptureBuffer::spanNanos() const

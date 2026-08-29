@@ -93,7 +93,7 @@ class CaptureProvider : public RecordedProvider
     explicit CaptureProvider(const CaptureBuffer& buffer);
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
-                 const std::function<void(const bag::BagMessage&)>& visit) override;
+                 const std::function<bool(const bag::BagMessage&)>& visit) override;
     std::vector<TopicInfo> topics() const override;
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const override;
     std::uint64_t revision() const override;

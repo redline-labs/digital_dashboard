@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <vector>
+#include <optional>
 
 namespace scope
 {
@@ -73,6 +74,7 @@ class TimeSeriesPanel : public Panel
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
     std::vector<QString> bindingLabels() const override;
+    std::size_t unboundBindingCount() const override;
     bool removeBinding(std::size_t index) override;
     void setTimeBase(TimeBase* time_base) override;
     void setHistorySeconds(double seconds) override;
@@ -96,7 +98,6 @@ class TimeSeriesPanel : public Panel
 
   protected:
     void paintEvent(QPaintEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
@@ -177,6 +178,11 @@ class TimeSeriesPanel : public Panel
     // Vertical extent to draw against, from the config or from the data.
     void computeYRange(double& y_min, double& y_max, bool right_axis) const;
 
+    // Reduce every bound line trace's window to per-column stats, once per
+    // paint. Both the autoscale and the draw read the result, which is what
+    // keeps the frame to ONE pass over the visible samples.
+    void decimateTraces(const QRectF& area);
+
     void paintGrid(QPainter& painter, const QRectF& area, double y_min, double y_max);
     void paintTraces(QPainter& painter, const QRectF& area);
     void paintLegend(QPainter& painter);
@@ -193,8 +199,11 @@ class TimeSeriesPanel : public Panel
 
     std::vector<std::unique_ptr<Trace>> traces_;
 
-    // Kept across frames so a 30 Hz redraw allocates nothing.
-    mutable std::vector<ColumnStats> columns_;
+    // What the last render tick saw, so onFrame() can skip a repaint when
+    // neither the data nor the shared window moved.
+    double last_frame_begin_ = 0.0;
+    double last_frame_end_ = 0.0;
+    std::optional<double> last_frame_cursor_;
 
     // The window actually drawn last frame, so the cursor readout and the
     // hover-to-time conversion agree with what is on screen.

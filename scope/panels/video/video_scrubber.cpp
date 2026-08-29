@@ -185,11 +185,6 @@ void VideoScrubber::mousePressEvent(QMouseEvent* event)
     }
 
     dragging_ = true;
-
-    // Announced BEFORE the first seek, so the whole gesture including its first
-    // instant is inside the coalescing window. Emitting it after would let the
-    // press through as an immediate seek and only then start batching.
-    emit interactionChanged(true);
     emit seekRequested(timeAt(event->position().toPoint().x()));
 }
 
@@ -218,12 +213,7 @@ void VideoScrubber::mouseReleaseEvent(QMouseEvent* event)
     }
 
     dragging_ = false;
-
-    // The final position first, then the release. The other order would let the
-    // coalescing window close on the second-to-last mouse move, leaving the
-    // playhead an event behind where the user let go.
     emit seekRequested(timeAt(event->position().toPoint().x()));
-    emit interactionChanged(false);
 }
 
 void VideoScrubber::leaveEvent(QEvent* event)

@@ -74,9 +74,13 @@ void OverviewStrip::setExtent(double t0, double t1)
     update();
 }
 
-void OverviewStrip::setDensity(std::vector<std::uint32_t> counts, double t0, double t1)
+void OverviewStrip::setDensity(const std::vector<std::uint32_t>& counts, double t0, double t1)
 {
-    density_ = std::move(counts);
+    if (density_ == counts && density_begin_ == t0 && density_end_ == t1)
+    {
+        return;
+    }
+    density_ = counts;
     density_begin_ = t0;
     density_end_ = t1;
     update();
@@ -346,15 +350,12 @@ void OverviewStrip::mousePressEvent(QMouseEvent* event)
         // would make the strip worse for the coarse case it is best at.
         const double span = view_end_ - view_begin_;
         const double centre = a.toT(event->position().x());
-        emit interactionChanged(true);
         emit viewRequested(centre - span / 2.0, centre + span / 2.0);
-        emit interactionChanged(false);
         QWidget::mousePressEvent(event);
         return;
     }
 
     grab_offset_ = a.toT(event->position().x()) - view_begin_;
-    emit interactionChanged(true);
     QWidget::mousePressEvent(event);
 }
 
@@ -410,7 +411,6 @@ void OverviewStrip::mouseReleaseEvent(QMouseEvent* event)
     if (grab_ != Grab::None)
     {
         grab_ = Grab::None;
-        emit interactionChanged(false);
     }
     QWidget::mouseReleaseEvent(event);
 }

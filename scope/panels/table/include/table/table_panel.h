@@ -15,6 +15,7 @@
 #include <memory>
 #include <string_view>
 #include <vector>
+#include <optional>
 
 namespace scope
 {
@@ -89,6 +90,7 @@ class TablePanel : public Panel
     bool acceptsBinding(const BindingCandidate& candidate) const override;
     bool addBinding(const BindingCandidate& candidate) override;
     std::vector<QString> bindingLabels() const override;
+    std::size_t unboundBindingCount() const override;
     bool removeBinding(std::size_t index) override;
     void setTimeBase(TimeBase* time_base) override;
     void setHistorySeconds(double seconds) override;
@@ -141,8 +143,7 @@ class TablePanel : public Panel
     //
     // These do not touch the shared time base either. Every gesture on a plot
     // moves the window every panel shares; every gesture here changes this
-    // panel's own layout and nothing else, which is why there is no
-    // setInteracting() bracketing and no seek to coalesce.
+    // panel's own layout and nothing else, so no seek is ever generated.
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -233,6 +234,11 @@ class TablePanel : public Panel
 
     TimeBase* time_base_ = nullptr;
     double history_seconds_ = kDefaultHistorySeconds;
+
+    // What the last render tick saw, so onFrame() can skip a repaint when
+    // neither the data nor the readout instant moved.
+    double last_frame_now_ = 0.0;
+    std::optional<double> last_frame_cursor_;
 
     std::vector<std::unique_ptr<Row>> rows_;
 

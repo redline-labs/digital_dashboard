@@ -322,6 +322,8 @@ void testTheViewsRightEdgeIsThePlayhead()
     source.seeks.clear();
     time_base.setView(100.0, 130.0);
 
+    // Seeks coalesce to the render tick; the flush stands in for it here.
+    time_base.flushSeek();
     expect(source.seeks.size() == 1, "moving the view seeks exactly once");
     if (!source.seeks.empty())
     {
@@ -415,7 +417,7 @@ void testSeekingIsClampedToTheRecording()
     expectNear(time_base.viewEnd(), 60.0, 1e-9, "and ends at it");
 }
 
-void testInteractionCoalescesSeeks()
+void testGesturesCoalesceSeeksToTheFlush()
 {
     StubSource source(false, true, 0.0, 600.0);
     source.setNow(600.0);
@@ -423,28 +425,34 @@ void testInteractionCoalescesSeeks()
     time_base.setWindowSeconds(30.0);
 
     source.seeks.clear();
-    time_base.setInteracting(true);
 
-    // A drag emits one of these per pass of the event loop. Each seek refills a
-    // whole retention window per bound signal, so seeking per event makes a drag
-    // stutter in proportion to how much history is retained -- the opposite of
-    // what retaining more should cost.
+    // A gesture -- drag OR wheel -- emits one of these per pass of the event
+    // loop, 60-125 a second. Each seek refills a whole retention window per
+    // bound signal, so seeking per event makes the gesture stutter in
+    // proportion to how much history is retained -- the opposite of what
+    // retaining more should cost. Seeks therefore coalesce UNCONDITIONALLY:
+    // nothing reaches the source until the render tick's flushSeek(). The old
+    // shape only bracketed drags, so a wheel zoom paid the per-event refill.
     for (int i = 0; i < 50; ++i)
     {
         time_base.panBy(-1.0);
     }
-    expect(source.seeks.empty(), "no seek reaches the source mid-drag");
+    expect(source.seeks.empty(), "no seek reaches the source between flushes");
 
-    time_base.setInteracting(false);
-    expect(source.seeks.size() == 1, "ending the drag applies exactly one");
+    time_base.flushSeek();
+    expect(source.seeks.size() == 1, "the flush applies exactly one");
     if (!source.seeks.empty())
     {
         expectNear(source.seeks.back(), time_base.viewEnd(), 1e-9,
                    "and it is where the view finished");
     }
+
+    // Nothing pending: a second flush is a no-op, not a repeat seek.
+    time_base.flushSeek();
+    expect(source.seeks.size() == 1, "a flush with nothing pending seeks nothing");
 }
 
-void testASeekOutsideAnInteractionIsImmediate()
+void testAnAgentReadFlushesThePendingSeek()
 {
     StubSource source(false, true, 0.0, 600.0);
     source.setNow(600.0);
@@ -454,9 +462,12 @@ void testASeekOutsideAnInteractionIsImmediate()
     time_base.seek(120.0);
 
     // The agent interface sets the view and then reads sample_stats in the same
-    // call. Deferring this one to the render tick would report the buffers from
-    // before the seek, which is a wrong answer rather than a slow one.
-    expect(source.seeks.size() == 1, "a seek outside a drag reaches the source at once");
+    // tick. The dispatcher calls flushSeek() before every scope.* method, so
+    // the read observes the buffers the seek asked for -- this is the mechanism
+    // that keeps "set the view, read the stats" exact while gestures coalesce.
+    expect(source.seeks.empty(), "the seek is parked, not applied");
+    time_base.flushSeek();
+    expect(source.seeks.size() == 1, "the dispatcher's flush applies it before any read");
 }
 
 // ------------------------------------------------------------------- fitting
@@ -578,8 +589,8 @@ int main(int argc, char** argv)
     testPlayingResumesFollowing();
     testSeekMovesTheWholeWindow();
     testSeekingIsClampedToTheRecording();
-    testInteractionCoalescesSeeks();
-    testASeekOutsideAnInteractionIsImmediate();
+    testGesturesCoalesceSeeksToTheFlush();
+    testAnAgentReadFlushesThePendingSeek();
 
     testAYoungLiveSourceStillGetsAFullWindow();
     testFitOnARecording();

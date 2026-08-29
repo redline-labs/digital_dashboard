@@ -68,7 +68,12 @@ std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root);
 // inside a file that still parses are reported through validate_workspace and
 // do not stop it loading -- a workspace missing one panel is more useful than
 // no workspace.
-std::optional<scope_workspace_t> load_workspace(const std::string& path);
+// `notes`, when given, collects everything a caller should show a human: the
+// validator's warnings, and on failure the reason the file did not load. The
+// log lines still happen either way -- notes are for the status bar and the
+// details dialog, which a GUI user actually sees.
+std::optional<scope_workspace_t> load_workspace(const std::string& path,
+                                                std::vector<std::string>* notes = nullptr);
 
 bool save_workspace(const scope_workspace_t& workspace, const std::string& path);
 

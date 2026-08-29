@@ -10,6 +10,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QMimeData>
 #include <QPushButton>
 #include <QTreeWidget>
@@ -75,6 +76,29 @@ class CandidateTree : public QTreeWidget
     using QTreeWidget::QTreeWidget;
 
   protected:
+    // Left/Right/Space are bound window-wide as pan-back/pan-forward/follow
+    // (Qt::WindowShortcut). A QLineEdit defends its keys through
+    // ShortcutOverride automatically; a QTreeWidget does not -- so with focus
+    // here, expanding a topic with Right panned the plot instead, and the only
+    // mouse-free way to reach a signal was broken by the navigation shortcuts.
+    // Accepting the override makes the key go to the tree while focus is here,
+    // and the shortcuts keep working everywhere else.
+    bool event(QEvent* e) override
+    {
+        if (e->type() == QEvent::ShortcutOverride)
+        {
+            const auto* key = static_cast<QKeyEvent*>(e);
+            if (key->modifiers() == Qt::NoModifier &&
+                (key->key() == Qt::Key_Left || key->key() == Qt::Key_Right ||
+                 key->key() == Qt::Key_Space))
+            {
+                e->accept();
+                return true;
+            }
+        }
+        return QTreeWidget::event(e);
+    }
+
     void startDrag(Qt::DropActions supported) override
     {
         const QTreeWidgetItem* item = currentItem();
@@ -516,33 +540,57 @@ bool SignalBrowser::findCandidate(const QString& zenoh_key,
             return true;
         }
 
+        // `base[N]` names one element of a list. Parsed here because
+        // candidates() offers those rows and a caller that can SEE a row must
+        // be able to name it -- element rows carry the BARE field name in
+        // kRoleField (their identity is field + kRoleElementIndex), so matching
+        // the whole string against kRoleField found nothing and the element
+        // rows were visible through the agent interface and unreachable by it.
+        QString base = field_name;
+        int element_index = -1;
+        if (field_name.endsWith(']'))
+        {
+            const qsizetype open = field_name.lastIndexOf('[');
+            if (open > 0)
+            {
+                bool numeric = false;
+                const int parsed =
+                    field_name.mid(open + 1, field_name.size() - open - 2).toInt(&numeric);
+                if (numeric && parsed >= 0)
+                {
+                    base = field_name.left(open);
+                    element_index = parsed;
+                }
+            }
+        }
+
         for (int j = 0; j < topic->childCount(); ++j)
         {
             const QTreeWidgetItem* field = topic->child(j);
-            if (field->data(0, kRoleField).toString() != field_name)
+            if (field->data(0, kRoleField).toString() != base)
             {
                 continue;
             }
 
-            // `field_name[N]` names one element of a list. Matched here rather
-            // than only on the bare field, because candidates() offers those
-            // rows and a caller that can SEE a row must be able to name it --
-            // otherwise the element rows are visible through the agent
-            // interface and unreachable by it.
-            const QString subscript = QString("%1[").arg(field_name);
-            for (int k = 0; k < field->childCount(); ++k)
+            if (element_index < 0)
             {
-                if (field->child(k)->text(0) == field_name ||
-                    field->child(k)->text(0).startsWith(subscript))
-                {
-                    // Only when the caller asked for a specific element; the
-                    // bare field name still resolves to the list row below.
-                    static_cast<void>(k);
-                }
+                out = candidateOf(field);
+                return true;
             }
 
-            out = candidateOf(field);
-            return true;
+            for (int k = 0; k < field->childCount(); ++k)
+            {
+                const QTreeWidgetItem* element = field->child(k);
+                if (element->data(0, kRoleElementIndex).toInt() == element_index)
+                {
+                    out = candidateOf(element);
+                    return true;
+                }
+            }
+            // The list exists but has no such element row -- an index past the
+            // declared length. A definite no beats binding the whole list under
+            // an element's name.
+            return false;
         }
         return false;
     }

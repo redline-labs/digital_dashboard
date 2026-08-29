@@ -104,8 +104,16 @@ std::vector<config_codec::Issue> validate_settings(const YAML::Node& root)
     return issues;
 }
 
-scope_settings_t load_settings(const std::string& path)
+scope_settings_t load_settings(const std::string& path, std::string* problem)
 {
+    const auto report = [problem](std::string text)
+    {
+        if (problem != nullptr && problem->empty())
+        {
+            *problem = std::move(text);
+        }
+    };
+
     if (!QFileInfo::exists(QString::fromStdString(path)))
     {
         // A first run. Not logged as a problem: there is nothing wrong with
@@ -141,6 +149,8 @@ scope_settings_t load_settings(const std::string& path)
             // real problem better than an app that refuses to start.
             SPDLOG_ERROR("Ignoring '{}': see the errors above. The file is NOT overwritten.",
                          path);
+            report("The settings file was ignored (invalid content); defaults are in use and "
+                   "the file was not overwritten.");
             return {};
         }
 
@@ -157,6 +167,8 @@ scope_settings_t load_settings(const std::string& path)
     {
         SPDLOG_ERROR("Could not parse settings '{}': {}. Using defaults; the file is NOT "
                      "overwritten.", path, e.what());
+        report(std::string("The settings file could not be parsed (") + e.what() +
+               "); defaults are in use and the file was not overwritten.");
         return {};
     }
 }

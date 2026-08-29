@@ -20,6 +20,24 @@ namespace scope
 using SignalHandle = std::uint64_t;
 inline constexpr SignalHandle kInvalidSignal = 0;
 
+// Opaque handle for a raw (whole-topic bytes) binding. The same width as
+// SignalHandle but a DISTINCT type on purpose: while the two shared
+// std::uint64_t, calling release() on a raw handle compiled cleanly and leaked
+// the subscription -- the raw binding stayed in the source's list forever,
+// still decoding into a buffer nobody drained, with no diagnostic. The wrapper
+// makes handing either kind to the other release path uncompilable.
+struct RawHandle
+{
+    std::uint64_t value = 0;
+
+    friend bool operator==(const RawHandle& lhs, const RawHandle& rhs) = default;
+    friend bool operator<(const RawHandle& lhs, const RawHandle& rhs)
+    {
+        return lhs.value < rhs.value;
+    }
+};
+inline constexpr RawHandle kInvalidRaw{};
+
 // What identifies a plottable signal: the tree's existing binding form.
 //
 // The same triple a dashboard widget uses, deliberately. A signal picked in
@@ -76,6 +94,13 @@ struct SourceCaps
 //
 // Nothing above this interface knows which kind it has. A panel asks the time
 // base what time it is; the time base asks the source what it is capable of.
+//
+// THREADING: bind()/release()/bindRaw()/releaseRaw()/seek()/setPlaying()/
+// setRate()/tick() are GUI-thread-only. Implementations may deliver samples
+// from their own threads into the buffers, but the binding table itself is
+// single-threaded by contract -- LiveZenohSource takes no lock around it and
+// relies on this, so the contract is stated here rather than differing
+// silently between implementations.
 class DataSource
 {
   public:
@@ -140,21 +165,21 @@ class DataSource
     // Same ownership and lifetime contract as bind(), including the shared_ptr,
     // for the same reason: release() cannot join an in-flight callback.
     //
-    // Returns kInvalidSignal when the binding could not be made. The default
+    // Returns kInvalidRaw when the binding could not be made. The default
     // declines, so a source that has no raw path -- a test stub -- says no
     // rather than accepting a binding it will never feed.
-    virtual SignalHandle bindRaw(const std::string& /*zenoh_key*/,
-                                 pub_sub::schema_type_t /*schema*/,
-                                 std::shared_ptr<RawBuffer> /*into*/,
-                                 RawClassifier /*classify*/ = {})
+    virtual RawHandle bindRaw(const std::string& /*zenoh_key*/,
+                              pub_sub::schema_type_t /*schema*/,
+                              std::shared_ptr<RawBuffer> /*into*/, RawClassifier /*classify*/ = {})
     {
-        return kInvalidSignal;
+        return kInvalidRaw;
     }
 
-    // Raw handles live in the same space as bind()'s, so THE ORDERING RULE ON
-    // Panel::rebindTo() applies to them identically: release against the source
-    // that issued the handle, before repointing.
-    virtual void releaseRaw(SignalHandle /*handle*/) {}
+    // THE ORDERING RULE ON Panel::rebindTo() applies to raw handles
+    // identically: release against the source that issued the handle, before
+    // repointing. The distinct type is what stops a raw handle from being fed
+    // to release() -- see RawHandle above.
+    virtual void releaseRaw(RawHandle /*handle*/) {}
 
     // The source's current time, in seconds on its own epoch. For a live source
     // this is wall-clock-ish and always advancing; for a recorded one it is the

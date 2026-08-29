@@ -35,6 +35,28 @@ void applyLimits(Cfg& cfg, std::string_view panel_type)
 
 }  // namespace
 
+panel_config_variant_t clampPanelConfig(panel_config_variant_t config)
+{
+    std::visit(
+        [](auto& cfg)
+        {
+            using cfg_t = std::decay_t<decltype(cfg)>;
+            if constexpr (!std::is_same_v<cfg_t, std::monostate>)
+            {
+#define SCOPE_PANEL_CLAMP(enum_name, panel_class)                                  \
+    if constexpr (std::is_same_v<cfg_t, typename panel_class::config_t>)           \
+    {                                                                              \
+        applyLimits(cfg, reflection::enum_traits<panel_type_t>::to_string(         \
+                             panel_class::kPanelType));                            \
+    }
+                SCOPE_PANEL_TABLE(SCOPE_PANEL_CLAMP)
+#undef SCOPE_PANEL_CLAMP
+            }
+        },
+        config);
+    return config;
+}
+
 std::unique_ptr<Panel> createPanel(const panel_config_variant_t& config,
                                    DataSource& source,
                                    double history_seconds,
