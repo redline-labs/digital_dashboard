@@ -92,6 +92,15 @@ void layOutStack(std::initializer_list<QAbstractButton*> buttons, const QSize& h
         }
         const int y = bottom ? hostSize.height() - size - margin - (slot * step)
                              : margin + (slot * step);
+        // A stack that has outgrown its host hides the tail rather than
+        // painting buttons off the edge or over whatever lives in the
+        // opposite corner. The far end is the least essential by
+        // construction -- callers order the list nearest-corner-first.
+        if (y < margin || y + size + margin > hostSize.height())
+        {
+            button->hide();
+            continue;
+        }
         button->setGeometry(x, y, size, size);
         ++slot;
     }

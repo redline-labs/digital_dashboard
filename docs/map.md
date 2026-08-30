@@ -681,22 +681,36 @@ coordinates the agent interface has to be told about.
   In the scope panel it clears the wheel zoom too, because there the wheel
   breaks Follow Cursor (see the panel section) and coming back means coming
   all the way back.
-- **Compass** cycles the orientation mode for the session (north_up ↔
-  heading_up on the dashboard, ↔ course_up in scope). Its needle points at
-  true north *on screen* — fed the frame's actual bearing from the paint pass,
-  so in heading-up it swings with the vehicle. When the map is effectively
-  north-up it de-emphasises rather than hiding, the way the big map apps'
-  compasses fade: unlike them there is no rotate gesture here, so the button
-  is the only door into heading-up and must stay pressable.
+- **Compass** is both the orientation toggle and the map's ROTATION control.
+  Its needle points at true north *on screen* — fed the frame's actual
+  bearing from the paint pass, so in heading-up it swings with the vehicle.
+  **Dragging the needle spins the map**: the bearing follows the cursor's
+  angle about the button centre, so the needle stays under the finger.
+  Confining rotation to the button keeps it from ever fighting the pan
+  gesture, and it works the same for mouse and touch. A drag forces manual
+  control (north-up + a session bearing override), whatever mode was driving
+  the bearing before. A plain **click straightens first**: a manually spun
+  map snaps back to the configured bearing, and only a click on an unspun
+  map cycles the mode (north_up ↔ heading_up on the dashboard, ↔ course_up
+  in scope). When the map is effectively north-up the compass de-emphasises
+  rather than hiding — it is the only door into heading-up and must stay
+  pressable.
 - **View mode** toggles top_down ↔ perspective. Its glyph shows the view a
   press WOULD GIVE — a trapezoid while flat, a flat square while tilted —
   because showing the current state reads as a broken toggle.
+- **Zoom pair** (+/−) steps one level per press through the same door the
+  wheel uses — eased and centre-anchored on the dashboard (so Follow Vehicle
+  survives, exactly as it survives a wheel notch), drag_zoom-setting in scope
+  (where the wheel breaks Follow Cursor, and recentre undoes both). The
+  buttons auto-repeat, so holding one zooms continuously.
 
-The toggles are **session state**, mirroring the interaction optionals: the
-config's `orientation`/`view_mode` fields are what the layout or workspace
-opens with, and a button press never writes back to them. The dashboard stacks
-its buttons bottom-right; the scope panel top-right, because `paintLegend()`
-owns its bottom-right corner.
+The toggles and the manual bearing are **session state**, mirroring the
+interaction optionals: the config's `orientation`/`view_mode`/`bearing` fields
+are what the layout or workspace opens with, and a button press never writes
+back to them. The dashboard stacks its buttons bottom-right; the scope panel
+top-right, because `paintLegend()` owns its bottom-right corner. On a host too
+short for the whole stack, `layOutStack()` sheds buttons from the far end —
+each caller orders its list so the least essential go first.
 
 `map_test_widget_hidpi` aside, an offscreen widget has no screen and so no
 mouse; the interaction tests post `QMouseEvent`/`QWheelEvent` straight at the

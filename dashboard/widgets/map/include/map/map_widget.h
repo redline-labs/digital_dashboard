@@ -69,6 +69,7 @@ class RawSubscriber;
 #include "map_controls/compass_button.h"
 #include "map_controls/recentre_button.h"
 #include "map_controls/view_mode_button.h"
+#include "map_controls/zoom_button.h"
 #include "map/tile_source.h"
 
 class MapWidget : public QWidget
@@ -152,8 +153,18 @@ class MapWidget : public QWidget
     // The session's mode toggles -- what the compass and view buttons flip.
     // Public because a control (or a test) flips them; the CONFIG's fields are
     // the mode the layout opens in, and these never write back to it.
+    //
+    // A compass CLICK straightens first: if the map has been manually spun,
+    // the click clears that spin (back to the configured bearing) and does
+    // nothing else -- the instinct is "the map is crooked, tap the compass to
+    // fix it". Only a click on an unspun map cycles the orientation mode.
     void cycleOrientation();
     void toggleViewMode();
+    // Dragging the compass needle: spin the map to this bearing for the
+    // session. Forces north-up -- grabbing the needle IS taking manual
+    // control, whatever mode was driving the bearing before.
+    void setManualBearing(double degrees);
+    std::optional<double> manualBearing() const { return mBearingOverride; }
     MapOrientation_t effectiveOrientation() const
     {
         return mOrientationOverride.value_or(mConfig.orientation);
@@ -402,6 +413,10 @@ class MapWidget : public QWidget
     // written to mConfig -- a view button must not edit the layout.
     std::optional<MapOrientation_t> mOrientationOverride;
     std::optional<MapViewMode_t> mViewModeOverride;
+    // The compass drag's spin. Beats the configured bearing while set;
+    // cleared by a compass click. Never consulted in heading-up -- a drag
+    // forces north-up on its way in.
+    std::optional<double> mBearingOverride;
 
     // The world point grabbed on mouse-down, held for the whole drag. Fixed at
     // press rather than recomputed per move: chasing a delta between successive
@@ -416,6 +431,8 @@ class MapWidget : public QWidget
     map_controls::RecentreButton* mRecentre { nullptr };
     map_controls::CompassButton* mCompass { nullptr };
     map_controls::ViewModeButton* mViewMode { nullptr };
+    map_controls::ZoomButton* mZoomIn { nullptr };
+    map_controls::ZoomButton* mZoomOut { nullptr };
 
     // WORLD points, not coordinates. A track point's world position is fixed
     // the moment it arrives; only the camera moves. Keeping degrees meant

@@ -231,6 +231,22 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         mViewMode->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
         connect(mViewMode, &QAbstractButton::clicked, this, &MapWidget::toggleViewMode);
 
+        connect(mCompass, &map_controls::CompassButton::bearingDragged, this,
+                &MapWidget::setManualBearing);
+
+        // The zoom pair goes through the same door the wheel does, one level
+        // per press, anchored on the centre -- which is what keeps Follow
+        // Vehicle alive across it, exactly as a wheel zoom does.
+        mZoomIn = new map_controls::ZoomButton(map_controls::ZoomButton::Direction::In, glyph,
+                                               disc, this);
+        mZoomOut = new map_controls::ZoomButton(map_controls::ZoomButton::Direction::Out, glyph,
+                                                disc, this);
+        const auto zoomStep = [this](double levels) {
+            zoomBy(levels, QPointF(width() / 2.0, height() / 2.0), kZoomEaseMs);
+        };
+        connect(mZoomIn, &QAbstractButton::clicked, this, [zoomStep] { zoomStep(1.0); });
+        connect(mZoomOut, &QAbstractButton::clicked, this, [zoomStep] { zoomStep(-1.0); });
+
         layOutMapButtons();
     }
 
@@ -354,13 +370,22 @@ map_render::Camera MapWidget::camera() const
     // with the vehicle, and recentring does not straighten it.
     out.bearing = (effectiveOrientation() == MapOrientation_t::heading_up && mHeading.has_value())
                       ? *mHeading
-                      : mConfig.bearing;
+                      : mBearingOverride.value_or(mConfig.bearing);
     out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? mConfig.pitch : 0.0;
     return out;
 }
 
 void MapWidget::cycleOrientation()
 {
+    // Straighten first -- see the header. A manually spun map takes one click
+    // to un-spin, and only the next click changes mode.
+    if (mBearingOverride.has_value())
+    {
+        mBearingOverride.reset();
+        update();
+        return;
+    }
+
     const MapOrientation_t next = effectiveOrientation() == MapOrientation_t::north_up
                                       ? MapOrientation_t::heading_up
                                       : MapOrientation_t::north_up;
@@ -368,6 +393,13 @@ void MapWidget::cycleOrientation()
     // value_or makes that indistinguishable, and clearing it would only save
     // an optional.
     mOrientationOverride = next;
+    update();
+}
+
+void MapWidget::setManualBearing(double degrees)
+{
+    mOrientationOverride = MapOrientation_t::north_up;
+    mBearingOverride = degrees;
     update();
 }
 
@@ -643,13 +675,17 @@ void MapWidget::layOutMapButtons()
     mRecentre->setVisible(room && mInteractionCentre.has_value() && !mRecentreEase.has_value());
     mCompass->setVisible(room);
     mViewMode->setVisible(room);
+    mZoomIn->setVisible(room);
+    mZoomOut->setVisible(room);
 
     // Bottom right, which is where a map's controls live and, more to the
     // point, the one corner nothing else uses: the diagnostic line is centred
     // and the vehicle marker follows the vehicle. Recentre sits nearest the
-    // corner when present; the stack compacts when it goes.
-    map_controls::layOutStack({ mRecentre, mViewMode, mCompass }, QSize(width(), height()),
-                              Qt::BottomRightCorner);
+    // corner when present; the stack compacts when it goes. Zoom minus under
+    // plus, mode toggles above them; on a short widget the stack sheds from
+    // the far end.
+    map_controls::layOutStack({ mRecentre, mZoomOut, mZoomIn, mViewMode, mCompass },
+                              QSize(width(), height()), Qt::BottomRightCorner);
 }
 
 void MapWidget::mousePressEvent(QMouseEvent* event)

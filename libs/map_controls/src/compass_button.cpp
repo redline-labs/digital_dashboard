@@ -2,10 +2,12 @@
 
 #include "map_controls/compass_button.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
 
 #include <cmath>
+#include <numbers>
 
 namespace map_controls
 {
@@ -13,7 +15,7 @@ namespace map_controls
 CompassButton::CompassButton(const QColor& glyph, const QColor& disc, QWidget* parent) :
     MapButton(glyph, disc, parent)
 {
-    setToolTip(QStringLiteral("Switch between north-up and heading-up"));
+    setToolTip(QStringLiteral("Click to change orientation, drag to spin the map"));
     setObjectName(QStringLiteral("mapCompassButton"));
 }
 
@@ -29,6 +31,63 @@ void CompassButton::setBearing(double degrees)
     // only way into heading-up; see the header.
     setEmphasis(std::abs(std::remainder(mBearing, 360.0)) < 0.5 ? kDeEmphasized : 1.0);
     update();
+}
+
+void CompassButton::mousePressEvent(QMouseEvent* event)
+{
+    mPressPos = event->position();
+    mDragging = false;
+    MapButton::mousePressEvent(event);
+}
+
+void CompassButton::mouseMoveEvent(QMouseEvent* event)
+{
+    // A few pixels of slop before a press becomes a drag, so a slightly
+    // wobbly tap still reads as a click.
+    constexpr double kDragThresholdPx = 4.0;
+    if (!mDragging &&
+        (event->position() - mPressPos).manhattanLength() < kDragThresholdPx)
+    {
+        MapButton::mouseMoveEvent(event);
+        return;
+    }
+
+    if (!mDragging)
+    {
+        mDragging = true;
+        // The click machinery must not fire on release -- the drag IS the
+        // action. Un-pressing the button is what cancels it.
+        setDown(false);
+    }
+
+    // The needle should point at the cursor. It is drawn rotated by -bearing
+    // (Qt rotates clockwise), so a cursor at screen angle a clockwise from
+    // straight-up wants bearing = -a.
+    const QPointF centre = QRectF(rect()).center();
+    const QPointF delta = event->position() - centre;
+    if (delta.manhattanLength() < 1.0)
+    {
+        return;
+    }
+    const double screenAngle = std::atan2(delta.x(), -delta.y()) * 180.0 / std::numbers::pi;
+    double bearing = std::fmod(-screenAngle, 360.0);
+    if (bearing < 0.0)
+    {
+        bearing += 360.0;
+    }
+    emit bearingDragged(bearing);
+}
+
+void CompassButton::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (mDragging)
+    {
+        mDragging = false;
+        event->accept();
+        update();
+        return;
+    }
+    MapButton::mouseReleaseEvent(event);
 }
 
 void CompassButton::paintGlyph(QPainter& painter, const QRectF& box, const QColor& glyph)

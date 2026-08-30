@@ -23,10 +23,12 @@ add_library(map_controls STATIC
     src/recentre_button.cpp
     src/compass_button.cpp
     src/view_mode_button.cpp
+    src/zoom_button.cpp
     include/map_controls/map_button.h
     include/map_controls/recentre_button.h
     include/map_controls/compass_button.h
     include/map_controls/view_mode_button.h
+    include/map_controls/zoom_button.h
 )
 
 target_include_directories(map_controls PUBLIC include)

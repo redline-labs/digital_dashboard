@@ -199,6 +199,16 @@ MapPanel::MapPanel(const config_t& cfg, DataSource& source, double history_secon
         view_mode_->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
         connect(view_mode_, &QAbstractButton::clicked, this, &MapPanel::toggleViewMode);
 
+        connect(compass_, &map_controls::CompassButton::bearingDragged, this,
+                &MapPanel::setManualBearing);
+
+        zoom_in_ = new map_controls::ZoomButton(map_controls::ZoomButton::Direction::In, glyph,
+                                                disc, this);
+        zoom_out_ = new map_controls::ZoomButton(map_controls::ZoomButton::Direction::Out, glyph,
+                                                 disc, this);
+        connect(zoom_in_, &QAbstractButton::clicked, this, [this] { zoomStep(1.0); });
+        connect(zoom_out_, &QAbstractButton::clicked, this, [this] { zoomStep(-1.0); });
+
         layOutMapButtons();
     }
 
@@ -762,7 +772,7 @@ map_render::Camera MapPanel::camera() const
     out.bearing = (effectiveOrientation() == MapPanelOrientation_t::course_up &&
                    course_deg_.has_value())
                       ? *course_deg_
-                      : cfg_.bearing;
+                      : bearing_override_.value_or(cfg_.bearing);
     out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? cfg_.pitch : 0.0;
 
     if (drag_centre_.has_value())
@@ -783,9 +793,40 @@ map_render::Camera MapPanel::camera() const
 
 void MapPanel::cycleOrientation()
 {
+    // Straighten first -- see the header. One click un-spins a manually
+    // rotated map; only the next click changes mode.
+    if (bearing_override_.has_value())
+    {
+        bearing_override_.reset();
+        update();
+        return;
+    }
+
     orientation_override_ = effectiveOrientation() == MapPanelOrientation_t::north_up
                                 ? MapPanelOrientation_t::course_up
                                 : MapPanelOrientation_t::north_up;
+    update();
+}
+
+void MapPanel::setManualBearing(double degrees)
+{
+    // Grabbing the needle IS taking manual control, whatever was driving the
+    // bearing before.
+    orientation_override_ = MapPanelOrientation_t::north_up;
+    bearing_override_ = degrees;
+    update();
+}
+
+void MapPanel::zoomStep(double levels)
+{
+    // The wheel's semantics, anchored on the centre: zooming about the
+    // middle moves no world point on screen, but it still sets drag_zoom_
+    // and so, like the wheel here, breaks Follow Cursor -- recentre undoes
+    // both together.
+    const map_render::Camera current = camera();
+    drag_zoom_ = std::clamp(current.zoom + levels, double(cfg_.min_zoom),
+                            double(cfg_.max_zoom));
+    layOutMapButtons();
     update();
 }
 
@@ -826,8 +867,14 @@ void MapPanel::layOutMapButtons()
                           (drag_centre_.has_value() || drag_zoom_.has_value()));
     compass_->setVisible(room);
     view_mode_->setVisible(room);
-    map_controls::layOutStack({ compass_, view_mode_, recentre_ }, QSize(width(), height()),
-                              Qt::TopRightCorner);
+    zoom_in_->setVisible(room);
+    zoom_out_->setVisible(room);
+    // Recentre ahead of the zoom pair: the stack sheds from the far end on a
+    // short panel, and losing a zoom button beats losing the only way back to
+    // Follow Cursor. Its coming and going shifts the zoom pair, which is the
+    // cheaper of the two costs.
+    map_controls::layOutStack({ compass_, view_mode_, recentre_, zoom_in_, zoom_out_ },
+                              QSize(width(), height()), Qt::TopRightCorner);
 }
 
 void MapPanel::resizeEvent(QResizeEvent* event)

@@ -14,6 +14,7 @@
 #include "map_controls/compass_button.h"
 #include "map_controls/recentre_button.h"
 #include "map_controls/view_mode_button.h"
+#include "map_controls/zoom_button.h"
 #include "map_panel/stats.h"
 #include "map_panel/tile_reader.h"
 #include "map_panel/track_builder.h"
@@ -106,8 +107,15 @@ class MapPanel : public Panel
     // The session's mode toggles -- what the compass and view buttons flip.
     // Public because a control (or a test) flips them; the CONFIG's fields are
     // what the workspace opens with, and these never write back to it.
+    // A compass CLICK straightens first: a manually spun map snaps back to
+    // the configured bearing, and only a click on an unspun map cycles the
+    // orientation. Dragging the needle spins the map (setManualBearing).
     void cycleOrientation();
     void toggleViewMode();
+    void setManualBearing(double degrees);
+    // One zoom step about the viewport centre -- the buttons' path. Same
+    // semantics as the wheel, including breaking Follow Cursor.
+    void zoomStep(double levels);
     MapPanelOrientation_t effectiveOrientation() const
     {
         return orientation_override_.value_or(cfg_.orientation);
@@ -310,12 +318,17 @@ class MapPanel : public Panel
     // written to cfg_ -- a view button must not edit the workspace.
     std::optional<MapPanelOrientation_t> orientation_override_;
     std::optional<MapViewMode_t> view_override_;
+    // The compass drag's spin; beats the configured bearing while set,
+    // cleared by a compass click. A drag forces north_up on its way in.
+    std::optional<double> bearing_override_;
 
     // Null unless the panel is interactive. Corner chrome, top-right --
     // paintLegend owns the bottom-right.
     map_controls::RecentreButton* recentre_ = nullptr;
     map_controls::CompassButton* compass_ = nullptr;
     map_controls::ViewModeButton* view_mode_ = nullptr;
+    map_controls::ZoomButton* zoom_in_ = nullptr;
+    map_controls::ZoomButton* zoom_out_ = nullptr;
     void layOutMapButtons();
 };
 

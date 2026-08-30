@@ -287,6 +287,65 @@ void testRecentreRestoresFollowCursor()
     expect(recentre->isHidden(), "and the button hides again");
 }
 
+// The zoom pair steps the panel's camera like the wheel does -- including
+// breaking Follow Cursor, which recentre then undoes together with the pan.
+void testTheZoomButtonsStepThePanelCamera()
+{
+    StubSource source;
+    MapPanelConfig_t cfg;
+    cfg.zoom = 12.0;
+    scope::MapPanel panel(cfg, source);
+    panel.resize(300, 260);
+    panel.show();
+    panel.repaint();
+
+    auto* zoomIn = panel.findChild<QAbstractButton*>(QStringLiteral("mapZoomInButton"));
+    auto* recentre = panel.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
+    expect(zoomIn != nullptr && recentre != nullptr, "the panel has the zoom pair");
+    if (zoomIn == nullptr || recentre == nullptr)
+    {
+        return;
+    }
+
+    zoomIn->click();
+    expect(std::abs(panel.stats().camera_zoom - 13.0) < 1e-9,
+           "one press of plus zooms a level");
+    expect(!recentre->isHidden(),
+           "and, wheel-like, it suspends Follow Cursor so recentre appears");
+
+    recentre->click();
+    expect(std::abs(panel.stats().camera_zoom - 12.0) < 1e-9,
+           "recentre restores the configured zoom");
+}
+
+// Compass drag and straighten-first click, panel edition.
+void testTheCompassSpinAndStraightenOnThePanel()
+{
+    StubSource source;
+    MapPanelConfig_t cfg;
+    cfg.bearing = 0.0;
+    scope::MapPanel panel(cfg, source);
+    panel.resize(300, 260);
+    panel.show();
+    panel.repaint();
+
+    panel.setManualBearing(120.0);
+    panel.repaint();
+    expect(std::abs(panel.stats().camera_bearing - 120.0) < 1e-9,
+           "a needle drag spins the panel's map");
+
+    panel.cycleOrientation();
+    panel.repaint();
+    expect(std::abs(panel.stats().camera_bearing) < 1e-9,
+           "the first compass click straightens");
+    expect(panel.effectiveOrientation() == MapPanelOrientation_t::north_up,
+           "without changing the mode");
+
+    panel.cycleOrientation();
+    expect(panel.effectiveOrientation() == MapPanelOrientation_t::course_up,
+           "and the next click cycles to course-up");
+}
+
 void runMapPanelTests()
 {
     testATopicLevelPositionDropFillsBothCoordinates();
@@ -300,6 +359,8 @@ void runMapPanelTests()
     testThePanelReportsItsCameraAfterAPaint();
     testTheCameraModesAreSessionOverrides();
     testRecentreRestoresFollowCursor();
+    testTheZoomButtonsStepThePanelCamera();
+    testTheCompassSpinAndStraightenOnThePanel();
 }
 
 }  // namespace panel_tests

@@ -2476,6 +2476,118 @@ void test_the_view_button_toggles_perspective()
     check(std::abs(widget.status().camera.pitch) < 1e-12, "and the next flattens it again");
 }
 
+// The zoom pair goes through the wheel's door: one level per press, eased,
+// centre-anchored -- so Follow Vehicle survives it exactly as it survives a
+// wheel notch.
+void test_the_zoom_buttons_step_the_camera()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.zoom = 12.0;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+    pump(std::chrono::milliseconds(30));
+
+    auto* zoomIn = widget.findChild<QAbstractButton*>(QStringLiteral("mapZoomInButton"));
+    auto* zoomOut = widget.findChild<QAbstractButton*>(QStringLiteral("mapZoomOutButton"));
+    check(zoomIn != nullptr && zoomOut != nullptr, "an interactive map has the zoom pair");
+    if (zoomIn == nullptr || zoomOut == nullptr)
+    {
+        return;
+    }
+
+    zoomIn->click();
+    // The zoom eases in over ~140 ms; poll the paint until it lands.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::abs(widget.status().camera.zoom - 13.0) > 1e-6 &&
+           std::chrono::steady_clock::now() < deadline)
+    {
+        pump(std::chrono::milliseconds(30));
+        widget.repaint();
+    }
+    check(std::abs(widget.status().camera.zoom - 13.0) < 1e-6,
+          "one press of plus zooms in a level, got " +
+              std::to_string(widget.status().camera.zoom));
+    check(!widget.status().cameraMoved, "and Follow Vehicle is not suspended by it");
+
+    zoomOut->click();
+    const auto deadline2 = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::abs(widget.status().camera.zoom - 12.0) > 1e-6 &&
+           std::chrono::steady_clock::now() < deadline2)
+    {
+        pump(std::chrono::milliseconds(30));
+        widget.repaint();
+    }
+    check(std::abs(widget.status().camera.zoom - 12.0) < 1e-6, "and minus steps back out");
+}
+
+// Dragging the compass needle spins the map; a click straightens it before it
+// ever changes mode.
+void test_the_compass_drag_spins_and_a_click_straightens()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.bearing = 0.0;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+    pump(std::chrono::milliseconds(30));
+
+    auto* compass = widget.findChild<map_controls::CompassButton*>(
+        QStringLiteral("mapCompassButton"));
+    check(compass != nullptr, "the compass is present");
+    if (compass == nullptr)
+    {
+        return;
+    }
+
+    // A real drag on the button: press at the centre, pull east. The needle
+    // should chase the cursor -- a cursor due east of centre puts north to
+    // the east, which is bearing 270.
+    const QPointF centre(17.0, 17.0);
+    const QPointF east(30.0, 17.0);
+    QMouseEvent press(QEvent::MouseButtonPress, centre, compass->mapToGlobal(centre),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(compass, &press);
+    QMouseEvent move(QEvent::MouseMove, east, compass->mapToGlobal(east), Qt::NoButton,
+                     Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(compass, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, east, compass->mapToGlobal(east),
+                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(compass, &release);
+    widget.repaint();
+
+    check(std::abs(widget.status().camera.bearing - 270.0) < 1e-6,
+          "dragging the needle east spins the map to bearing 270, got " +
+              std::to_string(widget.status().camera.bearing));
+    check(widget.effectiveOrientation() == MapOrientation_t::north_up,
+          "and a drag is manual control -- north-up, not heading-up");
+
+    // First click: straighten only. Mode must not change.
+    compass->click();
+    widget.repaint();
+    check(std::abs(widget.status().camera.bearing) < 1e-6,
+          "a click on a spun compass straightens the map");
+    check(widget.effectiveOrientation() == MapOrientation_t::north_up,
+          "without changing the orientation mode");
+
+    // Second click: NOW the mode cycles.
+    compass->click();
+    check(widget.effectiveOrientation() == MapOrientation_t::heading_up,
+          "and the next click cycles to heading-up");
+
+    // A drag while heading-up grabs control back.
+    widget.setManualBearing(45.0);
+    check(widget.effectiveOrientation() == MapOrientation_t::north_up &&
+              widget.manualBearing().has_value(),
+          "a drag in heading-up takes manual control");
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::warn);
@@ -2514,6 +2626,8 @@ int main(int argc, char** argv)
     test_the_same_name_from_two_zooms_is_placed_once();
     test_the_compass_button_cycles_orientation();
     test_the_compass_needle_tracks_the_bearing();
+    test_the_zoom_buttons_step_the_camera();
+    test_the_compass_drag_spins_and_a_click_straightens();
     test_the_view_button_toggles_perspective();
     test_a_road_label_never_reads_backwards();
     test_a_hairpin_gets_no_label_but_a_gentle_curve_does();
