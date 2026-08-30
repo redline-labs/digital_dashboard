@@ -170,6 +170,14 @@ int main(int argc, char** argv)
     // roads. Measuring only at 0 reports the cheap path and misses the cost of
     // the feature entirely.
     const double bearing = std::atof(argumentAfter(argc, argv, "--bearing", "0").c_str());
+    // The camera's pitch. Above 0 the tile walk becomes the quadtree descent
+    // and the far field draws from shallower zooms, so the preload below
+    // switches from a fixed corridor to the union of what the pitched walk
+    // actually wants.
+    const double pitch = std::atof(argumentAfter(argc, argv, "--pitch", "0").c_str());
+    // Where to write the run's LAST frame as a PNG. The medians say what a
+    // frame costs; only a picture says whether it was the right frame.
+    const std::string dumpPath = argumentAfter(argc, argv, "--dump", "");
 
     if (tilesPath.empty())
     {
@@ -208,8 +216,9 @@ int main(int argc, char** argv)
     std::unordered_map<TileId, Cached, TileIdHash> cache;
 
     const auto z = static_cast<std::uint8_t>(zoom);
-    const Camera startCamera { Coordinate { kStartLat, kStartLon }, zoom, bearing };
+    const Camera startCamera { Coordinate { kStartLat, kStartLon }, zoom, bearing, pitch };
     const Projection probe(startCamera, width, height, dpr);
+    const std::uint8_t archiveMin = archive->metadata().minzoom;
 
     // The whole corridor the camera will drive along, plus a generous margin.
     const WorldPoint centre = map_render::worldFor(Coordinate { kStartLat, kStartLon });
@@ -217,16 +226,49 @@ int main(int argc, char** argv)
     const auto centreX = static_cast<std::int64_t>(centre.x * side);
     const auto centreY = static_cast<std::int64_t>(centre.y * side);
 
+    // Which tiles to decode up front. Flat: the fixed corridor, unchanged so
+    // the baseline numbers stay comparable across runs. Pitched: the union of
+    // the walk's own answers along the corridor, because the far field pulls
+    // shallower tiles no fixed-z loop would name.
+    std::vector<TileId> toLoad;
+    if (pitch <= 0.0)
+    {
+        for (std::int64_t dy = -3; dy <= 3; ++dy)
+        {
+            for (std::int64_t dx = -3; dx <= 12; ++dx)
+            {
+                toLoad.push_back(TileId { z, static_cast<std::uint32_t>(centreX + dx),
+                                          static_cast<std::uint32_t>(centreY + dy) });
+            }
+        }
+    }
+    else
+    {
+        std::unordered_map<TileId, bool, TileIdHash> wanted;
+        const double degPerMetre =
+            1.0 / (111320.0 * std::cos(kStartLat * std::numbers::pi / 180.0));
+        for (int i = 0; i < frames; i += 10)
+        {
+            const Coordinate here { kStartLat, kStartLon + (double(i) * 25.0 * degPerMetre) };
+            const Projection sample(Camera { here, zoom, bearing, pitch }, width, height, dpr);
+            for (const TileId& id : sample.visibleTilesWithMargin(z, 1, archiveMin).withMargin)
+            {
+                wanted.emplace(id, true);
+            }
+        }
+        for (const auto& entry : wanted)
+        {
+            toLoad.push_back(entry.first);
+        }
+    }
+
     std::size_t decoded = 0;
     std::size_t absent = 0;
     std::uint64_t vertices = 0;
     const Timer loadTimer;
-    for (std::int64_t dy = -3; dy <= 3; ++dy)
     {
-        for (std::int64_t dx = -3; dx <= 12; ++dx)
+        for (const TileId& id : toLoad)
         {
-            const TileId id { z, static_cast<std::uint32_t>(centreX + dx),
-                              static_cast<std::uint32_t>(centreY + dy) };
             auto blob = archive->tile(id.z, id.x, id.y);
             if (!blob || !blob->has_value())
             {
@@ -258,8 +300,9 @@ int main(int argc, char** argv)
 
     SPDLOG_INFO("");
     SPDLOG_INFO("archive    {}", tilesPath);
-    SPDLOG_INFO("viewport   {}x{} logical at z{:.1f}, {}x device pixel ratio, bearing {:.0f}",
-                width, height, zoom, dpr, bearing);
+    SPDLOG_INFO("viewport   {}x{} logical at z{:.1f}, {}x device pixel ratio, bearing {:.0f}, "
+                "pitch {:.0f}",
+                width, height, zoom, dpr, bearing, pitch);
     SPDLOG_INFO("backend    {} ({}x MSAA)", gpu->backendName().toStdString(),
                 gpu->stats().sampleCount);
     SPDLOG_INFO("tiles      {} decoded, {} absent, {} vertices, {:.0f} ms to load+tessellate",
@@ -316,13 +359,13 @@ int main(int argc, char** argv)
 
         const Timer frameTimer;
 
-        const Camera camera { here, zoom, bearing };
+        const Camera camera { here, zoom, bearing, pitch };
         const Projection projection(camera, width, height, dpr);
 
         // Exactly what the widget does: the drawn set in its stable order, and
         // the prefetch ring sorted centre-outward for the request path only.
         const Timer visibleTimer;
-        auto sets = projection.visibleTilesWithMargin(z, 1);
+        auto sets = projection.visibleTilesWithMargin(z, 1, archiveMin);
         const std::vector<TileId> wanted = sets.drawn;
         projection.sortCentreOutward(sets.withMargin);
         visible.add(visibleTimer.ms());
@@ -357,6 +400,12 @@ int main(int argc, char** argv)
         const Timer renderTimer;
         const QImage& gpuFrame = gpu->render(projection, batches, style, background);
         render.add(renderTimer.ms());
+
+        if (!dumpPath.empty() && i == frames - 1)
+        {
+            gpuFrame.save(QString::fromStdString(dumpPath));
+            SPDLOG_INFO("frame {} written to {}", i, dumpPath);
+        }
 
         QPainter painter(&canvas);
         if (!gpuFrame.isNull())

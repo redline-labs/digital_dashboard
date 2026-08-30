@@ -11,6 +11,9 @@
 #include "scope/settings.h"
 
 #include "map_panel/config.h"
+#include "map_controls/compass_button.h"
+#include "map_controls/recentre_button.h"
+#include "map_controls/view_mode_button.h"
 #include "map_panel/stats.h"
 #include "map_panel/tile_reader.h"
 #include "map_panel/track_builder.h"
@@ -99,6 +102,23 @@ class MapPanel : public Panel
 
     const config_t& getConfig() const { return cfg_; }
     void applyConfig(const config_t& cfg);
+
+    // The session's mode toggles -- what the compass and view buttons flip.
+    // Public because a control (or a test) flips them; the CONFIG's fields are
+    // what the workspace opens with, and these never write back to it.
+    void cycleOrientation();
+    void toggleViewMode();
+    MapPanelOrientation_t effectiveOrientation() const
+    {
+        return orientation_override_.value_or(cfg_.orientation);
+    }
+    MapViewMode_t effectiveViewMode() const
+    {
+        return view_override_.value_or(cfg_.view_mode);
+    }
+    // Drop the pan and the wheel zoom and go back to Follow Cursor -- the way
+    // back that the panel never had; see stats().camera_moved.
+    void recentreCamera();
     stats_t stats() const;
 
     // Where the archives are, by the name cfg_.tileset refers to them by.
@@ -113,6 +133,7 @@ class MapPanel : public Panel
 
   protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
     // THE GESTURE ARBITRATION, and it is the whole interaction model: a press
     // landing on the drawn track scrubs the SHARED time base; a press anywhere
@@ -278,6 +299,24 @@ class MapPanel : public Panel
     bool marker_valid_ = false;
     double marker_t_ = 0.0;
     map_render::Coordinate marker_coordinate_;
+
+    // Course over ground at the marker, smoothed over its neighbours --
+    // computed beside the marker each paint, consumed by camera() when the
+    // orientation is course_up. Empty when the track is too short to say.
+    std::optional<double> course_deg_;
+
+    // The mode toggles, mirroring drag_centre_/drag_zoom_ above: empty means
+    // "as configured", set means a button was pressed this session. Never
+    // written to cfg_ -- a view button must not edit the workspace.
+    std::optional<MapPanelOrientation_t> orientation_override_;
+    std::optional<MapViewMode_t> view_override_;
+
+    // Null unless the panel is interactive. Corner chrome, top-right --
+    // paintLegend owns the bottom-right.
+    map_controls::RecentreButton* recentre_ = nullptr;
+    map_controls::CompassButton* compass_ = nullptr;
+    map_controls::ViewModeButton* view_mode_ = nullptr;
+    void layOutMapButtons();
 };
 
 }  // namespace scope

@@ -23,7 +23,19 @@
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
 
+#include "map_render/camera_modes.h"
+#include "map_render/projection.h"
 #include "map_render/style.h"
+
+// Which way up the map is. north_up holds the configured bearing; heading_up
+// turns the map so the vehicle's heading points up the screen, which needs a
+// heading expression to be feeding the widget. The old `rotate_with_heading`
+// bool became this enum -- a YAML layout still carrying the bool gets a
+// warning naming the unknown key and the default, not a failure.
+REFLECT_ENUM(MapOrientation_t,
+    north_up,
+    heading_up
+)
 
 REFLECT_STRUCT(MapConfig_t,
     (std::string, tileset, "socal",
@@ -86,8 +98,12 @@ REFLECT_STRUCT(MapConfig_t,
 
     (bool, follow_vehicle, true,
         "Follow Vehicle", "Keep the camera centred on the vehicle position as it arrives"),
-    (bool, rotate_with_heading, false,
-        "Rotate With Heading", "Turn the map so the vehicle's heading points up. Needs a heading expression"),
+    (MapOrientation_t, orientation, MapOrientation_t::north_up,
+        "Orientation", "north_up keeps the configured bearing; heading_up turns the map so the vehicle's heading points up. Needs a heading expression. The compass button cycles this for the session"),
+    (MapViewMode_t, view_mode, MapViewMode_t::top_down,
+        "View Mode", "top_down is the flat map; perspective tilts the view back to Pitch. The view button toggles this for the session"),
+    (double, pitch, 45.0,
+        "Pitch", "How far the perspective view tilts off straight-down, in degrees. Only used in perspective mode"),
     (bool, show_track, true,
         "Show Track", "Draw a trail behind the vehicle"),
     (uint16_t, track_points, 600,
@@ -164,6 +180,12 @@ inline std::vector<std::string> validate(MapConfig_t& config)
     // usable. It no longer affects which TILES are asked for: that range comes
     // from the server.
     config_codec::limits::orderRange(config.min_zoom, config.max_zoom, "the zoom range", notes);
+
+    // Pitch clamps into what the projection is defined for: kMaxPitch is where
+    // the top of the screen would leave the ground plane, and below 10 degrees
+    // a "perspective" is a flat map that lies about its mode.
+    config_codec::limits::clampInto<double>(config.pitch, 10.0, map_render::kMaxPitch, "pitch",
+                                            notes);
 
     // Bearing wraps rather than clamping: 350 and -10 are the same heading, and
     // clamping would turn a legitimate north-north-west into due north.

@@ -3,6 +3,8 @@
 
 #include "config_codec/config_limits.h"
 #include "helpers/color.h"
+#include "map_render/camera_modes.h"
+#include "map_render/projection.h"
 #include "map_render/style.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
@@ -32,6 +34,16 @@ REFLECT_ENUM(map_color_ramp_t,
     // a track overlay, a highlighted route -- and a second colour axis would
     // fight it.
     gray
+)
+
+// Which way up the map is. The panel has no live vehicle heading, so its
+// analogue of the dashboard's heading_up is COURSE over ground at the shared
+// cursor: the direction the recorded drive was travelling at the marker,
+// smoothed over a few points against GPS jitter. north_up keeps the
+// configured bearing.
+REFLECT_ENUM(MapPanelOrientation_t,
+    north_up,
+    course_up
 )
 
 // One signal the panel reads.
@@ -105,6 +117,14 @@ REFLECT_STRUCT(MapPanelConfig_t,
     // the map along the drive.
     (bool, follow_cursor, true,
         "Follow Cursor", "Keep the camera on the marker as the shared cursor moves"),
+    (MapPanelOrientation_t, orientation, MapPanelOrientation_t::north_up,
+        "Orientation", "north_up keeps the configured bearing; course_up turns the map so the drive's direction at the cursor points up. The compass button cycles this for the session"),
+    (double, bearing, 0.0,
+        "Bearing", "Map rotation in degrees clockwise from north, used in north_up"),
+    (MapViewMode_t, view_mode, MapViewMode_t::top_down,
+        "View Mode", "top_down is the flat map; perspective tilts the view back to Pitch. The view button toggles this for the session"),
+    (double, pitch, 45.0,
+        "Pitch", "How far the perspective view tilts off straight-down, in degrees. Only used in perspective mode"),
 
     // THE REASON A MAP BELONGS IN A REVIEW TOOL, and the one direction the
     // dashboard widget has no equivalent of: clicking the drawn track moves the
@@ -191,6 +211,15 @@ inline std::vector<std::string> validate(MapPanelConfig_t& cfg)
     config_codec::limits::orderRange(cfg.min_zoom, cfg.max_zoom, "the zoom range", notes);
 
     config_codec::limits::clampInto<uint16_t>(cfg.marker_size, 2u, 64u, "marker_size", notes);
+
+    // Pitch clamps into what the projection is defined for; bearing wraps
+    // rather than clamping -- 350 and -10 are the same heading.
+    config_codec::limits::clampInto<double>(cfg.pitch, 10.0, map_render::kMaxPitch, "pitch",
+                                            notes);
+    if (cfg.bearing < 0.0 || cfg.bearing >= 360.0)
+    {
+        cfg.bearing = cfg.bearing - (360.0 * std::floor(cfg.bearing / 360.0));
+    }
     config_codec::limits::clampInto<double>(cfg.track_width, 0.5, 20.0, "track_width", notes);
     config_codec::limits::clampInto<double>(cfg.view_track_width, 0.5, 24.0, "view_track_width",
                                             notes);

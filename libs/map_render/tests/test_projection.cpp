@@ -21,6 +21,7 @@
 #include <functional>
 #include <unordered_set>
 #include <cmath>
+#include <numbers>
 #include <string>
 
 namespace
@@ -752,6 +753,362 @@ void test_a_tile_is_drawn_at_its_native_size_when_zoom_matches()
 
 } // namespace
 
+// ------------------------------------------------------------------- pitch
+
+void test_an_unpitched_camera_takes_the_flat_path()
+{
+    // pitch 0 must be indistinguishable from the projection as it was before
+    // pitch existed -- the widget runs at 0 except in perspective mode, and
+    // Stage-gating relies on these frames not changing by a bit.
+    const Projection projection(Camera { kIrvine, 14.0, 30.0 }, 800.0, 600.0);
+    check(!projection.pitched(), "pitch 0 reports unpitched");
+
+    const auto transform = projection.tileTransform(TileId { 14, 2828, 6562 });
+    check(!transform.pitched, "and hands out an unpitched tile transform");
+    check(near(transform.scaleAt(0.3, 0.7), 1.0, 1e-12), "whose scale is exactly 1");
+}
+
+void test_the_centre_is_invariant_under_pitch()
+{
+    // The tilt pivots about the viewport centre, so the camera's own position
+    // must not move when the view tilts -- that is what makes toggling the
+    // perspective read as the SAME place leaning back.
+    const Projection projection(Camera { kIrvine, 14.0, 0.0, 45.0 }, 800.0, 600.0);
+
+    const ScreenPoint centre = projection.screenFor(kIrvine);
+    check(near(centre.x, 400.0, 1e-6), "the camera centre stays at half the width under pitch");
+    check(near(centre.y, 300.0, 1e-6), "and half the height");
+}
+
+void test_a_pitched_point_lands_where_the_formula_says()
+{
+    // Worked by hand from the tilt: a point d pixels up-screen on the flat map
+    // lands at cy - d*cos(p)*f/(f + d*sin(p)), with f = 1.5 * height. Computed
+    // here from first principles, not by calling the code under test.
+    const double height = 600.0;
+    const double focal = 1.5 * height;
+    const double pitch = 45.0 * std::numbers::pi / 180.0;
+    const double d = 200.0;
+
+    // A coordinate that the FLAT camera puts exactly d pixels above centre.
+    const Projection flat(Camera { kIrvine, 14.0, 0.0 }, 800.0, height);
+    const Coordinate up = flat.coordinateForScreen(ScreenPoint { 400.0, 300.0 - d });
+
+    const Projection pitched(Camera { kIrvine, 14.0, 0.0, 45.0 }, 800.0, height);
+    const ScreenPoint seen = pitched.screenFor(up);
+
+    const double expectedY = 300.0 - (d * std::cos(pitch) * focal / (focal + (d * std::sin(pitch))));
+    check(near(seen.x, 400.0, 1e-9), "a point straight up-screen stays on the centre line");
+    check(near(seen.y, expectedY, 1e-6), "and recedes by exactly the worked amount");
+    check(seen.y > 300.0 - d, "which is less far up than on the flat map");
+
+    // The mirror point below the centre comes CLOSER instead.
+    const Coordinate down = flat.coordinateForScreen(ScreenPoint { 400.0, 300.0 + d });
+    const ScreenPoint nearer = pitched.screenFor(down);
+    const double expectedDown = 300.0 + (d * std::cos(pitch) * focal / (focal - (d * std::sin(pitch))));
+    check(near(nearer.y, expectedDown, 1e-6), "a point below the centre is magnified toward the eye");
+    check(nearer.y > 300.0 + d * std::cos(pitch), "and lands lower than pure foreshortening alone");
+}
+
+void test_pitch_round_trips_everywhere_it_is_defined()
+{
+    // The inverse was derived by algebra; only a round-trip over the whole
+    // screen at several pitches and bearings says the algebra was right.
+    const double pitches[] = { 15.0, 30.0, 45.0, 60.0 };
+    const double bearings[] = { 0.0, 45.0, 210.0 };
+    const ScreenPoint points[] = { { 0.0, 0.0 },     { 800.0, 0.0 }, { 0.0, 600.0 },
+                                   { 800.0, 600.0 }, { 400.0, 300.0 }, { 123.0, 45.0 },
+                                   { 700.0, 580.0 } };
+
+    for (const double pitch : pitches)
+    {
+        for (const double bearing : bearings)
+        {
+            const Projection projection(Camera { kIrvine, 14.0, bearing, pitch }, 800.0, 600.0);
+            for (const ScreenPoint& point : points)
+            {
+                const ScreenPoint back =
+                    projection.screenFor(projection.worldForScreen(point));
+                check(near(back.x, point.x, 1e-6) && near(back.y, point.y, 1e-6),
+                      "screen -> world -> screen round-trips at pitch " + std::to_string(pitch) +
+                          " bearing " + std::to_string(bearing) + " (" + std::to_string(point.x) +
+                          ", " + std::to_string(point.y) + ")");
+            }
+        }
+    }
+}
+
+void test_every_screen_pixel_meets_the_ground_at_the_pitch_cap()
+{
+    // The reason kMaxPitch exists: at 60 degrees the horizon is still above
+    // the top edge, so all four corners -- the extreme rays -- must invert to
+    // finite ground and project straight back.
+    const Projection projection(Camera { kIrvine, 14.0, 30.0, 60.0 }, 800.0, 600.0);
+
+    const ScreenPoint corners[] = { { 0.0, 0.0 }, { 800.0, 0.0 }, { 0.0, 600.0 },
+                                    { 800.0, 600.0 } };
+    for (const ScreenPoint& corner : corners)
+    {
+        const auto world = projection.worldForScreen(corner);
+        check(std::isfinite(world.x) && std::isfinite(world.y),
+              "a corner inverts to finite ground at the pitch cap");
+        const ScreenPoint back = projection.screenFor(world);
+        check(near(back.x, corner.x, 1e-6) && near(back.y, corner.y, 1e-6),
+              "and projects straight back to the corner");
+    }
+
+    // A point far BEHIND the eye still projects to something finite (the w
+    // clamp), and lands well below the bottom edge where bounds tests reject
+    // it -- total, and harmless.
+    const Coordinate farBehind { kIrvine.latitude - 2.0, kIrvine.longitude };
+    const ScreenPoint behind = projection.screenFor(farBehind);
+    check(std::isfinite(behind.x) && std::isfinite(behind.y),
+          "a point behind the camera still projects finitely");
+    check(behind.y > 600.0, "and lands below the bottom edge, never inside the frame");
+}
+
+void test_pitch_is_clamped_to_the_cap()
+{
+    // A camera asking for 80 degrees gets 60: past the cap the top of the
+    // screen leaves the ground plane and the inverse stops existing.
+    const Projection wild(Camera { kIrvine, 14.0, 0.0, 80.0 }, 800.0, 600.0);
+    const Projection capped(Camera { kIrvine, 14.0, 0.0, map_render::kMaxPitch }, 800.0, 600.0);
+
+    const ScreenPoint point { 250.0, 80.0 };
+    const auto a = wild.screenFor(wild.worldForScreen(point));
+    const auto sameGround = wild.screenFor(capped.worldForScreen(point));
+    check(near(a.x, point.x, 1e-6) && near(a.y, point.y, 1e-6), "an over-cap pitch still inverts");
+    check(near(sameGround.x, point.x, 1e-6) && near(sameGround.y, point.y, 1e-6),
+          "and behaves exactly as the cap");
+}
+
+void test_the_tile_transform_agrees_with_the_projection_under_pitch()
+{
+    // The label pass places every glyph through TileTransform::map, and the
+    // marker goes through screenFor. If the two disagree, labels float off
+    // their roads -- only under pitch, only away from the centre.
+    const Projection projection(Camera { kIrvine, 14.0, 25.0, 50.0 }, 800.0, 600.0);
+
+    const TileId tile { 14, 2828, 6562 };
+    const auto transform = projection.tileTransform(tile);
+    check(transform.pitched, "the tile transform carries the tilt");
+
+    const double side = std::exp2(14.0);
+    const double locals[][2] = { { 0.0, 0.0 }, { 1.0, 1.0 }, { 0.3, 0.7 }, { 0.9, 0.1 } };
+    for (const auto& local : locals)
+    {
+        const ScreenPoint viaTransform = transform.map(local[0], local[1]);
+        const ScreenPoint viaProjection = projection.screenFor(map_render::WorldPoint {
+            (double(tile.x) + local[0]) / side, (double(tile.y) + local[1]) / side });
+        check(near(viaTransform.x, viaProjection.x, 1e-6) &&
+                  near(viaTransform.y, viaProjection.y, 1e-6),
+              "TileTransform::map matches screenFor at local (" + std::to_string(local[0]) + ", " +
+                  std::to_string(local[1]) + ")");
+    }
+}
+
+void test_scale_shrinks_up_screen_and_grows_down_screen()
+{
+    const Projection projection(Camera { kIrvine, 14.0, 0.0, 45.0 }, 800.0, 600.0);
+    const auto transform = projection.tileTransform(TileId { 14, 2828, 6562 });
+
+    // The camera's own tile: find the local y of the viewport centre, then
+    // sample above and below it.
+    const ScreenPoint origin = projection.tileOrigin(TileId { 14, 2828, 6562 });
+    const double centreLocalY = (300.0 - origin.y) / projection.tileScreenSize(14);
+
+    const double atCentre = transform.scaleAt(0.5, centreLocalY);
+    const double above = transform.scaleAt(0.5, centreLocalY - 0.3);
+    const double below = transform.scaleAt(0.5, centreLocalY + 0.3);
+    check(near(atCentre, 1.0, 1e-9), "scale is exactly 1 at the viewport centre");
+    check(above < 1.0, "smaller up-screen, where the ground recedes");
+    check(below > 1.0, "larger down-screen, where it approaches the eye");
+}
+
+// ------------------------------------------------------- pitched tile walk
+
+void test_a_nearly_flat_descent_agrees_with_the_grid_walk()
+{
+    // The descent is a different algorithm; at (almost) no pitch it must reach
+    // the same answer as the grid walk or the two modes would draw different
+    // maps for the same view.
+    const Projection flat(Camera { kIrvine, 14.0, 0.0 }, 800.0, 600.0);
+    const Projection tipped(Camera { kIrvine, 14.0, 0.0, 0.05 }, 800.0, 600.0);
+
+    const auto grid = flat.visibleTilesWithMargin(14, 0);
+    const auto descent = tipped.visibleTilesWithMargin(14, 0);
+
+    const auto asSet = [](const std::vector<TileId>& tiles) {
+        std::unordered_set<TileId, TileIdHash> set(tiles.begin(), tiles.end());
+        return set;
+    };
+    check(asSet(grid.drawn) == asSet(descent.drawn),
+          "a hair of pitch draws the same tile set as the flat grid walk");
+}
+
+void test_the_pitched_leaves_partition_the_viewport()
+{
+    // Every screen pixel must be covered by EXACTLY one drawn leaf: a missed
+    // pixel is a hole in the map, a doubled one is the same ground drawn
+    // twice, fighting itself at the seam.
+    const double pitches[] = { 30.0, 45.0, 60.0 };
+    for (const double pitch : pitches)
+    {
+        const Projection projection(Camera { kIrvine, 14.0, 35.0, pitch }, 800.0, 600.0);
+        const auto tiles = projection.visibleTilesWithMargin(14, 0);
+        check(!tiles.truncated, "the walk is not truncated");
+
+        for (double sy = 3.7; sy < 600.0; sy += 43.1)
+        {
+            for (double sx = 2.3; sx < 800.0; sx += 41.7)
+            {
+                const auto world = projection.worldForScreen(ScreenPoint { sx, sy });
+                int owners = 0;
+                for (const TileId& id : tiles.drawn)
+                {
+                    const double side = std::exp2(static_cast<double>(id.z));
+                    const double tx = world.x * side;
+                    const double ty = world.y * side;
+                    if (tx >= id.x && tx < id.x + 1 && ty >= id.y && ty < id.y + 1)
+                    {
+                        ++owners;
+                    }
+                }
+                check(owners == 1, "screen point (" + std::to_string(sx) + ", " +
+                                       std::to_string(sy) + ") at pitch " + std::to_string(pitch) +
+                                       " is owned by exactly one leaf, not " +
+                                       std::to_string(owners));
+            }
+        }
+    }
+}
+
+void test_the_pitched_walk_is_deterministic()
+{
+    const Camera camera { kIrvine, 14.0, 35.0, 55.0 };
+    const Projection a(camera, 800.0, 600.0);
+    const Projection b(camera, 800.0, 600.0);
+
+    const auto first = a.visibleTilesWithMargin(14, 2);
+    const auto second = b.visibleTilesWithMargin(14, 2);
+    check(first.drawn == second.drawn && first.withMargin == second.withMargin,
+          "the same camera walks to the identical ordered lists");
+}
+
+void test_the_far_field_is_coarser_than_the_near_field()
+{
+    // The point of the descent. At a steep pitch the top of the screen is far
+    // away and must come back at a shallower zoom than the bottom.
+    const Projection projection(Camera { kIrvine, 14.0, 0.0, 60.0 }, 800.0, 600.0);
+    const auto tiles = projection.visibleTilesWithMargin(14, 0);
+
+    int nearZ = 0;
+    int farZ = 99;
+    for (const TileId& id : tiles.drawn)
+    {
+        nearZ = std::max(nearZ, int(id.z));
+        farZ = std::min(farZ, int(id.z));
+    }
+    check(nearZ == 14, "the near field is at the target zoom");
+    check(farZ < 14, "and the far field is shallower");
+
+    // And it is the far field: every shallow leaf must sit above (up-screen
+    // of) the deepest ones. Compare centres through the projection.
+    double lowestShallow = 1e300;
+    double highestDeep = -1e300;
+    for (const TileId& id : tiles.drawn)
+    {
+        const double side = std::exp2(static_cast<double>(id.z));
+        const auto centre = projection.screenFor(
+            map_render::WorldPoint { (id.x + 0.5) / side, (id.y + 0.5) / side });
+        if (int(id.z) == nearZ)
+        {
+            highestDeep = std::max(highestDeep, centre.y);
+        }
+        if (int(id.z) == farZ)
+        {
+            lowestShallow = std::min(lowestShallow, centre.y);
+        }
+    }
+    check(lowestShallow < highestDeep, "the shallow leaves sit up-screen of the deep ones");
+}
+
+void test_the_pitched_walk_stays_within_the_frame_budget()
+{
+    // The renderer preallocates uniforms for 192 tiles a frame. The descent
+    // exists to keep a pitched view inside that; a count near it would mean
+    // the leaf test is wrong.
+    const double zooms[] = { 10.0, 14.0, 16.0 };
+    const struct { double w, h; } sizes[] = { { 660.0, 640.0 }, { 2560.0, 1440.0 } };
+    for (const double zoom : zooms)
+    {
+        for (const auto& size : sizes)
+        {
+            const Projection projection(Camera { kIrvine, zoom, 30.0, 60.0 }, size.w, size.h);
+            const auto tiles = projection.visibleTilesWithMargin(
+                static_cast<std::uint8_t>(zoom), 0);
+            check(tiles.drawn.size() < 100,
+                  "at zoom " + std::to_string(zoom) + " in " + std::to_string(int(size.w)) + "x" +
+                      std::to_string(int(size.h)) + " the pitched view draws " +
+                      std::to_string(tiles.drawn.size()) + " tiles, well inside the budget");
+        }
+    }
+}
+
+void test_the_leaf_floor_is_respected()
+{
+    // An archive that starts at z12 cannot serve the z9 leaves a steep pitch
+    // would like; the floor forces those regions to subdivide down to
+    // something that exists.
+    const Projection projection(Camera { kIrvine, 14.0, 0.0, 60.0 }, 800.0, 600.0);
+    const auto tiles = projection.visibleTilesWithMargin(14, 0, 12);
+    for (const TileId& id : tiles.drawn)
+    {
+        check(id.z >= 12, "no leaf is shallower than the archive floor");
+    }
+
+    // And the floor changes nothing about coverage: same partition property.
+    const auto unfloored = projection.visibleTilesWithMargin(14, 0);
+    check(tiles.drawn.size() >= unfloored.drawn.size(),
+          "the floor can only add tiles, never remove coverage");
+}
+
+void test_the_margin_ring_is_a_superset_under_pitch()
+{
+    const Projection projection(Camera { kIrvine, 14.0, 20.0, 45.0 }, 800.0, 600.0);
+    const auto tiles = projection.visibleTilesWithMargin(14, 2);
+
+    std::unordered_set<TileId, TileIdHash> ring(tiles.withMargin.begin(),
+                                                tiles.withMargin.end());
+    for (const TileId& id : tiles.drawn)
+    {
+        check(ring.count(id) == 1, "every drawn leaf is also in the margined list");
+    }
+    check(tiles.withMargin.size() > tiles.drawn.size(),
+          "and the margin actually adds prefetch tiles");
+}
+
+void test_centre_outward_sorting_handles_mixed_zoom_lists()
+{
+    // The pitched request list mixes zoom levels; the sort must compare
+    // world-space distances or a z9 tile at the horizon sorts as if it were a
+    // z14 neighbour.
+    const Projection projection(Camera { kIrvine, 14.0, 0.0, 60.0 }, 800.0, 600.0);
+    auto tiles = projection.visibleTilesWithMargin(14, 1).withMargin;
+    projection.sortCentreOutward(tiles);
+
+    // The first tile after sorting must contain (or nearly contain) the
+    // camera; a unit mix-up puts a far coarse tile first.
+    const auto world = map_render::worldFor(kIrvine);
+    const TileId& first = tiles.front();
+    const double side = std::exp2(static_cast<double>(first.z));
+    const double dx = ((first.x + 0.5) / side) - world.x;
+    const double dy = ((first.y + 0.5) / side) - world.y;
+    const double tileSpan = 1.0 / side;
+    check(std::abs(dx) <= tileSpan && std::abs(dy) <= tileSpan,
+          "the nearest-sorted request list starts at the camera");
+}
+
 int main()
 {
     spdlog::set_level(spdlog::level::info);
@@ -790,6 +1147,24 @@ int main()
 
     test_tile_placement_matches_the_projection();
     test_a_tile_is_drawn_at_its_native_size_when_zoom_matches();
+
+    test_an_unpitched_camera_takes_the_flat_path();
+    test_the_centre_is_invariant_under_pitch();
+    test_a_pitched_point_lands_where_the_formula_says();
+    test_pitch_round_trips_everywhere_it_is_defined();
+    test_every_screen_pixel_meets_the_ground_at_the_pitch_cap();
+    test_pitch_is_clamped_to_the_cap();
+    test_the_tile_transform_agrees_with_the_projection_under_pitch();
+    test_scale_shrinks_up_screen_and_grows_down_screen();
+
+    test_a_nearly_flat_descent_agrees_with_the_grid_walk();
+    test_the_pitched_leaves_partition_the_viewport();
+    test_the_pitched_walk_is_deterministic();
+    test_the_far_field_is_coarser_than_the_near_field();
+    test_the_pitched_walk_stays_within_the_frame_budget();
+    test_the_leaf_floor_is_respected();
+    test_the_margin_ring_is_a_superset_under_pitch();
+    test_centre_outward_sorting_handles_mixed_zoom_lists();
 
     if (failures != 0)
     {

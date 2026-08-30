@@ -324,6 +324,7 @@ class GpuRenderer
         Coordinate center;
         double zoom { 0.0 };
         double bearing { 0.0 };
+        double pitch { 0.0 };
         float widthScale { 0.0F };
         QRgb background { 0 };
         // The per-layer zoom floors, which the draw loop culls whole layers on
@@ -349,7 +350,8 @@ class GpuRenderer
         bool scalarsEqual(const FrameKey& other) const
         {
             return size == other.size && center == other.center && zoom == other.zoom &&
-                   bearing == other.bearing && widthScale == other.widthScale &&
+                   bearing == other.bearing && pitch == other.pitch &&
+                   widthScale == other.widthScale &&
                    background == other.background && highlightColour == other.highlightColour &&
                    highlightWidth == other.highlightWidth &&
                    layerMinZooms == other.layerMinZooms;

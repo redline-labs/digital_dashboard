@@ -65,6 +65,10 @@ add_subdirectory(map_wire)
 # without reaching into the dashboard's include tree. After mvt, which it
 # decodes tiles with; it knows nothing about where the bytes came from.
 add_subdirectory(map_render)
+# The floating buttons both map surfaces overlay on their maps. QWidgets,
+# which is exactly what map_render must not hold -- hence a sibling, after it
+# only for reading order; it links only Qt.
+add_subdirectory(map_controls)
 # The MOTOTRBO radio protocols: XNL framing and authentication, XCMP commands,
 # the on-air control plane, and the NAI data service codecs. Pure bytes, no
 # I/O -- `xpr` sits above it with the sockets, the same way bd992 sits above

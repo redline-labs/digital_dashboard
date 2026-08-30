@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace scope
 {
@@ -180,6 +181,25 @@ MapPanel::MapPanel(const config_t& cfg, DataSource& source, double history_secon
     if (!gpu_)
     {
         SPDLOG_ERROR("Panel '{}': no GPU backend; the basemap will not draw.", cfg_.title);
+    }
+
+    if (cfg_.interactive)
+    {
+        const QColor glyph = qt_helpers::toQColor(cfg_.style.label_text);
+        const QColor disc = qt_helpers::toQColor(cfg_.style.label_halo);
+
+        recentre_ = new map_controls::RecentreButton(glyph, disc, this);
+        recentre_->hide();
+        connect(recentre_, &QAbstractButton::clicked, this, &MapPanel::recentreCamera);
+
+        compass_ = new map_controls::CompassButton(glyph, disc, this);
+        connect(compass_, &QAbstractButton::clicked, this, &MapPanel::cycleOrientation);
+
+        view_mode_ = new map_controls::ViewModeButton(glyph, disc, this);
+        view_mode_->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
+        connect(view_mode_, &QAbstractButton::clicked, this, &MapPanel::toggleViewMode);
+
+        layOutMapButtons();
     }
 
     rebindAll();
@@ -736,7 +756,14 @@ map_render::Camera MapPanel::camera() const
 {
     map_render::Camera out;
     out.zoom = drag_zoom_.value_or(cfg_.zoom);
-    out.bearing = 0.0;
+    // The modes, not the raw config: the buttons override for the session.
+    // Orientation is independent of the centre on purpose -- panning away
+    // does not straighten the map, and recentring does not turn it.
+    out.bearing = (effectiveOrientation() == MapPanelOrientation_t::course_up &&
+                   course_deg_.has_value())
+                      ? *course_deg_
+                      : cfg_.bearing;
+    out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? cfg_.pitch : 0.0;
 
     if (drag_centre_.has_value())
     {
@@ -752,6 +779,61 @@ map_render::Camera MapPanel::camera() const
 
     out.center = map_render::Coordinate{cfg_.center_latitude, cfg_.center_longitude};
     return out;
+}
+
+void MapPanel::cycleOrientation()
+{
+    orientation_override_ = effectiveOrientation() == MapPanelOrientation_t::north_up
+                                ? MapPanelOrientation_t::course_up
+                                : MapPanelOrientation_t::north_up;
+    update();
+}
+
+void MapPanel::toggleViewMode()
+{
+    view_override_ = effectiveViewMode() == MapViewMode_t::top_down
+                         ? MapViewMode_t::perspective
+                         : MapViewMode_t::top_down;
+    update();
+}
+
+void MapPanel::recentreCamera()
+{
+    // Both, deliberately: in this panel the wheel breaks Follow Cursor too
+    // (unlike the dashboard widget), so coming back means coming all the way
+    // back to the configured zoom as well.
+    drag_centre_.reset();
+    drag_zoom_.reset();
+    layOutMapButtons();
+    update();
+}
+
+void MapPanel::layOutMapButtons()
+{
+    if (compass_ == nullptr)
+    {
+        return;
+    }
+
+    const int size = map_controls::MapButton::kSize;
+    const int margin = map_controls::MapButton::kMargin;
+    const bool room = width() > (size + (2 * margin)) && height() > (size + (2 * margin));
+
+    // Top-right: the legend owns the bottom-right corner. The recentre button
+    // appears only once the camera has been moved -- a button that is always
+    // there is a button that is usually a lie.
+    recentre_->setVisible(room &&
+                          (drag_centre_.has_value() || drag_zoom_.has_value()));
+    compass_->setVisible(room);
+    view_mode_->setVisible(room);
+    map_controls::layOutStack({ compass_, view_mode_, recentre_ }, QSize(width(), height()),
+                              Qt::TopRightCorner);
+}
+
+void MapPanel::resizeEvent(QResizeEvent* event)
+{
+    Panel::resizeEvent(event);
+    layOutMapButtons();
 }
 
 void MapPanel::refreshTiles(const map_render::Projection& projection)
@@ -783,7 +865,9 @@ void MapPanel::refreshTiles(const map_render::Projection& projection)
         const TileReader::ZoomRange range = readers_[s]->zoomRange();
         const std::uint8_t z = projection.tileZoom(range.min, range.max);
 
-        auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
+        // The archive floor matters only under pitch, where the far field
+        // walks shallower than z.
+        auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles, range.min);
         visible_[s] = std::move(tiles.drawn);
 
         // Sorted centre-outward HERE and not in visible_: the request order
@@ -793,8 +877,9 @@ void MapPanel::refreshTiles(const map_render::Projection& projection)
         projection.sortCentreOutward(tiles.withMargin);
 
         // The coarse overview goes on the END, so it can only ever spend slots
-        // the viewport did not want.
-        if (z > range.min)
+        // the viewport did not want. Not under pitch: the descent's far-field
+        // leaves ARE the coarse levels.
+        if (z > range.min && !projection.pitched())
         {
             const auto overview = static_cast<std::uint8_t>(
                 std::max(int(z) - int(kOverviewZoomDelta), int(range.min)));
@@ -912,14 +997,44 @@ void MapPanel::paintEvent(QPaintEvent* /*event*/)
     // Cursor makes the camera depend on it.
     marker_t_ = readoutTime();
     marker_valid_ = false;
+    course_deg_.reset();
     if (const std::optional<std::size_t> index = track::at(track_, marker_t_))
     {
         marker_valid_ = true;
         marker_coordinate_ = map_render::coordinateFor(track_[*index].world);
+
+        // Course over ground at the cursor, from the marker's neighbours --
+        // +/- 3 points smooths GPS jitter without lagging a real corner. In
+        // Mercator world coordinates the angle is exact (the projection is
+        // conformal); y grows southward, hence the negation.
+        const std::size_t behind = *index >= 3 ? *index - 3 : 0;
+        const std::size_t ahead = std::min(*index + 3, track_.size() - 1);
+        if (ahead > behind)
+        {
+            const map_render::WorldPoint& from = track_[behind].world;
+            const map_render::WorldPoint& to = track_[ahead].world;
+            const double dx = to.x - from.x;
+            const double dy = to.y - from.y;
+            if (dx != 0.0 || dy != 0.0)
+            {
+                course_deg_ = std::atan2(dx, -dy) * 180.0 / std::numbers::pi;
+            }
+        }
     }
 
     const map_render::Projection projection(camera(), width(), height(),
                                             devicePixelRatioF());
+
+    // The chrome mirrors the frame: the needle swings with the very bearing
+    // this frame is drawn at, and the view glyph flips with the mode. Both
+    // early-out when nothing changed. Recentre visibility tracks the drag
+    // state, which mouse handlers change without going through here.
+    if (compass_ != nullptr)
+    {
+        compass_->setBearing(projection.camera().bearing);
+        view_mode_->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
+        layOutMapButtons();
+    }
 
     refreshTiles(projection);
     assembleBatches();
@@ -1300,6 +1415,9 @@ void MapPanel::mouseMoveEvent(QMouseEvent* event)
                                        centre.y - (now.y - press_world_.y)};
     drag_centre_ = map_render::coordinateFor(moved);
     drag_zoom_ = current.zoom;
+    // The recentre button appears the moment there is something to undo --
+    // from the gesture, not the next paint, which an unmapped panel never gets.
+    layOutMapButtons();
     update();
 }
 
@@ -1342,6 +1460,7 @@ void MapPanel::wheelEvent(QWheelEvent* event)
         map_render::WorldPoint{centre.x - (moved_anchor.x - anchor.x),
                                centre.y - (moved_anchor.y - anchor.y)});
     drag_zoom_ = zoom;
+    layOutMapButtons();
     update();
 }
 
@@ -1392,6 +1511,8 @@ MapPanelStats_t MapPanel::stats() const
     out.camera_latitude = cam.center.latitude;
     out.camera_longitude = cam.center.longitude;
     out.camera_zoom = cam.zoom;
+    out.camera_bearing = cam.bearing;
+    out.camera_pitch = cam.pitch;
     out.camera_moved = drag_centre_.has_value();
 
     for (const auto& reader : readers_)

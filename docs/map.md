@@ -67,67 +67,65 @@ What it gains, beyond working offscreen: **no glyph PBFs**. `QPainter` has
 fonts, so there is no font pipeline, no sprite sheet, and no "the map has no
 labels and nothing said why" failure mode.
 
-## What it does not do: 3D
+## 3D: a pitched camera, not extruded geometry
 
-The renderer is **2D only**, by construction rather than by omission:
+The renderer draws a **tilted flat map** — `Camera` has `center`, `zoom`,
+`bearing` and `pitch`. Pitch is degrees off straight-down, capped at
+`kMaxPitch = 60`, and that cap is what keeps the whole thing simple: at 60°
+the horizon line still sits above the top edge of the viewport (0.866
+viewport-heights above centre versus the edge's 0.5, at the 1.5×-height focal
+length), so **every screen pixel intersects the ground plane** and
+`screenFor()`/`worldForScreen()` stay total functions with exact closed-form
+inverses. No sky, no fallible projection, no horizon clipping.
 
-- `MapVertex` carries `x, y` and a 2D normal, and the triangles that use it are
-  an **index buffer** — a polyline is two vertices per point rather than six per
-  segment, which measured 2.24x smaller on a road-and-lake mix. There is no z,
-  no depth buffer,
-  and no depth test — correctness comes from painter's-algorithm draw order
-  (layer-major across tiles), which works because everything is coplanar. Note
-  *coplanar*, not *axis-aligned*: tilting the camera does not break it.
-- `Camera` has `center`, `zoom` and `bearing`. There is **no pitch**, so the
-  view is always straight down; the MVP is an orthographic projection with a
-  rotation about z.
-- Buildings are drawn as **footprints**, not extrusions. The data is there and
-  unused: the `building` layer in the bench archive carries `render_height` and
-  `render_min_height`, and the tessellator reads neither.
+- **No depth buffer, still.** Everything drawn is coplanar on the ground, so
+  layer-major painter's order stays correct at any camera angle. `map.vert`
+  was already projective — `gl_Position = mvp * vec4(p, 0, 1)` — and pitch
+  just makes `w` finally vary. The tilt is one matrix per frame, composed
+  in device space between `screenToClip()` and the flat per-tile placement;
+  `tileOrigin()` deliberately stays FLAT (rotation, no tilt) so nothing tilts
+  twice — see the header note on it in `projection.h`.
+- **Per-tile LOD.** Under pitch `visibleTilesWithMargin()` switches from the
+  single-zoom grid walk to a quadtree descent: prune tiles whose FLAT-screen
+  quad (an undistorted rotated square — the one space where both shapes are
+  exact and convex) misses the viewport trapezoid, split while a tile would
+  draw wider than `tileSize·√2` at its nearest visible corner, emit the leaf
+  otherwise. Leaves partition the viewport; a 60° frame is a few dozen tiles,
+  not hundreds. The DFS order is a pure function of the emitted set, which is
+  what the renderer's positional batch comparison needs. `minLeafZoom` floors
+  the far field at the archive's own minimum. The overview-ring request is
+  skipped under pitch — the descent's far-field leaves ARE the coarse levels.
+- **Line widths.** Still one `pxPerLocal` scalar per tile, now evaluated at
+  the tile's visible centre. Mixed-zoom LOD bounds a tile to ~tileSize on
+  screen, so within-tile w varies little at the cap; the projective MVP
+  foreshortens the local-space expansion continuously (distant roads narrower,
+  which is what perspective looks like), and only the minimum-width floor and
+  fade quantize per tile. Revisit per-vertex `w` in the shader only if bench
+  screenshots show far-field crawl.
+- **Labels.** `Projection::TileTransform` carries the tilt behind one
+  early-out branch — the flat frame still pays a single predictable compare —
+  and grew `scaleAt(lx, ly)`, the tilt's shrink at a point. The label pass
+  scales glyphs, advances and collision claims by the anchor's scale (clamped
+  to [0.5, 1]; below half size the name is dropped rather than smudged onto
+  the horizon). Duplicates across zoom levels only arrive via stand-in tiles,
+  and the same world point lands on the same pixel, so collision already
+  rejects the copy.
+- Buildings are still drawn as **footprints**, not extrusions. Extrusions are
+  the separate, additive project — the one a depth buffer is actually for —
+  and also need `render_height` carried through `map_build` into the archive.
 
-There is no plan for either: a dash map is read at a glance, and a tilted view
-trades legibility for looks. But they are **two separate projects of very
-different size**, and it is worth not conflating them.
+Measured (`map_bench --pitch`, socal archive, 660×640): whole frame
+0.94 ms flat, 1.39 ms at 60° with bearing 30 — the increase tracks the larger
+visible footprint (tiles, labels), not any per-pixel regression, and the
+pitch-0 path is bit-identical to the old projection (asserted in
+`test_projection.cpp`).
 
-**A tilted camera (pitch) does not need a depth buffer.** Everything drawn is
-coplanar on the ground, so layer-major painter's order stays correct at any
-camera angle, and `map.vert` is already projective — `gl_Position = mvp *
-vec4(p, 0, 1)` with a full `mat4`, where today `w` is always 1. The per-tile
-uniform block survives untouched: it is a model matrix placing a unit quad on
-the ground, times a shared view-projection, and only the shared half changes.
-
-What pitch actually costs, in order:
-
-1. **Per-tile LOD — this is the project.** `refreshTiles()` picks one integer
-   zoom for the whole frame and `tileBounds()` takes the axis-aligned box of
-   four projected screen corners. Under pitch the visible region is a trapezoid
-   running to the horizon, and the top corners have no ground intersection at
-   all. Uniform z14 to the horizon is hundreds to thousands of tiles against a
-   hard `kMaxTilesPerFrame`. It needs a quadtree descent emitting leaves, plus a
-   far-plane cutoff and a pitch cap. Everything downstream already copes:
-   `TileSource` is keyed by `TileId` *across* zooms, so mixed-zoom tile sets are
-   already representable end to end.
-2. **Line widths.** `map.vert` expands lines in tile-local space by
-   `halfPx * widthScale / pxPerLocal`, one constant per tile. Under perspective
-   the screen scale varies *across* a tile, so distant roads shrink to
-   sub-pixel. The fix is to expand in clip space after projection, which wants
-   the viewport size as one more uniform — worth doing regardless, since it
-   decouples road width from tile size.
-3. **Labels.** `Projection::tileTransform()` is a 2D similarity — a scale, a
-   rotation and an offset. Under perspective each point has to go through the
-   full matrix instead; the transform object is already the seam for that, so
-   it is one implementation rather than one per call site. The new problem is
-   that mixed-zoom tiles show the same place twice, so label dedup becomes real
-   work.
-4. **`screenFor()` has to be allowed to fail.** Points behind the camera or
-   above the horizon have no screen position. Four call sites, but the vehicle
-   trail also needs clipping against the horizon or it draws garbage.
-
-**Extruded buildings are the separate, additive project**, and they are what the
-depth buffer is for. They also need height in the tessellator and
-`render_height` carried through `map_build`/`map_rules` into the archive —
-i.e. rebuilding the 512 MB archive. Pitch is worth having on its own; buildings
-are only worth it once pitch exists.
+Both surfaces expose it: the dashboard widget as `view_mode`
+(top_down/perspective) + `pitch` + `orientation` (north_up/heading_up), the
+scope panel with `course_up` instead of heading_up — the panel has no vehicle
+heading, so its analogue is course over ground at the shared cursor, smoothed
+over ±3 track points. The buttons that toggle these live in `libs/map_controls`
+— see "Corner controls" below.
 
 ## How it draws
 
@@ -660,15 +658,45 @@ vehicle if `follow_vehicle` is on, then the configured centre.
 - The panned centre is clamped to the Mercator limit and wrapped at the date
   line, so a drag cannot leave the projection.
 
-`RecentreButton` appears in the bottom right once the camera has been moved,
-and drops the pan when clicked. It does **not** touch the zoom: the user chose
-that separately, and asking to be recentred is not asking to be zoomed back
-out. It is a real `QAbstractButton` rather than a rectangle painted into
-`paintEvent`, which buys hover and press states, makes the editor's recursive
-mouse-transparency (`Canvas::setEditorMode`) cover it in edit mode, and puts it
-in `ui_snapshot` as an addressable widget instead of a coordinate the agent
-interface has to be told about. It paints itself in the style's *label* colours
-— the pair already chosen to stay readable over an arbitrary map.
+## Corner controls: `libs/map_controls`
+
+The floating buttons both map surfaces overlay live in `libs/map_controls` — a
+sibling of `map_render` rather than part of it, because they are QWidgets and
+`map_render` deliberately holds none. `MapButton` is the base: a translucent
+disc in the style's *label* colours (the pair already chosen to stay readable
+over an arbitrary map), a hand-painted soft shadow (no
+`QGraphicsDropShadowEffect` — it misbehaves under the offscreen platform), and
+hover/press expressed through opacity. Subclasses paint only their glyph, and
+`layOutStack()` stacks whichever are visible into a corner, compacting when a
+transient one hides. They are real `QAbstractButton`s rather than rectangles
+painted into `paintEvent`, which buys hover and press states, makes the
+editor's recursive mouse-transparency (`Canvas::setEditorMode`) cover them in
+edit mode, and puts them in `ui_snapshot` as addressable widgets
+(`mapRecentreButton`, `mapCompassButton`, `mapViewModeButton`) instead of
+coordinates the agent interface has to be told about.
+
+- **Recentre** appears once the camera has been moved and drops the pan when
+  clicked. In the widget it does **not** touch the zoom — the user chose that
+  separately, and asking to be recentred is not asking to be zoomed back out.
+  In the scope panel it clears the wheel zoom too, because there the wheel
+  breaks Follow Cursor (see the panel section) and coming back means coming
+  all the way back.
+- **Compass** cycles the orientation mode for the session (north_up ↔
+  heading_up on the dashboard, ↔ course_up in scope). Its needle points at
+  true north *on screen* — fed the frame's actual bearing from the paint pass,
+  so in heading-up it swings with the vehicle. When the map is effectively
+  north-up it de-emphasises rather than hiding, the way the big map apps'
+  compasses fade: unlike them there is no rotate gesture here, so the button
+  is the only door into heading-up and must stay pressable.
+- **View mode** toggles top_down ↔ perspective. Its glyph shows the view a
+  press WOULD GIVE — a trapezoid while flat, a flat square while tilted —
+  because showing the current state reads as a broken toggle.
+
+The toggles are **session state**, mirroring the interaction optionals: the
+config's `orientation`/`view_mode` fields are what the layout or workspace
+opens with, and a button press never writes back to them. The dashboard stacks
+its buttons bottom-right; the scope panel top-right, because `paintLegend()`
+owns its bottom-right corner.
 
 `map_test_widget_hidpi` aside, an offscreen widget has no screen and so no
 mouse; the interaction tests post `QMouseEvent`/`QWheelEvent` straight at the

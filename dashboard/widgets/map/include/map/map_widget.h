@@ -66,7 +66,9 @@ class RawSubscriber;
 #include "map_render/gpu_renderer.h"
 #include "map_render/labels.h"
 #include "map_render/projection.h"
-#include "map/recentre_button.h"
+#include "map_controls/compass_button.h"
+#include "map_controls/recentre_button.h"
+#include "map_controls/view_mode_button.h"
 #include "map/tile_source.h"
 
 class MapWidget : public QWidget
@@ -147,6 +149,20 @@ class MapWidget : public QWidget
 
     Status status() const;
 
+    // The session's mode toggles -- what the compass and view buttons flip.
+    // Public because a control (or a test) flips them; the CONFIG's fields are
+    // the mode the layout opens in, and these never write back to it.
+    void cycleOrientation();
+    void toggleViewMode();
+    MapOrientation_t effectiveOrientation() const
+    {
+        return mOrientationOverride.value_or(mConfig.orientation);
+    }
+    MapViewMode_t effectiveViewMode() const
+    {
+        return mViewModeOverride.value_or(mConfig.view_mode);
+    }
+
   protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -197,7 +213,9 @@ class MapWidget : public QWidget
     // that separately and asking to be recentred is not asking to be zoomed
     // back out.
     void recentreCamera();
-    void layOutRecentreButton();
+    // Geometry AND visibility for the whole corner stack -- the recentre
+    // button comes and goes with the pan, and the stack compacts around it.
+    void layOutMapButtons();
 
     void onPositionChanged();
     // Takes the frame's projection rather than making its own: the tile set has
@@ -379,6 +397,12 @@ class MapWidget : public QWidget
     std::optional<map_render::Coordinate> mInteractionCentre;
     std::optional<double> mInteractionZoom;
 
+    // The mode toggles, mirroring the interaction optionals above: empty means
+    // "as configured", set means the user pressed a button this session. Never
+    // written to mConfig -- a view button must not edit the layout.
+    std::optional<MapOrientation_t> mOrientationOverride;
+    std::optional<MapViewMode_t> mViewModeOverride;
+
     // The world point grabbed on mouse-down, held for the whole drag. Fixed at
     // press rather than recomputed per move: chasing a delta between successive
     // move events accumulates the rounding of every one of them, and the map
@@ -386,8 +410,12 @@ class MapWidget : public QWidget
     std::optional<map_render::WorldPoint> mDragAnchor;
 
     // Null unless the map is interactive. Parented to this widget, so the
-    // editor's recursive mouse-transparency reaches it in edit mode.
-    map_widget::RecentreButton* mRecentre { nullptr };
+    // editor's recursive mouse-transparency reaches them in edit mode. The
+    // recentre button is transient (it exists to undo a pan); the compass and
+    // the view toggle are standing controls.
+    map_controls::RecentreButton* mRecentre { nullptr };
+    map_controls::CompassButton* mCompass { nullptr };
+    map_controls::ViewModeButton* mViewMode { nullptr };
 
     // WORLD points, not coordinates. A track point's world position is fixed
     // the moment it arrives; only the camera moves. Keeping degrees meant

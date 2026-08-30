@@ -617,6 +617,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
     key.center = projection.camera().center;
     key.zoom = projection.camera().zoom;
     key.bearing = projection.camera().bearing;
+    key.pitch = projection.camera().pitch;
     // Times the ratio, because a vertex's halfPx is a LOGICAL pixel count and
     // this frame is drawn in device ones -- without it roads come out a ratio
     // thinner on a HiDPI screen while everything else keeps its width. It also
@@ -707,6 +708,36 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // into the vertices so that widening every road stays a uniform write and
     // does not re-tessellate the city.
     const float widthScale = key.widthScale;
+
+    // The tilt, one matrix for the whole frame, in DEVICE pixels -- the same
+    // space the flat placement below lands in. Rows above the pivot recede by
+    // the perspective divide; at pitch 0 this is the identity and the frame is
+    // bit-identical to the untilted path. Built by hand because the projective
+    // row is w = f - y*sin(p) about the pivot, which no QMatrix4x4 helper
+    // composes directly.
+    QMatrix4x4 tilt;
+    if (projection.pitched())
+    {
+        const float f = float(projection.focalPixels() * ratio);
+        const float sinP = float(projection.pitchSin());
+        const float cosP = float(projection.pitchCos());
+        const float cx = float((projection.viewportWidth() / 2.0) * ratio);
+        const float cy = float((projection.viewportHeight() / 2.0) * ratio);
+        QMatrix4x4 about; // takes (u, v) about the pivot to (u*f, v*cos*f, ., f - v*sin)
+        about.setRow(0, QVector4D(f, 0.0F, 0.0F, 0.0F));
+        about.setRow(1, QVector4D(0.0F, cosP * f, 0.0F, 0.0F));
+        about.setRow(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
+        about.setRow(3, QVector4D(0.0F, -sinP, 0.0F, f));
+        QMatrix4x4 toPivot;
+        toPivot.translate(-cx, -cy);
+        QMatrix4x4 fromPivot;
+        fromPivot.translate(cx, cy);
+        // The perspective divide leaves x/w, so the pivot restore must itself
+        // scale with w -- fold it in BEFORE the divide by multiplying the
+        // matrices in pivot order.
+        tilt = fromPivot * about * toPivot;
+    }
+
     std::vector<char>& uniforms = mUniformScratch;
     uniforms.assign(std::size_t(mUniformStride) * std::max<std::size_t>(batches.size(), 1), 0);
     for (std::size_t i = 0; i < batches.size(); ++i)
@@ -717,11 +748,15 @@ const QImage& GpuRenderer::render(const Projection& projection,
         const ScreenPoint origin = projection.tileOrigin(id);
         const float tileSize = float(projection.tileScreenSize(id.z) * ratio);
 
-        // Screen pixels -> clip, then place the tile: its rotated on-screen
-        // origin, the map's rotation, and local [0,1] -> pixels. tileOrigin()
-        // already carries the rotation and the date-line wrap, so the rotation
-        // here only orients the tile's own axes.
+        // Screen pixels -> clip, then the frame's tilt, then place the tile:
+        // its rotated on-screen origin, the map's rotation, and local [0,1] ->
+        // pixels. tileOrigin() is FLAT on purpose -- the tilt here is the only
+        // application of the pitch, so nothing tilts twice.
         QMatrix4x4 mvp = screenToClip(size);
+        if (projection.pitched())
+        {
+            mvp = mvp * tilt;
+        }
         mvp.translate(float(origin.x * ratio), float(origin.y * ratio));
         if (projection.camera().bearing != 0.0)
         {
@@ -731,7 +766,25 @@ const QImage& GpuRenderer::render(const Projection& projection,
 
         char* slot = uniforms.data() + (std::size_t(mUniformStride) * i);
         std::memcpy(slot, mvp.constData(), 16 * sizeof(float));
-        const float px = tileSize;
+
+        // The scale the vertex shader divides its line-expansion offsets by.
+        // Under pitch it is evaluated at the tile's visible centre, so a
+        // road's floor width stays honest where the tile actually shows; the
+        // continuous foreshortening across the tile comes free from the
+        // matrix, this only anchors the minimum-width clamp. Mixed-zoom LOD
+        // bounds a tile to about tileSize on screen, so within-tile variation
+        // is small -- see docs/map.md.
+        float px = tileSize;
+        if (projection.pitched())
+        {
+            const double fLog = projection.focalPixels();
+            const double centreV = origin.y +
+                                   ((projection.bearingCos() + projection.bearingSin()) *
+                                    projection.tileScreenSize(id.z) * 0.5) -
+                                   (projection.viewportHeight() / 2.0);
+            const double w = std::max(fLog - (centreV * projection.pitchSin()), 0.05 * fLog);
+            px = float(double(tileSize) * fLog / w);
+        }
         std::memcpy(slot + (16 * sizeof(float)), &px, sizeof(float));
         std::memcpy(slot + (17 * sizeof(float)), &widthScale, sizeof(float));
         // Floats 18 and 19: this tile's crossfade and the highlight's extra

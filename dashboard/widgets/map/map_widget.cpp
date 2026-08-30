@@ -201,9 +201,10 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
                 mConfig.position_zenoh_key, this, &MapWidget::setHeading, "map heading");
         }
 
-        if (mConfig.rotate_with_heading && mConfig.heading_expression.empty())
+        if (mConfig.orientation == MapOrientation_t::heading_up &&
+            mConfig.heading_expression.empty())
         {
-            SPDLOG_WARN("[map] rotate_with_heading is set but heading_expression is empty; the "
+            SPDLOG_WARN("[map] orientation is heading_up but heading_expression is empty; the "
                         "map will keep the configured bearing");
         }
     }
@@ -215,10 +216,22 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         // than any chrome that would.
         setCursor(Qt::OpenHandCursor);
 
-        mRecentre = new map_widget::RecentreButton(qt_helpers::toQColor(mConfig.style.label_text),
-                                                   qt_helpers::toQColor(mConfig.style.label_halo), this);
+        const QColor glyph = qt_helpers::toQColor(mConfig.style.label_text);
+        const QColor disc = qt_helpers::toQColor(mConfig.style.label_halo);
+
+        mRecentre = new map_controls::RecentreButton(glyph, disc, this);
         mRecentre->hide();
         connect(mRecentre, &QAbstractButton::clicked, this, &MapWidget::recentreCamera);
+
+        mCompass = new map_controls::CompassButton(glyph, disc, this);
+        mCompass->setBearing(camera().bearing);
+        connect(mCompass, &QAbstractButton::clicked, this, &MapWidget::cycleOrientation);
+
+        mViewMode = new map_controls::ViewModeButton(glyph, disc, this);
+        mViewMode->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
+        connect(mViewMode, &QAbstractButton::clicked, this, &MapWidget::toggleViewMode);
+
+        layOutMapButtons();
     }
 
     if (!mConfig.highlight_zenoh_key.empty())
@@ -335,9 +348,35 @@ map_render::Camera MapWidget::camera() const
     }
 
     out.zoom = mInteractionZoom.value_or(mConfig.zoom);
-    out.bearing = (mConfig.rotate_with_heading && mHeading.has_value()) ? *mHeading
-                                                                       : mConfig.bearing;
+    // The modes, not the raw config: the buttons override for the session and
+    // the config is only where a layout opens. Orientation is independent of
+    // the centre on purpose -- panning away does not stop the map turning
+    // with the vehicle, and recentring does not straighten it.
+    out.bearing = (effectiveOrientation() == MapOrientation_t::heading_up && mHeading.has_value())
+                      ? *mHeading
+                      : mConfig.bearing;
+    out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? mConfig.pitch : 0.0;
     return out;
+}
+
+void MapWidget::cycleOrientation()
+{
+    const MapOrientation_t next = effectiveOrientation() == MapOrientation_t::north_up
+                                      ? MapOrientation_t::heading_up
+                                      : MapOrientation_t::north_up;
+    // Stored as an override even when it lands back on the configured mode --
+    // value_or makes that indistinguishable, and clearing it would only save
+    // an optional.
+    mOrientationOverride = next;
+    update();
+}
+
+void MapWidget::toggleViewMode()
+{
+    mViewModeOverride = effectiveViewMode() == MapViewMode_t::top_down
+                            ? MapViewMode_t::perspective
+                            : MapViewMode_t::top_down;
+    update();
 }
 
 map_render::Projection MapWidget::projectionFor(const QPainter& painter) const
@@ -423,6 +462,7 @@ void MapWidget::refreshTiles(const map_render::Projection& projection)
         // outOfRange; from then on the range is known and it cannot happen again.
         const auto archive = mSources[s]->archiveZoomRange();
         mWalkRanges[s] = archive;
+        const std::uint8_t archiveMin = archive.has_value() ? archive->min : 0;
         const std::uint8_t z =
             archive.has_value()
                 ? projection.tileZoom(archive->min, archive->max)
@@ -430,8 +470,9 @@ void MapWidget::refreshTiles(const map_render::Projection& projection)
 
         // Both sets from one walk of the grid. The prefetch ring is requested but
         // never drawn, which is what keeps mVisible honest about what the paint
-        // pass will look at -- and what status() reports.
-        auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles);
+        // pass will look at -- and what status() reports. The archive floor
+        // matters only under pitch, where the far field walks shallower than z.
+        auto tiles = projection.visibleTilesWithMargin(z, kPrefetchRingTiles, archiveMin);
         mVisible[s] = std::move(tiles.drawn);
         mTileWalkTruncated = mTileWalkTruncated || tiles.truncated;
 
@@ -443,8 +484,9 @@ void MapWidget::refreshTiles(const map_render::Projection& projection)
         // The coarse overview goes on the END of the request list, so it can only
         // ever spend request slots the viewport did not want. A stand-in that
         // arrives at the cost of the real tile it stands in for is not a saving.
-        const std::uint8_t archiveMin = archive.has_value() ? archive->min : 0;
-        if (z > archiveMin)
+        // Not under pitch: the descent's far-field leaves ARE the coarse
+        // levels, so the overview would re-request what is already listed.
+        if (z > archiveMin && !projection.pitched())
         {
             const auto overviewZ =
                 static_cast<std::uint8_t>(std::max(int(z) - int(kOverviewZoomDelta), int(archiveMin)));
@@ -465,7 +507,7 @@ void MapWidget::resizeEvent(QResizeEvent* event)
     // paint pass recomputes at the size actually being drawn -- doing it twice
     // only walked the tile grid twice for the same answer.
     QWidget::resizeEvent(event);
-    layOutRecentreButton();
+    layOutMapButtons();
 }
 
 // ------------------------------------------------------------------- the mouse
@@ -489,7 +531,7 @@ void MapWidget::setInteractionCentreQuiet(const map_render::Coordinate& where)
 void MapWidget::setInteractionCentre(const map_render::Coordinate& where)
 {
     setInteractionCentreQuiet(where);
-    layOutRecentreButton();
+    layOutMapButtons();
     update();
 }
 
@@ -514,7 +556,7 @@ void MapWidget::moveCameraSoThatQuiet(const map_render::WorldPoint& world, const
 void MapWidget::moveCameraSoThat(const map_render::WorldPoint& world, const QPointF& screen)
 {
     moveCameraSoThatQuiet(world, screen);
-    layOutRecentreButton();
+    layOutMapButtons();
     update();
 }
 
@@ -569,39 +611,45 @@ void MapWidget::recentreCamera()
 {
     if (!mInteractionCentre.has_value())
     {
-        layOutRecentreButton();
+        layOutMapButtons();
         update();
         return;
     }
     // Fly back rather than snap: the centre glides toward the live target
     // (see RecentreEase) and mInteractionCentre is reset only on landing.
-    // The button hides at once -- see layOutRecentreButton().
+    // The button hides at once -- see layOutMapButtons().
     mRecentreEase = RecentreEase { *mInteractionCentre, std::chrono::steady_clock::now() };
-    layOutRecentreButton();
+    layOutMapButtons();
     update();
 }
 
-void MapWidget::layOutRecentreButton()
+void MapWidget::layOutMapButtons()
 {
     if (mRecentre == nullptr)
     {
         return;
     }
 
+    const int size = map_controls::MapButton::kSize;
+    const int margin = map_controls::MapButton::kMargin;
+    const bool room = width() > (size + (2 * margin)) && height() > (size + (2 * margin));
+
+    // The recentre button is shown only when it has something to undo -- a
+    // button that is always there is a button that is usually a lie -- and
+    // hidden the moment the fly-back starts, even though mInteractionCentre
+    // technically stays set until it lands: mid-flight there is nothing left
+    // to press for. The compass and view toggle are standing controls and
+    // only yield when the widget has no room for chrome at all.
+    mRecentre->setVisible(room && mInteractionCentre.has_value() && !mRecentreEase.has_value());
+    mCompass->setVisible(room);
+    mViewMode->setVisible(room);
+
     // Bottom right, which is where a map's controls live and, more to the
     // point, the one corner nothing else uses: the diagnostic line is centred
-    // and the vehicle marker follows the vehicle.
-    const int size = map_widget::RecentreButton::kSize;
-    const int margin = map_widget::RecentreButton::kMargin;
-    mRecentre->setGeometry(width() - size - margin, height() - size - margin, size, size);
-
-    // Shown only when it has something to undo -- a button that is always
-    // there is a button that is usually a lie -- and hidden the moment the
-    // fly-back starts, even though mInteractionCentre technically stays set
-    // until it lands: mid-flight there is nothing left to press for.
-    mRecentre->setVisible(mInteractionCentre.has_value() && !mRecentreEase.has_value() &&
-                          width() > (size + (2 * margin)) &&
-                          height() > (size + (2 * margin)));
+    // and the vehicle marker follows the vehicle. Recentre sits nearest the
+    // corner when present; the stack compacts when it goes.
+    map_controls::layOutStack({ mRecentre, mViewMode, mCompass }, QSize(width(), height()),
+                              Qt::BottomRightCorner);
 }
 
 void MapWidget::mousePressEvent(QMouseEvent* event)
@@ -619,7 +667,7 @@ void MapWidget::mousePressEvent(QMouseEvent* event)
     if (mRecentreEase.has_value())
     {
         mRecentreEase.reset();
-        layOutRecentreButton();
+        layOutMapButtons();
     }
 
     mDragAnchor = interactionProjection().worldForScreen(
@@ -705,7 +753,7 @@ void MapWidget::setLongitude(double degrees)
 void MapWidget::setHeading(double degrees)
 {
     mHeading = degrees;
-    if (mConfig.rotate_with_heading)
+    if (effectiveOrientation() == MapOrientation_t::heading_up)
     {
         // update() only: the paint pass refreshes the tile set itself, at the
         // camera it is actually about to draw.
@@ -987,6 +1035,16 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // guaranteed to run before anything is drawn, at the size and the ratio
     // actually being painted.
     const map_render::Projection projection = projectionFor(painter);
+
+    // The chrome mirrors the frame, not the config: the compass needle swings
+    // with the very bearing this frame is drawn at (live heading included),
+    // and the view toggle's glyph flips with the effective mode. Both calls
+    // early-out when nothing changed, so a steady repaint costs two compares.
+    if (mCompass != nullptr)
+    {
+        mCompass->setBearing(projection.camera().bearing);
+        mViewMode->setPerspective(effectiveViewMode() == MapViewMode_t::perspective);
+    }
     refreshTiles(projection);
 
     // --- 1. geometry, on the GPU -------------------------------------------
@@ -1160,12 +1218,25 @@ void MapWidget::paintMarker(QPainter& painter, const map_render::Projection& pro
 
     if (mHeading.has_value())
     {
-        // A triangle pointing where the vehicle is going. When the map itself
-        // rotates with heading the triangle points up the screen, which is
-        // exactly right -- the marker's rotation is relative to the map, and
-        // the map's is relative to north.
-        const double screenHeading = *mHeading - projection.camera().bearing;
-        const double radians = screenHeading * std::numbers::pi / 180.0;
+        // A triangle pointing where the vehicle is going -- along the ROAD AS
+        // DRAWN, which is why the direction is taken by projecting a short
+        // step along the heading rather than by arithmetic on the angles.
+        // Flat, the two agree exactly (Mercator is conformal and the rotation
+        // is shared); under pitch the drawn road is foreshortened and only
+        // the projected step stays on it. 20 m is far enough that the pixel
+        // direction is clean and near enough that the road cannot curve away
+        // inside it.
+        const double headingRad = *mHeading * std::numbers::pi / 180.0;
+        constexpr double kStepMetres = 20.0;
+        const double stepLat = (kStepMetres * std::cos(headingRad)) / 111320.0;
+        const double stepLon = (kStepMetres * std::sin(headingRad)) /
+                               (111320.0 * std::cos(*mLatitude * std::numbers::pi / 180.0));
+        const auto ahead = projection.screenFor(
+            map_render::Coordinate { *mLatitude + stepLat, *mLongitude + stepLon });
+        // atan2 of the screen step, rotated so 0 means up-screen -- the frame
+        // the arrow's own points are drawn in.
+        const double radians = std::atan2(ahead.y - at.y, ahead.x - at.x) +
+                               (std::numbers::pi / 2.0);
         const double sin = std::sin(radians);
         const double cos = std::cos(radians);
 

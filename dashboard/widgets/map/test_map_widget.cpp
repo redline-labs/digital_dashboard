@@ -562,13 +562,14 @@ struct Painted
 // geometry: if a quad's corners or its atlas rect were wrong, the GPU would
 // draw exactly the same wrong thing and no screenshot would say so.
 Painted paintOnto(const std::vector<map_render::LabelTile>& tiles, const MapStyle_t& style,
-                  double zoom = 14.0, double bearing = 0.0)
+                  double zoom = 14.0, double bearing = 0.0, double pitch = 0.0,
+                  map_render::Coordinate centre = { 33.6865966, -117.8557874 })
 {
     Painted out;
     out.canvas = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     out.canvas.fill(Qt::transparent);
 
-    const map_render::Camera camera { { 33.6865966, -117.8557874 }, zoom, bearing };
+    const map_render::Camera camera { centre, zoom, bearing, pitch };
     const map_render::Projection projection(camera, 800, 600, 1.0);
 
     map_render::LabelCache cache;
@@ -1495,7 +1496,7 @@ void test_a_map_that_was_not_asked_to_be_interactive_ignores_the_mouse()
     check(widget.status().camera.center == before.center, "a drag does not move the camera");
     check(widget.status().camera.zoom == before.zoom, "and the wheel does not zoom");
     check(!widget.status().cameraMoved, "and nothing reports having been moved");
-    check(widget.findChild<QAbstractButton*>() == nullptr,
+    check(widget.findChildren<QAbstractButton*>().isEmpty(),
           "and there is no recentre button to be found, because there is nothing to recentre");
 }
 
@@ -1553,7 +1554,7 @@ void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
     widget.resize(400, 300);
     render(widget);
 
-    auto* button = widget.findChild<QAbstractButton*>();
+    auto* button = widget.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
     check(button != nullptr, "an interactive map has a recentre button");
     if (button == nullptr)
     {
@@ -1707,7 +1708,7 @@ void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
 
     check(widget.status().camera.zoom == 13.0, "the wheel still zooms, landing on target");
 
-    auto* button = widget.findChild<QAbstractButton*>();
+    auto* button = widget.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
     check(button != nullptr && button->isHidden(),
           "and no recentre button appears, because there is nothing to go back to");
 }
@@ -2057,7 +2058,7 @@ void test_recentre_flies_back_and_lands_following()
     check(!sameCoordinate(away, home), "the drag moved the camera");
     check(widget.status().cameraMoved, "and following is suspended");
 
-    auto* button = widget.findChild<QAbstractButton*>();
+    auto* button = widget.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
     // isHidden(), not isVisible() -- the parent is never shown here.
     check(button != nullptr && !button->isHidden(), "the recentre button is showing");
     button->click();
@@ -2097,7 +2098,7 @@ void test_a_drag_cancels_the_fly_back()
 
     drag(widget, QPointF(200.0, 150.0), QPointF(40.0, 30.0));
     render(widget);
-    auto* button = widget.findChild<QAbstractButton*>();
+    auto* button = widget.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
     check(button != nullptr && !button->isHidden(), "dragged away, button showing");
     button->click();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -2278,6 +2279,203 @@ void test_a_large_glyph_is_not_clipped_by_its_image()
 
 } // namespace
 
+// The far field's text under pitch: same name, same tile, but the camera is
+// tilted and the anchor is up-screen -- so the glyphs must come out smaller,
+// still upright, still legible as a name.
+void test_a_far_label_draws_smaller_under_pitch()
+{
+    const map_render::TileId irvine { 14, 2828, 6562 };
+    mvt::Tile tile;
+    tile.layers.push_back(labelLayerWith(
+        "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
+                   { "rank", mvt::Value(std::int64_t { 2 }) } }));
+    const auto labels = labelsOf(tile);
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    // A camera SOUTH of the anchor, so the name sits up-screen where the tilt
+    // shrinks it. 250 flat pixels up: far enough to measure, near enough that
+    // the FLAT camera still has it on screen for the comparison.
+    const double side = std::exp2(14.0);
+    const map_render::WorldPoint anchorWorld { (2828.0 + 0.5) / side, (6562.0 + 0.5) / side };
+    const double worldPerPixel = 1.0 / (side * 512.0);
+    const map_render::Coordinate south = map_render::coordinateFor(
+        map_render::WorldPoint { anchorWorld.x, anchorWorld.y + (250.0 * worldPerPixel) });
+
+    const Painted flat = paintOnto({ { irvine, labels } }, style, 14.0, 0.0, 0.0, south);
+    const Painted tilted = paintOnto({ { irvine, labels } }, style, 14.0, 0.0, 55.0, south);
+    check(flat.stats.placed == 1 && tilted.stats.placed == 1,
+          "the name is placed both flat and tilted");
+
+    const QRectF flatInk = inkBounds(flat.canvas);
+    const QRectF tiltedInk = inkBounds(tilted.canvas);
+    check(tiltedInk.width() > 0.0 && tiltedInk.width() < flatInk.width() * 0.92,
+          "the tilted far-field name is measurably narrower, flat " +
+              std::to_string(flatInk.width()) + " vs tilted " +
+              std::to_string(tiltedInk.width()));
+    check(tiltedInk.width() > tiltedInk.height(), "and still upright");
+    // Foreshortening compresses the up-screen half toward the centre, so the
+    // tilted name sits BELOW where the flat camera drew it -- while staying in
+    // the top half of the frame.
+    check(tiltedInk.center().y() > flatInk.center().y() && tiltedInk.center().y() < 300.0,
+          "and is compressed toward the centre, flat y " +
+              std::to_string(flatInk.center().y()) + " vs tilted y " +
+              std::to_string(tiltedInk.center().y()));
+}
+
+// Past the readability floor the name is not drawn at all: half-size text is
+// the edge of legible, and a smudge on the horizon still costs collision.
+void test_an_unreadable_far_label_is_dropped()
+{
+    const map_render::TileId irvine { 14, 2828, 6562 };
+    mvt::Tile tile;
+    tile.layers.push_back(labelLayerWith(
+        "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
+                   { "rank", mvt::Value(std::int64_t { 2 }) } }));
+    const auto labels = labelsOf(tile);
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    // 1200 flat pixels up-screen at 60 degrees: the tilt brings the anchor
+    // INTO the viewport (y = 22) while its scale, 0.46, is below the floor --
+    // so only the readability cull can be what rejects it.
+    const double side = std::exp2(14.0);
+    const map_render::WorldPoint anchorWorld { (2828.0 + 0.5) / side, (6562.0 + 0.5) / side };
+    const double worldPerPixel = 1.0 / (side * 512.0);
+    const map_render::Coordinate south = map_render::coordinateFor(
+        map_render::WorldPoint { anchorWorld.x, anchorWorld.y + (1200.0 * worldPerPixel) });
+
+    const Painted tilted = paintOnto({ { irvine, labels } }, style, 14.0, 0.0, 60.0, south);
+    check(tilted.stats.placed == 0, "a name past the readability floor is not placed");
+}
+
+// One name from two zoom levels of the same ground -- what a pitched frame's
+// stand-in tiles produce while the real tile is in flight. The two anchors
+// land on the same pixel, and exactly one of them may win.
+void test_the_same_name_from_two_zooms_is_placed_once()
+{
+    const map_render::TileId child { 14, 2828, 6562 };
+    const map_render::TileId parent { 13, 1414, 3281 };
+
+    mvt::Tile childTile;
+    childTile.layers.push_back(labelLayerWith(
+        "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
+                   { "rank", mvt::Value(std::int64_t { 2 }) } }));
+
+    // The same world point in the parent's frame: the child is quadrant (0,0)
+    // of its parent, so extent 2048 in the child is extent 1024 in the parent.
+    mvt::Tile parentTile;
+    {
+        mvt::Layer layer = labelLayerWith(
+            "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "Irvine") },
+                       { "rank", mvt::Value(std::int64_t { 2 }) } });
+        layer.features.front().rings.front().front() = { 1024, 1024 };
+        parentTile.layers.push_back(std::move(layer));
+    }
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    const Painted painted = paintOnto(
+        { { child, labelsOf(childTile) }, { parent, labelsOf(parentTile) } }, style, 14.0, 0.0,
+        45.0);
+    check(painted.stats.placed == 1,
+          "the duplicated name is placed exactly once, got " +
+              std::to_string(painted.stats.placed));
+}
+
+// The compass cycles orientation for the SESSION, and its needle mirrors the
+// frame's bearing -- including a live heading.
+void test_the_compass_button_cycles_orientation()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.bearing = 0.0;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+    pump(std::chrono::milliseconds(30));
+
+    auto* compass = widget.findChild<QAbstractButton*>(QStringLiteral("mapCompassButton"));
+    check(compass != nullptr, "an interactive map has a compass button");
+    if (compass == nullptr)
+    {
+        return;
+    }
+    check(compass->isVisible(), "and it is a standing control, visible before any gesture");
+
+    check(widget.effectiveOrientation() == MapOrientation_t::north_up,
+          "the session opens in the configured orientation");
+    compass->click();
+    check(widget.effectiveOrientation() == MapOrientation_t::heading_up,
+          "one press turns heading-up on");
+    compass->click();
+    check(widget.effectiveOrientation() == MapOrientation_t::north_up,
+          "and the next turns it back");
+
+    // The needle mirrors the painted frame's bearing, not the config's
+    // default: a configured bearing must show up on it after one paint.
+    auto* needle = qobject_cast<map_controls::CompassButton*>(compass);
+    check(needle != nullptr, "the compass is the map_controls compass");
+}
+
+// The needle mirrors the frame it was painted with.
+void test_the_compass_needle_tracks_the_bearing()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.bearing = 35.0;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+    pump(std::chrono::milliseconds(30));
+    widget.repaint();
+
+    auto* needle = widget.findChild<map_controls::CompassButton*>(
+        QStringLiteral("mapCompassButton"));
+    check(needle != nullptr && std::abs(needle->bearing() - 35.0) < 1e-9,
+          "after a paint the needle carries the frame's bearing");
+}
+
+// The view button tilts the map for the session and never edits the config.
+void test_the_view_button_toggles_perspective()
+{
+    MapConfig_t config;
+    config.position_zenoh_key.clear();
+    config.interactive = true;
+    config.pitch = 52.0;
+
+    MapWidget widget(config);
+    widget.resize(512, 512);
+    widget.show();
+    pump(std::chrono::milliseconds(30));
+
+    auto* view = widget.findChild<QAbstractButton*>(QStringLiteral("mapViewModeButton"));
+    check(view != nullptr, "an interactive map has a view-mode button");
+    if (view == nullptr)
+    {
+        return;
+    }
+
+    widget.repaint();
+    check(std::abs(widget.status().camera.pitch) < 1e-12, "the map opens flat");
+    view->click();
+    widget.repaint();
+    check(std::abs(widget.status().camera.pitch - 52.0) < 1e-12,
+          "one press tilts to the configured pitch");
+    check(widget.getConfig().view_mode == MapViewMode_t::top_down,
+          "without writing the mode into the config");
+    view->click();
+    widget.repaint();
+    check(std::abs(widget.status().camera.pitch) < 1e-12, "and the next flattens it again");
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::warn);
@@ -2311,6 +2509,12 @@ int main(int argc, char** argv)
     test_the_label_anchor_turns_with_the_map();
     test_the_label_anchor_is_right_at_half_a_turn();
     test_a_place_name_stays_upright_when_the_map_turns();
+    test_a_far_label_draws_smaller_under_pitch();
+    test_an_unreadable_far_label_is_dropped();
+    test_the_same_name_from_two_zooms_is_placed_once();
+    test_the_compass_button_cycles_orientation();
+    test_the_compass_needle_tracks_the_bearing();
+    test_the_view_button_toggles_perspective();
     test_a_road_label_never_reads_backwards();
     test_a_hairpin_gets_no_label_but_a_gentle_curve_does();
     test_a_road_label_lies_along_a_diagonal_road();

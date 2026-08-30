@@ -16,12 +16,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
 add_library(${MAP_WIDGET_LIB} STATIC
     map_widget.cpp
-    recentre_button.cpp
     tile_source.cpp
     include/map/config.h
     include/map/highlight_ids.h
     include/map/map_widget.h
-    include/map/recentre_button.h
     include/map/tile_source.h
 )
 
@@ -39,6 +37,9 @@ target_link_libraries(${MAP_WIDGET_LIB}
         # The renderer. PUBLIC because map_widget.h and tile_source.h both
         # expose its types -- Projection, TileId, CachedTile, GpuRenderer.
         map_render
+        # The floating buttons. PUBLIC because map_widget.h holds pointers to
+        # its widget types.
+        map_controls
         helpers
         qt_helpers
         reflection

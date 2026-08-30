@@ -206,6 +206,87 @@ void testThePanelReportsItsCameraAfterAPaint()
     expect(!stats.camera_moved, "and nothing has panned it");
 }
 
+// The compass and view buttons: session-only overrides that never touch the
+// workspace config, and a recentre that restores Follow Cursor.
+void testTheCameraModesAreSessionOverrides()
+{
+    StubSource source;
+    MapPanelConfig_t cfg;
+    cfg.pitch = 50.0;
+    cfg.bearing = 30.0;
+    scope::MapPanel panel(cfg, source);
+    panel.resize(300, 200);
+    panel.show();
+    panel.repaint();
+
+    auto* view = panel.findChild<QAbstractButton*>(QStringLiteral("mapViewModeButton"));
+    auto* compass = panel.findChild<QAbstractButton*>(QStringLiteral("mapCompassButton"));
+    expect(view != nullptr && compass != nullptr,
+           "an interactive panel carries the view and compass buttons");
+    if (view == nullptr || compass == nullptr)
+    {
+        return;
+    }
+
+    expect(std::abs(panel.stats().camera_pitch) < 1e-12, "the panel opens flat");
+    view->click();
+    panel.repaint();
+    expect(std::abs(panel.stats().camera_pitch - 50.0) < 1e-12,
+           "one press tilts to the configured pitch");
+    expect(panel.getConfig().view_mode == MapViewMode_t::top_down,
+           "without writing the mode into the workspace config");
+
+    // With no track there is no course, so course_up falls back to the
+    // configured bearing rather than snapping to zero.
+    compass->click();
+    panel.repaint();
+    expect(std::abs(panel.stats().camera_bearing - cfg.bearing) < 1e-12,
+           "course-up with no track keeps the configured bearing");
+}
+
+// The way back the panel never had: recentre clears both the pan and the
+// wheel zoom, and the button only exists while there is something to undo.
+void testRecentreRestoresFollowCursor()
+{
+    StubSource source;
+    MapPanelConfig_t cfg;
+    scope::MapPanel panel(cfg, source);
+    panel.resize(300, 200);
+    panel.show();
+    panel.repaint();
+
+    auto* recentre = panel.findChild<QAbstractButton*>(QStringLiteral("mapRecentreButton"));
+    expect(recentre != nullptr, "the recentre button exists");
+    if (recentre == nullptr)
+    {
+        return;
+    }
+    expect(recentre->isHidden(), "and hides while there is nothing to undo");
+
+    // A drag: press away from any track (there is none), move, release.
+    // Synthesised events rather than QTest, which the scope tests do not link.
+    const auto mouse = [&](QEvent::Type type, QPointF at) {
+        QMouseEvent event(type, at, panel.mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(&panel, &event);
+    };
+    mouse(QEvent::MouseButtonPress, QPointF(150, 100));
+    mouse(QEvent::MouseMove, QPointF(180, 130));
+    mouse(QEvent::MouseButtonRelease, QPointF(180, 130));
+    panel.repaint();
+    expect(panel.stats().camera_moved, "a drag suspends Follow Cursor");
+    // isHidden rather than isVisible: under the offscreen platform the panel
+    // window is never mapped, and isVisible would ask about the whole chain.
+    expect(!recentre->isHidden(), "and the recentre button appears");
+
+    recentre->click();
+    panel.repaint();
+    expect(!panel.stats().camera_moved, "recentre restores Follow Cursor");
+    expect(recentre->isHidden(), "and the button hides again");
+}
+
 void runMapPanelTests()
 {
     testATopicLevelPositionDropFillsBothCoordinates();
@@ -217,6 +298,8 @@ void runMapPanelTests()
     testAnUnboundPanelSaysSoRatherThanLookingEmpty();
     testTheMarkerReadsTheSharedInstant();
     testThePanelReportsItsCameraAfterAPaint();
+    testTheCameraModesAreSessionOverrides();
+    testRecentreRestoresFollowCursor();
 }
 
 }  // namespace panel_tests

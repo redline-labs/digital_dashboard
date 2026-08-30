@@ -54,6 +54,11 @@ struct Candidate
     // Empty for a point label, which is placed at a point and drawn upright.
     std::uint32_t runBegin { 0 };
     std::uint32_t runCount { 0 };
+    // The tilt's shrink at this label's anchor: 1 on a flat map, smaller with
+    // distance under pitch. Applied to the glyphs, their advances and their
+    // collision claims alike, so far-field text reads as far away instead of
+    // as full-size text crowding a compressed horizon.
+    double scale { 1.0 };
 };
 
 // Which source layers carry labels, and how each ranks its own.
@@ -77,6 +82,11 @@ bool waterLabelsEnabled(const MapStyle_t& style, double zoom)
 // candidate is even built. The exact test against the rendered text width
 // still happens at placement.
 constexpr double kShortestWorthNaming = 24.0;
+
+// The tilt scale below which a label is dropped rather than drawn. Half-size
+// text at the style's label size is at the edge of legible; anything past it
+// costs layout and collision to produce a smudge near the horizon.
+constexpr double kSmallestReadableScale = 0.5;
 
 } // namespace
 
@@ -494,7 +504,7 @@ struct PlacedLabel
 // text this pass has always refused to draw.
 std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& walker,
                                          LabelCache& cache, const QFont& font, double emSize,
-                                         double start)
+                                         double start, double scale = 1.0)
 {
     if (text.isEmpty())
     {
@@ -505,12 +515,16 @@ std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& w
     // hundreds a frame -- and only the couple of dozen that survive collision
     // are ever drawn. Rendering the alphabet to find out how wide a name is
     // costs the whole label budget; see LabelCache::advanceFor.
+    //
+    // Scaled advances: the run is in screen pixels, already foreshortened, so
+    // the characters walking it must be foreshortened the same amount or a
+    // name reads full-size on a road drawn half-size.
     std::vector<PlacedGlyph> glyphs;
     glyphs.reserve(std::size_t(text.size()));
     double width = 0.0;
     for (const QChar ch : text)
     {
-        const double advance = cache.advanceFor(ch, font);
+        const double advance = cache.advanceFor(ch, font) * scale;
         glyphs.push_back(PlacedGlyph { ch, {}, 0.0, advance });
         width += advance;
     }
@@ -635,7 +649,7 @@ std::optional<PlacedLabel> placeAlongRun(const QString& text, const RunWalker& w
 // old placement and not an approximation of it.
 void placeRepeatsAlongRun(const QString& text, const RunWalker& walker, LabelCache& cache,
                           const QFont& font, double emSize, double repeat,
-                          std::vector<PlacedLabel>& out)
+                          std::vector<PlacedLabel>& out, double scale = 1.0)
 {
     out.clear();
     if (text.isEmpty())
@@ -646,7 +660,7 @@ void placeRepeatsAlongRun(const QString& text, const RunWalker& walker, LabelCac
     double width = 0.0;
     for (const QChar ch : text)
     {
-        width += cache.advanceFor(ch, font);
+        width += cache.advanceFor(ch, font) * scale;
     }
     if (width <= 0.0 || width > walker.length())
     {
@@ -670,7 +684,8 @@ void placeRepeatsAlongRun(const QString& text, const RunWalker& walker, LabelCac
     for (int i = 0; i < count; ++i)
     {
         std::optional<PlacedLabel> placed =
-            placeAlongRun(text, walker, cache, font, emSize, leading + (double(i) * stride));
+            placeAlongRun(text, walker, cache, font, emSize, leading + (double(i) * stride),
+                          scale);
         if (placed.has_value())
         {
             out.push_back(std::move(*placed));
@@ -713,7 +728,8 @@ void collisionBoxesFor(const std::vector<PlacedGlyph>& glyphs, double height,
 // passes to avoid.
 void emitQuads(const std::vector<PlacedGlyph>& glyphs, LabelCache& cache, const QFont& font,
                double haloWidth, const QColor& haloColour, const QColor& textColour,
-               double ratio, double baselineShift, std::vector<TextQuad>& out)
+               double ratio, double baselineShift, std::vector<TextQuad>& out,
+               double scale = 1.0)
 {
     for (int pass = 0; pass < 2; ++pass)
     {
@@ -735,10 +751,14 @@ void emitQuads(const std::vector<PlacedGlyph>& glyphs, LabelCache& cache, const 
             // From the centre of the character's advance on the text's centre
             // line, back to where the pen belongs: half an advance left, and
             // down by however far the baseline sits below that centre line.
+            // placed.at and placed.advance are in final screen pixels -- the
+            // advances were scaled where the glyphs were laid out -- so only
+            // the bitmap and the baseline drop still need the shrink here.
             QTransform place;
             place.translate(placed.at.x(), placed.at.y());
             place.rotateRadians(placed.angle);
-            place.translate(-placed.advance / 2.0, baselineShift);
+            place.translate(-placed.advance / 2.0, baselineShift * scale);
+            place.scale(scale, scale);
 
             // The glyph's own box, in LOGICAL pixels -- its atlas image was
             // rasterised at the device ratio, so its size in logical pixels is
@@ -829,9 +849,20 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
                 continue;
             }
 
+            // The tilt's shrink at the anchor. Clamped: near-field text stays
+            // the size the style asked for rather than ballooning, and below
+            // half size a name is an unreadable smudge that still costs
+            // layout and collision -- dropped instead.
+            const double scale = std::clamp(transform.scaleAt(candidate.x, candidate.y), 0.0, 1.0);
+            if (scale < kSmallestReadableScale)
+            {
+                continue;
+            }
+
             Candidate gathered { candidate.text,          at,
                             spanPx,                  candidate.oneLabelPerName,
                             candidate.priority,      candidate.magnitude };
+            gathered.scale = scale;
 
             // A line label carries its road with it. Projected here, where the
             // tile's transform is already in hand, rather than at placement
@@ -950,8 +981,14 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
         // are worth pixels -- and with road names in the mix, the candidate
         // list is tens of thousands long while the placed set is a few dozen.
         const QRectF& text = cache.measure(candidate.text, font);
-        const QRectF box(candidate.at.x - (text.width() / 2.0),
-                         candidate.at.y - (text.height() / 2.0), text.width(), text.height());
+        // The measured box is flat; the label claims and draws at its tilt
+        // scale. spanPx is deliberately NOT scaled where it is compared --
+        // the road it constrains is foreshortened by the same factor, so the
+        // flat-to-flat comparison is already the right one.
+        const double scale = candidate.scale;
+        const QRectF box(candidate.at.x - (text.width() * scale / 2.0),
+                         candidate.at.y - (text.height() * scale / 2.0), text.width() * scale,
+                         text.height() * scale);
 
         if (!viewport.intersects(box))
         {
@@ -1011,14 +1048,14 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
             double pen = box.left();
             for (const QChar ch : candidate.text)
             {
-                const double advance = cache.advanceFor(ch, font);
+                const double advance = cache.advanceFor(ch, font) * scale;
                 placedScratch.push_back(
                     PlacedGlyph { ch, QPointF(pen + (advance / 2.0), box.center().y()), 0.0,
                                   advance });
                 pen += advance;
             }
             emitQuads(placedScratch, cache, font, style.label_halo_width, haloColour,
-                      textColour, ratio, baselineShift, out);
+                      textColour, ratio, baselineShift, out, scale);
             ++stats.placed;
             continue;
         }
@@ -1027,7 +1064,8 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
         // once. Where it lands and what it claims are both decided by the run
         // rather than by a box around the anchor.
         const RunWalker walker(runs.data() + candidate.runBegin, candidate.runCount);
-        placeRepeatsAlongRun(candidate.text, walker, cache, font, emSize, repeatPx, placements);
+        placeRepeatsAlongRun(candidate.text, walker, cache, font, emSize * scale, repeatPx,
+                             placements, scale);
         if (placements.empty())
         {
             // Too long for its road, or the road kinks under it. Either way
@@ -1053,12 +1091,13 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
                 QTransform turn;
                 turn.translate(along.centre.x(), along.centre.y());
                 turn.rotateRadians(*along.uniformAngle);
-                boxes.push_back(turn.mapRect(QRectF(-text.width() / 2.0, -text.height() / 2.0,
-                                                    text.width(), text.height())));
+                boxes.push_back(turn.mapRect(
+                    QRectF(-text.width() * scale / 2.0, -text.height() * scale / 2.0,
+                           text.width() * scale, text.height() * scale)));
             }
             else
             {
-                collisionBoxesFor(along.glyphs, text.height(), boxes);
+                collisionBoxesFor(along.glyphs, text.height() * scale, boxes);
             }
             pad(boxes);
 
@@ -1078,7 +1117,7 @@ LabelStats layOutText(const Projection& projection, const std::vector<LabelTile>
             // split existed solely because a rotated CPU blit costs about
             // 4 us, and a quad costs nothing worth splitting for.
             emitQuads(along.glyphs, cache, font, style.label_halo_width, haloColour,
-                      textColour, ratio, baselineShift, out);
+                      textColour, ratio, baselineShift, out, scale);
             ++stats.placed;
         }
     }

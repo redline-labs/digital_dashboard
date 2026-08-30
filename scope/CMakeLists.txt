@@ -157,6 +157,9 @@ target_link_libraries(scope_core PUBLIC
     # pixels from a different place -- it asks nodes/map_server, this reads the
     # file. Neither transport is visible from inside the library.
     map_render
+    # The floating buttons the map panel overlays -- compass, view toggle,
+    # recentre. Shared with dashboard/widgets/map, which is the point.
+    map_controls
     mvt
 
     spdlog::spdlog

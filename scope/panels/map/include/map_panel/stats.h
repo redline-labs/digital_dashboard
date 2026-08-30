@@ -85,6 +85,11 @@ REFLECT_STRUCT(MapPanelStats_t,
         "Camera Longitude", "Degrees east the camera is centred on"),
     (double, camera_zoom, 0.0,
         "Camera Zoom", "The zoom the last frame was drawn at"),
+    (double, camera_bearing, 0.0,
+        "Camera Bearing", "Degrees clockwise from north the last frame was turned. Course "
+                          "over ground in course-up mode"),
+    (double, camera_pitch, 0.0,
+        "Camera Pitch", "Degrees off straight-down the last frame was tilted. 0 in top-down"),
     (bool, camera_moved, false,
         "Camera Moved", "Whether a manual pan or zoom is in effect, overriding Follow Cursor"),
 

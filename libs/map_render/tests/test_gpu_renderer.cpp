@@ -1554,6 +1554,84 @@ void test_line_widths_stay_logical_pixels()
 
 } // namespace
 
+void test_a_pitched_frame_agrees_with_the_projection()
+{
+    // The GPU applies the tilt as a matrix; the Projection applies it as
+    // arithmetic. If they disagree, everything drawn by QPainter through
+    // screenFor() -- the marker, the trail -- floats off the GPU's map.
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0, 50.0 },
+                                kWidth, kHeight);
+    const QColor background(0x16, 0x18, 0x1d);
+
+    const TileId tile = centreTile(projection);
+    std::vector<GpuBatch> batches { GpuBatch {
+        tile, fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) } };
+
+    const QImage& frame = renderer->render(projection, batches, style, background);
+    check(!frame.isNull(), "the pitched frame renders");
+    if (frame.isNull())
+    {
+        return;
+    }
+
+    // The tile's top edge, as the PROJECTION places it. The GPU's pixels must
+    // change from green to background within a couple of rows of that line.
+    const double side = std::exp2(double(tile.z));
+    const auto topEdge = projection.screenFor(
+        map_render::WorldPoint { (double(tile.x) + 0.5) / side, double(tile.y) / side });
+    check(topEdge.y > 0.0 && topEdge.y < kHeight, "the tile's top edge is inside the viewport");
+
+    const int x = int(std::lround(topEdge.x));
+    const QColor above = frame.pixelColor(x, int(std::lround(topEdge.y)) - 3);
+    const QColor below = frame.pixelColor(x, int(std::lround(topEdge.y)) + 3);
+    check(near(above, background), "just above the projected edge is background, got " +
+                                        describe(above));
+    check(near(below, QColor(0, 255, 0)), "just below it is the tile, got " + describe(below));
+
+    // Foreshortening, in pixels: the edge is up-screen of the centre, and the
+    // tilt compresses everything up-screen toward the horizon -- so it must
+    // land CLOSER to the centre line than the flat camera put it.
+    const Projection flat(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                          kWidth, kHeight);
+    const auto flatEdge = flat.screenFor(
+        map_render::WorldPoint { (double(tile.x) + 0.5) / side, double(tile.y) / side });
+    check(topEdge.y > flatEdge.y, "the tilted top edge is foreshortened toward the centre");
+}
+
+void test_pitch_is_part_of_the_memo_key()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0, 0.0 };
+    const Projection flat(camera, kWidth, kHeight);
+    std::vector<GpuBatch> batches { GpuBatch {
+        centreTile(flat), fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) } };
+
+    renderer->render(flat, batches, style, background);
+    renderer->render(flat, batches, style, background);
+    const std::uint64_t afterRepeat = renderer->stats().reused;
+    check(afterRepeat >= 1, "an unchanged flat frame is served from the memo");
+
+    Camera pitched = camera;
+    pitched.pitch = 45.0;
+    renderer->render(Projection(pitched, kWidth, kHeight), batches, style, background);
+    check(renderer->stats().reused == afterRepeat,
+          "tilting the camera is a new picture, not a memo hit");
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::info);
@@ -1591,6 +1669,8 @@ int main(int argc, char** argv)
     test_a_hidpi_frame_is_rendered_at_device_resolution();
     test_line_widths_stay_logical_pixels();
     test_a_viewport_too_wide_for_a_texture_comes_back_soft_not_blank();
+    test_a_pitched_frame_agrees_with_the_projection();
+    test_pitch_is_part_of_the_memo_key();
 
     if (failures != 0)
     {

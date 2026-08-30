@@ -28,6 +28,7 @@
 #ifndef MAP_PROJECTION_H
 #define MAP_PROJECTION_H
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -45,6 +46,14 @@ inline constexpr double kMaxLatitude = 85.0511287798066;
 // comfortable. No archive in this tree goes near it; it is the ceiling used
 // before a server has said what its archive actually holds.
 inline constexpr std::uint8_t kMaxTileZoom = 22;
+
+// The steepest camera pitch, in degrees off straight-down. The cap is what
+// keeps the projection total: at 60 degrees the horizon line sits 0.866
+// viewport-heights above the centre while the top edge is only 0.5 above it,
+// so every screen pixel still meets the ground plane and worldForScreen()
+// never has to answer for a ray that misses the world. (The geometry holds to
+// 71.6 degrees at the 1.5x focal length below; 60 leaves headroom.)
+inline constexpr double kMaxPitch = 60.0;
 
 struct WorldPoint
 {
@@ -115,6 +124,10 @@ struct Camera
     double zoom { 13.0 };
     // Degrees clockwise from north. The map rotates; the vehicle stays upright.
     double bearing { 0.0 };
+    // Degrees the view tilts off straight-down, 0 = the flat map. Clamped to
+    // [0, kMaxPitch] by the Projection, not here: the camera is a dumb value
+    // and the walk memo compares it exactly.
+    double pitch { 0.0 };
 
     // Exact comparison, deliberately: this asks "are these two copies of each
     // other", the same question Coordinate's own operator== answers, not "are
@@ -159,6 +172,14 @@ class Projection
     double bearingCos() const { return mCos; }
     double bearingSin() const { return mSin; }
 
+    // Whether this projection tilts at all, and the tilt's precomputed terms.
+    // sin/cos are of the CLAMPED pitch; focalPixels() is the perspective
+    // distance from the eye to the viewport centre, in logical pixels.
+    bool pitched() const { return mPitched; }
+    double pitchSin() const { return mPitchSin; }
+    double pitchCos() const { return mPitchCos; }
+    double focalPixels() const { return mFocalPx; }
+
     // Pixels across the whole world at this zoom. The single number that ties
     // world coordinates to screen ones.
     double worldPixels() const { return mWorldPixels; }
@@ -184,6 +205,14 @@ class Projection
     // shifted as the camera moved re-uploaded every visible tile's geometry
     // for no change at all. Sort a COPY with sortCentreOutward() when the
     // question is what to fetch first.
+    //
+    // Under pitch the single-zoom grid gives way to a quadtree descent: the
+    // near field gets tiles at `z`, the far field shallower ones, because a
+    // z14 tile three streets from the horizon is a few pixels tall and two
+    // hundred of them is neither drawable nor fetchable. The order is then
+    // depth-first with a fixed child order -- a different order, but equally
+    // a pure function of the visible set, which is all the positional
+    // comparison needs.
     std::vector<TileId> visibleTiles(std::uint8_t z, int marginTiles = 0) const;
 
     // Reorder `tiles` nearest-first about the viewport centre. For REQUESTS
@@ -208,12 +237,17 @@ class Projection
         bool truncated { false };
     };
 
-    VisibleTiles visibleTilesWithMargin(std::uint8_t z, int marginTiles) const;
+    // `minLeafZoom` matters only under pitch: the far field is drawn from
+    // shallower tiles than `z`, and this is the floor under how shallow --
+    // the archive's own minimum, so no leaf names a tile that cannot exist.
+    VisibleTiles visibleTilesWithMargin(std::uint8_t z, int marginTiles,
+                                        std::uint8_t minLeafZoom = 0) const;
 
-    // Where a whole tile lands on screen: its north-west corner, and how many
-    // pixels across it is. A tile is square in world space and stays square on
-    // screen, which is what lets a feature inside it be placed by a single
-    // scale and offset rather than a full transform per point.
+    // Where a whole tile lands on the FLAT screen -- rotation applied, tilt
+    // not. Under pitch the GPU applies the tilt as one matrix per frame after
+    // this flat placement, and TileTransform::map() applies it per point; a
+    // tilted origin here would tilt twice. At pitch 0 flat and true screen
+    // coincide, which is every frame today.
     ScreenPoint tileOrigin(const TileId& id) const;
     double tileScreenSize(std::uint8_t z) const;
 
@@ -230,26 +264,57 @@ class Projection
     // camera-free domain the GPU's vertices use and for the same reason.
     struct TileTransform
     {
+        // The similarity: the tile's FLAT-screen origin, and the shared
+        // rotation. Under pitch a tilt about the viewport centre follows it,
+        // so map() is no longer a similarity -- but the flat half still is,
+        // and the unpitched frame (every frame today) still takes only it.
         ScreenPoint origin;
         double size { 0.0 };
         double cos { 1.0 };
         double sin { 0.0 };
 
+        // The tilt, shared by every tile of the frame: the viewport centre it
+        // pivots about, sin/cos of the clamped pitch, and the focal length.
+        // Meaningful only when pitched; the flag keeps the flat path to one
+        // predictable branch, because the label pass calls map() per vertex of
+        // every road it considers, per frame, on the GUI thread.
+        bool pitched { false };
+        double centerX { 0.0 };
+        double centerY { 0.0 };
+        double pitchSin { 0.0 };
+        double pitchCos { 1.0 };
+        double focal { 1.0 };
+
         ScreenPoint map(double lx, double ly) const
         {
             const double sx = lx * size;
             const double sy = ly * size;
-            return ScreenPoint { origin.x + ((sx * cos) - (sy * sin)),
-                                 origin.y + ((sx * sin) + (sy * cos)) };
+            const ScreenPoint flat { origin.x + ((sx * cos) - (sy * sin)),
+                                     origin.y + ((sx * sin) + (sy * cos)) };
+            if (!pitched)
+            {
+                return flat;
+            }
+            const double u = flat.x - centerX;
+            const double v = flat.y - centerY;
+            const double w = std::max(focal - (v * pitchSin), 0.05 * focal);
+            return ScreenPoint { centerX + (u * focal / w),
+                                 centerY + (v * pitchCos * focal / w) };
         }
 
-        // A DIRECTION rather than a position: rotated and scaled, but not
-        // offset. What an on-screen bearing along a road is derived from.
-        ScreenPoint mapDelta(double dx, double dy) const
+        // How much the tilt shrinks things at this tile-local point: 1 on the
+        // flat map, less with distance. What a label's glyphs scale by.
+        double scaleAt(double lx, double ly) const
         {
-            const double sx = dx * size;
-            const double sy = dy * size;
-            return ScreenPoint { (sx * cos) - (sy * sin), (sx * sin) + (sy * cos) };
+            if (!pitched)
+            {
+                return 1.0;
+            }
+            const double sx = lx * size;
+            const double sy = ly * size;
+            const double v = origin.y + ((sx * sin) + (sy * cos)) - centerY;
+            const double w = std::max(focal - (v * pitchSin), 0.05 * focal);
+            return focal / w;
         }
     };
 
@@ -270,6 +335,17 @@ class Projection
 
     TileBounds tileBounds(std::uint8_t z, int marginTiles) const;
 
+    // The flat half of the projection: rotation and scale, no tilt. What the
+    // public screenFor()/worldForScreen() wrap the tilt around, and what
+    // tileOrigin() exposes directly for the GPU's own tilt matrix.
+    ScreenPoint flatScreenFor(const WorldPoint& world) const;
+
+    // The pitched walk. Works in FLAT screen space, where the viewport is a
+    // trapezoid and every tile is still an undistorted rotated square -- the
+    // one space where both shapes are exact and convex.
+    VisibleTiles pitchedVisibleTiles(std::uint8_t z, int marginTiles,
+                                     std::uint8_t minLeafZoom) const;
+
     Camera mCamera;
     double mWidthPx;
     double mHeightPx;
@@ -282,6 +358,14 @@ class Projection
     double mCos { 1.0 };
     double mSin { 0.0 };
     bool mRotated { false };
+    // The tilt: sin/cos of the clamped pitch, and the focal length in logical
+    // pixels. 1.5 viewport-heights is MapLibre's cameraToCenterDistance, kept
+    // for the same reason it is standard -- the perspective reads as a view of
+    // a map, not a view down a corridor.
+    double mPitchSin { 0.0 };
+    double mPitchCos { 1.0 };
+    double mFocalPx { 1.0 };
+    bool mPitched { false };
 };
 
 // ------------------------------------------------------- standing in for a tile
