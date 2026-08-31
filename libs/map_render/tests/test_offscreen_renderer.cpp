@@ -12,7 +12,7 @@
 // rules all differ slightly across backends, and asserting on an exact byte
 // would make this test a report on which GPU the CI box has.
 
-#include "map_render/gpu_renderer.h"
+#include "map_render/offscreen_renderer.h"
 #include "map_render/tessellator.h"
 
 #include "mvt/tile.h"
@@ -45,7 +45,7 @@ void check(bool condition, const std::string& what)
 using map_render::Camera;
 using map_render::Coordinate;
 using map_render::GpuBatch;
-using map_render::GpuRenderer;
+using map_render::OffscreenRenderer;
 using map_render::MapLayer;
 using map_render::MapVertex;
 using map_render::Projection;
@@ -202,7 +202,7 @@ TileId centreTile(const Projection& projection)
 
 void test_a_backend_comes_up_with_no_window()
 {
-    const auto renderer = GpuRenderer::create();
+    const auto renderer = OffscreenRenderer::create();
     check(renderer != nullptr,
           "QRhi initialises under QT_QPA_PLATFORM=offscreen -- if this fails, every map is blank");
     if (renderer)
@@ -214,7 +214,7 @@ void test_a_backend_comes_up_with_no_window()
 
 void test_an_empty_frame_is_the_background_colour()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -245,7 +245,7 @@ void test_geometry_reaches_the_pixels()
 {
     // The whole pipeline in one assertion: a tessellated quad, uploaded, drawn
     // through the baked shader, resolved out of MSAA and read back.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -287,7 +287,7 @@ void test_layer_order_beats_tile_order()
     // an earlier tile's motorway, so roads disappear along tile boundaries -- and
     // it looks like a tile-loading fault rather than a draw-order one. The fix is
     // to iterate layer-major across every tile, which is what this pins.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -325,7 +325,7 @@ void test_panning_does_not_reupload()
     // is cached per tile; a frame that changed only the camera must touch the
     // uniform buffer and nothing else. If uploads track the frame count, the
     // cache is being invalidated every frame and the GPU path has bought nothing.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -362,7 +362,7 @@ void test_new_geometry_for_the_same_tile_does_reupload()
     // The other half: a style change re-tessellates in place, so the tile ids are
     // identical while the geometry is not. Comparing ids alone would keep drawing
     // the old triangles and the style change would appear to do nothing.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -400,12 +400,136 @@ void test_new_geometry_for_the_same_tile_does_reupload()
     }
 }
 
+void test_a_new_tile_uploads_only_itself()
+{
+    // The point of the arena. Adding a tile used to flatten every resident tile
+    // into one array and re-upload the lot, so the cost of bringing in one tile
+    // was the size of the whole visible map -- which at a pitched camera
+    // happens several times a second. The traffic must be the ARRIVING tile,
+    // not the frame.
+    auto renderer = OffscreenRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    auto tiles = projection.visibleTiles(14, 0);
+    if (tiles.size() < 3)
+    {
+        return;
+    }
+    projection.sortCentreOutward(tiles);
+
+    std::vector<GpuBatch> batches;
+    for (std::size_t i = 0; i < tiles.size() - 1; ++i)
+    {
+        batches.push_back(GpuBatch { tiles[i], fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) });
+    }
+    renderer->render(projection, batches, style, background);
+    const std::uint64_t settled = renderer->stats().uploadedVertices;
+    check(settled > 0, "the first frame uploads its tiles");
+
+    auto arriving = fullTileQuad(MapLayer::Water, 0.0f, 0.0f, 1.0f);
+    const auto arrivingVertices = std::uint64_t(arriving->vertices.size());
+    batches.push_back(GpuBatch { tiles.back(), std::move(arriving) });
+    renderer->render(projection, batches, style, background);
+
+    check(renderer->stats().uploadedVertices == settled + arrivingVertices,
+          "and the next frame uploads exactly the tile that arrived, got " +
+              std::to_string(renderer->stats().uploadedVertices - settled) + " vertices for a " +
+              std::to_string(arrivingVertices) + "-vertex tile");
+    check(renderer->stats().compactions == 0, "with no whole-buffer rebuild");
+}
+
+void test_a_tile_that_comes_straight_back_is_not_uploaded_again()
+{
+    // Measured on the bench: the drawn set oscillates as the camera crosses a
+    // tile boundary, so a tile that leaves is very likely back within a frame.
+    // Dropping its block on departure made every one of those round trips cost
+    // a re-upload -- five times the traffic on a camera that revisits ground.
+    auto renderer = OffscreenRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    auto tiles = projection.visibleTiles(14, 0);
+    if (tiles.size() < 2)
+    {
+        return;
+    }
+    projection.sortCentreOutward(tiles);
+
+    // Held here rather than in the batch list, so the SAME geometry -- and so
+    // the same serial -- is what comes back. A fresh tessellation is a
+    // different tile as far as the renderer is concerned, and rightly so.
+    auto first = fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f);
+    auto second = fullTileQuad(MapLayer::Water, 0.0f, 0.0f, 1.0f);
+
+    std::vector<GpuBatch> both { GpuBatch { tiles[0], first }, GpuBatch { tiles[1], second } };
+    renderer->render(projection, both, style, background);
+    const std::uint64_t afterBoth = renderer->stats().uploadedVertices;
+
+    std::vector<GpuBatch> one { GpuBatch { tiles[0], first } };
+    renderer->render(projection, one, style, background);
+    check(renderer->stats().uploadedVertices == afterBoth, "a tile leaving uploads nothing");
+
+    renderer->render(projection, both, style, background);
+    check(renderer->stats().uploadedVertices == afterBoth,
+          "and it coming back uploads nothing either, got " +
+              std::to_string(renderer->stats().uploadedVertices - afterBoth) + " vertices");
+}
+
+void test_two_sources_may_share_a_tile_id()
+{
+    // Residency is keyed by TileGeometry::serial, not by TileId, and this is
+    // why: a basemap and an overlay archive can both hand up the same z/x/y in
+    // one frame with entirely different triangles. Keyed by id, the second
+    // would find the first's block and the overlay would silently draw the
+    // basemap's geometry twice.
+    auto renderer = OffscreenRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    const MapStyle_t style;
+    const QColor background(0x16, 0x18, 0x1d);
+    const Projection projection(Camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 },
+                                kWidth, kHeight);
+    const TileId id = centreTile(projection);
+
+    // Green underneath, red over it: same id, same layer, different geometry.
+    // Whichever draws second owns the pixel, so the frame reports which of the
+    // two blocks the overlay was actually given.
+    std::vector<GpuBatch> batches {
+        GpuBatch { id, fullTileQuad(MapLayer::Water, 0.0f, 1.0f, 0.0f) },
+        GpuBatch { id, fullTileQuad(MapLayer::Water, 1.0f, 0.0f, 0.0f) }
+    };
+    const QImage& frame = renderer->render(projection, batches, style, background);
+    if (frame.isNull())
+    {
+        return;
+    }
+    const QColor pixel = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    check(near(pixel, QColor(255, 0, 0)),
+          "the second of two same-id tiles draws its own geometry, got " + describe(pixel));
+}
+
 void test_the_frame_follows_a_resize()
 {
     // Qt does not deliver resizeEvent to a widget that was never shown, so the
     // widget recomputes on paint -- which means render() gets a size change with
     // no warning and has to rebuild the render target underneath itself.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -440,7 +564,7 @@ void test_north_is_up_and_the_image_is_not_flipped()
     // top or the bottom, and QRhi reports it rather than normalising it. Half a
     // tile, on the tile's northern half only, has to appear in the NORTHERN half
     // of the frame.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -535,7 +659,7 @@ struct InkSweep
     double middle() const { return (lowest + highest) / 2.0; }
 };
 
-InkSweep sweepInk(GpuRenderer& renderer, float halfPx)
+InkSweep sweepInk(OffscreenRenderer& renderer, float halfPx)
 {
     const MapStyle_t style;
     const QColor background(0x16, 0x18, 0x1d);
@@ -576,7 +700,7 @@ InkSweep sweepInk(GpuRenderer& renderer, float halfPx)
 // that misses the pixel.
 void test_a_hairline_road_never_disappears()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -606,7 +730,7 @@ void test_a_hairline_road_never_disappears()
 // pixel.
 void test_widening_a_hairline_does_not_add_ink()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -628,7 +752,7 @@ void test_widening_a_hairline_does_not_add_ink()
 // A line comfortably wider than the floor must be untouched by any of this.
 void test_a_normal_width_line_is_unaffected()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -658,7 +782,7 @@ void test_a_normal_width_line_is_unaffected()
 // a washed-out lake is a bug none of the line checks above can see.
 void test_a_fill_is_never_faded_by_the_line_floor()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -696,7 +820,7 @@ void test_a_fill_is_never_faded_by_the_line_floor()
 // wedge that is present at one end and gone at the other.
 void test_a_tessellated_road_draws_as_a_continuous_band()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -875,7 +999,7 @@ void test_a_half_faded_tile_blends_with_the_background()
     // The crossfade rides the per-tile uniform: at alpha 0.5 a solid fill
     // must come out as an even mix of its colour and the background, with the
     // vertex buffer untouched.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -911,7 +1035,7 @@ void test_fade_state_is_part_of_the_memo_key()
 {
     // A fading tile makes every frame a fresh picture. Miss it in the key and
     // the fade freezes on its first frame -- pop-in with extra steps.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -946,7 +1070,7 @@ void test_a_highlighted_road_is_recoloured()
     // The whole point of the highlight pass: the road the vehicle is on comes
     // back from the matcher as an OSM way id, map_build stamps that id on the
     // tile feature, and the pass recolours the geometry already on the GPU.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -977,7 +1101,7 @@ void test_a_highlighted_road_is_recoloured()
 
     const QImage lit = renderer
                            ->render(projection, { GpuBatch { id, geometry } }, style, background,
-                                    GpuRenderer::Highlight { { 42 }, magenta, 0.0F })
+                                    OffscreenRenderer::Highlight { { 42 }, magenta, 0.0F })
                            .copy();
     check(near(lit.pixelColor(kWidth / 2, row), magenta, 12),
           "highlighted by its way id, the road turns the highlight colour");
@@ -987,7 +1111,7 @@ void test_a_highlight_misses_unknown_way_ids()
 {
     // An id no tile feature carries must draw nothing extra -- the pass joins
     // on the sorted road ranges, and a miss is silence, not a stray overlay.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1006,7 +1130,7 @@ void test_a_highlight_misses_unknown_way_ids()
 
     const QImage frame = renderer
                              ->render(projection, { GpuBatch { id, geometry } }, style, background,
-                                      GpuRenderer::Highlight { { 99 }, magenta, 4.0F })
+                                      OffscreenRenderer::Highlight { { 99 }, magenta, 4.0F })
                              .copy();
     bool anyMagenta = false;
     for (int y = 0; y < frame.height() && !anyMagenta; ++y)
@@ -1028,7 +1152,7 @@ void test_the_highlight_widens_by_extra_half_px()
     // extraHalfPx is what makes a highlight readable: at exactly the road's
     // width it vanishes into the road. The extra is added after the zoom
     // taper, in the highlight's own vertex stage.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1047,11 +1171,11 @@ void test_the_highlight_widens_by_extra_half_px()
 
     const QImage flush = renderer
                              ->render(projection, { GpuBatch { id, geometry } }, style, background,
-                                      GpuRenderer::Highlight { { 42 }, magenta, 0.0F })
+                                      OffscreenRenderer::Highlight { { 42 }, magenta, 0.0F })
                              .copy();
     const QImage cased = renderer
                              ->render(projection, { GpuBatch { id, geometry } }, style, background,
-                                      GpuRenderer::Highlight { { 42 }, magenta, 6.0F })
+                                      OffscreenRenderer::Highlight { { 42 }, magenta, 6.0F })
                              .copy();
 
     const int flushRun = columnRun(flush, kWidth / 2, magenta);
@@ -1069,7 +1193,7 @@ void test_a_changed_highlight_invalidates_the_memo()
     // The highlight is part of the frame key. Matching on it wrongly freezes
     // the lit road in place while the vehicle drives off it -- which reads as
     // the matcher being stuck, not the renderer.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1086,7 +1210,7 @@ void test_a_changed_highlight_invalidates_the_memo()
     const TileId id = centreTile(projection);
     const auto geometry = roadTileWithWayId(projection, id, style, 42);
     const std::vector<GpuBatch> batches { GpuBatch { id, geometry } };
-    const GpuRenderer::Highlight lit { { 42 }, magenta, 4.0F };
+    const OffscreenRenderer::Highlight lit { { 42 }, magenta, 4.0F };
 
     renderer->render(projection, batches, style, background, lit);
     const std::uint64_t afterFirst = renderer->stats().reused;
@@ -1096,11 +1220,11 @@ void test_a_changed_highlight_invalidates_the_memo()
           "an identical highlight is served from the memo");
 
     renderer->render(projection, batches, style, background,
-                     GpuRenderer::Highlight { { 43 }, magenta, 4.0F });
+                     OffscreenRenderer::Highlight { { 43 }, magenta, 4.0F });
     check(renderer->stats().reused == afterFirst + 1, "a different way id redraws");
 
     renderer->render(projection, batches, style, background,
-                     GpuRenderer::Highlight { { 43 }, magenta, 8.0F });
+                     OffscreenRenderer::Highlight { { 43 }, magenta, 8.0F });
     check(renderer->stats().reused == afterFirst + 1, "and so does a wider casing");
 }
 
@@ -1113,7 +1237,7 @@ void test_a_changed_highlight_invalidates_the_memo()
 // vertices shows up as the wrong colour on screen.
 void test_each_tile_draws_its_own_vertices()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1176,7 +1300,7 @@ void test_each_tile_draws_its_own_vertices()
 // Checked at the crossing pixel, which is the one place the two disagree.
 void test_an_overpass_draws_over_the_road_it_crosses()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1265,7 +1389,7 @@ void test_many_tiles_still_render()
     // stride is the hardware's alignment rather than sizeof(the struct). A wrong
     // stride draws every tile at tile zero's transform -- which looks like one
     // tile rendering and the rest missing.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1306,7 +1430,7 @@ void test_many_tiles_still_render()
 
 void test_a_tile_with_no_geometry_is_harmless()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1339,7 +1463,7 @@ void test_an_unchanged_frame_is_not_drawn_again()
     // A widget repaints for reasons that have nothing to do with the map --
     // a sibling widget updating, an expose event. Redrawing an identical image
     // and reading it back is the entire frame cost for no change at all.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         check(false, "a GPU backend comes up");
@@ -1391,7 +1515,7 @@ void test_a_hidpi_frame_is_rendered_at_device_resolution()
     // the label and marker passes, which go through QPainter, were drawn at
     // full resolution over the top. Soft roads under sharp text, which reads as
     // a styling problem rather than a resolution one.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1491,7 +1615,7 @@ void test_a_viewport_too_wide_for_a_texture_comes_back_soft_not_blank()
     // render() returns null, and the widget fills its background with no
     // diagnostic that says why -- so the ratio is lowered until the frame fits
     // and the map merely loses sharpness.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1537,7 +1661,7 @@ void test_line_widths_stay_logical_pixels()
     // halfWidthFor(). Rendering at 2x without also scaling the width uniform
     // leaves every road the same DEVICE width, which is half the road it should
     // be: a HiDPI map whose geometry is sharp and whose roads are hairlines.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1595,7 +1719,7 @@ void test_a_pitched_frame_agrees_with_the_projection()
     // The GPU applies the tilt as a matrix; the Projection applies it as
     // arithmetic. If they disagree, everything drawn by QPainter through
     // screenFor() -- the marker, the trail -- floats off the GPU's map.
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1643,7 +1767,7 @@ void test_a_pitched_frame_agrees_with_the_projection()
 
 void test_pitch_is_part_of_the_memo_key()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1680,7 +1804,7 @@ void test_pitch_is_part_of_the_memo_key()
 // instead makes the width independent of both position and tile size.
 void test_a_road_keeps_its_screen_width_under_pitch()
 {
-    auto renderer = GpuRenderer::create();
+    auto renderer = OffscreenRenderer::create();
     if (!renderer)
     {
         return;
@@ -1784,6 +1908,9 @@ int main(int argc, char** argv)
     test_layer_order_beats_tile_order();
     test_panning_does_not_reupload();
     test_new_geometry_for_the_same_tile_does_reupload();
+    test_a_new_tile_uploads_only_itself();
+    test_a_tile_that_comes_straight_back_is_not_uploaded_again();
+    test_two_sources_may_share_a_tile_id();
     test_the_frame_follows_a_resize();
     test_north_is_up_and_the_image_is_not_flipped();
     test_a_fill_is_never_faded_by_the_line_floor();

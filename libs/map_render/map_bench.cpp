@@ -19,7 +19,7 @@
 // SET changes. If it tracks the frame count, something is invalidating the
 // vertex cache every frame and the whole tessellate-once design is off.
 
-#include "map_render/gpu_renderer.h"
+#include "map_render/offscreen_renderer.h"
 #include "map_render/labels.h"
 #include "map_render/projection.h"
 #include "map_render/tessellator.h"
@@ -53,7 +53,7 @@ namespace
 using map_render::Camera;
 using map_render::Coordinate;
 using map_render::GpuBatch;
-using map_render::GpuRenderer;
+using map_render::OffscreenRenderer;
 using map_render::LabelTile;
 using map_render::Projection;
 using map_render::TileGeometry;
@@ -83,15 +83,24 @@ class Stage
         }
         std::vector<double> sorted = mSamples;
         std::sort(sorted.begin(), sorted.end());
-        const double median = sorted[sorted.size() / 2];
+        const auto at = [&sorted](double fraction) {
+            const std::size_t index = std::min(sorted.size() - 1,
+                                               std::size_t(fraction * double(sorted.size())));
+            return sorted[index];
+        };
+        const double median = at(0.5);
         const double worst = sorted.back();
         double total = 0.0;
         for (const double sample : sorted)
         {
             total += sample;
         }
-        SPDLOG_INFO("  {:<22} median {:7.3f} ms   worst {:7.3f} ms   total {:8.1f} ms", mName,
-                    median, worst, total);
+        // p90/p99 as well as the median, because the interesting failure here
+        // is not a slow average but a stall: a frame that brings in a new tile
+        // costs many times one that does not, and a median hides that entirely.
+        SPDLOG_INFO("  {:<22} median {:7.3f}   p90 {:7.3f}   p99 {:7.3f}   worst {:7.3f} ms"
+                    "   total {:8.1f} ms",
+                    mName, median, at(0.90), at(0.99), worst, total);
     }
 
     double median() const
@@ -146,7 +155,7 @@ int main(int argc, char** argv)
     spdlog::set_pattern("%v");
 
     // The renderer draws into a texture, never a surface -- so offscreen is not
-    // a limitation here, it is the supported configuration. See gpu_renderer.h.
+    // a limitation here, it is the supported configuration. See offscreen_renderer.h.
     ::qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
 
@@ -195,7 +204,7 @@ int main(int argc, char** argv)
     MapStyle_t style;
     const QColor background("#0d0f13");
 
-    auto gpu = GpuRenderer::create();
+    auto gpu = OffscreenRenderer::create();
     if (!gpu)
     {
         SPDLOG_ERROR("no GPU backend");
@@ -320,6 +329,11 @@ int main(int argc, char** argv)
     Stage visible("visible tiles");
     Stage ready("gather batches");
     Stage render("gpu render");
+    // The same frames, split by whether the vertex buffer had to be rewritten.
+    // A pan that brings in a tile is a different cost class from one that does
+    // not, and the combined median reports neither of them.
+    Stage renderUpload("  ^ upload frames");
+    Stage renderSteady("  ^ steady frames");
     Stage labels("labels (place only)");
     Stage trackCoord("track (Coordinate)");
     Stage trackWorld("track (WorldPoint)");
@@ -397,9 +411,19 @@ int main(int argc, char** argv)
         gpu->setText(textQuads, labelCache.atlas().page(), labelCache.atlas().dirty());
         labelCache.atlas().markClean();
 
+        const std::uint64_t uploadsBeforeFrame = gpu->stats().uploads;
         const Timer renderTimer;
         const QImage& gpuFrame = gpu->render(projection, batches, style, background);
-        render.add(renderTimer.ms());
+        const double renderMs = renderTimer.ms();
+        render.add(renderMs);
+        if (gpu->stats().uploads != uploadsBeforeFrame)
+        {
+            renderUpload.add(renderMs);
+        }
+        else
+        {
+            renderSteady.add(renderMs);
+        }
 
         if (!dumpPath.empty() && i == frames - 1)
         {
@@ -475,12 +499,14 @@ int main(int argc, char** argv)
         frame.add(frameTimer.ms());
     }
 
-    const GpuRenderer::Stats stats = gpu->stats();
+    const OffscreenRenderer::Stats stats = gpu->stats();
 
     SPDLOG_INFO("{} frames:", frames);
     visible.report();
     ready.report();
     render.report();
+    renderUpload.report();
+    renderSteady.report();
     labels.report();
     trackCoord.report();
     trackWorld.report();
@@ -488,6 +514,14 @@ int main(int argc, char** argv)
     SPDLOG_INFO("");
     SPDLOG_INFO("  uploads {} over {} frames   ({} draw calls, {} vertices resident)",
                 stats.uploads, frames, stats.drawCalls, stats.vertices);
+    // The number that says whether uploads are incremental. `uploadedVertices`
+    // divided by `uploads` is the average frame's traffic; if it approaches
+    // `vertices resident` then every upload is rewriting the whole buffer and
+    // the arena is not doing its job. `compactions` is how often it had to.
+    SPDLOG_INFO("  {} vertices uploaded in total ({:.0f} per upload frame), {} compactions",
+                stats.uploadedVertices,
+                stats.uploads > 0 ? double(stats.uploadedVertices) / double(stats.uploads) : 0.0,
+                stats.compactions);
     // The camera moves every frame here, so this must stay 0. Anything else
     // means the frame memo's key is missing an input.
     SPDLOG_INFO("  frames reused {} (expected 0: the camera moves every frame)", stats.reused);

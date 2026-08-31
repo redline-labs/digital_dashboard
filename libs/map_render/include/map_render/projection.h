@@ -200,7 +200,7 @@ class Projection
     //
     // ROW-MAJOR, and stably so: the same set of tiles comes back in the same
     // order however the camera moved to get there. That matters because this
-    // order reaches GpuRenderer, which compares the batch list POSITIONALLY to
+    // order reaches OffscreenRenderer, which compares the batch list POSITIONALLY to
     // decide whether its vertex buffer is still good -- so an order that
     // shifted as the camera moved re-uploaded every visible tile's geometry
     // for no change at all. Sort a COPY with sortCentreOutward() when the

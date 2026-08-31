@@ -4,7 +4,7 @@
 //
 // A header of its own because it is the seam between two halves that otherwise
 // know nothing about each other: map/labels.h decides where text goes and owns
-// the atlas it is rasterised into, and map/gpu_renderer.h draws quads and has
+// the atlas it is rasterised into, and map/offscreen_renderer.h draws quads and has
 // never heard of a font. Neither has to include the other.
 #ifndef MAP_TEXT_QUAD_H
 #define MAP_TEXT_QUAD_H

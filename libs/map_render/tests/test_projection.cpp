@@ -560,7 +560,7 @@ void test_visible_tiles_cover_the_viewport()
 
 void test_the_visible_order_does_not_move_with_the_camera()
 {
-    // THE reason visibleTiles() is row-major. This order reaches GpuRenderer,
+    // THE reason visibleTiles() is row-major. This order reaches OffscreenRenderer,
     // which compares the batch list positionally to decide whether its vertex
     // buffer is still valid -- so if a camera nudge that changes nothing about
     // WHICH tiles are visible reorders them, the renderer re-uploads every

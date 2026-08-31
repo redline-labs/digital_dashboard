@@ -69,6 +69,12 @@ add_subdirectory(map_render)
 # which is exactly what map_render must not hold -- hence a sibling, after it
 # only for reading order; it links only Qt.
 add_subdirectory(map_controls)
+# The same map pass, drawn straight into a QRhiWidget with no readback and no
+# blit -- three quarters to nine tenths of the map's paint cost, on a real
+# display. A QWidget, so it cannot live in map_render; and it cannot come up
+# under QT_QPA_PLATFORM=offscreen at all, so it is an addition to the offscreen
+# host rather than a replacement. After map_render, whose MapPass it hosts.
+add_subdirectory(map_surface)
 # The MOTOTRBO radio protocols: XNL framing and authentication, XCMP commands,
 # the on-air control plane, and the NAI data service codecs. Pure bytes, no
 # I/O -- `xpr` sits above it with the sockets, the same way bd992 sits above

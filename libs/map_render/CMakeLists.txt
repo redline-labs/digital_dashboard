@@ -12,13 +12,14 @@
 #   * zenoh and capnp. Where tiles come from is the caller's business.
 #     dashboard/widgets/map asks nodes/map_server; scope reads an .mbtiles
 #     directly. Neither transport is visible from in here.
-#   * a QWidget. Nothing here is one. GpuRenderer drives QRhi against an
-#     offscreen TEXTURE rather than a platform surface, which is the whole
-#     reason a map draws at all under QT_QPA_PLATFORM=offscreen -- and it is
-#     what lets two different hosts, a dashboard widget and a scope panel, blit
-#     the same frame. (Qt6::Widgets does arrive on the link line anyway, via
-#     qt_helpers' INTERFACE deps. That is a fact about that target, not a
-#     QWidget in here.)
+#   * a QWidget. Nothing here is one. MapPass records the drawing and owns no
+#     target at all; OffscreenRenderer hosts it against an offscreen TEXTURE rather
+#     than a platform surface, which is the whole reason a map draws at all
+#     under QT_QPA_PLATFORM=offscreen. The QRhiWidget host that draws the same
+#     pass straight into a window is libs/map_surface, and it lives there
+#     precisely so that this target stays buildable and testable headless.
+#     (Qt6::Widgets does arrive on the link line anyway, via qt_helpers'
+#     INTERFACE deps. That is a fact about that target, not a QWidget in here.)
 #   * libs/mbtiles. The archive reader stays with whoever opens a file.
 cmake_minimum_required(VERSION 3.16)
 
@@ -26,7 +27,7 @@ set(MAP_RENDER_LIB map_render)
 
 # GuiPrivate is what exposes <rhi/qrhi.h>. QRhi is semi-public in Qt 6 -- a
 # stable-ish API shipped behind the private headers -- and it is the only way to
-# reach the GPU without binding to a platform surface. See gpu_renderer.h for
+# reach the GPU without binding to a platform surface. See offscreen_renderer.h for
 # why binding to one is not an option here.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui GuiPrivate ShaderTools)
 
@@ -52,7 +53,7 @@ function(map_bake_shader source symbol out_var)
         OUTPUT ${hdr_out}
         # --glsl 330 is what an OpenGL fallback needs; --msl and --spirv cover
         # Metal and Vulkan. Baking all three keeps one artefact portable across
-        # the backends gpu_renderer.cpp tries.
+        # the backends offscreen_renderer.cpp tries.
         COMMAND Qt6::qsb --glsl 330 --msl 12 -o ${qsb_out} ${source}
         COMMAND ${CMAKE_COMMAND} -DIN=${qsb_out} -DOUT=${hdr_out} -DSYMBOL=${symbol}
                 -P ${CMAKE_SOURCE_DIR}/cmake/EmbedBinary.cmake
@@ -79,7 +80,8 @@ add_custom_target(map_render_shaders
 # ----------------------------------------------------------------- library
 
 add_library(${MAP_RENDER_LIB} STATIC
-    src/gpu_renderer.cpp
+    src/offscreen_renderer.cpp
+    src/map_pass.cpp
     src/label_candidates.cpp
     src/labels.cpp
     src/projection.cpp
@@ -92,7 +94,9 @@ add_library(${MAP_RENDER_LIB} STATIC
     ${MAP_HIGHLIGHT_FRAG_HEADER}
     ${GLYPH_VERT_HEADER}
     ${GLYPH_FRAG_HEADER}
-    include/map_render/gpu_renderer.h
+    include/map_render/buffer_arena.h
+    include/map_render/offscreen_renderer.h
+    include/map_render/map_pass.h
     include/map_render/label_candidates.h
     include/map_render/labels.h
     include/map_render/projection.h
@@ -254,11 +258,28 @@ target_link_libraries(map_test_tile_workers
 
 add_project_test(TARGET map_test_tile_workers LABELS map unit)
 
+# The suballocator the renderer places tile geometry with. Header-only and
+# Qt-free, so it needs nothing but itself -- and it is worth testing apart from
+# the renderer because a block handed out twice looks like a tessellation bug
+# there rather than an allocator one.
+add_executable(map_test_buffer_arena
+    tests/test_buffer_arena.cpp
+)
+
+target_include_directories(map_test_buffer_arena PRIVATE include)
+
+target_link_libraries(map_test_buffer_arena
+    PRIVATE
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_test_buffer_arena LABELS map unit)
+
 # The GPU renderer, headless. Asserts that known geometry lands on known pixels
 # under QT_QPA_PLATFORM=offscreen -- the property the whole design exists to
 # preserve.
 add_executable(map_test_gpu
-    tests/test_gpu_renderer.cpp
+    tests/test_offscreen_renderer.cpp
 )
 
 target_link_libraries(map_test_gpu

@@ -35,8 +35,12 @@ target_link_libraries(${MAP_WIDGET_LIB}
         Qt6::Gui
         Qt6::Widgets
         # The renderer. PUBLIC because map_widget.h and tile_source.h both
-        # expose its types -- Projection, TileId, CachedTile, GpuRenderer.
+        # expose its types -- Projection, TileId, CachedTile, MapPass::Stats.
         map_render
+        # The map itself, as a widget: it picks between drawing straight into a
+        # QRhiWidget and going through an offscreen texture, and this widget
+        # never learns which. PUBLIC because map_widget.h holds a pointer to it.
+        map_surface
         # The floating buttons. PUBLIC because map_widget.h holds pointers to
         # its widget types.
         map_controls

@@ -19,7 +19,8 @@
 #include "map_panel/tile_reader.h"
 #include "map_panel/track_builder.h"
 
-#include "map_render/gpu_renderer.h"
+#include "map_render/map_pass.h"
+#include "map_surface/map_surface.h"
 #include "map_render/labels.h"
 #include "map_render/projection.h"
 
@@ -54,15 +55,23 @@ class TimeBase;
 // tile into pixels -- projection, tessellator, GPU renderer, label layout, tile
 // cache -- which is libs/map_render, hoisted out of the widget for exactly this.
 //
-// NOT A QRhiWidget. GpuRenderer drives QRhi against an offscreen TEXTURE rather
-// than a platform surface, because under QT_QPA_PLATFORM=offscreen a
-// surface-bound widget reports "QRhi is not supported on this platform" and
-// returns a null map -- and every gui test and every ui_screenshot in this tree
-// runs offscreen. paintEvent blits the frame it reads back.
+// THE PANEL DOES NOT DRAW THE BASEMAP. It drives a map_surface::MapSurface
+// child, which picks between drawing straight into a QRhiWidget and going
+// through an offscreen texture depending on what the platform can do -- and
+// which one it got is not visible from here. See map_surface/map_surface.h.
 //
-// THREE PASSES, in order: the GPU frame, then labels, then the trail and marker
-// in QPainter. No CachedPaintWidget -- a Panel cannot derive from both bases
-// anyway, and the cached layer would invalidate on every cursor move.
+// Two consequences that ARE this panel's business:
+//
+//   * The trail, the marker, the legend and the diagnostic are painted through
+//     setOverlayPainter(), not in this panel's own paintEvent. A QRhiWidget has
+//     no paint engine, so QPainter over the map only works on the transparent
+//     layer the surface puts there.
+//   * paintEvent stays the frame driver, and it still paints the panel's
+//     background. Driving from there is what keeps render() and repaint()
+//     meaning "produce one frame" for every gui test and every ui_screenshot.
+//
+// No CachedPaintWidget -- a Panel cannot derive from both bases anyway, and the
+// cached layer would invalidate on every cursor move.
 class MapPanel : public Panel
 {
     Q_OBJECT
@@ -206,6 +215,9 @@ class MapPanel : public Panel
     void refreshTiles(const map_render::Projection& projection);
     void assembleBatches();
 
+    // Everything this panel draws over the basemap, on the surface's
+    // transparent layer. Hung on the surface once, in the constructor.
+    void paintOverlay(QPainter& painter);
     void paintTrack(QPainter& painter, const map_render::Projection& projection);
     void paintMarker(QPainter& painter, const map_render::Projection& projection);
     void paintLegend(QPainter& painter);
@@ -250,7 +262,14 @@ class MapPanel : public Panel
     // different fixes.
     std::vector<std::string> unknown_tilesets_;
 
-    std::unique_ptr<map_render::GpuRenderer> gpu_;
+    // The basemap, filling this panel and beneath everything else in it. Owned
+    // by Qt as a child, never null: it reports its own failure through
+    // isUsable(), which is a state the panel REPORTS rather than one it dies
+    // of -- the trail and the marker still draw over an empty map.
+    map_surface::MapSurface* surface_ { nullptr };
+    // What the last submitted frame was drawn for. The overlay paints after
+    // paintEvent has returned, so the projection it needs cannot be a local.
+    std::optional<map_render::Projection> frame_projection_;
     map_render::LabelCache label_cache_;
 
     // The trail, rebuilt each frame from the bound buffers, and the thinned

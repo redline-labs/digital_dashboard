@@ -3,41 +3,32 @@
 // An offline map, with the vehicle on it.
 //
 // Everything it draws comes from nodes/map_server over zenoh: no HTTP, and no
-// off-the-shelf map widget. That last part is deliberate -- the Qt ones are
-// QRhiWidget or QOpenGLWidget derived and do not initialise under
-// QT_QPA_PLATFORM=offscreen, which would leave this invisible to ui_screenshot
-// and to every `gui` test. See docs/map.md.
+// off-the-shelf map widget. See docs/map.md.
 //
-// Three passes, in this order, every paint:
+// THIS CLASS NO LONGER DRAWS THE MAP. It drives one: paintEvent works out the
+// camera, asks for the tiles, lays out the labels and hands the result to a
+// map_surface::MapSurface child, which draws it either straight into a
+// QRhiWidget or through an offscreen texture and a blit depending on what the
+// platform can do. Which one is not this widget's business and is not visible
+// from here -- see map_surface/map_surface.h.
 //
-//   1. The GPU frame. map_widget::GpuRenderer draws the tile geometry into an
-//      offscreen texture through QRhi and hands back a QImage. Not a
-//      QRhiWidget and not a QOpenGLWidget -- both bind to a platform surface
-//      that does not exist offscreen. See map/gpu_renderer.h.
+// Two consequences that are this widget's business:
 //
-//      At the screen's DEVICE pixel ratio, not the logical size: passes 2 and 3
-//      go through QPainter and are drawn at the ratio for free, so a logical
-//      frame here put upscaled geometry under sharp text.
-//
-//      This is NOT free. The frame is close to linear in device pixels --
-//      roughly 0.5 ms per megapixel on an M-series Metal backend, measured with
-//      map_bench --dpr -- so a 660x640 widget pays about +0.6 ms to go to 2x
-//      and a 2560x1440 one about +5.5 ms. It is the readback rather than the
-//      rasterisation: turning MSAA off entirely moves 2x at 2560x1440 by less
-//      than a millisecond. Worth it at dashboard sizes, and worth knowing about
-//      before putting a full-screen map on a 4K panel at 60 Hz.
-//   2. Labels, with QPainter. They must not rotate with the map and their
-//      collision is viewport-global, so they cannot ride in the GPU transform
-//      or be baked per tile. See map/labels.h.
-//   3. The vehicle marker and its trail, also QPainter.
+//   * The vehicle marker and the diagnostic line are painted through
+//     setOverlayPainter(), not in this widget's own paintEvent. A QRhiWidget
+//     has no paint engine, so QPainter over the map only works on the
+//     transparent layer the surface puts there.
+//   * paintEvent is the FRAME DRIVER. It ticks the eases, walks the tiles and
+//     places the labels, then submits. What it does not do any more is put a
+//     single pixel on the screen.
 //
 // There is no qt_helpers::CachedPaintWidget here and no cached underlay. That
 // split exists to keep an expensive redraw off the hot path, and both expensive
 // parts of this one are already cached somewhere better: tessellation happens
 // once per tile on a zenoh thread inside TileSource, and a frame whose camera,
-// tiles and style are unchanged is handed straight back out of GpuRenderer's
-// own memo without being drawn or read back at all. A QPixmap here would be a
-// third copy of the same picture.
+// tiles and style are unchanged is handed straight back out of the offscreen
+// renderer's own memo without being drawn or read back at all. A QPixmap here
+// would be a third copy of the same picture.
 #ifndef MAP_MAP_WIDGET_H
 #define MAP_MAP_WIDGET_H
 
@@ -63,9 +54,10 @@ class RawSubscriber;
 #include "dashboard/widget_types.h"
 
 #include "map/config.h"
-#include "map_render/gpu_renderer.h"
 #include "map_render/labels.h"
+#include "map_render/map_pass.h"
 #include "map_render/projection.h"
+#include "map_surface/map_surface.h"
 #include "map_controls/compass_button.h"
 #include "map_controls/recentre_button.h"
 #include "map_controls/view_mode_button.h"
@@ -115,10 +107,10 @@ class MapWidget : public QWidget
         bool tileWalkTruncated { false };
         int labelsPlaced { 0 };
         bool hasPosition { false };
-        // False when no QRhi backend could be created. Hard failure: there is
-        // no CPU fallback, so the map is background and labels only.
+        // False when no GPU backend at all could be created. Hard failure:
+        // there is no CPU fallback, so the map is background and marker only.
         bool gpuReady { false };
-        map_render::GpuRenderer::Stats gpu;
+        map_render::MapPass::Stats gpu;
         // Where the map is ACTUALLY looking, which is not always the configured
         // centre: Follow Vehicle moves it, and so does a drag. A screenshot of
         // the wrong place and a screenshot of an archive with no coverage there
@@ -200,7 +192,7 @@ class MapWidget : public QWidget
     // The camera, the logical viewport and the ratio of whatever is being
     // painted into, as one value. Built per paint rather than kept -- see
     // map/projection.h.
-    map_render::Projection projectionFor(const QPainter& painter) const;
+    map_render::Projection projectionFor() const;
 
     // The projection the MOUSE works against. Deliberately does not go looking
     // for a paint device -- there is none during an event -- and it does not
@@ -233,6 +225,9 @@ class MapWidget : public QWidget
     // to be the one the projection handed to the GPU is about to draw, and two
     // projections built independently is how those drift apart.
     void refreshTiles(const map_render::Projection& projection);
+    // Everything this widget draws over the map, on the surface's transparent
+    // layer. Hung on the surface once, in the constructor.
+    void paintOverlay(QPainter& painter);
     void paintMarker(QPainter& painter, const map_render::Projection& projection);
     void paintDiagnostic(QPainter& painter);
 
@@ -248,10 +243,16 @@ class MapWidget : public QWidget
     // missing" distinguishable.
     std::vector<std::unique_ptr<map_widget::TileSource>> mSources;
 
-    // Null when no backend came up. Checked on every paint rather than once,
-    // because a null renderer is a state the widget draws differently rather
-    // than a construction failure.
-    std::unique_ptr<map_render::GpuRenderer> mGpu;
+    // The map itself, filling this widget and beneath everything else in it.
+    // Owned by Qt as a child. Never null -- it reports its own failure through
+    // isUsable(), because a surface that could not get a GPU is a state the
+    // widget REPORTS rather than a construction failure it dies of.
+    map_surface::MapSurface* mSurface { nullptr };
+
+    // What the last submitted frame was drawn for. The overlay is painted by
+    // the surface's layer, after this widget's paintEvent has returned, so the
+    // projection it needs cannot be a local.
+    std::optional<map_render::Projection> mFrameProjection;
 
     // Set on a zenoh thread, cleared on the GUI thread. It is what coalesces a
     // burst of tile replies into ONE repaint: the first arrival posts a queued

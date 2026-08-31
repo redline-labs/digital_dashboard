@@ -174,11 +174,18 @@ MapPanel::MapPanel(const config_t& cfg, DataSource& source, double history_secon
     setMinimumSize(120, 90);
     setMouseTracking(false);
 
-    // Null when QRhi found no backend for any of the platforms it tries. NOT
-    // fatal: the trail and the marker are QPainter and still draw, which is the
-    // difference between a map with no basemap and a panel that is not there.
-    gpu_ = map_render::GpuRenderer::create();
-    if (!gpu_)
+    // The basemap, filling this panel and under everything else in it. It
+    // picks its own way of drawing and this panel never learns which; lowered
+    // so the buttons, which are the panel's own children, stay above it.
+    //
+    // A failure inside is NOT fatal: the trail and the marker are QPainter and
+    // still draw, which is the difference between a map with no basemap and a
+    // panel that is not there.
+    surface_ = new map_surface::MapSurface(this);
+    surface_->setGeometry(rect());
+    surface_->lower();
+    surface_->setOverlayPainter([this](QPainter& painter) { paintOverlay(painter); });
+    if (!surface_->isUsable())
     {
         SPDLOG_ERROR("Panel '{}': no GPU backend; the basemap will not draw.", cfg_.title);
     }
@@ -880,6 +887,10 @@ void MapPanel::layOutMapButtons()
 void MapPanel::resizeEvent(QResizeEvent* event)
 {
     Panel::resizeEvent(event);
+    if (surface_ != nullptr)
+    {
+        surface_->setGeometry(rect());
+    }
     layOutMapButtons();
 }
 
@@ -958,8 +969,8 @@ void MapPanel::assembleBatches()
     {
         visible_total += ids.size();
     }
-    std::size_t budget = map_render::GpuRenderer::kMaxTilesPerFrame > visible_total
-                             ? map_render::GpuRenderer::kMaxTilesPerFrame - visible_total
+    std::size_t budget = map_render::MapPass::kMaxTilesPerFrame > visible_total
+                             ? map_render::MapPass::kMaxTilesPerFrame - visible_total
                              : 0;
 
     for (std::size_t s = 0; s < readers_.size(); ++s)
@@ -1086,27 +1097,38 @@ void MapPanel::paintEvent(QPaintEvent* /*event*/)
     refreshTiles(projection);
     assembleBatches();
 
-    if (gpu_ && !batches_.empty())
+    if (surface_ != nullptr)
     {
         const map_render::LabelStats label_stats = map_render::layOutText(
             projection, label_tiles_, cfg_.style, label_cache_, devicePixelRatioF(), text_quads_);
         (void)label_stats;
-        gpu_->setText(text_quads_, label_cache_.atlas().page(), label_cache_.atlas().dirty());
-
-        const QImage& frame = gpu_->render(projection, batches_, cfg_.style, background);
-        if (!frame.isNull())
-        {
-            painter.drawImage(rect(), frame);
-        }
+        surface_->setText(text_quads_, label_cache_.atlas().page(), label_cache_.atlas().dirty());
+        label_cache_.atlas().markClean();
+        surface_->setFrame(projection, batches_, cfg_.style, background);
     }
 
     // Thinned once, and BOTH the path and the hit test use the result -- so a
     // click can never land on a point that is not drawn, which would read as a
-    // mis-aimed mouse.
+    // mis-aimed mouse. Done here rather than in the overlay because the hit
+    // test reads it too, and a gesture must not depend on having painted.
     track::thin(track_, projection, kThinPixels, thinned_);
 
-    paintTrack(painter, projection);
-    paintMarker(painter, projection);
+    // Kept for the overlay, which paints after this call has returned.
+    frame_projection_ = projection;
+}
+
+void MapPanel::paintOverlay(QPainter& painter)
+{
+    // Runs on the surface's transparent layer, over the basemap, AFTER
+    // paintEvent has returned -- so everything it needs is a member. `painter`
+    // already has antialiasing on; the layer sets it.
+    if (!frame_projection_)
+    {
+        return;
+    }
+
+    paintTrack(painter, *frame_projection_);
+    paintMarker(painter, *frame_projection_);
 
     if (cfg_.show_color_legend && color_.bound)
     {
@@ -1325,7 +1347,7 @@ QString MapPanel::diagnostic() const
         return tr("Latitude and longitude never share a timestamp — are they on the same topic?");
     }
 
-    if (gpu_ == nullptr)
+    if (surface_ == nullptr || !surface_->isUsable())
     {
         return tr("No GPU backend — map geometry cannot be drawn");
     }
@@ -1574,7 +1596,7 @@ MapPanelStats_t MapPanel::stats() const
     out.tiles_drawn = static_cast<std::uint64_t>(std::max(last_tiles_drawn_, 0));
     out.tiles_stand_in = static_cast<std::uint64_t>(std::max(last_tiles_stand_in_, 0));
 
-    out.gpu_ready = gpu_ != nullptr;
+    out.gpu_ready = surface_ != nullptr && surface_->isUsable();
     out.diagnostic = diagnostic().toStdString();
 
     return out;

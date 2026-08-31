@@ -20,7 +20,7 @@ namespace map_widget
 // to way ids because that is the identity map_build stamps on tile features.
 //
 // Sorted and deduplicated, which is the renderer's contract -- see
-// GpuRenderer::Highlight. Empty when the matcher has no position.
+// MapPass::Highlight. Empty when the matcher has no position.
 std::vector<std::uint64_t> highlightWayIds(::MapHorizon::Reader horizon);
 
 } // namespace map_widget

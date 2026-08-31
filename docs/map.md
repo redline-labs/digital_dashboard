@@ -12,8 +12,11 @@ A map on the dash, from a file, with no internet anywhere in the path.
                                    map/catalog                      │
                                    map/asset                        ▼
                                                               libs/map_render
-                                                     libs/mvt ─► tessellator ─► GpuRenderer (QRhi)
+                                                     libs/mvt ─► tessellator ─► MapPass (QRhi)
                                                                       └───────► labels (glyph atlas)
+                                                                                     │
+                                                              libs/map_surface ◄──────┘
+                                                              RhiWidgetHost | OffscreenHost
 ```
 
 Four pieces. `libs/mbtiles` reads the archive. `nodes/map_server` answers zenoh
@@ -45,7 +48,10 @@ up and then removed. Two findings killed it:
   this platform"* and hands back a **null** map. Every `gui` test and every
   `ui_screenshot` in this tree runs offscreen, so the map would have been
   invisible to the entire agent-control loop — and the first symptom was a
-  segfault, not a blank image.
+  segfault, not a blank image. (The tree DOES now drive a `QRhiWidget`, for the
+  same speed those widgets promised — but only as one of two hosts behind
+  `libs/map_surface`, with the offscreen one still there for exactly this
+  reason. That is a different thing from depending on one.)
 - It cost **7 GB of recursive submodules and 42 minutes of configure** to find
   that out, on every fresh checkout.
 
@@ -151,21 +157,59 @@ A QPainter-only renderer was built first and measured at **241 ms per frame**
 (4 fps) on four z14 tiles — 14 440 features, 96 822 vertices — of which
 buildings alone were 55 ms. That is a map you cannot pan.
 
-The replacement is **QRhi driven directly against an offscreen texture**, which
-is the one GPU path that survives `QT_QPA_PLATFORM=offscreen`:
-`QOpenGLContext::create()` returns false there and `QRhiWidget` reports no RHI,
-but Metal, Vulkan and D3D render into a *texture* without any window at all.
-The frame is read back into a `QImage` and blitted by the widget's `paintEvent`.
+The replacement is **QRhi, driven two ways from one shared pass**. What decides
+what a pixel looks like is `map_render::MapPass`, which owns no target at all;
+what varies is only the frame lifecycle, and there are two hosts for it
+(`libs/map_surface` picks between them in its constructor, and nothing outside
+that library learns which it got):
+
+- **`RhiWidgetHost`** — a `QRhiWidget`, recording straight into the widget's own
+  swapchain. No readback, no blit, and the GUI thread never waits for the GPU.
+  This is what runs on a real display.
+- **`OffscreenHost`** — `OffscreenRenderer` rendering into a texture it allocates
+  itself, read back into a `QImage` and blitted by a `QPainter`. Metal, Vulkan
+  and D3D render into a *texture* without any window at all, which is the one
+  GPU path that survives `QT_QPA_PLATFORM=offscreen` — so this is what agent
+  control and every `gui` test see.
+
+Neither can be dropped, and the split is drawn where it is deliberately: the
+fast path is the one CI can never exercise, so it is kept small enough to read
+in one sitting (~143 lines) while ~880 lines of pass are shared verbatim.
+
+MEASURED on a real display, GUI-thread milliseconds for one map frame with both
+loops paced identically — the readback and blit are ten to twenty-five times the
+cost of recording the same drawing:
+
+| | offscreen | QRhiWidget |
+|---|---|---|
+| labels + batches *(identical work; the control)* | 0.38 | 0.38 |
+| **the map frame** | **2.06** | **0.08** |
+| overlay (marker + trail) | 1.94 | 1.92 |
+
+At 1920×1080 pitched the map frame is 6.25 ms against 0.24 ms. Measure with
+`map_surface_bench --tiles ... --width ... --pitch ...`, which needs a screen.
+
+Because a `QRhiWidget` **has no paint engine** — `QPainter` on one logs
+*"QWidget::paintEngine: Should no longer be called"* and draws nothing — a
+host's marker and diagnostics cannot be painted after a blit any more. They go
+through `MapSurface::setOverlayPainter()` onto a transparent child layer above
+the map, which Qt composites; the same layer is used with both hosts so
+there is only ever one overlay path. MEASURED: the layer itself costs 3 us, and
+a sibling widget over the nested render-to-texture widget composites correctly
+and is still found by `childAt()` — which is why the floating buttons stay
+children of the host.
 
 Measured on the same scene: tessellation **1.9 ms once**, upload **6 ms once**,
 and then a fraction of a millisecond per frame with pan, zoom and rotate.
 
-The frame is **linear in pixels**, not flat — about **0.5 ms per megapixel** of
-the target, so 660×640 is ~0.4 ms and the same widget at a device pixel ratio of
-2 is ~1.0 ms. The cost is the readback rather than the rasterisation: forcing
-`sampleCount` to 1 moves a 5120×2880 frame by under a millisecond, which is why
-the sample count is taken as high as the hardware offers and the SIZE is the
-thing to think about. Measure with `map_bench --width/--height/--dpr`.
+The OFFSCREEN frame is **linear in pixels**, not flat — about **0.5 ms per
+megapixel** of the target, so 660×640 is ~0.4 ms and the same widget at a device
+pixel ratio of 2 is ~1.0 ms. The cost is the readback rather than the
+rasterisation: forcing `sampleCount` to 1 moves a 5120×2880 frame by under a
+millisecond, which is why the sample count is taken as high as the hardware
+offers and the SIZE is the thing to think about. Measure with `map_bench
+--width/--height/--dpr`. None of this applies to the `QRhiWidget` host, which
+neither reads back nor blits — that is the whole reason it exists.
 
 There is **no CPU fallback**: without a backend the widget draws its background
 and says so, which `status().gpuReady` reports.
@@ -602,13 +646,13 @@ no cached underlay — that split exists to keep an expensive redraw off the hot
 path, and both expensive parts here are already cached somewhere better.
 Tessellation happens once per tile on a zenoh thread inside `TileSource`, and a
 frame whose camera, tiles and style are unchanged comes straight back out of
-`GpuRenderer`'s own memo without being drawn or read back at all. A pixmap here
+the offscreen renderer's own memo without being drawn or read back at all. A pixmap here
 would be a third copy of the same picture.
 
 **The GPU pass renders at the screen's device pixel ratio**; the other two are
 QPainter and are drawn at it anyway. `Projection` carries the ratio without
 applying it — every coordinate it returns is logical, which is what the label,
-marker and tile-selection passes need — and `GpuRenderer::render()` is the only
+marker and tile-selection passes need — and `OffscreenRenderer::render()` is the only
 thing that multiplies by it, for the target size, the tile placement and the
 road width uniform. The frame it returns carries the ratio on the `QImage`, so
 the widget's blit covers the same rectangle either way.

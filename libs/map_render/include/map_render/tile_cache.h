@@ -73,7 +73,7 @@ class TileCache
     // still drawing, which re-requests them on the very next paint -- a refetch
     // loop that reads as a slow server rather than as a small cache.
     //
-    // 80 because gpu_renderer.h puts a 3840x2160 viewport at 40 tiles, and 70
+    // 80 because offscreen_renderer.h puts a 3840x2160 viewport at 40 tiles, and 70
     // with the prefetch ring. The set the paint pass just asked for is
     // therefore always safe, and safe is the point: an evicted visible tile
     // costs a round trip AND a re-tessellation on every frame, forever.

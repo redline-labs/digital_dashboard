@@ -104,18 +104,19 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
 {
     setAutoFillBackground(false);
 
-    // A failure here is not fatal and must not throw: there is no CPU fallback,
-    // but a widget that reports "no GPU" in its own frame is far easier to
-    // diagnose than one that refuses to construct and takes the layout with it.
-    mGpu = map_render::GpuRenderer::create();
-    if (!mGpu)
-    {
-        SPDLOG_ERROR("[map] no QRhi backend; the map will draw labels and marker only");
-    }
-    else
-    {
-        SPDLOG_INFO("[map] GPU backend: {}", mGpu->backendName().toStdString());
-    }
+    // The map, filling this widget and under everything else in it. It picks
+    // its own way of drawing -- straight into a QRhiWidget where the platform
+    // has one, an offscreen texture and a blit where it does not -- and this
+    // widget never learns which. Lowered so the buttons, which are this
+    // widget's own children, stay above it.
+    //
+    // A failure inside is not fatal and must not throw: there is no CPU
+    // fallback, but a widget that reports "no GPU" is far easier to diagnose
+    // than one that refuses to construct and takes the layout with it.
+    mSurface = new map_surface::MapSurface(this);
+    mSurface->setGeometry(rect());
+    mSurface->lower();
+    mSurface->setOverlayPainter([this](QPainter& painter) { paintOverlay(painter); });
 
     // This callback fires ON A ZENOH THREAD. The only safe thing it may do is
     // post to the GUI thread; touching the widget here would race the paint.
@@ -411,7 +412,7 @@ void MapWidget::toggleViewMode()
     update();
 }
 
-map_render::Projection MapWidget::projectionFor(const QPainter& painter) const
+map_render::Projection MapWidget::projectionFor() const
 {
     // LOGICAL size plus the ratio, rather than one or the other. Everything
     // this widget draws with QPainter -- labels, the marker, the trail -- is in
@@ -420,14 +421,12 @@ map_render::Projection MapWidget::projectionFor(const QPainter& painter) const
     // pass is the one that reads the ratio, and it is the one that was
     // rendering at half resolution without it.
     //
-    // Read off the PAINT DEVICE rather than the widget, because that is where
-    // layOutText() reads it from. The two passes have to agree on the ratio or
-    // this bug comes straight back in the other direction -- text rendered for
-    // a ratio the geometry underneath was not drawn at -- and the only way to
-    // guarantee that is to ask the same object.
-    const double ratio =
-        painter.device() != nullptr ? painter.device()->devicePixelRatioF() : 1.0;
-    return map_render::Projection(camera(), width(), height(), ratio);
+    // The WIDGET's ratio, and the same one handed to layOutText() below and to
+    // the surface. The three have to agree or text is rendered for a ratio the
+    // geometry underneath was not drawn at; asking one object is what
+    // guarantees it. There is no painter to ask any more -- this widget does
+    // not paint the map.
+    return map_render::Projection(camera(), width(), height(), devicePixelRatioF());
 }
 
 void MapWidget::refreshTiles(const map_render::Projection& projection)
@@ -539,7 +538,12 @@ void MapWidget::resizeEvent(QResizeEvent* event)
     // paint pass recomputes at the size actually being drawn -- doing it twice
     // only walked the tile grid twice for the same answer.
     QWidget::resizeEvent(event);
+    if (mSurface != nullptr)
+    {
+        mSurface->setGeometry(rect());
+    }
     layOutMapButtons();
+    update();
 }
 
 // ------------------------------------------------------------------- the mouse
@@ -791,7 +795,7 @@ void MapWidget::setHeading(double degrees)
     mHeading = degrees;
     if (effectiveOrientation() == MapOrientation_t::heading_up)
     {
-        // update() only: the paint pass refreshes the tile set itself, at the
+        // A frame only: the driver refreshes the tile set itself, at the
         // camera it is actually about to draw.
         update();
     }
@@ -920,8 +924,8 @@ void MapWidget::assembleBatches()
     {
         visibleTotal += ids.size();
     }
-    std::size_t budget = map_render::GpuRenderer::kMaxTilesPerFrame > visibleTotal
-                             ? map_render::GpuRenderer::kMaxTilesPerFrame - visibleTotal
+    std::size_t budget = map_render::MapPass::kMaxTilesPerFrame > visibleTotal
+                             ? map_render::MapPass::kMaxTilesPerFrame - visibleTotal
                              : 0;
 
     for (std::size_t s = 0; s < mSources.size(); ++s)
@@ -1049,8 +1053,24 @@ void MapWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
 
+    // STILL THE FRAME DRIVER, and no longer the thing that draws the map: it
+    // settles the camera, asks for the tiles, places the labels and hands the
+    // result to the surface -- a child filling this widget that draws it
+    // whichever way the platform allows. The marker and the diagnostic go on
+    // the surface's own transparent layer, see paintOverlay().
+    //
+    // Driving from HERE rather than from a queued call of our own is
+    // deliberate. It is what makes render() and repaint() still mean "produce
+    // one frame", synchronously and in order: Qt paints this widget and then
+    // its children in the same pass, so the surface draws the frame this call
+    // just submitted. Every gui test and every ui_screenshot depends on that.
     QPainter painter(this);
     const QColor background = qt_helpers::toQColor(mConfig.style.background);
+    // The widget's own background, underneath everything. Cheap, and it is why
+    // Qt always has a reason to paint this widget: a child that declared itself
+    // opaque and covered the rectangle would have Qt skip this paint entirely,
+    // and with it the whole frame.
+    painter.fillRect(rect(), background);
 
     if (mSources.empty() || width() <= 0 || height() <= 0)
     {
@@ -1059,7 +1079,14 @@ void MapWidget::paintEvent(QPaintEvent* event)
         mLastTilesDrawn = 0;
         mLastTilesStandIn = 0;
         mLastLabelsPlaced = 0;
-        painter.fillRect(rect(), background);
+        mBatches.clear();
+        mFrameProjection = projectionFor();
+        if (mSurface != nullptr)
+        {
+            // An empty frame rather than no frame: the surface has to be told
+            // to clear, or it keeps showing whatever it drew last.
+            mSurface->setFrame(*mFrameProjection, {}, mConfig.style, background);
+        }
         return;
     }
 
@@ -1070,7 +1097,7 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // Built here rather than only on resize: unlike resizeEvent this is
     // guaranteed to run before anything is drawn, at the size and the ratio
     // actually being painted.
-    const map_render::Projection projection = projectionFor(painter);
+    const map_render::Projection projection = projectionFor();
 
     // The chrome mirrors the frame, not the config: the compass needle swings
     // with the very bearing this frame is drawn at (live heading included),
@@ -1087,54 +1114,28 @@ void MapWidget::paintEvent(QPaintEvent* event)
 
     assembleBatches();
 
-    if (mGpu)
+    // --- 1a. text, placed on the CPU and drawn with the frame ---------------
+    //
+    // Placement and collision stay here -- which labels survive depends on what
+    // else is already on screen, across tiles, so it cannot be baked per tile.
+    // Only the DRAWING moves, and it was 95% of this pass.
+    const map_render::LabelStats labels =
+        map_render::layOutText(projection, mLabelTiles, mConfig.style, mLabelCache,
+                               projection.devicePixelRatio(), mTextQuads);
+    mLastLabelsPlaced = labels.placed;
+
+    // Kept for the overlay, which paints after this call has returned.
+    mFrameProjection = projection;
+
+    if (mSurface != nullptr)
     {
-        const map_render::GpuRenderer::Highlight highlight {
+        const map_surface::MapSurface::Highlight highlight {
             mHighlightWayIds, qt_helpers::toQColor(mConfig.highlight_color),
             float(mConfig.highlight_extra_width)
         };
-        // --- 1a. text, placed on the CPU and drawn with the frame ---------
-        //
-        // Placement and collision stay here -- which labels survive depends on
-        // what else is already on screen, across tiles, so it cannot be baked
-        // per tile. Only the DRAWING moves, and it was 95% of this pass.
-        const map_render::LabelStats labels =
-            map_render::layOutText(projection, mLabelTiles, mConfig.style, mLabelCache,
-                                   projection.devicePixelRatio(), mTextQuads);
-        mLastLabelsPlaced = labels.placed;
-        mGpu->setText(mTextQuads, mLabelCache.atlas().page(), mLabelCache.atlas().dirty());
+        mSurface->setText(mTextQuads, mLabelCache.atlas().page(), mLabelCache.atlas().dirty());
         mLabelCache.atlas().markClean();
-
-        const QImage& frame =
-            mGpu->render(projection, mBatches, mConfig.style, background, highlight);
-        if (frame.isNull())
-        {
-            painter.fillRect(rect(), background);
-        }
-        else
-        {
-            // Straight blit, no scaling: the renderer was asked for exactly
-            // this viewport, at exactly this screen's device pixel ratio, and
-            // carries that ratio on the image. SmoothPixmapTransform would be
-            // pure cost.
-            painter.drawImage(QPointF(0.0, 0.0), frame);
-        }
-    }
-    else
-    {
-        painter.fillRect(rect(), background);
-    }
-
-    // --- 2. the vehicle ----------------------------------------------------
-
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-
-    paintMarker(painter, projection);
-
-    if (mConfig.show_status)
-    {
-        paintDiagnostic(painter);
+        mSurface->setFrame(projection, mBatches, mConfig.style, background, highlight);
     }
 
     // The ONLY place the retry timer is armed, and it is enough: every drain
@@ -1145,12 +1146,30 @@ void MapWidget::paintEvent(QPaintEvent* event)
     // cannot be caught with a stale view of what is due.
     armRetryTimer();
 
-    // Never update() from inside a paint -- that is a repaint loop at event
-    // rate. The ticker fires ~16 ms later and dies by itself once nothing is
-    // fading.
+    // Never scheduleFrame() from inside the driver -- that is a frame loop at
+    // event rate. The ticker fires ~16 ms later and dies by itself once nothing
+    // is fading.
     if ((mLastTilesFading > 0 || mAnimating) && !mAnimationTimer.isActive())
     {
         mAnimationTimer.start();
+    }
+}
+
+void MapWidget::paintOverlay(QPainter& painter)
+{
+    // Runs on the surface's transparent layer, over the map, AFTER paintEvent
+    // has returned -- so everything it needs is a member. `painter` already has
+    // antialiasing on; the layer sets it.
+    if (!mFrameProjection)
+    {
+        return;
+    }
+
+    paintMarker(painter, *mFrameProjection);
+
+    if (mConfig.show_status)
+    {
+        paintDiagnostic(painter);
     }
 }
 
@@ -1161,7 +1180,7 @@ void MapWidget::paintDiagnostic(QPainter& painter)
     // which is reading app_logs to find out why a screenshot is empty.
     QString message;
 
-    if (!mGpu)
+    if (mSurface == nullptr || !mSurface->isUsable())
     {
         message = QStringLiteral("No GPU backend — map geometry cannot be drawn");
     }
@@ -1405,13 +1424,13 @@ MapWidget::Status MapWidget::status() const
     out.hasPosition = hasPosition();
     out.camera = camera();
     out.cameraMoved = mInteractionCentre.has_value();
-    out.gpuReady = (mGpu != nullptr);
+    out.gpuReady = mSurface != nullptr && mSurface->isUsable();
     out.retryPending = mRetryTimer.isActive();
     out.tilesFading = mLastTilesFading;
     out.animating = mZoomEase.has_value() || mRecentreEase.has_value();
-    if (mGpu)
+    if (mSurface != nullptr)
     {
-        out.gpu = mGpu->stats();
+        out.gpu = mSurface->stats();
     }
     return out;
 }

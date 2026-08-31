@@ -13,7 +13,7 @@ layout(location = 1) in vec2 uv;
 layout(location = 0) out vec2 vuv;
 
 layout(std140, binding = 0) uniform buf {
-    // Screen pixels -> clip. Built by GpuRenderer::screenToClip(), which is
+    // Screen pixels -> clip. Built by OffscreenRenderer::screenToClip(), which is
     // also where the map pass starts, so the two cannot disagree about which
     // way up the frame is. Hand-rolling this from the viewport size and a sign
     // is what put the labels upside down on Vulkan: the backend's Y convention

@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-
-#include "map_render/gpu_renderer.h"
+#include "map_render/map_pass.h"
 
 #include <rhi/qrhi.h>
-// The InitParams structs live here rather than in qrhi.h, and each is behind the
-// feature test for its own backend.
-#include <rhi/qrhi_platform.h>
 
-#include <QOffscreenSurface>
-#include <QSurfaceFormat>
 #include <QColor>
-#include <QElapsedTimer>
 #include <QMatrix4x4>
 
 #include <spdlog/spdlog.h>
@@ -26,8 +19,6 @@
 #include "glyphVert_qsb.h"
 #include "glyphFrag_qsb.h"
 
-#include <QPainter>
-
 namespace map_render
 {
 namespace
@@ -40,31 +31,6 @@ namespace
 // backends impose.
 constexpr quint32 kUniformBlockSize = 112;
 
-// Refuse absurd viewports rather than trying to allocate for them.
-constexpr int kMaxDimension = 8192;
-
-// The ratio this frame will actually be rendered at: the screen's, unless the
-// viewport is wide enough that the device-pixel texture would cross
-// kMaxDimension.
-//
-// Clamping rather than failing matters because the alternative is a blank map:
-// ensureTarget() refuses an oversized texture, render() returns a null image,
-// and the widget fills its background with no diagnostic to say why. A map
-// that comes back soft is a far better answer than one that does not come back.
-double renderRatio(const Projection& projection)
-{
-    double ratio = projection.devicePixelRatio();
-    if (projection.viewportWidth() > 0.0)
-    {
-        ratio = std::min(ratio, double(kMaxDimension) / projection.viewportWidth());
-    }
-    if (projection.viewportHeight() > 0.0)
-    {
-        ratio = std::min(ratio, double(kMaxDimension) / projection.viewportHeight());
-    }
-    return ratio;
-}
-
 QShader loadShader(const unsigned char* bytes, std::size_t size)
 {
     return QShader::fromSerialized(
@@ -73,8 +39,10 @@ QShader loadShader(const unsigned char* bytes, std::size_t size)
 
 } // namespace
 
-void GpuRenderer::setText(std::vector<TextQuad> quads, const QImage& atlasPage,
-                          bool atlasDirty)
+MapPass::MapPass() = default;
+MapPass::~MapPass() = default;
+
+void MapPass::setText(std::vector<TextQuad> quads, const QImage& atlasPage, bool atlasDirty)
 {
     mTextQuads = std::move(quads);
     if (atlasDirty)
@@ -84,109 +52,56 @@ void GpuRenderer::setText(std::vector<TextQuad> quads, const QImage& atlasPage,
     }
 }
 
-std::unique_ptr<GpuRenderer> GpuRenderer::create()
+void MapPass::releaseResources()
 {
-    std::unique_ptr<GpuRenderer> renderer(new GpuRenderer);
-    if (!renderer->initialise())
-    {
-        return nullptr;
-    }
-    return renderer;
+    // Reverse of creation order: a pipeline references the shader resource
+    // bindings and the render pass descriptor, and the bindings reference the
+    // uniform buffer.
+    mGlyphPipeline.reset();
+    mGlyphSrb.reset();
+    mGlyphVertexBuffer.reset();
+    mGlyphUniform.reset();
+    mGlyphTexture.reset();
+    mGlyphSampler.reset();
+    mHighlightPipeline.reset();
+    mPipeline.reset();
+    mSrb.reset();
+    mUniformBuffer.reset();
+    mVertexBuffer.reset();
+    mIndexBuffer.reset();
+
+    // The buffers are gone, so nothing is resident any more. Forgetting this
+    // would have the next frame draw from block offsets into a buffer that no
+    // longer exists and never upload the geometry it thinks is already there.
+    mResident.clear();
+    mUploadedIds.clear();
+    mUploadedSerials.clear();
+    mBatchRegions.clear();
+    mPendingUploads.clear();
+    mVertexArena.reset(0);
+    mIndexArena.reset(0);
+    mAtlasDirty = !mAtlasPage.isNull();
+
+    mRhi = nullptr;
+    mPass = nullptr;
 }
 
-GpuRenderer::GpuRenderer() = default;
-GpuRenderer::~GpuRenderer() = default;
-
-bool GpuRenderer::initialise()
+bool MapPass::createResources(QRhi* rhi, QRhiRenderPassDescriptor* pass, int sampleCount)
 {
-    // Tried in the order each platform actually prefers. OpenGL is last
-    // everywhere: it is the backend that always exists, not the one to reach
-    // for first. It does work under a headless QPA plugin, provided it is given
-    // the fallback surface below -- and it has to, because the offscreen plugin
-    // never implements createPlatformVulkanInstance, so Vulkan cannot come up
-    // there no matter what the driver supports.
-#if QT_CONFIG(metal)
+    releaseResources();
+    if (!rhi || !pass)
     {
-        QRhiMetalInitParams params;
-        mRhi.reset(QRhi::create(QRhi::Metal, &params));
-    }
-#endif
-
-#if MAP_HAS_VULKAN
-    if (!mRhi)
-    {
-        // A QVulkanInstance is not optional -- QRhi::create() rejects Vulkan
-        // params with a null one. Kept alive for as long as the QRhi, which is
-        // why it is a member and not a local.
-        mVulkan = std::make_unique<QVulkanInstance>();
-        if (mVulkan->create())
-        {
-            QRhiVulkanInitParams params;
-            params.inst = mVulkan.get();
-            mRhi.reset(QRhi::create(QRhi::Vulkan, &params));
-        }
-        if (!mRhi)
-        {
-            mVulkan.reset();
-        }
-    }
-#endif
-
-    if (!mRhi)
-    {
-        // 3.3 core because that is what the shaders are baked for: CMakeLists
-        // runs qsb at --glsl 330, so a context below it has nothing to compile.
-        // Qt's default surface format is GL 2.0, which QRhi honours and then
-        // reports as GLSL 120 -- and the mismatch does not surface here, where
-        // the backend comes up happily, but later at pipeline creation as "no
-        // GLSL shader code found". Asking for the version the bake targets puts
-        // the failure, if there is one, at the point that can explain it.
-        QRhiGles2InitParams params;
-        params.format.setVersion(3, 3);
-        params.format.setProfile(QSurfaceFormat::CoreProfile);
-
-        // The fallback surface is NOT optional, and not merely a nicety for
-        // headless. QRhi drives GL through a context that has to be current on
-        // something, and with no window in play there is nothing to make it
-        // current on. Given no surface to fall back to, QRhi does not decline
-        // the backend -- it dereferences the null and takes the process with it.
-        // It has to carry the same format as the context, or the two disagree.
-        mFallbackSurface.reset(QRhiGles2InitParams::newFallbackSurface(params.format));
-        params.fallbackSurface = mFallbackSurface.get();
-        mRhi.reset(QRhi::create(QRhi::OpenGLES2, &params));
-        if (!mRhi)
-        {
-            mFallbackSurface.reset();
-        }
-    }
-
-    if (!mRhi)
-    {
-        SPDLOG_ERROR("[map] no GPU backend available; the map cannot be drawn");
         return false;
     }
+    mRhi = rhi;
+    mPass = pass;
+    mSampleCount = sampleCount;
+    mStats.sampleCount = sampleCount;
 
     mUniformStride = std::max<quint32>(quint32(mRhi->ubufAlignment()), kUniformBlockSize);
     // Fixed for the life of the backend, and read once: it decides which way
     // up the ortho box goes, which is per tile per frame.
     mYUpInFramebuffer = mRhi->isYUpInFramebuffer();
-
-    // 4x if the hardware has it. Multisampling is not what a frame costs -- see
-    // the header: at 5120x2880 the difference between 4x and none is under a
-    // millisecond, against six for the pixels themselves -- so the only reason
-    // not to antialias is not being able to.
-    //
-    // supportedSampleCounts() is the wrong question on its own: it answers
-    // "can this backend multisample", where ensureTarget() needs "can it
-    // multisample into a TEXTURE", which QRhi tracks separately. The GL backend
-    // here reports 1 2 4 8 16 and lets newTexture(..., 4, ...) succeed, then
-    // fails at framebuffer completeness -- an incomplete attachment two calls
-    // away from the list that promised it. Ask the feature that governs it.
-    const QList<int> counts = mRhi->isFeatureSupported(QRhi::MultisampleTexture)
-                                  ? mRhi->supportedSampleCounts()
-                                  : QList<int> { 1 };
-    mSampleCount = counts.contains(4) ? 4 : (counts.contains(2) ? 2 : 1);
-    mStats.sampleCount = mSampleCount;
 
     // Allocated once, here, and never replaced -- see the header. Both
     // objects outlive every pipeline built against them, which is the whole
@@ -209,72 +124,6 @@ bool GpuRenderer::initialise()
     if (!mSrb->create())
     {
         SPDLOG_ERROR("[map] GPU shader resource bindings could not be created");
-        return false;
-    }
-
-    SPDLOG_INFO("[map] GPU renderer on {} ({}x MSAA)", mRhi->backendName(), mSampleCount);
-    return true;
-}
-
-QString GpuRenderer::backendName() const
-{
-    return mRhi ? QString::fromUtf8(mRhi->backendName()) : QString();
-}
-
-bool GpuRenderer::ensureTarget(const QSize& size)
-{
-    if (mTarget && mSize == size)
-    {
-        return true;
-    }
-    if (size.width() <= 0 || size.height() <= 0 || size.width() > kMaxDimension ||
-        size.height() > kMaxDimension)
-    {
-        return false;
-    }
-
-    // Order matters on teardown: the pipeline references the render pass
-    // descriptor, which references the target.
-    mPipeline.reset();
-    mHighlightPipeline.reset();
-    mTarget.reset();
-    mPass.reset();
-    mResolve.reset();
-    mMsaaColour.reset();
-
-    mResolve.reset(mRhi->newTexture(QRhiTexture::RGBA8, size, 1,
-                                    QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
-    if (!mResolve->create())
-    {
-        return false;
-    }
-
-    QRhiColorAttachment attachment;
-    if (mSampleCount > 1)
-    {
-        mMsaaColour.reset(
-            mRhi->newTexture(QRhiTexture::RGBA8, size, mSampleCount, QRhiTexture::RenderTarget));
-        if (!mMsaaColour->create())
-        {
-            return false;
-        }
-        // Draw multisampled, then resolve into the single-sample texture that
-        // gets read back. Reading back the multisample texture directly is not
-        // a thing.
-        attachment.setTexture(mMsaaColour.get());
-        attachment.setResolveTexture(mResolve.get());
-    }
-    else
-    {
-        attachment.setTexture(mResolve.get());
-    }
-
-    QRhiTextureRenderTargetDescription description({ attachment });
-    mTarget.reset(mRhi->newTextureRenderTarget(description));
-    mPass.reset(mTarget->newCompatibleRenderPassDescriptor());
-    mTarget->setRenderPassDescriptor(mPass.get());
-    if (!mTarget->create())
-    {
         return false;
     }
 
@@ -308,7 +157,7 @@ bool GpuRenderer::ensureTarget(const QSize& size)
                                     { QRhiShaderStage::Fragment, std::move(frag) } });
         pipeline->setVertexInputLayout(layout);
         pipeline->setShaderResourceBindings(mSrb.get());
-        pipeline->setRenderPassDescriptor(mPass.get());
+        pipeline->setRenderPassDescriptor(mPass);
         if (!pipeline->create())
         {
             pipeline.reset();
@@ -413,7 +262,7 @@ bool GpuRenderer::ensureTarget(const QSize& size)
                 loadShader(map_shaders::glyphFrag, map_shaders::glyphFragSize) } });
         mGlyphPipeline->setVertexInputLayout(glyphLayout);
         mGlyphPipeline->setShaderResourceBindings(mGlyphSrb.get());
-        mGlyphPipeline->setRenderPassDescriptor(mPass.get());
+        mGlyphPipeline->setRenderPassDescriptor(mPass);
         if (!mGlyphPipeline->create())
         {
             SPDLOG_ERROR("[map] glyph pipeline could not be created");
@@ -421,11 +270,27 @@ bool GpuRenderer::ensureTarget(const QSize& size)
         }
     }
 
-    mSize = size;
     return true;
 }
 
-bool GpuRenderer::batchesChanged(std::span<const GpuBatch> batches) const
+std::span<const GpuBatch> MapPass::clampToBudget(std::span<const GpuBatch> requested)
+{
+    if (requested.size() <= kMaxTilesPerFrame)
+    {
+        return requested;
+    }
+    // Logged once rather than per frame: at 60 Hz the warning would be the
+    // problem.
+    if (!mWarnedTileLimit)
+    {
+        mWarnedTileLimit = true;
+        SPDLOG_WARN("[map] {} tiles in one frame; drawing the nearest {}", requested.size(),
+                    kMaxTilesPerFrame);
+    }
+    return requested.subspan(0, kMaxTilesPerFrame);
+}
+
+bool MapPass::batchesChanged(std::span<const GpuBatch> batches) const
 {
     if (batches.size() != mUploadedIds.size())
     {
@@ -451,92 +316,223 @@ bool GpuRenderer::batchesChanged(std::span<const GpuBatch> batches) const
     return false;
 }
 
-bool GpuRenderer::prepareUpload(std::span<const GpuBatch> batches,
-                                std::vector<MapVertex>& flat,
-                                std::vector<std::uint32_t>& flatIndices)
+// Oldest-first reclaim, and only under pressure. Returns false when the arenas
+// cannot serve the request even with every tile this frame does not need thrown
+// out -- which is fragmentation, and the caller's answer to that is to compact.
+bool MapPass::allocateRegion(Region& region)
 {
-    mTileBaseVertex.clear();
-    mTileBaseIndex.clear();
+    for (;;)
+    {
+        region.vertexBase = mVertexArena.allocate(region.vertexCount);
+        region.indexBase = mIndexArena.allocate(region.indexCount);
+        if (region.vertexBase != BufferArena::kNoBlock &&
+            region.indexBase != BufferArena::kNoBlock)
+        {
+            return true;
+        }
+        // Hand back whichever half succeeded before evicting, so the freed
+        // space is available to the retry and nothing leaks on the way out.
+        if (region.vertexBase != BufferArena::kNoBlock)
+        {
+            mVertexArena.release(region.vertexBase, region.vertexCount);
+        }
+        if (region.indexBase != BufferArena::kNoBlock)
+        {
+            mIndexArena.release(region.indexBase, region.indexCount);
+        }
+
+        auto oldest = mResident.end();
+        for (auto it = mResident.begin(); it != mResident.end(); ++it)
+        {
+            // Never a tile this frame already placed: evicting one would free
+            // a block the draw loop is about to read from.
+            if (it->second.lastPlan == mPlanCounter)
+            {
+                continue;
+            }
+            if (oldest == mResident.end() || it->second.lastPlan < oldest->second.lastPlan)
+            {
+                oldest = it;
+            }
+        }
+        if (oldest == mResident.end())
+        {
+            return false;
+        }
+        mVertexArena.release(oldest->second.region.vertexBase, oldest->second.region.vertexCount);
+        mIndexArena.release(oldest->second.region.indexBase, oldest->second.region.indexCount);
+        mResident.erase(oldest);
+    }
+}
+
+bool MapPass::planResidency(std::span<const GpuBatch> batches)
+{
+    mPendingUploads.clear();
+    mBatchRegions.assign(batches.size(), Region {});
     mUploadedIds.clear();
     mUploadedSerials.clear();
+    mUploadedIds.reserve(batches.size());
+    mUploadedSerials.reserve(batches.size());
 
-    std::uint32_t total = 0;
-    std::uint32_t totalIndices = 0;
+    // What the whole frame needs, so the buffers can be sized before anything
+    // is placed. A tile appearing twice -- the same archive tile drawn as both
+    // a stand-in and a real tile, say -- is counted twice here and shares one
+    // block below, so this over-estimates. Over-estimating is the safe
+    // direction: it can only ask for a buffer larger than the frame uses.
+    std::uint32_t needVertices = 0;
+    std::uint32_t needIndices = 0;
     for (const GpuBatch& batch : batches)
     {
-        mTileBaseVertex.push_back(total);
-        mTileBaseIndex.push_back(totalIndices);
-        mUploadedIds.push_back(batch.id);
-        mUploadedSerials.push_back(batch.geometry ? batch.geometry->serial : 0);
         // Null is a normal state -- a tile that has been asked for but has not
-        // arrived. It still takes a slot, so the base-vertex and uniform indices
-        // stay aligned with `batches`.
-        total += batch.geometry
-                     ? static_cast<std::uint32_t>(batch.geometry->vertices.size())
-                     : 0U;
-        totalIndices += batch.geometry
-                            ? static_cast<std::uint32_t>(batch.geometry->indices.size())
-                            : 0U;
-    }
-    mUploadedVertexCount = total;
-    mUploadedIndexCount = totalIndices;
-
-    if (total == 0 || totalIndices == 0)
-    {
-        return true;
-    }
-
-    const quint32 needBytes = quint32(total * sizeof(MapVertex));
-    if (!mVertexBuffer || needBytes > mVertexCapacity)
-    {
-        // Grow with headroom so a pan that adds one tile does not reallocate a
-        // ten megabyte buffer every time.
-        const quint32 capacity = needBytes + (needBytes / 2);
-        mVertexBuffer.reset(
-            mRhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, capacity));
-        if (!mVertexBuffer->create())
-        {
-            return false;
-        }
-        mVertexCapacity = capacity;
-    }
-
-    const quint32 needIndexBytes = quint32(totalIndices * sizeof(std::uint32_t));
-    if (!mIndexBuffer || needIndexBytes > mIndexCapacity)
-    {
-        const quint32 capacity = needIndexBytes + (needIndexBytes / 2);
-        mIndexBuffer.reset(
-            mRhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::IndexBuffer, capacity));
-        if (!mIndexBuffer->create())
-        {
-            return false;
-        }
-        mIndexCapacity = capacity;
-    }
-
-    flat.clear();
-    flat.reserve(total);
-    flatIndices.clear();
-    flatIndices.reserve(totalIndices);
-    for (const GpuBatch& batch : batches)
-    {
+        // arrived. It gets no block and draws nothing, but it still takes a
+        // slot in `batches` so the uniform indices stay aligned.
         if (!batch.geometry)
         {
             continue;
         }
-        flat.insert(flat.end(), batch.geometry->vertices.begin(), batch.geometry->vertices.end());
-        // Copied VERBATIM: they are tile-local, and drawIndexed() is handed the
-        // tile's base vertex to add. Rewriting them here would make a tile's
-        // indices depend on where in the batch it landed, which is exactly what
-        // batchesChanged() relies on NOT being true.
-        flatIndices.insert(flatIndices.end(), batch.geometry->indices.begin(),
-                           batch.geometry->indices.end());
+        needVertices += static_cast<std::uint32_t>(batch.geometry->vertices.size());
+        needIndices += static_cast<std::uint32_t>(batch.geometry->indices.size());
     }
 
+    // Outgrowing a buffer means a new one, and a new one holds nothing -- so
+    // every tile has to be placed and sent again. Grown with headroom so a pan
+    // that adds one tile does not reallocate ten megabytes every time.
+    bool rebuild = false;
+    if (!mVertexBuffer || needVertices > mVertexArena.capacity())
+    {
+        const std::uint32_t capacity = needVertices + (needVertices / 2);
+        mVertexBuffer.reset(mRhi->newBuffer(QRhiBuffer::Static, QRhiBuffer::VertexBuffer,
+                                            quint32(capacity * sizeof(MapVertex))));
+        if (!mVertexBuffer->create())
+        {
+            return false;
+        }
+        mVertexArena.reset(capacity);
+        rebuild = true;
+    }
+    if (!mIndexBuffer || needIndices > mIndexArena.capacity())
+    {
+        const std::uint32_t capacity = needIndices + (needIndices / 2);
+        mIndexBuffer.reset(mRhi->newBuffer(QRhiBuffer::Static, QRhiBuffer::IndexBuffer,
+                                           quint32(capacity * sizeof(std::uint32_t))));
+        if (!mIndexBuffer->create())
+        {
+            return false;
+        }
+        mIndexArena.reset(capacity);
+        rebuild = true;
+    }
+    if (rebuild)
+    {
+        // Both arenas are reset together even when only one buffer was
+        // replaced: a Region names a place in each, and half a table is worse
+        // than none.
+        mResident.clear();
+        mVertexArena.reset(mVertexArena.capacity());
+        mIndexArena.reset(mIndexArena.capacity());
+    }
+
+    ++mPlanCounter;
+
+    // A tile that leaves the visible set is NOT evicted. Measured: the drawn
+    // set oscillates between four and six tiles as the camera crosses a tile
+    // boundary, so a tile that leaves is very likely back within a frame or
+    // two, and evicting on departure paid a full re-upload for each round trip.
+    // Space is reclaimed lazily instead -- oldest first, and only when an
+    // allocation actually cannot be served, which bounds the table to what the
+    // buffer holds without needing a size limit of its own.
+
+    // Place everything that is not already down. `compact` is the answer to
+    // fragmentation: the arenas have the room but not in one run, so throw the
+    // layout away and rebuild it contiguously. That is exactly the cost every
+    // upload used to pay, which is what bounds the worst case to today's.
+    bool compact = false;
+    for (std::size_t i = 0; i < batches.size(); ++i)
+    {
+        const GpuBatch& batch = batches[i];
+        mUploadedIds.push_back(batch.id);
+        mUploadedSerials.push_back(batch.geometry ? batch.geometry->serial : 0);
+        if (!batch.geometry || batch.geometry->vertices.empty() ||
+            batch.geometry->indices.empty())
+        {
+            continue;
+        }
+        if (compact)
+        {
+            continue;
+        }
+
+        const auto found = mResident.find(batch.geometry->serial);
+        if (found != mResident.end())
+        {
+            found->second.lastPlan = mPlanCounter;
+            mBatchRegions[i] = found->second.region;
+            continue;
+        }
+
+        Region region;
+        region.vertexCount = static_cast<std::uint32_t>(batch.geometry->vertices.size());
+        region.indexCount = static_cast<std::uint32_t>(batch.geometry->indices.size());
+        if (!allocateRegion(region))
+        {
+            compact = true;
+            continue;
+        }
+        mResident.emplace(batch.geometry->serial, Resident { region, mPlanCounter });
+        mBatchRegions[i] = region;
+        mPendingUploads.push_back(PendingUpload { batch.geometry->vertices.data(),
+                                                  batch.geometry->indices.data(), region });
+    }
+
+    if (compact)
+    {
+        ++mStats.compactions;
+        mResident.clear();
+        mVertexArena.reset(mVertexArena.capacity());
+        mIndexArena.reset(mIndexArena.capacity());
+        mPendingUploads.clear();
+        for (std::size_t i = 0; i < batches.size(); ++i)
+        {
+            const GpuBatch& batch = batches[i];
+            mBatchRegions[i] = Region {};
+            if (!batch.geometry || batch.geometry->vertices.empty() ||
+                batch.geometry->indices.empty())
+            {
+                continue;
+            }
+            const auto found = mResident.find(batch.geometry->serial);
+            if (found != mResident.end())
+            {
+                mBatchRegions[i] = found->second.region;
+                continue;
+            }
+            Region region;
+            region.vertexCount = static_cast<std::uint32_t>(batch.geometry->vertices.size());
+            region.indexCount = static_cast<std::uint32_t>(batch.geometry->indices.size());
+            region.vertexBase = mVertexArena.allocate(region.vertexCount);
+            region.indexBase = mIndexArena.allocate(region.indexCount);
+            // Cannot fail: the buffers were sized above against the same
+            // (over-estimated) total, and an arena reset to its capacity has
+            // one run that long.
+            if (region.vertexBase == BufferArena::kNoBlock ||
+                region.indexBase == BufferArena::kNoBlock)
+            {
+                SPDLOG_ERROR("[map] tile geometry did not fit a freshly compacted buffer");
+                return false;
+            }
+            mResident.emplace(batch.geometry->serial, Resident { region, mPlanCounter });
+            mBatchRegions[i] = region;
+            mPendingUploads.push_back(PendingUpload { batch.geometry->vertices.data(),
+                                                      batch.geometry->indices.data(), region });
+        }
+    }
+
+    mStats.vertices = mVertexArena.used();
+    mStats.indices = mIndexArena.used();
     return true;
 }
 
-QMatrix4x4 GpuRenderer::screenToClip(const QSize& size) const
+QMatrix4x4 MapPass::screenToClip(const QSize& size) const
 {
     // Two independent per-backend facts, and both have to be applied.
     //
@@ -564,143 +560,32 @@ QMatrix4x4 GpuRenderer::screenToClip(const QSize& size) const
     return m;
 }
 
-const QImage& GpuRenderer::render(const Projection& projection,
-                                  const std::vector<GpuBatch>& requested, const MapStyle_t& style,
-                                  const QColor& background, const Highlight& highlight)
+bool MapPass::prepare(const Frame& frame, QRhiResourceUpdateBatch* updates)
 {
-    static const QImage kNull;
-
-    QElapsedTimer timer;
-    timer.start();
-
-    // DEVICE pixels, which is the whole point of the ratio: the projection is
-    // logical because the label and marker passes drawn over this frame go
-    // through QPainter, and this is the one pass that can render at what the
-    // screen actually has. Rendering it logical left the geometry upscaled
-    // underneath text drawn sharp, which reads as a blurry map rather than as
-    // a bug.
-    const double ratio = renderRatio(projection);
-    const QSize size(int(std::lround(projection.viewportWidth() * ratio)),
-                     int(std::lround(projection.viewportHeight() * ratio)));
-    if (!mRhi || !ensureTarget(size))
+    if (!mPipeline || !updates)
     {
-        return kNull;
+        return false;
     }
-    mStats.devicePixelRatio = ratio;
+    const Projection& projection = *frame.projection;
+    const MapStyle_t& style = *frame.style;
+    const Highlight& highlight = *frame.highlight;
+    const std::span<const GpuBatch> batches = frame.batches;
+    const double ratio = frame.ratio;
+    const QSize size = frame.sizePx;
 
-    // Truncated rather than grown, because the uniform buffer is fixed -- see
-    // kMaxTilesPerFrame. Projection::visibleTiles() orders centre-outward, so
-    // what is dropped is what is furthest from where the driver is looking.
-    // Logged once rather than per frame: at 60 Hz the warning would be the
-    // problem.
-    if (requested.size() > kMaxTilesPerFrame && !mWarnedTileLimit)
+    // batchesChanged() is kept in front of the residency pass purely as the
+    // fast path: the overwhelmingly common frame moves the camera over an
+    // unchanged tile set, and that frame should not walk a hash table at all.
+    if (batchesChanged(batches))
     {
-        mWarnedTileLimit = true;
-        SPDLOG_WARN("[map] {} tiles in one frame; drawing the nearest {}", requested.size(),
-                    kMaxTilesPerFrame);
-    }
-    // A view, not a copy: the old copy-and-rebind idiom only worked because
-    // kMaxTilesPerFrame is nonzero, and cost a vector of shared_ptrs per
-    // clamped frame besides.
-    const std::span<const GpuBatch> batches(
-        requested.data(), std::min(requested.size(), std::size_t(kMaxTilesPerFrame)));
-
-    // Same camera, same tiles, same style, same viewport -- so the same
-    // pixels. Handing back the frame already in hand skips the draw AND the
-    // readback, which together are the whole cost.
-    //
-    // The scalar half of the key is built on the stack; the vector half is
-    // COMPARED IN PLACE against what the memo already holds rather than built
-    // first -- the hit path is every idle repaint, and paying three vector
-    // allocations per frame to conclude "nothing changed" was the memo's
-    // whole cost.
-    FrameKey key;
-    key.size = size;
-    key.center = projection.camera().center;
-    key.zoom = projection.camera().zoom;
-    key.bearing = projection.camera().bearing;
-    key.pitch = projection.camera().pitch;
-    // Times the ratio, because a vertex's halfPx is a LOGICAL pixel count and
-    // this frame is drawn in device ones -- without it roads come out a ratio
-    // thinner on a HiDPI screen while everything else keeps its width. It also
-    // means the ratio is part of the key, along with `size` above.
-    key.widthScale =
-        widthScaleForZoom(projection.camera().zoom) * float(style.road_width_scale) * float(ratio);
-    key.background = background.rgba();
-    // The highlight is part of the picture, so it is part of the key -- without
-    // it, moving onto the next road leaves the previous one lit until something
-    // else happens to invalidate the frame.
-    key.highlightColour = highlight.colour.rgba();
-    key.highlightWidth = highlight.extraHalfPx;
-    for (std::size_t li = 0; li < kMapLayerCount; ++li)
-    {
-        key.layerMinZooms[li] = layerMinZoom(static_cast<MapLayer>(li), style);
-    }
-
-    const auto batchesMatchKey = [&]() {
-        if (mFrameKey.ids.size() != batches.size())
+        if (!planResidency(batches))
         {
             return false;
         }
-        for (std::size_t i = 0; i < batches.size(); ++i)
-        {
-            if (!(mFrameKey.ids[i] == batches[i].id) ||
-                mFrameKey.serials[i] !=
-                    (batches[i].geometry ? batches[i].geometry->serial : 0) ||
-                mFrameKey.alphas[i] != quantizeAlpha(batches[i].alpha))
-            {
-                return false;
-            }
-        }
-        return mFrameKey.highlightIds == highlight.osmWayIds;
-    };
-
-    // Text, compared in place for the same reason the batch vectors are: the
-    // hit path is every idle repaint, and building a copy to conclude "nothing
-    // changed" is the one cost the memo cannot afford.
-    const auto textMatchesKey = [&]() { return mFrameKey.text == mTextQuads; };
-
-    if (mHaveFrame && !mFrame.isNull() && key.scalarsEqual(mFrameKey) && batchesMatchKey() &&
-        textMatchesKey())
-    {
-        ++mStats.reused;
-        mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
-        return mFrame;
     }
-
-    // A miss: refill the stored key's vectors in place, keeping their
-    // capacity across frames.
-    key.highlightIds = std::move(mFrameKey.highlightIds);
-    key.highlightIds.assign(highlight.osmWayIds.begin(), highlight.osmWayIds.end());
-    key.text = mTextQuads;
-    key.ids = std::move(mFrameKey.ids);
-    key.serials = std::move(mFrameKey.serials);
-    key.alphas = std::move(mFrameKey.alphas);
-    key.ids.clear();
-    key.serials.clear();
-    key.alphas.clear();
-    key.ids.reserve(batches.size());
-    key.serials.reserve(batches.size());
-    key.alphas.reserve(batches.size());
-    for (const GpuBatch& batch : batches)
+    else
     {
-        key.ids.push_back(batch.id);
-        key.serials.push_back(batch.geometry ? batch.geometry->serial : 0);
-        key.alphas.push_back(quantizeAlpha(batch.alpha));
-    }
-
-    // Prepared, not submitted. The vertices ride in the same resource update
-    // batch as the uniforms below -- uploading them used to open and close an
-    // offscreen frame of its own, so a frame that brought in a new tile cost
-    // two submissions and two GPU waits instead of one.
-    std::vector<MapVertex>& flat = mFlatScratch;
-    std::vector<std::uint32_t>& flatIndices = mFlatIndexScratch;
-    flat.clear();
-    flatIndices.clear();
-    const bool uploading = batchesChanged(batches);
-    if (uploading && !prepareUpload(batches, flat, flatIndices))
-    {
-        return kNull;
+        mPendingUploads.clear();
     }
 
     // Per-tile uniforms. A camera move rewrites these 80 bytes per tile and
@@ -709,7 +594,8 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // Zoom taper times the user's multiplier. Applied here rather than baked
     // into the vertices so that widening every road stays a uniform write and
     // does not re-tessellate the city.
-    const float widthScale = key.widthScale;
+    const float widthScale = widthScaleForZoom(projection.camera().zoom) *
+                             float(style.road_width_scale) * float(ratio);
 
     // The tilt, one matrix for the whole frame, in DEVICE pixels -- the same
     // space the flat placement below lands in. Rows above the pivot recede by
@@ -790,20 +676,22 @@ const QImage& GpuRenderer::render(const Projection& projection,
         std::memcpy(slot + (24 * sizeof(float)), highlightRgba.data(), 4 * sizeof(float));
     }
 
-    QRhiCommandBuffer* cb = nullptr;
-    if (mRhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess)
+    // One pair of regions per tile that is NOT already on the GPU. QRhi copies
+    // out of these pointers as the batch is built, so pointing straight at each
+    // tile's own vectors is safe and saves flattening the whole frame into a
+    // scratch array first -- which used to be the larger half of an upload.
+    for (const PendingUpload& pending : mPendingUploads)
     {
-        return kNull;
+        updates->uploadStaticBuffer(
+            mVertexBuffer.get(), quint32(pending.region.vertexBase * sizeof(MapVertex)),
+            quint32(pending.region.vertexCount * sizeof(MapVertex)), pending.vertexData);
+        updates->uploadStaticBuffer(
+            mIndexBuffer.get(), quint32(pending.region.indexBase * sizeof(std::uint32_t)),
+            quint32(pending.region.indexCount * sizeof(std::uint32_t)), pending.indexData);
+        mStats.uploadedVertices += pending.region.vertexCount;
     }
-
-    QRhiResourceUpdateBatch* updates = mRhi->nextResourceUpdateBatch();
-    if (uploading && !flat.empty() && !flatIndices.empty())
+    if (!mPendingUploads.empty())
     {
-        updates->uploadStaticBuffer(mVertexBuffer.get(), 0,
-                                    quint32(flat.size() * sizeof(MapVertex)), flat.data());
-        updates->uploadStaticBuffer(mIndexBuffer.get(), 0,
-                                    quint32(flatIndices.size() * sizeof(std::uint32_t)),
-                                    flatIndices.data());
         ++mStats.uploads;
     }
     if (!batches.empty())
@@ -813,7 +701,6 @@ const QImage& GpuRenderer::render(const Projection& projection,
     }
 
     // ---- text, prepared alongside the tiles ------------------------------
-    quint32 glyphVertexCount = 0;
     if (!mTextQuads.empty() && mGlyphPipeline)
     {
         mGlyphScratch.clear();
@@ -831,7 +718,7 @@ const QImage& GpuRenderer::render(const Projection& projection,
                 mGlyphScratch.push_back(float(uvs[i].y()));
             }
         }
-        glyphVertexCount = quint32(mTextQuads.size() * 6);
+        mGlyphVertexCount = quint32(mTextQuads.size() * 6);
 
         const quint32 bytes = quint32(mGlyphScratch.size() * sizeof(float));
         if (!mGlyphVertexBuffer || mGlyphVertexBuffer->size() < bytes)
@@ -857,10 +744,24 @@ const QImage& GpuRenderer::render(const Projection& projection,
         updates->updateDynamicBuffer(mGlyphUniform.get(), 0, 64, textClip.constData());
     }
 
-    cb->beginPass(mTarget.get(), background, { 1.0f, 0 }, updates);
+    mStats.tiles = int(batches.size());
+    return true;
+}
+
+void MapPass::record(const Frame& frame, QRhiCommandBuffer* cb)
+{
+    if (!mPipeline || !cb)
+    {
+        return;
+    }
+    const Projection& projection = *frame.projection;
+    const MapStyle_t& style = *frame.style;
+    const Highlight& highlight = *frame.highlight;
+    const std::span<const GpuBatch> batches = frame.batches;
+    const QSize size = frame.sizePx;
 
     int draws = 0;
-    if (!batches.empty() && mUploadedVertexCount > 0 && mUploadedIndexCount > 0)
+    if (!batches.empty() && mVertexArena.used() > 0 && mIndexArena.used() > 0)
     {
         cb->setGraphicsPipeline(mPipeline.get());
         cb->setViewport({ 0.0f, 0.0f, float(size.width()), float(size.height()) });
@@ -902,8 +803,9 @@ const QImage& GpuRenderer::render(const Projection& projection,
                 // The tile's base vertex is the LAST argument, not folded into
                 // the indices: that is what lets a tile's geometry be uploaded
                 // unchanged wherever it lands in the shared buffer.
-                cb->drawIndexed(count, 1, mTileBaseIndex[ti] + geometry.layerIndexStart[li], 
-                                qint32(mTileBaseVertex[ti]));
+                cb->drawIndexed(count, 1,
+                                mBatchRegions[ti].indexBase + geometry.layerIndexStart[li],
+                                qint32(mBatchRegions[ti].vertexBase));
                 ++draws;
             }
         }
@@ -936,8 +838,8 @@ const QImage& GpuRenderer::render(const Projection& projection,
                             bound = true;
                         }
                         cb->drawIndexed(range.indexCount, 1,
-                                        mTileBaseIndex[ti] + range.indexStart,
-                                        qint32(mTileBaseVertex[ti]));
+                                        mBatchRegions[ti].indexBase + range.indexStart,
+                                        qint32(mBatchRegions[ti].vertexBase));
                         ++draws;
                     });
                 }
@@ -947,60 +849,18 @@ const QImage& GpuRenderer::render(const Projection& projection,
     // Text last, inside the same pass: a second pass would have to clear or
     // load the target, and drawing here is both cheaper and correctly ordered
     // over every tile.
-    if (glyphVertexCount > 0)
+    if (mGlyphVertexCount > 0)
     {
         cb->setGraphicsPipeline(mGlyphPipeline.get());
         cb->setViewport({ 0.0f, 0.0f, float(size.width()), float(size.height()) });
         cb->setShaderResources(mGlyphSrb.get());
         const QRhiCommandBuffer::VertexInput glyphInput(mGlyphVertexBuffer.get(), 0);
         cb->setVertexInput(0, 1, &glyphInput);
-        cb->draw(glyphVertexCount);
+        cb->draw(mGlyphVertexCount);
         ++draws;
     }
 
-    cb->endPass();
-
-    QRhiReadbackResult readback;
-    QRhiResourceUpdateBatch* readUpdates = mRhi->nextResourceUpdateBatch();
-    readUpdates->readBackTexture(QRhiReadbackDescription(mResolve.get()), &readback);
-    cb->resourceUpdate(readUpdates);
-
-    mRhi->endOffscreenFrame();
-
-    if (readback.data.isEmpty())
-    {
-        return kNull;
-    }
-
-    // MOVED, not copied. The bytes are already the frame; copying them buys a
-    // whole-image memcpy every paint to produce something identical. Holding
-    // them in a member is what lets the QImage below be a view -- and render()
-    // already promises the image is only valid until the next call, which is
-    // exactly how long the member lives.
-    mReadbackData = std::move(readback.data);
-    // Rebuilt each frame rather than kept: the buffer moves in from a fresh
-    // QByteArray every time, so a QImage held across frames would be pointing
-    // at whatever the previous one owned.
-    mFrame = QImage(reinterpret_cast<const uchar*>(mReadbackData.constData()),
-                    readback.pixelSize.width(), readback.pixelSize.height(),
-                    QImage::Format_RGBA8888);
-    // What makes the blit a straight one: with this set, QPainter draws the
-    // frame across the logical rectangle it was rendered for instead of
-    // treating its device pixels as logical ones and covering four times the
-    // widget. It is also the clamp's escape hatch -- a frame that had to come
-    // back at less than the screen's ratio still lands on the same rectangle,
-    // upscaled.
-    mFrame.setDevicePixelRatio(ratio);
-
-    mFrameKey = std::move(key);
-    mHaveFrame = true;
-
     mStats.drawCalls = draws;
-    mStats.tiles = int(batches.size());
-    mStats.vertices = mUploadedVertexCount;
-    mStats.indices = mUploadedIndexCount;
-    mStats.lastFrameMs = double(timer.nsecsElapsed()) / 1.0e6;
-    return mFrame;
 }
 
 } // namespace map_render

@@ -104,7 +104,7 @@ inline std::vector<std::string> validate(MapWidths_t& widths)
 // `tessellate()` never consults `layerMinZoom`: a tile is turned into triangles
 // once, on arrival, and reused at every zoom the camera later visits, so the
 // zoom is not a thing it may look at. The cull is at draw time
-// (gpu_renderer.cpp, the layer loop). Making this save tessellation too would
+// (offscreen_renderer.cpp, the layer loop). Making this save tessellation too would
 // mean passing the camera zoom into `tessellate()` and so making a tile's
 // geometry depend on the zoom it happened to ARRIVE at -- which breaks the
 // invariant the whole geometry cache rests on. Do not.
