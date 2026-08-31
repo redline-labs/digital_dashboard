@@ -563,18 +563,19 @@ struct Painted
 // draw exactly the same wrong thing and no screenshot would say so.
 Painted paintOnto(const std::vector<map_render::LabelTile>& tiles, const MapStyle_t& style,
                   double zoom = 14.0, double bearing = 0.0, double pitch = 0.0,
-                  map_render::Coordinate centre = { 33.6865966, -117.8557874 })
+                  map_render::Coordinate centre = { 33.6865966, -117.8557874 },
+                  double ratio = 1.0)
 {
     Painted out;
-    out.canvas = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+    out.canvas = QImage(int(800 * ratio), int(600 * ratio), QImage::Format_ARGB32_Premultiplied);
     out.canvas.fill(Qt::transparent);
 
     const map_render::Camera camera { centre, zoom, bearing, pitch };
-    const map_render::Projection projection(camera, 800, 600, 1.0);
+    const map_render::Projection projection(camera, 800, 600, ratio);
 
     map_render::LabelCache cache;
     std::vector<map_render::TextQuad> quads;
-    out.stats = map_render::layOutText(projection, tiles, style, cache, 1.0, quads);
+    out.stats = map_render::layOutText(projection, tiles, style, cache, ratio, quads);
 
     const QImage& page = cache.atlas().page();
     if (page.isNull())
@@ -2588,6 +2589,64 @@ void test_the_compass_drag_spins_and_a_click_straightens()
           "a drag in heading-up takes manual control");
 }
 
+// Text must come out the size the style asked for at EVERY device pixel
+// ratio, and the same shape at each.
+//
+// The atlas rasterises each glyph at the screen's ratio and the page is then
+// sampled by uv, so the blit into the page has to be raw pixels: a HiDPI
+// glyph drawn at its LOGICAL size lands half-size inside a full-size cell,
+// and the map comes out with tiny letters spaced for big ones. Nothing else
+// here would catch it -- every other test runs at ratio 1, where the bug is
+// invisible -- and on a 2x screen it is the first thing anyone notices.
+void test_labels_keep_their_size_and_shape_at_every_device_ratio()
+{
+    const map_render::TileId irvine { 14, 2828, 6562 };
+    mvt::Tile tile;
+    tile.layers.push_back(labelLayerWith(
+        "place", { { "name:latin", mvt::Value(std::in_place_type<std::string>, "HIXbo") },
+                   { "rank", mvt::Value(std::int64_t { 2 }) } }));
+    const auto labels = labelsOf(tile);
+
+    MapStyle_t style;
+    style.label_halo_width = 0.0;
+
+    const map_render::Coordinate centre { 33.6865966, -117.8557874 };
+    QRectF ink[2];
+    for (int i = 0; i < 2; ++i)
+    {
+        const double ratio = i == 0 ? 1.0 : 2.0;
+        const Painted painted = paintOnto({ { irvine, labels } }, style, 14.0, 0.0, 0.0, centre,
+                                          ratio);
+        check(painted.stats.placed == 1,
+              "the name is placed at ratio " + std::to_string(ratio));
+        ink[i] = inkBounds(painted.canvas);
+        check(ink[i].width() > 0.0 && ink[i].height() > 0.0,
+              "and puts ink on the canvas at ratio " + std::to_string(ratio));
+    }
+    if (ink[0].isEmpty() || ink[1].isEmpty())
+    {
+        return;
+    }
+
+    // Twice the ratio, twice the text -- in BOTH directions.
+    const double widthGrowth = ink[1].width() / ink[0].width();
+    const double heightGrowth = ink[1].height() / ink[0].height();
+    check(std::abs(widthGrowth - 2.0) < 0.15,
+          "doubling the device ratio doubles the drawn width, got " +
+              std::to_string(widthGrowth));
+    check(std::abs(heightGrowth - 2.0) < 0.15,
+          "and the drawn height with it, got " + std::to_string(heightGrowth));
+
+    // And the letters keep their proportions: a glyph blitted at the wrong
+    // scale inside a right-sized cell shrinks without moving its neighbours,
+    // which reads as squashed text rather than as small text.
+    const double flat = ink[0].width() / ink[0].height();
+    const double hidpi = ink[1].width() / ink[1].height();
+    check(std::abs(hidpi - flat) / flat < 0.05,
+          "and the text keeps its aspect ratio, " + std::to_string(flat) + " vs " +
+              std::to_string(hidpi));
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::warn);
@@ -2621,6 +2680,7 @@ int main(int argc, char** argv)
     test_the_label_anchor_turns_with_the_map();
     test_the_label_anchor_is_right_at_half_a_turn();
     test_a_place_name_stays_upright_when_the_map_turns();
+    test_labels_keep_their_size_and_shape_at_every_device_ratio();
     test_a_far_label_draws_smaller_under_pitch();
     test_an_unreadable_far_label_is_dropped();
     test_the_same_name_from_two_zooms_is_placed_once();

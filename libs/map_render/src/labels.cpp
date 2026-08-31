@@ -209,9 +209,20 @@ QRectF LabelCache::Atlas::add(const QImage& image)
         return {};
     }
 
+    // Blitted as RAW PIXELS. The glyph was rasterised into a HiDPI image --
+    // its devicePixelRatio is what made QPainter scale the outline up while
+    // drawing it -- but the page is a plain device-pixel raster that the GPU
+    // samples by uv. QPainter::drawImage HONOURS a source image's ratio and
+    // would draw a 22x35 glyph into 11x18 of a cell this reserves at 22x35:
+    // on a 2x screen every letter comes out half size inside a full-size cell
+    // while its advance stays full size, which reads as tiny text with the
+    // spacing of big text. Stripping the ratio is what keeps the blit 1:1.
+    QImage pixels = image;
+    pixels.setDevicePixelRatio(1.0);
+
     QPainter into(&mPage);
     into.setCompositionMode(QPainter::CompositionMode_Source);
-    into.drawImage(QPoint(mShelfX + kGutter, mShelfY + kGutter), image);
+    into.drawImage(QPoint(mShelfX + kGutter, mShelfY + kGutter), pixels);
     into.end();
 
     const QRectF uv(double(mShelfX + kGutter) / kSide, double(mShelfY + kGutter) / kSide,
