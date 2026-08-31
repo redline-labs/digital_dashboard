@@ -18,7 +18,7 @@ layout(location = 0) out vec4 fragColor;
 
 layout(std140, binding = 0) uniform buf {
     mat4 mvp;
-    float pxPerLocal;
+    vec2 viewportPx;
     float widthScale;
     float fadeAlpha;
     float extraHalfPx;

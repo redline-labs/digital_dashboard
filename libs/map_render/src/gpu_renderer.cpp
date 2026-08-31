@@ -33,10 +33,12 @@ namespace map_render
 namespace
 {
 
-// mat4 + two floats + vec2 pad + the highlight vec4. Comfortably inside the
-// 256-byte stride the hardware's uniform alignment rounds up to, and inside
-// the 64 KB uniform buffer limit the stricter backends impose.
-constexpr quint32 kUniformBlockSize = 96;
+// mat4 (64) + vec2 viewport (8) + three floats (12) + the pad std140 needs to
+// put a vec4 back on a 16-byte boundary (4) + the highlight vec4 (16).
+// Comfortably inside the 256-byte stride the hardware's uniform alignment
+// rounds up to, and inside the 64 KB uniform buffer limit the stricter
+// backends impose.
+constexpr quint32 kUniformBlockSize = 112;
 
 // Refuse absurd viewports rather than trying to allocate for them.
 constexpr int kMaxDimension = 8192;
@@ -767,37 +769,25 @@ const QImage& GpuRenderer::render(const Projection& projection,
         char* slot = uniforms.data() + (std::size_t(mUniformStride) * i);
         std::memcpy(slot, mvp.constData(), 16 * sizeof(float));
 
-        // The scale the vertex shader divides its line-expansion offsets by.
-        // Under pitch it is evaluated at the tile's visible centre, so a
-        // road's floor width stays honest where the tile actually shows; the
-        // continuous foreshortening across the tile comes free from the
-        // matrix, this only anchors the minimum-width clamp. Mixed-zoom LOD
-        // bounds a tile to about tileSize on screen, so within-tile variation
-        // is small -- see docs/map.md.
-        float px = tileSize;
-        if (projection.pitched())
-        {
-            const double fLog = projection.focalPixels();
-            const double centreV = origin.y +
-                                   ((projection.bearingCos() + projection.bearingSin()) *
-                                    projection.tileScreenSize(id.z) * 0.5) -
-                                   (projection.viewportHeight() / 2.0);
-            const double w = std::max(fLog - (centreV * projection.pitchSin()), 0.05 * fLog);
-            px = float(double(tileSize) * fLog / w);
-        }
-        std::memcpy(slot + (16 * sizeof(float)), &px, sizeof(float));
-        std::memcpy(slot + (17 * sizeof(float)), &widthScale, sizeof(float));
-        // Floats 18 and 19: this tile's crossfade and the highlight's extra
-        // half-width. Then the highlight colour at float 20 -- std140 aligns a
-        // vec4 to 16 bytes, which is exactly where the two floats leave it.
+        // Floats 16 and 17: the frame in DEVICE pixels. The vertex stage
+        // widens lines AFTER the matrix and needs it to turn an offset in
+        // pixels into one in NDC -- see expandToScreenWidth() in map.vert.
+        // The same for every tile; it rides the per-tile block because there
+        // is only one block.
+        const std::array<float, 2> viewportPx { float(size.width()), float(size.height()) };
+        std::memcpy(slot + (16 * sizeof(float)), viewportPx.data(), 2 * sizeof(float));
+        std::memcpy(slot + (18 * sizeof(float)), &widthScale, sizeof(float));
+        // Floats 19 and 20: this tile's crossfade and the highlight's extra
+        // half-width. Then the highlight colour at float 24 -- std140 aligns a
+        // vec4 to 16 bytes, and floats 21..23 are the pad that gets it there.
         const float fadeAlpha = float(quantizeAlpha(batches[i].alpha)) / 255.0F;
-        std::memcpy(slot + (18 * sizeof(float)), &fadeAlpha, sizeof(float));
-        std::memcpy(slot + (19 * sizeof(float)), &highlight.extraHalfPx, sizeof(float));
+        std::memcpy(slot + (19 * sizeof(float)), &fadeAlpha, sizeof(float));
+        std::memcpy(slot + (20 * sizeof(float)), &highlight.extraHalfPx, sizeof(float));
         const std::array<float, 4> highlightRgba {
             float(highlight.colour.redF()), float(highlight.colour.greenF()),
             float(highlight.colour.blueF()), float(highlight.colour.alphaF())
         };
-        std::memcpy(slot + (20 * sizeof(float)), highlightRgba.data(), 4 * sizeof(float));
+        std::memcpy(slot + (24 * sizeof(float)), highlightRgba.data(), 4 * sizeof(float));
     }
 
     QRhiCommandBuffer* cb = nullptr;

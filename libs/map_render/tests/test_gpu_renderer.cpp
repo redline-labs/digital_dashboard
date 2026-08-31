@@ -125,6 +125,42 @@ std::shared_ptr<const TileGeometry> fullTileStripe(float halfPx)
     return geometry;
 }
 
+// A stripe across the tile at a chosen local y, so the same road can be put
+// at several distances from a pitched camera.
+std::shared_ptr<const TileGeometry> stripeAtLocalY(float halfPx, float localY)
+{
+    auto geometry = std::make_shared<TileGeometry>();
+    const auto vertex = [&](float x, float normalY) {
+        return MapVertex { x, localY, 0.0f, normalY, halfPx, 0.0f, 1.0f, 0.0f, 1.0f };
+    };
+    geometry->vertices = { vertex(0.0f, -1.0f), vertex(0.0f, 1.0f), vertex(1.0f, -1.0f),
+                           vertex(1.0f, 1.0f) };
+    geometry->indices = { 0, 1, 2, 2, 1, 3 };
+    for (std::size_t i = 0; i <= map_render::kMapLayerCount; ++i)
+    {
+        geometry->layerStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 4U;
+        geometry->layerIndexStart[i] = (i <= std::size_t(MapLayer::Motorway)) ? 0U : 6U;
+    }
+    return geometry;
+}
+
+// How many pixels of stripe one column of the frame passes through -- the
+// drawn width of a horizontal road, read where it cannot be confused with the
+// road's length.
+int stripeThicknessAtColumn(const QImage& frame, int x)
+{
+    int n = 0;
+    for (int y = 0; y < frame.height(); ++y)
+    {
+        const QColor c = frame.pixelColor(x, y);
+        if (c.green() > 100 && c.red() < 100 && c.blue() < 100)
+        {
+            ++n;
+        }
+    }
+    return n;
+}
+
 // How much of the frame the green stripe covers. Counted rather than sampled,
 // because the question is how WIDE the line came out and a sample says only
 // whether it was hit.
@@ -1632,6 +1668,106 @@ void test_pitch_is_part_of_the_memo_key()
           "tilting the camera is a new picture, not a memo hit");
 }
 
+// A road is a fixed number of SCREEN pixels wide, and stays that width when
+// the camera tilts -- wherever it sits in the frame, and whichever zoom level
+// the tile it came from was drawn at.
+//
+// This is what a per-tile expansion scale cannot do. Under perspective the
+// local-to-screen scale falls off with distance and differs between x and y,
+// so one scalar per tile leaves a road tapering across the tile and stepping
+// at every tile boundary -- worst where a coarse far-field tile, normalised
+// about a centre far off-screen, meets a fine one. Widening after the matrix
+// instead makes the width independent of both position and tile size.
+void test_a_road_keeps_its_screen_width_under_pitch()
+{
+    auto renderer = GpuRenderer::create();
+    if (!renderer)
+    {
+        return;
+    }
+
+    MapStyle_t style;
+    // Wide, so the antialiased fringe is noise rather than the measurement.
+    style.road_width_scale = 4.0;
+    const QColor background(0x16, 0x18, 0x1d);
+    const float halfPx = map_render::halfWidthFor(MapLayer::Motorway, style);
+    constexpr int kSize = 800;
+    const float kLocalYs[] = { 0.1f, 0.3f, 0.5f, 0.7f };
+
+    // The flat map sets the standard: whatever width it draws is the width
+    // the style asked for.
+    int nominal = 0;
+    {
+        const Camera camera { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0 };
+        const Projection projection(camera, kSize, kSize);
+        const QImage frame =
+            renderer
+                ->render(projection,
+                         { GpuBatch { centreTile(projection), stripeAtLocalY(halfPx, 0.5f) } },
+                         style, background)
+                .copy();
+        if (frame.isNull())
+        {
+            return;
+        }
+        nominal = stripeThicknessAtColumn(frame, kSize / 2);
+        check(nominal > 20, "the flat stripe is wide enough to measure, got " +
+                                std::to_string(nominal) + " px");
+    }
+    if (nominal <= 0)
+    {
+        return;
+    }
+
+    const Camera pitched { Coordinate { kIrvineLat, kIrvineLon }, 14.0, 0.0, 55.0 };
+    const Projection projection(pitched, kSize, kSize);
+    const TileId centre = centreTile(projection);
+
+    for (const float localY : kLocalYs)
+    {
+        const QImage frame =
+            renderer
+                ->render(projection, { GpuBatch { centre, stripeAtLocalY(halfPx, localY) } },
+                         style, background)
+                .copy();
+        if (frame.isNull())
+        {
+            continue;
+        }
+        const int thickness = stripeThicknessAtColumn(frame, kSize / 2);
+        const double drift = std::abs(double(thickness) - double(nominal)) / double(nominal);
+        check(drift < 0.15, "a tilted road keeps its width down the frame: at local y " +
+                                std::to_string(localY) + " it is " + std::to_string(thickness) +
+                                " px against the flat map's " + std::to_string(nominal));
+    }
+
+    // And the same ground drawn from a COARSER tile comes out the same width:
+    // a road crossing a LOD boundary must not step.
+    const TileId parent { std::uint8_t(centre.z - 1), centre.x / 2, centre.y / 2 };
+    const double worldY = (double(centre.y) + 0.5) / std::exp2(double(centre.z));
+    const float parentY = float((worldY * std::exp2(double(parent.z))) - double(parent.y));
+    const QImage fine =
+        renderer
+            ->render(projection, { GpuBatch { centre, stripeAtLocalY(halfPx, 0.5f) } }, style,
+                     background)
+            .copy();
+    const QImage coarse =
+        renderer
+            ->render(projection, { GpuBatch { parent, stripeAtLocalY(halfPx, parentY) } }, style,
+                     background)
+            .copy();
+    if (!fine.isNull() && !coarse.isNull())
+    {
+        const int fineWidth = stripeThicknessAtColumn(fine, kSize / 2);
+        const int coarseWidth = stripeThicknessAtColumn(coarse, kSize / 2);
+        check(fineWidth > 0 && std::abs(fineWidth - coarseWidth) <= 2,
+              "the same road is the same width from either zoom level, got " +
+                  std::to_string(fineWidth) + " px at z" + std::to_string(int(centre.z)) +
+                  " and " + std::to_string(coarseWidth) + " px at z" +
+                  std::to_string(int(parent.z)));
+    }
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::info);
@@ -1671,6 +1807,7 @@ int main(int argc, char** argv)
     test_a_viewport_too_wide_for_a_texture_comes_back_soft_not_blank();
     test_a_pitched_frame_agrees_with_the_projection();
     test_pitch_is_part_of_the_memo_key();
+    test_a_road_keeps_its_screen_width_under_pitch();
 
     if (failures != 0)
     {

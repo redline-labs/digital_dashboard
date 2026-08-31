@@ -95,13 +95,28 @@ inverses. No sky, no fallible projection, no horizon clipping.
   what the renderer's positional batch comparison needs. `minLeafZoom` floors
   the far field at the archive's own minimum. The overview-ring request is
   skipped under pitch — the descent's far-field leaves ARE the coarse levels.
-- **Line widths.** Still one `pxPerLocal` scalar per tile, now evaluated at
-  the tile's visible centre. Mixed-zoom LOD bounds a tile to ~tileSize on
-  screen, so within-tile w varies little at the cap; the projective MVP
-  foreshortens the local-space expansion continuously (distant roads narrower,
-  which is what perspective looks like), and only the minimum-width floor and
-  fade quantize per tile. Revisit per-vertex `w` in the shader only if bench
-  screenshots show far-field crawl.
+- **Line widths are expanded AFTER the matrix**, in clip space:
+  `expandToScreenWidth()` in `map.vert` projects the centreline, projects a
+  short step along the normal, and offsets by the half-width along that
+  direction measured in pixels. A road is then exactly as many screen pixels
+  wide as the style asked for, wherever it is and whatever zoom level its tile
+  came from.
+  Expanding in tile-local space and dividing by a per-tile scale — which is
+  what this did first, and what the flat map got away with for years — cannot
+  work under perspective. The local-to-screen scale is not constant across a
+  tile (it falls off with distance) and is not the same in x and y (the
+  vertical carries `cos(pitch)` and a second factor of `w`), so one scalar per
+  tile leaves a road tapering across each tile and stepping at every tile
+  boundary. The step is worst where a coarse far-field tile meets a fine one:
+  a big tile normalised about a centre far off-screen draws the sliver you can
+  actually see roughly twice too wide. Measured before the change, at 55
+  degrees: a road of a flat 30 px ran 15 px at the far edge of its tile and
+  29 px at the near edge. `test_a_road_keeps_its_screen_width_under_pitch`
+  holds it to within 15% of the flat width down the frame, and to within 2 px
+  across a LOD boundary.
+  Costs one extra matrix multiply per line vertex — fills carry a zero normal
+  and skip it — for about 0.2 ms a frame on the bench's pitched view. At pitch
+  0 the arithmetic reduces to what it replaced, so the flat map is unchanged.
 - **Labels.** `Projection::TileTransform` carries the tilt behind one
   early-out branch — the flat frame still pays a single predictable compare —
   and grew `scaleAt(lx, ly)`, the tilt's shrink at a point. The label pass

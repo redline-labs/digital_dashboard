@@ -19,8 +19,9 @@ layout(std140, binding = 0) uniform buf {
     // tile-local [0,1] -> clip. Carries the tile's placement, the map rotation
     // and the projection, so a camera move is this matrix and nothing else.
     mat4 mvp;
-    // Screen pixels across one local unit, i.e. the tile's on-screen size.
-    float pxPerLocal;
+    // The frame's size in DEVICE pixels. Line expansion happens after the
+    // matrix now, and converting an NDC offset into pixels needs it.
+    vec2 viewportPx;
     // Road widths shrink as you zoom out. A uniform rather than baked into the
     // vertex, so zooming does not invalidate the geometry.
     float widthScale;
@@ -39,6 +40,50 @@ layout(std140, binding = 0) uniform buf {
 // Half a pixel, i.e. one pixel of total width, below which a line stops being
 // reliably drawable. See main().
 const float kMinHalfPx = 0.5;
+
+// The projected centreline, offset by `drawnHalf` PIXELS along the projected
+// normal.
+//
+// Expanding here -- after the matrix -- rather than in tile-local space is
+// what keeps a road the same number of pixels wide under a PERSPECTIVE
+// matrix. Local space cannot express it: the local-to-screen scale under
+// pitch is neither constant across a tile (it falls off with distance) nor
+// the same in x and y (the vertical is squeezed by cos(pitch) and a second
+// factor of w), so no single per-tile scale factor stands in for it. Doing it
+// per vertex also drops any dependence on the tile's own size, which is what
+// makes a road cross a LOD boundary without a step in its width.
+vec4 expandToScreenWidth(vec2 pos, vec2 nrm, float drawnHalf, mat4 mvp, vec2 viewportPx)
+{
+    vec4 centre = mvp * vec4(pos, 0.0, 1.0);
+
+    // Fills carry a zero normal and must never be widened; a vertex behind the
+    // eye has no screen position to offset from. Both are left where they are
+    // -- the second is off-screen by construction and gets clipped.
+    if (nrm == vec2(0.0) || centre.w <= 1e-6)
+    {
+        return centre;
+    }
+
+    // Where the normal POINTS on screen, by finite difference: project a short
+    // step along it and subtract. One extra matrix multiply, and it is exact
+    // for the affine (unpitched) case as well.
+    const float kStep = 1.0 / 1024.0;
+    vec4 stepped = mvp * vec4(pos + (nrm * kStep), 0.0, 1.0);
+    vec2 halfViewport = viewportPx * 0.5;
+    vec2 deltaPx =
+        ((stepped.xy / max(stepped.w, 1e-6)) - (centre.xy / centre.w)) * halfViewport;
+
+    float len = length(deltaPx);
+    if (len < 1e-6)
+    {
+        return centre;
+    }
+
+    // Back into clip space. An offset in NDC has to be multiplied by w to
+    // survive the perspective divide that follows.
+    vec2 offsetNdc = ((deltaPx / len) * drawnHalf) / halfViewport;
+    return vec4(centre.xy + (offsetNdc * centre.w), centre.z, centre.w);
+}
 
 void main() {
     // Half-width in SCREEN pixels, after the zoom taper.
@@ -62,10 +107,6 @@ void main() {
     float drawnHalf = max(screenHalf, kMinHalfPx);
     float fade = screenHalf > 0.0 ? screenHalf / drawnHalf : 1.0;
 
-    // Expanding here rather than on the CPU is what keeps a road the same
-    // number of pixels wide at every zoom AND under rotation: the normal is in
-    // local units and the matrix rotates it, which preserves its length.
-    vec2 p = pos + nrm * (drawnHalf / max(pxPerLocal, 1e-6));
     vcol = vec4(col.rgb, col.a * fade * fadeAlpha);
-    gl_Position = mvp * vec4(p, 0.0, 1.0);
+    gl_Position = expandToScreenWidth(pos, nrm, drawnHalf, mvp, viewportPx);
 }
