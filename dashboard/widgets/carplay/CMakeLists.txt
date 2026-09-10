@@ -16,7 +16,6 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
     ${CMAKE_SOURCE_DIR}/dashboard/include
     include
-    ${CMAKE_SOURCE_DIR}/include
 )
 
 # libavcodec for software H.264/H.265 decode of the zenoh video stream, plus

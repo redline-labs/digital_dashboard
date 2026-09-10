@@ -26,7 +26,6 @@ add_library(${MAP_WIDGET_LIB} STATIC
 target_include_directories(${MAP_WIDGET_LIB} PUBLIC
     ${CMAKE_SOURCE_DIR}/dashboard/include
     include
-    ${CMAKE_SOURCE_DIR}/include
 )
 
 target_link_libraries(${MAP_WIDGET_LIB}
