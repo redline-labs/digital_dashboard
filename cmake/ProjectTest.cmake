@@ -56,6 +56,15 @@ function(add_project_test)
         set(PT_NAME ${PT_TARGET})
     endif()
 
+    # -DBUILD_TESTING=OFF, in one place rather than in the forty-odd CMakeLists
+    # that declare a test. The target stays DECLARED but drops out of `all`.
+    # Checked after the argument validation above on purpose: a bad registration
+    # must fail the same way whether or not tests are being built.
+    if(NOT BUILD_TESTING)
+        set_target_properties(${PT_TARGET} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        return()
+    endif()
+
     add_test(NAME ${PT_NAME} COMMAND ${PT_TARGET})
     set_tests_properties(${PT_NAME} PROPERTIES LABELS "${PT_LABELS}")
 

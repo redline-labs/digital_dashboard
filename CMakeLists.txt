@@ -50,6 +50,21 @@ add_compile_options(
     #-flto
 )
 
+# Tests are opt-out, under CTest's conventional name. The vendored projects read
+# the same variable, so third_party/CMakeLists.txt pins it OFF for its subtree --
+# turning ours on never drags in capnproto's or zenoh-cpp's.
+#
+# Older build trees carry BUILD_TESTING=OFF, forced into the cache by
+# third_party/capnproto.cmake. option() will not overwrite an existing entry, so
+# that stale OFF would silently disable every test here. The forced entry is
+# recognisable by its empty help string, which no option() ever writes.
+get_property(_build_testing_help CACHE BUILD_TESTING PROPERTY HELPSTRING)
+if(DEFINED CACHE{BUILD_TESTING} AND _build_testing_help STREQUAL "")
+    unset(BUILD_TESTING CACHE)
+endif()
+unset(_build_testing_help)
+option(BUILD_TESTING "Build this project's test suite" ON)
+
 add_subdirectory(third_party)
 
 # Homebrew's Qt exports its entire install prefix as a system include directory.
@@ -103,7 +118,9 @@ set_target_properties(Qt6::Platform PROPERTIES
 #     ctest --test-dir build -LE slow         # everything except the slow ones
 #     ctest --test-dir build -L airplay -V    # one component, verbose
 #
-enable_testing()
+if(BUILD_TESTING)
+    enable_testing()
+endif()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 include(ProjectTest)
 include(DashboardWidget)
@@ -148,13 +165,59 @@ add_compile_options(
     # so the tree spells those captures with distinct names instead. If that
     # ever costs more than it catches, this line is the thing to delete.
     $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wshadow-uncaptured-local>
-    #-Wlogical-op
-
     #-Wsuggest-final-types
     #-Wsuggest-final-methods
 
     -Wno-expansion-to-defined
     -Wswitch-enum
+
+    # CLOSING THE GAP BETWEEN THE TWO COMPILERS. Developed on clang, shipped by
+    # Yocto on GCC 15, and the two do not diagnose the same set -- which is free
+    # coverage, not a nuisance to waive at the integration end. GCC found a real
+    # use-after-free on the pub/sub RX path that clang cannot spell at all; see
+    # -Wdangling-reference below and byte_subscriber.cpp.
+    #
+    # The rule: a warning in OUR code gets FIXED, never downgraded. Only system
+    # and third-party headers get waived, and that is the integrator's business
+    # -- the libstdc++ -Warray-bounds false positive the recipe downgrades does
+    # reproduce here under GCC 16 at -O2, and nothing in the application changes
+    # it. A flag belongs here only if the tree builds clean under it; the ones
+    # that did not are recorded below with the reason.
+
+    # Both compilers, C++ only: the two ways a class hierarchy silently does the
+    # wrong thing at runtime, over a tree full of polymorphic seams.
+    $<$<COMPILE_LANGUAGE:CXX>:-Wnon-virtual-dtor>
+    $<$<COMPILE_LANGUAGE:CXX>:-Woverloaded-virtual>
+
+    # NOT -Wextra-semi, NOT -Wundef: both clean in our code, both fire only from
+    # vendored headers (zenoh-cpp and earcut write `};`, kj/windows-sanity.h
+    # tests _WIN32). Passing them means moving those to -isystem, which
+    # third_party/earcut.cmake explains this tree deliberately does not do.
+
+    # Both compilers, any language. -Wimplicit-fallthrough is in GCC's -Wextra
+    # but not in clang's for C++, so a fallthrough that stops the Yocto build
+    # compiles silently here -- the exact shape this block exists to retire.
+    -Wimplicit-fallthrough
+
+    # NOT -Wdouble-promotion, and this one looks like it belongs: 169 hits, no
+    # defects. Qt's geometry API is all qreal and this tree computes in float,
+    # so every hit is a widening at an API boundary. Silencing it means casts at
+    # 169 call sites to remove a warning that was never about a bug.
+
+    # GCC only, each a class clang cannot see. -Wdangling-reference is in GCC's
+    # -Wall from 13, but naming it means a GCC 13/14 builder gets it too.
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU>>:-Wdangling-reference>
+    $<$<CXX_COMPILER_ID:GNU>:-Wduplicated-cond>
+    $<$<CXX_COMPILER_ID:GNU>:-Wduplicated-branches>
+    $<$<CXX_COMPILER_ID:GNU>:-Wlogical-op>
+
+    # Clang only, the other direction. -Wconditional-uninitialized is clang's
+    # answer to -Wmaybe-uninitialized and stricter than the -Wuninitialized we
+    # were relying on; -Wheader-hygiene catches `using namespace` at header
+    # scope, which GCC has no flag for.
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wconditional-uninitialized>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wloop-analysis>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wheader-hygiene>
 )
 
 

@@ -9,8 +9,9 @@ FetchContent_Declare(
 )
 
 # Configure capnproto options before making it available
-# Disable building tests, examples, and tools we don't need
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# Disable building tests, examples, and tools we don't need. BUILD_TESTING is no
+# longer forced into the cache from here; third_party/CMakeLists.txt pins it for
+# this subtree instead.
 set(CAPNP_LITE OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(capnproto)

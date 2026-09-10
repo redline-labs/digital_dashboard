@@ -1,3 +1,6 @@
+get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
+                      "${CMAKE_CURRENT_LIST_DIR}/../dashboard/include" ABSOLUTE)
+
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # One way to declare a dashboard widget library.
@@ -78,8 +81,11 @@ function(add_dashboard_widget widget_name)
     # does not depend on where in the tree it happens to be included from.
     set_target_properties(${widget_name} PROPERTIES AUTOMOC ON)
 
+    # Resolved against THIS file, not CMAKE_SOURCE_DIR -- that is the top of
+    # whatever project is configuring, so a consumer including this module from
+    # its own tree got a dashboard/include that does not exist.
     target_include_directories(${widget_name} PUBLIC
-        ${CMAKE_SOURCE_DIR}/dashboard/include
+        ${DASHBOARD_WIDGET_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
 

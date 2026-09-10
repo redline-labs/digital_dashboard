@@ -15,13 +15,23 @@ ctest --test-dir build -L gui           # constructs Qt widgets, forced offscree
 ctest --test-dir build -LE slow         # everything quick
 ```
 
+`-DBUILD_TESTING=OFF` drops the test targets out of `all` (they stay declared).
+`-DREDLINE_NATIVE_CODEGEN_DIR=<dir>` points the three code generators this build
+runs on itself at host builds of the same tools, which a cross build needs — see
+`cmake/NativeCodegen.cmake`.
+
 Tests are plain `main()` programs registered with `add_project_test()`
 (`cmake/ProjectTest.cmake`). **A test must fail by exit code** — a program that
 prints and always returns 0 is a demo, and registering it makes a green run mean
 nothing.
 
 New code compiles with `-Werror -Wshadow -Wold-style-cast -Wswitch-enum
--Wsuggest-override`. **Spell out every case in a `switch` over an enum.** Do not
+-Wsuggest-override`, plus a block of flags that makes clang here and GCC on the
+Yocto builder diagnose the same set; read its comment in the root `CMakeLists.txt`
+before adding or removing one. **A warning in our own code gets fixed, never
+downgraded** — only system and third-party headers get waived.
+
+**Spell out every case in a `switch` over an enum.** Do not
 dodge `-Wswitch-enum` by rewriting the switch as an if-chain, and do not add a
 `default:` that swallows the cases you did not want to name — both throw away
 the only thing that tells you where to look when a value is added to the enum.

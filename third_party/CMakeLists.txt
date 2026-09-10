@@ -5,6 +5,13 @@ include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 set(FETCHCONTENT_QUIET OFF)
 
+# No vendored dependency's test suite, ever, whatever our own BUILD_TESTING says.
+# Directory-scoped, so it reaches everything below (including the sub-projects
+# FetchContent adds) without touching the cache entry that decides OUR tests.
+# It used to be a forced cache write in capnproto.cmake, which is how one
+# vendored dependency ended up deciding whether the project had tests.
+set(BUILD_TESTING OFF)
+
 # Include dependency configurations
 include(spdlog.cmake)
 include(nlohmann_json.cmake)
@@ -33,4 +40,4 @@ include(sqlite3.cmake)
 include(earcut.cmake)
 
 # LGPL Compliance: Create source code availability notice
-file(COPY ${CMAKE_SOURCE_DIR}/NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)
+file(COPY ${CMAKE_CURRENT_LIST_DIR}/../NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)

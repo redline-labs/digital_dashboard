@@ -22,6 +22,14 @@ endif()
 add_executable(capnpc_schema_registry tools/schema_registry_plugin.cpp)
 target_link_libraries(capnpc_schema_registry PRIVATE capnp kj)
 
+# ... unless the host is not the target, in which case none of the three tools
+# below is runnable by the build that produced them.
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/NativeCodegen.cmake)
+redline_codegen_tool(CAPNP_COMMAND CAPNP_DEPENDS capnp_tool capnp)
+redline_codegen_tool(CAPNPC_CPP_COMMAND CAPNPC_CPP_DEPENDS capnpc_cpp capnpc-c++)
+redline_codegen_tool(REGISTRY_PLUGIN_COMMAND REGISTRY_PLUGIN_DEPENDS
+                     capnpc_schema_registry capnpc_schema_registry)
+
 set(GENERATED_SOURCES)
 set(GENERATED_HEADERS)
 set(STAGED_OUTPUTS)
@@ -57,10 +65,10 @@ add_custom_command(
     # in `cmake -E env` with the vendored capnpc-c++'s directory prepended.
     # Naming the target file directly does the same job without rewriting the
     # environment, and reads as what it is.
-    COMMAND $<TARGET_FILE:capnp_tool>
+    COMMAND ${CAPNP_COMMAND}
             compile
-            -o$<TARGET_FILE:capnpc_cpp>:${STAGE_DIR}
-            -o$<TARGET_FILE:capnpc_schema_registry>:${STAGE_DIR}
+            -o${CAPNPC_CPP_COMMAND}:${STAGE_DIR}
+            -o${REGISTRY_PLUGIN_COMMAND}:${STAGE_DIR}
             --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
             ${SCHEMA_FILES}
     # Destinations are named as files, not as directories: given a single source
@@ -79,7 +87,8 @@ add_custom_command(
     # capnp_tool and capnpc_cpp are listed because the generated code is tied to
     # the compiler that produced it. Without them, bumping capnproto's GIT_TAG
     # leaves every .capnp.h stale against the new runtime.
-    DEPENDS ${SCHEMA_FILES} capnp_tool capnpc_cpp capnpc_schema_registry
+    DEPENDS ${SCHEMA_FILES}
+            ${CAPNP_DEPENDS} ${CAPNPC_CPP_DEPENDS} ${REGISTRY_PLUGIN_DEPENDS}
     COMMENT "Generating C++ and the schema registry from ${CMAKE_CURRENT_SOURCE_DIR}/*.capnp"
     VERBATIM
 )

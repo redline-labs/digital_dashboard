@@ -62,7 +62,15 @@ class ZenohSampleMeta final : public SampleMeta
         // actually has. thread_local so the cache needs no lock on the one
         // path that must never take one; zenoh delivers a subscriber's
         // callbacks from more than one RX thread.
-        const std::array<std::uint8_t, 16>& id = stamp->get_id().bytes();
+        //
+        // The Id is HELD BY VALUE, and that is load-bearing: get_id() returns
+        // one by value and Id::bytes() hands back a reference into it. Binding
+        // a `const&` to a function's RESULT does not extend that temporary --
+        // only binding directly to a temporary does -- so the old
+        // `const auto& id = stamp->get_id().bytes()` read a dead Id every time.
+        // GCC calls this -Wdangling-reference; clang has no equivalent.
+        const zenoh::Id zid = stamp->get_id();
+        const std::array<std::uint8_t, 16>& id = zid.bytes();
 
         thread_local std::vector<std::pair<std::array<std::uint8_t, 16>, std::string>> cache;
         for (const auto& [key, text] : cache)
@@ -73,7 +81,7 @@ class ZenohSampleMeta final : public SampleMeta
             }
         }
 
-        std::string text = stamp->get_id().to_string();
+        std::string text = zid.to_string();
         // Bounded: a runaway set of ids (which would take a bus of hundreds of
         // sessions) degrades to the old per-message formatting, not to growth.
         if (cache.size() < 64)

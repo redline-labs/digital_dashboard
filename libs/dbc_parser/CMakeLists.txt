@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 
 project(dbc_parser)
 
+# generate_dbc_code() runs dbc_code_gen during the build, which a cross build
+# cannot do with the copy it just built for the target.
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NativeCodegen.cmake)
+
 add_library(dbc_parser
     src/ast.cpp
     src/dbc_lexer.cpp
@@ -71,6 +75,10 @@ target_link_libraries(dbc_code_gen
 # they are always rewritten together with these -- and deleting one by hand
 # fails loudly at compile time, because the main header includes it.
 function(generate_dbc_code library_name dbc_file)
+    # Per call, not once at the top of this file: this function is called from
+    # sibling directories (dbcs/), where a variable set here is invisible.
+    redline_codegen_tool(codegen_command codegen_depends dbc_code_gen dbc_code_gen)
+
     set(output_dir ${CMAKE_CURRENT_BINARY_DIR}/${library_name})
     set(output_hdr ${output_dir}/${library_name}.h)
     set(output_common_hdr ${output_dir}/${library_name}_common.h)
@@ -80,8 +88,8 @@ function(generate_dbc_code library_name dbc_file)
     add_custom_command(
         OUTPUT ${output_hdr} ${output_common_hdr} ${output_parser_hdr} ${output_parser_src}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}
-        COMMAND $<TARGET_FILE:dbc_code_gen> --name ${library_name} --input ${dbc_file} --output ${output_dir} --silent
-        DEPENDS dbc_code_gen ${dbc_file}
+        COMMAND ${codegen_command} --name ${library_name} --input ${dbc_file} --output ${output_dir} --silent
+        DEPENDS ${codegen_depends} ${dbc_file}
         MAIN_DEPENDENCY ${dbc_file}
         COMMENT "Generating ${library_name} from ${dbc_file}"
         VERBATIM
@@ -97,4 +105,11 @@ endfunction()
 
 # Tests own their own synthetic DBCs, so this has to come after
 # generate_dbc_code() is defined above.
-add_subdirectory(tests)
+#
+# Gated because this is a library a consumer may want on its own: everything in
+# tests/ calls add_project_test(), which is defined by the root project's
+# cmake/ProjectTest.cmake, and a consumer that just wanted a DBC parser had to
+# stub that function to get past this line.
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 
 project(canopen)
 
+# generate_eds_code() runs canopen_code_gen during the build, which a cross build
+# cannot do with the copy it just built for the target.
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NativeCodegen.cmake)
+
 add_library(canopen
     src/bus.cpp
     src/eds_ast.cpp
@@ -36,19 +40,28 @@ target_link_libraries(canopen
 # The zenoh transport is a separate target on purpose: it pulls in zenoh, capnp
 # and the schemas, and nothing that only wants to parse an EDS or drive a stub
 # should have to carry that.
-add_library(canopen_zenoh
-    src/zenoh_bus.cpp
-)
+#
+# Separate but, until now, unavoidable: CMake resolves link-line names at
+# generate time, so a consumer taking just the EDS parser still had to make
+# `zenoh_pub_sub` and `schemas` exist -- most of what the split was avoiding.
+# ON by default; OFF fails loudly at the link if the consumer was wrong.
+option(CANOPEN_WITH_ZENOH "Build the canopen zenoh transport (needs zenoh, capnp and the schemas)" ON)
 
-target_link_libraries(canopen_zenoh
-    PUBLIC
-        canopen
-    PRIVATE
-        zenoh_pub_sub
-        schemas
-        capnp
-        spdlog::spdlog
-)
+if(CANOPEN_WITH_ZENOH)
+    add_library(canopen_zenoh
+        src/zenoh_bus.cpp
+    )
+
+    target_link_libraries(canopen_zenoh
+        PUBLIC
+            canopen
+        PRIVATE
+            zenoh_pub_sub
+            schemas
+            capnp
+            spdlog::spdlog
+    )
+endif()
 
 # Code generator
 add_executable(canopen_code_gen
@@ -74,6 +87,10 @@ target_link_libraries(canopen_code_gen
 # A macro substitutes its arguments textually, so the absolute form needs a new
 # name: assigning to `eds_file` would not change what `${eds_file}` expands to.
 macro(generate_eds_code library_name eds_file)
+    # Per expansion, not once at the top of this file: this macro is expanded in
+    # sibling directories (eds/), where a variable set here is invisible.
+    redline_codegen_tool(codegen_command codegen_depends canopen_code_gen canopen_code_gen)
+
     get_filename_component(eds_path "${eds_file}" ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
     set(output_dir ${CMAKE_CURRENT_BINARY_DIR}/${library_name})
     set(output_hdr ${output_dir}/${library_name}_helpers.h)
@@ -91,8 +108,8 @@ macro(generate_eds_code library_name eds_file)
         # --strict: the generated code is only worth anything if it was derived
         # from the file, and a parser regression that fell back to constants
         # would otherwise produce a clean build with wrong numbers in it.
-        COMMAND $<TARGET_FILE:canopen_code_gen> --name ${library_name} --input ${eds_path} --output ${output_dir} --silent --strict
-        DEPENDS canopen_code_gen ${eds_path}
+        COMMAND ${codegen_command} --name ${library_name} --input ${eds_path} --output ${output_dir} --silent --strict
+        DEPENDS ${codegen_depends} ${eds_path}
         MAIN_DEPENDENCY ${eds_path}
         VERBATIM
     )

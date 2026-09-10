@@ -1,3 +1,8 @@
+# Patches resolve against THIS file, not CMAKE_SOURCE_DIR -- that is the top of
+# whatever project is configuring, so a consumer including this file from its
+# own tree got "can't open patch '<their root>/patches/...'".
+get_filename_component(REDLINE_PATCH_DIR "${CMAKE_CURRENT_LIST_DIR}/../patches" ABSOLUTE)
+
 # THE RUST `zenoh` CRATE IS NOT FETCHED BY CMAKE, and that is the whole
 # awkwardness of what follows. zenoh-c is a CMake project, but the library that
 # actually contains the bug is its cargo dependency:
@@ -55,7 +60,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh.git
     GIT_TAG release/1.10.0
     GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply ${CMAKE_SOURCE_DIR}/patches/zenoh_abortable_gossip_connect.patch
+    PATCH_COMMAND git apply ${REDLINE_PATCH_DIR}/zenoh_abortable_gossip_connect.patch
 )
 FetchContent_MakeAvailable(zenoh_rust)
 
