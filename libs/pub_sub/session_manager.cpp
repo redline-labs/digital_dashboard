@@ -69,6 +69,37 @@ zenoh::Config SessionManager::buildConfig()
     config.insert_json5("transport/shared_memory/transport_optimization/message_size_threshold",
                         "262144");
 
+    // DO NOT BLOCK open() ON SCOUTING. This is worth ~500 ms of time-to-first-
+    // frame and it is the single largest fixed cost in a node's startup.
+    //
+    // In peer mode `scouting/delay` (500 ms) is NOT a sleep -- zenoh's
+    // orchestrator does `timeout(delay, start_conditions.notified())`, gated on
+    // this flag, so it is an upper bound on waiting for a peer to answer. First
+    // node up on a quiet bus has nobody to answer and pays all 500 ms; with
+    // peers already there it still paid 30-150 ms. Turning the flag off skips
+    // the wait only -- start_scout() has already been spawned, so scouting,
+    // discovery and autoconnect all still happen, just behind us instead of in
+    // front of us. Peer mode is unchanged.
+    //
+    // MEASURED: open() 152 ms mean / 506 ms worst -> 0.9 ms. For a subscriber,
+    // process start to first delivered sample against a 50 Hz publisher went
+    // 33-62 ms -> 7-16 ms; the link comes up in single-digit ms either way, so
+    // blocking open() on it only serialised that wait ahead of everything else.
+    //
+    // WHAT IT COSTS, also measured: a publisher that opens and immediately puts
+    // 400 samples at 1 ms spacing loses the first 2 -- a ~2 ms window where the
+    // link is not up yet. Declarations are not affected (they re-synchronise
+    // when a link comes up), so subscriptions and liveliness tokens are safe;
+    // this is only about data published inside that window. Nothing in this tree
+    // publishes a one-shot message at startup, and a node that grows one should
+    // wait for `get_peers_z_id()` to be non-empty rather than turn this back on
+    // for everyone.
+    //
+    // `open/return_conditions/declares` is deliberately left alone: it removed
+    // nothing further in the same measurement and zenoh warns it costs extra
+    // startup traffic.
+    config.insert_json5("open/return_conditions/connect_scouted", "false");
+
     // PUB_SUB_NO_DISCOVERY=1 keeps this session off the machine's bus.
     //
     // Set for every test by cmake/ProjectTest.cmake, and it fixes a hang rather
