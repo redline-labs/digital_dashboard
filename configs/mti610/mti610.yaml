@@ -1,0 +1,147 @@
+# Xsens MTi-610 inertial measurement unit.
+#
+# The MTi-610 is the IMU member of the 600-series. It has NO ORIENTATION
+# FILTER: there is no quaternion, no Euler angle and no free acceleration
+# anywhere in this file, because the device cannot produce them. Those are a
+# 620 (VRU), 630 (AHRS) or 670 (GNSS/INS). What a 610 gives you is calibrated
+# acceleration, rate of turn and magnetic field, the strapdown increments that
+# go with them, barometric pressure and temperature.
+#
+# `mti610_bridge --probe --config <this file>` is how to check a new unit: it
+# identifies the device and prints what it is currently configured to output.
+# A clean "no goto_config_ack from the device" on every attempt means the bytes
+# are not reaching a listener -- which is almost always the baud rate below, or
+# the wrong /dev node.
+
+device:
+  # Linux: /dev/ttyUSB0 for an FTDI adapter, /dev/ttyACM0 for CDC-ACM.
+  # macOS:  /dev/cu.usbserial-XXXXXXXX -- note `cu`, not `tty`. Opening the
+  #         `tty` variant blocks waiting for carrier detect on a device that
+  #         never asserts it.
+  port: /dev/ttyUSB0
+
+  # 115200 is the factory default in serial mode.
+  #
+  # THIS NODE NEVER CHANGES THE DEVICE'S BAUD RATE. It opens the port at
+  # whatever is set here and expects the device to already be there. Changing
+  # the device's rate needs SetPortConfig, whose 32-bit word layout the LLCP
+  # documents only as an unlabelled figure -- so this build reads and
+  # round-trips those words but will not compose one. Use MT Manager if you
+  # need the device moved off 115200, then change this to match.
+  #
+  # Above 230400 on macOS there is no termios constant and the rate is applied
+  # by ioctl instead; that path exists and is used automatically.
+  baud: 115200
+
+  open_timeout_ms: 2000
+
+  # Tried in order, then the last repeats. Capped rather than doubling forever
+  # so an adapter replugged after an hour is picked up within seconds.
+  reopen_backoff_ms: [250, 500, 1000, 2000, 5000]
+
+configuration:
+  # enforce      read the device's output configuration, then write ONLY what
+  #              differs from the list below.
+  # report_only  read and report the difference, change nothing. Use this
+  #              around a device somebody else owns.
+  mode: enforce
+
+  # additive   leave outputs that are not listed below alone, and report them.
+  #            The default: the device may legitimately be feeding something
+  #            else, and a list of what THIS node needs is no basis for
+  #            deciding those are wrong.
+  # exclusive  turn off anything not listed. Only for a device this node owns
+  #            outright.
+  #
+  # Note that SetOutputConfiguration replaces the WHOLE list -- XBus has no way
+  # to change one output -- so `additive` means the node re-sends the entries
+  # it is leaving alone. That is handled for you; it is mentioned because it is
+  # the opposite of how the BD992's APPFILE works.
+  port_policy: additive
+
+  reply_timeout_ms: 1000
+  retries: 2
+
+  # How often to re-read and re-compare. Zero checks once, at startup.
+  #
+  # A RE-CHECK STOPS THE DATA for as long as it takes. An MTi answers
+  # configuration messages only in Config state and emits data only in
+  # Measurement state, so there is no way to ask it anything without
+  # interrupting it. That is a property of the device, and it is why this is a
+  # minute rather than a second.
+  recheck_interval_s: 60
+
+  # What the device should emit, and how often.
+  #
+  # `precision` selects the low two bits of the data identifier and is a real
+  # choice, not decoration:
+  #
+  #   float32  four bytes, about seven significant digits.
+  #   fp1632   six bytes, resolving 2^-32 -- finer than float32 anywhere above
+  #            1.0, which is where an accelerometer spends its life. The cost
+  #            is two extra bytes per component, which at 100 Hz on a
+  #            115200-baud link is affordable and at 400 Hz is not.
+  #   fp1220   four bytes, range +/-2048. Fine for rate of turn, too coarse for
+  #            nothing here.
+  #   float64  eight bytes. More precision than the sensors have.
+  #
+  # Output names are the ones in XBUS_DATA_TABLE
+  # (libs/xbus/include/xbus/data_table.h); an unknown name is refused at load
+  # with the full list.
+  #
+  # WATCH THE TOTAL RATE. The device answers a configuration it cannot carry
+  # with error 0x1E, "timer overflow" -- or, worse, silently clamps a rate and
+  # keeps going. The node logs a warning when what comes back differs from what
+  # was asked, and the status message carries the effective rates.
+  outputs:
+    # Packet metadata. These accompany every packet and the device ignores
+    # their rate, answering 'max' whatever is asked -- so `max` is written here
+    # to match what it will report. They are not topics of their own: they ride
+    # on every measurement message as its sample header, which is what lets a
+    # consumer say which acceleration belongs to which instant.
+    - { data: packet_counter,   rate: max }
+    - { data: sample_time_fine, rate: max }
+    - { data: status_word,      rate: max }
+
+    # The three calibrated measurements. fp16.32 because the extra resolution
+    # is free at 100 Hz and the swizzle is well covered by tests.
+    - { data: acceleration,   rate: 100, precision: fp1632 }
+    - { data: rate_of_turn,   rate: 100, precision: fp1632 }
+    - { data: magnetic_field, rate: 100, precision: fp1632 }
+
+    # The strapdown increments. Already multiplied by the sample interval,
+    # which makes them immune to the aliasing a sampled acceleration suffers
+    # under vibration -- so anything integrating motion should use these rather
+    # than integrating `acceleration` itself.
+    - { data: delta_v, rate: 100, precision: fp1632 }
+    - { data: delta_q, rate: 100, precision: fp1632 }
+
+    # Slow-moving, so 1 Hz is plenty. The temperature is the SENSOR's internal
+    # temperature, not the ambient: it reads high by whatever the device is
+    # dissipating, and it is the thing to look at when a gyro bias drifts.
+    - { data: temperature, rate: 1, precision: float32 }
+
+    # The barometer. Whole pascals; converting to an altitude needs a reference
+    # pressure the device has no way to know.
+    - { data: baro_pressure, rate: 50 }
+
+    # NOT ENABLED, deliberately: acceleration_hr and rate_of_turn_hr.
+    #
+    # The high-rate taps run at about 2000 Hz and 1600 Hz on a 600-series and
+    # are NOT time-aligned with anything else -- the LLCP says they do not go
+    # through the strapdown integration and are not grouped with the messages
+    # coming out at the same instant. They also will not fit down a
+    # 115200-baud link alongside the above. Enable one only if you want it, and
+    # do not pair it with `acceleration` by packet counter: that pairs two
+    # different moments.
+
+publish:
+  topic_prefix: nodes/mti610
+  status_key: nodes/mti610/status
+  status_interval_ms: 1000
+
+  # Publish items this build does not model on <prefix>/mtdata2/raw. Worth
+  # leaving on: a device emitting something unrecognised is otherwise
+  # indistinguishable from one that is silent, and on an MTi-610 a busy raw
+  # topic means the device is not a 610.
+  publish_unknown_items: true

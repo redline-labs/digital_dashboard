@@ -1,0 +1,26 @@
+# Replaying a captured MTi-610 stream, with no device present.
+#
+# WITH NO HARDWARE THIS IS THE ONLY WAY TO RUN THE NODE END TO END, which is
+# why it is a checked-in config rather than a set of flags to remember:
+#
+#   mti610_bridge --config configs/mti610/replay.yaml --replay /tmp/mti610.bin
+#
+# Nothing is configured during a replay -- a capture cannot answer -- so the
+# node skips the handshake and reads. `configuration.outputs` is therefore
+# ignored here, and is absent rather than set to something misleading.
+
+device:
+  # Unused with --replay, but the parser wants a port unless one is given, and
+  # a name that says so beats a plausible /dev node somebody might believe.
+  port: /dev/null-replay-only
+  baud: 115200
+
+configuration:
+  mode: report_only
+  recheck_interval_s: 0
+
+publish:
+  topic_prefix: nodes/mti610
+  status_key: nodes/mti610/status
+  status_interval_ms: 1000
+  publish_unknown_items: true

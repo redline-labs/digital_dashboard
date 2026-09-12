@@ -171,6 +171,30 @@ discovery seeing only live traffic, and what `accepted: false` and
   instead. The *command* encodings carry the opposite caveat, stated in their
   test: no receiver has ever seen those bytes,
   and as of 2026-08-23 no port on ours accepts them. See `docs/bd992.md`.
+- **`libs/xbus`'s fp16.32 byte order cannot be checked by round-tripping.**
+  Xsens sends the low six bytes of `round(v * 2^32)` in the order
+  `[b3,b2,b1,b0,b5,b4]` -- fraction first, then integer. A plain six-byte
+  big-endian read returns a plausible wrong number (9.81 reads back as
+  -12451.84), and an encoder and decoder sharing that mistake agree perfectly.
+  What catches it is encoding ONE value as float32 AND as fp16.32 and requiring
+  the decodes to match: there is no byte order the two can be wrong in
+  together. Removing the swizzle breaks the build at four `static_assert`s.
+  The same cross-check at the item level is what proves a payload is sized by
+  the format nibble rather than by a constant. See docs/mti610.md.
+- **An MTi has two states and one port, and that shapes the whole node.** It
+  answers configuration only in Config state and emits data only in Measurement
+  state, so reconfiguring STOPS THE DATA and whoever owns the port owns the
+  handshake -- unlike the BD992, which configures itself over a second socket
+  while the first keeps streaming. `mti610::StreamClient` runs both on its
+  reader thread and treats reconfiguration as a request, not a call. An
+  unsolicited `WakeUp` means the device reset and must be answered inside
+  500 ms, or it comes back up on its STORED configuration while the node keeps
+  publishing and nothing says so.
+- **`SetOutputConfiguration` replaces the whole list.** XBus cannot change one
+  output, so `additive` -- leave what I did not ask for alone -- means
+  RE-SENDING those entries. Backwards, it switches off somebody else's data
+  silently. The opposite of how the BD992's APPFILE works, and the reason
+  `libs/mti610/output_config.h` is free functions over two lists.
 - **The MOTOTRBO handshake is shaped by five defects a capture could not
   show.** `libs/xpr`'s session sends a 12-byte CONN_REQUEST, reads its assigned
   address from CONN_REPLY+2, advances a rolling flags counter on every data
@@ -319,6 +343,8 @@ libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/motec_utc.md for the MoTeC one,
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
+                    xbus (Xsens XBus, constexpr) + mti610 (its SERIAL transport,
+                    the tree's only termios code) -- docs/mti610.md,
                     mototrbo (XNL/XCMP, constexpr) + xpr (the radio's session)
                   -- docs/xpr.md,
                     mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md,

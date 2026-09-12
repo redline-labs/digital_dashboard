@@ -16,6 +16,9 @@ add_subdirectory(bd992_bridge)
 # route or a track centreline and drives it. The first caller of map/route and
 # map/track_detail anywhere in the tree.
 add_subdirectory(bd992_mock)
+# The Xsens MTi-610 IMU. Same split as the BD992: libs/xbus parses, libs/mti610
+# owns the serial port, and this maps what comes out onto schemas.
+add_subdirectory(mti610_bridge)
 # A Motorola MOTOTRBO radio over its USB-RNDIS link: what the radio is doing,
 # and the channel as a service. Read-only except for the channel, which is
 # gated by config.

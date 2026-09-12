@@ -33,6 +33,14 @@ add_subdirectory(gsof)
 # TCP, threads and the read-before-write configuration logic. After `gsof`,
 # which it links; nothing in `gsof` may depend on this.
 add_subdirectory(bd992)
+# The Xsens XBus protocol: framing, MTData2 decoding, command building. Pure
+# bytes, no I/O -- `mti610` sits above it with the serial port, the same way
+# bd992 sits above gsof. Nothing here may depend on that.
+add_subdirectory(xbus)
+# The serial port, the reader thread and the Config/Measurement handshake for
+# an Xsens MTi-610. After `xbus`, which it links; nothing in `xbus` may depend
+# on this. The tree's only termios code lives here.
+add_subdirectory(mti610)
 # The mbtiles 1.3 format: an SQLite file full of map tiles. Pure file reading,
 # no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The
 # dashboard must not link this, and scope deliberately does; see the note in
