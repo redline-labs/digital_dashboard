@@ -1014,10 +1014,26 @@ This is the single most misleading behaviour on this board. A bus scan that
 probes each address once walks straight past it: the wake-up NACK at `0x11` is
 read as "nothing here" and the scan moves on to `0x12`, never coming back. Two
 consecutive `i2cdetect` runs show it clearly — the first finds nothing, the
-second finds `0x11`. It also re-sleeps quickly: a **0.7 s** gap between opening
-the bus and the next access was enough. Every transaction in `AppleMFIIC` is
-therefore retried (8 attempts, 20 ms apart) rather than only the first one after
-connect. Do not "simplify" that away.
+second finds `0x11`. It also re-sleeps quickly. Measured on the LattePanda
+(DesignWare controller at 100 kHz, 2026-09-13, with a probe that kept the bus
+open and timed each transaction):
+
+| | |
+|---|---|
+| sleeps after | ~30–60 ms idle |
+| first START after sleep | NACKed, or ACKed with a ~12 ms clock stretch |
+| responsive again after a NACK | ~0.5 ms |
+| after a **successful** register-select write | busy ~0.8–1.5 ms, NACKs everything; the pointer stays set |
+| after a **NACKed** write | pointer NOT set — a following read returns garbage |
+
+The last two rows are what broke the first native-controller attempt: the read
+came straight after the write, inside the busy window, and re-issuing the
+*pair* on every failure just reopened it, so the demo never read a byte even
+though `i2cdetect` saw the part. Over the MCP2221A the USB round trip had
+hidden the window. `AppleMFIIC::read_register` therefore retries a NACKed
+write (pointer unset) but retries the *read alone* after a good write, 0.5 ms
+apart for up to ~20 ms, before redoing the pair. Do not "simplify" that away,
+and do not put the read back-to-back with the write.
 
 **Two MCP2221A behaviours worth knowing.** These bit us on the userspace hidapi
 path used on macOS; the kernel driver handles both itself, so they are invisible

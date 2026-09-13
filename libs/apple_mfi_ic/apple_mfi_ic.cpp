@@ -30,13 +30,28 @@ AppleMFIIC::~AppleMFIIC()
 
 namespace
 {
-// The MFi coprocessor stops acknowledging after a short idle period; the NACK
-// that costs is itself the wake-up, and the next attempt succeeds. Measured on
-// hardware: a 0.7 s gap between opening the bus and the next access was enough
-// to put it back to sleep, so every transaction retries rather than only the
-// first one after connect.
+// The coprocessor's I2C timing, measured on the LattePanda (DesignWare
+// controller, 100 kHz, 2026-09-13) with a scripted probe that kept the bus open
+// and timed every transaction:
+//
+//   * It sleeps after ~30-60 ms of idle. The first START after that is either
+//     NACKed outright or ACKed with a ~12 ms clock stretch; after a NACK it is
+//     answering again within ~0.5 ms. A NACKed register-select write leaves the
+//     register pointer UNSET -- a read that follows returns garbage, so the
+//     write has to be repeated, never just the read.
+//   * After a SUCCESSFUL register-select write it is busy for ~0.8-1 ms and
+//     NACKs everything in that window; the pointer is set and a read retried
+//     at 1 ms succeeds. Over a USB bridge (MCP2221A) the round trip hid this
+//     window; on a native controller the read lands inside it every time, and
+//     re-issuing the write on each failure just reopens the window -- which is
+//     why the old "retry the pair, 20 ms apart" never read a byte here.
+//
+// So: a NACKed write is retried after a short pause, and the read after a
+// successful write is retried on its own, briefly, before the pair is redone.
 constexpr int kTransactionAttempts = 8;
-constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(20);
+constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(2);
+constexpr int kReadAfterWriteAttempts = 40;
+constexpr auto kReadAfterWriteDelay = std::chrono::microseconds(500);
 }  // namespace
 
 bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
@@ -68,7 +83,7 @@ bool AppleMFIIC::wake()
             }
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(kTransactionRetryDelay);
     }
     return false;
 }
@@ -128,21 +143,34 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
     // Select the register, then read it back as a *separate* transaction: this
     // part rejects a combined write/read with a repeated START.
     //
-    // The pair is retried as a unit because the coprocessor stops answering
-    // after even a short idle period and wakes on the NACK. Retrying only the
-    // read would leave the register pointer unset.
+    // A NACKed write means asleep or busy and leaves the pointer unset, so the
+    // pair is redone. A successful write is followed by the ~1 ms busy window
+    // described at the top of the file, so the READ is retried on its own; the
+    // pointer is already set and re-writing it would only restart the window.
+    // If the reads keep failing past that (the part went back to sleep), redo
+    // the pair.
     const std::vector<uint8_t> reg_addr = {static_cast<uint8_t>(reg)};
     for (int attempt = 0; attempt < kTransactionAttempts; ++attempt)
     {
-        if (bus_->write(I2C_ADDRESS, reg_addr))
+        if (!bus_->write(I2C_ADDRESS, reg_addr))
+        {
+            std::this_thread::sleep_for(kTransactionRetryDelay);
+            continue;
+        }
+        for (int read_attempt = 0; read_attempt < kReadAfterWriteAttempts; ++read_attempt)
         {
             auto data = bus_->read(I2C_ADDRESS, length);
             if (!data.empty())
             {
+                if (attempt > 0 || read_attempt > 1)
+                {
+                    SPDLOG_DEBUG("register 0x{:02x} read on pair {} / read {}",
+                                 static_cast<uint8_t>(reg), attempt + 1, read_attempt + 1);
+                }
                 return data;
             }
+            std::this_thread::sleep_for(kReadAfterWriteDelay);
         }
-        std::this_thread::sleep_for(kTransactionRetryDelay);
     }
 
     SPDLOG_ERROR("Failed to read register 0x{:02x} after {} attempts",
