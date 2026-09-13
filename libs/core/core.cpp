@@ -18,10 +18,6 @@
 #include <mach-o/dyld.h>
 #endif
 
-#ifndef REDLINE_SOURCE_DIR
-#define REDLINE_SOURCE_DIR ""
-#endif
-
 namespace core
 {
 
@@ -143,25 +139,44 @@ std::string executableDir()
 std::string resource(std::string_view relative)
 {
     std::error_code ec;
+    const std::string rel(relative);
+
+    // The install layout: /opt/redline/bin/<tool> next to /opt/redline/eds.
     const std::string exe_dir = executableDir();
     if (!exe_dir.empty())
     {
-        const auto installed = std::filesystem::path(exe_dir) / ".." / std::string(relative);
+        const auto installed = std::filesystem::path(exe_dir) / ".." / rel;
         if (std::filesystem::exists(installed, ec))
         {
             return std::filesystem::weakly_canonical(installed, ec).string();
         }
-    }
-    const std::string source = REDLINE_SOURCE_DIR;
-    if (!source.empty())
-    {
-        const auto in_tree = std::filesystem::path(source) / std::string(relative);
-        if (std::filesystem::exists(in_tree, ec))
+
+        // A developer build: build/nodes/<node>/<tool> somewhere under the
+        // checkout. Walk up a few levels looking for the file itself, so no
+        // build path is ever compiled in (a binary carrying its build
+        // directory fails the image's QA and is wrong on any other machine).
+        std::filesystem::path dir(exe_dir);
+        for (int up = 0; up < 6 && !dir.empty() && dir != dir.root_path(); ++up)
         {
-            return in_tree.string();
+            const auto candidate = dir / rel;
+            if (std::filesystem::exists(candidate, ec))
+            {
+                return candidate.lexically_normal().string();
+            }
+            dir = dir.parent_path();
         }
     }
-    return std::string(relative);
+
+    // The explicit escape hatch the MCP tooling already uses for the checkout.
+    if (const auto root = env("REDLINE_REPO_ROOT"))
+    {
+        const auto candidate = std::filesystem::path(*root) / rel;
+        if (std::filesystem::exists(candidate, ec))
+        {
+            return candidate.string();
+        }
+    }
+    return rel;
 }
 
 std::string expand(std::string_view value, std::string_view relative_to)

@@ -21,5 +21,5 @@ file should call `core::paths::expand()` too.
 
 Shipped resources (the `eds/` directory, for one) are found with
 `core::paths::resource()`: next to the installed binaries first
-(`/opt/redline/bin/../eds`), then in the source checkout the binary was built
-from, so a developer build needs no setup.
+(`/opt/redline/bin/../eds`), then by walking up from the binary to the checkout a
+developer build sits in, then `REDLINE_REPO_ROOT`. No build path is compiled in.

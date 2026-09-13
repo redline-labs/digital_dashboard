@@ -66,8 +66,10 @@ std::string executableDir();
 
 // A file shipped alongside the binaries, such as an EDS under eds/. Looks for
 // <executable dir>/../<relative> first -- the install layout, /opt/redline/bin
-// next to /opt/redline/eds -- and falls back to the source checkout the binary
-// was built from, so a developer build finds the same file in the tree.
+// next to /opt/redline/eds -- then walks up from the executable to find the
+// checkout a developer build lives in, then REDLINE_REPO_ROOT. No build path
+// is compiled in: a binary that carries its build directory fails the image's
+// QA and is wrong on any other machine.
 std::string resource(std::string_view relative);
 
 // Expands a path from a config file or the command line:
