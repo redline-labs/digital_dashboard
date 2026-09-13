@@ -46,7 +46,11 @@
 #include <termios.h>
 #include <thread>
 #include <unistd.h>
-#include <util.h>
+#ifdef __APPLE__
+#include <util.h>  // openpty
+#else
+#include <pty.h>  // openpty
+#endif
 #include <vector>
 
 namespace
