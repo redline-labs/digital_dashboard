@@ -339,8 +339,10 @@ against libusb's darwin backend rather than assumed:
 
 Caveats worth knowing before you blame the code:
 
-- Under `sudo`, `$HOME` may be `/var/root`, which moves the state dir. On macOS
-  this matters less than it looks — the pair record comes from the system
+- The default state dir is `<data dir>/carplay`, where the data dir is
+  `REDLINE_DATA_DIR` or the per-user location (`libs/core`, see
+  `docs/environment.md`). Under `sudo`, `$HOME` may be `/var/root`, which moves
+  it. On macOS this matters less than it looks — the pair record comes from the system
   usbmuxd, not from our state dir — but pass `--state-dir` explicitly if you
   want one shared location.
 - The vendor request `0x52` triggers a real bus re-enumeration, unlike capture.

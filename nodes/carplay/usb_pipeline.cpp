@@ -3,6 +3,8 @@
 
 #include "iap2_session.h"
 
+#include "core/core.h"
+
 #include "apple_usb/lockdown.h"
 #include "apple_usb/muxd.h"
 #include "apple_usb/ncm_discovery.h"
@@ -178,17 +180,14 @@ bool populateSerial(apple_usb::DeviceInfo& device)
 // tmpfs and gets wiped, which silently re-prompts for trust on the phone at
 // every boot. The mux socket is created here too, which is fine -- it is
 // unlinked on the way in and out.
+//
+// core::paths::dataDir() rather than $HOME: under systemd on the image there is
+// no HOME and / is read-only, and the old fallback quietly picked /tmp -- the
+// very tmpfs this comment warns about. dataDir() is REDLINE_DATA_DIR (/data on
+// the image) or the per-user data directory on a desktop.
 std::string defaultStateDir()
 {
-    if (const char* data_home = std::getenv("XDG_DATA_HOME"); data_home != nullptr)
-    {
-        return (fs::path(data_home) / "carplay").string();
-    }
-    if (const char* home = std::getenv("HOME"); home != nullptr)
-    {
-        return (fs::path(home) / ".local" / "share" / "carplay").string();
-    }
-    return (fs::temp_directory_path() / "carplay").string();
+    return (fs::path(core::paths::dataDir()) / "carplay").string();
 }
 
 // --- Stage 2: device detection and the CarPlay configuration switch ---------
