@@ -417,8 +417,23 @@ link, and it is fine for that to fail.
 `hid_mcp2221` driver binds the MCP2221A and registers it as a standard I²C
 adapter, which `i2c-dev` exposes as `/dev/i2c-N`; the driver talks to the
 coprocessor through that. macOS has no such driver and drives the bridge over
-USB HID from userspace instead. The backend follows the host platform and is not
-configurable — there is only one right answer per OS.
+USB HID from userspace instead. The backend follows the host platform; what *is*
+configurable is which adapter the Linux backend opens, because a deployed board
+has several and auto-detection only knows to prefer an MCP2221A. With no bridge
+present it takes the first `/dev/i2c-N` it finds, which on the LattePanda is the
+GPU's DDC bus — every probe there NACKs and the failure looks exactly like a
+dead coprocessor. Name the bus instead, in one of two ways:
+
+```bash
+apple_mfi_demo /dev/i2c-13                   # the LattePanda carrier's I2C4 header
+carplay --config ... --mfi-i2c-device /dev/i2c-13
+REDLINE_MFI_I2C_DEV=/dev/i2c-13 carplay ...  # what the image's unit does
+```
+
+The environment variable is the deployment's knob (the image sets it in the
+`redline-node@carplay` drop-in, next to `REDLINE_DATA_DIR`); the flag and the
+demo argument are for a bench. Unset on a desktop with the MCP2221A, where
+auto-detection is right.
 
 Load the two modules (they are not autoloaded by anything here):
 

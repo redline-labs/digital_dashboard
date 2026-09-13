@@ -11,11 +11,11 @@ Mcp2221aMfiSigner::~Mcp2221aMfiSigner()
     ic_.close();
 }
 
-bool Mcp2221aMfiSigner::init()
+bool Mcp2221aMfiSigner::init(const std::string& bus_hint)
 {
-    if (!ic_.init())
+    if (!ic_.init(bus_hint))
     {
-        SPDLOG_ERROR("Failed to open MFi coprocessor via MCP2221A");
+        SPDLOG_ERROR("Failed to open the MFi coprocessor's I2C bus");
         return false;
     }
 

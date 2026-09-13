@@ -68,6 +68,10 @@ int main(int argc, char** argv)
          cxxopts::value<int>()->default_value("7"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
+        ("mfi-i2c-device",
+         "I2C adapter of the MFi coprocessor, e.g. /dev/i2c-13 (default: $REDLINE_MFI_I2C_DEV, "
+         "else auto-detect)",
+         cxxopts::value<std::string>()->default_value(""))
         ("location",
          "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
          "(otherwise a GPS source publishes on <prefix>/location)",
@@ -157,6 +161,7 @@ int main(int argc, char** argv)
     config.max_stage = args["max-stage"].as<int>();
     config.state_dir = args["state-dir"].as<std::string>();
     config.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
+    config.mfi_i2c_device = args["mfi-i2c-device"].as<std::string>();
 
     // A static GPS fix for bench-testing the location uplink: "lat,lon[,alt,speed,course]".
     if (const std::string spec = args["location"].as<std::string>(); !spec.empty())

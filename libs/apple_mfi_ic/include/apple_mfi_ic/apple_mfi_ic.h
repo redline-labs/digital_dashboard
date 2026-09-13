@@ -69,8 +69,12 @@ public:
     AppleMFIIC();
     ~AppleMFIIC();
     
-    // Initialize the connection through MCP2221A
-    bool init();
+    // Opens the I2C bus and wakes the coprocessor. `bus_hint` names the adapter
+    // (a "/dev/i2c-N" path on Linux). Empty falls back to the REDLINE_MFI_I2C_DEV
+    // environment variable, then to the bus library's auto-detection, which
+    // prefers an MCP2221A bridge and otherwise takes the FIRST adapter -- on a
+    // deployed board that is typically the GPU's DDC bus, so set one of the two.
+    bool init(const std::string& bus_hint = {});
     
     // Close the connection
     void close();

@@ -4,15 +4,23 @@
 #include <algorithm>
 #include <spdlog/fmt/ranges.h> // Required for fmt::join
 
-int main() {
+int main(int argc, char** argv) {
     // Set up logging
     spdlog::set_level(spdlog::level::debug);
-    
+
+    // Optional: the adapter to use, e.g. /dev/i2c-13. Without it the driver
+    // takes $REDLINE_MFI_I2C_DEV, then auto-detects (see AppleMFIIC::init).
+    const std::string bus_hint = argc > 1 ? argv[1] : "";
+    if (bus_hint == "-h" || bus_hint == "--help") {
+        std::cout << "usage: apple_mfi_demo [/dev/i2c-N]\n";
+        return 0;
+    }
+
     // Create the Apple MFI IC instance
     AppleMFIIC mfi_ic;
     
     // Initialize the connection
-    if (!mfi_ic.init()) {
+    if (!mfi_ic.init(bus_hint)) {
         SPDLOG_ERROR("Failed to initialize Apple MFI IC connection");
         return 1;
     }

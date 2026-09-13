@@ -1,4 +1,5 @@
-# Runtime environment
+
+| `REDLINE_MFI_I2C_DEV` | the image: `/dev/i2c-13` (the `redline-node@carplay` drop-in) | The I2C adapter the Apple MFi coprocessor is on. Unset on a desktop, where the driver auto-detects an MCP2221A bridge (and otherwise takes the first adapter, which on a board with a GPU is its DDC bus -- so the image names it). `carplay --mfi-i2c-device` and `apple_mfi_demo /dev/i2c-N` override it. |# Runtime environment
 
 Every binary in this tree runs on a developer machine with nothing set, and on
 the LattePanda image with a few variables the systemd units provide. `libs/core`

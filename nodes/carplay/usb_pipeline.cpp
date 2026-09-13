@@ -1526,7 +1526,7 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     // The coprocessor is on I2C, not USB, so it is initialised once and outlives
     // every phone that comes and goes below.
     auto mfi_signer = std::make_unique<iap2::Mcp2221aMfiSigner>();
-    if (!mfi_signer->init())
+    if (!mfi_signer->init(options.mfi_i2c_device))
     {
         SPDLOG_WARN("[mfi] coprocessor unavailable");
         mfi_signer.reset();

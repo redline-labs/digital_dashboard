@@ -6,6 +6,8 @@
 
 #include "apple_mfi_ic/apple_mfi_ic.h"
 
+#include <string>
+
 namespace iap2
 {
 
@@ -16,8 +18,10 @@ class Mcp2221aMfiSigner : public MfiSigner
     Mcp2221aMfiSigner() = default;
     ~Mcp2221aMfiSigner() override;
 
-    // Opens the MCP2221A and probes the coprocessor. Must succeed before use.
-    bool init();
+    // Opens the coprocessor's I2C bus and probes it. Must succeed before use.
+    // `bus_hint` is passed through to AppleMFIIC::init (empty = environment,
+    // then auto-detect).
+    bool init(const std::string& bus_hint = {});
 
     std::optional<std::vector<uint8_t>> certificate() override;
     std::optional<std::vector<uint8_t>> signChallenge(const std::vector<uint8_t>& challenge) override;

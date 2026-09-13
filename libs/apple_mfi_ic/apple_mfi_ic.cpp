@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 
 // OpenSSL includes
 #include <openssl/x509.h>
@@ -72,9 +73,19 @@ bool AppleMFIIC::wake()
     return false;
 }
 
-bool AppleMFIIC::init()
+bool AppleMFIIC::init(const std::string& bus_hint)
 {
-    bus_ = i2c::makeBus();
+    // Explicit argument, then the environment (how a deployed board names its
+    // coprocessor bus without every caller learning a flag), then auto-detect.
+    std::string hint = bus_hint;
+    if (hint.empty())
+    {
+        if (const char* env = std::getenv("REDLINE_MFI_I2C_DEV"); env != nullptr && *env != '\0')
+        {
+            hint = env;
+        }
+    }
+    bus_ = i2c::makeBus(hint);
     if (!bus_ || !bus_->open())
     {
         SPDLOG_ERROR("Failed to open the I2C bus for the Apple MFI IC");

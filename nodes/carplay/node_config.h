@@ -148,6 +148,13 @@ struct NodeConfig
     // not start, but everything below it can be exercised.
     bool allow_missing_mfi = false;
 
+    // The I2C adapter the MFi coprocessor sits on, e.g. "/dev/i2c-13". Empty
+    // defers to the REDLINE_MFI_I2C_DEV environment variable and then to
+    // auto-detection (an MCP2221A bridge, else the first adapter). The bus is
+    // a property of the board, not of the vehicle, which is why it is not in
+    // the YAML: the deployment sets the variable per machine.
+    std::string mfi_i2c_device;
+
     // A fixed GPS fix for bench-testing the location uplink. When set it takes
     // precedence over any fix published on <prefix>/location.
     std::optional<LocationFix> static_location;
