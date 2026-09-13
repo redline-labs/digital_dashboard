@@ -4,6 +4,7 @@
 #include "app_config.h"
 
 #include <QPoint>
+#include <QString>
 #include <QWidget>
 #include <vector>
 #include <memory>
@@ -33,6 +34,15 @@ class MainWindow : public QWidget
     // at construction and have no setter, so changing one means rebuilding it.
     // Returns false if `existing` is not one of this window's widgets.
     bool rebuildWidget(QWidget* existing, const widget_config_t& cfg);
+
+    // How many of the config's widgets failed to construct. Non-zero means the
+    // window is missing something the config asked for.
+    std::size_t widgetBuildFailures() const;
+
+    // A persistent diagnostic banner in the top-left corner, above the widgets:
+    // for things the person in front of the panel must act on, such as a
+    // rejected config override.
+    void showNotice(const QString& text);
 
   protected:
     void resizeEvent(QResizeEvent* event) override;

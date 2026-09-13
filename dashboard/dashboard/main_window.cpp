@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 #include <QDebug>
+#include <QLabel>
 #include <QMetaObject>
 #include <QPalette>
 
@@ -75,6 +76,24 @@ void MainWindow::createWidgetsFromConfig()
 const std::string& MainWindow::getWindowName() const
 {
     return _app_cfg.name;
+}
+
+std::size_t MainWindow::widgetBuildFailures() const
+{
+    return _app_cfg.widgets.size() - _widgets.size();
+}
+
+void MainWindow::showNotice(const QString& text)
+{
+    auto* label = new QLabel(text, this);
+    label->setObjectName("notice");
+    label->setWordWrap(true);
+    label->setStyleSheet("QLabel { background-color: #b00020; color: white; padding: 6px; font-size: 14px; }");
+    label->setFixedWidth(width());
+    label->adjustSize();
+    label->move(0, 0);
+    label->raise();
+    label->show();
 }
 
 void MainWindow::showOnScreen(QScreen* screen)

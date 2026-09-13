@@ -2,6 +2,7 @@
 #include "pub_sub/node_identity.h"
 #include "dashboard/app_config.h"
 #include "dashboard/command_line_args.h"
+#include "dashboard/config_override.h"
 #include "dashboard/display_binding.h"
 #include "dashboard/main_window.h"
 
@@ -83,13 +84,31 @@ int main(int argc, char** argv)
                    std::chrono::steady_clock::now() - t_start).count();
     };
 
-    // Load the configuration file
+    // Which config runs: the shipped one, or an operator's override on the data
+    // partition when it is present and valid (config_override.h). --check
+    // validates --config alone: no override, no marker, no READY.
     SPDLOG_INFO("Loading configuration file '{}'.", args->config_file_path);
-    auto cfg = load_dashboard_config(args->config_file_path);
-    if (!cfg)
+    auto selection = dashboard::config::select(
+        args->config_file_path, args->check_only ? std::nullopt : args->config_override_path);
+    if (!selection)
     {
         SPDLOG_CRITICAL("Failed to load configuration file '{}'.", args->config_file_path);
-        return -1;
+        return args->check_only ? 1 : -1;
+    }
+    if (selection->override_rejected)
+    {
+        SPDLOG_ERROR("{}", dashboard::config::describe(*selection));
+    }
+    else
+    {
+        SPDLOG_INFO("{}", dashboard::config::describe(*selection));
+    }
+    const dashboard_config_t* cfg = &selection->config;
+
+    if (args->check_only)
+    {
+        // Headless: the windows are built to prove the widgets construct, never shown.
+        qputenv("QT_QPA_PLATFORM", "offscreen");
     }
 
     // Bind windows to displays only where the rootfs published some. Everywhere
@@ -127,72 +146,111 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     SPDLOG_INFO("startup: QApplication at {} ms", since());
 
-    // Create windows from configuration
-    std::vector<std::unique_ptr<MainWindow>> windows;
-    for (const app_config_t& window_cfg : cfg->windows)
-    {
-        const std::string_view role = reflection::enum_to_string(window_cfg.display);
-
-        if (!bind_displays)
+    // Create windows from configuration. A lambda because a rejected override is
+    // rebuilt from the shipped config below.
+    auto build_windows = [&](const dashboard_config_t& config, bool show_windows) {
+        std::vector<std::unique_ptr<MainWindow>> windows;
+        for (const app_config_t& window_cfg : config.windows)
         {
-            windows.push_back(std::make_unique<MainWindow>(window_cfg));
-            windows.back()->show();
-            SPDLOG_INFO("Starting window '{}' ({}x{}).", window_cfg.name, window_cfg.width, window_cfg.height);
-            continue;
-        }
+            const std::string_view role = reflection::enum_to_string(window_cfg.display);
 
-        QScreen* screen = nullptr;
-        const auto display = dashboard::display::lookupDisplay(window_cfg.display, env);
-        if (display)
-        {
-            for (QScreen* candidate : QGuiApplication::screens())
+            if (!bind_displays)
             {
-                if (dashboard::display::screenMatchesConnector(candidate->name().toStdString(), display->connector))
-                {
-                    screen = candidate;
-                    break;
-                }
-            }
-        }
-
-        if (screen == nullptr)
-        {
-            std::string available;
-            for (QScreen* candidate : QGuiApplication::screens())
-            {
-                available += (available.empty() ? "" : ", ") + candidate->name().toStdString();
-            }
-            const std::string wanted = display ? "connector '" + display->connector + "'" : "no connector published";
-
-            // The primary falls back to wherever Qt put its primary screen, which is
-            // what happened before displays were bound at all. A secondary does not:
-            // on eglfs it would land full screen on top of the primary, and building
-            // it would start its subscriptions -- CarPlay's included -- for nothing.
-            if (window_cfg.display != display_role_t::primary)
-            {
-                SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, so it is not shown.",
-                            window_cfg.name, role, wanted, available);
+                windows.push_back(std::make_unique<MainWindow>(window_cfg));
+                if (show_windows) windows.back()->show();
+                SPDLOG_INFO("Starting window '{}' ({}x{}).", window_cfg.name, window_cfg.width, window_cfg.height);
                 continue;
             }
-            screen = QGuiApplication::primaryScreen();
-            SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, using '{}'.",
-                        window_cfg.name, role, wanted, available,
-                        screen ? screen->name().toStdString() : std::string("<none>"));
-        }
 
-        windows.push_back(std::make_unique<MainWindow>(window_cfg));
-        if (screen != nullptr)
-        {
-            windows.back()->showOnScreen(screen);
-            SPDLOG_INFO("Starting window '{}' ({}x{}) on the {} display, screen '{}' ({}x{} logical, dpr {}).",
-                        window_cfg.name, window_cfg.width, window_cfg.height, role,
-                        screen->name().toStdString(), screen->geometry().width(),
-                        screen->geometry().height(), screen->devicePixelRatio());
+            QScreen* screen = nullptr;
+            const auto display = dashboard::display::lookupDisplay(window_cfg.display, env);
+            if (display)
+            {
+                for (QScreen* candidate : QGuiApplication::screens())
+                {
+                    if (dashboard::display::screenMatchesConnector(candidate->name().toStdString(), display->connector))
+                    {
+                        screen = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (screen == nullptr)
+            {
+                std::string available;
+                for (QScreen* candidate : QGuiApplication::screens())
+                {
+                    available += (available.empty() ? "" : ", ") + candidate->name().toStdString();
+                }
+                const std::string wanted = display ? "connector '" + display->connector + "'" : "no connector published";
+
+                // The primary falls back to wherever Qt put its primary screen, which is
+                // what happened before displays were bound at all. A secondary does not:
+                // on eglfs it would land full screen on top of the primary, and building
+                // it would start its subscriptions -- CarPlay's included -- for nothing.
+                if (window_cfg.display != display_role_t::primary)
+                {
+                    SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, so it is not shown.",
+                                window_cfg.name, role, wanted, available);
+                    continue;
+                }
+                screen = QGuiApplication::primaryScreen();
+                SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, using '{}'.",
+                            window_cfg.name, role, wanted, available,
+                            screen ? screen->name().toStdString() : std::string("<none>"));
+            }
+
+            windows.push_back(std::make_unique<MainWindow>(window_cfg));
+            if (screen != nullptr)
+            {
+                if (show_windows) windows.back()->showOnScreen(screen);
+                SPDLOG_INFO("Starting window '{}' ({}x{}) on the {} display, screen '{}' ({}x{} logical, dpr {}).",
+                            window_cfg.name, window_cfg.width, window_cfg.height, role,
+                            screen->name().toStdString(), screen->geometry().width(),
+                            screen->geometry().height(), screen->devicePixelRatio());
+            }
+            else
+            {
+                if (show_windows) windows.back()->show();
+            }
         }
-        else
+        return windows;
+    };
+
+    std::vector<std::unique_ptr<MainWindow>> windows = build_windows(*cfg, !args->check_only);
+
+    // A window missing widgets is a rejection too: for an override, fall back to
+    // the shipped config; for the shipped config, a logged warning as before.
+    std::size_t build_failures = 0;
+    for (const auto& w : windows)
+    {
+        build_failures += w->widgetBuildFailures();
+    }
+
+    if (args->check_only)
+    {
+        const bool ok = !windows.empty() && build_failures == 0;
+        SPDLOG_INFO("check: {} -- {} window(s), {} widget(s) failed to build: {}", args->config_file_path,
+                    windows.size(), build_failures, ok ? "OK" : "REJECTED");
+        return ok ? 0 : 1;
+    }
+
+    if (selection->override_in_use && (windows.empty() || build_failures > 0))
+    {
+        const std::string reason = windows.empty() ? "none of its windows has a display to go on"
+                                                   : std::to_string(build_failures) + " widget(s) failed to build";
+        windows.clear();
+        auto fallback = dashboard::config::rejectAfterLoad(*selection, args->config_file_path, reason);
+        if (!fallback)
         {
-            windows.back()->show();
+            SPDLOG_CRITICAL("Failed to load configuration file '{}'.", args->config_file_path);
+            return -1;
         }
+        *selection = std::move(*fallback);
+        cfg = &selection->config;
+        SPDLOG_ERROR("{}", dashboard::config::describe(*selection));
+        windows = build_windows(*cfg, true);
     }
 
     if (windows.empty())
@@ -207,10 +265,22 @@ int main(int argc, char** argv)
     // zero-length timer runs after the expose and paint events show() posted,
     // i.e. once the first frame has been painted. No-op outside a Type=notify
     // unit (no NOTIFY_SOCKET).
-    QTimer::singleShot(0, [&since]() {
+    if (selection->override_rejected && !windows.empty())
+    {
+        windows.front()->showNotice(QString::fromStdString(dashboard::config::describe(*selection)));
+    }
+
+    QTimer::singleShot(0, [&since, &selection, &args]() {
         if (core::systemd::notifyReady())
         {
             SPDLOG_INFO("startup: READY sent to systemd at {} ms", since());
+        }
+        // The status line outlives the log: `systemctl status` shows it.
+        core::systemd::notifyStatus(dashboard::config::describe(*selection));
+        if (selection->override_in_use && args->config_override_path)
+        {
+            // On screen with the override: the attempt succeeded.
+            dashboard::config::clearAttemptMarker(*args->config_override_path);
         }
     });
 
@@ -221,7 +291,7 @@ int main(int argc, char** argv)
 
         agent_control::AppInfo app_info;
         app_info.app = "dashboard";
-        app_info.config_path = args->config_file_path;
+        app_info.config_path = selection->path;
         agent_control::registerCoreMethods(*agent, app_info);
 
         // Dashboard widgets take their config at construction, so applying a new

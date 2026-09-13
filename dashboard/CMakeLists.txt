@@ -43,6 +43,7 @@ endif()
 qt_add_executable(${PROJECT_NAME}
     dashboard/main.cpp
     dashboard/app_config.cpp
+    dashboard/config_override.cpp
     dashboard/main_window.cpp
     dashboard/display_binding.cpp
     dashboard/command_line_args.cpp
@@ -154,6 +155,29 @@ add_executable(dashboard_test_display_binding
 target_include_directories(dashboard_test_display_binding PRIVATE include)
 target_link_libraries(dashboard_test_display_binding PRIVATE reflection)
 add_project_test(TARGET dashboard_test_display_binding LABELS dashboard unit)
+
+# Which config runs -- shipped, or an operator's override on the data partition
+# -- and the attempt marker that keeps a crashing override from taking both
+# slots down. Links the loader (so the real one is exercised) but needs no
+# display.
+add_executable(dashboard_test_config_override
+    dashboard/test_config_override.cpp
+    dashboard/config_override.cpp
+    dashboard/app_config.cpp
+)
+target_include_directories(dashboard_test_config_override PRIVATE include)
+target_link_libraries(dashboard_test_config_override PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    zenoh_pub_sub
+    helpers
+    config_codec
+    qt_helpers
+    spdlog::spdlog
+    yaml-cpp::yaml-cpp
+    ${WIDGET_LIBS}
+)
+add_project_test(TARGET dashboard_test_config_override LABELS dashboard unit)
 
 # The undo/redo history on its own, against a fake document. No widgets, so
 # unlike the editor test below it needs no display and no QApplication.

@@ -14,6 +14,9 @@ is where they are read (`core::paths`, `core::setupLogging`,
 | `PUB_SUB_NO_DISCOVERY` | tests and tools | `1` keeps a zenoh session off the machine's bus. |
 | `REDLINE_REPO_ROOT`, `REDLINE_BUILD_DIR` | developers | Where the MCP supervisor finds the checkout and its binaries. See [agent_control.md](agent_control.md). |
 
+An operator's dashboard config lives at `${REDLINE_DATA_DIR}/dashboard/config.yaml`; see
+[config-on-target.md](config-on-target.md).
+
 Config files may use `${REDLINE_DATA_DIR}`, any `${VARIABLE}`, and `~/`; relative
 paths resolve against the config file's own directory. Today the map server's
 tilesets, graphs and tracksets go through this; a new config key that names a

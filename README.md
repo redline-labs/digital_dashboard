@@ -134,3 +134,4 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 See `COPYING` for license information.
 
 Runtime environment variables, data and log locations: [docs/environment.md](docs/environment.md).
+Changing the dashboard's config on a running board: [docs/config-on-target.md](docs/config-on-target.md).

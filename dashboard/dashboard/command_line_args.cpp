@@ -22,6 +22,11 @@ std::optional<CommandLineArgs> parse_command_line_args(int argc, char** argv)
         
         options.add_options("optional")
             ("debug", "Enable debug logging.", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("config-override", "A config on the data partition that replaces --config when present and valid; "
+                                "rejected ones fall back to --config and are reported.",
+                cxxopts::value<std::string>())
+            ("check", "Validate --config (load it and build its windows headless) and exit 0 or 1.",
+                cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("mcp", "Enable the agent control interface on a unix socket, and run headless "
                     "(forces the Qt platform to 'offscreen'). Defaults to /tmp/redline_agent_<pid>.sock.",
                 cxxopts::value<std::string>()->implicit_value(""))
@@ -64,6 +69,11 @@ std::optional<CommandLineArgs> parse_command_line_args(int argc, char** argv)
         CommandLineArgs parsed_args;
         parsed_args.config_file_path = args_result["config"].as<std::string>();
         parsed_args.debug_enabled = args_result["debug"].as<bool>();
+        parsed_args.check_only = args_result["check"].as<bool>();
+        if (args_result.count("config-override") != 0)
+        {
+            parsed_args.config_override_path = args_result["config-override"].as<std::string>();
+        }
         parsed_args.help_requested = false;  // We already handled help above
 
         if (args_result.count("mcp") != 0)
