@@ -1,6 +1,8 @@
 #include "dashboard/display_binding.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <cctype>
 #include <charconv>
 #include <cstdio>
@@ -105,6 +107,37 @@ std::string kmsScreenName(std::string_view connector)
 bool screenMatchesConnector(std::string_view screen_name, std::string_view connector)
 {
     return screen_name == connector || screen_name == kmsScreenName(connector);
+}
+
+std::optional<bool> anyOutputConnected(std::string_view drm_root)
+{
+    std::error_code ec;
+    const std::filesystem::path root{std::string(drm_root)};
+    if (!std::filesystem::is_directory(root, ec))
+    {
+        return std::nullopt;
+    }
+    bool saw_connector = false;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+    {
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos)
+        {
+            continue;
+        }
+        std::ifstream status(entry.path() / "status");
+        std::string state;
+        if (!(status >> state))
+        {
+            continue;
+        }
+        saw_connector = true;
+        if (state == "connected")
+        {
+            return true;
+        }
+    }
+    return saw_connector ? std::optional<bool>(false) : std::nullopt;
 }
 
 bool platformPublishesDisplays(const EnvGetter& env)

@@ -70,6 +70,14 @@ std::string kmsScreenName(std::string_view connector);
 // either naming scheme.
 bool screenMatchesConnector(std::string_view screen_name, std::string_view connector);
 
+// Whether any DRM connector under `drm_root` (/sys/class/drm) reports
+// "connected". nullopt when there is no DRM at all (a desktop without sysfs,
+// a Mac), in which case the caller must not draw conclusions. Used on the
+// target to run headless when no display is attached: a bench unit with
+// nothing plugged in is a valid configuration, not a broken one, and the
+// dashboard must still report READY so the slot is not marked bad.
+std::optional<bool> anyOutputConnected(std::string_view drm_root = "/sys/class/drm");
+
 // True when the rootfs published any display at all -- i.e. this is a target
 // with a detected display module, and windows should be bound rather than shown
 // the way a desktop shows them.

@@ -117,6 +117,22 @@ int main(int argc, char** argv)
     const auto env = dashboard::display::processEnvironment();
     const bool bind_displays = !agent_mode && dashboard::display::platformPublishesDisplays(env);
 
+    // NO DISPLAY IS NOT A FAULT.  On the target (eglfs, no window system) a
+    // bench unit with nothing plugged in has no DRM output, and eglfs cannot
+    // create a screen from nothing.  Run headless instead, report READY and say
+    // so in the status line: the software works, the slot is good, and whoever
+    // attaches a display restarts the unit.  A desktop is never in this branch.
+    bool headless = false;
+    if (!agent_mode && !args->check_only && qgetenv("QT_QPA_PLATFORM") == "eglfs")
+    {
+        if (const auto connected = dashboard::display::anyOutputConnected(); connected && !*connected)
+        {
+            headless = true;
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+            SPDLOG_WARN("No display connected (no DRM connector is 'connected'): running headless.");
+        }
+    }
+
     if (bind_displays)
     {
         std::vector<WindowPlacement> placements;
@@ -270,13 +286,14 @@ int main(int argc, char** argv)
         windows.front()->showNotice(QString::fromStdString(dashboard::config::describe(*selection)));
     }
 
-    QTimer::singleShot(0, [&since, &selection, &args]() {
+    QTimer::singleShot(0, [&since, &selection, &args, headless]() {
         if (core::systemd::notifyReady())
         {
             SPDLOG_INFO("startup: READY sent to systemd at {} ms", since());
         }
         // The status line outlives the log: `systemctl status` shows it.
-        core::systemd::notifyStatus(dashboard::config::describe(*selection));
+        core::systemd::notifyStatus((headless ? std::string("no display connected, running headless; ") : std::string()) +
+                                    dashboard::config::describe(*selection));
         if (selection->override_in_use && args->config_override_path)
         {
             // On screen with the override: the attempt succeeded.

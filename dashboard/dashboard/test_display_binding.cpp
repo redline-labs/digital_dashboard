@@ -7,6 +7,8 @@
 #include "dashboard/display_binding.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 
@@ -70,6 +72,27 @@ void testKmsScreenNames()
     check(screenMatchesConnector("HDMI2", "HDMI-A-2"), "the eglfs name matches the connector");
     check(screenMatchesConnector("HDMI-A-2", "HDMI-A-2"), "the Wayland name matches the connector");
     check(!screenMatchesConnector("HDMI1", "HDMI-A-2"), "another port does not match");
+}
+
+void testAnyOutputConnected()
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "dashboard_test_drm";
+    fs::remove_all(root);
+    check(!anyOutputConnected((root / "missing").string()), "no DRM directory at all: nullopt");
+
+    fs::create_directories(root / "card0");                 // the device node, not a connector
+    fs::create_directories(root / "card0-HDMI-A-1");
+    std::ofstream(root / "card0-HDMI-A-1" / "status") << "disconnected\n";
+    fs::create_directories(root / "card0-HDMI-A-2");
+    std::ofstream(root / "card0-HDMI-A-2" / "status") << "disconnected\n";
+    const auto none = anyOutputConnected(root.string());
+    check(none.has_value() && !*none, "connectors present but none connected: false");
+
+    std::ofstream(root / "card0-HDMI-A-2" / "status") << "connected\n";
+    const auto one = anyOutputConnected(root.string());
+    check(one.has_value() && *one, "one connected connector: true");
+    fs::remove_all(root);
 }
 
 void testNothingPublishedMeansNothingToDo()
@@ -154,6 +177,7 @@ void testRoleNamesMapToTheRootfsVariables()
 int main()
 {
     testKmsScreenNames();
+    testAnyOutputConnected();
     testNothingPublishedMeansNothingToDo();
     testTheRivianPanel();
     testFitLetterboxesTheLongerAxis();
