@@ -1,0 +1,24 @@
+# nodes/backlight: the primary display module's backlight and sensors.
+#
+#   ./build/nodes/backlight/backlight --config configs/backlight/backlight.yaml
+#
+# On the target this runs as redline-node@backlight, with
+# /opt/redline/nodes/backlight.args holding REDLINE_NODE_ARGS=--config <this file>.
+# With no display module in the slot there is no record, and the node says so
+# and exits cleanly. See docs/backlight.md.
+
+# Which display: names the record redline-display-setup writes per boot.
+role: primary
+
+# Where those records are. Point this at a fake tree to run off the target.
+record_dir: /run/redline/displays
+
+# Publishes <prefix>/status and serves <prefix>/set_brightness.
+# Omit for nodes/backlight/<role>.
+# topic_prefix: nodes/backlight/primary
+
+# How often status is read and published.
+poll_ms: 500
+
+# The lowest brightness set_brightness will apply, percent of max_brightness.
+min_percent: 1

@@ -41,6 +41,10 @@ add_subdirectory(xbus)
 # an Xsens MTi-610. After `xbus`, which it links; nothing in `xbus` may depend
 # on this. The tree's only termios code lives here.
 add_subdirectory(mti610)
+# A display module's record from the rootfs, and the sysfs backlight, IIO light
+# and hwmon temperature devices it names. File I/O only; nodes/backlight puts it
+# on the bus.
+add_subdirectory(display_backlight)
 # The mbtiles 1.3 format: an SQLite file full of map tiles. Pure file reading,
 # no zenoh and no Qt -- nodes/map_server is what puts it on the bus. The
 # dashboard must not link this, and scope deliberately does; see the note in

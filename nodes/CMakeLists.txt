@@ -23,6 +23,10 @@ add_subdirectory(mti610_bridge)
 # and the channel as a service. Read-only except for the channel, which is
 # gated by config.
 add_subdirectory(xpr_bridge)
+# A display module's backlight and its light and temperature sensors, from what
+# the rootfs bound at boot: status out, brightness in. libs/display_backlight
+# reads the files.
+add_subdirectory(backlight)
 # Offline maps: .mbtiles archives served as tiles, catalogs and style assets.
 # The only node with no hardware behind it -- what it bridges is a file.
 add_subdirectory(map_server)
