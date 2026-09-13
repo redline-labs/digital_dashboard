@@ -78,6 +78,35 @@ std::optional<DisplayInfo> lookupDisplay(display_role_t role, const EnvGetter& e
     return info;
 }
 
+std::string kmsScreenName(std::string_view connector)
+{
+    // "<type>[-<subtype>]-<index>": keep the type, drop the subtype, append the
+    // index without a separator. Anything that does not end in "-<digits>" is
+    // returned unchanged; there is nothing better to guess.
+    const auto dash = connector.rfind('-');
+    if (dash == std::string_view::npos || dash + 1 >= connector.size())
+    {
+        return std::string(connector);
+    }
+    const std::string_view index = connector.substr(dash + 1);
+    if (!std::all_of(index.begin(), index.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+    {
+        return std::string(connector);
+    }
+    std::string_view type = connector.substr(0, dash);
+    const auto type_dash = type.find('-');
+    if (type_dash != std::string_view::npos)
+    {
+        type = type.substr(0, type_dash);  // "HDMI-A" -> "HDMI", "DVI-D" -> "DVI"
+    }
+    return std::string(type) + std::string(index);
+}
+
+bool screenMatchesConnector(std::string_view screen_name, std::string_view connector)
+{
+    return screen_name == connector || screen_name == kmsScreenName(connector);
+}
+
 bool platformPublishesDisplays(const EnvGetter& env)
 {
     for (const display_role_t role : enum_values(display_role_t{}))
@@ -121,11 +150,19 @@ std::optional<std::string> screenScaleFactors(const std::vector<WindowPlacement>
         std::snprintf(factor, sizeof(factor), "%.6g",
                       fitFactor(*info->mode, window.width, window.height));
 
+        // Qt keys this variable by QScreen::name(), which is the DRM name under
+        // Wayland and eglfs_kms's own spelling on the target; list both, Qt
+        // ignores a name that matches no screen.
         if (!out.empty())
         {
             out += ';';
         }
         out += info->connector + "=" + factor;
+        const std::string kms = kmsScreenName(info->connector);
+        if (kms != info->connector)
+        {
+            out += ";" + kms + "=" + factor;
+        }
     }
 
     if (out.empty())

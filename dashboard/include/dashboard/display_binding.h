@@ -41,8 +41,9 @@ struct Mode
 
 struct DisplayInfo
 {
-    // The DRM connector name, which is what QScreen::name() reports under
-    // eglfs_kms and Wayland.
+    // The DRM connector name ("HDMI-A-2"), which is what QScreen::name() reports
+    // under Wayland. Qt's eglfs_kms backend names screens differently -- see
+    // kmsScreenName() -- so a screen matches when its name equals either form.
     std::string connector;
 
     // The panel's native mode, if the rootfs published one.
@@ -57,6 +58,17 @@ std::optional<Mode> parseMode(std::string_view text);
 
 // The display the rootfs published for `role`, or nullopt if it published none.
 std::optional<DisplayInfo> lookupDisplay(display_role_t role, const EnvGetter& env);
+
+// The name Qt's eglfs_kms backend gives the screen on a DRM connector: the
+// connector type name followed by the connector's type index, with the
+// subtype letter dropped -- "HDMI-A-2" -> "HDMI2", "DP-1" -> "DP1", "eDP-1" ->
+// "eDP1", "DVI-D-1" -> "DVI1" (qkmsdevice.cpp's connector_type_names). Under
+// Wayland QScreen::name() is the DRM name itself, so callers accept both.
+std::string kmsScreenName(std::string_view connector);
+
+// True when a QScreen named `screen_name` is the display on `connector`, in
+// either naming scheme.
+bool screenMatchesConnector(std::string_view screen_name, std::string_view connector);
 
 // True when the rootfs published any display at all -- i.e. this is a target
 // with a detected display module, and windows should be bound rather than shown

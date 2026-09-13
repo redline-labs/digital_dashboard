@@ -57,6 +57,21 @@ WindowPlacement window(display_role_t display, int width, int height, scale_mode
     return placement;
 }
 
+void testKmsScreenNames()
+{
+    // Measured on the LattePanda: eglfs_kms reports the screen on HDMI-A-2 as "HDMI2".
+    check(kmsScreenName("HDMI-A-2") == "HDMI2", "HDMI-A-2 is HDMI2 under eglfs_kms");
+    check(kmsScreenName("HDMI-A-1") == "HDMI1", "HDMI-A-1 is HDMI1");
+    check(kmsScreenName("DP-1") == "DP1", "DP-1 is DP1");
+    check(kmsScreenName("eDP-1") == "eDP1", "eDP-1 is eDP1");
+    check(kmsScreenName("DVI-D-1") == "DVI1", "DVI-D-1 is DVI1");
+    check(kmsScreenName("Virtual-1") == "Virtual1", "Virtual-1 is Virtual1");
+    check(kmsScreenName("weird") == "weird", "a name with no index is left alone");
+    check(screenMatchesConnector("HDMI2", "HDMI-A-2"), "the eglfs name matches the connector");
+    check(screenMatchesConnector("HDMI-A-2", "HDMI-A-2"), "the Wayland name matches the connector");
+    check(!screenMatchesConnector("HDMI1", "HDMI-A-2"), "another port does not match");
+}
+
 void testNothingPublishedMeansNothingToDo()
 {
     const auto env = fakeEnvironment({{"QT_QPA_PLATFORM", "cocoa"}});
@@ -79,7 +94,7 @@ void testTheRivianPanel()
 
     // The 190e cluster's design size on this panel: exactly 1.6 on both axes.
     const auto factors = screenScaleFactors({window(display_role_t::primary, 1200, 450)}, env);
-    check(factors == std::optional<std::string>("HDMI-A-2=1.6"),
+    check(factors == std::optional<std::string>("HDMI-A-2=1.6;HDMI2=1.6"),
           "the 190e layout fits the Rivian panel at 1.6, got '" + factors.value_or("<none>") + "'");
 }
 
@@ -101,13 +116,13 @@ void testEachFittedWindowGetsItsOwnScreen()
 
     const auto factors = screenScaleFactors(
         {window(display_role_t::primary, 1200, 450), window(display_role_t::secondary, 800, 480)}, env);
-    check(factors == std::optional<std::string>("HDMI-A-2=1.6;HDMI-A-1=2.25"),
+    check(factors == std::optional<std::string>("HDMI-A-2=1.6;HDMI2=1.6;HDMI-A-1=2.25;HDMI1=2.25"),
           "two windows produce two named factors, got '" + factors.value_or("<none>") + "'");
 
     const auto unscaled = screenScaleFactors(
         {window(display_role_t::primary, 1200, 450),
          window(display_role_t::secondary, 800, 480, scale_mode_t::none)}, env);
-    check(unscaled == std::optional<std::string>("HDMI-A-2=1.6"),
+    check(unscaled == std::optional<std::string>("HDMI-A-2=1.6;HDMI2=1.6"),
           "a `scale: none` window is left out, got '" + unscaled.value_or("<none>") + "'");
 }
 
@@ -138,6 +153,7 @@ void testRoleNamesMapToTheRootfsVariables()
 
 int main()
 {
+    testKmsScreenNames();
     testNothingPublishedMeansNothingToDo();
     testTheRivianPanel();
     testFitLetterboxesTheLongerAxis();

@@ -96,8 +96,11 @@ shown at its fixed design size. The environment is not touched.
      Check the log, not `/proc/<pid>/environ`: that file only shows the
      environment the process started with.
 2. Each window is matched to the `QScreen` whose `name()` is its role's
-   connector. Under eglfs_kms, `name()` is the DRM connector name. The window is
-   moved to that screen and shown full screen.
+   connector in either of Qt's spellings: the DRM name (`HDMI-A-2`, what
+   Wayland reports) or eglfs_kms's own (`HDMI2`: type name plus index, subtype
+   letter dropped -- measured on the LattePanda, where the first cut matched
+   nothing and fell back to the primary screen). The window is moved to that
+   screen and shown full screen.
 3. The layout keeps its design size and is centred. If the panel's aspect ratio
    differs, the bars show the window's `background_color`. Widgets remain direct
    children of `MainWindow`, so agent selector paths do not change.
@@ -143,7 +146,10 @@ other editor verb acts on the window being shown. See
   `/run/redline/kms.json` lists every display `redline-display` detected (only
   the primary exists today), so nothing more is needed on that side. Check this
   as soon as a second panel is attached.
-- **Named `QT_SCREEN_SCALE_FACTORS` is not yet verified under eglfs.**
+- **Named `QT_SCREEN_SCALE_FACTORS` is not yet verified under eglfs**, and it
+  will have to use the eglfs name (`HDMI2=1.6`), since Qt keys that variable by
+  `QScreen::name()`. The shipped 190E config is now designed at 1920x720 with
+  `scale: none`, so nothing exercises it today.
   `QT_LOGGING_RULES=qt.highdpi.*=true` prints the factor Qt applied to each
   screen.
 - ~~**The Yocto side drops its `QT_SCALE_FACTOR` settings**~~ Done 2026-09-12:

@@ -161,7 +161,7 @@ int main(int argc, char** argv)
         {
             for (QScreen* candidate : QGuiApplication::screens())
             {
-                if (candidate->name().toStdString() == display->connector)
+                if (dashboard::display::screenMatchesConnector(candidate->name().toStdString(), display->connector))
                 {
                     screen = candidate;
                     break;
