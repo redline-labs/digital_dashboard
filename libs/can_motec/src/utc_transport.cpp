@@ -546,7 +546,15 @@ public:
             const ssize_t got = ::recv(fd_, buffer.data(), buffer.size(), MSG_DONTWAIT);
             if (got < 0)
             {
+                // EAGAIN and EWOULDBLOCK may be the same value and are on Linux and
+                // macOS, which makes the portable two-value test look like a mistake to
+                // -Wlogical-op. The test is deliberate -- POSIX allows them to differ --
+                // so guard it rather than drop a term that another platform needs.
+#if EAGAIN == EWOULDBLOCK
+                if (errno == EAGAIN)
+#else
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
+#endif
                 {
                     break;
                 }

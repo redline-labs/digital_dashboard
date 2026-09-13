@@ -225,7 +225,15 @@ ssize_t TcpStream::recvSome(std::span<std::uint8_t> out, unsigned timeoutMs)
     }
     if (n < 0)
     {
+        // EAGAIN and EWOULDBLOCK may be the same value and are on Linux and
+        // macOS, which makes the portable two-value test look like a mistake to
+        // -Wlogical-op. The test is deliberate -- POSIX allows them to differ --
+        // so guard it rather than drop a term that another platform needs.
+#if EAGAIN == EWOULDBLOCK
+        if (errno == EINTR || errno == EAGAIN)
+#else
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+#endif
         {
             return 0;
         }

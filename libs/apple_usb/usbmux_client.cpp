@@ -262,7 +262,15 @@ ssize_t MuxConnection::recvSome(uint8_t* out, size_t max_len, unsigned timeout_m
     }
     if (n < 0)
     {
+        // EAGAIN and EWOULDBLOCK may be the same value and are on Linux and
+        // macOS, which makes the portable two-value test look like a mistake to
+        // -Wlogical-op. The test is deliberate -- POSIX allows them to differ --
+        // so guard it rather than drop a term that another platform needs.
+#if EAGAIN == EWOULDBLOCK
+        return (errno == EAGAIN || errno == EINTR) ? 0 : -1;
+#else
         return (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) ? 0 : -1;
+#endif
     }
     return n;
 }
