@@ -140,16 +140,15 @@ other editor verb acts on the window being shown. See
 
 - **Two windows on two eglfs screens is unproven.** The image has no Wayland
   plugin, so both windows go through eglfs_kms's per-screen compositing.
-  `/run/redline/kms.json` also lists only the primary output today, so
-  `redline-display` has to emit the secondary too. Check this as soon as a second
-  panel is attached.
+  `/run/redline/kms.json` lists every display `redline-display` detected (only
+  the primary exists today), so nothing more is needed on that side. Check this
+  as soon as a second panel is attached.
 - **Named `QT_SCREEN_SCALE_FACTORS` is not yet verified under eglfs.**
   `QT_LOGGING_RULES=qt.highdpi.*=true` prints the factor Qt applied to each
   screen.
-- **The Yocto side drops its `QT_SCALE_FACTOR` settings** when it picks this up:
-  `environment = QT_SCALE_FACTOR=1.6` in the Rivian display profile, and
-  `Environment=QT_SCALE_FACTOR=3.2` in `redline-dashboard.service`. The
-  dashboard does not unset them, so leaving either in place would scale twice.
-- **The deployed dashboard's `main.cpp` differs from this tree.** Its
-  `startup: … at N ms` log lines come from a patch in the Yocto recipe, and that
-  patch touches the code that creates the windows, so it will need rebasing.
+- ~~**The Yocto side drops its `QT_SCALE_FACTOR` settings**~~ Done 2026-09-12:
+  both the profile's 1.6 and the unit's 3.2 are gone; nothing on the rootfs sets
+  `QT_SCALE_FACTOR`.
+- ~~**The deployed dashboard's `main.cpp` differs from this tree.**~~ The
+  `startup: … at N ms` marks now live in this tree and the Yocto layer carries
+  no patches against it.

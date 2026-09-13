@@ -105,7 +105,7 @@ The node runs as an instance of the `redline-node@.service` template:
   `/data/nodes/backlight.args`, which takes precedence:
 
 ```sh
-REDLINE_NODE_ARGS=--config /usr/share/redline/backlight.yaml
+REDLINE_NODE_ARGS=--config /opt/redline/configs/backlight/backlight.yaml
 ```
 
 The unit runs as root, which is what writing `brightness` requires.
@@ -125,5 +125,8 @@ fake `brightness` file.
   attribute, and what value it expects has not been checked against the
   `lp8863_bl` source.
 - **Nothing sets brightness automatically.** See above.
-- **The Yocto side** needs to install the node and its args file and enable
-  `redline-node@backlight`.
+- ~~**The Yocto side** needs to install the node and its args file and enable
+  `redline-node@backlight`.~~ Done 2026-09-12: `redline-nodes` ships
+  `backlight.args` and a drop-in ordering the instance after
+  `redline-display-setup` and `redline-display-backlight`; the lattepanda-mu
+  machine enables it (`REDLINE_ENABLED_NODES`).

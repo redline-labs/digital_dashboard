@@ -80,6 +80,23 @@ int main(int argc, char** argv)
     // Set the logging level based on the debug flag
     spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
 
+    // STARTUP TIMING.
+    //
+    // Time to first frame is a product requirement for an instrument cluster,
+    // and the phases below have very different costs: on a LattePanda Mu the
+    // QApplication constructor alone is around half a second, dwarfing config
+    // parsing and widget construction put together. Without these marks the
+    // only way to see that is to correlate journal timestamps against source
+    // line numbers, which stops working the moment this file is edited.
+    //
+    // steady_clock, not system_clock: this measures an interval, and
+    // system_clock can step under it when the RTC syncs mid-startup.
+    const auto t_start = std::chrono::steady_clock::now();
+    const auto since = [&t_start]() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - t_start).count();
+    };
+
     // Load the configuration file
     SPDLOG_INFO("Loading configuration file '{}'.", args->config_file_path);
     auto cfg = load_dashboard_config(args->config_file_path);
@@ -116,9 +133,13 @@ int main(int argc, char** argv)
     // appears on every topic it advertises and every sample it stamps. This
     // app subscribes but never publishes, so without it the process is
     // invisible on the bus entirely. See pub_sub/node_identity.h.
+    SPDLOG_INFO("startup: config loaded at {} ms", since());
+
     pub_sub::NodeIdentity node_identity("dashboard");
+    SPDLOG_INFO("startup: zenoh session at {} ms", since());
 
     QApplication app(argc, argv);
+    SPDLOG_INFO("startup: QApplication at {} ms", since());
 
     // Create windows from configuration
     std::vector<std::unique_ptr<MainWindow>> windows;
@@ -193,6 +214,7 @@ int main(int argc, char** argv)
         SPDLOG_CRITICAL("No window in '{}' has a display to go on.", args->config_file_path);
         return -1;
     }
+    SPDLOG_INFO("startup: {} window(s) built and shown at {} ms", windows.size(), since());
 
     std::unique_ptr<agent_control::AgentServer> agent;
     if (agent_mode)
