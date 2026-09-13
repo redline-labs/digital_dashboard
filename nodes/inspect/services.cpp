@@ -224,6 +224,21 @@ int runCall(cli::Context& context)
         return cli::kFailure;
     }
 
+    // A session opened a moment ago may not be linked to anything yet. Opening no
+    // longer waits out zenoh's scouting delay (see session_manager.cpp), and a
+    // query sent before discovery finishes is routed nowhere: it completes at
+    // once with no replies, which surfaced as "no reply within the timeout" after
+    // a few hundred milliseconds against a service that was plainly there. The
+    // service directory above opened a session too, but it has been released by
+    // now, so this one is new. Wait briefly for a peer or a router; a bus with
+    // nobody on it gets the same answer as before, only a second later.
+    const auto link_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (session->get_peers_z_id().empty() && session->get_routers_z_id().empty() &&
+           std::chrono::steady_clock::now() < link_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
     const auto words = capnp::messageToFlatArray(message);
     const auto bytes = words.asBytes();
 
