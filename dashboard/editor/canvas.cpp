@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QApplication>
 #include <QKeyEvent>
+#include <algorithm>
 #include <map>
 #include <variant>
 
@@ -37,6 +38,9 @@ Canvas::Canvas(QWidget* parent) :
     resize(editor_defaults::kDefaultCanvasWidth, editor_defaults::kDefaultCanvasHeight);
     setFocusPolicy(Qt::StrongFocus);
 
+    // An empty canvas is still a one-window document.
+    document_.windows.push_back(exportAppConfig());
+
     // Using per-widget SelectionFrame; no global overlay
 }
 
@@ -60,11 +64,208 @@ void Canvas::clearAll()
 
 void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 {
+    dashboard_config_t doc;
+    doc.windows.push_back(app_cfg);
+    loadDocument(doc);
+}
+
+void Canvas::loadDocument(const dashboard_config_t& doc)
+{
+    document_ = doc;
+    if (document_.windows.empty())
+    {
+        document_.windows.push_back(app_config_t{});
+    }
+    activeWindow_ = 0;
+    loadWindow(document_.windows.front());
+    emit windowsChanged();
+}
+
+dashboard_config_t Canvas::exportDocument() const
+{
+    dashboard_config_t doc = document_;
+    doc.windows[activeWindow_] = exportAppConfig();
+    return doc;
+}
+
+std::vector<Canvas::WindowSummary> Canvas::windowSummaries() const
+{
+    std::vector<WindowSummary> out;
+    out.reserve(document_.windows.size());
+    for (std::size_t i = 0; i < document_.windows.size(); ++i)
+    {
+        // The active window's own entry is stale; its state is on the canvas.
+        if (i == activeWindow_)
+        {
+            out.push_back({windowName_, display_, scale_, width(), height()});
+        }
+        else
+        {
+            const app_config_t& window = document_.windows[i];
+            out.push_back({window.name, window.display, window.scale, window.width, window.height});
+        }
+    }
+    return out;
+}
+
+bool Canvas::selectWindow(std::size_t index)
+{
+    if (index >= document_.windows.size())
+    {
+        return false;
+    }
+    if (index == activeWindow_)
+    {
+        return true;
+    }
+
+    // Close anything still open first, so the entry it records is taken while
+    // its window is the one on the canvas.
+    commitEdit();
+
+    document_.windows[activeWindow_] = exportAppConfig();
+    activeWindow_ = index;
+    loadWindow(document_.windows[activeWindow_]);
+    emit windowsChanged();
+    return true;
+}
+
+std::optional<std::size_t> Canvas::addWindow(std::string name, std::optional<display_role_t> display, QSize size)
+{
+    const dashboard_config_t current = exportDocument();
+    const auto nameTaken = [&current](const std::string& candidate)
+    {
+        return std::any_of(current.windows.begin(), current.windows.end(),
+                           [&](const app_config_t& w) { return w.name == candidate; });
+    };
+    const auto displayTaken = [&current](display_role_t role)
+    {
+        return std::any_of(current.windows.begin(), current.windows.end(),
+                           [&](const app_config_t& w) { return w.display == role; });
+    };
+
+    if (name.empty())
+    {
+        for (std::size_t n = current.windows.size() + 1; name.empty() || nameTaken(name); ++n)
+        {
+            name = "window_" + std::to_string(n);
+        }
+    }
+    else if (nameTaken(name))
+    {
+        return std::nullopt;
+    }
+
+    if (!display)
+    {
+        for (const display_role_t role : enum_values(display_role_t{}))
+        {
+            if (!displayTaken(role))
+            {
+                display = role;
+                break;
+            }
+        }
+    }
+    if (!display || displayTaken(*display))
+    {
+        return std::nullopt;
+    }
+
+    app_config_t window;
+    window.name = std::move(name);
+    window.display = *display;
+    window.width = static_cast<uint16_t>(size.isValid() && !size.isEmpty() ? size.width()
+                                                                          : editor_defaults::kDefaultCanvasWidth);
+    window.height = static_cast<uint16_t>(size.isValid() && !size.isEmpty() ? size.height()
+                                                                           : editor_defaults::kDefaultCanvasHeight);
+
+    commitEdit();
+    {
+        const auto tx = edit(EditSource::Window);
+        document_ = current;
+        document_.windows.push_back(window);
+        activeWindow_ = document_.windows.size() - 1;
+        loadWindow(document_.windows[activeWindow_]);
+    }
+    emit windowsChanged();
+    return activeWindow_;
+}
+
+bool Canvas::removeWindow(std::size_t index)
+{
+    if (document_.windows.size() <= 1 || index >= document_.windows.size())
+    {
+        return false;
+    }
+
+    commitEdit();
+    {
+        const auto tx = edit(EditSource::Window);
+        document_ = exportDocument();
+        document_.windows.erase(document_.windows.begin() + static_cast<std::ptrdiff_t>(index));
+
+        if (index < activeWindow_)
+        {
+            // Same window on the canvas; only its position in the list moved.
+            --activeWindow_;
+        }
+        else if (index == activeWindow_)
+        {
+            activeWindow_ = std::min(activeWindow_, document_.windows.size() - 1);
+            loadWindow(document_.windows[activeWindow_]);
+        }
+    }
+    emit windowsChanged();
+    return true;
+}
+
+void Canvas::setWindowName(std::string name)
+{
+    if (name == windowName_)
+    {
+        return;
+    }
+    windowName_ = std::move(name);
+    emit windowsChanged();
+}
+
+void Canvas::setDisplay(display_role_t display)
+{
+    if (display == display_)
+    {
+        return;
+    }
+    for (std::size_t i = 0; i < document_.windows.size(); ++i)
+    {
+        if (i != activeWindow_ && document_.windows[i].display == display)
+        {
+            document_.windows[i].display = display_;
+        }
+    }
+    display_ = display;
+    emit windowsChanged();
+}
+
+void Canvas::setScale(scale_mode_t scale)
+{
+    if (scale == scale_)
+    {
+        return;
+    }
+    scale_ = scale;
+    emit windowsChanged();
+}
+
+void Canvas::loadWindow(const app_config_t& app_cfg)
+{
     // Remove existing first
     clearAll();
 
     // Canvas adopts window name, size and background color
     windowName_ = app_cfg.name;
+    display_ = app_cfg.display;
+    scale_ = app_cfg.scale;
     resize(app_cfg.width, app_cfg.height);
     setBackgroundColor(QString::fromStdString(app_cfg.background_color));
 
@@ -149,7 +350,8 @@ void Canvas::loadFromAppConfig(const app_config_t& app_cfg)
 Canvas::Snapshot Canvas::captureDocument() const
 {
     Snapshot state;
-    state.doc = exportAppConfig();
+    state.doc = exportDocument();
+    state.active_window = activeWindow_;
 
     state.names.reserve(items_.size());
     for (const auto& frame : items_)
@@ -178,25 +380,51 @@ void Canvas::applyDocument(const Snapshot& state)
     // carried; a matched widget keeps its live object unless its configuration
     // actually differs, and a move is then just a move.
 
-    windowName_ = state.doc.name;
-    resize(state.doc.width, state.doc.height);
-    setBackgroundColor(QString::fromStdString(state.doc.background_color));
+    document_ = state.doc;
+    if (document_.windows.empty())
+    {
+        document_.windows.push_back(app_config_t{});
+    }
+    const std::size_t target_window = std::min(state.active_window, document_.windows.size() - 1);
+    const app_config_t window = document_.windows[target_window];
 
     // Names are the identity. A snapshot with a name per widget is the normal
     // case; the mismatched one can only arise from a snapshot taken before the
     // names were recorded, and is handled by falling back to a full rebuild
     // rather than by guessing at a pairing.
-    if (state.names.size() != state.doc.widgets.size())
+    //
+    // A snapshot of a different window has nothing on the canvas to diff
+    // against either, so it takes the same path -- keeping the names it carries,
+    // so the widgets come back addressable by the selectors they had.
+    if (target_window != activeWindow_ || state.names.size() != window.widgets.size())
     {
-        SPDLOG_WARN("Snapshot has {} widgets but {} names; rebuilding rather than diffing.",
-                    state.doc.widgets.size(), state.names.size());
+        if (target_window == activeWindow_)
+        {
+            SPDLOG_WARN("Snapshot has {} widgets but {} names; rebuilding rather than diffing.",
+                        window.widgets.size(), state.names.size());
+        }
+        activeWindow_ = target_window;
         const std::size_t names_before = nextNameIndex_;
-        loadFromAppConfig(state.doc);
+        loadWindow(window);
+        if (state.names.size() == items_.size())
+        {
+            for (std::size_t i = 0; i < items_.size(); ++i)
+            {
+                if (items_[i]) items_[i]->setObjectName(state.names[i]);
+            }
+        }
         nextNameIndex_ = std::max(nextNameIndex_, names_before);
         emit selectionChanged(nullptr);
+        emit windowsChanged();
         emit historyChanged();
         return;
     }
+
+    windowName_ = window.name;
+    display_ = window.display;
+    scale_ = window.scale;
+    resize(window.width, window.height);
+    setBackgroundColor(QString::fromStdString(window.background_color));
 
     // What is on the canvas now, by name.
     std::map<QString, SelectionFrame*> live;
@@ -209,12 +437,12 @@ void Canvas::applyDocument(const Snapshot& state)
     }
 
     std::vector<QPointer<SelectionFrame>> rebuilt;
-    rebuilt.reserve(state.doc.widgets.size());
+    rebuilt.reserve(window.widgets.size());
     bool selection_survived = false;
 
-    for (std::size_t i = 0; i < state.doc.widgets.size(); ++i)
+    for (std::size_t i = 0; i < window.widgets.size(); ++i)
     {
-        const widget_config_t& wcfg = state.doc.widgets[i];
+        const widget_config_t& wcfg = window.widgets[i];
         const QString& name = state.names[i];
 
         SelectionFrame* frame = nullptr;
@@ -268,7 +496,7 @@ void Canvas::applyDocument(const Snapshot& state)
 
     // Keep the naming counter ahead of anything the restored document uses, so a
     // widget added next cannot collide with one that came back from an undo.
-    nextNameIndex_ = std::max(nextNameIndex_, state.doc.widgets.size());
+    nextNameIndex_ = std::max(nextNameIndex_, window.widgets.size());
 
     // The selection only has to be dropped if the widget holding it is gone.
     // Otherwise it is re-emitted rather than cleared, so the properties panel
@@ -288,6 +516,7 @@ void Canvas::applyDocument(const Snapshot& state)
     }
 
     update();
+    emit windowsChanged();
     emit historyChanged();
 }
 
@@ -349,6 +578,8 @@ app_config_t Canvas::exportAppConfig() const
     cfg.width = static_cast<uint16_t>(width());
     cfg.height = static_cast<uint16_t>(height());
     cfg.background_color = getBackgroundColorHex().toStdString();
+    cfg.display = display_;
+    cfg.scale = scale_;
 
     for (const auto& frame : items_)
     {

@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <map>
 #include <string>
 
 namespace {
@@ -13,9 +14,10 @@ using config_codec::Issue;
 // Validates one entry of the `widgets:` list. The per-widget `config:` block is
 // a different struct for every `type:`, so the walk has to dispatch, and
 // The widget table is what makes that automatic for a widget added later.
-void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue>& issues)
+void validateWidget(const YAML::Node& node, const std::string& prefix, std::size_t index,
+                    std::vector<Issue>& issues)
 {
-    const std::string path = "widgets[" + std::to_string(index) + "]";
+    const std::string path = prefix + "widgets[" + std::to_string(index) + "]";
 
     if (!node.IsMap())
     {
@@ -86,6 +88,193 @@ void validateWidget(const YAML::Node& node, std::size_t index, std::vector<Issue
 #undef VALIDATE_CONFIG_CASE
 }
 
+// A scalar that must name one value of a reflected enum. Checked by name rather
+// than through as<Enum>(), because yaml-cpp turns a failed conversion into a bare
+// "bad conversion" that names neither the value nor the alternatives.
+template <typename Enum>
+void validateEnumKey(const YAML::Node& window, const char* key, const std::string& prefix,
+                     std::vector<Issue>& issues)
+{
+    if (!window[key])
+    {
+        return;
+    }
+
+    const std::string path = prefix + key;
+    if (!window[key].IsScalar())
+    {
+        issues.push_back({Issue::Severity::error, path, "expected a name, not a collection"});
+        return;
+    }
+
+    const std::string text = window[key].as<std::string>();
+    if (!reflection::enum_traits<Enum>::try_from_string(text))
+    {
+        issues.push_back({Issue::Severity::error, path,
+                          "unknown value '" + text + "'; expected one of: " +
+                              reflection::enum_traits<Enum>::known_values()});
+    }
+}
+
+// One window's keys and widgets. `prefix` is "" for the flat form, where the
+// window's keys sit at the top of the file, and "windows[N]." otherwise, so every
+// path names exactly where in the file the problem is.
+void validateWindow(const YAML::Node& window, const std::string& prefix, std::vector<Issue>& issues)
+{
+    // The window-level keys, validated against app_config_t itself. `widgets` is
+    // handled separately below because its element type depends on `type`.
+    static constexpr std::string_view kWindowKeys[] = {"name", "width", "height", "background_color",
+                                                       "display", "scale", "widgets"};
+    for (const auto& entry : window)
+    {
+        const std::string key = entry.first.as<std::string>();
+        // `windows` belongs to the document, not the window. The flat form cannot
+        // carry it (validate_app_config picks the form on its presence), so it is
+        // only ever seen here when it is legitimate.
+        if (prefix.empty() && key == "windows")
+        {
+            continue;
+        }
+        if (std::find(std::begin(kWindowKeys), std::end(kWindowKeys), key) == std::end(kWindowKeys))
+        {
+            issues.push_back({Issue::Severity::warning, prefix + key, "unknown key, ignored"});
+        }
+    }
+
+    // The window's own scalars. These cannot go through validateStruct against
+    // app_config_t, because its `widgets` field is a vector whose element type
+    // depends on `type` -- so they are checked individually here.
+    if (window["background_color"])
+    {
+        const std::string color = window["background_color"].as<std::string>();
+        if (!helpers::Color::isValidFormat(color))
+        {
+            // This one goes straight into a Qt stylesheet, where an unparseable
+            // value makes Qt drop the whole rule and the window keeps whatever
+            // background it had. Silently.
+            issues.push_back({Issue::Severity::error, prefix + "background_color",
+                              "'" + color + "' is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA"});
+        }
+    }
+
+    for (const char* key : {"width", "height"})
+    {
+        if (!window[key]) continue;
+        try
+        {
+            (void)window[key].as<uint16_t>();
+        }
+        catch (const std::exception& e)
+        {
+            issues.push_back({Issue::Severity::error, prefix + key, e.what()});
+        }
+    }
+
+    validateEnumKey<display_role_t>(window, "display", prefix, issues);
+    validateEnumKey<scale_mode_t>(window, "scale", prefix, issues);
+
+    if (!window["widgets"])
+    {
+        issues.push_back({Issue::Severity::warning, prefix + "widgets", "missing; the window will be empty"});
+        return;
+    }
+
+    if (!window["widgets"].IsSequence())
+    {
+        issues.push_back({Issue::Severity::error, prefix + "widgets", "expected a list"});
+        return;
+    }
+
+    for (std::size_t i = 0; i < window["widgets"].size(); ++i)
+    {
+        validateWidget(window["widgets"][i], prefix, i, issues);
+    }
+}
+
+// The `windows:` form: a document name and a list of windows, each validated as
+// the flat form would be, plus the rules only a list can break.
+void validateWindowList(const YAML::Node& root, std::vector<Issue>& issues)
+{
+    for (const auto& entry : root)
+    {
+        const std::string key = entry.first.as<std::string>();
+        if (key == "name" || key == "windows")
+        {
+            continue;
+        }
+
+        // A window key beside `windows:` is almost certainly a file half-way
+        // through being converted, and which of the two was meant cannot be
+        // guessed. A `widgets:` list here would be silently dropped, so that one
+        // stops the load; the scalars only warn.
+        if (key == "widgets")
+        {
+            issues.push_back({Issue::Severity::error, key,
+                              "a config has either a top-level `widgets:` list or a `windows:` list, "
+                              "not both; move these widgets into one of the windows"});
+        }
+        else
+        {
+            issues.push_back({Issue::Severity::warning, key,
+                              "unknown key, ignored (window keys belong inside an entry of `windows:`)"});
+        }
+    }
+
+    const YAML::Node windows = root["windows"];
+    if (!windows.IsSequence() || windows.size() == 0)
+    {
+        issues.push_back({Issue::Severity::error, "windows", "expected a non-empty list of windows"});
+        return;
+    }
+
+    std::map<std::string, std::size_t> names;
+    std::map<std::string, std::size_t> displays;
+    for (std::size_t i = 0; i < windows.size(); ++i)
+    {
+        const std::string prefix = "windows[" + std::to_string(i) + "].";
+        const YAML::Node window = windows[i];
+        if (!window.IsMap())
+        {
+            issues.push_back({Issue::Severity::error, "windows[" + std::to_string(i) + "]",
+                              "expected a mapping"});
+            continue;
+        }
+
+        validateWindow(window, prefix, issues);
+
+        // The window name roots every agent selector into it, so two windows with
+        // one name make every widget in both ambiguous.
+        if (window["name"] && window["name"].IsScalar())
+        {
+            const std::string name = window["name"].as<std::string>();
+            if (!name.empty())
+            {
+                if (const auto [it, inserted] = names.emplace(name, i); !inserted)
+                {
+                    issues.push_back({Issue::Severity::error, prefix + "name",
+                                      "'" + name + "' is already the name of windows[" +
+                                          std::to_string(it->second) + "]"});
+                }
+            }
+        }
+
+        // One window per display. Two on one would stack full-screen on the same
+        // panel, and which ends up on top is an accident of construction order.
+        std::string display = "primary";
+        if (window["display"] && window["display"].IsScalar())
+        {
+            display = window["display"].as<std::string>();
+        }
+        if (const auto [it, inserted] = displays.emplace(display, i); !inserted)
+        {
+            issues.push_back({Issue::Severity::error, prefix + "display",
+                              "windows[" + std::to_string(it->second) + "] is already on the '" +
+                                  display + "' display" +
+                                  (window["display"] ? "" : " (a window with no `display:` is primary)")});
+        }
+    }
+}
+
 }  // namespace
 
 std::vector<Issue> validate_app_config(const YAML::Node& root)
@@ -98,62 +287,13 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
         return issues;
     }
 
-    // The window-level keys, validated against app_config_t itself. `widgets` is
-    // handled separately below because its element type depends on `type`.
-    static constexpr std::string_view kWindowKeys[] = {"name", "width", "height", "background_color", "widgets"};
-    for (const auto& entry : root)
+    if (root["windows"])
     {
-        const std::string key = entry.first.as<std::string>();
-        if (std::find(std::begin(kWindowKeys), std::end(kWindowKeys), key) == std::end(kWindowKeys))
-        {
-            issues.push_back({Issue::Severity::warning, key, "unknown key, ignored"});
-        }
+        validateWindowList(root, issues);
     }
-
-    // The window's own scalars. These cannot go through validateStruct against
-    // app_config_t, because its `widgets` field is a vector whose element type
-    // depends on `type` -- so they are checked individually here.
-    if (root["background_color"])
+    else
     {
-        const std::string color = root["background_color"].as<std::string>();
-        if (!helpers::Color::isValidFormat(color))
-        {
-            // This one goes straight into a Qt stylesheet, where an unparseable
-            // value makes Qt drop the whole rule and the window keeps whatever
-            // background it had. Silently.
-            issues.push_back({Issue::Severity::error, "background_color",
-                              "'" + color + "' is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA"});
-        }
-    }
-
-    for (const char* key : {"width", "height"})
-    {
-        if (!root[key]) continue;
-        try
-        {
-            (void)root[key].as<uint16_t>();
-        }
-        catch (const std::exception& e)
-        {
-            issues.push_back({Issue::Severity::error, key, e.what()});
-        }
-    }
-
-    if (!root["widgets"])
-    {
-        issues.push_back({Issue::Severity::warning, "widgets", "missing; the window will be empty"});
-        return issues;
-    }
-
-    if (!root["widgets"].IsSequence())
-    {
-        issues.push_back({Issue::Severity::error, "widgets", "expected a list"});
-        return issues;
-    }
-
-    for (std::size_t i = 0; i < root["widgets"].size(); ++i)
-    {
-        validateWidget(root["widgets"][i], i, issues);
+        validateWindow(root, "", issues);
     }
 
     // Refused outright rather than warned about. Every way a key can be wrong
@@ -172,10 +312,10 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
 }
 
 
-std::optional<app_config_t> load_app_config(const std::string& config_filepath)
+std::optional<dashboard_config_t> load_dashboard_config(const std::string& config_filepath)
 {
     // Default config in case of error.
-    std::optional<app_config_t> config = std::nullopt;
+    std::optional<dashboard_config_t> config = std::nullopt;
 
     try
     {
@@ -208,7 +348,7 @@ std::optional<app_config_t> load_app_config(const std::string& config_filepath)
             return std::nullopt;
         }
 
-        config = root.as<app_config_t>();
+        config = root.as<dashboard_config_t>();
     }
     catch (const YAML::BadFile& e)
     {

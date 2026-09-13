@@ -863,6 +863,68 @@ def editor_load(path: Annotated[str, Field(description="YAML config to open.")])
         return _fail(exc)
 
 
+WINDOW_FIELD = Field(description="A window's index, or its name. See editor_windows.")
+
+
+@mcp.tool()
+def editor_windows() -> str:
+    """List the config's windows: name, display, scale, size, and which is shown.
+
+    A config holds one or more windows and the canvas shows one at a time. Every
+    other editor tool acts on the window being shown.
+    """
+    try:
+        return json.dumps(_call("editor", "editor.windows"), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_select_window(window: Annotated[int | str, WINDOW_FIELD]) -> str:
+    """Show another window on the canvas. Not an edit; nothing is changed."""
+    try:
+        return json.dumps(_call("editor", "editor.select_window", {"window": window}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_add_window(
+    name: Annotated[str | None, Field(default=None, description="Window name; omit for a fresh one.")] = None,
+    display: Annotated[
+        str | None,
+        Field(default=None, description="'primary' or 'secondary'; omit for the first one no window has."),
+    ] = None,
+    width: Annotated[int | None, Field(default=None, description="Design width; omit (with height) for the default.")] = None,
+    height: Annotated[int | None, Field(default=None, description="Design height.")] = None,
+) -> str:
+    """Add a window to the config and show it. Undoable.
+
+    Refused when the name is taken or every display already has a window: the
+    loader rejects both, so the editor will not build a file it cannot open.
+    """
+    try:
+        return json.dumps(
+            _call(
+                "editor",
+                "editor.add_window",
+                {"name": name, "display": display, "width": width, "height": height},
+            ),
+            indent=2,
+        )
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_remove_window(window: Annotated[int | str, WINDOW_FIELD]) -> str:
+    """Remove a window from the config. Undoable. The last window cannot be removed."""
+    try:
+        return json.dumps(_call("editor", "editor.remove_window", {"window": window}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
 # --------------------------------------------------------------- widget config
 
 

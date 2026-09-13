@@ -907,11 +907,41 @@ void PropertiesPanel::buildWindowPage()
     winBgColorEdit_->setPlaceholderText("#RRGGBB");
     winBgColorEdit_->setObjectName("window:background_color");
 
+    winDisplayCombo_ = new QComboBox(windowPage_);
+    winDisplayCombo_->setObjectName("window:display");
+    for (const auto name : enum_names(display_role_t{}))
+    {
+        winDisplayCombo_->addItem(QString::fromStdString(std::string(name)));
+    }
+    winDisplayCombo_->setToolTip("The panel this window binds to on the target. Ignored on a desktop, "
+                                 "where every window opens as an ordinary window.");
+
+    winScaleCombo_ = new QComboBox(windowPage_);
+    winScaleCombo_->setObjectName("window:scale");
+    for (const auto name : enum_names(scale_mode_t{}))
+    {
+        winScaleCombo_->addItem(QString::fromStdString(std::string(name)));
+    }
+    winScaleCombo_->setToolTip("fit: scale the layout uniformly to the panel, letterboxing the rest. "
+                               "none: leave scaling to the environment.");
+
     form->addRow("Name", winNameEdit_);
     form->addRow("Width", winWidthSpin_);
     form->addRow("Height", winHeightSpin_);
     form->addRow("Background Color", winBgColorEdit_);
+    form->addRow("Display", winDisplayCombo_);
+    form->addRow("Scale", winScaleCombo_);
     windowPage_->setLayout(form);
+
+    // A choice is a whole edit, so it opens and closes its own history entry.
+    for (QComboBox* combo : {winDisplayCombo_, winScaleCombo_})
+    {
+        connect(combo, &QComboBox::currentIndexChanged, this, [this](int)
+        {
+            applyWindowEdits();
+            commitWindowEdits();
+        });
+    }
 
     connect(winNameEdit_, &QLineEdit::textEdited, this, [this]{ applyWindowEdits(); });
     connect(winWidthSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ applyWindowEdits(); });
@@ -1063,6 +1093,17 @@ void PropertiesPanel::applyWindowEdits()
     // to be collected here and never read, while save hardcoded its own.
     canvas_->setWindowName(winNameEdit_->text().toStdString());
 
+    if (const auto role = reflection::enum_traits<display_role_t>::try_from_string(
+            winDisplayCombo_->currentText().toStdString()))
+    {
+        canvas_->setDisplay(*role);
+    }
+    if (const auto scale = reflection::enum_traits<scale_mode_t>::try_from_string(
+            winScaleCombo_->currentText().toStdString()))
+    {
+        canvas_->setScale(*scale);
+    }
+
     // Only apply a colour that is actually a colour. Half-typed text arrives
     // here on every keystroke -- "#ff00" on the way to "#ff0000" -- and an
     // unparseable value silently becomes the fallback, so without this the
@@ -1099,11 +1140,15 @@ void PropertiesPanel::syncFromCanvas()
     const QSignalBlocker b2(winWidthSpin_);
     const QSignalBlocker b3(winHeightSpin_);
     const QSignalBlocker b4(winBgColorEdit_);
+    const QSignalBlocker b5(winDisplayCombo_);
+    const QSignalBlocker b6(winScaleCombo_);
     isSyncing_ = true;
     winNameEdit_->setText(QString::fromStdString(canvas_->windowName()));
     winWidthSpin_->setValue(canvas_->width());
     winHeightSpin_->setValue(canvas_->height());
     winBgColorEdit_->setText(canvas_->getBackgroundColorHex());
+    winDisplayCombo_->setCurrentText(QString::fromStdString(std::string(reflection::enum_to_string(canvas_->display()))));
+    winScaleCombo_->setCurrentText(QString::fromStdString(std::string(reflection::enum_to_string(canvas_->scale()))));
     isSyncing_ = false;
 }
 

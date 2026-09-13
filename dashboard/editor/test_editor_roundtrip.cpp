@@ -14,6 +14,7 @@
 #include "editor/selection_frame.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -45,12 +46,17 @@ void check(bool condition, const std::string& what)
 
 // The document as it would be written to disk. Not named `emit`: Qt defines
 // that as a macro.
-std::string toYaml(const app_config_t& cfg)
+std::string toYaml(const dashboard_config_t& doc)
 {
     YAML::Emitter out;
-    out << YAML::convert<app_config_t>::encode(cfg);
+    out << YAML::convert<dashboard_config_t>::encode(doc);
     return out.c_str();
 }
+
+app_config_t twoStaticTexts(const std::string& window_name);
+
+// A cluster on the primary display and a one-widget window on the secondary.
+dashboard_config_t twoWindows();
 
 app_config_t twoStaticTexts(const std::string& window_name)
 {
@@ -1033,7 +1039,7 @@ void testShippedConfigsSurviveTheEditorUnchanged()
 
     for (const auto& path : configs)
     {
-        const auto loaded = load_app_config(path.string());
+        const auto loaded = load_dashboard_config(path.string());
         if (!loaded)
         {
             check(false, path.filename().string() + " loads");
@@ -1041,14 +1047,128 @@ void testShippedConfigsSurviveTheEditorUnchanged()
         }
 
         Canvas canvas;
-        canvas.loadFromAppConfig(*loaded);
+        canvas.loadDocument(*loaded);
+
+        // Visit every window, so each one goes through the canvas and back
+        // rather than only the one shown at load.
+        for (std::size_t i = canvas.windowCount(); i-- > 0;)
+        {
+            canvas.selectWindow(i);
+        }
 
         const std::string before = toYaml(*loaded);
-        const std::string after = toYaml(canvas.exportAppConfig());
+        const std::string after = toYaml(canvas.exportDocument());
         check(before == after,
               path.filename().string() + " survives load -> export unchanged\n--- before ---\n" +
                   before + "\n--- after ---\n" + after);
     }
+}
+
+dashboard_config_t twoWindows()
+{
+    dashboard_config_t doc;
+    doc.name = "two_screens";
+    doc.windows.push_back(twoStaticTexts("cluster"));
+    doc.windows.push_back(twoStaticTexts("carplay"));
+    doc.windows[1].display = display_role_t::secondary;
+    doc.windows[1].scale = scale_mode_t::none;
+    doc.windows[1].width = 800;
+    doc.windows[1].widgets.pop_back();
+    return doc;
+}
+
+// The canvas shows one window; the others must come through untouched, and an
+// edit in one must survive the canvas moving on to another.
+void testTheCanvasEditsOneWindowAndKeepsTheRest()
+{
+    Canvas canvas;
+    canvas.loadDocument(twoWindows());
+    canvas.clearHistory();
+    canvas.markSaved();
+
+    check(canvas.windowCount() == 2, "both windows are in the document");
+    check(canvas.windowName() == "cluster" && canvas.frames().size() == 2, "the first window is shown");
+    check(canvas.exportDocument() == twoWindows(), "load -> export is lossless across windows");
+
+    check(canvas.selectWindow(1), "the second window can be selected");
+    check(canvas.windowName() == "carplay" && canvas.frames().size() == 1, "the second window is shown");
+    check(canvas.display() == display_role_t::secondary && canvas.scale() == scale_mode_t::none,
+          "the second window's placement is shown");
+    check(!canvas.isDirty() && !canvas.canUndo(), "switching windows is not an edit");
+
+    const auto frames = canvas.frames();
+    {
+        const auto tx = canvas.edit();
+        frames.at(0)->move(300, 40);
+    }
+    check(canvas.isDirty(), "moving a widget in the second window is an edit");
+
+    canvas.selectWindow(0);
+    const dashboard_config_t doc = canvas.exportDocument();
+    check(doc.windows[1].widgets.at(0).x == 300, "an edit survives switching away from its window");
+    check(doc.windows[0] == twoWindows().windows[0], "the other window is untouched");
+
+    check(canvas.undo(), "the edit can be undone from another window");
+    check(canvas.activeWindow() == 1, "undo shows the window the edit was made in");
+    check(canvas.exportDocument() == twoWindows(), "undo restores the document");
+    check(!canvas.isDirty(), "undoing back to the saved state is clean");
+}
+
+void testAddingAndRemovingWindowsIsUndoable()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(twoStaticTexts("cluster"));
+    canvas.clearHistory();
+
+    const auto added = canvas.addWindow();
+    check(added == std::optional<std::size_t>(1), "a second window is added");
+    check(canvas.activeWindow() == 1 && canvas.frames().empty(), "the new, empty window is shown");
+    check(canvas.display() == display_role_t::secondary, "a new window takes the display no window has");
+    const std::string added_name = canvas.windowName();
+    check(!added_name.empty() && added_name != "cluster", "a new window gets a fresh name");
+
+    check(!canvas.addWindow().has_value(), "no window is added once every display is taken");
+    check(!canvas.addWindow("cluster", display_role_t::primary).has_value(), "a taken name is refused");
+
+    check(canvas.undo(), "adding a window is undoable");
+    check(canvas.windowCount() == 1 && canvas.activeWindow() == 0 && canvas.frames().size() == 2,
+          "undo removes the window and shows the original again");
+    check(canvas.redo() && canvas.windowCount() == 2, "and redo puts it back");
+
+    check(canvas.removeWindow(0), "the first window can be removed");
+    check(canvas.windowCount() == 1 && canvas.windowName() == added_name, "the remaining window is shown");
+    check(!canvas.removeWindow(0), "the last window cannot be removed");
+
+    check(canvas.undo(), "removing a window is undoable");
+    const dashboard_config_t doc = canvas.exportDocument();
+    check(doc.windows.size() == 2 && doc.windows[0].name == "cluster" && doc.windows[0].widgets.size() == 2,
+          "undo restores the removed window with its widgets");
+}
+
+// Two windows on one display is a file the loader refuses, so the editor must
+// not be able to produce one.
+void testChoosingATakenDisplaySwaps()
+{
+    Canvas canvas;
+    PropertiesPanel panel;
+    panel.setCanvas(&canvas);
+    canvas.loadDocument(twoWindows());
+    canvas.clearHistory();
+
+    auto* display = panel.findChild<QComboBox*>("window:display");
+    if (display == nullptr)
+    {
+        check(false, "the window page has an addressable display field");
+        return;
+    }
+    panel.syncFromCanvas();
+    check(display->currentText() == "primary", "the display field shows the window's display");
+
+    display->setCurrentText("secondary");
+    const dashboard_config_t doc = canvas.exportDocument();
+    check(doc.windows[0].display == display_role_t::secondary, "the shown window moves to the chosen display");
+    check(doc.windows[1].display == display_role_t::primary, "the window that had it takes the other one");
+    check(canvas.undo() && canvas.exportDocument() == twoWindows(), "the swap is one undoable edit");
 }
 
 // A drag carrying text that is not a widget type used to reach a throwing
@@ -1104,6 +1224,9 @@ int main(int argc, char** argv)
     testReflectedStructsCompareByValue();
     testShippedConfigsSurviveTheEditorUnchanged();
     testUnknownDropPayloadIsRefused();
+    testTheCanvasEditsOneWindowAndKeepsTheRest();
+    testAddingAndRemovingWindowsIsUndoable();
+    testChoosingATakenDisplaySwaps();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -284,10 +284,110 @@ void testReflectedTypesNeedNoRegistration()
           "an unregistered enum is written as its name");
 }
 
+// ------------------------------------------------------------- window lists
+
+std::string toYaml(const dashboard_config_t& cfg)
+{
+    YAML::Emitter out;
+    out << YAML::convert<dashboard_config_t>::encode(cfg);
+    return out.c_str();
+}
+
+// Every config written before there could be two windows is flat, and must load
+// as one window without anybody touching it.
+void testFlatFormLoadsAsOneWindow()
+{
+    const auto doc = YAML::Load(R"(
+name: instrument_cluster
+width: 1200
+height: 450
+background_color: "#000000"
+widgets: []
+)").as<dashboard_config_t>();
+
+    check(doc.windows.size() == 1, "a flat config is one window");
+    check(doc.name.empty(), "a flat config's name is the window's, not the document's");
+    if (doc.windows.size() == 1)
+    {
+        const app_config_t& window = doc.windows.front();
+        check(window.name == "instrument_cluster", "the flat name lands on the window");
+        check(window.width == 1200 && window.height == 450, "the flat size lands on the window");
+        check(window.display == display_role_t::primary, "a window with no display is primary");
+        check(window.scale == scale_mode_t::fit, "a window with no scale fits");
+    }
+}
+
+void testWindowListLoads()
+{
+    const auto doc = YAML::Load(R"(
+name: mercedes_190e
+windows:
+  - name: cluster
+    width: 1200
+    height: 450
+    widgets: []
+  - name: carplay
+    display: secondary
+    scale: none
+    width: 800
+    height: 480
+    widgets:
+      - type: static_text
+        config: {}
+)").as<dashboard_config_t>();
+
+    check(doc.name == "mercedes_190e", "the document name is read from beside `windows:`");
+    check(doc.windows.size() == 2, "both windows load");
+    if (doc.windows.size() == 2)
+    {
+        check(doc.windows[0].display == display_role_t::primary, "the first window defaults to primary");
+        check(doc.windows[1].display == display_role_t::secondary, "`display: secondary` is read");
+        check(doc.windows[1].scale == scale_mode_t::none, "`scale: none` is read");
+        check(doc.windows[1].widgets.size() == 1, "a window's widgets are its own");
+    }
+}
+
+// The editor saves whatever it holds, so the form it picks is what decides
+// whether every shipped config churns on its first save.
+void testTheWrittenFormIsTheSmallestThatSaysEverything()
+{
+    dashboard_config_t one;
+    one.windows.push_back(app_config_t{});
+    one.windows[0].name = "cluster";
+    const std::string flat = toYaml(one);
+    check(flat.find("windows:") == std::string::npos, "one default window is written flat");
+    check(flat.find("display:") == std::string::npos && flat.find("scale:") == std::string::npos,
+          "default display and scale are not written out");
+
+    dashboard_config_t secondary = one;
+    secondary.windows[0].display = display_role_t::secondary;
+    const std::string listed = toYaml(secondary);
+    check(listed.find("windows:") != std::string::npos,
+          "a window the flat form cannot place is written as a list");
+    check(listed.find("display: secondary") != std::string::npos, "a non-default display is written");
+
+    dashboard_config_t named = one;
+    named.name = "document";
+    check(toYaml(named).find("windows:") != std::string::npos,
+          "a document name forces the list form, which is the only one with room for it");
+
+    dashboard_config_t two = one;
+    two.windows.push_back(app_config_t{});
+    two.windows[1].name = "carplay";
+    two.windows[1].display = display_role_t::secondary;
+    two.windows[1].scale = scale_mode_t::none;
+
+    const auto back = YAML::Load(toYaml(two)).as<dashboard_config_t>();
+    check(back == two, "a two-window document survives a round trip:\n" + toYaml(two));
+}
+
 }  // namespace
 
 int main()
 {
+    testFlatFormLoadsAsOneWindow();
+    testWindowListLoads();
+    testTheWrittenFormIsTheSmallestThatSaysEverything();
     testWindowFieldsSurvive();
     testEveryWidgetTypeSurvives();
     testEmptyIdIsOmitted();

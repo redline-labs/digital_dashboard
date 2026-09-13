@@ -1,6 +1,7 @@
 #include "pub_sub/node_identity.h"
 #include "dashboard/app_config.h"
 #include "dashboard/command_line_args.h"
+#include "dashboard/display_binding.h"
 #include "dashboard/main_window.h"
 
 #include "agent_control/log_sink.h"
@@ -22,7 +23,13 @@
 #include <memory>
 
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QTimer>
+
+#include <string>
+#include <string_view>
+#include <vector>
 
 // Patches to third party:
 // LibUSB core for debug messages.
@@ -75,11 +82,34 @@ int main(int argc, char** argv)
 
     // Load the configuration file
     SPDLOG_INFO("Loading configuration file '{}'.", args->config_file_path);
-    auto cfg = load_app_config(args->config_file_path);
+    auto cfg = load_dashboard_config(args->config_file_path);
     if (!cfg)
     {
         SPDLOG_CRITICAL("Failed to load configuration file '{}'.", args->config_file_path);
         return -1;
+    }
+
+    // Bind windows to displays only where the rootfs published some. Everywhere
+    // else -- a desktop, a Mac, --mcp offscreen -- this is false and every window
+    // is shown the way it always was, with the environment untouched.
+    const auto env = dashboard::display::processEnvironment();
+    const bool bind_displays = !agent_mode && dashboard::display::platformPublishesDisplays(env);
+
+    if (bind_displays)
+    {
+        std::vector<WindowPlacement> placements;
+        for (const app_config_t& window_cfg : cfg->windows)
+        {
+            placements.push_back({window_cfg.display, window_cfg.scale, window_cfg.width, window_cfg.height});
+        }
+
+        // Scale factors only take effect if they are in place before QApplication
+        // is constructed, which is why this cannot wait for the screens to exist.
+        if (const auto factors = dashboard::display::screenScaleFactors(placements, env))
+        {
+            qputenv("QT_SCREEN_SCALE_FACTORS", QByteArray::fromStdString(*factors));
+            SPDLOG_INFO("Displays: QT_SCREEN_SCALE_FACTORS={}", *factors);
+        }
     }
 
     // Announce this process so tools can put a name to the session id that
@@ -91,12 +121,78 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
 
     // Create windows from configuration
-    MainWindow window(cfg.value());
+    std::vector<std::unique_ptr<MainWindow>> windows;
+    for (const app_config_t& window_cfg : cfg->windows)
+    {
+        const std::string_view role = reflection::enum_to_string(window_cfg.display);
 
-    // Create configured windows
-    window.show();
+        if (!bind_displays)
+        {
+            windows.push_back(std::make_unique<MainWindow>(window_cfg));
+            windows.back()->show();
+            SPDLOG_INFO("Starting window '{}' ({}x{}).", window_cfg.name, window_cfg.width, window_cfg.height);
+            continue;
+        }
 
-    SPDLOG_INFO("Starting with window '{}'.", window.getWindowName());
+        QScreen* screen = nullptr;
+        const auto display = dashboard::display::lookupDisplay(window_cfg.display, env);
+        if (display)
+        {
+            for (QScreen* candidate : QGuiApplication::screens())
+            {
+                if (candidate->name().toStdString() == display->connector)
+                {
+                    screen = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (screen == nullptr)
+        {
+            std::string available;
+            for (QScreen* candidate : QGuiApplication::screens())
+            {
+                available += (available.empty() ? "" : ", ") + candidate->name().toStdString();
+            }
+            const std::string wanted = display ? "connector '" + display->connector + "'" : "no connector published";
+
+            // The primary falls back to wherever Qt put its primary screen, which is
+            // what happened before displays were bound at all. A secondary does not:
+            // on eglfs it would land full screen on top of the primary, and building
+            // it would start its subscriptions -- CarPlay's included -- for nothing.
+            if (window_cfg.display != display_role_t::primary)
+            {
+                SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, so it is not shown.",
+                            window_cfg.name, role, wanted, available);
+                continue;
+            }
+            screen = QGuiApplication::primaryScreen();
+            SPDLOG_WARN("Window '{}' wants the {} display ({}); none of [{}] matches, using '{}'.",
+                        window_cfg.name, role, wanted, available,
+                        screen ? screen->name().toStdString() : std::string("<none>"));
+        }
+
+        windows.push_back(std::make_unique<MainWindow>(window_cfg));
+        if (screen != nullptr)
+        {
+            windows.back()->showOnScreen(screen);
+            SPDLOG_INFO("Starting window '{}' ({}x{}) on the {} display, screen '{}' ({}x{} logical, dpr {}).",
+                        window_cfg.name, window_cfg.width, window_cfg.height, role,
+                        screen->name().toStdString(), screen->geometry().width(),
+                        screen->geometry().height(), screen->devicePixelRatio());
+        }
+        else
+        {
+            windows.back()->show();
+        }
+    }
+
+    if (windows.empty())
+    {
+        SPDLOG_CRITICAL("No window in '{}' has a display to go on.", args->config_file_path);
+        return -1;
+    }
 
     std::unique_ptr<agent_control::AgentServer> agent;
     if (agent_mode)
@@ -112,8 +208,18 @@ int main(int argc, char** argv)
         // one means rebuilding the widget in place.
         dashboard::agent::registerWidgetMethods(
             *agent,
-            [&window](QWidget* target, const widget_config_t& widget_config)
-            { return window.rebuildWidget(target, widget_config); });
+            [&windows](QWidget* target, const widget_config_t& widget_config)
+            {
+                // Only the window that owns the widget will take it.
+                for (const auto& window : windows)
+                {
+                    if (window->rebuildWidget(target, widget_config))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            });
 
         // Publishing a known value and screenshotting the gauge that subscribes
         // to it is the fastest way to check a dashboard change.

@@ -9,7 +9,7 @@ All the gauges are drawn/rendered, no static images.  A YAML configuration file 
 
  Zenoh is used for pub/sub, and capnproto is used for serialization.  The widgets additionally have a flexible "expression parser" to where a user can specify a capnproto signal and any math expression to be used for the data source for a widget.
 
-For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.  Multiple windows (displays) can also be supported in the same single configuration - for example, you can have one display be your instrument cluster, the other be a CarPlay window.
+For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.  Multiple windows (displays) can also be supported in the same single configuration - for example, you can have one display be your instrument cluster, the other be a CarPlay window.  Each window names the display it belongs on (`primary` or `secondary`); on the target it is bound to that panel and scaled to fit, and on a desktop it simply opens as a window.  See [docs/displays.md](docs/displays.md).
 
 #### (Work in progress) Mercedes 190E Instrument Cluster
 With additional "sparklines" widget on the right.

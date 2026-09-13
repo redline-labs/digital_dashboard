@@ -316,6 +316,97 @@ void testWellFormedColoursAreAccepted()
     }
 }
 
+// ---------------------------------------------------------------- window lists
+
+void testAValidWindowListIsSilent()
+{
+    const auto issues = issuesFor(R"(
+name: "two_screens"
+windows:
+  - name: cluster
+    width: 1200
+    height: 450
+    widgets: []
+  - name: carplay
+    display: secondary
+    scale: none
+    widgets: []
+)");
+    check(issues.empty(), "a valid window list produces no issues, got:" + dump(issues));
+}
+
+// Paths are what make a report actionable, and a list of windows is where a bare
+// "widgets[0]" stops saying which window it means.
+void testWindowListPathsNameTheWindow()
+{
+    const auto issues = issuesFor(R"(
+windows:
+  - name: a
+    widgets: []
+  - name: b
+    display: secondary
+    widht: 5
+    widgets:
+      - type: motec_cdl3_tachometer
+        config:
+          zenoh_kye: "vehicle/engine/rpm"
+)");
+    check(find(issues, "windows[1].widgets[0].config.zenoh_kye") != nullptr,
+          "a widget problem is reported under its window, got:" + dump(issues));
+    check(find(issues, "windows[1].widht") != nullptr, "an unknown window key is reported under its window");
+}
+
+void testBadDisplayAndScaleNameTheAlternatives()
+{
+    const auto issues = issuesFor(R"(
+display: tertiary
+scale: stretch
+widgets: []
+)");
+    const Issue* display = find(issues, "display");
+    check(display != nullptr && display->severity == Issue::Severity::error,
+          "an unknown display role is an error, got:" + dump(issues));
+    if (display)
+    {
+        check(display->message.find("secondary") != std::string::npos, "the message lists the real roles");
+    }
+    const Issue* scale = find(issues, "scale");
+    check(scale != nullptr && scale->severity == Issue::Severity::error, "an unknown scale mode is an error");
+}
+
+void testWindowListShapeErrors()
+{
+    check(hasError(issuesFor("windows: []")), "an empty window list is an error");
+    check(hasError(issuesFor("windows: 5")), "a scalar window list is an error");
+    check(hasError(issuesFor("windows: [5]")), "a scalar window is an error");
+
+    const auto both = issuesFor(R"(
+widgets: []
+windows:
+  - widgets: []
+)");
+    const Issue* issue = find(both, "widgets");
+    check(issue != nullptr && issue->severity == Issue::Severity::error,
+          "top-level widgets beside a window list is an error, got:" + dump(both));
+}
+
+void testTwoWindowsCannotShareANameOrADisplay()
+{
+    const auto issues = issuesFor(R"(
+windows:
+  - name: same
+    widgets: []
+  - name: same
+    widgets: []
+)");
+    check(find(issues, "windows[1].name") != nullptr, "a duplicate window name is reported, got:" + dump(issues));
+
+    // The second window has no `display:` and so is primary, like the first.
+    const Issue* display = find(issues, "windows[1].display");
+    check(display != nullptr && display->severity == Issue::Severity::error,
+          "two windows on the primary display is an error, including by default");
+}
+
 // ---------------------------------------------------------------- range limits
 //
 // The validator above catches what a file *says*; these catch what it *means*.
@@ -489,6 +580,12 @@ int main()
     testNestedStructsAreWalked();
     testMalformedColoursAreReported();
     testWellFormedColoursAreAccepted();
+
+    testAValidWindowListIsSilent();
+    testWindowListPathsNameTheWindow();
+    testBadDisplayAndScaleNameTheAlternatives();
+    testWindowListShapeErrors();
+    testTwoWindowsCannotShareANameOrADisplay();
 
     testFullScaleIsNeverZero();
     testFullScaleIsCapped();

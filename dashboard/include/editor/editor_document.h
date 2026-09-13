@@ -50,9 +50,16 @@ class EditorDocument
     // silently changes name when you undo breaks every selector pointing at it,
     // which is exactly what the agent verbs are used through. They are also what
     // lets a restore match a stored widget to a live one and leave it alone.
+    //
+    // The whole document rides in every snapshot, not just the window on the
+    // canvas, so an undo can reach an edit made in a window that is no longer
+    // the one being shown -- and `active_window` says which one to show again.
+    // The names are those of the active window's widgets, the only ones that
+    // exist as live objects.
     struct Snapshot
     {
-        app_config_t doc;
+        dashboard_config_t doc;
+        std::size_t active_window = 0;
         std::vector<QString> names;
 
         // Only the document decides whether anything changed. Names follow the

@@ -4,6 +4,7 @@
 #include <QMainWindow>
 
 class QAction;
+class QComboBox;
 class WidgetPalette;
 class Canvas;
 class PropertiesPanel;
@@ -36,6 +37,15 @@ private:
     void saveConfig();
     void updateHistoryUi();
     bool confirmDiscardChanges(const QString& action);
+
+    // Rebuilds the window picker from the canvas, and brings the properties
+    // panel over to the window being shown when that changed.
+    void refreshWindowList();
+    QComboBox* windowCombo_ = nullptr;
+    QAction* addWindowAction_ = nullptr;
+    QAction* removeWindowAction_ = nullptr;
+    std::size_t shownWindow_ = 0;
+    std::size_t shownWindowCount_ = 0;
 
     WidgetPalette* widgetPalette_;
     Canvas* canvas_;

@@ -53,6 +53,8 @@ private:
     QSpinBox* winWidthSpin_;
     QSpinBox* winHeightSpin_;
     QLineEdit* winBgColorEdit_;
+    QComboBox* winDisplayCombo_ = nullptr;
+    QComboBox* winScaleCombo_ = nullptr;
     Canvas* canvas_;
     bool isSyncing_;
 

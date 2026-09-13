@@ -44,6 +44,7 @@ qt_add_executable(${PROJECT_NAME}
     dashboard/main.cpp
     dashboard/app_config.cpp
     dashboard/main_window.cpp
+    dashboard/display_binding.cpp
     dashboard/command_line_args.cpp
 
     # Shared by both executables: the widget config methods sweep the widget table,
@@ -142,6 +143,16 @@ foreach(config_test roundtrip validation colors)
     )
     add_project_test(TARGET dashboard_test_config_${config_test} LABELS dashboard unit)
 endforeach()
+
+# Which display a window binds to and at what scale, against a fake environment.
+# Pure C++: no widgets, no Qt, no display.
+add_executable(dashboard_test_display_binding
+    dashboard/test_display_binding.cpp
+    dashboard/display_binding.cpp
+)
+target_include_directories(dashboard_test_display_binding PRIVATE include)
+target_link_libraries(dashboard_test_display_binding PRIVATE reflection)
+add_project_test(TARGET dashboard_test_display_binding LABELS dashboard unit)
 
 # The undo/redo history on its own, against a fake document. No widgets, so
 # unlike the editor test below it needs no display and no QApplication.

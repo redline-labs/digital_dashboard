@@ -56,6 +56,64 @@ std::expected<widget_type_t, AgentError> parseType(const json& params)
         std::move(data)});
 }
 
+json describeWindows(const Canvas& canvas)
+{
+    json windows = json::array();
+    const auto summaries = canvas.windowSummaries();
+    for (std::size_t i = 0; i < summaries.size(); ++i)
+    {
+        json entry = json::object();
+        entry["index"] = i;
+        entry["name"] = summaries[i].name;
+        entry["display"] = std::string(reflection::enum_to_string(summaries[i].display));
+        entry["scale"] = std::string(reflection::enum_to_string(summaries[i].scale));
+        entry["size"] = json::array({summaries[i].width, summaries[i].height});
+        entry["active"] = i == canvas.activeWindow();
+        windows.push_back(std::move(entry));
+    }
+    json out = json::object();
+    out["windows"] = std::move(windows);
+    out["active"] = canvas.activeWindow();
+    return out;
+}
+
+// A window named by index or by name, the two ways a caller holding editor.windows
+// output can refer to one.
+std::expected<std::size_t, AgentError> windowIndexOf(const Canvas& canvas, const json& params)
+{
+    if (!params.contains("window"))
+    {
+        return std::unexpected(badParams("'window' is required: an index or a window name."));
+    }
+    const json& window = params["window"];
+    if (window.is_number_integer())
+    {
+        const auto index = window.get<long long>();
+        if (index < 0 || static_cast<std::size_t>(index) >= canvas.windowCount())
+        {
+            return std::unexpected(badParams("No window at index " + std::to_string(index) + "; there are " +
+                                             std::to_string(canvas.windowCount()) + "."));
+        }
+        return static_cast<std::size_t>(index);
+    }
+    if (window.is_string())
+    {
+        const auto summaries = canvas.windowSummaries();
+        for (std::size_t i = 0; i < summaries.size(); ++i)
+        {
+            if (summaries[i].name == window.get<std::string>())
+            {
+                return i;
+            }
+        }
+        json data = describeWindows(canvas);
+        return std::unexpected(AgentError{ErrorCode::kBadParams,
+                                          "No window named '" + window.get<std::string>() + "'.",
+                                          std::move(data)});
+    }
+    return std::unexpected(badParams("'window' must be an index or a window name."));
+}
+
 json describeFrame(const SelectionFrame* frame)
 {
     json out = json::object();
@@ -341,6 +399,7 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
                               }
                               json out = json::object();
                               out["editor_mode"] = canvas.value()->editorMode();
+                              out["window"] = canvas.value()->windowName();
                               out["items"] = std::move(items);
                               return out;
                           });
@@ -454,6 +513,126 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
             json out = json::object();
             out["loaded"] = path;
             return out;
+        },
+        AgentServer::MethodKind::kMutating);
+
+    // -------------------------------------------------------- editor.windows
+    //
+    // A config is one or more windows and the canvas shows one of them. Every
+    // other editor verb acts on the window being shown.
+    server.registerMethod("editor.windows",
+                          [canvasOf](const json&) -> MethodResult
+                          {
+                              auto canvas = canvasOf();
+                              if (!canvas.has_value())
+                              {
+                                  return std::unexpected(canvas.error());
+                              }
+                              return describeWindows(*canvas.value());
+                          });
+
+    server.registerMethod(
+        "editor.select_window",
+        [canvasOf](const json& params) -> MethodResult
+        {
+            auto canvas = canvasOf();
+            if (!canvas.has_value())
+            {
+                return std::unexpected(canvas.error());
+            }
+            auto index = windowIndexOf(*canvas.value(), params);
+            if (!index.has_value())
+            {
+                return std::unexpected(index.error());
+            }
+            canvas.value()->selectWindow(index.value());
+            return describeWindows(*canvas.value());
+        },
+        AgentServer::MethodKind::kMutating);
+
+    server.registerMethod(
+        "editor.add_window",
+        [canvasOf](const json& params) -> MethodResult
+        {
+            auto canvas = canvasOf();
+            if (!canvas.has_value())
+            {
+                return std::unexpected(canvas.error());
+            }
+
+            std::string name;
+            if (params.contains("name") && !params["name"].is_null())
+            {
+                if (!params["name"].is_string())
+                {
+                    return std::unexpected(badParams("'name' must be a string."));
+                }
+                name = params["name"].get<std::string>();
+            }
+
+            std::optional<display_role_t> display;
+            if (params.contains("display") && !params["display"].is_null())
+            {
+                display = params["display"].is_string()
+                              ? reflection::enum_traits<display_role_t>::try_from_string(
+                                    params["display"].get<std::string>())
+                              : std::nullopt;
+                if (!display)
+                {
+                    return std::unexpected(badParams("'display' must be one of: " +
+                                                     reflection::enum_traits<display_role_t>::known_values()));
+                }
+            }
+
+            QSize size;
+            const bool has_width = params.contains("width") && !params["width"].is_null();
+            const bool has_height = params.contains("height") && !params["height"].is_null();
+            if (has_width != has_height)
+            {
+                return std::unexpected(badParams("'width' and 'height' must be given together, or both omitted."));
+            }
+            if (has_width)
+            {
+                if (!params["width"].is_number_integer() || !params["height"].is_number_integer() ||
+                    params["width"].get<int>() <= 0 || params["height"].get<int>() <= 0)
+                {
+                    return std::unexpected(badParams("'width' and 'height' must be positive integers."));
+                }
+                size = QSize(params["width"].get<int>(), params["height"].get<int>());
+            }
+
+            if (!canvas.value()->addWindow(name, display, size))
+            {
+                json data = describeWindows(*canvas.value());
+                return std::unexpected(AgentError{
+                    ErrorCode::kBadParams,
+                    "Refused: a window with that name already exists, or its display is taken. "
+                    "Each window needs its own name and its own display.",
+                    std::move(data)});
+            }
+            return describeWindows(*canvas.value());
+        },
+        AgentServer::MethodKind::kMutating);
+
+    server.registerMethod(
+        "editor.remove_window",
+        [canvasOf](const json& params) -> MethodResult
+        {
+            auto canvas = canvasOf();
+            if (!canvas.has_value())
+            {
+                return std::unexpected(canvas.error());
+            }
+            auto index = windowIndexOf(*canvas.value(), params);
+            if (!index.has_value())
+            {
+                return std::unexpected(index.error());
+            }
+            if (!canvas.value()->removeWindow(index.value()))
+            {
+                return std::unexpected(badParams("The last window cannot be removed."));
+            }
+            return describeWindows(*canvas.value());
         },
         AgentServer::MethodKind::kMutating);
 }

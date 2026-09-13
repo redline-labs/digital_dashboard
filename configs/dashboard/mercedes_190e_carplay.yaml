@@ -1,0 +1,100 @@
+name: mercedes_190e_carplay
+windows:
+  - name: instrument_cluster
+    width: 1920
+    height: 720
+    background_color: "#000000"
+    widgets:
+      - x: 88
+        y: 44
+        width: 539
+        height: 558
+        type: mercedes_190e_speedometer
+        config:
+          odometer_value: 123456
+          max_speed: 160
+          zenoh_key: vehicle/speed_mps
+          schema_type: VehicleSpeed
+          speed_expression: mps_to_mph(speedMps)
+          odometer_expression: totalMiles
+          odometer_zenoh_key: vehicle/odometer
+          odometer_schema_type: VehicleOdometer
+          shift_box_markers:
+            - 28
+            - 54
+            - 87
+      - x: 651
+        y: 15
+        width: 693
+        height: 586
+        type: mercedes_190e_tachometer
+        config:
+          max_rpm: 8000
+          redline_rpm: 7000
+          show_clock: true
+          zenoh_key: vehicle/engine/rpm
+          schema_type: EngineRpm
+          rpm_expression: rpm
+      - x: 50
+        y: 400
+        width: 30
+        height: 30
+        type: mercedes_190e_telltale
+        config:
+          telltale_type: battery
+          warning_color: "#FF0000"
+          normal_color: "#333333"
+          zenoh_key: vehicle/telltales/battery_warning
+          schema_type: BatteryWarning
+          condition_expression: batteryVoltage < 12.0
+  - name: carplay
+    width: 1200
+    height: 600
+    background_color: "#555555"
+    display: secondary
+    widgets:
+      - x: 0
+        y: 0
+        width: 800
+        height: 600
+        type: carplay
+        config:
+          video_key: nodes/carplay/video
+          audio_key: nodes/carplay/audio
+          mic_key: nodes/carplay/mic
+          input_key: nodes/carplay/input
+          session_key: nodes/carplay/session
+      - id: now_playing
+        x: 810
+        y: 20
+        width: 380
+        height: 120
+        type: now_playing
+        config:
+          zenoh_key: nodes/carplay/nowplaying
+          show_album_art: true
+          show_progress: true
+          title_color: "#FFFFFF"
+          detail_color: "#AAAAAA"
+          accent_color: "#FFA500"
+          show_calls: true
+          call_zenoh_key: nodes/carplay/call
+          call_accent_color: "#39B54A"
+          transition_ms: 260
+          call_linger_ms: 1600
+      - id: nav
+        x: 810
+        y: 160
+        width: 380
+        height: 150
+        type: carplay_nav
+        config:
+          zenoh_key: nodes/carplay/nav
+          imperial_units: false
+          show_trip_summary: true
+          arrow_color: "#39B54A"
+          distance_color: "#FFFFFF"
+          road_color: "#FFFFFF"
+          detail_color: "#AAAAAA"
+          background_color: "#111111"
+          idle_text: No route

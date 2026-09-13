@@ -5,7 +5,10 @@
 #include <QPoint>
 #include <QPointer>
 #include <QMouseEvent>
+#include <QSize>
+#include <cstddef>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "dashboard/app_config.h"
@@ -22,18 +25,63 @@ public:
     void setBackgroundColor(const QString& hexColor);
     // Enable/disable editor mode (selection, resize, gridlines, event interception)
     void setEditorMode(bool enabled);
-    // Clear and populate from a dashboard window configuration
+    // Clear and populate from one window. The document becomes just that window.
     void loadFromAppConfig(const app_config_t& app_cfg);
-    // Export current canvas as a window configuration.
+    // Export the window on the canvas.
     app_config_t exportAppConfig() const;
     // Current background color hex string (e.g. "#1e1e1e")
     QString getBackgroundColorHex() const;
+
+    // ------------------------------------------------------------------ windows
+    //
+    // A document is one or more windows, and the canvas shows one at a time.
+    // The others are held as configs rather than live widgets: building a
+    // window nobody is looking at would start its subscriptions (CarPlay's
+    // decoder among them) for nothing.
+    void loadDocument(const dashboard_config_t& doc);
+    // Every window, with the one on the canvas exactly as it stands.
+    dashboard_config_t exportDocument() const;
+
+    struct WindowSummary
+    {
+        std::string name;
+        display_role_t display;
+        scale_mode_t scale;
+        int width;
+        int height;
+    };
+    std::vector<WindowSummary> windowSummaries() const;
+
+    std::size_t windowCount() const { return document_.windows.size(); }
+    std::size_t activeWindow() const { return activeWindow_; }
+
+    // Shows another window. Not an edit: nothing in the document changes.
+    bool selectWindow(std::size_t index);
+
+    // Adds a window and shows it. Undoable. A window with no name is given a
+    // fresh one; with no display, the first one no window has yet. Refused
+    // (nullopt) when every display is taken or the name is already used,
+    // because either would save a file the loader rejects.
+    std::optional<std::size_t> addWindow(std::string name = {},
+                                         std::optional<display_role_t> display = std::nullopt,
+                                         QSize size = QSize());
+
+    // Undoable. The last window cannot be removed.
+    bool removeWindow(std::size_t index);
 
     // The window's name, carried through load -> save so a config keeps the one
     // it arrived with. The canvas owns it for the same reason it owns the
     // background colour: it is window state, and it has to survive an export.
     const std::string& windowName() const { return windowName_; }
-    void setWindowName(std::string name) { windowName_ = std::move(name); }
+    void setWindowName(std::string name);
+
+    display_role_t display() const { return display_; }
+    // Choosing a display another window already has swaps the two, so the
+    // document never holds two windows on one display.
+    void setDisplay(display_role_t display);
+
+    scale_mode_t scale() const { return scale_; }
+    void setScale(scale_mode_t scale);
 
     // Dialog-free, event-free editing. dropEvent is a thin wrapper over
     // addWidget, so a widget added by an agent and one added by dragging from
@@ -118,6 +166,10 @@ signals:
     // so the window can update its title and menu without polling.
     void historyChanged();
 
+    // The window list or the window being shown may have changed: a window was
+    // added, removed, selected or renamed, or had its display changed.
+    void windowsChanged();
+
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -149,6 +201,18 @@ private:
     std::size_t nextNameIndex_ = 0;
 
     std::string windowName_;
+    display_role_t display_ = display_role_t::primary;
+    scale_mode_t scale_ = scale_mode_t::fit;
+
+    // Every window of the document. The entry at activeWindow_ is stale while
+    // that window is on the canvas -- the live widgets are its truth -- and is
+    // written back whenever the canvas stops showing it or the document is
+    // exported.
+    dashboard_config_t document_;
+    std::size_t activeWindow_ = 0;
+
+    // Rebuilds the canvas from one window, leaving document_ alone.
+    void loadWindow(const app_config_t& window);
 
     // The configured background, verbatim. Authoritative -- the widget's palette
     // is derived from it and never read back. See setBackgroundColor().

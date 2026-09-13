@@ -11,6 +11,7 @@
 #include "config_codec/config_validation.h"
 #include "config_codec/config_yaml.h"
 #include "dashboard/widget_types.h"
+#include "dashboard/window_placement.h"
 #include "helpers/color.h"
 
 #include "editor/widget_registry.h"
@@ -82,13 +83,36 @@ struct widget_config_t {
     widget_config_variant_t config;
 };
 
+// One window: its design size, where it goes, and what is in it.
+//
+// Named app_config_t for history -- it was the whole config when a dashboard was
+// one window, and the editor's canvas still edits exactly one of these. The file
+// as a whole is dashboard_config_t below.
 REFLECT_STRUCT(app_config_t,
     (std::string, name, ""),
     (uint16_t, width, 800),
     (uint16_t, height, 480),
     (helpers::Color, background_color, "#000000"),
+    (display_role_t, display, display_role_t::primary),
+    (scale_mode_t, scale, scale_mode_t::fit),
     (std::vector<widget_config_t>, widgets, {})
 )
+
+// A whole config file: one or more windows.
+//
+// Written either as a `windows:` list or, for the one-window case, in the flat
+// form every config used before there could be more than one -- the window's own
+// keys at the top level. Both load; see YAML::convert<dashboard_config_t> for
+// which one is written.
+struct dashboard_config_t
+{
+    // The document's name. Only the `windows:` form has a place for it: in the
+    // flat form the top-level `name:` is the window's.
+    std::string name;
+    std::vector<app_config_t> windows;
+
+    bool operator==(const dashboard_config_t&) const = default;
+};
 
 // The generic half of this -- operator== and the YAML conversions for every
 // reflected struct and enum -- lives in config_codec/config_yaml.h. Only the
@@ -183,15 +207,101 @@ struct convert<widget_config_t> {
     }
 };
 
+// Hand-written rather than the generic reflected conversion for one reason: the
+// placement keys are omitted while they hold their defaults. Every config written
+// before windows had a display would otherwise gain `display: primary` and
+// `scale: fit` the first time the editor saved it.
+template<>
+struct convert<app_config_t> {
+    static Node encode(const app_config_t& rhs)
+    {
+        Node node = {};
+        node["name"] = rhs.name;
+        node["width"] = rhs.width;
+        node["height"] = rhs.height;
+        node["background_color"] = rhs.background_color;
+        if (rhs.display != display_role_t::primary)
+        {
+            node["display"] = rhs.display;
+        }
+        if (rhs.scale != scale_mode_t::fit)
+        {
+            node["scale"] = rhs.scale;
+        }
+        node["widgets"] = rhs.widgets;
+        return node;
+    }
+
+    static bool decode(const Node& node, app_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["name"]) rhs.name = node["name"].as<std::string>();
+        if (node["width"]) rhs.width = node["width"].as<uint16_t>();
+        if (node["height"]) rhs.height = node["height"].as<uint16_t>();
+        if (node["background_color"]) rhs.background_color = node["background_color"].as<helpers::Color>();
+        if (node["display"]) rhs.display = node["display"].as<display_role_t>();
+        if (node["scale"]) rhs.scale = node["scale"].as<scale_mode_t>();
+        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
+        return true;
+    }
+};
+
+template<>
+struct convert<dashboard_config_t> {
+    // True when the document says nothing the flat form cannot: one window, on
+    // the default display, and no document name. Written flat in that case, so
+    // every single-window config stays byte-identical through an editor save.
+    static bool fitsFlatForm(const dashboard_config_t& rhs)
+    {
+        return rhs.windows.size() == 1 && rhs.name.empty() &&
+               rhs.windows.front().display == display_role_t::primary &&
+               rhs.windows.front().scale == scale_mode_t::fit;
+    }
+
+    static Node encode(const dashboard_config_t& rhs)
+    {
+        if (fitsFlatForm(rhs))
+        {
+            return convert<app_config_t>::encode(rhs.windows.front());
+        }
+
+        Node node = {};
+        if (!rhs.name.empty())
+        {
+            node["name"] = rhs.name;
+        }
+        node["windows"] = rhs.windows;
+        return node;
+    }
+
+    static bool decode(const Node& node, dashboard_config_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+
+        rhs = dashboard_config_t{};
+        if (node["windows"])
+        {
+            if (node["name"]) rhs.name = node["name"].as<std::string>();
+            rhs.windows = node["windows"].as<std::vector<app_config_t>>();
+        }
+        else
+        {
+            rhs.windows.push_back(node.as<app_config_t>());
+        }
+        return true;
+    }
+};
+
 }   // namespace YAML
 
 
 // Checks a parsed config tree and returns everything wrong with it, each with a
-// path like "widgets[3].config.zenoh_key". Errors mean the file cannot be loaded
+// path like "widgets[3].config.zenoh_key" (flat form) or
+// "windows[1].widgets[3].config.zenoh_key". Errors mean the file cannot be loaded
 // as written; warnings mean something in it was ignored.
 std::vector<config_codec::Issue> validate_app_config(const YAML::Node& root);
 
-std::optional<app_config_t> load_app_config(const std::string& config_filepath);
+std::optional<dashboard_config_t> load_dashboard_config(const std::string& config_filepath);
 
 
 

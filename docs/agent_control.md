@@ -102,6 +102,14 @@ widget produces a confident wrong conclusion, which is worse than failing.
 Both apps name widgets by the same rule (`dashboard/include/dashboard/widget_identity.h`),
 so one selector addresses the same widget in the dashboard and in the editor.
 
+**A config with several windows** (see [displays.md](displays.md)) gives the
+dashboard several `MainWindow` roots. Each window's objectName is its `name:`
+from the config, so `#carplay` addresses the window. Derived names count per
+window, so `static_text#0` can exist in two windows. A selector that matches
+both is an ambiguity error, which lists the candidates. Give such widgets an
+`id:`. The editor shows one window at a time, so its selectors only ever see the
+window on the canvas. Switch windows with `editor.select_window`.
+
 ## The coordinate contract
 
 > **Every coordinate is a logical pixel, local to the widget you name. There are
@@ -289,7 +297,7 @@ Everything in the plan is implemented:
 | Input | `input.click`, `input.key`, `input.type`, `input.drag`, `input.drop` |
 | Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
 | Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
-| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load` |
+| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load`, `editor.windows`, `editor.select_window`, `editor.add_window`, `editor.remove_window` |
 | Scope | `scope.panels`, `scope.add_panel`, `scope.remove_panel`, `scope.add_signal`, `scope.remove_signal`, `scope.browser`, `scope.browser_drag`, `scope.time_base`, `scope.panel_get_config`, `scope.panel_set_config`, `scope.panel_describe_config`, `scope.save`, `scope.load`, `scope.sample_stats` (see `docs/scope.md`) |
 | Meta | `rpc.methods` |
 

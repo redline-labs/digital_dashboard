@@ -18,6 +18,8 @@
 #include <QFileDialog>
 #include <QKeySequence>
 #include <QMessageBox>
+#include <QComboBox>
+#include <QSignalBlocker>
 #include "spdlog/spdlog.h"
 #include "dashboard/app_config.h"
 
@@ -71,6 +73,34 @@ EditorWindow::EditorWindow(QWidget* parent) :
 
     auto* tb = addToolBar("Main");
     tb->setMovable(false);
+
+    // A config can hold several windows; the canvas shows one at a time.
+    tb->addWidget(new QLabel(" Window ", this));
+    windowCombo_ = new QComboBox(this);
+    windowCombo_->setObjectName("editor:window");
+    windowCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    tb->addWidget(windowCombo_);
+    addWindowAction_ = tb->addAction("Add Window");
+    addWindowAction_->setToolTip("Add a window on the first display no window has yet.");
+    removeWindowAction_ = tb->addAction("Remove Window");
+    removeWindowAction_->setToolTip("Remove the window being shown.");
+
+    // activated, not currentIndexChanged: only a person choosing should switch,
+    // never the list being rebuilt.
+    connect(windowCombo_, &QComboBox::activated, this, [this](int index)
+    {
+        if (canvas_ && index >= 0) canvas_->selectWindow(static_cast<std::size_t>(index));
+    });
+    connect(addWindowAction_, &QAction::triggered, this, [this]
+    {
+        if (canvas_) canvas_->addWindow();
+    });
+    connect(removeWindowAction_, &QAction::triggered, this, [this]
+    {
+        if (canvas_) canvas_->removeWindow(canvas_->activeWindow());
+    });
+    connect(canvas_, &Canvas::windowsChanged, this, &EditorWindow::refreshWindowList);
+    refreshWindowList();
     statusBar()->showMessage("Drag widgets from the left onto the canvas");
 
     // Add a toggle to control whether the canvas intercepts interactions
@@ -159,6 +189,45 @@ void EditorWindow::updateHistoryUi()
                        .arg(canvas_->isDirty() ? " *" : ""));
 }
 
+void EditorWindow::refreshWindowList()
+{
+    if (!canvas_ || !windowCombo_)
+    {
+        return;
+    }
+
+    const auto windows = canvas_->windowSummaries();
+    {
+        const QSignalBlocker block(windowCombo_);
+        windowCombo_->clear();
+        for (const auto& window : windows)
+        {
+            windowCombo_->addItem(QString("%1 (%2)")
+                                      .arg(QString::fromStdString(window.name))
+                                      .arg(QString::fromStdString(std::string(reflection::enum_to_string(window.display)))));
+        }
+        windowCombo_->setCurrentIndex(static_cast<int>(canvas_->activeWindow()));
+    }
+
+    removeWindowAction_->setEnabled(windows.size() > 1);
+    addWindowAction_->setEnabled(windows.size() < enum_values(display_role_t{}).size());
+
+    // The canvas clears the selection when it swaps windows, which blanks the
+    // panel before the new window's fields are in place. Only then, not on every
+    // rename: re-syncing while the name field is being typed in would move its
+    // cursor.
+    if (canvas_->activeWindow() != shownWindow_ || windows.size() != shownWindowCount_)
+    {
+        shownWindow_ = canvas_->activeWindow();
+        shownWindowCount_ = windows.size();
+        if (propertiesPanel_)
+        {
+            propertiesPanel_->syncFromCanvas();
+        }
+    }
+    updateHistoryUi();
+}
+
 // Nothing used to stand between an unsaved layout and a closed window.
 void EditorWindow::closeEvent(QCloseEvent* event)
 {
@@ -214,7 +283,7 @@ bool EditorWindow::loadConfigFrom(const QString& path)
     }
 
     SPDLOG_INFO("Loading dashboard config from: {}", path.toStdString());
-    auto cfg = load_app_config(path.toStdString());
+    auto cfg = load_dashboard_config(path.toStdString());
     if (!cfg)
     {
         SPDLOG_ERROR("Config failed to load: {}", path.toStdString());
@@ -226,17 +295,21 @@ bool EditorWindow::loadConfigFrom(const QString& path)
         return false;
     }
 
-    canvas_->loadFromAppConfig(cfg.value());
+    canvas_->loadDocument(cfg.value());
 
     // A freshly loaded document is clean, and its history starts here -- undoing
     // past a load into the previous document would be nonsense.
     canvas_->clearHistory();
     canvas_->markSaved();
 
-    statusBar()->showMessage(QString("Loaded '%1' (%2x%3)")
-                             .arg(QString::fromStdString(cfg.value().name))
-                             .arg(cfg.value().width)
-                             .arg(cfg.value().height), 3000);
+    const app_config_t& first = cfg.value().windows.front();
+    statusBar()->showMessage(QString("Loaded '%1' (%2x%3)%4")
+                             .arg(QString::fromStdString(first.name))
+                             .arg(first.width)
+                             .arg(first.height)
+                             .arg(cfg.value().windows.size() > 1
+                                      ? QString(", 1 of %1 windows").arg(cfg.value().windows.size())
+                                      : QString()), 3000);
     if (propertiesPanel_)
     {
         // Clear the selection first: the panel's form points at frames the load
@@ -255,15 +328,16 @@ bool EditorWindow::saveConfigTo(const QString& path)
         return false;
     }
 
-    // Export current canvas to a single-window app config. The name comes from
-    // the canvas, which carries the one the config was loaded with -- this used
-    // to be hardcoded to "editor_window", so load-then-save renamed every
-    // config it touched.
-    app_config_t app = canvas_->exportAppConfig();
+    // Export every window. The names come from the canvas, which carries the
+    // ones the config was loaded with -- this used to be hardcoded to
+    // "editor_window", so load-then-save renamed every config it touched. A
+    // one-window document is written in the flat form it was most likely read
+    // in; see YAML::convert<dashboard_config_t>.
+    const dashboard_config_t doc = canvas_->exportDocument();
 
     try
     {
-        YAML::Node node = YAML::convert<app_config_t>::encode(app);
+        YAML::Node node = YAML::convert<dashboard_config_t>::encode(doc);
         YAML::Emitter emitter;
         emitter << node;
 

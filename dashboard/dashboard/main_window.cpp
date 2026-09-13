@@ -15,6 +15,10 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
     _app_cfg{app_cfg}
 {
     setWindowTitle(QString("Redline Dash - %1").arg(QString::fromStdString(_app_cfg.name)));
+
+    // Addressable as "#<window name>" once a config has more than one window,
+    // where every root is a MainWindow and the class name alone no longer picks one.
+    setObjectName(QString::fromStdString(_app_cfg.name));
     setFixedSize(_app_cfg.width, _app_cfg.height);
 
     // Set background color from configuration
@@ -42,7 +46,8 @@ void MainWindow::createWidgetsFromConfig()
             dashboard::applyWidgetIdentity(widget, widget_config, this_index);
 
             // Set position
-            widget->setGeometry(widget_config.x, widget_config.y, widget_config.width, widget_config.height);
+            widget->setGeometry(_origin.x() + widget_config.x, _origin.y() + widget_config.y,
+                                widget_config.width, widget_config.height);
             widget->show();
 
             // Store the widget alongside the config entry it came from, so a
@@ -70,6 +75,40 @@ void MainWindow::createWidgetsFromConfig()
 const std::string& MainWindow::getWindowName() const
 {
     return _app_cfg.name;
+}
+
+void MainWindow::showOnScreen(QScreen* screen)
+{
+    setScreen(screen);
+
+    // The design size was pinned as both minimum and maximum, which would hold a
+    // full-screen window to it. The layout keeps its size regardless; only the
+    // window grows around it.
+    setMinimumSize(0, 0);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    showFullScreen();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+
+    // Centre the layout. Negative when the window is smaller than the design --
+    // a `scale: none` window on a small panel -- which crops both edges evenly
+    // rather than all of it off the right and bottom.
+    const QPoint origin((width() - static_cast<int>(_app_cfg.width)) / 2,
+                        (height() - static_cast<int>(_app_cfg.height)) / 2);
+    if (origin == _origin)
+    {
+        return;
+    }
+
+    const QPoint delta = origin - _origin;
+    _origin = origin;
+    for (const LiveWidget& live : _widgets)
+    {
+        live.widget->move(live.widget->pos() + delta);
+    }
 }
 
 bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
@@ -109,8 +148,9 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
             const std::string id = _app_cfg.widgets[cfg_index].id;
             _app_cfg.widgets[cfg_index] = cfg;
             _app_cfg.widgets[cfg_index].id = id;
-            _app_cfg.widgets[cfg_index].x = static_cast<int16_t>(geometry.x());
-            _app_cfg.widgets[cfg_index].y = static_cast<int16_t>(geometry.y());
+            // Back in layout coordinates: the live geometry includes the letterbox.
+            _app_cfg.widgets[cfg_index].x = static_cast<int16_t>(geometry.x() - _origin.x());
+            _app_cfg.widgets[cfg_index].y = static_cast<int16_t>(geometry.y() - _origin.y());
             _app_cfg.widgets[cfg_index].width = static_cast<uint16_t>(geometry.width());
             _app_cfg.widgets[cfg_index].height = static_cast<uint16_t>(geometry.height());
         }
