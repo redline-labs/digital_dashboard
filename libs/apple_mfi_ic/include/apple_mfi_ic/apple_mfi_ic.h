@@ -67,6 +67,9 @@ public:
     };
     
     AppleMFIIC();
+    // Uses the given bus instead of creating one in init(): tests, and any
+    // backend the i2c_bus factory does not know about. init() still opens it.
+    explicit AppleMFIIC(std::unique_ptr<i2c::Bus> bus);
     ~AppleMFIIC();
     
     // Opens the I2C bus and wakes the coprocessor. `bus_hint` names the adapter

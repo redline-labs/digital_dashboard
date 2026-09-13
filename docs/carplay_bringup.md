@@ -1032,8 +1032,22 @@ came straight after the write, inside the busy window, and re-issuing the
 though `i2cdetect` saw the part. Over the MCP2221A the USB round trip had
 hidden the window. `AppleMFIIC::read_register` therefore retries a NACKed
 write (pointer unset) but retries the *read alone* after a good write, 0.5 ms
-apart for up to ~20 ms, before redoing the pair. Do not "simplify" that away,
+apart for up to 25 ms, before redoing the pair. Do not "simplify" that away,
 and do not put the read back-to-back with the write.
+
+The read retry is bounded by *time*, not by a count, because one failed read
+costs ~0.2 ms on the native controller and ~12 ms over the hidapi bridge (the
+engine latches on a NACK and has to be polled back to idle). A count tuned for
+one transport is useless or a stall on the other; 25 ms is under the part's
+idle-to-sleep threshold on both. The same logic serves both paths — the Linux
+controller and the MCP2221A are just different `i2c::Bus` backends — and
+`libs/apple_mfi_ic/tests/test_apple_mfi_ic.cpp` drives it against a fake
+coprocessor with the measured timing on a native-shaped and a bridge-shaped
+transport, checking device info, a full challenge, and the wall time of each.
+One physical limit the fake makes explicit: a transport whose NACK recovery
+takes longer than the part's ~30 ms sleep threshold can never wake it, because
+the recovery itself is idle time. The hidapi backend's ~12 ms is inside that;
+keep it there.
 
 **Two MCP2221A behaviours worth knowing.** These bit us on the userspace hidapi
 path used on macOS; the kernel driver handles both itself, so they are invisible

@@ -23,6 +23,12 @@ AppleMFIIC::AppleMFIIC()
 {
 }
 
+AppleMFIIC::AppleMFIIC(std::unique_ptr<i2c::Bus> bus)
+    : bus_(std::move(bus))
+    , connected_(false)
+{
+}
+
 AppleMFIIC::~AppleMFIIC()
 {
     close();
@@ -48,9 +54,17 @@ namespace
 //
 // So: a NACKed write is retried after a short pause, and the read after a
 // successful write is retried on its own, briefly, before the pair is redone.
+//
+// The read retry is bounded by TIME, not by a count, because the cost of one
+// failed read depends on the transport: ~0.2 ms on a native controller, but
+// tens of milliseconds over the MCP2221A bridge (the engine has to be
+// unlatched and re-polled). A fixed count that suits one is either useless or
+// a multi-second stall on the other. 25 ms is under the part's idle-to-sleep
+// threshold, so a read that has not succeeded by then is not going to: the
+// pointer must be re-selected, which the outer loop does.
 constexpr int kTransactionAttempts = 8;
 constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(2);
-constexpr int kReadAfterWriteAttempts = 40;
+constexpr auto kReadAfterWriteWindow = std::chrono::milliseconds(25);
 constexpr auto kReadAfterWriteDelay = std::chrono::microseconds(500);
 }  // namespace
 
@@ -100,7 +114,10 @@ bool AppleMFIIC::init(const std::string& bus_hint)
             hint = env;
         }
     }
-    bus_ = i2c::makeBus(hint);
+    if (!bus_)
+    {
+        bus_ = i2c::makeBus(hint);
+    }
     if (!bus_ || !bus_->open())
     {
         SPDLOG_ERROR("Failed to open the I2C bus for the Apple MFI IC");
@@ -157,7 +174,8 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
             std::this_thread::sleep_for(kTransactionRetryDelay);
             continue;
         }
-        for (int read_attempt = 0; read_attempt < kReadAfterWriteAttempts; ++read_attempt)
+        const auto deadline = std::chrono::steady_clock::now() + kReadAfterWriteWindow;
+        for (int read_attempt = 0;; ++read_attempt)
         {
             auto data = bus_->read(I2C_ADDRESS, length);
             if (!data.empty())
@@ -168,6 +186,10 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
                                  static_cast<uint8_t>(reg), attempt + 1, read_attempt + 1);
                 }
                 return data;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
             }
             std::this_thread::sleep_for(kReadAfterWriteDelay);
         }

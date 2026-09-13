@@ -30,3 +30,12 @@ target_link_libraries(apple_mfi_demo PRIVATE
     # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
     spdlog::spdlog
 )
+
+# The retry policy against a fake coprocessor with the measured timing, on a
+# native-controller and a bridge-shaped transport.
+add_executable(apple_mfi_ic_test tests/test_apple_mfi_ic.cpp)
+target_link_libraries(apple_mfi_ic_test PRIVATE
+    apple_mfi_ic
+    spdlog::spdlog
+)
+add_test(NAME apple_mfi_ic_test COMMAND apple_mfi_ic_test)
