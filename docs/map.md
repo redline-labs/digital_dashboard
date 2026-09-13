@@ -534,7 +534,7 @@ One entry in `configs/map_server.yaml`:
 ```yaml
 tilesets:
   - name: socal
-    path: /Users/ryan/Documents/map_data/socal.mbtiles
+    path: ${REDLINE_DATA_DIR}/maps/socal.mbtiles
 ```
 
 The **name** is what clients ask for; the path is nobody's business but the

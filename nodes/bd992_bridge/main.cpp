@@ -29,6 +29,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include "bd992/control_client.h"
@@ -270,8 +271,7 @@ void publishStatus(pub_sub::ZenohPublisher<::Bd992Status>& publisher, const Node
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "bd992_bridge"});
 
     std::string configPath;
     std::string replayPath;

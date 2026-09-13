@@ -12,6 +12,7 @@ add_executable(backlight
 )
 
 target_link_libraries(backlight PRIVATE
+    core
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

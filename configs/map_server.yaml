@@ -6,18 +6,22 @@
 # --check opens every archive and says what is in it without touching zenoh,
 # which is the fastest way to find out whether a path is right.
 
+# Paths: ${REDLINE_DATA_DIR} is /data on the target and, when the variable is unset
+# on a desktop, the per-user data directory (~/.local/share/redline on Linux,
+# ~/Library/Application Support/redline on macOS). Relative paths resolve against
+# this file. See docs/environment.md.
 tilesets:
   # The name is what clients ask for and what appears in a tile URL; the path
   # is nobody's business but this node's. Renaming the file changes one line
   # here and nothing in any style or layout.
   - name: socal
-    path: /Users/ryan/Documents/map_data/socal.mbtiles
+    path: ${REDLINE_DATA_DIR}/maps/socal.mbtiles
 
   # The race-track layer, built by a verb that never opens a PBF:
   #
   #   ./build/tools/map_build/map_build tracks \
-  #       --input /Users/ryan/Documents/map_data/tracks \
-  #       --output /Users/ryan/Documents/map_data/tracks.mbtiles \
+  #       --input ${REDLINE_DATA_DIR}/maps/tracks \
+  #       --output ${REDLINE_DATA_DIR}/maps/tracks.mbtiles \
   #       --report /tmp/tracks_qa.csv
   #
   # A SEPARATE ARCHIVE, and that is the whole point: new track maps arrive on
@@ -29,19 +33,19 @@ tilesets:
   # The dashboard asks for it as an OVERLAY alongside the basemap; see
   # `overlay_tilesets` in configs/dashboard/map_demo.yaml.
   - name: tracks
-    path: /Users/ryan/Documents/map_data/tracks.mbtiles
+    path: ${REDLINE_DATA_DIR}/maps/tracks.mbtiles
 
 # The routable road network, built by tools/map_build:
 #
 #   ./build/tools/map_build/map_build graph \
-#       --input /Users/ryan/Documents/map_data/socal-260813.osm.pbf \
-#       --output /Users/ryan/Documents/map_data/socal.graph
+#       --input ${REDLINE_DATA_DIR}/maps/socal-260813.osm.pbf \
+#       --output ${REDLINE_DATA_DIR}/maps/socal.graph
 #
 # Named, not pathed, exactly as a tileset is. Absent is fine: without one the
 # nearest/route services answer noSuchGraph and the tiles are unaffected.
 graphs:
   - name: socal
-    path: /Users/ryan/Documents/map_data/socal.graph
+    path: ${REDLINE_DATA_DIR}/maps/socal.graph
 
 # The race-track CATALOGUE, which lives in extra tables inside the same file the
 # `tracks` tileset above draws from.
@@ -57,7 +61,7 @@ graphs:
 # simplifies and clips, so none of those survive it.
 tracksets:
   - name: tracks
-    path: /Users/ryan/Documents/map_data/tracks.mbtiles
+    path: ${REDLINE_DATA_DIR}/maps/tracks.mbtiles
 
 services:
   tile_key: map/tile

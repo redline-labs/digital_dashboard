@@ -17,6 +17,7 @@ add_executable(xpr_bridge
 
 target_link_libraries(xpr_bridge
     PRIVATE
+    core
         xpr
         mototrbo
         zenoh_pub_sub

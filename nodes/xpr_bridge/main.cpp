@@ -28,6 +28,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include "node_config.h"
@@ -177,8 +178,7 @@ void publishStatus(pub_sub::ZenohPublisher<::XprRadioStatus>& publisher, const N
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "xpr_bridge"});
 
     std::string configPath;
     bool probe = false;

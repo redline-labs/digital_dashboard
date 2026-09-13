@@ -18,6 +18,7 @@ add_executable(mti610_bridge
 
 target_link_libraries(mti610_bridge
     PRIVATE
+    core
         mti610
         xbus
         zenoh_pub_sub

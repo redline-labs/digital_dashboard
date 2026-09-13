@@ -39,6 +39,7 @@
 #include "pub_sub/zenoh_subscriber.h"
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <atomic>
@@ -468,8 +469,7 @@ void print_channel_list(const can::Registry& registry)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "can_bridge"});
 
     cxxopts::Options options("can_bridge", "Bridge CAN hardware to zenoh topics");
     options.add_options()

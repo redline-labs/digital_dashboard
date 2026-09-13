@@ -10,6 +10,7 @@ add_executable(can_bridge
 
 target_link_libraries(can_bridge
     PRIVATE
+    core
         can
         can_backends
         can_trc

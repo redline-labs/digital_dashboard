@@ -4,13 +4,12 @@
 #include "scope/scope_window.h"
 
 #include "agent_control/log_sink.h"
+#include "core/core.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
 #include "agent_control/zenoh_methods.h"
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <unistd.h>
 
@@ -25,8 +24,6 @@
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
     // Parse before touching sinks or Qt: --mcp changes both where logs go and
     // which platform plugin QApplication will pick, and the platform can only
     // be chosen before QApplication is constructed.
@@ -38,34 +35,20 @@ int main(int argc, char** argv)
 
     const bool agent_mode = args->mcp_socket_path.has_value();
 
+    // Pattern, level and sinks from libs/core (see core::setupLogging); in
+    // agent mode stdout is the handshake channel, so logs go to stderr only.
+    core::setupLogging({.program = "scope", .debug = args->debug_enabled, .stderr_only = agent_mode});
+
     if (agent_mode)
     {
         // Headless, always. No window manager, no display, no way for a stray
         // window to steal focus on a developer's desktop.
         qputenv("QT_QPA_PLATFORM", "offscreen");
 
-        // stdout carries the AGENT_READY handshake line and nothing else, so
-        // the supervising process can parse it without wading through log
-        // output. Logs go to stderr, which the companion server captures for
-        // post-mortem after a crash (the in-process ring dies with the process).
-        spdlog::default_logger()->sinks().clear();
-        spdlog::default_logger()->sinks().push_back(
-            std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
-
         // The queryable ring behind app.logs, plus the bridge that routes Qt's
         // own diagnostics into the same stream.
         agent_control::installLogCapture();
     }
-    else
-    {
-        const size_t max_size_bytes = 5u * 1024u * 1024u;
-        const size_t max_files = 3u;
-        spdlog::default_logger()->sinks().push_back(
-            std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                "logs/scope.txt", max_size_bytes, max_files, true));
-    }
-
-    spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
 
     // NodeIdentity is NOT declared here. Constructing it opens a zenoh session
     // (SessionManager::getOrCreate), and scope starts OFFLINE -- a process that

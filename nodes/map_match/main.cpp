@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <cxxopts.hpp>
@@ -87,8 +88,7 @@ int runCheck(const map_match::NodeConfig& config)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "map_match"});
 
     std::string configPath;
     bool check = false;

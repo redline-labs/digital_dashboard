@@ -7,6 +7,7 @@
 #include "motec_ltc.capnp.h"
 
 #include <span>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -95,7 +96,7 @@ static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::Zenoh
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::debug);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "motec_ltc"});
 
     cxxopts::Options options("motec_ltc", "MoTeC LTC node");
     options.add_options()

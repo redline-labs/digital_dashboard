@@ -58,6 +58,7 @@
 #include "msel_master_relay.capnp.h"
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -264,7 +265,7 @@ void fillConfig(const msel::Config& config, MselMasterRelayConfig::Builder out)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "msel_master_relay"});
 
     cxxopts::Options options("msel_master_relay",
                              "MSEL Master Relay node: publishes isolator state and exposes its "

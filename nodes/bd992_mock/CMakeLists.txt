@@ -16,6 +16,7 @@ target_include_directories(bd992_mock PRIVATE
 )
 
 target_link_libraries(bd992_mock PRIVATE
+    core
     # For road_graph/geometry.h -- the distance, bearing and 1e-7 fixed-point
     # vocabulary the whole map half of this tree already speaks. Header-only,
     # but linking the target is how its include directory arrives.

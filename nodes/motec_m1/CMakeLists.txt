@@ -11,6 +11,7 @@ target_include_directories(motec_m1 PRIVATE
 )
 
 target_link_libraries(motec_m1 PRIVATE
+    core
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

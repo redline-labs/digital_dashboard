@@ -7,6 +7,7 @@
 #include "megasquirt.capnp.h"
 
 #include <span>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -64,7 +65,7 @@ static void publish_dash(const dbc_megasquirt_dash_data_parser::db_t& db, pub_su
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::debug);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "megasquirt"});
 
     cxxopts::Options options("megasquirt", "Megasquirt dash node");
     options.add_options()

@@ -58,6 +58,7 @@ qt_add_executable(${PROJECT_NAME}
 #set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    core
     Qt6::Core
     Qt6::Widgets
 
@@ -204,6 +205,7 @@ target_link_libraries(editor_test_roundtrip PRIVATE
 add_project_test(TARGET editor_test_roundtrip LABELS dashboard gui)
 
 target_link_libraries(editor PRIVATE
+    core
     Qt6::Core
     Qt6::Widgets
 

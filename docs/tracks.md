@@ -5,8 +5,8 @@ that is rebuilt independently of the basemap.
 
 ```bash
 ./build/tools/map_build/map_build tracks \
-    --input /Users/ryan/Documents/map_data/tracks \
-    --output /Users/ryan/Documents/map_data/tracks.mbtiles \
+    --input ${REDLINE_DATA_DIR}/maps/tracks \
+    --output ${REDLINE_DATA_DIR}/maps/tracks.mbtiles \
     --report /tmp/tracks_qa.csv
 ```
 

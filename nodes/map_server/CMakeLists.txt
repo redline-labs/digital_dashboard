@@ -26,6 +26,7 @@ add_executable(map_server
 
 target_link_libraries(map_server
     PRIVATE
+    core
         mbtiles
         # The race-track catalogue, in extra tables inside the same .mbtiles.
         track_store
@@ -52,6 +53,7 @@ target_include_directories(map_server_test_config PRIVATE ${CMAKE_CURRENT_SOURCE
 
 target_link_libraries(map_server_test_config
     PRIVATE
+    core
         zenoh_pub_sub
         spdlog::spdlog
         yaml-cpp::yaml-cpp
@@ -72,6 +74,7 @@ target_include_directories(map_server_test_assets PRIVATE ${CMAKE_CURRENT_SOURCE
 
 target_link_libraries(map_server_test_assets
     PRIVATE
+    core
         mbtiles
         spdlog::spdlog
 )
@@ -91,6 +94,7 @@ target_include_directories(map_server_test_graphs PRIVATE .)
 
 target_link_libraries(map_server_test_graphs
     PRIVATE
+    core
         road_graph
         map_rules
         zenoh_pub_sub
@@ -112,6 +116,7 @@ target_include_directories(map_server_test_tile_range PRIVATE .)
 
 target_link_libraries(map_server_test_tile_range
     PRIVATE
+    core
         mbtiles
         spdlog::spdlog
 )
@@ -130,6 +135,7 @@ target_include_directories(map_server_test_route_endpoints PRIVATE .)
 
 target_link_libraries(map_server_test_route_endpoints
     PRIVATE
+    core
         road_graph
         map_rules
         spdlog::spdlog
@@ -150,6 +156,7 @@ target_include_directories(map_server_test_route_geometry PRIVATE .)
 
 target_link_libraries(map_server_test_route_geometry
     PRIVATE
+    core
         road_graph
         spdlog::spdlog
 )

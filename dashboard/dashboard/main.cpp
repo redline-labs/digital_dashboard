@@ -1,3 +1,4 @@
+#include "core/core.h"
 #include "pub_sub/node_identity.h"
 #include "dashboard/app_config.h"
 #include "dashboard/command_line_args.h"
@@ -11,8 +12,6 @@
 #include "dashboard/widget_methods.h"
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <unistd.h>
 
@@ -37,8 +36,6 @@
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
     // Parse before touching sinks or Qt: --mcp changes both where logs go and
     // which platform plugin QApplication will pick, and the platform can only be
     // chosen before QApplication is constructed.
@@ -51,34 +48,23 @@ int main(int argc, char** argv)
 
     const bool agent_mode = args->mcp_socket_path.has_value();
 
+    // Logging: pattern, level and sinks all come from libs/core, so the
+    // dashboard, the tools and the nodes agree on where logs go. In agent mode
+    // stdout carries the AGENT_READY handshake line and nothing else, so logs go
+    // to stderr only, which the companion server captures for post-mortem.
+    core::setupLogging({.program = "dashboard", .debug = args->debug_enabled, .stderr_only = agent_mode});
+
     if (agent_mode)
     {
         // Headless, always. No window manager, no display, no way for a stray
         // window to steal focus on a developer's desktop.
         qputenv("QT_QPA_PLATFORM", "offscreen");
 
-        // stdout carries the AGENT_READY handshake line and nothing else, so the
-        // supervising process can parse it without wading through log output.
-        // Logs go to stderr, which the companion server captures for post-mortem
-        // after a crash (the in-process ring buffer dies with the process).
-        spdlog::default_logger()->sinks().clear();
-        spdlog::default_logger()->sinks().push_back(
-            std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
-
         // The queryable ring behind app.logs, plus the bridge that routes Qt's
         // own diagnostics into the same stream.
         agent_control::installLogCapture();
     }
-    else
-    {
-        size_t max_size_bytes = 5u * 1024u * 1024u;  // 5MB
-        size_t max_files = 3u;
-        auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("logs/rotating.txt", max_size_bytes, max_files, true);
-        spdlog::default_logger()->sinks().push_back(file_sink);
-    }
 
-    // Set the logging level based on the debug flag
-    spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
 
     // STARTUP TIMING.
     //
@@ -215,6 +201,18 @@ int main(int argc, char** argv)
         return -1;
     }
     SPDLOG_INFO("startup: {} window(s) built and shown at {} ms", windows.size(), since());
+
+    // Readiness means "the cluster is on screen", not "the process is running":
+    // redline-mark-good and the backlight unit on the target key on it. A
+    // zero-length timer runs after the expose and paint events show() posted,
+    // i.e. once the first frame has been painted. No-op outside a Type=notify
+    // unit (no NOTIFY_SOCKET).
+    QTimer::singleShot(0, [&since]() {
+        if (core::systemd::notifyReady())
+        {
+            SPDLOG_INFO("startup: READY sent to systemd at {} ms", since());
+        }
+    });
 
     std::unique_ptr<agent_control::AgentServer> agent;
     if (agent_mode)

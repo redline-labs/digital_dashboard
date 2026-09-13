@@ -10,6 +10,7 @@ add_executable(grayhill_keypad
 
 target_link_libraries(grayhill_keypad
     PRIVATE
+    core
         canopen_grayhill
         canopen
         canopen_zenoh
@@ -39,6 +40,7 @@ add_executable(grayhill_keypad_reconfigure
 
 target_link_libraries(grayhill_keypad_reconfigure
     PRIVATE
+    core
         canopen
         canopen_zenoh
         spdlog::spdlog

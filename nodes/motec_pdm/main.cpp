@@ -1,4 +1,5 @@
 #include <span>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 #include <cxxopts.hpp>
@@ -49,8 +50,7 @@ PdmOutputStatusEnum convert_enum_to_capnp(EnumT input)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] %v");
+    core::setupLogging({.program = "motec_pdm"});
 
     cxxopts::Options options("motec_pdm", "Decode PDM_Generic_Output.dbc frames and publish typed telemetry");
     options.add_options()

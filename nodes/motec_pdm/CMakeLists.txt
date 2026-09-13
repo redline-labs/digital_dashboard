@@ -7,6 +7,7 @@ add_executable(motec_pdm
 )
 
 target_link_libraries(motec_pdm PRIVATE
+    core
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

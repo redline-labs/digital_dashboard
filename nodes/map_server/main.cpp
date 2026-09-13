@@ -15,6 +15,7 @@
 //   --check       open every configured archive AND graph, report, exit
 //   (default)     serve
 
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <cxxopts.hpp>
@@ -212,8 +213,7 @@ int runCheck(const NodeConfig& config)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "map_server"});
 
     std::string configPath;
     bool check = false;

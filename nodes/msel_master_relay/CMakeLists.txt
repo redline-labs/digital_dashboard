@@ -14,6 +14,7 @@ add_executable(msel_master_relay
 )
 
 target_link_libraries(msel_master_relay PRIVATE
+    core
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

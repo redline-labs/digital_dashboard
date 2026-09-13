@@ -25,6 +25,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include "pub_sub/node_identity.h"
@@ -154,8 +155,7 @@ void reportPath(const bd992_mock::Path& path, const bd992_mock::SourceReport& re
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "bd992_mock"});
 
     std::string configPath;
     std::string routeFrom;

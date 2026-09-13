@@ -29,6 +29,7 @@
 #include "display_backlight.capnp.h"
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -142,7 +143,7 @@ void fillSensors(DisplayBacklightStatus::Builder& status, const DisplayRecord& r
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "backlight"});
 
     cxxopts::Options options("backlight",
                              "Display backlight node: publishes the module's backlight, light and "

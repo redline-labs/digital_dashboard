@@ -18,6 +18,7 @@
 
 #include "helpers/ffmpeg_log.h"
 
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -46,8 +47,7 @@ void handleSignal(int)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "carplay"});
     // libavcodec and libswscale otherwise write straight to stderr, untimed and
     // unfiltered, in the middle of our own output.
     helpers::routeFfmpegLogsToSpdlog();

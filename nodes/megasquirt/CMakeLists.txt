@@ -11,6 +11,7 @@ target_include_directories(megasquirt PRIVATE
 )
 
 target_link_libraries(megasquirt PRIVATE
+    core
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc

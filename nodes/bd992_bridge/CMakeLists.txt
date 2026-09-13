@@ -18,6 +18,7 @@ add_executable(bd992_bridge
 
 target_link_libraries(bd992_bridge
     PRIVATE
+    core
         bd992
         gsof
         zenoh_pub_sub

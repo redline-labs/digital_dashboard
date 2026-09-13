@@ -2,11 +2,14 @@
 
 #include "node_config.h"
 
+#include "core/core.h"
+
 #include <yaml-cpp/yaml.h>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -23,6 +26,8 @@ namespace
 // three mistakes takes one run to fix rather than three.
 struct Context
 {
+    // Directory the YAML file came from, for relative paths; empty for a string.
+    std::string base_dir;
     bool ok { true };
 
     void fail(const std::string& message)
@@ -125,6 +130,7 @@ void parseTilesets(const YAML::Node& node, std::vector<TilesetConfig>& out, Cont
         TilesetConfig tileset;
         readString(entry, "name", tileset.name, context, where);
         readString(entry, "path", tileset.path, context, where);
+        tileset.path = core::paths::expand(tileset.path, context.base_dir);
 
         if (tileset.name.empty())
         {
@@ -198,6 +204,7 @@ void parseGraphs(const YAML::Node& node, std::vector<GraphConfig>& out, Context&
         GraphConfig graph;
         readString(entry, "name", graph.name, context, where);
         readString(entry, "path", graph.path, context, where);
+        graph.path = core::paths::expand(graph.path, context.base_dir);
 
         if (graph.name.empty())
         {
@@ -256,6 +263,7 @@ void parseTracksets(const YAML::Node& node, std::vector<TracksetConfig>& out, Co
         TracksetConfig trackset;
         readString(entry, "name", trackset.name, context, where);
         readString(entry, "path", trackset.path, context, where);
+        trackset.path = core::paths::expand(trackset.path, context.base_dir);
 
         if (trackset.name.empty())
         {
@@ -366,9 +374,10 @@ void parseAssets(const YAML::Node& node, AssetConfig& out, Context& context)
 
 } // namespace
 
-bool parse_node_config(const std::string& yaml, NodeConfig& out)
+bool parse_node_config(const std::string& yaml, NodeConfig& out, const std::string& base_dir)
 {
     Context context;
+    context.base_dir = base_dir;
 
     YAML::Node root;
     try
@@ -409,7 +418,7 @@ bool load_node_config(const std::string& path, NodeConfig& out)
 
     const std::string text((std::istreambuf_iterator<char>(file)),
                            std::istreambuf_iterator<char>());
-    return parse_node_config(text, out);
+    return parse_node_config(text, out, std::filesystem::path(path).parent_path().string());
 }
 
 } // namespace map_server

@@ -132,3 +132,5 @@ The following libraries are fetched as part of a CMake step.  For complete licen
 ## License
 
 See `COPYING` for license information.
+
+Runtime environment variables, data and log locations: [docs/environment.md](docs/environment.md).

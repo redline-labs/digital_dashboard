@@ -8,6 +8,7 @@
 #include "editor/editor_window.h"
 
 #include "agent_control/log_sink.h"
+#include "core/core.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
 #include "agent_control/zenoh_methods.h"
@@ -17,7 +18,6 @@
 
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <unistd.h>
 
@@ -108,8 +108,6 @@ std::optional<EditorArgs> parseArgs(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
-
     auto args = parseArgs(argc, argv);
     if (!args)
     {
@@ -118,22 +116,19 @@ int main(int argc, char** argv)
 
     const bool agent_mode = args->mcp_socket_path.has_value();
 
+    // Pattern, level and sinks from libs/core; in agent mode stdout is the
+    // AGENT_READY handshake channel alone, so logs go to stderr.
+    core::setupLogging({.program = "editor", .debug = args->debug_enabled, .stderr_only = agent_mode});
+
     // Must happen before QApplication is constructed -- the platform plugin is
     // chosen during its construction and cannot be changed afterwards.
     if (agent_mode)
     {
         qputenv("QT_QPA_PLATFORM", "offscreen");
 
-        // Keep stdout for the AGENT_READY handshake alone.
-        spdlog::default_logger()->sinks().clear();
-        spdlog::default_logger()->sinks().push_back(
-            std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
-
         // The queryable ring behind app.logs, plus the Qt message bridge.
         agent_control::installLogCapture();
     }
-
-    spdlog::set_level(args->debug_enabled ? spdlog::level::debug : spdlog::level::info);
 
     // Announce this process so tools can put a name to the session id that
     // appears on every topic it advertises and every sample it stamps. This

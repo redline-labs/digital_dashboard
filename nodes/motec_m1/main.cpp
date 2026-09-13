@@ -7,6 +7,7 @@
 #include "motec_m1.capnp.h"
 
 #include <span>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
@@ -413,7 +414,7 @@ static void publishAuxOutput5(const M1_GEN_0x6A1_t& m, pub_sub::ZenohPublisher<M
 int main(int argc, char** argv)
 {
     spdlog::set_level(spdlog::level::debug);
-    spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
+    core::setupLogging({.program = "motec_m1"});
 
     cxxopts::Options options("motec_m1", "MoTeC M1 node");
     options.add_options()

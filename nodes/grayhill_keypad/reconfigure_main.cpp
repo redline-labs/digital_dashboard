@@ -26,6 +26,7 @@
 #include "canopen/zenoh_bus.h"
 
 #include <cxxopts.hpp>
+#include "core/core.h"
 #include <spdlog/spdlog.h>
 
 #include <fstream>
@@ -309,14 +310,14 @@ int execute(const grayhill::Plan& plan, Transport& transport, bool singleNodeBus
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::info);
-    spdlog::set_pattern("[%^%l%$] %v");
+    core::setupLogging({.program = "grayhill_keypad_reconfigure"});
 
     cxxopts::Options options("grayhill_keypad_reconfigure",
                              "Change a Grayhill 3K keypad's configuration, once");
     options.add_options()
         ("config", "Desired-state YAML", cxxopts::value<std::string>())
-        ("eds", "Device EDS", cxxopts::value<std::string>()->default_value(GRAYHILL_EDS_PATH))
+        ("eds", "Device EDS (default: the copy shipped next to this binary, else the checkout's)",
+         cxxopts::value<std::string>()->default_value(core::paths::resource("eds/grayhill/DS401_3K_C.eds")))
         ("transport", "stub or zenoh", cxxopts::value<std::string>()->default_value("stub"))
         ("apply", "Actually write. Without this the tool prints the plan and exits",
          cxxopts::value<bool>()->default_value("false")->implicit_value("true"))

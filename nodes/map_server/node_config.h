@@ -95,7 +95,9 @@ struct NodeConfig
 
 // Both report every problem they find before returning false, so a config with
 // three mistakes takes one run to fix rather than three.
-bool parse_node_config(const std::string& yaml, NodeConfig& out);
+// `base_dir` is the directory the YAML came from: relative paths in it resolve
+// against that, and ${REDLINE_DATA_DIR} / ${VAR} / ~ expand (core::paths::expand).
+bool parse_node_config(const std::string& yaml, NodeConfig& out, const std::string& base_dir = "");
 bool load_node_config(const std::string& path, NodeConfig& out);
 
 } // namespace map_server

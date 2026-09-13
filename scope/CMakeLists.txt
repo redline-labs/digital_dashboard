@@ -177,6 +177,7 @@ qt_add_executable(scope
 )
 
 target_link_libraries(scope PRIVATE
+    core
     scope_core
 
     # Agent control interface (--mcp). Always built in; only listens when the
