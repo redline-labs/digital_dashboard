@@ -133,7 +133,15 @@ bool writeAll(int fd, std::span<const std::uint8_t> data, const std::string& wha
             continue;
         }
 
+        // EAGAIN and EWOULDBLOCK may be the same value and are on Linux and
+        // macOS, which makes the portable two-value test look like a mistake to
+        // -Wlogical-op. The test is deliberate -- POSIX allows them to differ --
+        // so guard it rather than drop a term that another platform needs.
+#if EAGAIN == EWOULDBLOCK
+        if (n < 0 && errno == EAGAIN)
+#else
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+#endif
         {
             // The driver's buffer is full. Wait for room rather than spinning
             // or failing: at a low baud rate this is ordinary.
@@ -196,7 +204,11 @@ ssize_t readSome(int fd, std::span<std::uint8_t> out, unsigned timeoutMs, const 
         return -1;
     }
 
+#if EAGAIN == EWOULDBLOCK
+    if (errno == EINTR || errno == EAGAIN)
+#else
     if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+#endif
     {
         return 0;
     }
