@@ -37,7 +37,7 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor", "scope", "map_server", "bd992_mock"]
+AppName = Literal["dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock"]
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,11 @@ APPS: dict[str, AppSpec] = {
     ),
     "scope": AppSpec(
         binaries=("scope/scope",),
+        controllable=True,
+        ready_marker="AGENT_READY",
+    ),
+    "switchboard": AppSpec(
+        binaries=("switchboard/switchboard",),
         controllable=True,
         ready_marker="AGENT_READY",
     ),

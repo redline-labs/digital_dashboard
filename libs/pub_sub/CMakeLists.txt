@@ -37,6 +37,10 @@ add_library(zenoh_pub_sub STATIC
     capnp_json.cpp
     topic_discovery.cpp
 
+    # A service call where the schema is known only by name: build the request
+    # from JSON, collect every reply. Shared by `inspect call` and switchboard.
+    dynamic_service_call.cpp
+
     # Topic key charset rules and the mangling that packs a key into a
     # liveliness token's key expression. Pure string logic, no zenoh.
     topic_key.cpp
@@ -76,6 +80,24 @@ target_link_libraries(pub_sub_test_capnp_encoding PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_capnp_encoding LABELS pub_sub unit)
+
+# JSON <-> capnp, over a fixture with every field shape a request can take. The
+# fixture is parsed at test time by capnp::SchemaParser (the capnpc library)
+# rather than compiled into the registry, where it would appear in every picker.
+add_executable(pub_sub_test_capnp_json
+    test_capnp_json.cpp
+)
+
+target_compile_definitions(pub_sub_test_capnp_json PRIVATE
+    FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
+
+target_link_libraries(pub_sub_test_capnp_json PRIVATE
+    zenoh_pub_sub
+    capnpc
+    capnp
+    kj
+)
+add_project_test(TARGET pub_sub_test_capnp_json LABELS pub_sub unit)
 
 # NTP64 conversion. Pure arithmetic over a header, so `unit` -- and it has to be
 # a test rather than a careful reading, because every way of getting the
@@ -212,3 +234,19 @@ target_link_libraries(pub_sub_test_async_client PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET pub_sub_test_async_client LABELS pub_sub net)
+
+# The schema-by-name call, end to end against in-process services: every reply
+# collected, error replies surfaced with their text, a bad request refused
+# before anything is sent -- and a service whose handler throws answering with
+# an error instead of taking the process down. `net`.
+add_executable(pub_sub_test_dynamic_service_call
+    test_dynamic_service_call.cpp
+)
+
+target_link_libraries(pub_sub_test_dynamic_service_call PRIVATE
+    zenoh_pub_sub
+    schemas
+    capnp
+    spdlog::spdlog
+)
+add_project_test(TARGET pub_sub_test_dynamic_service_call LABELS pub_sub net)

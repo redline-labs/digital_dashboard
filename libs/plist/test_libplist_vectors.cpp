@@ -20,6 +20,8 @@
 #include "plist/binary.h"
 #include "plist/xml.h"
 
+#include "helpers/hex.h"
+
 #include <spdlog/spdlog.h>
 
 #include <string>
@@ -40,17 +42,6 @@ void expect(bool condition, const std::string& what)
         ++failures;
         SPDLOG_ERROR("FAIL: {}", what);
     }
-}
-
-Bytes fromHex(const std::string& hex)
-{
-    Bytes out;
-    out.reserve(hex.size() / 2);
-    for (size_t i = 0; i + 1 < hex.size(); i += 2)
-    {
-        out.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
-    }
-    return out;
 }
 
 // --- kLibplistResultReply ---
@@ -260,7 +251,7 @@ void testDataShapes()
     expect(xml.has_value(), "libplist <data> document parses");
     expect(xml.has_value() && *xml == expected, "every byte value survives libplist's base64");
 
-    const auto bin = plist::decodeBinary(fromHex(kLibplistDataShapesBinary));
+    const auto bin = plist::decodeBinary(helpers::fromHex(kLibplistDataShapesBinary).value());
     expect(bin.has_value(), "libplist binary <data> document parses");
     expect(bin.has_value() && *bin == expected, "every byte value survives libplist's bplist");
 
@@ -295,7 +286,7 @@ void testEscaping()
     expect(xml.has_value(), "libplist escaping document parses");
     expect(xml.has_value() && *xml == expected, "escapes and UTF-8 survive libplist's XML");
 
-    const auto bin = plist::decodeBinary(fromHex(kLibplistEscapingBinary));
+    const auto bin = plist::decodeBinary(helpers::fromHex(kLibplistEscapingBinary).value());
     expect(bin.has_value(), "libplist binary escaping document parses");
     expect(bin.has_value() && *bin == expected, "escapes and UTF-8 survive libplist's bplist");
 

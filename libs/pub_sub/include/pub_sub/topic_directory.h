@@ -171,7 +171,9 @@ class ServiceDirectory
 
     bool isValid() const;
 
-    // Sorted by key.
+    // One entry per (key, owner), sorted by key then owner zid. A key offered by
+    // two nodes is two entries: a call to that key reaches both, and a listing
+    // that showed one would be describing a different bus from the one routed.
     std::vector<ServiceEntry> snapshot() const;
 
     std::uint64_t revision() const;

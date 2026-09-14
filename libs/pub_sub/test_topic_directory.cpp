@@ -319,6 +319,48 @@ int main()
                        return entry && !entry->reachable;
                    }),
                    "a service that goes away is marked unreachable rather than dropped");
+
+            // Two nodes offering one key. A call to that key reaches both, so
+            // the directory must show both -- it used to be keyed on the key
+            // alone, and the second advertisement silently replaced the first.
+            // The second node is a hand-declared token with another zid, which
+            // is exactly what that node's ZenohService would put on the bus.
+            //
+            // Mutation-check: key the directory on `key` alone again and this
+            // finds one entry.
+            {
+                const std::string shared_key = "test/directory/shared";
+                const std::string other_zid = "0123456789abcdef0123456789abcdef";
+
+                pub_sub::ZenohService<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse>
+                    local(shared_key, [](const CanBridgeSetBitrateRequest::Reader&,
+                                         CanBridgeSetBitrateResponse::Builder&) {});
+
+                const auto session = pub_sub::SessionManager::getOrCreate();
+                const zenoh::LivelinessToken remote = session->liveliness_declare_token(
+                    zenoh::KeyExpr(pub_sub::serviceKey(shared_key, "CanBridgeSetBitrateRequest",
+                                                       "CanBridgeSetBitrateResponse", other_zid)));
+
+                const auto offers = [&]()
+                {
+                    std::vector<pub_sub::ServiceEntry> out;
+                    for (const pub_sub::ServiceEntry& entry : services.snapshot())
+                    {
+                        if (entry.key == shared_key && entry.reachable)
+                        {
+                            out.push_back(entry);
+                        }
+                    }
+                    return out;
+                };
+
+                expect(waitFor([&] { return offers().size() == 2; }),
+                       "a key offered by two nodes is listed once per node");
+
+                const auto both = offers();
+                expect(both.size() == 2 && both[0].owner_zid != both[1].owner_zid,
+                       "each entry names its own owner");
+            }
         }
     }
 

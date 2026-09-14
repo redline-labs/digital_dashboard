@@ -6,11 +6,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
-
-#include <cstdint>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pub_sub
@@ -22,12 +23,30 @@ using json = nlohmann::json;
 // the registry with no per-schema code. A schema added to schemas/CMakeLists.txt
 // becomes readable and publishable through here automatically.
 
+struct CapnpJsonOptions
+{
+    // Data fields up to this many bytes decode as a lowercase hex string --
+    // the spelling jsonToCapnp accepts, so a decoded reply can be sent back.
+    // Larger ones decode as {"_data_bytes": N, "hex_prefix": "<first N bytes>"}.
+    //
+    // 0, the default, keeps {"_data_bytes": N} with no bytes at all: the Data
+    // on topics is video and audio, and a tool echoing those must not inline
+    // megabytes of hex it was never asked for.
+    std::size_t data_hex_limit = 0;
+};
+
 // Decodes a serialised capnp message against `schema`. Returns the message as a
 // JSON object.
 //
 // Throws kj::Exception on a malformed message, which callers must catch --
 // capnp's readers signal structural damage that way rather than by return value.
 json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema);
+json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema,
+                 const CapnpJsonOptions& options);
+
+// A message already in hand -- e.g. a freshly initialised builder's reader,
+// which is how a form learns a schema's declared defaults.
+json capnpToJson(capnp::DynamicStruct::Reader reader, const CapnpJsonOptions& options = {});
 
 // The reverse: fills `builder` from `value`. Appends a description of every
 // problem to `errors` and returns false if any were found.
@@ -35,6 +54,17 @@ json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema);
 // Unknown field names are errors rather than being ignored: a typo that silently
 // publishes a default-valued message produces a plausible wrong reading on a
 // gauge, which is far harder to notice than a rejection.
+//
+// Spellings, for every field and every list element alike:
+//   integers  JSON integers, range-checked for the field's width. Negative into
+//             an unsigned type is an error, never a wrap.
+//   floats    any JSON number
+//   Text      string          Enum    enumerant name
+//   Data      hex string, as helpers::fromHex reads it: whitespace and ':'
+//             between bytes, optional 0x
+//   struct    object          List    array (nested lists recurse)
+//   union     object naming exactly one arm, e.g. {"value": {"speed": 3.5}}
+//   Void      null, true or {} (selects a payload-less union arm)
 bool jsonToCapnp(const json& value, capnp::DynamicStruct::Builder builder,
                  std::vector<std::string>& errors);
 

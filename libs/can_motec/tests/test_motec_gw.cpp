@@ -20,6 +20,8 @@
 #include "can_motec/motec_gw.h"
 #include "can_motec/utc_backend.h"
 
+#include "helpers/hex.h"
+
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
@@ -43,38 +45,6 @@ void check(bool condition, const std::string& what)
     }
 }
 
-std::vector<uint8_t> from_hex(const std::string& text)
-{
-    std::vector<uint8_t> bytes;
-    for (size_t i = 0; i < text.size();)
-    {
-        if (std::isspace(static_cast<unsigned char>(text[i])) != 0)
-        {
-            ++i;
-            continue;
-        }
-        bytes.push_back(static_cast<uint8_t>(std::stoul(text.substr(i, 2), nullptr, 16)));
-        i += 2;
-    }
-    return bytes;
-}
-
-std::string to_hex(std::span<const uint8_t> bytes)
-{
-    static const char* digits = "0123456789ABCDEF";
-    std::string text;
-    for (size_t i = 0; i < bytes.size(); ++i)
-    {
-        if (i != 0)
-        {
-            text += ' ';
-        }
-        text += digits[bytes[i] >> 4];
-        text += digits[bytes[i] & 0x0F];
-    }
-    return text;
-}
-
 // ============================================================================
 // Real hardware
 // ============================================================================
@@ -85,7 +55,7 @@ std::string to_hex(std::span<const uint8_t> bytes)
 // frame below.
 Frame round_trip(const golden::CapturedFrame& captured)
 {
-    const auto expected = from_hex(captured.hex);
+    const auto expected = helpers::fromHex(captured.hex).value();
     auto decoded = decode_frame(expected);
     if (!decoded.has_value())
     {
@@ -97,7 +67,8 @@ Frame round_trip(const golden::CapturedFrame& captured)
     const auto reencoded = encode_frame(*decoded);
     check(reencoded == expected,
           fmt::format("{} re-encodes identically\n    got {}\n    expected {}", captured.what,
-                      to_hex(reencoded), to_hex(expected)));
+                      helpers::toHex(reencoded, " ", helpers::HexCase::kUpper),
+                      helpers::toHex(expected, " ", helpers::HexCase::kUpper)));
     return *decoded;
 }
 
@@ -312,7 +283,7 @@ void test_tx_builder_matches_the_capture()
     // Rebuild the captured Tx request from a record and require the same
     // bytes. This is the strongest statement available about the builder:
     // it has to agree with hardware, not merely with the decoder.
-    const auto expected = from_hex(golden::kTx[0].hex);
+    const auto expected = helpers::fromHex(golden::kTx[0].hex).value();
     auto captured = decode_frame(expected);
     check(captured.has_value(), "the captured Tx decodes");
     if (!captured.has_value())
@@ -325,7 +296,8 @@ void test_tx_builder_matches_the_capture()
         make_tx(captured->field5, captured->reqid, records, captured->tag()));
     check(rebuilt == expected,
           fmt::format("make_tx rebuilds the captured request\n    got {}\n    expected {}",
-                      to_hex(rebuilt), to_hex(expected)));
+                      helpers::toHex(rebuilt, " ", helpers::HexCase::kUpper),
+                      helpers::toHex(expected, " ", helpers::HexCase::kUpper)));
 }
 
 void test_can_frame_conversion()
@@ -443,7 +415,7 @@ void test_decode_rejections()
 {
     check(!decode_frame({}).has_value(), "an empty buffer is refused");
 
-    auto valid = from_hex(golden::kHandshake[1].hex);
+    auto valid = helpers::fromHex(golden::kHandshake[1].hex).value();
 
     auto shortened = valid;
     shortened.resize(valid.size() - 1);
@@ -463,7 +435,7 @@ void test_decode_rejections()
 
     // A data-path response whose block never arrived. Accepting this would
     // hand a caller a short block and call it complete.
-    auto truncatedBlock = from_hex(golden::kRx[1].hex);
+    auto truncatedBlock = helpers::fromHex(golden::kRx[1].hex).value();
     truncatedBlock.resize(truncatedBlock.size() - 4);
     check(!decode_frame(truncatedBlock).has_value(), "a truncated data block is refused");
 }
@@ -480,7 +452,7 @@ void test_reader_reassembles_split_frames()
     std::vector<std::vector<uint8_t>> expected;
     for (const auto& captured : golden::kRx)
     {
-        auto bytes = from_hex(captured.hex);
+        auto bytes = helpers::fromHex(captured.hex).value();
         expected.push_back(bytes);
         stream.insert(stream.end(), bytes.begin(), bytes.end());
     }
@@ -509,7 +481,7 @@ void test_reader_handles_several_frames_in_one_push()
     std::vector<uint8_t> stream;
     for (const auto& captured : golden::kRx)
     {
-        auto bytes = from_hex(captured.hex);
+        auto bytes = helpers::fromHex(captured.hex).value();
         stream.insert(stream.end(), bytes.begin(), bytes.end());
     }
 
@@ -530,7 +502,7 @@ void test_reader_handles_several_frames_in_one_push()
 // short block as a damaged frame and resynchronise past it.
 void test_reader_waits_for_a_split_data_block()
 {
-    const auto whole = from_hex(golden::kRx[2].hex);
+    const auto whole = helpers::fromHex(golden::kRx[2].hex).value();
 
     FrameReader reader;
     // Everything except the last record's final four bytes.
@@ -554,8 +526,8 @@ void test_reader_waits_for_a_split_data_block()
 // still arrives.
 void test_tx_ack_does_not_swallow_the_next_frame()
 {
-    const auto ack = from_hex(golden::kTx[1].hex);
-    const auto next = from_hex(golden::kRx[1].hex);
+    const auto ack = helpers::fromHex(golden::kTx[1].hex).value();
+    const auto next = helpers::fromHex(golden::kRx[1].hex).value();
 
     std::vector<uint8_t> stream(ack.begin(), ack.end());
     stream.insert(stream.end(), next.begin(), next.end());
@@ -579,7 +551,7 @@ void test_tx_ack_does_not_swallow_the_next_frame()
 
 void test_reader_resynchronises_after_damage()
 {
-    const auto good = from_hex(golden::kRx[1].hex);
+    const auto good = helpers::fromHex(golden::kRx[1].hex).value();
 
     std::vector<uint8_t> stream { 0x11, 0x22, 0x33 };
     stream.insert(stream.end(), good.begin(), good.end());
@@ -613,7 +585,7 @@ void test_reader_resynchronises_after_damage()
 // bytes that are never coming.
 void test_reader_rejects_an_impossible_length()
 {
-    const auto good = from_hex(golden::kRx[1].hex);
+    const auto good = helpers::fromHex(golden::kRx[1].hex).value();
 
     std::vector<uint8_t> stream { kPreamble0, kPreamble1, kPreamble2, 0x00, 0x00, 0x00 };
     stream.insert(stream.end(), good.begin(), good.end());
@@ -664,7 +636,7 @@ void test_ftdi_status_stripping()
 // record.
 void test_stripping_then_reading_a_straddling_frame()
 {
-    const auto frame = from_hex(golden::kRx[2].hex);
+    const auto frame = helpers::fromHex(golden::kRx[2].hex).value();
 
     // Chop the frame into 62-byte pieces and give each a status prefix, as the
     // endpoint would.

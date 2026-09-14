@@ -30,6 +30,9 @@ A very much work-in-progress dashboard editor is being pieced together.  This is
 
 ![Screengrab](/docs/images/dashboard_editor.png)
 
+## Switchboard
+A GUI for calling the services nodes advertise on the bus. Every service is listed. Selecting one builds a form from its request schema, and the reply comes back as fields. It is the form-driven counterpart to `inspect call`. See [docs/switchboard.md](docs/switchboard.md).
+
 ## Documentation
 Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
 

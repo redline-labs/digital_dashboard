@@ -2,6 +2,8 @@
 // avcC/hvcC -> Annex-B rewriting, codec detection and keyframe detection.
 #include "airplay/nalu.h"
 
+#include "helpers/hex.h"
+
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
@@ -24,62 +26,6 @@ void expect(bool condition, const char* what)
     }
 }
 
-int hexDigit(char c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f')
-    {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F')
-    {
-        return c - 'A' + 10;
-    }
-    return -1;
-}
-
-// Whitespace in the literals below is ignored so the atoms stay readable.
-Bytes fromHex(std::string_view hex)
-{
-    Bytes out;
-    out.reserve(hex.size() / 2);
-    int high = -1;
-    for (char c : hex)
-    {
-        const int digit = hexDigit(c);
-        if (digit < 0)
-        {
-            continue;
-        }
-        if (high < 0)
-        {
-            high = digit;
-        }
-        else
-        {
-            out.push_back(static_cast<uint8_t>((high << 4) | digit));
-            high = -1;
-        }
-    }
-    return out;
-}
-
-std::string toHex(const Bytes& bytes)
-{
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(bytes.size() * 2);
-    for (uint8_t b : bytes)
-    {
-        out.push_back(kHex[b >> 4]);
-        out.push_back(kHex[b & 0x0f]);
-    }
-    return out;
-}
-
 struct QuietLogs
 {
     QuietLogs() { spdlog::set_level(spdlog::level::off); }
@@ -98,7 +44,7 @@ void appendFourCc(Bytes& out, const char* cc)
 // (NAL type 8).
 Bytes makeAvcCRecord()
 {
-    return fromHex(
+    return helpers::fromHex(
         "01"      // configurationVersion
         "42c01e"  // profile, compatibility, level
         "ff"      // 0xfc | lengthSizeMinusOne = 3
@@ -108,7 +54,7 @@ Bytes makeAvcCRecord()
         "22"
         "01"    // numOfPictureParameterSets
         "0004"  // PPS length
-        "68ce3c80");
+        "68ce3c80").value();
 }
 
 // A minimal but structurally valid hvcC record: 22 fixed bytes, then VPS/SPS/PPS
@@ -116,7 +62,7 @@ Bytes makeAvcCRecord()
 Bytes makeHvcCRecord()
 {
     // 22 fixed bytes, then numOfArrays.
-    Bytes record = fromHex(
+    Bytes record = helpers::fromHex(
         "01"            // configurationVersion
         "01"            // general_profile_space / tier / idc
         "60000000"      // general_profile_compatibility_flags
@@ -129,7 +75,7 @@ Bytes makeHvcCRecord()
         "f8"            // bitDepthChromaMinus8
         "0000"          // avgFrameRate
         "0f"            // constantFrameRate .. lengthSizeMinusOne
-        "03");          // numOfArrays
+        "03").value();          // numOfArrays
 
     // VPS array: NAL type 32.
     record.insert(record.end(), {0x20, 0x00, 0x01, 0x00, 0x04});
@@ -148,33 +94,35 @@ void testAvccFrameRewrite()
     using airplay::nalu::avccFrameToAnnexB;
 
     // Two 4-byte length prefixed NAL units.
-    const Bytes frame = fromHex(
+    const Bytes frame = helpers::fromHex(
         "00000003"
         "65aabb"
         "00000004"
-        "41ccddee");
-    expect(toHex(avccFrameToAnnexB(frame)) == "0000000165aabb0000000141ccddee",
+        "41ccddee").value();
+    expect(helpers::toHex(avccFrameToAnnexB(frame)) == "0000000165aabb0000000141ccddee",
            "avcC frame -> Annex-B (two NAL units)");
 
     // Single NAL unit.
-    expect(toHex(avccFrameToAnnexB(fromHex("0000000267aa"))) == "0000000167aa",
+    expect(helpers::toHex(avccFrameToAnnexB(helpers::fromHex("0000000267aa").value())) == "0000000167aa",
            "avcC frame -> Annex-B (single NAL unit)");
 
     // A 2-byte length prefix.
-    expect(toHex(avccFrameToAnnexB(fromHex("000267aa" "000268bb"), 2)) == "0000000167aa" "0000000168bb",
+    expect(helpers::toHex(avccFrameToAnnexB(helpers::fromHex("000267aa" "000268bb").value(), 2)) ==
+               "0000000167aa" "0000000168bb",
            "avcC frame -> Annex-B with a 2-byte length prefix");
 
     // A 1-byte length prefix.
-    expect(toHex(avccFrameToAnnexB(fromHex("0267aa"), 1)) == "0000000167aa",
+    expect(helpers::toHex(avccFrameToAnnexB(helpers::fromHex("0267aa").value(), 1)) == "0000000167aa",
            "avcC frame -> Annex-B with a 1-byte length prefix");
 
     // Trailing garbage that cannot be a NAL unit is dropped, like the original.
-    expect(toHex(avccFrameToAnnexB(fromHex("0000000267aa" "000000ff41"))) == "0000000167aa",
+    expect(helpers::toHex(avccFrameToAnnexB(helpers::fromHex("0000000267aa" "000000ff41").value())) ==
+               "0000000167aa",
            "avcC frame -> Annex-B stops at a length that overruns the buffer");
 
     expect(avccFrameToAnnexB({}).empty(), "empty frame yields nothing");
-    expect(avccFrameToAnnexB(fromHex("000000")).empty(), "runt frame yields nothing");
-    expect(avccFrameToAnnexB(fromHex("00000000")).empty(), "zero-length NAL unit yields nothing");
+    expect(avccFrameToAnnexB(helpers::fromHex("000000").value()).empty(), "runt frame yields nothing");
+    expect(avccFrameToAnnexB(helpers::fromHex("00000000").value()).empty(), "zero-length NAL unit yields nothing");
 
     const QuietLogs quiet;
     expect(avccFrameToAnnexB(frame, 0).empty(), "length prefix size 0 is rejected");
@@ -198,13 +146,13 @@ void testConfigToAnnexB()
         if (config)
         {
             expect(config->codec == Codec::H264, "bare avcC record detects H.264");
-            expect(toHex(config->annex_b) == expected_avc, "bare avcC record yields SPS + PPS");
+            expect(helpers::toHex(config->annex_b) == expected_avc, "bare avcC record yields SPS + PPS");
         }
     }
 
     // avcC box: [size]['avcC'][record].
     {
-        Bytes payload = fromHex("00000000");
+        Bytes payload = helpers::fromHex("00000000").value();
         appendFourCc(payload, "avcC");
         const Bytes record = makeAvcCRecord();
         payload.insert(payload.end(), record.begin(), record.end());
@@ -215,7 +163,7 @@ void testConfigToAnnexB()
         if (config)
         {
             expect(config->codec == Codec::H264, "avcC box detects H.264");
-            expect(toHex(config->annex_b) == expected_avc, "avcC box yields SPS + PPS");
+            expect(helpers::toHex(config->annex_b) == expected_avc, "avcC box yields SPS + PPS");
         }
     }
 
@@ -234,17 +182,17 @@ void testConfigToAnnexB()
         if (config)
         {
             expect(config->codec == Codec::H265, "bare hvcC record detects H.265");
-            expect(toHex(config->annex_b) == expected_hevc, "bare hvcC record yields VPS + SPS + PPS");
+            expect(helpers::toHex(config->annex_b) == expected_hevc, "bare hvcC record yields VPS + SPS + PPS");
         }
     }
 
     // hvc1 sample entry with the hvcC box nested inside, which is how H.265
     // actually arrives from the phone.
     {
-        Bytes payload = fromHex("0000006e");
+        Bytes payload = helpers::fromHex("0000006e").value();
         appendFourCc(payload, "hvc1");
         payload.resize(payload.size() + 78, 0x00);  // sample entry fixed fields
-        Bytes inner = fromHex("00000000");
+        Bytes inner = helpers::fromHex("00000000").value();
         appendFourCc(inner, "hvcC");
         const Bytes record = makeHvcCRecord();
         inner.insert(inner.end(), record.begin(), record.end());
@@ -256,13 +204,13 @@ void testConfigToAnnexB()
         if (config)
         {
             expect(config->codec == Codec::H265, "nested hvcC detects H.265");
-            expect(toHex(config->annex_b) == expected_hevc, "nested hvcC yields VPS + SPS + PPS");
+            expect(helpers::toHex(config->annex_b) == expected_hevc, "nested hvcC yields VPS + SPS + PPS");
         }
     }
 
     // The fourcc search must win over the bare-atom heuristic.
     {
-        Bytes payload = fromHex("00000000");
+        Bytes payload = helpers::fromHex("00000000").value();
         appendFourCc(payload, "hvcC");
         const Bytes record = makeHvcCRecord();
         payload.insert(payload.end(), record.begin(), record.end());
@@ -272,9 +220,11 @@ void testConfigToAnnexB()
 
     const QuietLogs quiet;
     expect(!configToAnnexB({}).has_value(), "empty config is rejected");
-    expect(!configToAnnexB(fromHex("00112233445566778899")).has_value(), "garbage config is rejected");
+    expect(!configToAnnexB(helpers::fromHex("00112233445566778899").value()).has_value(),
+           "garbage config is rejected");
     // Truncated avcC: the SPS length runs past the end.
-    expect(!configToAnnexB(fromHex("0142c01effe100ff67")).has_value(), "truncated avcC is rejected");
+    expect(!configToAnnexB(helpers::fromHex("0142c01effe100ff67").value()).has_value(),
+           "truncated avcC is rejected");
 }
 
 void testKeyframeDetection()
@@ -302,31 +252,31 @@ void testKeyframeDetection()
     expect(!isKeyframeNalu(0x40, Codec::H265), "H.265 VPS alone is not a keyframe");
 
     // Length-prefixed access units.
-    const Bytes idr_access_unit = fromHex(
+    const Bytes idr_access_unit = helpers::fromHex(
         "00000009"
         "6742c01ed900b0c922"
         "00000004"
         "68ce3c80"
         "00000005"
-        "65aabbccdd");
-    const Bytes inter_access_unit = fromHex(
+        "65aabbccdd").value();
+    const Bytes inter_access_unit = helpers::fromHex(
         "00000005"
         "41aabbccdd"
         "00000003"
-        "41eeff00");
+        "41eeff00").value();
 
     expect(avccContainsKeyframe(idr_access_unit, Codec::H264), "avcC access unit with an IDR is a keyframe");
     expect(!avccContainsKeyframe(inter_access_unit, Codec::H264), "avcC access unit without an IDR is not");
     expect(!avccContainsKeyframe({}, Codec::H264), "empty access unit is not a keyframe");
 
-    const Bytes hevc_irap = fromHex(
+    const Bytes hevc_irap = helpers::fromHex(
         "00000004"
         "40010c01"
         "00000006"
-        "2601aabbccdd");
-    const Bytes hevc_inter = fromHex(
+        "2601aabbccdd").value();
+    const Bytes hevc_inter = helpers::fromHex(
         "00000006"
-        "0201aabbccdd");
+        "0201aabbccdd").value();
     expect(avccContainsKeyframe(hevc_irap, Codec::H265), "hvcC access unit with an IRAP is a keyframe");
     expect(!avccContainsKeyframe(hevc_inter, Codec::H265), "hvcC access unit without an IRAP is not");
     expect(!avccContainsKeyframe(hevc_irap, Codec::H264), "H.265 IRAP is not mistaken for an H.264 IDR");
@@ -340,9 +290,10 @@ void testKeyframeDetection()
            "Annex-B H.265 keyframe detection after rewriting");
 
     // 3-byte start codes must be handled too.
-    expect(annexBContainsKeyframe(fromHex("00000141aa" "00000165bb"), Codec::H264),
+    expect(annexBContainsKeyframe(helpers::fromHex("00000141aa" "00000165bb").value(), Codec::H264),
            "Annex-B 3-byte start codes are handled");
-    expect(!annexBContainsKeyframe(fromHex("00000141aa"), Codec::H264), "Annex-B non-keyframe with 3-byte codes");
+    expect(!annexBContainsKeyframe(helpers::fromHex("00000141aa").value(), Codec::H264),
+           "Annex-B non-keyframe with 3-byte codes");
     expect(!annexBContainsKeyframe({}, Codec::H264), "empty Annex-B stream is not a keyframe");
 
     const QuietLogs quiet;
@@ -358,8 +309,9 @@ void testKeyframeDetection()
 void testConfigCodecDrivesKeyframeDetection()
 {
     const Bytes hevc_irap = airplay::nalu::avccFrameToAnnexB(
-        fromHex("00000004" "40010c01" "00000006" "2601aabbccdd"));
-    const Bytes h264_idr = airplay::nalu::avccFrameToAnnexB(fromHex("00000005" "65aabbccdd"));
+        helpers::fromHex("00000004" "40010c01" "00000006" "2601aabbccdd").value());
+    const Bytes h264_idr =
+        airplay::nalu::avccFrameToAnnexB(helpers::fromHex("00000005" "65aabbccdd").value());
 
     const auto hevc_config = airplay::nalu::configToAnnexB(makeHvcCRecord());
     expect(hevc_config.has_value(), "hvcC config parses");
@@ -389,8 +341,11 @@ void testMutationFuzz()
 {
     const QuietLogs quiet;
 
-    const Bytes seeds[] = {makeAvcCRecord(), makeHvcCRecord(),
-                           fromHex("00000009 6742c01ed900b0c922 00000004 68ce3c80 00000005 65aabbccdd")};
+    const Bytes seeds[] = {
+        makeAvcCRecord(),
+        makeHvcCRecord(),
+        helpers::fromHex("00000009 6742c01ed900b0c922 00000004 68ce3c80 00000005 65aabbccdd").value(),
+    };
 
     uint32_t state = 0xfeedface;
     const auto next = [&state]

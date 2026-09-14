@@ -3,6 +3,8 @@
 // from Apple's own plutil(1) so the wire format is pinned to the real thing.
 #include "plist/binary.h"
 
+#include "helpers/hex.h"
+
 #include <spdlog/spdlog.h>
 
 #include <cmath>
@@ -24,47 +26,6 @@ void expect(bool condition, const char* what)
         SPDLOG_ERROR("FAIL: {}", what);
         ++failures;
     }
-}
-
-int hexDigit(char c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f')
-    {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F')
-    {
-        return c - 'A' + 10;
-    }
-    return -1;
-}
-
-Bytes fromHex(std::string_view hex)
-{
-    Bytes out;
-    out.reserve(hex.size() / 2);
-    for (size_t i = 0; i + 1 < hex.size(); i += 2)
-    {
-        out.push_back(static_cast<uint8_t>((hexDigit(hex[i]) << 4) | hexDigit(hex[i + 1])));
-    }
-    return out;
-}
-
-std::string toHex(const Bytes& bytes)
-{
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(bytes.size() * 2);
-    for (uint8_t b : bytes)
-    {
-        out.push_back(kHex[b >> 4]);
-        out.push_back(kHex[b & 0x0f]);
-    }
-    return out;
 }
 
 struct QuietLogs
@@ -120,7 +81,7 @@ void testScalars()
     roundTrips(Value::string("Mercedes 190E \xe2\x80\x94 Motorhead"), "utf-8 string round trip");
     roundTrips(Value::string("emoji \xf0\x9f\x9a\x97 surrogate pair"), "non-BMP string round trip");
     roundTrips(Value::data({}), "empty data round trip");
-    roundTrips(Value::data(fromHex("000102030405060708090a0b0c0d0e0f")), "data round trip");
+    roundTrips(Value::data(helpers::fromHex("000102030405060708090a0b0c0d0e0f").value()), "data round trip");
     roundTrips(Value::data(Bytes(70000, 0xab)), "large data round trip (4-byte count)");
     roundTrips(Value::date(0.0), "date epoch round trip");
     roundTrips(Value::date(742000000.5), "date round trip");
@@ -140,7 +101,7 @@ void testContainers()
     inner_array.push(Value::integer(1));
     inner_array.push(Value::string("two"));
     inner_array.push(Value::boolean(false));
-    inner_array.push(Value::data(fromHex("cafebabe")));
+    inner_array.push(Value::data(helpers::fromHex("cafebabe").value()));
     roundTrips(inner_array, "mixed array round trip");
     roundTrips(Value::array(), "empty array round trip");
     roundTrips(Value::dict(), "empty dict round trip");
@@ -232,7 +193,7 @@ void testAppleReference()
     // Produced by: plutil -convert binary1, macOS 15. A dict with an ASCII
     // string, 8-byte positive and negative integers, a 2-byte integer, a
     // double, a 16-byte data blob, a nested array of dicts and a UTF-16 string.
-    const Bytes reference = fromHex(
+    const Bytes reference = helpers::fromHex(
         "62706c6973743030db0102030405060708090a0b0c0d0e0f1011121a1b1c1d58"
         "6e656761746976655970726f746f766572735b737461747573466c6167735864"
         "65766963656964576c6174656e637952706b58646973706c61797357756e6963"
@@ -245,7 +206,7 @@ void testAppleReference()
         "006800650061006400202713130000001e5a7ffff708090008001f0028003200"
         "3e0047004f0052005b0063006c00770081008a008e009000a400ad00c000c200"
         "c900cf00e400eb00ee00f000f3012c0135013600000000000002010000000000"
-        "00001e00000000000000000000000000000137");
+        "00001e00000000000000000000000000000137").value();
 
     const auto decoded = plist::decodeBinary(reference);
     expect(decoded.has_value(), "Apple reference plist decodes");
@@ -273,7 +234,7 @@ void testAppleReference()
                decoded->find("latency")->asReal() == 0.25,
            "Apple reference real");
     expect(decoded->find("pk") != nullptr &&
-               toHex(decoded->find("pk")->asData()) == "000102030405060708090a0b0c0d0e0f",
+               helpers::toHex(decoded->find("pk")->asData()) == "000102030405060708090a0b0c0d0e0f",
            "Apple reference data");
     expect(decoded->find("unicode") != nullptr &&
                decoded->find("unicode")->asString() == "Mercedes 190E \xe2\x80\x94 Mot\xc3\xb6rhead \xe2\x9c\x93",
@@ -303,7 +264,7 @@ void testEncoderKnownAnswers()
     // Byte-exact comparisons against plutil output. Only shapes where Apple's
     // encoder makes the same choices we do (no key sorting, no deduplication)
     // can be compared this way.
-    expect(toHex(plist::encodeBinary(Value::string("hello"))) ==
+    expect(helpers::toHex(plist::encodeBinary(Value::string("hello"))) ==
                "62706c6973743030"  // bplist00
                "5568656c6c6f"      // "hello"
                "08"                // offset table
@@ -313,7 +274,7 @@ void testEncoderKnownAnswers()
     Value pair = Value::array();
     pair.push(Value::integer(1));
     pair.push(Value::integer(258));
-    expect(toHex(plist::encodeBinary(pair)) ==
+    expect(helpers::toHex(plist::encodeBinary(pair)) ==
                "62706c6973743030"
                "a20102"  // array of 2, refs 1 and 2
                "1001"    // 1
@@ -324,7 +285,7 @@ void testEncoderKnownAnswers()
 
     Value dict = Value::dict();
     dict.set("alpha", Value::string("beta"));
-    expect(toHex(plist::encodeBinary(dict)) ==
+    expect(helpers::toHex(plist::encodeBinary(dict)) ==
                "62706c6973743030"
                "d10102"        // dict of 1, key ref 1, value ref 2
                "55616c706861"  // "alpha"
@@ -339,7 +300,7 @@ void testMalformed()
     const QuietLogs quiet;
 
     expect(!plist::decodeBinary({}).has_value(), "empty buffer is rejected");
-    expect(!plist::decodeBinary(fromHex("00")).has_value(), "runt buffer is rejected");
+    expect(!plist::decodeBinary(helpers::fromHex("00").value()).has_value(), "runt buffer is rejected");
     expect(!plist::decodeBinary(Bytes(64, 0x00)).has_value(), "bad magic is rejected");
 
     const Bytes good = plist::encodeBinary(Value::string("hello"));
@@ -374,12 +335,12 @@ void testMalformed()
     expect(!plist::decodeBinary(bad_type).has_value(), "unsupported object type is rejected");
 
     // A dict whose key is not a string.
-    Bytes bad_key = fromHex(
+    Bytes bad_key = helpers::fromHex(
         "62706c6973743030d10102"  // dict with 1 entry, refs 1 and 2
         "1001"                    // object 1: integer 1 (an illegal key)
         "5462657461"              // object 2: "beta"
         "080b0d"                  // offset table
-        "0000000000000101000000000000000300000000000000000000000000000012");
+        "0000000000000101000000000000000300000000000000000000000000000012").value();
     expect(!plist::decodeBinary(bad_key).has_value(), "non-string dict key is rejected");
 }
 

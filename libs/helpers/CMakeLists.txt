@@ -5,6 +5,16 @@ target_include_directories(helpers INTERFACE
 target_link_libraries(helpers INTERFACE
     yaml-cpp
 )
+
+# Hex <-> bytes. The rejections are what is pinned: the copies helpers/hex.h
+# replaced skipped bad digits and dropped odd nibbles.
+add_executable(helpers_test_hex
+    tests/test_hex.cpp
+)
+target_link_libraries(helpers_test_hex PRIVATE
+    helpers
+)
+add_project_test(TARGET helpers_test_hex LABELS helpers unit)
 # Routing ffmpeg's own logging into spdlog. A separate target from the
 # header-only `helpers` above because it has to link libavutil, and almost
 # nothing that uses helpers has anything to do with ffmpeg.

@@ -16,6 +16,8 @@
 #include "airplay/srp.h"
 #include "airplay/tlv8.h"
 
+#include "helpers/hex.h"
+
 #include <spdlog/spdlog.h>
 
 #include <arpa/inet.h>
@@ -54,20 +56,8 @@ constexpr uint8_t kTlvSignature = 0x0A;
 
 std::string hexPreview(const Bytes& data, size_t limit = 64)
 {
-    std::string out;
-    const size_t n = std::min(limit, data.size());
-    out.reserve(n * 3);
-    for (size_t i = 0; i < n; ++i)
-    {
-        char buf[4];
-        std::snprintf(buf, sizeof(buf), "%02x ", data[i]);
-        out += buf;
-    }
-    if (data.size() > n)
-    {
-        out += "...";
-    }
-    return out;
+    const std::span<const uint8_t> shown(data.data(), std::min(limit, data.size()));
+    return helpers::toHex(shown, " ") + (data.size() > shown.size() ? " ..." : "");
 }
 
 void logTlv(const char* direction, const Bytes& body)

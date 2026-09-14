@@ -21,6 +21,7 @@ target_link_libraries(dbc_parser_test_golden
     dbc_test_layout
     dbc_test_scaling
     dbc_test_features
+    helpers
 )
 
 add_project_test(TARGET dbc_parser_test_golden LABELS dbc_parser unit)

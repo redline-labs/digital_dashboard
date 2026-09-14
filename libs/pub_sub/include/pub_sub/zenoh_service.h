@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <zenoh.hxx>
 #include "pub_sub/session_manager.h"
@@ -39,85 +40,28 @@ class ZenohService
         mSession(pub_sub::SessionManager::getOrCreate())
     {
         
+        // NOTHING MAY ESCAPE THIS CLOSURE. The frame above it is Rust, and an
+        // exception crossing it aborts the process -- so a handler that threw on
+        // one bad request used to take the whole node down, every other service
+        // on it included. It now answers that one caller with an error reply
+        // carrying the reason, which is also what makes the failure visible:
+        // before, the caller could only see a timeout.
         auto on_query = [this](const zenoh::Query& query)
         {
-            // Decode request (if any)
-            capnp::MallocMessageBuilder respBuilder;
-            auto resp = respBuilder.template initRoot<ResponseT>();
-
-            if (auto payloadRef = query.get_payload())
+            try
             {
-                const auto& bytes = payloadRef->get();
-                // Borrowed from the sample, not copied out of it -- see
-                // pub_sub/zenoh_payload.h. `bytes` outlives the reader below.
-                const ZenohPayload payload(bytes);
-                if (!payload.empty())
-                {
-                    capnp::FlatArrayMessageReader reader(payload.words());
-                    auto req = reader.template getRoot<RequestT>();
-                    // SIZE AND SCHEMA, NEVER THE MESSAGE. This used to log
-                    // req.toString().flatten() -- the whole message as text -- and that
-                    // is not a debug line you can afford on a data path.
-                    //
-                    // spdlog's SPDLOG_LOGGER_CALL expands straight to logger->log(...)
-                    // with no should_log() test, so every argument is evaluated
-                    // whatever the level is, and patches/spdlog_tweakme.patch sets
-                    // SPDLOG_ACTIVE_LEVEL to TRACE so SPDLOG_DEBUG is compiled in
-                    // rather than preprocessed away. capnp's toString() then walks
-                    // every byte of the message to build a string that gets discarded
-                    // at info level. Measured on a 64-tile map reply: ~99% of this
-                    // handler's CPU, and 81.9 ms of an 82 ms request.
-                    //
-                    // Guarding it with should_log() was the other option and is worse:
-                    // it leaves a --debug run stringifying megabytes per request, so
-                    // the one time you turn debugging on is the one time the thing you
-                    // are debugging changes shape. `inspect call` and `inspect echo`
-                    // already decode any message on the bus to JSON on demand, which
-                    // is what this line was reaching for and could never be as good at.
-                    SPDLOG_DEBUG("Service '{}' request {} bytes ('{}')", mKeyExpr, bytes.size(),
-                                 schema_traits<RequestT>::name);
-                    mHandler(req, resp);
-                }
-                else
-                {
-                    // Payload malformed; handler not invoked. Respond with default-constructed response.
-                    SPDLOG_ERROR("Payload malformed for key '{}'", mKeyExpr);
-                }
+                answer(query);
             }
-            else
+            catch (const std::exception& e)
             {
-                SPDLOG_ERROR("No payload for key '{}'", mKeyExpr);
+                SPDLOG_ERROR("Service '{}' failed a request: {}", mKeyExpr, e.what());
+                replyError(query, e.what());
             }
-
-            // Serialize and reply.
-            //
-            // capnp has already laid the message out contiguously; zenoh is
-            // handed THAT buffer rather than a copy of it. This used to
-            // allocate a second buffer the size of the whole reply and memcpy
-            // into it, which for a map tile is a hundred kilobytes moved to
-            // produce bytes identical to the ones next to it -- on every
-            // request, for every service on the bus.
-            //
-            // The kj::Array is moved onto the heap and released by the
-            // deleter, which zenoh calls once the payload and every clone of
-            // it are done. Nothing here may assume the reply has been sent by
-            // the time reply() returns.
-            auto* held = new kj::Array<capnp::word>(capnp::messageToFlatArray(respBuilder));
-            const std::size_t bytes = held->size() * sizeof(capnp::word);
-
-            // Logged here rather than next to the request, because this is where the
-            // reply's size is known. See the note above on why it is a size and not
-            // the message.
-            SPDLOG_DEBUG("Service '{}' reply {} bytes ('{}')", mKeyExpr, bytes,
-                         schema_traits<ResponseT>::name);
-
-            zenoh::Query::ReplyOptions ropts = zenoh::Query::ReplyOptions::create_default();
-            ropts.encoding.emplace(kCapnpEncodingMime);
-            ropts.encoding->set_schema(std::string(schema_traits<ResponseT>::name));
-            query.reply(mKeyExpr,
-                        zenoh::Bytes(reinterpret_cast<uint8_t*>(held->begin()), bytes,
-                                     [held](uint8_t*) { delete held; }),
-                        std::move(ropts));
+            catch (...)
+            {
+                SPDLOG_ERROR("Service '{}' failed a request with a non-standard exception", mKeyExpr);
+                replyError(query, "the service handler threw a non-standard exception");
+            }
         };
 
         auto on_drop = []() {};
@@ -174,6 +118,107 @@ class ZenohService
     ZenohService& operator=(ZenohService&&) noexcept = delete;
 
 private:
+    // Everything a query needs, run inside on_query's exception net.
+    void answer(const zenoh::Query& query)
+    {
+        // Decode request (if any)
+        capnp::MallocMessageBuilder respBuilder;
+        auto resp = respBuilder.template initRoot<ResponseT>();
+
+        if (auto payloadRef = query.get_payload())
+        {
+            const auto& bytes = payloadRef->get();
+            // Borrowed from the sample, not copied out of it -- see
+            // pub_sub/zenoh_payload.h. `bytes` outlives the reader below.
+            const ZenohPayload payload(bytes);
+            if (!payload.empty())
+            {
+                capnp::FlatArrayMessageReader reader(payload.words());
+                auto req = reader.template getRoot<RequestT>();
+                // SIZE AND SCHEMA, NEVER THE MESSAGE. This used to log
+                // req.toString().flatten() -- the whole message as text -- and that
+                // is not a debug line you can afford on a data path.
+                //
+                // spdlog's SPDLOG_LOGGER_CALL expands straight to logger->log(...)
+                // with no should_log() test, so every argument is evaluated
+                // whatever the level is, and patches/spdlog_tweakme.patch sets
+                // SPDLOG_ACTIVE_LEVEL to TRACE so SPDLOG_DEBUG is compiled in
+                // rather than preprocessed away. capnp's toString() then walks
+                // every byte of the message to build a string that gets discarded
+                // at info level. Measured on a 64-tile map reply: ~99% of this
+                // handler's CPU, and 81.9 ms of an 82 ms request.
+                //
+                // Guarding it with should_log() was the other option and is worse:
+                // it leaves a --debug run stringifying megabytes per request, so
+                // the one time you turn debugging on is the one time the thing you
+                // are debugging changes shape. `inspect call` and `inspect echo`
+                // already decode any message on the bus to JSON on demand, which
+                // is what this line was reaching for and could never be as good at.
+                SPDLOG_DEBUG("Service '{}' request {} bytes ('{}')", mKeyExpr, bytes.size(),
+                             schema_traits<RequestT>::name);
+                mHandler(req, resp);
+            }
+            else
+            {
+                // Payload malformed; handler not invoked. Respond with default-constructed response.
+                SPDLOG_ERROR("Payload malformed for key '{}'", mKeyExpr);
+            }
+        }
+        else
+        {
+            SPDLOG_ERROR("No payload for key '{}'", mKeyExpr);
+        }
+
+        // Serialize and reply.
+        //
+        // capnp has already laid the message out contiguously; zenoh is
+        // handed THAT buffer rather than a copy of it. This used to
+        // allocate a second buffer the size of the whole reply and memcpy
+        // into it, which for a map tile is a hundred kilobytes moved to
+        // produce bytes identical to the ones next to it -- on every
+        // request, for every service on the bus.
+        //
+        // The kj::Array is moved onto the heap and released by the
+        // deleter, which zenoh calls once the payload and every clone of
+        // it are done. Nothing here may assume the reply has been sent by
+        // the time reply() returns.
+        auto* held = new kj::Array<capnp::word>(capnp::messageToFlatArray(respBuilder));
+        const std::size_t bytes = held->size() * sizeof(capnp::word);
+
+        // Logged here rather than next to the request, because this is where the
+        // reply's size is known. See the note above on why it is a size and not
+        // the message.
+        SPDLOG_DEBUG("Service '{}' reply {} bytes ('{}')", mKeyExpr, bytes,
+                     schema_traits<ResponseT>::name);
+
+        zenoh::Query::ReplyOptions ropts = zenoh::Query::ReplyOptions::create_default();
+        ropts.encoding.emplace(kCapnpEncodingMime);
+        ropts.encoding->set_schema(std::string(schema_traits<ResponseT>::name));
+        query.reply(mKeyExpr,
+                    zenoh::Bytes(reinterpret_cast<uint8_t*>(held->begin()), bytes,
+                                 [held](uint8_t*) { delete held; }),
+                    std::move(ropts));
+    }
+
+    // An error reply, so the caller learns why rather than waiting out its
+    // timeout. Plain text: an error payload is for a person to read, and a
+    // caller that decoded it against the response schema would get a plausible
+    // message full of garbage. May itself fail -- the query can already be gone
+    // -- and that must not escape either.
+    void replyError(const zenoh::Query& query, std::string_view reason) const noexcept
+    {
+        try
+        {
+            zenoh::Query::ReplyErrOptions options = zenoh::Query::ReplyErrOptions::create_default();
+            options.encoding.emplace(zenoh::Encoding::Predefined::zenoh_string());
+            query.reply_err(zenoh::Bytes(std::string(reason)), std::move(options));
+        }
+        catch (...)
+        {
+            SPDLOG_ERROR("Service '{}' could not send its error reply", mKeyExpr);
+        }
+    }
+
     std::string mKeyExpr;
     Handler mHandler;
     std::optional<zenoh::Queryable<void>> mQueryable;

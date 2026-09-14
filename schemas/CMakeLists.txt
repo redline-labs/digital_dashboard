@@ -144,3 +144,17 @@ target_link_libraries(schemas_test_schema_descriptor PRIVATE
 )
 
 add_project_test(TARGET schemas_test_schema_descriptor LABELS schemas unit)
+
+# The doc comments the generator lifts out of the schemas, looked up the way a
+# runtime form builder does: by node id and field index.
+add_executable(schemas_test_doc_comments
+    test_doc_comments.cpp
+)
+
+target_link_libraries(schemas_test_doc_comments PRIVATE
+    schemas
+    capnp
+    kj
+)
+
+add_project_test(TARGET schemas_test_doc_comments LABELS schemas unit)

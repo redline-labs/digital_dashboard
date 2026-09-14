@@ -59,8 +59,9 @@ because it makes the bug look covered.
 
 ### The GUI apps — drive them and look
 
-`dashboard`, `editor` and `scope` are the GUI applications, and they are what the
-agent control interface exists for. A widget change is not done when it builds;
+`dashboard`, `editor`, `scope` and `switchboard` are the GUI applications, and
+they are what the agent control interface exists for. (`switchboard` calls the
+services advertised on the bus; see `docs/switchboard.md`.) A widget change is not done when it builds;
 it is done when you have looked at it.
 
 **The round trip before saying it works:**

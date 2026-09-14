@@ -30,6 +30,7 @@ foreach(test binary xml libplist_vectors)
     add_executable(plist_test_${test} test_${test}.cpp)
     target_link_libraries(plist_test_${test} PRIVATE
         plist
+        helpers
         spdlog::spdlog
     )
     add_project_test(TARGET plist_test_${test} LABELS plist unit)

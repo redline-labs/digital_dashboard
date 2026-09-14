@@ -19,8 +19,8 @@ from .supervisor import AppName, LaunchError, Supervisor
 APP_FIELD = Field(
     default=None,
     description=(
-        "Which app to target: 'dashboard', 'editor' or 'scope'. Optional when only "
-        "one is running. There is at most one instance of each type."
+        "Which app to target: 'dashboard', 'editor', 'scope' or 'switchboard'. Optional "
+        "when only one is running. There is at most one instance of each type."
     ),
 )
 
@@ -35,12 +35,15 @@ TARGET_FIELD = Field(
 )
 
 INSTRUCTIONS = """\
-Drives the Redline dashboard, editor and scope headlessly (Qt 'offscreen'
-platform) so you can see and interact with them without a human at the screen,
-and supervises the nodes they need behind them.
+Drives the Redline dashboard, editor, scope and switchboard headlessly (Qt
+'offscreen' platform) so you can see and interact with them without a human at
+the screen, and supervises the nodes they need behind them.
 
-TWO KINDS OF PROCESS. dashboard, editor and scope are controllable: they take a
-control socket, and every ui_/input_/widget_/scope_/editor_ tool works on them.
+TWO KINDS OF PROCESS. dashboard, editor, scope and switchboard are controllable:
+they take a control socket, and every ui_/input_/widget_/scope_/editor_ tool
+works on them. switchboard (the service caller) has no typed tools; drive it with
+app_call and the switchboard.* methods (app_methods lists them): services,
+select, form, set_fields, reset, submit (returns a call_id), result, history.
 map_server is a supervised NODE: launch it, read it with app_logs, quit it, and
 nothing else -- it is headless and has no control socket.
 
@@ -149,8 +152,8 @@ def app_launch(
 
     Two kinds:
 
-      * dashboard, editor, scope -- Qt apps with a control socket. Everything
-        that inspects, screenshots or clicks works on these.
+      * dashboard, editor, scope, switchboard -- Qt apps with a control socket.
+        Everything that inspects, screenshots or clicks works on these.
       * map_server -- a headless node, supervised only: launch it, read it with
         app_logs, quit it. It has no control socket, so ui_/input_/widget_ calls
         do not apply to it and say so.

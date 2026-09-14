@@ -12,6 +12,8 @@ Redline Labs Digital Dash is an open, hackable vehicle dashboard platform. The g
 The software stack is organized in this repository:
 - `dashboard`: Qt6 application that renders fully drawn widgets (no static images) for gauges and UI elements.
 - `dashboard_editor`: a work‑in‑progress GUI editor for composing dashboards via drag‑and‑drop.
+- `scope`: a live and recorded time‑series visualizer for anything on the bus.
+- `switchboard`: lists every service advertised on the bus and calls one from a form generated from its request schema.
 
 Key capabilities:
 - Fully customizable via a configuration (YAML) that controls layout, which widgets are shown, widget parameters (for example, max RPM and shift points), and the data sources for each element.

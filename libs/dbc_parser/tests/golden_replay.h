@@ -9,6 +9,8 @@
 // That is what makes it worth more than a hand-written expectation, which can
 // only ever encode what the author already believed.
 
+#include "helpers/hex.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -38,46 +40,6 @@ struct Case
     std::vector<uint8_t> expectedEncoding; // empty when the golden had no encode line
     int line{};
 };
-
-inline std::optional<std::vector<uint8_t>> parseHex(std::string_view text)
-{
-    if ((text.size() % 2) != 0)
-    {
-        return std::nullopt;
-    }
-
-    std::vector<uint8_t> out;
-    out.reserve(text.size() / 2);
-
-    for (size_t i = 0; i < text.size(); i += 2)
-    {
-        unsigned value = 0;
-        for (size_t j = 0; j < 2; ++j)
-        {
-            const char c = text[i + j];
-            value <<= 4u;
-            if ((c >= '0') && (c <= '9'))
-            {
-                value |= static_cast<unsigned>(c - '0');
-            }
-            else if ((c >= 'a') && (c <= 'f'))
-            {
-                value |= static_cast<unsigned>(c - 'a' + 10);
-            }
-            else if ((c >= 'A') && (c <= 'F'))
-            {
-                value |= static_cast<unsigned>(c - 'A' + 10);
-            }
-            else
-            {
-                return std::nullopt;
-            }
-        }
-        out.push_back(static_cast<uint8_t>(value));
-    }
-
-    return out;
-}
 
 inline std::vector<Case> load(const std::string &path, const char *text, std::string &errorOut)
 {
@@ -145,7 +107,7 @@ inline std::vector<Case> load(const std::string &path, const char *text, std::st
         {
             std::string payloadHex;
             fields >> payloadHex;
-            auto payload = parseHex(payloadHex);
+            auto payload = helpers::fromHex(payloadHex);
             if (!payload)
             {
                 errorOut = path + ":" + std::to_string(lineNumber) + ": malformed payload";
@@ -172,7 +134,7 @@ inline std::vector<Case> load(const std::string &path, const char *text, std::st
 
             std::string payloadHex;
             fields >> payloadHex;
-            auto payload = parseHex(payloadHex);
+            auto payload = helpers::fromHex(payloadHex);
             if (!payload)
             {
                 errorOut = path + ":" + std::to_string(lineNumber) + ": malformed encoding";
@@ -187,18 +149,6 @@ inline std::vector<Case> load(const std::string &path, const char *text, std::st
     }
 
     return cases;
-}
-
-inline std::string hexOf(const std::vector<uint8_t> &bytes)
-{
-    std::string out;
-    for (uint8_t byte : bytes)
-    {
-        char buf[3];
-        std::snprintf(buf, sizeof(buf), "%02x", byte);
-        out += buf;
-    }
-    return out;
 }
 
 // cantools and the generated code both compute raw * scale + offset in IEEE
@@ -274,7 +224,8 @@ int replay(const std::string &goldenPath, const char *goldenText)
                         std::fprintf(stderr,
                                      "%s:%d: %s.%s from %s: got %.17g, cantools says %.17g\n",
                                      goldenPath.c_str(), entry.line, entry.messageName.c_str(),
-                                     expectation.signalName.c_str(), hexOf(entry.payload).c_str(),
+                                     expectation.signalName.c_str(),
+                                     helpers::toHex(entry.payload).c_str(),
                                      actual, expectation.value);
                         failures += 1;
                     }
@@ -298,7 +249,8 @@ int replay(const std::string &goldenPath, const char *goldenText)
                 {
                     std::fprintf(stderr, "%s:%d: %s re-encoded to %s, cantools says %s\n",
                                  goldenPath.c_str(), entry.line, entry.messageName.c_str(),
-                                 hexOf(actual).c_str(), hexOf(entry.expectedEncoding).c_str());
+                                 helpers::toHex(actual).c_str(),
+                                 helpers::toHex(entry.expectedEncoding).c_str());
                     failures += 1;
                 }
             }

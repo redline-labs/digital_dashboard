@@ -123,6 +123,13 @@ private:
     // registry_name -> the file that claimed it first.
     std::map<std::string, std::string> claimed_names_;
 
+    // Doc comments, by node id. capnp hands these over separately from the node
+    // graph (CodeGeneratorRequest.sourceInfo) precisely so they never end up in
+    // anything compiled -- which is why the descriptors below carry none, and
+    // why the doc table is its own output.
+    std::map<uint64_t, capnp::schema::Node::SourceInfo::Reader> source_info_;
+    std::set<uint64_t> requested_file_ids_;
+
     kj::MainBuilder::Validity run()
     {
         capnp::ReaderOptions options;
@@ -133,6 +140,16 @@ private:
         for (auto node : request.getNodes())
         {
             nodes_.emplace(node.getId(), node);
+        }
+
+        for (auto info : request.getSourceInfo())
+        {
+            source_info_.emplace(info.getId(), info);
+        }
+
+        for (auto requested : request.getRequestedFiles())
+        {
+            requested_file_ids_.insert(requested.getId());
         }
 
         for (auto requested : request.getRequestedFiles())
@@ -436,6 +453,178 @@ private:
         return out;
     }
 
+    // ------------------------------------------------------------ doc comments
+    //
+    // The `#` comments in a schema are the only field-level documentation this
+    // tree has -- "Up to eight bytes, indicators 1..64" is what a person filling
+    // in a Grayhill request needs, and it existed nowhere a program could read.
+    // capnp::Schema carries no comments at all, so a tool building a form from a
+    // schema at runtime had names and types and nothing else.
+
+    // True when `id` is declared in one of the files we were asked to generate,
+    // rather than in an import such as capnp's own c++.capnp. Walks the scope
+    // chain, which also covers groups: they are reached through a field rather
+    // than nestedNodes, but their scope is still the struct that holds them.
+    bool inRequestedFile(uint64_t id) const
+    {
+        for (int depth = 0; id != 0 && depth < 64; ++depth)
+        {
+            if (requested_file_ids_.count(id) != 0)
+            {
+                return true;
+            }
+            const auto found = nodes_.find(id);
+            if (found == nodes_.end())
+            {
+                return false;
+            }
+            id = found->second.getScopeId();
+        }
+        return false;
+    }
+
+    // capnp keeps the comment's line breaks and its trailing newline. The line
+    // breaks are content -- several comments are paragraphs -- but the trailing
+    // whitespace is not.
+    static std::string trimDoc(kj::StringPtr text)
+    {
+        std::string out = toStd(text);
+        while (!out.empty() && (out.back() == '\n' || out.back() == ' ' || out.back() == '\r'))
+        {
+            out.pop_back();
+        }
+        return out;
+    }
+
+    // A C++ string literal for arbitrary text. Everything outside printable ASCII
+    // becomes a three-digit octal escape: octal escapes stop after three digits,
+    // so unlike \x one cannot swallow a following character that happens to be a
+    // hex digit. Comments in this tree do contain UTF-8 (arrows, degree signs).
+    static std::string cxxLiteral(const std::string& text)
+    {
+        std::string out = "\"";
+        for (const char ch : text)
+        {
+            const auto c = static_cast<unsigned char>(ch);
+            if (c == '\\')
+            {
+                out += "\\\\";
+            }
+            else if (c == '"')
+            {
+                out += "\\\"";
+            }
+            else if (c == '\n')
+            {
+                out += "\\n";
+            }
+            else if (c >= 0x20 && c < 0x7f)
+            {
+                out += ch;
+            }
+            else
+            {
+                const char digits[] = {'\\', static_cast<char>('0' + ((c >> 6) & 7)),
+                                       static_cast<char>('0' + ((c >> 3) & 7)),
+                                       static_cast<char>('0' + (c & 7)), '\0'};
+                out += digits;
+            }
+        }
+        out += "\"";
+        return out;
+    }
+
+    static std::string hexId(uint64_t id)
+    {
+        static constexpr char kDigits[] = "0123456789abcdef";
+        std::string out(16, '0');
+        for (int i = 15; i >= 0; --i)
+        {
+            out[static_cast<size_t>(i)] = kDigits[id & 0xf];
+            id >>= 4;
+        }
+        return out;
+    }
+
+    // One row per struct, group or enum that has any comment at all, sorted by
+    // id (std::map order) so the lookup can binary search. Members are indexed
+    // exactly like Node.struct.fields / Node.enum.enumerants, which is what
+    // capnp::StructSchema::Field::getIndex() and EnumSchema::Enumerant::getIndex()
+    // return.
+    std::string docTable() const
+    {
+        std::string arrays;
+        std::string rows;
+        size_t count = 0;
+
+        for (const auto& [id, info] : source_info_)
+        {
+            const auto node = nodes_.find(id);
+            if (node == nodes_.end() || !(node->second.isStruct() || node->second.isEnum()) ||
+                !inRequestedFile(id))
+            {
+                continue;
+            }
+
+            const std::string doc = trimDoc(info.getDocComment());
+            std::vector<std::string> members;
+            bool any_member = false;
+            for (auto member : info.getMembers())
+            {
+                members.push_back(trimDoc(member.getDocComment()));
+                any_member = any_member || !members.back().empty();
+            }
+
+            if (doc.empty() && !any_member)
+            {
+                continue;
+            }
+
+            std::string members_ref = "{}";
+            if (any_member)
+            {
+                const std::string name = "kMemberDocs_" + hexId(id);
+                arrays += "constexpr std::array<std::string_view, " +
+                          std::to_string(members.size()) + "> " + name + "{\n";
+                for (const auto& member : members)
+                {
+                    arrays += "    " + cxxLiteral(member) + ",\n";
+                }
+                arrays += "};\n";
+                members_ref = name;
+            }
+
+            rows += "    NodeDoc{0x" + hexId(id) + "ull, " + cxxLiteral(doc) + ", " + members_ref +
+                    "},  // " + toStd(node->second.getDisplayName()) + "\n";
+            ++count;
+        }
+
+        return "// Doc comments from schemas/*.capnp, by capnp node id. See the generator.\n"
+               "namespace\n"
+               "{\n"
+               "\n"
+               "struct NodeDoc\n"
+               "{\n"
+               "    std::uint64_t id;\n"
+               "    std::string_view doc;\n"
+               "    std::span<const std::string_view> members;\n"
+               "};\n"
+               "\n" +
+               arrays + "\nconstexpr std::array<NodeDoc, " + std::to_string(count) +
+               "> kNodeDocs{{\n" + rows +
+               "}};\n"
+               "\n"
+               "const NodeDoc* findNodeDoc(std::uint64_t node_id)\n"
+               "{\n"
+               "    const auto it = std::lower_bound(\n"
+               "        kNodeDocs.begin(), kNodeDocs.end(), node_id,\n"
+               "        [](const NodeDoc& row, std::uint64_t id) { return row.id < id; });\n"
+               "    return (it != kNodeDocs.end() && it->id == node_id) ? &*it : nullptr;\n"
+               "}\n"
+               "\n"
+               "}  // namespace\n\n";
+    }
+
     static std::string cxxNamespaceOf(capnp::schema::Node::Reader file)
     {
         for (auto annotation : file.getAnnotations())
@@ -584,6 +773,20 @@ private:
             "// name is ours alone and appears nowhere in the descriptor.\n"
             "std::string_view schema_display_name(schema_type_t schema_type);\n"
             "\n"
+            "// The `#` doc comment on a struct, group or enum, by capnp node id\n"
+            "// (capnp::Schema::getProto().getId()). Empty when it has none, or when the\n"
+            "// node is not from schemas/*.capnp. Line breaks inside a comment are kept.\n"
+            "//\n"
+            "// capnp::Schema itself carries no comments -- capnp keeps them out of the\n"
+            "// compiled schema on purpose -- so this is the only way a program reading a\n"
+            "// schema at runtime can show a person what a field is for.\n"
+            "std::string_view schema_doc(std::uint64_t node_id);\n"
+            "\n"
+            "// The doc comment on one member: a field of a struct or group, indexed as\n"
+            "// capnp::StructSchema::Field::getIndex(), or an enumerant, indexed as\n"
+            "// capnp::EnumSchema::Enumerant::getIndex(). Empty when there is none.\n"
+            "std::string_view member_doc(std::uint64_t node_id, std::uint32_t index);\n"
+            "\n"
             "// Specialized only for registered schemas, so publishing an unregistered type\n"
             "// is a compile error rather than a message nothing can decode.\n"
             "template <typename Schema>\n"
@@ -611,8 +814,9 @@ private:
         {
             out += "#include \"" + file.filename + ".h\"\n";
         }
-        out += "\n";
+        out += "\n#include <algorithm>\n#include <array>\n#include <span>\n#include <string_view>\n\n";
         out += descriptorTable();
+        out += docTable();
         out +=
             "namespace pub_sub\n"
             "{\n"
@@ -690,6 +894,22 @@ private:
             "    }\n"
             "\n"
             "    return {};\n"
+            "}\n"
+            "\n"
+            "std::string_view schema_doc(std::uint64_t node_id)\n"
+            "{\n"
+            "    const auto* row = findNodeDoc(node_id);\n"
+            "    return row != nullptr ? row->doc : std::string_view{};\n"
+            "}\n"
+            "\n"
+            "std::string_view member_doc(std::uint64_t node_id, std::uint32_t index)\n"
+            "{\n"
+            "    const auto* row = findNodeDoc(node_id);\n"
+            "    if (row == nullptr || index >= row->members.size())\n"
+            "    {\n"
+            "        return {};\n"
+            "    }\n"
+            "    return row->members[index];\n"
             "}\n"
             "\n"
             "}  // namespace pub_sub\n";

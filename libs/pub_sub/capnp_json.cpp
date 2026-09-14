@@ -2,8 +2,11 @@
 
 #include "pub_sub/capnp_payload.h"
 
+#include "helpers/hex.h"
+
 #include <capnp/serialize.h>
 
+#include <cmath>
 #include <limits>
 
 namespace pub_sub
@@ -12,19 +15,19 @@ namespace pub_sub
 namespace
 {
 
-json dynamicToJson(capnp::DynamicValue::Reader value);
+json dynamicToJson(capnp::DynamicValue::Reader value, const CapnpJsonOptions& options);
 
-json listToJson(capnp::DynamicList::Reader list)
+json listToJson(capnp::DynamicList::Reader list, const CapnpJsonOptions& options)
 {
     json out = json::array();
     for (auto element : list)
     {
-        out.push_back(dynamicToJson(element));
+        out.push_back(dynamicToJson(element, options));
     }
     return out;
 }
 
-json structToJson(capnp::DynamicStruct::Reader reader)
+json structToJson(capnp::DynamicStruct::Reader reader, const CapnpJsonOptions& options)
 {
     json out = json::object();
 
@@ -32,19 +35,19 @@ json structToJson(capnp::DynamicStruct::Reader reader)
     // inactive union field throws, so this is the only safe traversal.
     for (auto field : reader.getSchema().getNonUnionFields())
     {
-        out[field.getProto().getName().cStr()] = dynamicToJson(reader.get(field));
+        out[field.getProto().getName().cStr()] = dynamicToJson(reader.get(field), options);
     }
 
     // KJ_IF_MAYBE binds a pointer, not a reference, in this capnp version.
     KJ_IF_MAYBE(active, reader.which())
     {
-        out[active->getProto().getName().cStr()] = dynamicToJson(reader.get(*active));
+        out[active->getProto().getName().cStr()] = dynamicToJson(reader.get(*active), options);
     }
 
     return out;
 }
 
-json dynamicToJson(capnp::DynamicValue::Reader value)
+json dynamicToJson(capnp::DynamicValue::Reader value, const CapnpJsonOptions& options)
 {
     switch (value.getType())
     {
@@ -62,16 +65,30 @@ json dynamicToJson(capnp::DynamicValue::Reader value)
             return std::string(value.as<capnp::Text>().cStr());
         case capnp::DynamicValue::DATA:
         {
-            // Bytes are not JSON. Report the length rather than inventing an
-            // encoding: the payloads this hits are H.264 access units and PCM
-            // audio, which nothing downstream would want inline anyway.
             const auto data = value.as<capnp::Data>();
+            const std::span<const std::uint8_t> bytes(data.begin(), data.size());
+
+            // Hex when the caller asked for it and the bytes fit: a service
+            // reply's Data is a handful of command bytes a person wants to read,
+            // and a hex string is exactly what jsonToCapnp accepts back.
+            if (options.data_hex_limit != 0 && bytes.size() <= options.data_hex_limit)
+            {
+                return helpers::toHex(bytes);
+            }
+
+            // Otherwise the length rather than an invented encoding: the
+            // payloads this hits by default are H.264 access units and PCM
+            // audio, which nothing downstream would want inline anyway.
             json out = json::object();
-            out["_data_bytes"] = data.size();
+            out["_data_bytes"] = bytes.size();
+            if (options.data_hex_limit != 0)
+            {
+                out["hex_prefix"] = helpers::toHex(bytes.first(options.data_hex_limit));
+            }
             return out;
         }
         case capnp::DynamicValue::LIST:
-            return listToJson(value.as<capnp::DynamicList>());
+            return listToJson(value.as<capnp::DynamicList>(), options);
         case capnp::DynamicValue::ENUM:
         {
             auto enumerant = value.as<capnp::DynamicEnum>().getEnumerant();
@@ -84,7 +101,7 @@ json dynamicToJson(capnp::DynamicValue::Reader value)
             return value.as<capnp::DynamicEnum>().getRaw();
         }
         case capnp::DynamicValue::STRUCT:
-            return structToJson(value.as<capnp::DynamicStruct>());
+            return structToJson(value.as<capnp::DynamicStruct>(), options);
         case capnp::DynamicValue::CAPABILITY:
             return "<capability>";
         case capnp::DynamicValue::ANY_POINTER:
@@ -95,10 +112,10 @@ json dynamicToJson(capnp::DynamicValue::Reader value)
     return nullptr;
 }
 
-std::string joinFieldNames(capnp::StructSchema schema)
+std::string joinFieldNames(capnp::StructSchema::FieldList fields)
 {
     std::string out;
-    for (auto field : schema.getFields())
+    for (auto field : fields)
     {
         out += (out.empty() ? "" : ", ");
         out += field.getProto().getName().cStr();
@@ -106,69 +123,223 @@ std::string joinFieldNames(capnp::StructSchema schema)
     return out;
 }
 
-void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field field,
-              const json& value, const std::string& path, std::vector<std::string>& errors)
+// The inclusive range a capnp integer type can hold, as the widest types that
+// can carry either end. Unsigned minimums are 0 and signed maximums fit int64.
+struct IntegerRange
 {
-    const auto type = field.getType();
+    bool is_signed;
+    std::int64_t min;
+    std::uint64_t max;
+};
 
-    switch (type.which())
+// nullopt for anything that is not an integer. Every enumerator is spelled out
+// and there is no default, so a capnp release adding a type kind fails the
+// build here (-Wswitch-enum) instead of silently reading as "not an integer".
+std::optional<IntegerRange> integerRange(capnp::schema::Type::Which which)
+{
+    using W = capnp::schema::Type::Which;
+    switch (which)
     {
-        case capnp::schema::Type::BOOL:
+        case W::INT8:   return IntegerRange{true, INT8_MIN, INT8_MAX};
+        case W::INT16:  return IntegerRange{true, INT16_MIN, INT16_MAX};
+        case W::INT32:  return IntegerRange{true, INT32_MIN, INT32_MAX};
+        case W::INT64:  return IntegerRange{true, INT64_MIN, INT64_MAX};
+        case W::UINT8:  return IntegerRange{false, 0, UINT8_MAX};
+        case W::UINT16: return IntegerRange{false, 0, UINT16_MAX};
+        case W::UINT32: return IntegerRange{false, 0, UINT32_MAX};
+        case W::UINT64: return IntegerRange{false, 0, UINT64_MAX};
+
+        case W::VOID:
+        case W::BOOL:
+        case W::FLOAT32:
+        case W::FLOAT64:
+        case W::TEXT:
+        case W::DATA:
+        case W::LIST:
+        case W::ENUM:
+        case W::STRUCT:
+        case W::INTERFACE:
+        case W::ANY_POINTER:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+void setValue(capnp::Type type, const json& value, const std::string& path,
+              std::vector<std::string>& errors,
+              const std::function<void(const capnp::DynamicValue::Reader&)>& set,
+              const std::function<capnp::DynamicStruct::Builder()>& init_struct,
+              const std::function<capnp::DynamicList::Builder(unsigned)>& init_list);
+
+// One element of a list, of any element type. The recursion that makes
+// List(List(UInt64)) and List(Struct) work the same way a field does.
+void setListElement(capnp::DynamicList::Builder list, unsigned index, capnp::Type element_type,
+                    const json& element, const std::string& path, std::vector<std::string>& errors)
+{
+    setValue(
+        element_type, element, path, errors,
+        [&](const capnp::DynamicValue::Reader& v) { list.set(index, v); },
+        [&]() { return list[index].as<capnp::DynamicStruct>(); },
+        [&](unsigned size) { return list.init(index, size).as<capnp::DynamicList>(); });
+}
+
+// Sets one value of type `type` from JSON, through whichever of the three
+// callbacks that type needs. Shared by struct fields and list elements, so a
+// list of enums is checked exactly the way an enum field is -- they used to be
+// separate code, and the list half pushed every non-text, non-bool element
+// through a double, which accepted a negative into a UInt8 list and rounded
+// uint64 values above 2^53.
+void setValue(capnp::Type type, const json& value, const std::string& path,
+              std::vector<std::string>& errors,
+              const std::function<void(const capnp::DynamicValue::Reader&)>& set,
+              const std::function<capnp::DynamicStruct::Builder()>& init_struct,
+              const std::function<capnp::DynamicList::Builder(unsigned)>& init_list)
+{
+    using W = capnp::schema::Type::Which;
+    const W which = type.which();
+
+    switch (which)
+    {
+        case W::VOID:
+        {
+            // Presence is the whole value -- a union arm chosen with no payload.
+            // Setting it is what moves the discriminant.
+            if (!value.is_null() && !(value.is_boolean() && value.get<bool>()) &&
+                !(value.is_object() && value.empty()))
+            {
+                errors.push_back(path + ": a Void value takes null, true or {}.");
+                return;
+            }
+            set(capnp::DynamicValue::Reader(capnp::VOID));
+            return;
+        }
+
+        case W::BOOL:
+        {
             if (!value.is_boolean())
             {
                 errors.push_back(path + ": expected a boolean.");
                 return;
             }
-            builder.set(field, value.get<bool>());
+            set(value.get<bool>());
             return;
+        }
 
-        case capnp::schema::Type::INT8:
-        case capnp::schema::Type::INT16:
-        case capnp::schema::Type::INT32:
-        case capnp::schema::Type::INT64:
+        case W::INT8:
+        case W::INT16:
+        case W::INT32:
+        case W::INT64:
+        case W::UINT8:
+        case W::UINT16:
+        case W::UINT32:
+        case W::UINT64:
+        {
+            const IntegerRange range = *integerRange(which);
             if (!value.is_number_integer())
             {
                 errors.push_back(path + ": expected an integer.");
                 return;
             }
-            builder.set(field, value.get<std::int64_t>());
-            return;
 
-        case capnp::schema::Type::UINT8:
-        case capnp::schema::Type::UINT16:
-        case capnp::schema::Type::UINT32:
-        case capnp::schema::Type::UINT64:
-            if (!value.is_number_unsigned())
+            // Unsigned JSON values are read as unsigned and signed as signed, so
+            // neither end of a 64-bit range goes through a conversion that loses
+            // it. A negative number into an unsigned field is refused here: capnp
+            // would otherwise throw, or, through a double, wrap it into something
+            // plausible and wrong.
+            if (value.is_number_unsigned())
             {
-                // Rejecting a negative number here matters: capnp would wrap it
-                // into a huge positive value, and a gauge would then display
-                // something plausible and wrong.
+                const std::uint64_t v = value.get<std::uint64_t>();
+                if (v > range.max)
+                {
+                    errors.push_back(path + ": " + std::to_string(v) + " is out of range (max " +
+                                     std::to_string(range.max) + ").");
+                    return;
+                }
+                if (range.is_signed)
+                {
+                    set(static_cast<std::int64_t>(v));
+                }
+                else
+                {
+                    set(v);
+                }
+                return;
+            }
+
+            const std::int64_t v = value.get<std::int64_t>();
+            if (!range.is_signed && v < 0)
+            {
                 errors.push_back(path + ": expected a non-negative integer.");
                 return;
             }
-            builder.set(field, value.get<std::uint64_t>());
+            if (v < range.min || (v >= 0 && static_cast<std::uint64_t>(v) > range.max))
+            {
+                errors.push_back(path + ": " + std::to_string(v) + " is out of range (" +
+                                 std::to_string(range.min) + " to " + std::to_string(range.max) +
+                                 ").");
+                return;
+            }
+            if (range.is_signed)
+            {
+                set(v);
+            }
+            else
+            {
+                set(static_cast<std::uint64_t>(v));
+            }
             return;
+        }
 
-        case capnp::schema::Type::FLOAT32:
-        case capnp::schema::Type::FLOAT64:
+        case W::FLOAT32:
+        case W::FLOAT64:
+        {
             if (!value.is_number())
             {
                 errors.push_back(path + ": expected a number.");
                 return;
             }
-            builder.set(field, value.get<double>());
+            const double v = value.get<double>();
+            if (which == W::FLOAT32 && std::isfinite(v) &&
+                std::fabs(v) > static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                errors.push_back(path + ": " + value.dump() + " does not fit a Float32.");
+                return;
+            }
+            set(v);
             return;
+        }
 
-        case capnp::schema::Type::TEXT:
+        case W::TEXT:
+        {
             if (!value.is_string())
             {
                 errors.push_back(path + ": expected a string.");
                 return;
             }
-            builder.set(field, capnp::Text::Reader(value.get<std::string>().c_str()));
+            const std::string text = value.get<std::string>();
+            set(capnp::Text::Reader(text.c_str(), text.size()));
             return;
+        }
 
-        case capnp::schema::Type::ENUM:
+        case W::DATA:
+        {
+            if (!value.is_string())
+            {
+                errors.push_back(path + ": expected a hex string, e.g. \"01 ff 7a\".");
+                return;
+            }
+            std::string error;
+            const auto bytes = helpers::fromHex(value.get<std::string>(), &error);
+            if (!bytes)
+            {
+                errors.push_back(path + ": " + error);
+                return;
+            }
+            set(capnp::Data::Reader(bytes->data(), bytes->size()));
+            return;
+        }
+
+        case W::ENUM:
         {
             if (!value.is_string())
             {
@@ -181,7 +352,7 @@ void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field 
             {
                 if (wanted == enumerant.getProto().getName().cStr())
                 {
-                    builder.set(field, capnp::DynamicEnum(enumerant));
+                    set(capnp::DynamicEnum(enumerant));
                     return;
                 }
             }
@@ -191,12 +362,12 @@ void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field 
                 valid += (valid.empty() ? "" : ", ");
                 valid += enumerant.getProto().getName().cStr();
             }
-            errors.push_back(path + ": '" + wanted + "' is not valid. Expected one of: " +
-                             valid + ".");
+            errors.push_back(path + ": '" + wanted + "' is not valid. Expected one of: " + valid +
+                             ".");
             return;
         }
 
-        case capnp::schema::Type::STRUCT:
+        case W::STRUCT:
         {
             if (!value.is_object())
             {
@@ -204,7 +375,7 @@ void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field 
                 return;
             }
             std::vector<std::string> nested;
-            jsonToCapnp(value, builder.init(field).as<capnp::DynamicStruct>(), nested);
+            jsonToCapnp(value, init_struct(), nested);
             for (auto& error : nested)
             {
                 errors.push_back(path + "." + error);
@@ -212,87 +383,45 @@ void setField(capnp::DynamicStruct::Builder builder, capnp::StructSchema::Field 
             return;
         }
 
-        case capnp::schema::Type::LIST:
+        case W::LIST:
         {
             if (!value.is_array())
             {
                 errors.push_back(path + ": expected an array.");
                 return;
             }
-            auto list = builder.init(field, static_cast<unsigned int>(value.size()))
-                            .as<capnp::DynamicList>();
+            auto list = init_list(static_cast<unsigned>(value.size()));
             const auto element_type = type.asList().getElementType();
             for (std::size_t i = 0; i < value.size(); ++i)
             {
-                const std::string element_path = path + "[" + std::to_string(i) + "]";
-                const json& element = value[i];
-                const auto index = static_cast<unsigned int>(i);
-
-                // An if-chain, not a switch: capnp::schema::Type::Which has 18
-                // enumerators and the build runs with -Wswitch-enum, so a switch
-                // would mean listing all of them to handle four.
-                if (element_type.which() == capnp::schema::Type::STRUCT)
-                {
-                    if (!element.is_object())
-                    {
-                        errors.push_back(element_path + ": expected an object.");
-                        continue;
-                    }
-                    std::vector<std::string> nested;
-                    jsonToCapnp(element, list[index].as<capnp::DynamicStruct>(), nested);
-                    for (auto& error : nested)
-                    {
-                        errors.push_back(element_path + "." + error);
-                    }
-                }
-                else if (element_type.which() == capnp::schema::Type::TEXT)
-                {
-                    if (!element.is_string())
-                    {
-                        errors.push_back(element_path + ": expected a string.");
-                        continue;
-                    }
-                    list.set(index, capnp::Text::Reader(element.get<std::string>().c_str()));
-                }
-                else if (element_type.which() == capnp::schema::Type::BOOL)
-                {
-                    if (!element.is_boolean())
-                    {
-                        errors.push_back(element_path + ": expected a boolean.");
-                        continue;
-                    }
-                    list.set(index, element.get<bool>());
-                }
-                else
-                {
-                    if (!element.is_number())
-                    {
-                        errors.push_back(element_path + ": expected a number.");
-                        continue;
-                    }
-                    list.set(index, element.get<double>());
-                }
+                setListElement(list, static_cast<unsigned>(i), element_type, value[i],
+                               path + "[" + std::to_string(i) + "]", errors);
             }
             return;
         }
 
-        case capnp::schema::Type::VOID:
-            // Nothing to set; presence is the whole value.
-            return;
-
-        case capnp::schema::Type::DATA:
-        case capnp::schema::Type::INTERFACE:
-        case capnp::schema::Type::ANY_POINTER:
+        // No service in the tree takes either, and there is no JSON spelling
+        // that would mean anything for them.
+        case W::INTERFACE:
+        case W::ANY_POINTER:
             errors.push_back(path + ": fields of this type cannot be set from JSON.");
             return;
     }
 
+    // Only a value outside the enum reaches here -- a schema from a newer capnp
+    // read by this one.
     errors.push_back(path + ": unhandled field type.");
 }
 
 }  // namespace
 
 json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema)
+{
+    return capnpToJson(bytes, schema, CapnpJsonOptions{});
+}
+
+json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema,
+                 const CapnpJsonOptions& options)
 {
     // This used to copy into a word-aligned buffer unconditionally, which was
     // safe but paid for a heap allocation on every sample. WordAlignedPayload
@@ -307,7 +436,12 @@ json capnpToJson(const std::vector<std::uint8_t>& bytes, capnp::Schema schema)
                bytes.size(), sizeof(capnp::word));
 
     capnp::FlatArrayMessageReader reader(aligned.words());
-    return structToJson(reader.getRoot<capnp::DynamicStruct>(schema.asStruct()));
+    return structToJson(reader.getRoot<capnp::DynamicStruct>(schema.asStruct()), options);
+}
+
+json capnpToJson(capnp::DynamicStruct::Reader reader, const CapnpJsonOptions& options)
+{
+    return structToJson(reader, options);
 }
 
 bool jsonToCapnp(const json& value, capnp::DynamicStruct::Builder builder,
@@ -322,16 +456,44 @@ bool jsonToCapnp(const json& value, capnp::DynamicStruct::Builder builder,
     const auto schema = builder.getSchema();
     const std::size_t before = errors.size();
 
+    // A union is a group whose every field is an arm, and exactly one arm can be
+    // set. Naming two would have the second silently replace the first, which is
+    // the unknown-field problem again in a different shape.
+    if (schema.getProto().getStruct().getDiscriminantCount() > 0 && value.size() != 1)
+    {
+        errors.push_back(std::string("a union takes exactly one of: ") +
+                         joinFieldNames(schema.getFields()) + ".");
+        return false;
+    }
+
     for (const auto& [key, field_value] : value.items())
     {
         KJ_IF_MAYBE(field, schema.findFieldByName(key))
         {
-            setField(builder, *field, field_value, key, errors);
+            const capnp::StructSchema::Field f = *field;
+            try
+            {
+                setValue(
+                    f.getType(), field_value, key, errors,
+                    [&](const capnp::DynamicValue::Reader& v) { builder.set(f, v); },
+                    // init() on a group clears it and returns the builder over
+                    // the parent's own storage, so plain groups and unions
+                    // recurse exactly like a struct field does.
+                    [&]() { return builder.init(f).as<capnp::DynamicStruct>(); },
+                    [&](unsigned size) { return builder.init(f, size).as<capnp::DynamicList>(); });
+            }
+            catch (const kj::Exception& e)
+            {
+                // Anything capnp itself refuses that the checks above did not
+                // anticipate. Reported, never thrown at a caller that asked for
+                // a list of errors.
+                errors.push_back(key + ": " + e.getDescription().cStr());
+            }
         }
         else
         {
             errors.push_back(key + ": no such field. Known fields: " +
-                             joinFieldNames(schema) + ".");
+                             joinFieldNames(schema.getFields()) + ".");
         }
     }
 

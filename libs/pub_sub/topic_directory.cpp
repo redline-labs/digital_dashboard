@@ -319,8 +319,12 @@ struct ServiceDirectory::Impl
 {
     mutable std::mutex mutex;
 
-    // Keyed on the service's key expression, which is what a caller addresses.
-    std::map<std::string, ServiceEntry> entries;
+    // Keyed on the key expression AND the offering session, not the key alone.
+    // Keyed on the key, a second node offering the same service silently
+    // replaced the first -- the directory showed one owner while a call reached
+    // both. Two offers of one key is a configuration problem worth SEEING, the
+    // same reasoning NodeDirectory applies to two instances of one node.
+    std::map<std::pair<std::string, std::string>, ServiceEntry> entries;
     std::atomic<std::uint64_t> revision{0};
 
     void apply(const zenoh::Sample& sample)
@@ -342,7 +346,7 @@ struct ServiceDirectory::Impl
         {
             const std::lock_guard<std::mutex> guard(mutex);
 
-            ServiceEntry& entry = entries[key];
+            ServiceEntry& entry = entries[{key, zid}];
             entry.key = key;
             entry.request_schema = request_schema;
             entry.response_schema = response_schema;
@@ -377,14 +381,22 @@ std::vector<ServiceEntry> ServiceDirectory::snapshot() const
     {
         const std::lock_guard<std::mutex> guard(impl_->mutex);
         out.reserve(impl_->entries.size());
-        for (const auto& [key, entry] : impl_->entries)
+        for (const auto& [identity, entry] : impl_->entries)
         {
             out.push_back(entry);
         }
     }
 
+    // By key, then owner, so two offers of one key land next to each other.
     std::sort(out.begin(), out.end(),
-              [](const ServiceEntry& lhs, const ServiceEntry& rhs) { return lhs.key < rhs.key; });
+              [](const ServiceEntry& lhs, const ServiceEntry& rhs)
+              {
+                  if (lhs.key != rhs.key)
+                  {
+                      return lhs.key < rhs.key;
+                  }
+                  return lhs.owner_zid < rhs.owner_zid;
+              });
     return out;
 }
 

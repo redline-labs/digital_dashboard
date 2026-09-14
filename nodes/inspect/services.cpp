@@ -2,16 +2,9 @@
 
 #include "cli/output.h"
 
-#include "pub_sub/capnp_encoding.h"
-#include "pub_sub/capnp_json.h"
-#include "pub_sub/capnp_payload.h"
-#include "pub_sub/schema_registry.h"
+#include "pub_sub/dynamic_service_call.h"
 #include "pub_sub/session_manager.h"
 #include "pub_sub/topic_directory.h"
-
-#include <capnp/dynamic.h>
-#include <capnp/message.h>
-#include <capnp/serialize.h>
 
 #include <zenoh.hxx>
 
@@ -175,13 +168,29 @@ int runCall(cli::Context& context)
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
+        // One entry per offering node now, so a key served twice appears twice.
+        // They normally agree on the schema; when they do not, there is no
+        // right request to build, and picking one would send the other node
+        // bytes it decodes as something else.
         for (const pub_sub::ServiceEntry& entry : services.snapshot())
         {
-            if (entry.key == *key)
+            if (entry.key != *key)
+            {
+                continue;
+            }
+            if (request_schema.empty())
             {
                 request_schema = entry.request_schema;
                 response_schema = entry.response_schema;
-                break;
+            }
+            else if (entry.request_schema != request_schema)
+            {
+                SPDLOG_ERROR("'{}' is offered by more than one node, with different request "
+                             "schemas ('{}' and '{}').",
+                             *key, request_schema, entry.request_schema);
+                SPDLOG_INFO("`inspect services` shows which node offers which. Pass --schema to "
+                            "choose.");
+                return cli::kUsage;
             }
         }
 
@@ -193,28 +202,6 @@ int runCall(cli::Context& context)
                         "unadvertised one anyway.");
             return cli::kUsage;
         }
-    }
-
-    const auto schema = pub_sub::get_schema(request_schema);
-    if (!schema)
-    {
-        SPDLOG_ERROR("Request schema '{}' is not in this build's registry.", request_schema);
-        return cli::kUsage;
-    }
-
-    capnp::MallocMessageBuilder message;
-    auto root = message.initRoot<capnp::DynamicStruct>(schema->asStruct());
-
-    std::vector<std::string> errors;
-    if (!pub_sub::jsonToCapnp(fields, root, errors))
-    {
-        SPDLOG_ERROR("Request rejected; nothing was sent:");
-        for (const std::string& error : errors)
-        {
-            SPDLOG_ERROR("  {}", error);
-        }
-        SPDLOG_INFO("`inspect schema {}` shows the fields it accepts.", request_schema);
-        return cli::kUsage;
     }
 
     auto session = pub_sub::SessionManager::getOrCreate();
@@ -239,93 +226,55 @@ int runCall(cli::Context& context)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    const auto words = capnp::messageToFlatArray(message);
-    const auto bytes = words.asBytes();
+    // The request build, the query and the reply decoding are the library's --
+    // the same code switchboard calls through -- so the two cannot disagree
+    // about what a request means or what came back.
+    pub_sub::ServiceCallRequest request;
+    request.key = *key;
+    request.request_schema = request_schema;
+    request.response_schema = response_schema;
+    request.fields = std::move(fields);
+    request.timeout = std::chrono::milliseconds(context.uintOr("timeout", 2000));
 
-    std::mutex reply_mutex;
-    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> replies;
-    std::atomic<bool> done{false};
+    const pub_sub::ServiceCallResult result = pub_sub::callServiceBlocking(std::move(request));
 
-    try
+    using Status = pub_sub::ServiceCallResult::Status;
+    if (result.status == Status::RequestRejected)
     {
-        zenoh::Session::GetOptions options;
-        options.timeout_ms = context.uintOr("timeout", 2000);
-        options.payload = zenoh::Bytes(std::vector<std::uint8_t>(bytes.begin(), bytes.end()));
-
-        zenoh::Encoding encoding(pub_sub::kCapnpEncodingMime);
-        encoding.set_schema(request_schema);
-        options.encoding = std::move(encoding);
-
-        session->get(
-            zenoh::KeyExpr(*key), "",
-            [&](const zenoh::Reply& reply)
-            {
-                try
-                {
-                    if (!reply.is_ok())
-                    {
-                        return;
-                    }
-                    const zenoh::Sample& sample = reply.get_ok();
-                    const std::string sample_encoding = sample.get_encoding().as_string();
-                    const std::lock_guard<std::mutex> guard(reply_mutex);
-                    replies.emplace_back(
-                        std::string(pub_sub::schemaNameFromEncoding(sample_encoding)),
-                        sample.get_payload().as_vector());
-                }
-                catch (...)
-                {
-                    // Must not escape into zenoh's Rust frame.
-                }
-            },
-            [&]() { done = true; }, std::move(options));
+        SPDLOG_ERROR("Request rejected; nothing was sent:");
+        for (const std::string& error : result.errors)
+        {
+            SPDLOG_ERROR("  {}", error);
+        }
+        SPDLOG_INFO("`inspect schema {}` shows the fields it accepts.", request_schema);
+        return cli::kUsage;
     }
-    catch (const std::exception& e)
+    if (result.status == Status::Failed)
     {
-        SPDLOG_ERROR("Call failed: {}", e.what());
+        for (const std::string& error : result.errors)
+        {
+            SPDLOG_ERROR("Call failed: {}", error);
+        }
         return cli::kFailure;
     }
-
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(context.uintOr("timeout", 2000) + 500);
-    while (!done && std::chrono::steady_clock::now() < deadline)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    const std::lock_guard<std::mutex> guard(reply_mutex);
-
-    if (replies.empty())
+    if (result.status == Status::NoReply)
     {
         SPDLOG_ERROR("No reply from '{}' within the timeout.", *key);
         return cli::kFailure;
     }
 
     nlohmann::json out = nlohmann::json::array();
-    for (const auto& [reply_schema_name, payload] : replies)
+    for (const pub_sub::ServiceReply& reply : result.replies)
     {
-        // Prefer the schema the responder stamped; fall back to what the
-        // advertisement said. They should agree, and if they do not, the
-        // responder is authoritative -- it is describing the bytes it sent.
-        const std::string effective =
-            reply_schema_name.empty() ? response_schema : reply_schema_name;
-        const auto reply_schema = pub_sub::get_schema(effective);
-
-        if (!reply_schema)
+        if (reply.is_error)
         {
-            SPDLOG_WARN("Reply schema '{}' is not in this build's registry.", effective);
+            // These used to be dropped without a word, so a service that
+            // refused the request was indistinguishable from one that was not
+            // there.
+            SPDLOG_ERROR("Service error: {}", reply.error_text);
             continue;
         }
-
-        try
-        {
-            out.push_back(pub_sub::capnpToJson(payload, *reply_schema));
-        }
-        catch (const kj::Exception& e)
-        {
-            SPDLOG_ERROR("Could not decode the reply: {}", e.getDescription().cStr());
-            return cli::kFailure;
-        }
+        out.push_back(reply.value);
     }
 
     if (out.empty())
