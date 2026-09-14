@@ -4,6 +4,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -245,11 +246,22 @@ bool notify(std::string_view message)
         return false;
     }
 
+#if defined(SOCK_CLOEXEC)
     const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
     {
         return false;
     }
+#else
+    // macOS has no SOCK_CLOEXEC; set it in a second call. The fd lives only
+    // for this function, so the window matters only to a concurrent fork.
+    const int fd = ::socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        return false;
+    }
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
