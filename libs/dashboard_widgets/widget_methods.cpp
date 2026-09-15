@@ -1,7 +1,7 @@
 #include "dashboard/widget_methods.h"
 
 #include "config_codec/config_json.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <algorithm>
 #include <expected>

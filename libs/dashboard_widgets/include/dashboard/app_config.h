@@ -14,7 +14,7 @@
 #include "dashboard/window_placement.h"
 #include "helpers/color.h"
 
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
 #include <spdlog/spdlog.h>

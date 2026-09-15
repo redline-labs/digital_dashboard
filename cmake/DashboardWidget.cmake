@@ -1,5 +1,5 @@
 get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
-                      "${CMAKE_CURRENT_LIST_DIR}/../dashboard/include" ABSOLUTE)
+                      "${CMAKE_CURRENT_LIST_DIR}/../libs/dashboard_widgets/include" ABSOLUTE)
 
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
@@ -16,7 +16,7 @@ get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
 #     )
 #
 # The widget is added to the DASHBOARD_WIDGET_LIBS global property, which
-# dashboard/CMakeLists.txt reads after add_subdirectory(widgets) to link both
+# libs/dashboard_widgets/CMakeLists.txt reads after add_subdirectory(widgets) to link both
 # executables. Widgets therefore register themselves, rather than being named a
 # second time in a list somewhere above them.
 #
@@ -25,7 +25,7 @@ get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
 #   PUBLIC   reflection, helpers, config_codec, qt_helpers, zenoh_pub_sub,
 #            Qt6::Widgets, QT_COMPONENTS
 #   PRIVATE  spdlog::spdlog
-#   includes dashboard/include and the widget's own include/
+#   includes libs/dashboard_widgets/include and the widget's own include/
 #   AUTOMOC  on, per target
 #
 # The PUBLIC defaults are PUBLIC deliberately, because a widget's headers are
@@ -71,7 +71,7 @@ function(add_dashboard_widget widget_name)
 
     # Widgets is needed by every widget; anything else is opt-in. The components
     # are found again here rather than assumed, so a widget still configures
-    # when built on its own. dashboard/CMakeLists.txt finds the common set
+    # when built on its own. libs/dashboard_widgets/CMakeLists.txt finds the common set
     # before add_subdirectory(widgets), so in the normal build these are no-ops.
     find_package(Qt6 REQUIRED COMPONENTS Widgets ${DW_QT_COMPONENTS})
 
@@ -83,7 +83,7 @@ function(add_dashboard_widget widget_name)
 
     # Resolved against THIS file, not CMAKE_SOURCE_DIR -- that is the top of
     # whatever project is configuring, so a consumer including this module from
-    # its own tree got a dashboard/include that does not exist.
+    # its own tree got an include path that does not exist.
     target_include_directories(${widget_name} PUBLIC
         ${DASHBOARD_WIDGET_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/include

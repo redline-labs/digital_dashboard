@@ -1,7 +1,7 @@
 #ifndef MAIN_WINDOW_H_
 #define MAIN_WINDOW_H_
 
-#include "app_config.h"
+#include "dashboard/app_config.h"
 
 #include <QPoint>
 #include <QString>

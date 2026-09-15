@@ -2,7 +2,7 @@
 #
 #   cmake -DIN=<file> -DOUT=<header> -DSYMBOL=<name> -P EmbedBinary.cmake
 #
-# Used for the baked shaders in dashboard/widgets/map. The obvious alternative
+# Used for the baked shaders in libs/dashboard_widgets/widgets/map. The obvious alternative
 # is Qt's resource system, but a .qrc inside a STATIC library needs its
 # initialiser to survive the link into two different executables, and a resource
 # that quietly fails to register presents as a shader that will not load at

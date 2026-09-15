@@ -121,7 +121,7 @@ tone, and rotating now-playing/nav metadata) on the real zenoh topics:
 
 ```bash
 ./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --simulate --verbose  # terminal 1
-./build/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml   # terminal 2
+./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml   # terminal 2
 ```
 
 You should see the moving test pattern with a sweeping white box, hear the tone,
@@ -1407,7 +1407,7 @@ to each hash — not the primitives.
 ## 8. Video + touch (usable CarPlay)
 
 Terminal 1: `sudo ./build/nodes/carplay/carplay --verbose`
-Terminal 2: `./build/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml`
+Terminal 2: `./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml`
 
 Independently confirm the zenoh contract before blaming the widget:
 
@@ -1549,7 +1549,7 @@ The two limits share only the spacing decision, as `helpers::RateGate`
 and are deliberately not unified: `airplay::EventQueue` is a bounded
 multi-producer queue drained by a writer thread that limits *every* report
 including down and up, while `TouchThrottle`
-(`dashboard/widgets/carplay/include/carplay/touch_throttle.h`) is single
+(`libs/dashboard_widgets/widgets/carplay/include/carplay/touch_throttle.h`) is single
 threaded, holds at most one deferred position, and never delays a down or an up.
 Folding the widget onto `EventQueue` would also mean the dashboard linking the
 AirPlay stack to get a rate limiter.
@@ -1695,7 +1695,7 @@ Siri and calls) is also not implemented.
 
 **Playback architecture.** The widget plays through `QAudioSink` in **pull
 mode**: the network thread pushes decrypted PCM into a thread-safe ring
-(`dashboard/widgets/carplay/audio_ring.*`) and the sink's own audio thread pulls
+(`libs/dashboard_widgets/widgets/carplay/audio_ring.*`) and the sink's own audio thread pulls
 at the sample-clock rate, with a short priming cushion and silence-fill on
 shortfall. This decouples the bursty network delivery from steady playback and,
 unlike the earlier push-mode path, never silently drops samples on a short

@@ -10,7 +10,7 @@ project(map_server)
 # it reads.
 #
 # Note what is NOT here: anything that draws. The renderer lives in
-# dashboard/widgets/map and reaches this node over the bus, which is the whole
+# libs/dashboard_widgets/widgets/map and reaches this node over the bus, which is the whole
 # point -- and it is also what keeps the sqlite3 this links out of the GUI apps.
 add_executable(map_server
     main.cpp

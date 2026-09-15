@@ -89,7 +89,7 @@ class TilesetRegistry
 
 // The tile URL template a client should use for this tileset, as it appears in
 // the TileJSON. The one place the wire URL grammar is written down on the server
-// side; dashboard/widgets/map/tile_url.h is its counterpart.
+// side; libs/dashboard_widgets/widgets/map/include/map/config.h is its counterpart.
 std::string tileUrlTemplate(const Tileset& tileset);
 
 } // namespace map_server

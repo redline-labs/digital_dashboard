@@ -21,7 +21,7 @@ namespace
 constexpr double kCoordScale = 1e-7;
 
 // Latitude beyond which Mercator's tan() runs away. The same clamp
-// dashboard/widgets/map/projection.h applies, and for the same reason: past it
+// libs/map_render/include/map_render/projection.h applies, and for the same reason: past it
 // every subsequent arithmetic yields NaN and the map paints nothing at all,
 // silently.
 constexpr double kMaxLatitude = 85.0511287798;
@@ -479,7 +479,7 @@ struct LayerBuilder
 
 const char* layerFor(map_rules::RenderClass value)
 {
-    // The vocabulary dashboard/widgets/map/tessellator.cpp already switches on.
+    // The vocabulary libs/map_render/src/tessellator.cpp already switches on.
     // Getting a name wrong here does not fail: the layer is simply never drawn,
     // and the map comes up missing its water or its buildings with nothing said.
     switch (value)
@@ -512,7 +512,7 @@ const char* layerFor(map_rules::RenderClass value)
         case map_rules::RenderClass::Boundary:
             return "boundary";
         case map_rules::RenderClass::Place:
-            // The label layer, which dashboard/widgets/map/labels.cpp reads by
+            // The label layer, which libs/map_render/src/labels.cpp reads by
             // this exact name.
             return "place";
     }
@@ -706,7 +706,7 @@ mbtiles::Result<TileStats> Tiler::write(mbtiles::Writer& writer, const TileOptio
                 // exactly one tile -- the one it falls in.
                 //
                 // Not duplicated into the neighbours the way a renderer's own
-                // label buffer would: dashboard/widgets/map/labels.cpp gathers
+                // label buffer would: libs/map_render/src/labels.cpp gathers
                 // candidates across every visible tile before placing any of
                 // them, so a second copy would compete with the first for the
                 // same spot and one of the two would always lose.
@@ -739,7 +739,7 @@ mbtiles::Result<TileStats> Tiler::write(mbtiles::Writer& writer, const TileOptio
                     out.tags.push_back(builder.value(feature.name));
 
                     // BOTH spellings, and the duplication is deliberate.
-                    // dashboard/widgets/map/labels.cpp reads `name:latin`,
+                    // libs/map_render/src/labels.cpp reads `name:latin`,
                     // because the archive tilemaker produced emitted only that
                     // and reading `name` returned an empty string for every
                     // place -- a map with no labels and no error anywhere.

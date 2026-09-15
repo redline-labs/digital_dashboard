@@ -20,7 +20,7 @@
 
 #include <spdlog/spdlog.h>
 #include "reflection/reflection.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 class SelectionFrame : public QWidget
 {

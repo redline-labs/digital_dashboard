@@ -9,7 +9,8 @@
 # as a grouped list and `ctest -R <component>` selects one library's tests.
 #
 # Labels are how you pick a subset. Every test carries its component
-# (airplay, plist, iap2, apple_usb, pub_sub, canopen, dashboard) plus at least
+# (airplay, plist, iap2, apple_usb, pub_sub, canopen, dashboard,
+# dashboard_widgets, editor, scope, switchboard) plus at least
 # one of:
 #
 #   unit   pure logic. No sockets, no clock, no hardware, no display.

@@ -3,7 +3,7 @@
 // Turning drawn ways into a vector tile pyramid.
 //
 // The layer names and the `class` values are NOT arbitrary: they are what
-// dashboard/widgets/map/tessellator.cpp already switches on, so tiles built
+// libs/map_render/src/tessellator.cpp already switches on, so tiles built
 // here render in the widget that exists rather than needing a new one. That is
 // the whole cutover story -- see kLayerFor below.
 //

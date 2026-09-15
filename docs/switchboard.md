@@ -7,9 +7,9 @@ form from the request schema. Submit, and the reply comes back as fields.
 
 ```bash
 cmake --build build --target switchboard
-./build/switchboard/switchboard                 # attaches to the bus at startup
-./build/switchboard/switchboard --timeout 5000  # default reply wait, changeable in the window
-./build/switchboard/switchboard --mcp           # headless, agent-driven
+./build/apps/switchboard/switchboard                 # attaches to the bus at startup
+./build/apps/switchboard/switchboard --timeout 5000  # default reply wait, changeable in the window
+./build/apps/switchboard/switchboard --mcp           # headless, agent-driven
 ```
 
 ```

@@ -6,7 +6,7 @@
 #include "editor/canvas.h"
 #include "editor/editor_window.h"
 #include "editor/selection_frame.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <QPointF>
 

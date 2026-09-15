@@ -31,7 +31,7 @@ struct ClickOptions
 
 // Sends a press/release pair (and the DoubleClick event when count == 2) to
 // `widget` via QApplication::sendEvent, mirroring what
-// dashboard/widgets/carplay/test_touch_rate.cpp already does.
+// libs/dashboard_widgets/widgets/carplay/test_touch_rate.cpp already does.
 Result<json> sendClick(QWidget* widget, const ClickOptions& options);
 
 struct DragOptions

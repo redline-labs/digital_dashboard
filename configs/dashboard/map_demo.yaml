@@ -84,7 +84,7 @@ widgets:
       follow_vehicle: false
       position_zenoh_key: ""
       # Everything below is optional -- omitted keys keep the defaults in
-      # dashboard/widgets/map/include/map/style.h. This one is tuned for a
+      # libs/map_render/include/map_render/style.h. This one is tuned for a
       # small overview pane: no buildings, thinner text, and roads pulled back
       # so a region reads as a road network rather than a smear.
       style:

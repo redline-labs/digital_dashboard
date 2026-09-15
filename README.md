@@ -77,7 +77,7 @@ brew install qt@6
 
 4. **Run the application**:
    ```bash
-   ./dashboard/dashboard -c <path_to_config>
+   ./apps/dashboard/dashboard -c <path_to_config>
    ```
 
 ### Command Line Options
@@ -97,7 +97,7 @@ data without touching the projection stack.
 sudo ./nodes/carplay/carplay --verbose
 
 # terminal 2 - the dashboard
-./dashboard/dashboard -c ../configs/dashboard/carplay_demo.yaml
+./apps/dashboard/dashboard -c ../configs/dashboard/carplay_demo.yaml
 ```
 
 No hardware handy?  `--simulate` publishes a synthetic session (H.264 test pattern, audio

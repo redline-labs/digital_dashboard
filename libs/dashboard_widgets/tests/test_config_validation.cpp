@@ -7,7 +7,7 @@
 
 #include "dashboard/app_config.h"
 #include "config_codec/config_limits.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
 

@@ -7,7 +7,7 @@ title: Offline maps
 A map on the dash, from a file, with no internet anywhere in the path.
 
 ```
- socal.mbtiles ─► libs/mbtiles ─► nodes/map_server ─► zenoh ─► dashboard/widgets/map
+ socal.mbtiles ─► libs/mbtiles ─► nodes/map_server ─► zenoh ─► libs/dashboard_widgets/widgets/map
                   (format only)    map/tile                    TileSource
                                    map/catalog                      │
                                    map/asset                        ▼
@@ -20,7 +20,7 @@ A map on the dash, from a file, with no internet anywhere in the path.
 ```
 
 Four pieces. `libs/mbtiles` reads the archive. `nodes/map_server` answers zenoh
-queries for tiles, catalogs and assets. `dashboard/widgets/map` is the QWidget
+queries for tiles, catalogs and assets. `libs/dashboard_widgets/widgets/map` is the QWidget
 and the zenoh client that fetches tiles. `libs/map_render` is everything that
 turns a vector tile into pixels — projection, tessellator, GPU renderer, label
 layout, tile cache — and it knows nothing about where the bytes came from.
@@ -29,7 +29,7 @@ layout, tile cache — and it knows nothing about where the bytes came from.
 hoisted out of the widget the same way `libs/config_codec` and `libs/qt_helpers`
 were hoisted out of `dashboard/include/dashboard/` when `scope` was created, and
 for the same reason: a second top-level app must not reach into the first's
-include tree. `dashboard/widgets/map` asks `map_server`; `scope`'s map panel
+include tree. `libs/dashboard_widgets/widgets/map` asks `map_server`; `scope`'s map panel
 reads an `.mbtiles` directly. Neither transport is visible from inside
 `libs/map_render`.
 
@@ -1101,7 +1101,7 @@ one -- and it looked entirely plausible. Run it alone, and check `uptime` first.
   meet in one process. The widget has no use for it — it asks the node. `scope`
   is the deliberate exception: it is a desktop review tool that opens archives
   itself and links no `Qt6::Sql`. Check with
-  `grep -o sqlite3 build/dashboard/CMakeFiles/dashboard.dir/link.txt`, which
+  `grep -o sqlite3 build/apps/dashboard/CMakeFiles/dashboard.dir/link.txt`, which
   must stay empty.
 - **`Qt6::GuiPrivate` is what exposes `<rhi/qrhi.h>`.** QRhi is semi-public in
   Qt 6 — a stable-ish API shipped behind the private headers — and the

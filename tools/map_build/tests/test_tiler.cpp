@@ -118,7 +118,7 @@ map_build::DrawInput lineAt(std::int64_t wayId, std::int32_t lat, std::int32_t l
 
 void test_the_layer_vocabulary_matches_the_widget()
 {
-    // These strings are what dashboard/widgets/map/tessellator.cpp switches on.
+    // These strings are what libs/map_render/src/tessellator.cpp switches on.
     // A name that does not match does not fail -- the layer is simply never
     // drawn, and the map comes up missing its water with nothing said.
     check(std::string(map_build::layerFor(map_rules::RenderClass::Motorway)) == "transportation",
@@ -760,7 +760,7 @@ void test_the_archive_advertises_the_layers_it_actually_carries()
 
 void test_a_place_label_reaches_the_widget_that_draws_it()
 {
-    // The label contract, end to end. dashboard/widgets/map/labels.cpp will
+    // The label contract, end to end. libs/map_render/src/labels.cpp will
     // draw NOTHING unless all four of these hold: a layer literally named
     // "place", a feature of type Point, a non-empty "name:latin", and geometry
     // in the tile it claims to be in. Each one failing on its own produces a

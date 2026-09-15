@@ -5,7 +5,7 @@
 # reading and writing are separable from the tool that drives them -- and every
 # one of them exercises a failure that is silent in production (a torn part, a
 # lost message, a seek that scans). And scope's DataSource seam
-# (scope/include/scope/data_source.h) was designed for a recorded source; when
+# (apps/scope/include/scope/data_source.h) was designed for a recorded source; when
 # that lands it links this rather than shelling out to a binary.
 add_library(bag STATIC
     metadata.cpp

@@ -10,7 +10,7 @@
 // covered here without anyone remembering to come back.
 
 #include "dashboard/app_config.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
 

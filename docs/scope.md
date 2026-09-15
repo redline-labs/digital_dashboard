@@ -5,11 +5,11 @@ what it has been *doing*.
 
 ```bash
 cmake --build build --target scope
-./build/scope/scope                                     # OFFLINE and empty — the default
-./build/scope/scope --bag drives/2026-08-06             # offline, over a recording
-./build/scope/scope --online                            # attach to the bus and capture
-./build/scope/scope -c configs/scope/engine_demo.yaml   # a saved workspace
-./build/scope/scope --mcp                               # headless, agent-driven
+./build/apps/scope/scope                                     # OFFLINE and empty — the default
+./build/apps/scope/scope --bag drives/2026-08-06             # offline, over a recording
+./build/apps/scope/scope --online                            # attach to the bus and capture
+./build/apps/scope/scope -c configs/scope/engine_demo.yaml   # a saved workspace
+./build/apps/scope/scope --mcp                               # headless, agent-driven
 ```
 
 **Scope starts OFFLINE and does not open a zenoh session until you ask it to.**
@@ -23,7 +23,7 @@ bring-up:
 
 ```bash
 ./build/mock_data/test_data_publisher &
-./build/scope/scope -c configs/scope/engine_demo.yaml --online
+./build/apps/scope/scope -c configs/scope/engine_demo.yaml --online
 ```
 
 ## The shape of it
@@ -67,12 +67,12 @@ releases; the browser and the time base follow; only then is the old source
 destroyed. A handle means nothing to a source that did not issue it, so
 repointing before releasing leaks every subscription on the old one.
 
-**Panels are registered in one place.** `scope/include/scope/panel_table.h` is
+**Panels are registered in one place.** `apps/scope/include/scope/panel_table.h` is
 the list; the enum, the config variant, **the stats variant**, the Panels menu,
 **the toolbar's Add buttons**, the YAML decoder and the agent interface's idea of
 what exists all derive from it. Adding an XY panel is one line there plus a
 directory — the registration steps are written out at the top of
-`scope/include/scope/panel_registry.h`. The `video` panel was the first to go
+`apps/scope/include/scope/panel_registry.h`. The `video` panel was the first to go
 through that recipe end to end, and adding it needed **no change to
 `scope_methods.cpp` at all**. The `table` panel was the second, and needed one:
 not for anything panel-specific, but to stop `scope.remove_signal` casting to
@@ -155,7 +155,7 @@ the second panel type arrived — which is what the seam was for.
 
 **Reading a panel knows nothing about panel types either.** `panelConfigOf()`,
 `applyPanelConfig()` and `panelStatsOf()` are generated from the same table
-(`scope/include/scope/panel_registry.h`), so the workspace codec and the four
+(`apps/scope/include/scope/panel_registry.h`), so the workspace codec and the four
 `scope.*` methods that serve config and stats never name a panel kind. They are
 free functions rather than virtuals on `Panel` because the variants are built
 *from* the panel classes and `Panel` sits below them — a virtual returning one
@@ -208,7 +208,7 @@ would lose them on the next reload. Only a bare field (`phase`) or one list
 element (`values[7]`) resolves — `phase * 2` has left the enum's domain and is a
 number, so it stays a line.
 
-That resolution lives in `scope/include/scope/state_names.h` and is shared with
+That resolution lives in `apps/scope/include/scope/state_names.h` and is shared with
 the table panel's cells, so a lane and a cell can never disagree about what a
 state is called. A lane only has room for the name when the band is wide enough;
 if you want the word every time, that is what [the table panel](#the-table-panel)
@@ -535,7 +535,7 @@ silently check nothing.
 ## Drawing
 
 Traces are reduced to one min/max span per pixel column
-(`scope/include/scope/decimate.h`): the samples inside the window are walked
+(`apps/scope/include/scope/decimate.h`): the samples inside the window are walked
 once (a binary search finds the left edge, so retained history outside the
 window costs nothing) and the DRAW CALLS are bounded by the width of the
 widget. The autoscale is derived from the same columns, so one pass serves
@@ -562,7 +562,7 @@ a plot under the shared cursor and the picture beside it are the same instant.
 
 ```bash
 ./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --simulate &
-./build/scope/scope
+./build/apps/scope/scope
 # Panels ▸ Add ▸ Video, then drag the nodes/carplay/video TOPIC row onto it
 ```
 
@@ -622,7 +622,7 @@ doing that synchronously would block the event loop for as long as the GOP is �
 hence a **per-tick decode budget** of ~10 ms, spreading a catch-up over two or
 three frames rather than stalling the window.
 
-`scope/panels/video/video_decoder.{h,cpp}` is a **second** decoder, not a refactor
+`apps/scope/panels/video/video_decoder.{h,cpp}` is a **second** decoder, not a refactor
 of `CarPlayWidget`'s. That one is load-bearing on a screen someone is touching and
 its settings are measured against a real capture; pulling it out from under a
 working CarPlay path to serve a review tool is a bad trade. What was copied is the
@@ -664,7 +664,7 @@ nothing reads as a broken panel.
 A readout of what every bound signal is doing **right now**, one row each.
 
 ```bash
-./build/scope/scope
+./build/apps/scope/scope
 # Panels ▸ Add ▸ Table, then drag fields onto it exactly as you would onto a plot
 ```
 
@@ -699,7 +699,7 @@ colour and nothing else. A cell always has room for the word. `3` and `iap2` are
 the same number and only one of them is an answer.
 
 The names come from the same resolver the lanes use —
-`scope/include/scope/state_names.h`, hoisted out of the plot when the table
+`apps/scope/include/scope/state_names.h`, hoisted out of the plot when the table
 needed it — so the two cannot disagree about which fields have names, what those
 names are, or that `phase * 2` has left the enum's domain and is a number.
 
@@ -825,7 +825,7 @@ kind it is. `scope_test_panels` drives both over **every** entry in
 Where the vehicle went, under the shared clock.
 
 ```bash
-./build/scope/scope --bag drives/2026-08-28
+./build/apps/scope/scope --bag drives/2026-08-28
 # File ▸ Settings… to point 'socal' at an .mbtiles, then
 # Panels ▸ Add ▸ Map, and drag the nodes/bd992/gsof/lat_long_height TOPIC onto it
 ```
@@ -847,9 +847,9 @@ is evidence about the file named in Settings and nothing else.
 
 What IS shared with the dashboard is everything that turns a vector tile into
 pixels — projection, tessellator, GPU renderer, label layout, tile cache. That
-is `libs/map_render`, hoisted out of `dashboard/widgets/map` for exactly this.
+is `libs/map_render`, hoisted out of `libs/dashboard_widgets/widgets/map` for exactly this.
 The panel itself — camera, tile selection, paint driver, config, interaction —
-is its own, the same call `scope/panels/video/video_decoder` made against
+is its own, the same call `apps/scope/panels/video/video_decoder` made against
 `CarPlayWidget`'s decoder.
 
 The local path is simpler than the served one in three ways, and each is a whole
@@ -965,7 +965,7 @@ A ready-made layout is in `configs/scope/drive_review.yaml` — the map and a
 speed trace over one clock:
 
 ```bash
-./build/scope/scope --config configs/scope/drive_review.yaml --bag drives/today
+./build/apps/scope/scope --config configs/scope/drive_review.yaml --bag drives/today
 ```
 
 ### Driving it

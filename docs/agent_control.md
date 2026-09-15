@@ -28,7 +28,7 @@ change without a rebuild.
 
 ```bash
 cmake --build build --target dashboard editor
-./build/dashboard/dashboard --mcp=/tmp/a.sock -c configs/dashboard/mercedes_190e_dash.yaml
+./build/apps/dashboard/dashboard --mcp=/tmp/a.sock -c configs/dashboard/mercedes_190e_dash.yaml
 # prints: AGENT_READY /tmp/a.sock <pid>   (and no window: the platform is forced to offscreen)
 
 printf '{"jsonrpc":"2.0","id":1,"method":"ui.snapshot","params":{}}\n' | nc -U /tmp/a.sock
@@ -100,7 +100,7 @@ A selector matching **nothing** or **more than one** widget is always an error,
 and the error lists the candidates. Never a silent first match: driving the wrong
 widget produces a confident wrong conclusion, which is worse than failing.
 
-Both apps name widgets by the same rule (`dashboard/include/dashboard/widget_identity.h`),
+Both apps name widgets by the same rule (`libs/dashboard_widgets/include/dashboard/widget_identity.h`),
 so one selector addresses the same widget in the dashboard and in the editor.
 
 **A config with several windows** (see [displays.md](displays.md)) gives the
@@ -175,7 +175,7 @@ messages now state outright:
   Note the check is `==`, not `inherits()`, so a SUBCLASS of any of them would
   slip past it silently.
 - **Why `offscreen` and not a virtual display.** `--mcp` sets
-  `QT_QPA_PLATFORM=offscreen` (dashboard/dashboard/main.cpp); without it the app
+  `QT_QPA_PLATFORM=offscreen` (apps/dashboard/main.cpp); without it the app
   uses the platform's own plugin, so production and the agent loop already run
   two different configurations. The alternative -- Xvfb plus `xcb`, or `eglfs`
   on a board -- gives a real GL stack with no monitor, and is how Qt GUI tests
@@ -226,7 +226,7 @@ messages now state outright:
 GUI thread and may touch widgets directly. Mark a handler `kMutating` if it
 changes state — the dispatcher then drains the event loop before returning, so a
 following screenshot observes the effect rather than the previous frame. See the
-`editor.save` / `editor.load` registrations in `dashboard/editor/main.cpp` for the
+`editor.save` / `editor.load` registrations in `apps/editor/main.cpp` for the
 shape.
 
 New methods are reachable from Claude Code immediately via `app_call(method,

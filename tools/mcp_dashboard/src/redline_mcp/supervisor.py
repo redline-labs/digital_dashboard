@@ -72,22 +72,22 @@ class AppSpec:
 
 APPS: dict[str, AppSpec] = {
     "dashboard": AppSpec(
-        binaries=("dashboard/dashboard",),
+        binaries=("apps/dashboard/dashboard",),
         controllable=True,
         ready_marker="AGENT_READY",
     ),
     "editor": AppSpec(
-        binaries=("dashboard/editor.app/Contents/MacOS/editor", "dashboard/editor"),
+        binaries=("apps/editor/editor.app/Contents/MacOS/editor", "apps/editor/editor"),
         controllable=True,
         ready_marker="AGENT_READY",
     ),
     "scope": AppSpec(
-        binaries=("scope/scope",),
+        binaries=("apps/scope/scope",),
         controllable=True,
         ready_marker="AGENT_READY",
     ),
     "switchboard": AppSpec(
-        binaries=("switchboard/switchboard",),
+        binaries=("apps/switchboard/switchboard",),
         controllable=True,
         ready_marker="AGENT_READY",
     ),

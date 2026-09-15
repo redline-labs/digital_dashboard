@@ -10,7 +10,7 @@
 # What is deliberately NOT here, and must stay out:
 #
 #   * zenoh and capnp. Where tiles come from is the caller's business.
-#     dashboard/widgets/map asks nodes/map_server; scope reads an .mbtiles
+#     libs/dashboard_widgets/widgets/map asks nodes/map_server; scope reads an .mbtiles
 #     directly. Neither transport is visible from in here.
 #   * a QWidget. Nothing here is one. MapPass records the drawing and owns no
 #     target at all; OffscreenRenderer hosts it against an offscreen TEXTURE rather

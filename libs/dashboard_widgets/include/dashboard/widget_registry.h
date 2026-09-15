@@ -1,5 +1,5 @@
-#ifndef DASHBOARD_EDITOR_WIDGET_REGISTRY_H
-#define DASHBOARD_EDITOR_WIDGET_REGISTRY_H
+#ifndef DASHBOARD_WIDGET_REGISTRY_H
+#define DASHBOARD_WIDGET_REGISTRY_H
 
 #include <array>
 #include <string_view>
@@ -38,7 +38,7 @@ namespace widget_registry
 //      - config_t getConfig() const method
 //   2. Add ONE line to DASHBOARD_WIDGET_TABLE in dashboard/widget_table.h
 //   3. Call add_dashboard_widget() in your widget's CMakeLists.txt, and
-//      add_subdirectory() in dashboard/widgets/CMakeLists.txt
+//      add_subdirectory() in libs/dashboard_widgets/widgets/CMakeLists.txt
 //
 // Config types need no registration. Anything declared with REFLECT_STRUCT or
 // REFLECT_ENUM converts to and from YAML on its own, nested structs and enums
@@ -97,6 +97,6 @@ DASHBOARD_WIDGET_TABLE(WIDGET_TRAITS_SPECIALIZATION)
 
 } // namespace widget_registry
 
-#endif // DASHBOARD_EDITOR_WIDGET_REGISTRY_H
+#endif // DASHBOARD_WIDGET_REGISTRY_H
 
 

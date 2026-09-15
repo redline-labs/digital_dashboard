@@ -1,5 +1,5 @@
 #include "editor/widget_palette.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 
 #include <QVBoxLayout>
 #include <QDrag>

@@ -21,7 +21,7 @@ using Common = import "map_common.capnp";
 # not by reinterpreting this one.
 #
 # WHAT THIS DOES NOT DO: correct the position. It says which segment the
-# vehicle is on; dashboard/widgets/map keeps drawing the receiver's own fix.
+# vehicle is on; libs/dashboard_widgets/widgets/map keeps drawing the receiver's own fix.
 # The position source is a BD992 with an RTK fix, which is accurate to
 # centimetres, while OSM road geometry is routinely several metres from the
 # real centreline -- so snapping the displayed position to the map would make

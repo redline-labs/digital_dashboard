@@ -129,7 +129,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   nothing logged. Scrubbing backwards is the operation that breaks it, which is
   why a seek clears before it refills.
 - **Adding a scope panel** is a 3-step registration documented at the top of
-  `scope/include/scope/panel_registry.h`, and works the same way: one line in
+  `apps/scope/include/scope/panel_registry.h`, and works the same way: one line in
   `SCOPE_PANEL_TABLE` and everything else follows. Panels decide for themselves
   what they will plot via `acceptsBinding()`, and hand a binding back via
   `bindingLabels()`/`removeBinding()`, so the signal browser, the drag, the
@@ -147,7 +147,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   Two flag bits are reserved: `kSeekPoint` ("you can start here") and `kPreamble`
   ("replay me before the seek point after me"). See `docs/scope.md`.
 - **Adding a widget** is a 5-step registration documented at the top of
-  `dashboard/include/editor/widget_registry.h`. Follow it exactly; several
+  `libs/dashboard_widgets/include/dashboard/widget_registry.h`. Follow it exactly; several
   generated things (the config variant, the palette, the YAML decoder) derive
   from that one macro list. Widgets built this way are automatically inspectable
   and settable through `widget_*_config` — no extra work.
@@ -318,7 +318,7 @@ discovery seeing only live traffic, and what `accepted: false` and
 - **Threading**: Qt owns exactly one thread. Zenoh callbacks run on zenoh threads
   and must not block; hop with
   `QMetaObject::invokeMethod(obj, lambda, Qt::QueuedConnection)`. See
-  `dashboard/include/dashboard/expression_subscription.h` for the established
+  `libs/dashboard_widgets/include/dashboard/expression_subscription.h` for the established
   shape.
 - Logging is `SPDLOG_*`, never `std::cout` -- see the stdout carve-out above for
   tool *results*. CLI parsing is cxxopts, through `libs/cli` for multi-verb tools.
@@ -332,15 +332,21 @@ discovery seeing only live traffic, and what `accepted: false` and
 ## Layout
 
 ```
-dashboard/          the dashboard app, the editor, and every widget
-  include/          shared headers (widget registry, config, agent glue)
-  widgets/<name>/   one static lib per widget, each with its own config.h
-scope/              the time-series visualizer app
-  panels/<name>/    one panel type per directory, each with its own config.h
-                    and stats.h (time_series, video)
-libs/               reusable: pub_sub (zenoh+capnp), reflection, agent_control,
-                    config_codec, qt_helpers, airplay, iap2, apple_usb, plist,
-                    canopen, dbc_parser, cli (verb dispatch), bag (MCAP record/replay),
+apps/               the GUI applications; siblings that share libs/ and never
+                    include from one another
+  dashboard/        renders a layout: window, display binding, config override
+  editor/           edits one: palette, canvas, properties, undo
+  scope/            the time-series visualizer
+    panels/<name>/  one panel type per directory, each with its own config.h
+                    and stats.h (time_series, video, table, map)
+  switchboard/      calls the services on the bus from a generated form
+libs/               reusable: dashboard_widgets (every widget under widgets/<name>/,
+                    one static lib each with its own config.h; plus the widget
+                    table, the layout config and the widget.* agent methods
+                    both apps above share), pub_sub (zenoh+capnp), reflection,
+                    agent_control, config_codec, qt_helpers, airplay, iap2,
+                    apple_usb, plist, canopen, dbc_parser, cli (verb dispatch),
+                    bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/motec_utc.md for the MoTeC one,
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),

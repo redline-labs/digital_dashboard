@@ -112,3 +112,11 @@ add_subdirectory(airplay)
 # gets stubbed elsewhere, but the mux/usbmuxd/lockdown protocol layer is
 # portable -- which is what makes it testable without a Linux box or a phone.
 add_subdirectory(apple_usb)
+
+# The dashboard's widget set and everything both GUI apps need to build a
+# layout out of it: the widget table, the reflected layout config, the factory,
+# and the widget.* agent methods. Last, because the widgets link most of what
+# is above (config_codec, qt_helpers, agent_control, map_render, map_surface,
+# map_controls). apps/dashboard renders a layout and apps/editor edits one;
+# neither reaches into the other's tree, the same rule scope established.
+add_subdirectory(dashboard_widgets)

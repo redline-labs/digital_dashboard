@@ -18,7 +18,7 @@ using json = nlohmann::json;
 // Generic JSON view of any REFLECT_STRUCT config, driven entirely by
 // reflection::visit_fields.
 //
-// This is the same machinery dashboard/editor/properties_panel.cpp uses to build
+// This is the same machinery apps/editor/properties_panel.cpp uses to build
 // its forms, applied to a different output. Doing it generically is what makes
 // the agent interface cover every widget automatically: a new widget with a
 // reflected config becomes inspectable and settable with no work here.

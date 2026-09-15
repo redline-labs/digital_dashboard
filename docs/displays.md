@@ -76,7 +76,7 @@ REDLINE_DISPLAY_PRIMARY_MODE=1920x720
 
 ## How a window is placed
 
-`dashboard/include/dashboard/display_binding.h` makes the decisions. It is pure
+`apps/dashboard/include/dashboard/display_binding.h` makes the decisions. It is pure
 C++ with the environment passed in, and `dashboard_test_display_binding` tests it.
 
 **No `REDLINE_DISPLAY_*_CONNECTOR` set** (desktop, Mac, `--mcp`): every window is
@@ -117,7 +117,7 @@ has no platform-specific code:
 ```sh
 REDLINE_DISPLAY_PRIMARY_CONNECTOR="<a screen name from the fallback log line>" \
 REDLINE_DISPLAY_PRIMARY_MODE=2400x900 \
-./build/dashboard/dashboard -c configs/dashboard/mercedes_190e_dash.yaml
+./build/apps/dashboard/dashboard -c configs/dashboard/mercedes_190e_dash.yaml
 ```
 
 ## Editing

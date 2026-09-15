@@ -1,5 +1,5 @@
 #include "editor/properties_panel.h"
-#include "editor/widget_registry.h"
+#include "dashboard/widget_registry.h"
 #include "editor/canvas.h"
 #include "editor/selection_frame.h"
 #include "editor/editor_constants.h"

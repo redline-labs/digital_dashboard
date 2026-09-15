@@ -255,7 +255,7 @@ recording is a `scope::DataSource` and every panel scrubs it without knowing
 what is behind them:
 
 ```bash
-./build/scope/scope --bag drives/2026-08-06
+./build/apps/scope/scope --bag drives/2026-08-06
 ```
 
 Two things about that path are worth knowing from here.

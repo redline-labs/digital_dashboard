@@ -6,7 +6,7 @@ project(mbtiles)
 #
 # No zenoh, no Qt, no network, no HTTP. Everything here is answerable from a
 # file on disk; nodes/map_server is what puts the answers on the bus, and
-# dashboard/widgets/map never links this at all -- it asks the server.
+# libs/dashboard_widgets/widgets/map never links this at all -- it asks the server.
 #
 # That last part is not just tidiness. Qt reaches SQLite through Qt6::Sql, which
 # links its own copy; keeping this library -- and the amalgamation vendored in
@@ -15,7 +15,7 @@ project(mbtiles)
 #
 # `scope` is the deliberate exception. It is a desktop review tool that opens
 # archives itself rather than asking a node, and it links no Qt6::Sql, so the
-# two copies cannot meet there. See scope/CMakeLists.txt and docs/scope.md.
+# two copies cannot meet there. See apps/scope/CMakeLists.txt and docs/scope.md.
 add_library(mbtiles STATIC
     src/archive.cpp
     src/writer.cpp

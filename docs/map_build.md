@@ -9,7 +9,7 @@ tiles the dashboard draws, the routable road graph, and the contraction
 hierarchy that makes routing fast.
 
 ```
- region.osm.pbf ─► tools/map_build ─┬─► region.mbtiles        ─► nodes/map_server ─► dashboard/widgets/map
+ region.osm.pbf ─► tools/map_build ─┬─► region.mbtiles        ─► nodes/map_server ─► libs/dashboard_widgets/widgets/map
                                     ├─► region.graph          ─► nodes/map_server ─► map/nearest, map/route
                                     └─► region.graph.overlay  ─┘                     nodes/map_match
 ```

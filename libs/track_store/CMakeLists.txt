@@ -6,7 +6,7 @@ project(track_store)
 #
 # No zenoh, no Qt, no network. Everything here is answerable from a file on
 # disk; nodes/map_server is what puts the answers on the bus, and
-# dashboard/widgets/map never links this at all -- it asks the server.
+# libs/dashboard_widgets/widgets/map never links this at all -- it asks the server.
 #
 # That last part is the same rule libs/mbtiles states and for the same reason:
 # Qt reaches SQLite through Qt6::Sql with its own copy, and keeping this library
