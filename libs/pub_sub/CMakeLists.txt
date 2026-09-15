@@ -99,6 +99,18 @@ target_link_libraries(pub_sub_test_capnp_json PRIVATE
 )
 add_project_test(TARGET pub_sub_test_capnp_json LABELS pub_sub unit)
 
+# The bus-topic CanFrame <-> helpers::CanFrame conversion every CAN consumer
+# shares. The length rule is what is pinned: declared and supplied lengths can
+# disagree, and a decoder must see only the bytes that exist.
+add_executable(pub_sub_test_can_frame
+    test_can_frame.cpp
+)
+
+target_link_libraries(pub_sub_test_can_frame PRIVATE
+    zenoh_pub_sub
+)
+add_project_test(TARGET pub_sub_test_can_frame LABELS pub_sub unit)
+
 # NTP64 conversion. Pure arithmetic over a header, so `unit` -- and it has to be
 # a test rather than a careful reading, because every way of getting the
 # conversion wrong yields a plausible number instead of an error. A timestamp off

@@ -49,6 +49,7 @@
 #include "msel/protocol.h"
 #include "msel/response_waiter.h"
 
+#include "pub_sub/can_frame.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
@@ -566,25 +567,10 @@ int main(int argc, char** argv)
     // --- receive -----------------------------------------------------------
     pub_sub::ZenohTypedSubscriber<CanFrame> canSubscriber(
         config.rxKey, [&](CanFrame::Reader reader) {
-            helpers::CanFrame frame;
-            frame.id = reader.getId();
-            frame.isExtended = reader.getExtended();
-            frame.isRTR = reader.getRtr();
-            frame.isFD = reader.getFd();
-            frame.isError = reader.getError();
-            frame.timestampUs = reader.getTimestampUs();
-
-            const auto payload = reader.getData();
-            // The real length, not the padded buffer: a frame shorter than the
+            // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
-            const size_t length =
-                std::min<size_t>(frame.data.size(), std::min<size_t>(reader.getLen(), payload.size()));
-            frame.len = static_cast<uint8_t>(length);
-            for (size_t i = 0u; i < length; ++i)
-            {
-                frame.data[i] = payload[static_cast<unsigned>(i)];
-            }
+            const helpers::CanFrame frame = pub_sub::fromCapnp(reader);
 
             const std::lock_guard<std::mutex> lock(mutex);
             const auto accepted = decoder.onFrame(frame);

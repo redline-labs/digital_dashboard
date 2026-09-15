@@ -32,6 +32,7 @@
 
 #include "can_bridge.capnp.h"
 #include "can_frame.capnp.h"
+#include "pub_sub/can_frame.h"
 #include "pub_sub/zenoh_client.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -194,25 +195,10 @@ public:
 private:
     void transmit(::CanFrame::Reader message)
     {
-        helpers::CanFrame frame {};
-        frame.id = message.getId();
-        frame.len = message.getLen();
-        frame.isExtended = message.getExtended();
-        frame.isRTR = message.getRtr();
-        frame.isFD = message.getFd();
-        frame.isBRS = message.getBrs();
-        frame.isESI = message.getEsi();
-
-        auto data = message.getData();
-        const size_t n
-            = std::min<size_t>(frame.data.size(), std::min<size_t>(frame.len, data.size()));
-        for (size_t i = 0; i < n; ++i)
-        {
-            frame.data[i] = static_cast<uint8_t>(data[i]);
-        }
-        // A publisher that set `len` larger than the payload it supplied would
-        // otherwise put uninitialised bytes on the bus.
-        frame.len = static_cast<uint8_t>(n);
+        // fromCapnp caps `len` at the payload actually supplied. A publisher
+        // that set `len` larger would otherwise put uninitialised bytes on the
+        // bus.
+        const helpers::CanFrame frame = pub_sub::fromCapnp(message);
 
         auto result = channel_->send(frame);
         if (result.has_value() && recorder_)
@@ -270,24 +256,8 @@ private:
     void publish(const helpers::CanFrame& frame)
     {
         auto& fields = rxPublisher_->fields();
-        fields.setId(frame.id);
-        fields.setLen(frame.len);
-        fields.setExtended(frame.isExtended);
-        fields.setRtr(frame.isRTR);
-        fields.setFd(frame.isFD);
-        fields.setBrs(frame.isBRS);
-        fields.setEsi(frame.isESI);
-        fields.setError(frame.isError);
-        fields.setTimestampUs(frame.timestampUs);
+        pub_sub::toCapnp(frame, fields);
         fields.setChannel(config_.name);
-
-        const size_t n = std::min<size_t>(frame.data.size(), frame.len);
-        auto data = fields.initData(static_cast<unsigned>(n));
-        for (size_t i = 0; i < n; ++i)
-        {
-            data.set(static_cast<unsigned>(i), frame.data[i]);
-        }
-
         rxPublisher_->put();
     }
 

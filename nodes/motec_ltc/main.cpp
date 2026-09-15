@@ -1,5 +1,6 @@
 #include "dbc_motec_ltc_rev1_parser.h"
 
+#include "pub_sub/can_frame.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
@@ -123,22 +124,13 @@ int main(int argc, char** argv)
 
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
-        [&parser](CanFrame::Reader frame)
+        [&parser](CanFrame::Reader message)
         {
-            uint32_t id = frame.getId();
-            uint8_t len = frame.getLen();
-            auto dataList = frame.getData();
-
-            std::array<uint8_t, 8u> bytes{};
-            const size_t n = std::min<size_t>(8u, std::min<size_t>(len, dataList.size()));
-            for (size_t i = 0; i < n; ++i)
-            {
-                bytes[i] = static_cast<uint8_t>(dataList[i]);
-            }
-            // The real length, not the padded buffer: a frame shorter than the
+            // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
-            parser.handle_can_frame(id, std::span<const uint8_t>(bytes.data(), n));
+            const helpers::CanFrame frame = pub_sub::fromCapnp(message);
+            parser.handle_can_frame(frame.id, frame.data_span());
         });
 
     for (;;)

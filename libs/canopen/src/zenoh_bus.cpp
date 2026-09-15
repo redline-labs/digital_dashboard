@@ -3,6 +3,7 @@
 #include "canopen/zenoh_bus.h"
 
 #include "can_frame.capnp.h"
+#include "pub_sub/can_frame.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
 
@@ -37,17 +38,7 @@ ZenohBus::ZenohBus(std::string txKey, std::string rxKey)
         rxKey_,
         [this](::CanFrame::Reader message)
         {
-            helpers::CanFrame frame {};
-            frame.id = message.getId();
-            frame.len = static_cast<uint8_t>(message.getLen());
-
-            auto data = message.getData();
-            const size_t n = std::min<size_t>(
-                frame.data.size(), std::min<size_t>(frame.len, data.size()));
-            for (size_t i = 0; i < n; ++i)
-            {
-                frame.data[i] = static_cast<uint8_t>(data[i]);
-            }
+            const helpers::CanFrame frame = pub_sub::fromCapnp(message);
 
             // This runs on a zenoh thread. Queue it and let poll() hand it to
             // the protocol code on the thread that is waiting.
@@ -76,17 +67,7 @@ uint64_t ZenohBus::dropped() const
 
 void ZenohBus::send(const helpers::CanFrame& frame)
 {
-    auto& fields = impl_->publisher.fields();
-    fields.setId(frame.id);
-    fields.setLen(frame.len);
-
-    const size_t n = std::min<size_t>(frame.data.size(), frame.len);
-    auto data = fields.initData(static_cast<unsigned>(n));
-    for (size_t i = 0; i < n; ++i)
-    {
-        data.set(static_cast<unsigned>(i), frame.data[i]);
-    }
-
+    pub_sub::toCapnp(frame, impl_->publisher.fields());
     impl_->publisher.put();
 }
 
