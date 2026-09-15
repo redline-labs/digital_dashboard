@@ -1280,6 +1280,37 @@ void Parser::validateMessage(const Message &msg, int line)
         }
     }
 
+    if (const Signal *mux = msg.multiplexor(); mux != nullptr)
+    {
+        // The generated decoder compares the multiplexor's raw bits against
+        // each group index. An index the field cannot hold names a group that
+        // can never be selected, and in generated code it is a comparison the
+        // compiler rejects as always false.
+        const uint64_t muxMax = (mux->length >= 64u) ? UINT64_MAX
+                                                     : ((uint64_t{1} << mux->length) - 1u);
+        for (const auto &sig : msg.signals)
+        {
+            if (sig.isMultiplex && (sig.multiplexedGroupIdx > muxMax))
+            {
+                diags_.error(line, 1, "signal '" + msg.name + "." + sig.name +
+                                          "' is in multiplex group " +
+                                          std::to_string(sig.multiplexedGroupIdx) +
+                                          ", which the " + std::to_string(mux->length) +
+                                          " bit multiplexor '" + mux->name + "' cannot hold");
+            }
+        }
+
+        // Groups are matched on the multiplexor's raw bits, as the DBC format
+        // defines them. Tools that match on the scaled, sign-extended value
+        // (cantools does) will pick a different group for the same frame.
+        if (mux->isSigned || (mux->scale != 1.0) || (mux->offset != 0.0))
+        {
+            diags_.warn(line, 1, "multiplexor '" + msg.name + "." + mux->name +
+                                     "' is signed or scaled; groups are selected by its raw "
+                                     "bits, which other tools may not agree with");
+        }
+    }
+
     if (msg.isMultiplexed && (multiplexorCount == 0))
     {
         // This used to reach the generator, which dereferenced the missing
@@ -1372,10 +1403,24 @@ void Parser::validateSignal(const Message &msg, const Signal &sig, int line)
 
     for (const auto &mapping : sig.valueTable)
     {
-        const int64_t widest = (sig.length >= 64u)
-                                   ? INT64_MAX
-                                   : ((static_cast<int64_t>(1) << sig.length) - 1);
-        if (!sig.isSigned && ((mapping.rawValue < 0) || (mapping.rawValue > widest)))
+        bool representable = true;
+        if (sig.isSigned)
+        {
+            if (sig.length < 64u)
+            {
+                const int64_t half = static_cast<int64_t>(1) << (sig.length - 1u);
+                representable = (mapping.rawValue >= -half) && (mapping.rawValue < half);
+            }
+        }
+        else
+        {
+            const int64_t widest = (sig.length >= 63u)
+                                       ? INT64_MAX
+                                       : ((static_cast<int64_t>(1) << sig.length) - 1);
+            representable = (mapping.rawValue >= 0) && (mapping.rawValue <= widest);
+        }
+
+        if (!representable)
         {
             diags_.warn(line, 1, where + " has a value table entry " +
                                      std::to_string(mapping.rawValue) +

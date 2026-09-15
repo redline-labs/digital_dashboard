@@ -197,6 +197,14 @@ SG_MUL_VAL_ 100 A M0 1-2;
         "extended multiplexing",
     },
     {
+        "multiplex group the multiplexor cannot hold",
+        R"(BO_ 100 Frame: 8 ECU
+ SG_ Top M : 7|2@0+ (1,0) [0|3] "" ECU
+ SG_ Leaf m4 : 15|8@0+ (1,0) [0|255] "" ECU
+)",
+        "which the 2 bit multiplexor 'Top' cannot hold",
+    },
+    {
         "no messages at all",
         "this is not a DBC file\n",
         "no BO_ message definitions found",
@@ -260,6 +268,79 @@ CM_ SG_ 100 A "he said \"go\" and left";
         "",
     },
 };
+
+// Constructs that parse, but that a user should be told about.
+const std::vector<Expectation> kWarnedCases = {
+    {
+        "signed multiplexor",
+        R"(BO_ 100 Frame: 8 ECU
+ SG_ Top M : 7|4@0- (1,0) [-8|7] "" ECU
+ SG_ Leaf m1 : 15|8@0+ (1,0) [0|255] "" ECU
+)",
+        "is signed or scaled",
+    },
+    {
+        "scaled multiplexor",
+        R"(BO_ 100 Frame: 8 ECU
+ SG_ Top M : 7|4@0+ (2,0) [0|30] "" ECU
+ SG_ Leaf m1 : 15|8@0+ (1,0) [0|255] "" ECU
+)",
+        "is signed or scaled",
+    },
+    {
+        "value table entry outside a signed field",
+        R"(BO_ 100 Frame: 8 ECU
+ SG_ A : 7|4@0- (1,0) [-8|7] "" ECU
+VAL_ 100 A 8 "Overflow" 0 "Zero" ;
+)",
+        "value table entry 8 that the signal cannot represent",
+    },
+    {
+        "value table entry outside an unsigned field",
+        R"(BO_ 100 Frame: 8 ECU
+ SG_ A : 7|4@0+ (1,0) [0|15] "" ECU
+VAL_ 100 A 16 "Overflow" 0 "Zero" ;
+)",
+        "value table entry 16 that the signal cannot represent",
+    },
+};
+
+// Parses, and says so with a warning containing the expected text.
+bool runWarned(const Expectation &expectation)
+{
+    const std::string source = std::string(kPreamble) + std::string(expectation.source);
+
+    dbc_parser::Parser parser(source);
+    const auto db = parser.parse();
+
+    std::string warnings;
+    for (const auto &entry : parser.diagnostics().entries())
+    {
+        if (entry.severity == dbc_parser::Severity::Warning)
+        {
+            warnings += entry.message;
+            warnings += '\n';
+        }
+    }
+
+    if (!db)
+    {
+        std::fprintf(stderr, "FAIL [%.*s]: expected this to parse with a warning, but it did not parse\n",
+                     static_cast<int>(expectation.name.size()), expectation.name.data());
+        return false;
+    }
+
+    if (warnings.find(expectation.expectedError) == std::string::npos)
+    {
+        std::fprintf(stderr, "FAIL [%.*s]: no warning mentions '%.*s'. Got:\n%s",
+                     static_cast<int>(expectation.name.size()), expectation.name.data(),
+                     static_cast<int>(expectation.expectedError.size()),
+                     expectation.expectedError.data(), warnings.c_str());
+        return false;
+    }
+
+    return true;
+}
 
 bool run(const Expectation &expectation, bool mustParse)
 {
@@ -346,8 +427,16 @@ int main()
         }
     }
 
-    std::printf("malformed corpus: %zu rejections, %zu acceptances, %d failures\n",
-                kCases.size(), kAcceptedCases.size(), failures);
+    for (const auto &expectation : kWarnedCases)
+    {
+        if (!runWarned(expectation))
+        {
+            failures += 1;
+        }
+    }
+
+    std::printf("malformed corpus: %zu rejections, %zu acceptances, %zu warnings, %d failures\n",
+                kCases.size(), kAcceptedCases.size(), kWarnedCases.size(), failures);
 
     return (failures == 0) ? 0 : 1;
 }
