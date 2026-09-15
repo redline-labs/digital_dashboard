@@ -80,6 +80,11 @@ names and are decimal in `CanFrame`.
 | `thresholds_limits` | `MotecM1ThresholdsAndLimits` | `0x65F` | Knock threshold, logging used, pit speed limit |
 | `aux_outputs`, `aux_output5` | `MotecM1AuxOutputs`, `MotecM1AuxOutput5` | `0x6A0`, `0x6A1` | Auxiliary output duties 1..4, and 5 |
 
+{: .note }
+The five temperatures in `temperatures` are Int16 as of 2026-09-15. They were
+Int8, which wrapped anything above 127 C negative, so a recording made before
+then misreads those fields.
+
 Four topics are built from a pair of frames and publish only when both have
 arrived since the last publish:
 
