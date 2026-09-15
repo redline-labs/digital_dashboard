@@ -8,9 +8,14 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -73,7 +78,7 @@ std::string stringLiteral(std::string_view text)
 
 // A double that round-trips exactly and is always spelled as a double, so
 // `1` does not become an int literal in a constexpr double context.
-std::string literal(double value)
+std::string doubleLiteral(double value)
 {
     std::string text = fmt::format("{:.17g}", value);
     if (text.find_first_of(".eE") == std::string::npos)
@@ -83,84 +88,388 @@ std::string literal(double value)
     return text;
 }
 
-enum class DecodedType
+// The float nearest the DBC's value, spelled so it can only be a float.
+std::string floatLiteral(double value)
 {
-    Enum,
-    Double,
-    Int64,
-    UInt64,
-};
-
-bool isIntegral(double value)
-{
-    return std::isfinite(value) && (std::floor(value) == value);
+    std::string text = fmt::format("{:.9g}", static_cast<float>(value));
+    if (text.find_first_of(".eE") == std::string::npos)
+    {
+        text += ".0";
+    }
+    return text + "f";
 }
 
-// What C++ type a decoded signal is handed to callers as.
-//
-// The rule this replaced looked only at `scale` and `isSigned`, so an unsigned
-// signal with a negative offset -- Motec's `(1,-40)` temperatures -- got an
-// unsigned type and every reading below 40 was converted out of range. That is
-// undefined behaviour, and in practice produced one junk constant for the whole
-// cold half of the scale.
-DecodedType decodedType(const dbc_parser::Signal &signal)
+// Ranges are worked out in 128 bits: the product of a 64 bit raw value and a
+// 63 bit scale is exact there, and in no narrower type.
+using i128 = __int128;
+
+const i128 kInt64Min = std::numeric_limits<int64_t>::min();
+const i128 kInt64Max = std::numeric_limits<int64_t>::max();
+
+std::string decimal(i128 value)
 {
+    if (value == 0)
+    {
+        return "0";
+    }
+
+    const bool negative = (value < 0);
+    unsigned __int128 magnitude = negative ? (static_cast<unsigned __int128>(0) - static_cast<unsigned __int128>(value))
+                                           : static_cast<unsigned __int128>(value);
+    std::string digits;
+    while (magnitude != 0)
+    {
+        digits.push_back(static_cast<char>('0' + static_cast<int>(magnitude % 10)));
+        magnitude /= 10;
+    }
+    if (negative)
+    {
+        digits.push_back('-');
+    }
+    std::reverse(digits.begin(), digits.end());
+    return digits;
+}
+
+// An integer literal that means the same value whatever type it initialises.
+// INT64_MIN cannot be written directly: the literal is its positive half,
+// which overflows before the minus sign applies.
+std::string integerLiteral(i128 value)
+{
+    if (value == kInt64Min)
+    {
+        return "(-9223372036854775807LL - 1)";
+    }
+    if (value > kInt64Max)
+    {
+        return decimal(value) + "ULL";
+    }
+    if ((value > std::numeric_limits<int32_t>::max()) || (value < std::numeric_limits<int32_t>::min()))
+    {
+        return decimal(value) + "LL";
+    }
+    return decimal(value);
+}
+
+struct IntChoice
+{
+    std::string_view name;
+    i128 lo;
+    i128 hi;
+};
+
+template <typename T>
+constexpr IntChoice choice(std::string_view name)
+{
+    return {name, std::numeric_limits<T>::min(), std::numeric_limits<T>::max()};
+}
+
+const std::array<IntChoice, 4> kUnsignedTypes{{
+    choice<uint8_t>("uint8_t"),
+    choice<uint16_t>("uint16_t"),
+    choice<uint32_t>("uint32_t"),
+    choice<uint64_t>("uint64_t"),
+}};
+
+const std::array<IntChoice, 4> kSignedTypes{{
+    choice<int8_t>("int8_t"),
+    choice<int16_t>("int16_t"),
+    choice<int32_t>("int32_t"),
+    choice<int64_t>("int64_t"),
+}};
+
+// The narrowest standard integer type holding [lo, hi]: unsigned when nothing
+// is negative, so a value that can never be negative is not typed as if it
+// could be.
+std::optional<IntChoice> smallestHolding(i128 lo, i128 hi)
+{
+    const auto &table = (lo >= 0) ? kUnsignedTypes : kSignedTypes;
+    for (const auto &choice : table)
+    {
+        if ((lo >= choice.lo) && (hi <= choice.hi))
+        {
+            return choice;
+        }
+    }
+    return std::nullopt;
+}
+
+// A DBC number as an exact integer, if it is one small enough to multiply a
+// 64 bit raw value by without leaving 128 bits.
+bool asInteger(double value, i128 &out)
+{
+    if (!std::isfinite(value) || (std::floor(value) != value) || (std::fabs(value) >= 0x1p63))
+    {
+        return false;
+    }
+    out = static_cast<i128>(static_cast<long long>(value));
+    return true;
+}
+
+std::string_view rawTypeName(uint32_t length)
+{
+    if (length <= 8u)
+    {
+        return "uint8_t";
+    }
+    if (length <= 16u)
+    {
+        return "uint16_t";
+    }
+    if (length <= 32u)
+    {
+        return "uint32_t";
+    }
+    return "uint64_t";
+}
+
+// The integer a floating-point signal is rounded into on encode: wide enough
+// for every raw value of the field, and no wider.
+std::string_view conversionTypeName(uint32_t length, bool isSigned)
+{
+    if ((length < 32u) || ((length == 32u) && isSigned))
+    {
+        return "int32_t";
+    }
+    if (length == 32u)
+    {
+        return "uint32_t";
+    }
+    if ((length < 64u) || isSigned)
+    {
+        return "int64_t";
+    }
+    return "uint64_t";
+}
+
+// How a signal's raw bits become its value. Mirrors value_domain in the
+// generated common header; see generate_cpp_common_header().
+enum class Domain
+{
+    Bool,
+    Enum,
+    Integer,
+    Float,
+    Double,
+    IeeeFloat,
+    IeeeDouble,
+};
+
+std::string_view domainName(Domain domain)
+{
+    switch (domain)
+    {
+    case Domain::Bool:
+        return "Bool";
+
+    case Domain::Enum:
+        return "Enum";
+
+    case Domain::Integer:
+        return "Integer";
+
+    case Domain::Float:
+        return "Float";
+
+    case Domain::Double:
+        return "Double";
+
+    case Domain::IeeeFloat:
+        return "IeeeFloat";
+
+    case Domain::IeeeDouble:
+        return "IeeeDouble";
+    }
+
+    return "Double";
+}
+
+// Everything the generated code needs to know about one signal's types,
+// decided once so that emission only ever reads it.
+struct SignalPlan
+{
+    Domain domain{Domain::Double};
+    bool identity{false};
+
+    std::string rawType;
+    std::string type;
+    std::string enumBase;     // Enum only
+    std::string workType;     // Integer with scaling only
+    std::string convType;     // Float and Double only
+    std::string constantType; // the type of scale and offset
+    std::string scale;
+    std::string offset;
+
+    i128 rawMin{};
+    i128 rawMax{};
+    i128 physMin{};
+    i128 physMax{};
+};
+
+// A float32 decode and encode keep every raw step recoverable while
+// max|raw| + |offset / scale| stays below this. The provable bound for a
+// float round trip is 2^20.4; the first failure an adversarial search found
+// was 2^22.75. See docs/libs/dbc_parser.md.
+constexpr double kFloatStepsFromZero = 0x1p20;
+
+bool floatIsNormal(double value)
+{
+    if (!std::isfinite(value) || (std::fabs(value) > FLT_MAX))
+    {
+        return false;
+    }
+    return std::fpclassify(static_cast<float>(value)) == FP_NORMAL;
+}
+
+void setIntegerConstants(SignalPlan &plan, std::string_view constantType, i128 scale, i128 offset)
+{
+    plan.constantType = constantType;
+    plan.scale = integerLiteral(scale);
+    plan.offset = integerLiteral(offset);
+}
+
+// The type rules, in order. Ranges always come from the raw bit range: the
+// DBC's declared minimum and maximum are [0|0] in about half of the files this
+// runs on, and nothing checks them.
+SignalPlan planSignal(const dbc_parser::Signal &signal)
+{
+    SignalPlan plan;
+    plan.identity = (signal.scale == 1.0) && (signal.offset == 0.0);
+    plan.rawType = rawTypeName(signal.length);
+
+    const uint32_t length = std::clamp(signal.length, 1u, 64u);
+    plan.rawMin = signal.isSigned ? -(static_cast<i128>(1) << (length - 1u)) : 0;
+    plan.rawMax = signal.isSigned ? ((static_cast<i128>(1) << (length - 1u)) - 1)
+                                  : ((static_cast<i128>(1) << length) - 1);
+
+    switch (signal.valueType)
+    {
+    case dbc_parser::SignalValueType::Float:
+        // No arithmetic at all when unscaled, so the bits survive untouched --
+        // including -0.0, which 0.0f * 1.0f + 0.0f would not.
+        plan.domain = Domain::IeeeFloat;
+        plan.type = plan.identity ? "float" : "double";
+        plan.constantType = plan.type;
+        plan.scale = plan.identity ? floatLiteral(signal.scale) : doubleLiteral(signal.scale);
+        plan.offset = plan.identity ? floatLiteral(signal.offset) : doubleLiteral(signal.offset);
+        return plan;
+
+    case dbc_parser::SignalValueType::Double:
+        plan.domain = Domain::IeeeDouble;
+        plan.type = "double";
+        plan.constantType = "double";
+        plan.scale = doubleLiteral(signal.scale);
+        plan.offset = doubleLiteral(signal.offset);
+        return plan;
+
+    case dbc_parser::SignalValueType::Integer:
+        break;
+    }
+
     // A value table becomes an enum only when raw and physical are the same
     // number. VAL_ maps *raw* values to names, so with a scale or offset in
     // play the enumerators would name unscaled values while the field held a
     // scaled one -- two different numbers wearing the same name.
-    if (!signal.valueTable.empty() && (signal.scale == 1.0) && (signal.offset == 0.0) &&
-        (signal.valueType == dbc_parser::SignalValueType::Integer))
+    if (!signal.valueTable.empty() && plan.identity)
     {
-        return DecodedType::Enum;
+        i128 lo = plan.rawMin;
+        i128 hi = plan.rawMax;
+        for (const auto &mapping : signal.valueTable)
+        {
+            lo = std::min(lo, static_cast<i128>(mapping.rawValue));
+            hi = std::max(hi, static_cast<i128>(mapping.rawValue));
+        }
+        const auto base = smallestHolding(lo, hi);
+        plan.domain = Domain::Enum;
+        plan.type = "Values";
+        plan.enumBase = base ? std::string(base->name) : "int64_t";
+        setIntegerConstants(plan, "int32_t", 1, 0);
+        return plan;
     }
 
-    if (signal.valueType != dbc_parser::SignalValueType::Integer)
+    if ((length == 1u) && !signal.isSigned && plan.identity)
     {
-        return DecodedType::Double;
+        plan.domain = Domain::Bool;
+        plan.type = "bool";
+        setIntegerConstants(plan, "int32_t", 1, 0);
+        return plan;
     }
 
-    if (!isIntegral(signal.scale) || !isIntegral(signal.offset))
+    i128 scale = 0;
+    i128 offset = 0;
+    if (asInteger(signal.scale, scale) && asInteger(signal.offset, offset))
     {
-        return DecodedType::Double;
+        const i128 atMin = plan.rawMin * scale + offset;
+        const i128 atMax = plan.rawMax * scale + offset;
+        const i128 lo = std::min(atMin, atMax);
+        const i128 hi = std::max(atMin, atMax);
+
+        if (const auto type = smallestHolding(lo, hi))
+        {
+            if (plan.identity)
+            {
+                plan.domain = Domain::Integer;
+                plan.type = type->name;
+                plan.physMin = lo;
+                plan.physMax = hi;
+                setIntegerConstants(plan, "int32_t", 1, 0);
+                return plan;
+            }
+
+            // Encode clamps the value to [lo, hi] before subtracting the
+            // offset, so the arithmetic only ever meets these numbers. Holding
+            // the raw range also rules out INT_MIN / -1, and holding |scale|
+            // rules out negating the scale.
+            const std::array<i128, 7> needed{plan.rawMin,         plan.rawMax,         plan.rawMin * scale,
+                                             plan.rawMax * scale, lo,                  hi,
+                                             (scale < 0) ? -scale : scale};
+            for (const auto &work : {kSignedTypes[2], kSignedTypes[3]})
+            {
+                const bool fits = std::all_of(needed.begin(), needed.end(), [&](i128 n) {
+                    return (n >= work.lo) && (n <= work.hi);
+                });
+                if (fits)
+                {
+                    plan.domain = Domain::Integer;
+                    plan.type = type->name;
+                    plan.workType = work.name;
+                    plan.physMin = lo;
+                    plan.physMax = hi;
+                    setIntegerConstants(plan, work.name, scale, offset);
+                    return plan;
+                }
+            }
+        }
+        // Integral, but too wide for 64 bit arithmetic: falls through to the
+        // floating-point rule like any other scaling.
     }
 
-    // The physical value is raw * scale + offset. It can be negative because
-    // the field is signed, because the offset is, or because the scale is.
-    if (signal.isSigned || (signal.offset < 0.0) || (signal.scale < 0.0))
+    const double maxAbsRaw = signal.isSigned ? std::ldexp(1.0, static_cast<int>(length) - 1)
+                                             : (std::ldexp(1.0, static_cast<int>(length)) - 1.0);
+    const double stepsFromZero = maxAbsRaw + std::fabs(signal.offset / signal.scale);
+
+    // The threshold assumes the constants are ordinary floats. A scale that
+    // underflows to zero or a subnormal would decode everything as nothing.
+    const bool floatable = (stepsFromZero < kFloatStepsFromZero) && floatIsNormal(signal.scale) &&
+                           ((signal.offset == 0.0) || floatIsNormal(signal.offset));
+
+    if (floatable)
     {
-        return DecodedType::Int64;
+        plan.domain = Domain::Float;
+        plan.type = "float";
+        plan.convType = "int32_t";
+        plan.constantType = "float";
+        plan.scale = floatLiteral(signal.scale);
+        plan.offset = floatLiteral(signal.offset);
+        return plan;
     }
 
-    return DecodedType::UInt64;
-}
-
-std::string_view typeName(DecodedType type)
-{
-    switch (type)
-    {
-    case DecodedType::Enum:
-        return "Values";
-
-    case DecodedType::Double:
-        return "double";
-
-    case DecodedType::Int64:
-        return "int64_t";
-
-    case DecodedType::UInt64:
-        return "uint64_t";
-    }
-
-    return "double";
-}
-
-// A value table only becomes an enum when raw and physical are the same
-// number. With a scale or offset in play the enumerators would be raw values
-// while the field held a scaled one, and the two would silently disagree.
-bool emitsEnum(const dbc_parser::Signal &signal)
-{
-    return decodedType(signal) == DecodedType::Enum;
+    plan.domain = Domain::Double;
+    plan.type = "double";
+    plan.convType = conversionTypeName(length, signal.isSigned);
+    plan.constantType = "double";
+    plan.scale = doubleLiteral(signal.scale);
+    plan.offset = doubleLiteral(signal.offset);
+    return plan;
 }
 
 // Enumerator names come from free text in the DBC. Anything that is not a
@@ -236,10 +545,8 @@ std::vector<std::string> enumeratorNames(const dbc_parser::Signal &signal)
     return names;
 }
 
-void generateSignalTraits(const dbc_parser::Signal &signal, std::ostream &out)
+void generateSignalTraits(const dbc_parser::Signal &signal, const SignalPlan &plan, std::ostream &out)
 {
-    const DecodedType type = decodedType(signal);
-
     fmt::print(out, "    struct sig_{}_t\n", signal.name);
     fmt::print(out, "    {{\n");
     fmt::print(out, "        static constexpr std::string_view name = {};\n", stringLiteral(signal.name));
@@ -257,52 +564,62 @@ void generateSignalTraits(const dbc_parser::Signal &signal, std::ostream &out)
                signal.multiplexedGroupIdx);
     fmt::print(out, "\n");
 
-    // Scale and offset are emitted for every signal, including enumerated
-    // ones. Leaving them off value-table signals meant a scaled enum lost its
-    // scaling entirely, and callers had no way to notice.
-    fmt::print(out, "        static constexpr double scale = {};\n", literal(signal.scale));
-    fmt::print(out, "        static constexpr double offset = {};\n", literal(signal.offset));
-    fmt::print(out, "        static constexpr double minimum = {};\n", literal(signal.minimum));
-    fmt::print(out, "        static constexpr double maximum = {};\n", literal(signal.maximum));
+    fmt::print(out, "        static constexpr value_domain domain = value_domain::{};\n", domainName(plan.domain));
+    fmt::print(out, "        static constexpr bool identity = {};\n", plan.identity);
     fmt::print(out, "\n");
 
-    switch (signal.valueType)
-    {
-    case dbc_parser::SignalValueType::Integer:
-        fmt::print(out, "        static constexpr raw_encoding encoding = raw_encoding::Integer;\n");
-        break;
-
-    case dbc_parser::SignalValueType::Float:
-        fmt::print(out, "        static constexpr raw_encoding encoding = raw_encoding::Float;\n");
-        break;
-
-    case dbc_parser::SignalValueType::Double:
-        fmt::print(out, "        static constexpr raw_encoding encoding = raw_encoding::Double;\n");
-        break;
-    }
-
-    fmt::print(out, "        static constexpr bool has_value_table = {};\n", emitsEnum(signal));
-    fmt::print(out, "\n");
-
-    if (emitsEnum(signal))
+    if (plan.domain == Domain::Enum)
     {
         const std::vector<std::string> names = enumeratorNames(signal);
 
-        // int64_t underlying, because a raw value from the file can be wider
-        // than the int an unscoped enum would default to.
-        fmt::print(out, "        enum class Values : int64_t\n");
+        fmt::print(out, "        enum class Values : {}\n", plan.enumBase);
         fmt::print(out, "        {{\n");
         for (size_t i = 0; i < names.size(); ++i)
         {
-            fmt::print(out, "            {} = {},\n", names[i], signal.valueTable[i].rawValue);
+            fmt::print(out, "            {} = {},\n", names[i],
+                       integerLiteral(static_cast<i128>(signal.valueTable[i].rawValue)));
         }
         fmt::print(out, "        }};\n");
         fmt::print(out, "\n");
     }
 
+    fmt::print(out, "        using Raw = {};\n", plan.rawType);
     fmt::print(out, "        // The type decoded values of this signal are handed over as.\n");
-    fmt::print(out, "        using Type = {};\n", typeName(type));
+    fmt::print(out, "        using Type = {};\n", plan.type);
+    if (!plan.workType.empty())
+    {
+        fmt::print(out, "        using Work = {};\n", plan.workType);
+    }
+    if (!plan.convType.empty())
+    {
+        fmt::print(out, "        using Conv = {};\n", plan.convType);
+    }
     fmt::print(out, "\n");
+
+    // Scale and offset are emitted for every signal, including enumerated
+    // ones. Leaving them off value-table signals meant a scaled enum lost its
+    // scaling entirely, and callers had no way to notice.
+    fmt::print(out, "        static constexpr {} scale = {};\n", plan.constantType, plan.scale);
+    fmt::print(out, "        static constexpr {} offset = {};\n", plan.constantType, plan.offset);
+
+    if (plan.domain == Domain::Integer)
+    {
+        fmt::print(out, "        static constexpr {} phys_min = {};\n", plan.type, integerLiteral(plan.physMin));
+        fmt::print(out, "        static constexpr {} phys_max = {};\n", plan.type, integerLiteral(plan.physMax));
+    }
+    if (!plan.convType.empty())
+    {
+        fmt::print(out, "        static constexpr {} raw_min = {};\n", plan.convType, integerLiteral(plan.rawMin));
+        fmt::print(out, "        static constexpr {} raw_max = {};\n", plan.convType, integerLiteral(plan.rawMax));
+    }
+    fmt::print(out, "\n");
+
+    fmt::print(out, "        // As declared in the DBC. Nothing in the generated code reads these:\n");
+    fmt::print(out, "        // half the files in the wild declare [0|0].\n");
+    fmt::print(out, "        static constexpr double minimum = {};\n", doubleLiteral(signal.minimum));
+    fmt::print(out, "        static constexpr double maximum = {};\n", doubleLiteral(signal.maximum));
+    fmt::print(out, "\n");
+
     fmt::print(out, "        static constexpr std::array<std::string_view, {}> receivers =\n",
                signal.receivers.size());
     fmt::print(out, "        {{\n");
@@ -315,200 +632,20 @@ void generateSignalTraits(const dbc_parser::Signal &signal, std::ostream &out)
     fmt::print(out, "\n");
 }
 
-void generateBitHelpers(std::ostream &out)
+// A name for a local in a generated member function that no signal member
+// shares. A local that shadows a member is a -Wshadow error, and a signal
+// called `frame` is not something the DBC author should have to avoid.
+std::string localName(const dbc_parser::Message &message, std::string base)
 {
-    fmt::print(out, "    // Pull Sig::length bits out of the frame into a right aligned word.\n");
-    fmt::print(out, "    template <typename Sig>\n");
-    fmt::print(out, "    static constexpr uint64_t extract_bits(std::span<const uint8_t> data)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        uint64_t raw_u = 0;\n");
-    fmt::print(out, "        if constexpr (Sig::little_endian)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            for (uint32_t i = 0; i < Sig::length; ++i)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                const uint32_t abs_bit = Sig::start_bit + i;\n");
-    fmt::print(out, "                const uint8_t bit = static_cast<uint8_t>((data[abs_bit / 8u] >> (abs_bit % 8u)) & 0x1u);\n");
-    fmt::print(out, "                raw_u |= (static_cast<uint64_t>(bit) << i);\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            // Motorola order: walk down within a byte, then jump to the\n");
-    fmt::print(out, "            // top of the next one.\n");
-    fmt::print(out, "            uint32_t abs_bit = Sig::start_bit;\n");
-    fmt::print(out, "            for (uint32_t i = 0; i < Sig::length; ++i)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                const uint8_t bit = static_cast<uint8_t>((data[abs_bit / 8u] >> (abs_bit % 8u)) & 0x1u);\n");
-    fmt::print(out, "                raw_u = (raw_u << 1) | static_cast<uint64_t>(bit);\n");
-    fmt::print(out, "                if ((abs_bit % 8u) == 0u) abs_bit += 15u; else abs_bit -= 1u;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        return raw_u;\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "    template <typename Sig>\n");
-    fmt::print(out, "    static constexpr void insert_bits(std::span<uint8_t> buf, uint64_t raw_u)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        if constexpr (Sig::little_endian)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            for (uint32_t i = 0; i < Sig::length; ++i)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                const uint32_t abs_bit = Sig::start_bit + i;\n");
-    fmt::print(out, "                const uint8_t bit = static_cast<uint8_t>((raw_u >> i) & 0x1u);\n");
-    fmt::print(out, "                set_bit(buf, abs_bit, bit);\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            uint32_t abs_bit = Sig::start_bit;\n");
-    fmt::print(out, "            for (uint32_t i = 0; i < Sig::length; ++i)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                const uint8_t bit = static_cast<uint8_t>((raw_u >> (Sig::length - 1u - i)) & 0x1u);\n");
-    fmt::print(out, "                set_bit(buf, abs_bit, bit);\n");
-    fmt::print(out, "                if ((abs_bit % 8u) == 0u) abs_bit += 15u; else abs_bit -= 1u;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "    static constexpr void set_bit(std::span<uint8_t> buf, uint32_t abs_bit, uint8_t bit)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        uint8_t& byte = buf[abs_bit / 8u];\n");
-    fmt::print(out, "        const uint8_t mask = static_cast<uint8_t>(1u << (abs_bit % 8u));\n");
-    fmt::print(out, "        byte = static_cast<uint8_t>((byte & static_cast<uint8_t>(~mask)) | (bit ? mask : 0u));\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "\n");
-
-    // Decode
-    fmt::print(out, "    template <typename Sig>\n");
-    fmt::print(out, "    static constexpr typename Sig::Type extract(std::span<const uint8_t> data)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        static_assert(Sig::length >= 1 && Sig::length <= 64);\n");
-    fmt::print(out, "        const uint64_t raw_u = extract_bits<Sig>(data);\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "        if constexpr (Sig::encoding == raw_encoding::Float)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            const float raw_f = std::bit_cast<float>(static_cast<uint32_t>(raw_u));\n");
-    fmt::print(out, "            return static_cast<typename Sig::Type>(static_cast<double>(raw_f) * Sig::scale + Sig::offset);\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else if constexpr (Sig::encoding == raw_encoding::Double)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            const double raw_d = std::bit_cast<double>(raw_u);\n");
-    fmt::print(out, "            return static_cast<typename Sig::Type>(raw_d * Sig::scale + Sig::offset);\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            int64_t raw = static_cast<int64_t>(raw_u);\n");
-    fmt::print(out, "            if constexpr (Sig::is_signed && Sig::length < 64)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                if (((raw_u >> (Sig::length - 1u)) & 0x1u) != 0u)\n");
-    fmt::print(out, "                {{\n");
-    fmt::print(out, "                    raw |= (~0ll) << Sig::length;\n");
-    fmt::print(out, "                }}\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "            if constexpr (Sig::has_value_table)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                return static_cast<typename Sig::Type>(raw);\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "            else if constexpr (Sig::scale == 1.0 && Sig::offset == 0.0)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                // Identity scaling stays in the integer domain, so a 64 bit\n");
-    fmt::print(out, "                // signal is not rounded by a trip through double.\n");
-    fmt::print(out, "                return static_cast<typename Sig::Type>(raw);\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "            else\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                return static_cast<typename Sig::Type>(static_cast<double>(raw) * Sig::scale + Sig::offset);\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "\n");
-
-    // Encode
-    fmt::print(out, "    template <typename Sig>\n");
-    fmt::print(out, "    static constexpr uint64_t to_raw_u(typename Sig::Type value)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        constexpr uint64_t mask = (Sig::length == 64u) ? ~0ull : ((1ull << (Sig::length % 64u)) - 1ull);\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "        if constexpr (Sig::has_value_table)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            return static_cast<uint64_t>(static_cast<int64_t>(value)) & mask;\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else if constexpr (Sig::encoding == raw_encoding::Float)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            const float raw_f = static_cast<float>((static_cast<double>(value) - Sig::offset) / Sig::scale);\n");
-    fmt::print(out, "            return static_cast<uint64_t>(std::bit_cast<uint32_t>(raw_f));\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else if constexpr (Sig::encoding == raw_encoding::Double)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            const double raw_d = (static_cast<double>(value) - Sig::offset) / Sig::scale;\n");
-    fmt::print(out, "            return std::bit_cast<uint64_t>(raw_d);\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else if constexpr (Sig::scale == 1.0 && Sig::offset == 0.0)\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            // Identity scaling stays in the integer domain, mirroring\n");
-    fmt::print(out, "            // extract(). A signal wider than 53 bits does not survive a\n");
-    fmt::print(out, "            // trip through double: adding 0.5 to a value at the top of\n");
-    fmt::print(out, "            // that range rounds it to the wrong integer outright.\n");
-    fmt::print(out, "            if constexpr (Sig::is_signed)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                constexpr int64_t min_v = (Sig::length == 64u) ? std::numeric_limits<int64_t>::min() : -(1ll << ((Sig::length - 1u) % 63u));\n");
-    fmt::print(out, "                constexpr int64_t max_v = (Sig::length == 64u) ? std::numeric_limits<int64_t>::max() : ((1ll << ((Sig::length - 1u) % 63u)) - 1ll);\n");
-    fmt::print(out, "                int64_t raw = static_cast<int64_t>(value);\n");
-    fmt::print(out, "                if (raw < min_v) raw = min_v;\n");
-    fmt::print(out, "                if (raw > max_v) raw = max_v;\n");
-    fmt::print(out, "                return static_cast<uint64_t>(raw) & mask;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "            else\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                uint64_t raw = static_cast<uint64_t>(value);\n");
-    fmt::print(out, "                if (raw > mask) raw = mask;\n");
-    fmt::print(out, "                return raw;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "        else\n");
-    fmt::print(out, "        {{\n");
-    fmt::print(out, "            const double raw_d = (static_cast<double>(value) - Sig::offset) / Sig::scale;\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "            // Saturate before rounding, never after. Converting an out of\n");
-    fmt::print(out, "            // range double to an integer is undefined, not clamping, and\n");
-    fmt::print(out, "            // the bounds below are powers of two so they stay exact even\n");
-    fmt::print(out, "            // for a field too wide for a double to enumerate.\n");
-    fmt::print(out, "            if constexpr (Sig::is_signed)\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                constexpr int64_t min_v = (Sig::length == 64u) ? std::numeric_limits<int64_t>::min() : -(1ll << ((Sig::length - 1u) % 63u));\n");
-    fmt::print(out, "                constexpr int64_t max_v = (Sig::length == 64u) ? std::numeric_limits<int64_t>::max() : ((1ll << ((Sig::length - 1u) % 63u)) - 1ll);\n");
-    fmt::print(out, "                constexpr double limit = two_pow(Sig::length - 1u);\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "                // Written so a NaN takes the first branch rather than\n");
-    fmt::print(out, "                // falling through to the conversion.\n");
-    fmt::print(out, "                if (!(raw_d >= -limit))\n");
-    fmt::print(out, "                {{\n");
-    fmt::print(out, "                    return static_cast<uint64_t>(min_v) & mask;\n");
-    fmt::print(out, "                }}\n");
-    fmt::print(out, "                if (raw_d >= limit)\n");
-    fmt::print(out, "                {{\n");
-    fmt::print(out, "                    return static_cast<uint64_t>(max_v) & mask;\n");
-    fmt::print(out, "                }}\n");
-    fmt::print(out, "                return static_cast<uint64_t>(round_half_away_from_zero<int64_t>(raw_d)) & mask;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "            else\n");
-    fmt::print(out, "            {{\n");
-    fmt::print(out, "                constexpr double limit = two_pow(Sig::length);\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "                if (!(raw_d >= 0.0))\n");
-    fmt::print(out, "                {{\n");
-    fmt::print(out, "                    return 0ull;\n");
-    fmt::print(out, "                }}\n");
-    fmt::print(out, "                if (raw_d >= limit)\n");
-    fmt::print(out, "                {{\n");
-    fmt::print(out, "                    return mask;\n");
-    fmt::print(out, "                }}\n");
-    fmt::print(out, "                return round_half_away_from_zero<uint64_t>(raw_d) & mask;\n");
-    fmt::print(out, "            }}\n");
-    fmt::print(out, "        }}\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "\n");
+    const auto taken = [&](const std::string &name) {
+        return std::any_of(message.signals.begin(), message.signals.end(),
+                           [&](const dbc_parser::Signal &signal) { return signal.name == name; });
+    };
+    while (taken(base))
+    {
+        base.push_back('_');
+    }
+    return base;
 }
 
 void generateMessageHeader(const dbc_parser::Message &message, const std::string &base,
@@ -531,6 +668,11 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     const bool multiplexed = message.isMultiplexed && (muxSignal != nullptr);
     const uint32_t startMuxGroup = muxGroups.empty() ? 0u : *muxGroups.begin();
 
+    const std::string frame = localName(message, "frame");
+    const std::string view = localName(message, "view");
+    const std::string muxRaw = localName(message, "mux_raw");
+    const std::string fn = localName(message, "fn");
+
     std::string guard = base + "_" + message.name + "_H_";
     std::transform(guard.begin(), guard.end(), guard.begin(), ::toupper);
 
@@ -538,10 +680,7 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     fmt::print(out, "#define {}\n\n", guard);
     fmt::print(out, "/* Generated C++ header - do not edit as any changes will be overwritten. */\n");
     fmt::print(out, "#include <array>\n");
-    fmt::print(out, "#include <bit>\n");
-    fmt::print(out, "#include <cmath>\n");
     fmt::print(out, "#include <cstdint>\n");
-    fmt::print(out, "#include <limits>\n");
     fmt::print(out, "#include <span>\n");
     fmt::print(out, "#include <string_view>\n");
     fmt::print(out, "\n");
@@ -585,7 +724,7 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
 
     for (const auto &signal : message.signals)
     {
-        generateSignalTraits(signal, out);
+        generateSignalTraits(signal, planSignal(signal), out);
     }
 
     for (const auto &signal : message.signals)
@@ -617,24 +756,27 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
         fmt::print(out, "\n");
     }
 
-    generateBitHelpers(out);
-
     // encode
     fmt::print(out, "    [[nodiscard]] constexpr std::array<uint8_t, {}u> encode() const\n", message.dlc);
     fmt::print(out, "    {{\n");
-    fmt::print(out, "        std::array<uint8_t, {}u> data{{}};\n", message.dlc);
-    fmt::print(out, "        const std::span<uint8_t> out{{data}};\n");
+    fmt::print(out, "        std::array<uint8_t, {}u> {}{{}};\n", message.dlc, frame);
+    fmt::print(out, "        const std::span<uint8_t> {}{{{}}};\n", view, frame);
     fmt::print(out, "\n");
 
     if (multiplexed)
     {
-        fmt::print(out, "        insert_bits<sig_{}_t>(out, to_raw_u<sig_{}_t>({}));\n",
-                   muxSignal->name, muxSignal->name, muxSignal->name);
+        // Groups are selected by the multiplexor's raw bits, held in the
+        // accumulator word rather than the signal's own type: a group index
+        // compared against a uint8_t would be a comparison clang can prove
+        // false, and -Werror makes that a build failure.
+        fmt::print(out, "        const dbc_detail::acc_t<sig_{0}_t> {1} = dbc_detail::to_raw<sig_{0}_t>({0});\n",
+                   muxSignal->name, muxRaw);
+        fmt::print(out, "        dbc_detail::insert_bits<sig_{}_t>({}, {});\n", muxSignal->name, view, muxRaw);
         fmt::print(out, "\n");
 
         for (const auto &group : muxGroups)
         {
-            fmt::print(out, "        if (static_cast<uint64_t>({}) == {}u)\n", muxSignal->name, group);
+            fmt::print(out, "        if ({} == {}u)\n", muxRaw, group);
             fmt::print(out, "        {{\n");
             for (const auto &signal : message.signals)
             {
@@ -643,8 +785,8 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
                 {
                     continue;
                 }
-                fmt::print(out, "            insert_bits<sig_{}_t>(out, to_raw_u<sig_{}_t>({}));\n",
-                           signal.name, signal.name, signal.name);
+                fmt::print(out, "            dbc_detail::encode_signal<sig_{0}_t>({1}, {0});\n",
+                           signal.name, view);
             }
             fmt::print(out, "        }}\n");
         }
@@ -657,12 +799,11 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
         {
             continue;
         }
-        fmt::print(out, "        insert_bits<sig_{}_t>(out, to_raw_u<sig_{}_t>({}));\n",
-                   signal.name, signal.name, signal.name);
+        fmt::print(out, "        dbc_detail::encode_signal<sig_{0}_t>({1}, {0});\n", signal.name, view);
     }
 
     fmt::print(out, "\n");
-    fmt::print(out, "        return data;\n");
+    fmt::print(out, "        return {};\n", frame);
     fmt::print(out, "    }}\n");
     fmt::print(out, "\n");
 
@@ -670,9 +811,9 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     fmt::print(out, "    // False if the frame is shorter than this message, in which case\n");
     fmt::print(out, "    // nothing is written. A short frame used to be zero padded by the\n");
     fmt::print(out, "    // caller and decoded as though those zeroes were real readings.\n");
-    fmt::print(out, "    [[nodiscard]] constexpr bool decode(std::span<const uint8_t> data)\n");
+    fmt::print(out, "    [[nodiscard]] constexpr bool decode(std::span<const uint8_t> {})\n", frame);
     fmt::print(out, "    {{\n");
-    fmt::print(out, "        if (data.size() < dlc)\n");
+    fmt::print(out, "        if ({}.size() < dlc)\n", frame);
     fmt::print(out, "        {{\n");
     fmt::print(out, "            return false;\n");
     fmt::print(out, "        }}\n");
@@ -680,12 +821,15 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
 
     if (multiplexed)
     {
-        fmt::print(out, "        {} = extract<sig_{}_t>(data);\n", muxSignal->name, muxSignal->name);
+        fmt::print(out, "        const dbc_detail::acc_t<sig_{0}_t> {1} = dbc_detail::extract_bits<sig_{0}_t>({2});\n",
+                   muxSignal->name, muxRaw, frame);
+        fmt::print(out, "        {0} = dbc_detail::from_raw<sig_{0}_t>(static_cast<sig_{0}_t::Raw>({1}));\n",
+                   muxSignal->name, muxRaw);
         fmt::print(out, "\n");
 
         for (const auto &group : muxGroups)
         {
-            fmt::print(out, "        if (static_cast<uint64_t>({}) == {}u)\n", muxSignal->name, group);
+            fmt::print(out, "        if ({} == {}u)\n", muxRaw, group);
             fmt::print(out, "        {{\n");
 
             if (group == startMuxGroup)
@@ -713,8 +857,8 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
                 {
                     continue;
                 }
-                fmt::print(out, "            {} = extract<sig_{}_t>(data);\n", signal.name,
-                           signal.name);
+                fmt::print(out, "            {0} = dbc_detail::decode_signal<sig_{0}_t>({1});\n",
+                           signal.name, frame);
             }
 
             fmt::print(out, "        }}\n");
@@ -728,7 +872,7 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
         {
             continue;
         }
-        fmt::print(out, "        {} = extract<sig_{}_t>(data);\n", signal.name, signal.name);
+        fmt::print(out, "        {0} = dbc_detail::decode_signal<sig_{0}_t>({1});\n", signal.name, frame);
     }
 
     fmt::print(out, "\n");
@@ -740,15 +884,15 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     for (std::string_view qualifier : {"", " const"})
     {
         fmt::print(out, "    template <typename Func>\n");
-        fmt::print(out, "    constexpr void visit(Func&& fn){}\n", qualifier);
+        fmt::print(out, "    constexpr void visit(Func&& {}){}\n", fn, qualifier);
         fmt::print(out, "    {{\n");
         for (const auto &signal : message.signals)
         {
-            fmt::print(out, "        fn({}, sig_{}_t{{}});\n", signal.name, signal.name);
+            fmt::print(out, "        {}({}, sig_{}_t{{}});\n", fn, signal.name, signal.name);
         }
         if (message.signals.empty())
         {
-            fmt::print(out, "        (void)fn;\n");
+            fmt::print(out, "        (void){};\n", fn);
         }
         fmt::print(out, "    }}\n");
         fmt::print(out, "\n");
@@ -785,6 +929,389 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     fmt::print(out, "#endif  // {}\n", guard);
 }
 
+// Shared by every message header of one database, emitted once. Written as one
+// block of C++ rather than line by line so it reads as the code it produces.
+constexpr std::string_view kCommonHeader = R"CPP(#ifndef @GUARD@
+#define @GUARD@
+
+/* Generated C++ header - do not edit as any changes will be overwritten. */
+
+#include <bit>
+#include <cstdint>
+#include <limits>
+#include <span>
+#include <type_traits>
+#include <utility>
+
+namespace @BASE@
+{
+
+// How a signal's raw bits become its value. The generator picks one per signal
+// from the field's raw bit range -- never from the DBC's declared minimum and
+// maximum, which are [0|0] in half the files in the wild:
+//
+//   Bool        one unsigned bit, no scaling, no value table
+//   Enum        a value table on an unscaled field
+//   Integer     integral scale and offset: integer arithmetic only, no FPU
+//   Float       float32 arithmetic. Every raw value still round-trips, because
+//               max|raw| + |offset / scale| < 2^20.
+//   Double      double arithmetic, for everything else
+//   IeeeFloat   SIG_VALTYPE_ float32 on the wire
+//   IeeeDouble  SIG_VALTYPE_ float64 on the wire
+enum class value_domain
+{
+    Bool,
+    Enum,
+    Integer,
+    Float,
+    Double,
+    IeeeFloat,
+    IeeeDouble,
+};
+
+namespace dbc_detail
+{
+
+// The word raw bits are gathered in. 32 bits whenever the field fits, so a
+// 32 bit core never does 64 bit shifts for an 8 bit signal.
+template <typename Sig>
+using acc_t = std::conditional_t<(Sig::length <= 32u), uint32_t, uint64_t>;
+
+template <typename Sig>
+using sacc_t = std::make_signed_t<acc_t<Sig>>;
+
+// Sig::length ones, right aligned. Shifting down from all ones keeps the
+// shift count in range for every length, a full 64 bit field included.
+template <typename Sig>
+constexpr acc_t<Sig> field_mask()
+{
+    return static_cast<acc_t<Sig>>(~acc_t<Sig>{0} >> (std::numeric_limits<acc_t<Sig>>::digits - Sig::length));
+}
+
+// Sig::length bits out of the frame, right aligned. Motorola order walks down
+// within a byte, then jumps to the top of the next one.
+template <typename Sig>
+constexpr acc_t<Sig> extract_bits(std::span<const uint8_t> frame)
+{
+    acc_t<Sig> raw = 0u;
+    if constexpr (Sig::little_endian)
+    {
+        for (uint32_t i = 0u; i < Sig::length; ++i)
+        {
+            const uint32_t position = Sig::start_bit + i;
+            const auto bit = static_cast<acc_t<Sig>>((frame[position / 8u] >> (position % 8u)) & 1u);
+            raw = static_cast<acc_t<Sig>>(raw | (bit << i));
+        }
+    }
+    else
+    {
+        uint32_t position = Sig::start_bit;
+        for (uint32_t i = 0u; i < Sig::length; ++i)
+        {
+            const auto bit = static_cast<acc_t<Sig>>((frame[position / 8u] >> (position % 8u)) & 1u);
+            raw = static_cast<acc_t<Sig>>((raw << 1u) | bit);
+            position = ((position % 8u) == 0u) ? (position + 15u) : (position - 1u);
+        }
+    }
+    return raw;
+}
+
+constexpr void set_bit(std::span<uint8_t> frame, uint32_t position, bool on)
+{
+    const auto mask = static_cast<uint8_t>(1u << (position % 8u));
+    uint8_t &byte = frame[position / 8u];
+    byte = on ? static_cast<uint8_t>(byte | mask) : static_cast<uint8_t>(byte & static_cast<uint8_t>(~mask));
+}
+
+template <typename Sig>
+constexpr void insert_bits(std::span<uint8_t> frame, acc_t<Sig> raw)
+{
+    if constexpr (Sig::little_endian)
+    {
+        for (uint32_t i = 0u; i < Sig::length; ++i)
+        {
+            set_bit(frame, Sig::start_bit + i, ((raw >> i) & 1u) != 0u);
+        }
+    }
+    else
+    {
+        uint32_t position = Sig::start_bit;
+        for (uint32_t i = 0u; i < Sig::length; ++i)
+        {
+            set_bit(frame, position, ((raw >> (Sig::length - 1u - i)) & 1u) != 0u);
+            position = ((position % 8u) == 0u) ? (position + 15u) : (position - 1u);
+        }
+    }
+}
+
+// Two's complement sign extension of a Sig::length bit field. (raw ^ sign) -
+// sign in unsigned arithmetic is exact for every length, including a field
+// that fills the whole word, where shifting ~0 left would not be.
+template <typename Sig>
+constexpr sacc_t<Sig> sign_extend(acc_t<Sig> raw)
+{
+    const auto sign = static_cast<acc_t<Sig>>(acc_t<Sig>{1} << (Sig::length - 1u));
+    return static_cast<sacc_t<Sig>>(static_cast<acc_t<Sig>>((raw ^ sign) - sign));
+}
+
+// Round half away from zero into [lo, hi], saturating everything else.
+//
+// NaN and anything below the field go to lo, anything at or above it to hi.
+// The fraction is taken after truncation rather than by adding 0.5 first,
+// which rounds 0.49999997f up to 1.
+template <typename Fp, typename Int>
+constexpr Int round_saturate(Fp q, Int lo, Int hi)
+{
+    if (!(q >= static_cast<Fp>(lo)))
+    {
+        return lo;
+    }
+    if (q >= static_cast<Fp>(hi))
+    {
+        return hi;
+    }
+    const Int truncated = static_cast<Int>(q);
+    const Fp fraction = q - static_cast<Fp>(truncated);
+    if (fraction >= static_cast<Fp>(0.5))
+    {
+        return static_cast<Int>(truncated + 1);
+    }
+    if (fraction <= static_cast<Fp>(-0.5))
+    {
+        return static_cast<Int>(truncated - 1);
+    }
+    return truncated;
+}
+
+// Raw bits to the value they mean.
+template <typename Sig>
+constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
+{
+    const acc_t<Sig> bits = raw;
+
+    if constexpr (Sig::domain == value_domain::Bool)
+    {
+        return bits != 0u;
+    }
+    else if constexpr (Sig::domain == value_domain::Enum)
+    {
+        if constexpr (Sig::is_signed)
+        {
+            return static_cast<typename Sig::Type>(sign_extend<Sig>(bits));
+        }
+        else
+        {
+            return static_cast<typename Sig::Type>(bits);
+        }
+    }
+    else if constexpr (Sig::domain == value_domain::Integer)
+    {
+        if constexpr (Sig::identity)
+        {
+            if constexpr (Sig::is_signed)
+            {
+                return static_cast<typename Sig::Type>(sign_extend<Sig>(bits));
+            }
+            else
+            {
+                return static_cast<typename Sig::Type>(bits);
+            }
+        }
+        else if constexpr (Sig::is_signed)
+        {
+            const auto n = static_cast<typename Sig::Work>(sign_extend<Sig>(bits));
+            return static_cast<typename Sig::Type>(n * Sig::scale + Sig::offset);
+        }
+        else
+        {
+            const auto n = static_cast<typename Sig::Work>(bits);
+            return static_cast<typename Sig::Type>(n * Sig::scale + Sig::offset);
+        }
+    }
+    else if constexpr (Sig::domain == value_domain::Float)
+    {
+        static_assert(std::is_same_v<std::remove_cv_t<decltype(Sig::scale)>, float>,
+                      "a float signal's constants must be float, or its arithmetic silently runs in double");
+        if constexpr (Sig::is_signed)
+        {
+            return static_cast<float>(static_cast<int32_t>(sign_extend<Sig>(bits))) * Sig::scale + Sig::offset;
+        }
+        else
+        {
+            return static_cast<float>(static_cast<int32_t>(bits)) * Sig::scale + Sig::offset;
+        }
+    }
+    else if constexpr (Sig::domain == value_domain::Double)
+    {
+        if constexpr (Sig::is_signed)
+        {
+            return static_cast<double>(sign_extend<Sig>(bits)) * Sig::scale + Sig::offset;
+        }
+        else
+        {
+            return static_cast<double>(bits) * Sig::scale + Sig::offset;
+        }
+    }
+    else if constexpr (Sig::domain == value_domain::IeeeFloat)
+    {
+        const float value = std::bit_cast<float>(static_cast<uint32_t>(bits));
+        if constexpr (Sig::identity)
+        {
+            return value;
+        }
+        else
+        {
+            return static_cast<double>(value) * Sig::scale + Sig::offset;
+        }
+    }
+    else
+    {
+        const double value = std::bit_cast<double>(static_cast<uint64_t>(bits));
+        if constexpr (Sig::identity)
+        {
+            return value;
+        }
+        else
+        {
+            return value * Sig::scale + Sig::offset;
+        }
+    }
+}
+
+// A value to the raw bits that encode it: saturated to the field, rounded
+// half away from zero where the scale leaves a fraction.
+template <typename Sig>
+constexpr typename Sig::Raw to_raw(typename Sig::Type value)
+{
+    if constexpr (Sig::domain == value_domain::Bool)
+    {
+        return static_cast<typename Sig::Raw>(value ? 1u : 0u);
+    }
+    else if constexpr (Sig::domain == value_domain::Enum)
+    {
+        return static_cast<typename Sig::Raw>(static_cast<acc_t<Sig>>(std::to_underlying(value)) & field_mask<Sig>());
+    }
+    else if constexpr (Sig::domain == value_domain::Integer)
+    {
+        // Clamped first, so the arithmetic below never meets a value the
+        // generator did not size Work for.
+        auto clamped = value;
+        if constexpr (Sig::phys_min != std::numeric_limits<typename Sig::Type>::min())
+        {
+            if (clamped < Sig::phys_min)
+            {
+                clamped = Sig::phys_min;
+            }
+        }
+        if constexpr (Sig::phys_max != std::numeric_limits<typename Sig::Type>::max())
+        {
+            if (clamped > Sig::phys_max)
+            {
+                clamped = Sig::phys_max;
+            }
+        }
+
+        if constexpr (Sig::identity)
+        {
+            return static_cast<typename Sig::Raw>(static_cast<acc_t<Sig>>(clamped) & field_mask<Sig>());
+        }
+        else
+        {
+            using Work = typename Sig::Work;
+            const auto numerator = static_cast<Work>(static_cast<Work>(clamped) - Sig::offset);
+            auto quotient = static_cast<Work>(numerator / Sig::scale);
+            const auto remainder = static_cast<Work>(numerator % Sig::scale);
+            const auto abs_remainder = (remainder < 0) ? static_cast<Work>(-remainder) : remainder;
+            const auto abs_scale = (Sig::scale < 0) ? static_cast<Work>(-Sig::scale) : Sig::scale;
+            if (abs_remainder >= static_cast<Work>(abs_scale - abs_remainder))
+            {
+                quotient = static_cast<Work>(quotient + (((numerator < 0) == (Sig::scale < 0)) ? 1 : -1));
+            }
+            return static_cast<typename Sig::Raw>(static_cast<acc_t<Sig>>(quotient) & field_mask<Sig>());
+        }
+    }
+    else if constexpr (Sig::domain == value_domain::Float)
+    {
+        const float scaled = (value - Sig::offset) / Sig::scale;
+        const int32_t rounded = round_saturate<float, int32_t>(scaled, Sig::raw_min, Sig::raw_max);
+        return static_cast<typename Sig::Raw>(static_cast<acc_t<Sig>>(rounded) & field_mask<Sig>());
+    }
+    else if constexpr (Sig::domain == value_domain::Double)
+    {
+        const double scaled = (value - Sig::offset) / Sig::scale;
+        const auto rounded = round_saturate<double, typename Sig::Conv>(scaled, Sig::raw_min, Sig::raw_max);
+        return static_cast<typename Sig::Raw>(static_cast<acc_t<Sig>>(rounded) & field_mask<Sig>());
+    }
+    else if constexpr (Sig::domain == value_domain::IeeeFloat)
+    {
+        if constexpr (Sig::identity)
+        {
+            return static_cast<typename Sig::Raw>(std::bit_cast<uint32_t>(value));
+        }
+        else
+        {
+            return static_cast<typename Sig::Raw>(std::bit_cast<uint32_t>(static_cast<float>((value - Sig::offset) / Sig::scale)));
+        }
+    }
+    else
+    {
+        if constexpr (Sig::identity)
+        {
+            return static_cast<typename Sig::Raw>(std::bit_cast<uint64_t>(value));
+        }
+        else
+        {
+            return static_cast<typename Sig::Raw>(std::bit_cast<uint64_t>((value - Sig::offset) / Sig::scale));
+        }
+    }
+}
+
+template <typename Sig>
+constexpr typename Sig::Type decode_signal(std::span<const uint8_t> frame)
+{
+    return from_raw<Sig>(static_cast<typename Sig::Raw>(extract_bits<Sig>(frame)));
+}
+
+template <typename Sig>
+constexpr void encode_signal(std::span<uint8_t> frame, typename Sig::Type value)
+{
+    insert_bits<Sig>(frame, to_raw<Sig>(value));
+}
+
+}  // namespace dbc_detail
+
+// One signal's raw bits and value, either way. The signal's traits type is the
+// tag, so these are found by argument-dependent lookup:
+//
+//     const auto raw = to_raw(Frame_t::sig_Speed_t{}, frame.Speed);
+template <typename Sig>
+constexpr typename Sig::Raw to_raw(Sig, typename Sig::Type value)
+{
+    return dbc_detail::to_raw<Sig>(value);
+}
+
+template <typename Sig>
+constexpr typename Sig::Type from_raw(Sig, typename Sig::Raw raw)
+{
+    return dbc_detail::from_raw<Sig>(raw);
+}
+
+}  // namespace @BASE@
+
+#endif  // @GUARD@
+)CPP";
+
+std::string replaceAll(std::string text, std::string_view from, std::string_view to)
+{
+    size_t position = 0;
+    while ((position = text.find(from, position)) != std::string::npos)
+    {
+        text.replace(position, from.size(), to);
+        position += to.size();
+    }
+    return text;
+}
+
 } // namespace
 
 void generate_cpp_common_header(const std::string &base, std::ostream &out)
@@ -792,55 +1319,9 @@ void generate_cpp_common_header(const std::string &base, std::ostream &out)
     std::string baseUpper = base;
     std::transform(baseUpper.begin(), baseUpper.end(), baseUpper.begin(), ::toupper);
 
-    // Anything shared by every message header lives here once. Emitting it per
-    // message put several dozen definitions of the same enum in one namespace.
-    fmt::print(out, "#ifndef {}_COMMON_H_\n", baseUpper);
-    fmt::print(out, "#define {}_COMMON_H_\n\n", baseUpper);
-    fmt::print(out, "/* Generated C++ header - do not edit as any changes will be overwritten. */\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "#include <cstdint>\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "namespace {}\n", base);
-    fmt::print(out, "{{\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "// How the raw bits of a signal are to be read, from SIG_VALTYPE_.\n");
-    fmt::print(out, "enum class raw_encoding\n");
-    fmt::print(out, "{{\n");
-    fmt::print(out, "    Integer,\n");
-    fmt::print(out, "    Float,\n");
-    fmt::print(out, "    Double,\n");
-    fmt::print(out, "}};\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "// Two to the power n, exactly, at compile time. Used for field bounds:\n");
-    fmt::print(out, "// a power of two is always exactly representable as a double, which the\n");
-    fmt::print(out, "// largest value of a wide field is not.\n");
-    fmt::print(out, "constexpr double two_pow(uint32_t n)\n");
-    fmt::print(out, "{{\n");
-    fmt::print(out, "    double result = 1.0;\n");
-    fmt::print(out, "    for (uint32_t i = 0; i < n; ++i)\n");
-    fmt::print(out, "    {{\n");
-    fmt::print(out, "        result *= 2.0;\n");
-    fmt::print(out, "    }}\n");
-    fmt::print(out, "    return result;\n");
-    fmt::print(out, "}}\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "// Round half away from zero, straight into the integer type the caller\n");
-    fmt::print(out, "// wants. This is what DBC encoding needs; it is deliberately not a\n");
-    fmt::print(out, "// general floor/ceil, because std::floor is only constexpr from C++26\n");
-    fmt::print(out, "// and reimplementing all of its edge cases would buy nothing here.\n");
-    fmt::print(out, "//\n");
-    fmt::print(out, "// The caller must already have excluded values outside Int's range --\n");
-    fmt::print(out, "// to_raw_u() saturates first -- because that conversion is otherwise\n");
-    fmt::print(out, "// undefined rather than clamping.\n");
-    fmt::print(out, "template <typename Int>\n");
-    fmt::print(out, "constexpr Int round_half_away_from_zero(double value)\n");
-    fmt::print(out, "{{\n");
-    fmt::print(out, "    return static_cast<Int>((value >= 0.0) ? (value + 0.5) : (value - 0.5));\n");
-    fmt::print(out, "}}\n");
-    fmt::print(out, "\n");
-    fmt::print(out, "}}  // namespace {}\n", base);
-    fmt::print(out, "\n");
-    fmt::print(out, "#endif  // {}_COMMON_H_\n", baseUpper);
+    std::string text = replaceAll(std::string(kCommonHeader), "@GUARD@", baseUpper + "_COMMON_H_");
+    text = replaceAll(std::move(text), "@BASE@", base);
+    out << text;
 }
 
 void generate_cpp_message_header(const dbc_parser::Message &message, const std::string &base,

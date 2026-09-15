@@ -65,10 +65,12 @@ static_assert(encodedByte(1) == 0x40u, "the rest of the multiplexor lands at bit
 
 // Signal traits are compile-time constants, so the type selection that used to
 // hand an unsigned type to a signal with a negative offset is checkable here.
+// -40..215 is sixteen bits, and integer arithmetic.
 using Coolantish = dbc_test_scaling::Scaling1_t;
-static_assert(std::is_same_v<Coolantish::sig_S1_8_LE_U_t::Type, int64_t>,
+static_assert(std::is_same_v<Coolantish::sig_S1_8_LE_U_t::Type, int16_t>,
               "an unsigned field with a negative offset must not decode as unsigned");
-static_assert(Coolantish::sig_S1_8_LE_U_t::offset == -40.0);
+static_assert(Coolantish::sig_S1_8_LE_U_t::domain == dbc_test_scaling::value_domain::Integer);
+static_assert(Coolantish::sig_S1_8_LE_U_t::offset == -40);
 
 } // namespace compile_time
 

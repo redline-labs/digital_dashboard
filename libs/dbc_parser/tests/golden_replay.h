@@ -328,12 +328,13 @@ bool valueMatches(const T &actual, const std::string &expectedText)
     }
 }
 
-// The raw bits a decoded value maps back to. One place, so the day the
-// generator's helper is renamed only this changes.
-template <typename Message, typename Sig>
-uint64_t recoverRaw(const typename Sig::Type &value)
+// The raw bits a decoded value maps back to. The generated to_raw() lives in
+// each database's namespace and takes the signal's traits as a tag, so it is
+// found by argument-dependent lookup whichever database this is replaying.
+template <typename Sig>
+uint64_t recoverRaw(Sig tag, const typename Sig::Type &value)
 {
-    return static_cast<uint64_t>(Message::template to_raw_u<Sig>(value));
+    return static_cast<uint64_t>(to_raw(tag, value));
 }
 
 struct Counters
@@ -469,7 +470,7 @@ int replay(const std::string &goldenPath, const char *goldenText)
                     if (expectation.hasRaw)
                     {
                         counted.raws += 1;
-                        const uint64_t raw = recoverRaw<Message, Sig>(value);
+                        const uint64_t raw = recoverRaw(tag, value);
                         if (raw != expectation.raw)
                         {
                             std::fprintf(stderr,
