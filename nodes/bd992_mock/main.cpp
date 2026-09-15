@@ -28,6 +28,7 @@
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/topic_discovery.h"
 
@@ -256,6 +257,9 @@ int main(int argc, char** argv)
     // before the topics it offers -- and sees that they belong to a mock.
     pub_sub::NodeIdentity identity("bd992_mock");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("bd992_mock");
+
     bd992_mock::Path path;
     bd992_mock::SourceReport report;
     bool built = false;
@@ -328,8 +332,15 @@ int main(int argc, char** argv)
 
     std::uint32_t lastLap = 0;
 
+    // Nothing here can fail the way hardware does; the check exists so the mock
+    // appears beside the real nodes rather than as a gap.
+    health.setCheck("driving", node_health::State::ok, "simulated");
+
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         vehicle.step(dt);
         simulatedS += dt;
 

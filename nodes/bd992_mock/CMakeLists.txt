@@ -28,6 +28,7 @@ target_link_libraries(bd992_mock PRIVATE
     spdlog::spdlog
     cxxopts::cxxopts
     yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The geometry and the vehicle model, with no bus and no map server: both are

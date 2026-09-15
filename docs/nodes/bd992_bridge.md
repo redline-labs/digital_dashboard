@@ -178,6 +178,19 @@ have the zenoh sample stamp.
 | `status.seen[].ageMs` | Distinguishes "the receiver is fine" from "the receiver quietly stopped sending record 27". |
 | `nav_message_auth.anyFailed` | A satellite's navigation message failed authentication, which is a spoofer. Nothing else in the stream shows it. |
 
+### Health
+
+`nodes/bd992/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `stream` | the data connection to the receiver is down (fault) |
+| `control` | the control port is down, so the configuration cannot be checked |
+| `config` | the last configuration pass disagreed with what the receiver reports |
+
+`inspect health` prints them.
+
 ## Services
 
 Siblings of the topics under `<topic_prefix>`:

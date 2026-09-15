@@ -22,6 +22,7 @@ target_link_libraries(grayhill_keypad
         capnp
         schemas
         helpers
+    node_health
 )
 
 target_compile_definitions(grayhill_keypad PRIVATE

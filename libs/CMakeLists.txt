@@ -12,6 +12,9 @@ add_subdirectory(dbc_parser)
 add_subdirectory(core)
 # Builds on core for the log pattern, and on pub_sub for --connect/--mode.
 add_subdirectory(cli)
+# Node health: the reporter every node declares and the monitor `inspect health`
+# reads. After core (systemd notifications) and pub_sub.
+add_subdirectory(node_health)
 # Recording and replay (MCAP). After config_codec (reflected YAML) and schemas
 # (the schema descriptors it embeds).
 add_subdirectory(bag)

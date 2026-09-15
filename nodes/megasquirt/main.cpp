@@ -1,5 +1,7 @@
 #include "dbc_megasquirt_dash_data_parser.h"
 
+#include "cli/interrupt.h"
+#include "node_health/reporter.h"
 #include "pub_sub/can_frame.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -84,6 +86,9 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("megasquirt");
 
+    // SIGINT and SIGTERM both set the flag the loop below polls.
+    cli::installInterruptHandler();
+
     pub_sub::ZenohPublisher<MegasquirtDash> dash_pub("nodes/megasquirt/dash");
 
     dbc_megasquirt_dash_data_parser parser;
@@ -100,22 +105,38 @@ int main(int argc, char** argv)
         publish_dash(db, dash_pub);
     });
 
+    // Declared before the subscriber, so the subscriber is destroyed first and
+    // no callback can touch a check that has gone away.
+    node_health::HealthReporter health("megasquirt");
+    // Frames arriving at all, and frames this node could decode: a quiet bus
+    // and a bus carrying nothing but other devices look identical otherwise.
+    auto& frames_in = health.addActivityCheck("can_rx", std::chrono::seconds(1));
+    auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
+
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
-        [&parser](CanFrame::Reader message)
+        [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
+            frames_in.touch();
             // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
             const helpers::CanFrame frame = pub_sub::fromCapnp(message);
-            parser.handle_can_frame(frame.id, frame.data_span());
+            if (parser.handle_can_frame(frame.id, frame.data_span()))
+            {
+                decoded.touch();
+            }
         });
 
-    for (;;)
+    health.markReady();
+
+    while (!cli::interrupted())
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        health.kick();
     }
 
+    SPDLOG_INFO("Interrupted; shutting down.");
     return 0;
 }
 

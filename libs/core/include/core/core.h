@@ -1,6 +1,7 @@
 #ifndef CORE_H_
 #define CORE_H_
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -94,6 +95,16 @@ bool notifyReady();
 
 // Also sends a free-form status line, shown by `systemctl status`.
 bool notifyStatus(std::string_view status);
+
+// Tells the service manager this process is still alive (sd_notify
+// "WATCHDOG=1"). False, silently, outside a unit, like notifyReady().
+bool notifyWatchdog();
+
+// The watchdog interval systemd expects pings within, from WATCHDOG_USEC --
+// or nullopt when the unit has no watchdog, the value is not a positive
+// number, or WATCHDOG_PID names a different process (the variable leaked into
+// a child). Ping at half this, as sd_watchdog_enabled(3) advises.
+std::optional<std::chrono::microseconds> watchdogInterval();
 
 }  // namespace systemd
 

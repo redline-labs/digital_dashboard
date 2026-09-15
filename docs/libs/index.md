@@ -23,6 +23,7 @@ Every library is listed; the ones without a page yet say so.
 | `qt_helpers` | `qt_helpers` | The Qt-using sibling: a paint-caching widget base, colour conversion, resource fonts. | [qt_helpers](qt_helpers.html) |
 | `agent_control` | `agent_control` | The `--mcp` control socket embedded in every GUI app: methods, screenshots, input, the widget locator. | [agent_control](agent_control.html) |
 | `dashboard_widgets` | `dashboard_widgets` | Every dashboard widget, the widget table, the layout config and its loader, the factory, and the `widget.*` agent methods; shared by the dashboard and the editor. | [dashboard_widgets](dashboard_widgets.html) |
+| `node_health` | `node_health` | The health a node publishes and the monitor that reads every node at once; what `inspect health` prints. | [node_health](node_health.html) |
 | `bag` | `bag` | Recording and replaying the bus as MCAP. | [bag](bag.html) |
 
 ## CAN

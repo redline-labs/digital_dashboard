@@ -5,6 +5,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -103,6 +104,37 @@ void testNotify()
     ::unsetenv("NOTIFY_SOCKET");
 }
 
+void testWatchdogInterval()
+{
+    ::unsetenv("WATCHDOG_USEC");
+    ::unsetenv("WATCHDOG_PID");
+    check(!core::systemd::watchdogInterval(), "no WATCHDOG_USEC: no watchdog");
+
+    ::setenv("WATCHDOG_USEC", "5000000", 1);
+    const auto interval = core::systemd::watchdogInterval();
+    check(interval && *interval == std::chrono::seconds(5), "WATCHDOG_USEC=5000000 is five seconds");
+
+    for (const char* garbage : {"0", "-1", "5s", "", " 10", "99999999999999999999999"})
+    {
+        ::setenv("WATCHDOG_USEC", garbage, 1);
+        check(!core::systemd::watchdogInterval(),
+              std::string("WATCHDOG_USEC='") + garbage + "' is not an interval");
+    }
+
+    ::setenv("WATCHDOG_USEC", "1000000", 1);
+    ::setenv("WATCHDOG_PID", std::to_string(::getpid()).c_str(), 1);
+    check(core::systemd::watchdogInterval().has_value(), "WATCHDOG_PID naming this process is honoured");
+    ::setenv("WATCHDOG_PID", std::to_string(::getpid() + 1).c_str(), 1);
+    check(!core::systemd::watchdogInterval(), "WATCHDOG_PID naming another process disables it");
+    ::setenv("WATCHDOG_PID", "not-a-pid", 1);
+    check(!core::systemd::watchdogInterval(), "an unparseable WATCHDOG_PID disables it");
+
+    ::unsetenv("WATCHDOG_USEC");
+    ::unsetenv("WATCHDOG_PID");
+    ::unsetenv("NOTIFY_SOCKET");
+    check(!core::systemd::notifyWatchdog(), "no NOTIFY_SOCKET: no WATCHDOG=1 sent");
+}
+
 }  // namespace
 
 int main()
@@ -111,6 +143,7 @@ int main()
     testExpand();
     testExecutableAndResource();
     testNotify();
+    testWatchdogInterval();
     std::printf("%s\n", failures == 0 ? "all core tests passed" : "core tests FAILED");
     return failures == 0 ? 0 : 1;
 }

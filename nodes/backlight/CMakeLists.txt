@@ -21,6 +21,7 @@ target_link_libraries(backlight PRIVATE
     zenoh_pub_sub
     display_backlight
     yaml-cpp::yaml-cpp
+    node_health
 )
 
 add_executable(backlight_test_node_config

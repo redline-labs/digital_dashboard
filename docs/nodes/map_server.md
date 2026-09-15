@@ -258,6 +258,19 @@ park), `outOfCoverage`, `noRoute` (both ends matched, nothing connects them) or
 `noSuchGraph`; a profile the graph does not offer is `badRequest`, and the list
 `map/graph` reports is the list `map/route` accepts.
 
+## Health
+
+`nodes/map_server/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `tilesets` | no tileset opened (fault), or fewer opened than configured |
+| `graphs` | a configured graph did not open |
+| `tracksets` | a configured trackset did not open |
+
+`inspect health` prints them.
+
 ## Troubleshooting
 
 `--check` first, always. The node is built to degrade rather than refuse: a

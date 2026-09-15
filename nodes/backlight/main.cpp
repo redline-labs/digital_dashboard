@@ -22,6 +22,7 @@
 #include "display_backlight/display_record.h"
 #include "display_backlight/sysfs.h"
 
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
@@ -245,6 +246,9 @@ int main(int argc, char** argv)
     // appears on every topic it advertises and every sample it stamps.
     pub_sub::NodeIdentity nodeIdentity("backlight");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("backlight");
+
     const std::string prefix = config.resolvedTopicPrefix();
     pub_sub::ZenohPublisher<DisplayBacklightStatus> statusPublisher(prefix + "/status");
 
@@ -328,8 +332,11 @@ int main(int argc, char** argv)
                 record.temperatureSensors.size(), prefix);
 
     auto nextStatus = std::chrono::steady_clock::now();
+    health.markReady();
+
     while (gRunning)
     {
+        health.kick();
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
         {
@@ -342,6 +349,11 @@ int main(int argc, char** argv)
             status.setConnector(record.connector.c_str());
             status.setBacklightType(record.backlightType.c_str());
             status.setWritable(writable);
+            // A display whose brightness cannot be set still reports its
+            // sensors, so this is degraded rather than a fault.
+            health.setCheck("backlight", writable ? node_health::State::ok
+                                                  : node_health::State::degraded,
+                            writable ? "" : "the backlight device is not writable");
             if (writable)
             {
                 fillBacklight(status, readBacklight(device));

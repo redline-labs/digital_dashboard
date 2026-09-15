@@ -138,6 +138,18 @@ dissipating, and is the thing to look at when a gyro bias drifts. Do not pair
 `acceleration_hr` with `acceleration` by packet counter: that pairs two
 different moments.
 
+## Health
+
+`nodes/mti610/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `serial` | the reader thread stopped (fault) |
+| `measuring` | the device is open but not in Measurement state, so it publishes nothing |
+
+`inspect health` prints them.
+
 ## Services
 
 | Key | |

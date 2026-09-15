@@ -18,6 +18,8 @@ target_link_libraries(racegrade_tc8 PRIVATE
     capnp
     schemas
     zenoh_pub_sub
+    node_health
+    cli
     dbc_motec_e888_rev1
     core
 )

@@ -113,6 +113,17 @@ With the default prefix:
 | `nodes/grayhill_keypad/buttons` | `GrayhillButtons` | Buttons 1..24 as three bytes, one bit each, on every TPDO1 |
 | `nodes/grayhill_keypad/status` | `GrayhillStatus` | NMT state from the last heartbeat, boot-up count, last emergency code; on every state change and emergency |
 
+### Health
+
+`nodes/grayhill_keypad/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `nmt` | the keypad is stopped (fault), or in any state other than Operational |
+
+`inspect health` prints them.
+
 ## Services
 
 | Key | Request | Response | Effect |

@@ -1,5 +1,7 @@
 #include "dbc_motec_m1_rev3_parser.h"
 
+#include "cli/interrupt.h"
+#include "node_health/reporter.h"
 #include "pub_sub/can_frame.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -433,6 +435,9 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("motec_m1");
 
+    // SIGINT and SIGTERM both set the flag the loop below polls.
+    cli::installInterruptHandler();
+
     pub_sub::ZenohPublisher<MotecM1EngineAir> pubEngineAir("nodes/motec_m1/engine_air");
     pub_sub::ZenohPublisher<MotecM1FuelStatus> pubFuelStatus("nodes/motec_m1/fuel_status");
     pub_sub::ZenohPublisher<MotecM1Temperatures> pubTemps("nodes/motec_m1/temperatures");
@@ -521,22 +526,38 @@ int main(int argc, char** argv)
         publishTurboBoth(db.M1_GEN_0x6A6, db.M1_GEN_0x6A7, pubTurbo);
     });
 
+    // Declared before the subscriber, so the subscriber is destroyed first and
+    // no callback can touch a check that has gone away.
+    node_health::HealthReporter health("motec_m1");
+    // Frames arriving at all, and frames this node could decode: a quiet bus
+    // and a bus carrying nothing but other devices look identical otherwise.
+    auto& frames_in = health.addActivityCheck("can_rx", std::chrono::seconds(1));
+    auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
+
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
-        [&parser](CanFrame::Reader message)
+        [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
+            frames_in.touch();
             // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
             const helpers::CanFrame frame = pub_sub::fromCapnp(message);
-            parser.handle_can_frame(frame.id, frame.data_span());
+            if (parser.handle_can_frame(frame.id, frame.data_span()))
+            {
+                decoded.touch();
+            }
         });
 
-    for (;;)
+    health.markReady();
+
+    while (!cli::interrupted())
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        health.kick();
     }
 
+    SPDLOG_INFO("Interrupted; shutting down.");
     return 0;
 }
 

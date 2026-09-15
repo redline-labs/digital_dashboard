@@ -87,6 +87,17 @@ so the topic reports what the radio did rather than what a service asked for,
 and every publisher stays on one thread, which is what `ZenohPublisher`
 requires.
 
+## Health
+
+`nodes/xpr/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `radio` | not connected to the radio (fault) |
+
+`inspect health` prints them.
+
 ## Services
 
 | Service | |

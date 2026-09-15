@@ -1,3 +1,5 @@
+#include "cli/interrupt.h"
+#include "node_health/reporter.h"
 #include "pub_sub/can_frame.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/node_identity.h"
@@ -115,6 +117,9 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("racegrade_tc8");
 
+    // SIGINT and SIGTERM both set the flag the loop below polls.
+    cli::installInterruptHandler();
+
     // Create the publishers for the Inputs and Diagnostics messages
     pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
     pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
@@ -135,23 +140,38 @@ int main(int argc, char** argv)
         keyexpr, handle_service_request);
 
     // Subscribe to CAN frames and feed parser using typed subscriber
+    // Declared before the subscriber, so the subscriber is destroyed first and
+    // no callback can touch a check that has gone away.
+    node_health::HealthReporter health("racegrade_tc8");
+    // Frames arriving at all, and frames this node could decode: a quiet bus
+    // and a bus carrying nothing but other devices look identical otherwise.
+    auto& frames_in = health.addActivityCheck("can_rx", std::chrono::seconds(1));
+    auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
+
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
-        [&parser](CanFrame::Reader message)
+        [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
+            frames_in.touch();
             // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
             const helpers::CanFrame frame = pub_sub::fromCapnp(message);
-            parser.handle_can_frame(frame.id, frame.data_span());
+            if (parser.handle_can_frame(frame.id, frame.data_span()))
+            {
+                decoded.touch();
+            }
         });
 
-    // Keep the process alive; Ctrl+C to exit
-    for (;;)
+    health.markReady();
+
+    while (!cli::interrupted())
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        health.kick();
     }
-    
+
+    SPDLOG_INFO("Interrupted; shutting down.");
     return 0;
 }
 

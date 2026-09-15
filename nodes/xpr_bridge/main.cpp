@@ -35,6 +35,7 @@
 #include "publishers.h"
 #include "services.h"
 #include "xpr_radio.capnp.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "xpr/radio.h"
@@ -233,6 +234,9 @@ int main(int argc, char** argv)
     // appear before its topics do.
     pub_sub::NodeIdentity identity("xpr");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("xpr");
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -256,13 +260,20 @@ int main(int argc, char** argv)
     std::optional<ChannelState> published;
     auto nextStatus = std::chrono::steady_clock::now();
 
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         // Collect whatever the radio has to say, and reconnect if it has
         // nothing because it went away.
         radio.pump(std::chrono::milliseconds(50));
 
         const bool connected = radio.connected();
+        // A radio that is not answering is the whole node's job gone; an
+        // unknown identity means it answered but not the query that names it.
+        health.setCheck("radio", connected ? node_health::State::ok : node_health::State::fault,
+                        connected ? "" : "not connected to the radio");
 
         if (connected && !sessionUp)
         {

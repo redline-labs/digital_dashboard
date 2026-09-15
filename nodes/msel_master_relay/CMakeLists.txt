@@ -23,6 +23,7 @@ target_link_libraries(msel_master_relay PRIVATE
     zenoh_pub_sub
     msel
     yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The config file is the only thing standing between a typo and a node that

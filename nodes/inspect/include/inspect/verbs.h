@@ -34,6 +34,11 @@ int runEcho(cli::Context& context);
 void addNodesOptions(cxxopts::Options& options);
 int runNodes(cli::Context& context);
 
+// What every node says about itself: its state, how stale its heartbeat is, and
+// the first check that is not ok.
+void addHealthOptions(cxxopts::Options& options);
+int runHealth(cli::Context& context);
+
 // Message rate, with the distribution of the gaps rather than just a count.
 void addHzOptions(cxxopts::Options& options);
 int runHz(cli::Context& context);

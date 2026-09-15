@@ -26,6 +26,7 @@ target_link_libraries(xpr_bridge
         spdlog::spdlog
         cxxopts::cxxopts
         yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The YAML parser, exercised without a radio or a file. Recompiles

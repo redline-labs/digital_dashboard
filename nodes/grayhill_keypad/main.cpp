@@ -33,6 +33,7 @@
 #include "canopen_grayhill_node.h"
 
 #include "grayhill_keypad.capnp.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_service.h"
@@ -150,6 +151,9 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("grayhill_keypad");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("grayhill_keypad");
+
     // --- what we publish ----------------------------------------------------
     pub_sub::ZenohPublisher<GrayhillButtons> buttonsPublisher(config.topicPrefix + "/buttons");
     pub_sub::ZenohPublisher<GrayhillStatus> statusPublisher(config.topicPrefix + "/status");
@@ -163,6 +167,15 @@ int main(int argc, char** argv)
         fields.setBootCount(bootCount);
         fields.setLastEmergencyCode(lastEmergency);
         statusPublisher.put();
+
+        // Operational is the only state in which the keypad sends buttons.
+        // A keypad configured without heartbeats stays unknown, which is not a
+        // fault on its own -- hence degraded rather than fault.
+        const node_health::State keypad =
+            state == canopen::NmtState::Operational  ? node_health::State::ok
+            : state == canopen::NmtState::Stopped    ? node_health::State::fault
+                                                     : node_health::State::degraded;
+        health.setCheck("nmt", keypad, canopen::to_string(state));
     };
 
     device.on_tpdo1(
@@ -367,8 +380,11 @@ int main(int argc, char** argv)
     SPDLOG_INFO("[node] running; publishing buttons on '{}/buttons'", config.topicPrefix);
     publishStatus(nmt.state(config.nodeId).value_or(canopen::NmtState::PreOperational));
 
+    health.markReady();
+
     while (running)
     {
+        health.kick();
         bus.poll(canopen::Duration { 50 });
     }
 

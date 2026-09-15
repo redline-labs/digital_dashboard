@@ -16,6 +16,7 @@ add_executable(inspect
     info.cpp
     nodes.cpp
     services.cpp
+    health.cpp
 
     # Traffic.
     echo.cpp
@@ -45,6 +46,7 @@ target_link_libraries(inspect PRIVATE
     capnp
     schemas
     zenoh_pub_sub
+    node_health
 )
 
 # The wildcard matcher `list -k` filters with. Reimplemented rather than reused

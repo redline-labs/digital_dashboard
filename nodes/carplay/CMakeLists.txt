@@ -38,6 +38,7 @@ target_include_directories(carplay PRIVATE
 
 target_link_libraries(carplay PRIVATE
     core
+    node_health
     carplay_node_config
     helpers_ffmpeg
     spdlog::spdlog

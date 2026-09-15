@@ -67,6 +67,17 @@ Load current is signed: positive while the battery is discharging, negative
 while it is being charged. It is accurate to ±10% or 1 A, whichever is greater —
 a whole-system draw indication, not a per-circuit measurement.
 
+## Health
+
+`nodes/msel_master_relay/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `link` | no status frame from the relay for two seconds |
+
+`inspect health` prints them.
+
 ## The services
 
 | Key | Request | Effect |

@@ -121,6 +121,17 @@ decoder nodes' job, downstream of `vehicle/<name>/rx`.
 | `vehicle/can/status` | `CanBridgeStatus` | One `CanBridgeChannelStatus` per channel: `open`, `running`, `error`, the bit rates, `state`, `rxFrames`, `txFrames`, `rxDropped`, `txDropped`, error counters where the backend has them, `recordPath`, `recordedFrames`, `recordDropped`. Republished every `status_interval_ms` so a late subscriber does not wait for something to go wrong. |
 | `vehicle/can/set_bitrate` | service | Change a channel's bit rate at runtime, by `name`. `--set-bitrate` is the client. |
 
+### Health
+
+`nodes/can_bridge/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `channel:<name>` | the channel is not open or not running, or the controller is bus-off (fault); bus errors or frames being dropped now (degraded) |
+
+`inspect health` prints them.
+
 ## Access
 
 On Linux the USB dongles (`pcan:`, `motec:`) need a udev rule; without one,

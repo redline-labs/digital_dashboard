@@ -53,6 +53,7 @@ The verbs, in the order the program lists them:
 | `bw [key]` | Payload bytes per second per key | `-i`, `-n` |
 | `latency [key]` | Arrival minus the publisher's timestamp, over samples that carried one | `-i`, `-n` |
 | `nodes` | Our processes by name, joined against zenoh's session list | `--all` |
+| `health` | What every node says about itself: state, heartbeat age, uptime, restarts, first problem | `--all` include exited, `--checks` list every check, `-w` keep refreshing with `-i` and `--no-clear`, `--wait` seconds to collect first (default `1.5`) |
 | `services` | Callable services and their request and response schemas | `--all` |
 | `call <key>` | Call a service with a JSON request | `-d` JSON object, `-` for stdin, or `@file` (default `{}`); `-s` request schema when the service is not advertised; `-t` reply timeout in ms (default `2000`) |
 | `schema [name]` | The compiled-in registry: list it, or describe one schema's fields | `-f` substring filter, case-insensitive |
@@ -91,6 +92,27 @@ name, with the schema you name, exactly as a node would.
 None. `call` is a client for other nodes' services; `services` lists them with
 their request and response schemas, and `schema <name>` shows the fields a
 request needs.
+
+## Health
+
+`health` reads what every node publishes about itself and prints one row each:
+its state, how old its heartbeat is, how long it has been up, how many times it
+has restarted, and the first check that is not ok. It waits `--wait` seconds
+first, because a node that has just started has not published yet and would
+otherwise read as silent.
+
+```
+NODE                 STATE         AGE   UPTIME RESTARTS  PROBLEM
+can_bridge           ok           0.3s    4m12s        0  -
+megasquirt           degraded     0.2s      31s        0  can_rx: nothing for 2.4 s
+map_server           gone            -    1m02s        1  -
+```
+
+It exits non-zero when any node is not ok, so a script can gate on it. `--all`
+includes nodes that have exited or gone, `--checks` lists every check under its
+node, and `-w` keeps refreshing. [node_health](../libs/node_health.html)
+explains the verdicts, in particular `late` (its heartbeat stopped, the process
+did not) against `gone` (the process did).
 
 ## Troubleshooting
 

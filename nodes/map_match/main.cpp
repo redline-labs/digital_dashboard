@@ -23,6 +23,7 @@
 
 #include <cxxopts.hpp>
 
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "road_graph/graph.h"
 
@@ -155,16 +156,26 @@ int main(int argc, char** argv)
     // before the things it offers.
     pub_sub::NodeIdentity identity("map_match");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("map_match");
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
     map_match::Services services(config, *graph);
 
+    // The graph is opened and probed before this point, so reaching here means
+    // it is usable; a failure exits instead.
+    health.setCheck("graph", node_health::State::ok, config.graphPath);
+
     const auto statusInterval = std::chrono::milliseconds(config.services.statusIntervalMs);
     auto nextStatus = std::chrono::steady_clock::now();
 
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
         {

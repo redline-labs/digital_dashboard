@@ -22,6 +22,9 @@ extern "C" void handleInterrupt(int /*signum*/)
 void installInterruptHandler()
 {
     std::signal(SIGINT, handleInterrupt);
+    // SIGTERM too: it is how systemd stops a unit, and a node that only handled
+    // Ctrl-C was killed mid-write rather than shutting down.
+    std::signal(SIGTERM, handleInterrupt);
 }
 
 bool interrupted()

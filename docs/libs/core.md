@@ -23,7 +23,7 @@ under a hardcoded program name as well as set up logging; parsing now lives in
 
 | Header | |
 | --- | --- |
-| `core/core.h` | `setupLogging` and `LoggingOptions`; `paths::logDir`, `dataDir`, `executableDir`, `resource`, `expand`; `systemd::notifyReady`, `notifyStatus`. |
+| `core/core.h` | `setupLogging` and `LoggingOptions`; `paths::logDir`, `dataDir`, `executableDir`, `resource`, `expand`; `systemd::notifyReady`, `notifyStatus`, `notifyWatchdog`, `watchdogInterval`. |
 
 ## Using it
 
@@ -83,12 +83,19 @@ file's directory) and otherwise left alone.
 `notifyReady()` speaks `sd_notify` over a datagram socket with no libsystemd,
 handling the abstract-socket form that starts with `@`. Without
 `NOTIFY_SOCKET` it returns false silently, which is every run outside a
-`Type=notify` unit.
+`Type=notify` unit. `notifyStatus()` and `notifyWatchdog()` send the other two
+lines the same way.
+
+`watchdogInterval()` reads `WATCHDOG_USEC`, and returns nothing when the unit
+has no watchdog, when the value is not a positive number, or when
+`WATCHDOG_PID` names another process -- the variable is inherited by children,
+so a child that pinged on its parent's behalf would keep a dead service alive.
+Ping at half the interval; [node_health](node_health.html) does it for a node
+that declares a reporter.
 
 ## Tests
 
-`core_test` is registered with a plain `add_test`, so it has no labels and
-`ctest -L unit` does not select it; run it by name. It covers `dataDir()`
-precedence, every `expand()` rule, `executableDir()` and `resource()` against
-a real file in the checkout, and the notification against a socket it opens
-itself, without a target.
+`core_test` is labelled `core unit`. It covers `dataDir()` precedence, every
+`expand()` rule, `executableDir()` and `resource()` against a real file in the
+checkout, the notification against a socket it opens itself, and the watchdog
+interval including the values that must disable it.

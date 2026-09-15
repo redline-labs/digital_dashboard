@@ -234,6 +234,18 @@ Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
 Nothing publishes `knob`, `mediaKey` or `telephony` yet; on hardware they are
 exercised by publishing to the topic directly.
 
+## Health
+
+`nodes/carplay/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `usb` | USB bring-up did not complete (fault) |
+| `session` | never: it reports whether a session is recording or idle |
+
+`inspect health` prints them.
+
 ## Troubleshooting
 
 Most failures are silent, or look like a different layer's fault. In stage order:

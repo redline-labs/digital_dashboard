@@ -4,7 +4,8 @@
 namespace cli
 {
 
-// Ctrl-C, once, for every verb that runs until told to stop.
+// Ctrl-C and SIGTERM, once, for every verb and node that runs until told to
+// stop. SIGTERM is what systemd sends to stop a unit.
 //
 // This replaces three near-identical copies in nodes/inspect -- `g_running_dump`,
 // `g_running_info`, `g_running_hz`, each with its own file-scope atomic and its
@@ -17,7 +18,7 @@ namespace cli
 // the whole point of this file is that the answer is written down once).
 void installInterruptHandler();
 
-// False until SIGINT arrives. Poll it from a loop:
+// False until SIGINT or SIGTERM arrives. Poll it from a loop:
 //
 //     while (!cli::interrupted()) { ... }
 //

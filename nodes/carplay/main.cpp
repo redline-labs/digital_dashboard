@@ -10,6 +10,7 @@
 // USB pipeline is verified on a Linux host, --simulate exercises the whole
 // dashboard side without any hardware.
 
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "zenoh_bridge.h"
 #include "node_config.h"
@@ -121,6 +122,12 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("carplay");
 
+    // One health topic per node: see libs/node_health. No phone plugged in is
+    // the normal state for a parked car, so `usb` says what it sees rather than
+    // calling it a fault.
+    node_health::HealthReporter health("carplay");
+    health.setCheck("usb", node_health::State::ok, "waiting for a device");
+
     carplay::ZenohBridge bridge(prefix);
 
     // Input arrives from the dashboard widget on <prefix>/input.
@@ -144,10 +151,15 @@ int main(int argc, char** argv)
 
     // Keep the dashboard fed with idle session state while the USB pipeline
     // runs; the widgets should show "no session" rather than nothing at all.
-    std::thread session_thread([&bridge]() {
+    std::thread session_thread([&bridge, &health]() {
         carplay::SessionState idle;
         while (!g_stop.load())
         {
+            // This thread is the node's heartbeat: the pipeline below blocks
+            // until the process is stopped.
+            health.kick();
+            health.setCheck("session", node_health::State::ok,
+                            g_recording.load() ? "recording" : "idle");
             // Once the AirPlay session is live the receiver publishes the
             // authoritative state (device connected, recording); don't clobber it.
             if (!g_recording.load())
@@ -199,9 +211,12 @@ int main(int argc, char** argv)
         }
     }
 
+    health.markReady();
+
     const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, &g_recording);
     if (!usb_ok)
     {
+        health.setCheck("usb", node_health::State::fault, "USB bring-up did not complete");
         SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/nodes/carplay.md");
     }
 

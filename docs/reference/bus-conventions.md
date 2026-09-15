@@ -59,6 +59,26 @@ longer form would turn the first added field into a silent, total outage for
 every build that predates it, and an empty picker looks exactly like a bus with
 no publishers.
 
+## Health
+
+Every node publishes `nodes/<node>/health` (schema `NodeHealth`), through
+`node_health::HealthReporter`: a heartbeat once a second, an immediate sample
+whenever a check changes state, and one last sample saying `stopping` on a clean
+exit. [node_health](../libs/node_health.html) has the vocabulary and the
+verdicts a monitor draws from it; `inspect health` prints them.
+
+It is an ordinary topic rather than a liveliness space, so a recording carries
+the health history alongside the data it explains.
+
+{: .note }
+Liveliness and health answer different questions. A liveliness token stays up
+for a process whose main loop is stuck, so a monitor calls a node `late` when
+its heartbeat stops and `gone` only when its identity does.
+
+A node's own detailed status schema stays where it is. Health is the summary
+every node shares; `CanBridgeStatus` and its siblings are what a tool that knows
+the device reads.
+
 ## Timestamps
 
 Samples carry a publish timestamp because `SessionManager::buildConfig()`

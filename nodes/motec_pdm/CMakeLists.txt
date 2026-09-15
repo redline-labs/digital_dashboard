@@ -28,6 +28,8 @@ target_link_libraries(motec_pdm PRIVATE
     capnp
     schemas
     zenoh_pub_sub
+    node_health
+    cli
     motec_pdm_messages
 )
 

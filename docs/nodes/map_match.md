@@ -138,6 +138,17 @@ opened, the three keys in use, `fixesReceived`, `fixesMatched`,
 `fixesUnmatched`, `horizonsPublished`, `lastFixAgeMs`, the last confidence and
 sigma, and `fixesWithoutVelocity` / `fixesWithoutSigma`.
 
+### Health
+
+`nodes/map_match/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `graph` | never after start: a graph that does not open exits instead |
+
+`inspect health` prints them.
+
 ## Troubleshooting
 
 A blank road name and a dead node look the same in a screenshot; the status

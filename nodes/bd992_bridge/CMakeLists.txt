@@ -27,6 +27,7 @@ target_link_libraries(bd992_bridge
         spdlog::spdlog
         cxxopts::cxxopts
         yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The YAML parser, exercised without a receiver or a file. Recompiles

@@ -39,6 +39,7 @@
 #include "bd992.capnp.h"
 #include "node_config.h"
 #include "publishers.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "services.h"
@@ -353,6 +354,9 @@ int main(int argc, char** argv)
     // appear before its topics do.
     pub_sub::NodeIdentity identity("bd992");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("bd992");
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -443,8 +447,11 @@ int main(int argc, char** argv)
     auto nextStatus = std::chrono::steady_clock::now();
     auto nextConfigCheck = std::chrono::steady_clock::now();
 
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         const auto now = std::chrono::steady_clock::now();
 
         if (control && !config.configuration.outputs.empty() && now >= nextConfigCheck)
@@ -473,6 +480,26 @@ int main(int argc, char** argv)
             publishStatus(statusPublisher, config, stream, publishers, lastPass, configChecked,
                           outputsCorrected.load(), controlConnected);
             nextStatus = now + std::chrono::milliseconds(config.publish.statusIntervalMs);
+
+            // The same facts the status message carries, as the health every
+            // node publishes. The stream is the receiver's data; the control
+            // port is how its configuration is checked, and losing it leaves a
+            // working but unverified receiver.
+            health.setCheck("stream", stream.isRunning() ? node_health::State::ok
+                                                         : node_health::State::fault,
+                            stream.isRunning() ? "" : "not connected to the receiver");
+            if (control)
+            {
+                health.setCheck("control", controlConnected ? node_health::State::ok
+                                                            : node_health::State::degraded,
+                                controlConnected ? "" : lastPass.error);
+            }
+            if (configChecked)
+            {
+                health.setCheck("config", lastPass.ok ? node_health::State::ok
+                                                      : node_health::State::degraded,
+                                lastPass.ok ? "" : lastPass.error);
+            }
         }
 
         // A replay without --loop finishes on its own; the node should exit

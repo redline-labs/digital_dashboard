@@ -58,6 +58,19 @@ page carries the serial and firmware; both publish together. An output status
 is one of `off`, `on`, `faultError`, `overCurrentError` or `retriesReached`;
 any other raw value is published as `off`.
 
+### Health
+
+The node publishes `nodes/motec_pdm/health` ([NodeHealth](../libs/node_health.html))
+once a second, and at once whenever a check changes:
+
+| Check | Degraded when |
+|---|---|
+| `can_rx` | no CAN frame of any kind has arrived for a second: the bus is quiet, or the node is subscribed to the wrong key |
+| `decoded` | frames are arriving but none of them has been one of this node's messages for two seconds |
+
+`inspect health` prints them. The node exits cleanly on SIGINT or SIGTERM, so a
+monitor reads a deliberate stop as `exited` rather than as a crash.
+
 ## Services
 
 None.

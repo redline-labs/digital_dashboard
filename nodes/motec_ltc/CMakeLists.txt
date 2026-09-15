@@ -18,6 +18,8 @@ target_link_libraries(motec_ltc PRIVATE
     capnp
     schemas
     zenoh_pub_sub
+    node_health
+    cli
     dbc_motec_ltc_rev1
 )
 

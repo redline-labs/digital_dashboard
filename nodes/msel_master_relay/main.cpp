@@ -49,6 +49,7 @@
 #include "msel/protocol.h"
 #include "msel/response_waiter.h"
 
+#include "node_health/reporter.h"
 #include "pub_sub/can_frame.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -313,6 +314,9 @@ int main(int argc, char** argv)
     // appears on every topic it advertises and every sample it stamps.
     pub_sub::NodeIdentity nodeIdentity("msel_master_relay");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("msel_master_relay");
+
     const std::string prefix = config.topicPrefix;
     pub_sub::ZenohPublisher<MselMasterRelayStatus> statusPublisher(prefix + "/status");
     pub_sub::ZenohPublisher<MselMasterRelayInfo> infoPublisher(prefix + "/info");
@@ -564,6 +568,10 @@ int main(int argc, char** argv)
         return answer;
     };
 
+    // The relay sends status frames continuously; silence means the CAN path
+    // to it is broken, which is exactly what a driver cannot see from the car.
+    auto& relay_link = health.addActivityCheck("link", std::chrono::seconds(2));
+
     // --- receive -----------------------------------------------------------
     pub_sub::ZenohTypedSubscriber<CanFrame> canSubscriber(
         config.rxKey, [&](CanFrame::Reader reader) {
@@ -576,6 +584,7 @@ int main(int argc, char** argv)
             const auto accepted = decoder.onFrame(frame);
             if (accepted != msel::Decoder::Accepted::No)
             {
+                relay_link.touch();
                 SPDLOG_DEBUG("[relay] decoded 0x{:X} [{}]", frame.id,
                              msel::toHex(frame.data_span()));
             }
@@ -790,8 +799,11 @@ int main(int argc, char** argv)
     }
 
     auto nextStatus = std::chrono::steady_clock::now();
+    health.markReady();
+
     while (gRunning)
     {
+        health.kick();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
         if (config.statusIntervalMs == 0u)

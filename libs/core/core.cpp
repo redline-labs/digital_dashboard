@@ -10,6 +10,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -292,6 +294,49 @@ bool notifyReady()
 bool notifyStatus(std::string_view status)
 {
     return notify("STATUS=" + std::string(status) + "\n");
+}
+
+bool notifyWatchdog()
+{
+    return notify("WATCHDOG=1\n");
+}
+
+std::optional<std::chrono::microseconds> watchdogInterval()
+{
+    const auto parse = [](const std::string& text) -> std::optional<std::uint64_t>
+    {
+        std::uint64_t value = 0;
+        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (error != std::errc{} || end != text.data() + text.size())
+        {
+            return std::nullopt;
+        }
+        return value;
+    };
+
+    const auto usec_text = env("WATCHDOG_USEC");
+    if (!usec_text)
+    {
+        return std::nullopt;
+    }
+    const auto usec = parse(*usec_text);
+    // chrono's microseconds rep is signed; anything past it is not a real
+    // interval either.
+    if (!usec || *usec == 0 ||
+        *usec > static_cast<std::uint64_t>(std::chrono::microseconds::max().count()))
+    {
+        return std::nullopt;
+    }
+
+    if (const auto pid_text = env("WATCHDOG_PID"))
+    {
+        const auto pid = parse(*pid_text);
+        if (!pid || *pid != static_cast<std::uint64_t>(::getpid()))
+        {
+            return std::nullopt;
+        }
+    }
+    return std::chrono::microseconds(static_cast<std::chrono::microseconds::rep>(*usec));
 }
 
 }  // namespace systemd

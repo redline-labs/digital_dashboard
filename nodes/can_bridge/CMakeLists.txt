@@ -21,6 +21,7 @@ target_link_libraries(can_bridge
         capnp
         schemas
         helpers
+    node_health
 )
 
 # The config surface: what an absent key defaults to, and the collisions that

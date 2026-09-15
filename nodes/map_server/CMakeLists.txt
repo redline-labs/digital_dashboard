@@ -38,6 +38,7 @@ target_link_libraries(map_server
         spdlog::spdlog
         cxxopts::cxxopts
         yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The config surface: the defaults, and the two collisions that make a server

@@ -32,6 +32,7 @@
 
 #include "can_bridge.capnp.h"
 #include "can_frame.capnp.h"
+#include "node_health/reporter.h"
 #include "pub_sub/can_frame.h"
 #include "pub_sub/zenoh_client.h"
 #include "pub_sub/node_identity.h"
@@ -45,6 +46,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -516,6 +518,9 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("can_bridge");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("can_bridge");
+
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
@@ -579,6 +584,9 @@ int main(int argc, char** argv)
     // --- status and control -------------------------------------------------
     pub_sub::ZenohPublisher<CanBridgeStatus> statusPublisher(config.statusKey);
 
+    // Per channel, the drop counters as of the last status: see below.
+    std::map<std::string, std::uint64_t> droppedSeen;
+
     auto publishStatus = [&]
     {
         auto& fields = statusPublisher.fields();
@@ -600,6 +608,44 @@ int main(int argc, char** argv)
             entry.setRunning(false);
             entry.setError(failure.error);
             entry.setState(CanBusState::UNKNOWN);
+        }
+
+        // Health from the same numbers, before put() re-roots the builder.
+        // Growth in the drop counters matters more than their value: a bridge
+        // that dropped frames an hour ago and none since is working now.
+        for (const auto channel : fields.asReader().getChannels())
+        {
+            const std::string name = "channel:" + std::string(channel.getName());
+            const std::uint64_t dropped = channel.getRxDropped() + channel.getTxDropped();
+            std::uint64_t& seen = droppedSeen[name];
+            const bool dropping = dropped > seen;
+            seen = dropped;
+
+            if (!channel.getOpen() || !channel.getRunning())
+            {
+                health.setCheck(name, node_health::State::fault,
+                                channel.getError().size() != 0
+                                    ? std::string(channel.getError().cStr())
+                                    : std::string("not running"));
+            }
+            else if (channel.getState() == CanBusState::BUS_OFF ||
+                     channel.getState() == CanBusState::STOPPED)
+            {
+                health.setCheck(name, node_health::State::fault, "bus off");
+            }
+            else if (channel.getState() == CanBusState::ERROR_PASSIVE ||
+                     channel.getState() == CanBusState::ERROR_WARNING)
+            {
+                health.setCheck(name, node_health::State::degraded, "bus errors");
+            }
+            else if (dropping)
+            {
+                health.setCheck(name, node_health::State::degraded, "dropping frames");
+            }
+            else
+            {
+                health.setCheck(name, node_health::State::ok, "");
+            }
         }
 
         statusPublisher.put();
@@ -673,8 +719,11 @@ int main(int argc, char** argv)
 
     // --- run ----------------------------------------------------------------
     auto nextStatus = std::chrono::steady_clock::now();
+    health.markReady();
+
     while (running)
     {
+        health.kick();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
         const auto now = std::chrono::steady_clock::now();

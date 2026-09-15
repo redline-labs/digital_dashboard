@@ -29,6 +29,7 @@ target_link_libraries(map_match
         spdlog::spdlog
         cxxopts::cxxopts
         yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The config surface, including the two things that make a node start cleanly

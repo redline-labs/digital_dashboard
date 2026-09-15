@@ -38,6 +38,7 @@
 #include "mti610/serial_stream.h"
 #include "mti610/stream_client.h"
 #include "node_config.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "publishers.h"
@@ -409,6 +410,9 @@ int main(int argc, char** argv)
     // appear before its topics do.
     pub_sub::NodeIdentity identity("mti610");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("mti610");
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -471,14 +475,27 @@ int main(int argc, char** argv)
     auto nextRecheck = std::chrono::steady_clock::now() +
                        std::chrono::seconds(config.configuration.recheckIntervalS);
 
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         const auto now = std::chrono::steady_clock::now();
 
         if (now >= nextStatus)
         {
             publishStatus(statusPublisher, client, publishers, config);
             nextStatus = now + std::chrono::milliseconds(config.publish.statusIntervalMs);
+
+            // Connected and measuring are different failures: a device that is
+            // open but not in Measurement state is a configuration that did not
+            // take, and it publishes nothing while looking attached.
+            health.setCheck("serial", client.running() ? node_health::State::ok
+                                                       : node_health::State::fault,
+                            client.running() ? "" : "the reader is not running");
+            health.setCheck("measuring", client.measuring() ? node_health::State::ok
+                                                            : node_health::State::degraded,
+                            client.measuring() ? "" : "open, but not in Measurement state");
         }
 
         if (config.configuration.recheckIntervalS != 0 && now >= nextRecheck &&

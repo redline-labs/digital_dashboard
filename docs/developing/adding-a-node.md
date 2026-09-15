@@ -25,16 +25,38 @@ int main(int argc, char** argv)
     // ... cxxopts for the command line ...
 
     pub_sub::NodeIdentity node_identity("my_node"); // announces the process on the bus
+    cli::installInterruptHandler();                 // SIGINT and SIGTERM
+
+    node_health::HealthReporter health("my_node");  // nodes/my_node/health
+    auto& frames_in = health.addActivityCheck("can_rx", std::chrono::seconds(1));
 
     pub_sub::ZenohPublisher<MyReading> pub("nodes/my_node/reading");
-    pub_sub::ZenohTypedSubscriber<CanFrame> sub("vehicle/engine/rx", [&](const CanFrame::Reader& f) { ... });
-    // ... run until signalled ...
+    pub_sub::ZenohTypedSubscriber<CanFrame> sub("vehicle/engine/rx", [&](const CanFrame::Reader& f) {
+        frames_in.touch();
+        ...
+    });
+
+    health.markReady();
+    while (!cli::interrupted())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        health.kick();
+    }
+    return 0;
 }
 ```
 
 `core::setupLogging` is where the runtime environment variables are honoured,
 so a node that calls it behaves the same on a desktop and under systemd on the
 target. Logging is `SPDLOG_*`, never `std::cout`.
+
+Every node publishes health. Declare the
+[HealthReporter](../libs/node_health.html) before anything whose callbacks touch
+its checks, name the things that have to keep happening, and call `markReady()`
+once the node is serving. `inspect health` then reports the node beside every
+other, and a monitor can tell a hung node from a stopped one. Run until
+`cli::interrupted()` rather than forever: SIGTERM is how a unit is stopped, and
+`kick()` in that loop is what feeds the systemd watchdog.
 
 `pub_sub::NodeIdentity` is declared explicitly, once, in `main()`. It is the
 only way a process that subscribes but never publishes appears on the bus at

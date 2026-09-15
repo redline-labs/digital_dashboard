@@ -90,6 +90,17 @@ clamp changed it, says so. Clamping up to `min_percent` stops a slider or a remo
 from turning the panel off by accident, since a backlight at zero looks exactly
 like a dead display.
 
+### Health
+
+`nodes/backlight/health` ([NodeHealth](../libs/node_health.html)), once a second and
+at once on any change:
+
+| Check | Not ok when |
+|---|---|
+| `backlight` | the backlight device is not writable, so brightness cannot be set |
+
+`inspect health` prints them.
+
 ## Config
 
 `configs/backlight/backlight.yaml`:

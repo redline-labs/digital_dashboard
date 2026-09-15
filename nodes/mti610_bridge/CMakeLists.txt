@@ -27,6 +27,7 @@ target_link_libraries(mti610_bridge
         spdlog::spdlog
         cxxopts::cxxopts
         yaml-cpp::yaml-cpp
+    node_health
 )
 
 # The YAML parser, exercised without a device or a file. Recompiles

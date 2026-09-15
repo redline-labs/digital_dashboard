@@ -17,6 +17,8 @@ target_link_libraries(megasquirt PRIVATE
     zenohcxx::zenohc
     schemas
     zenoh_pub_sub
+    node_health
+    cli
     dbc_megasquirt_dash_data
 )
 

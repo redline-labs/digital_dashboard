@@ -28,6 +28,7 @@
 #include <string>
 #include <thread>
 
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 
 #include "graphs.h"
@@ -268,6 +269,9 @@ int main(int argc, char** argv)
     // before the things it offers.
     pub_sub::NodeIdentity identity("map_server");
 
+    // One health topic per node, whatever it does: see libs/node_health.
+    node_health::HealthReporter health("map_server");
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -298,11 +302,31 @@ int main(int argc, char** argv)
 
     Services services(config, tilesets, graphs, tracksets);
 
+    // What this node serves, decided once at open: nothing later changes it.
+    health.setCheck("tilesets",
+                    tilesets.openCount() == 0 ? node_health::State::fault
+                    : tilesets.openCount() < config.tilesets.size() ? node_health::State::degraded
+                                                                    : node_health::State::ok,
+                    tilesets.openCount() == 0 ? "no tileset opened" : "");
+    health.setCheck("graphs",
+                    graphs.openCount() < config.graphs.size() ? node_health::State::degraded
+                                                              : node_health::State::ok,
+                    graphs.openCount() < config.graphs.size() ? "a configured graph did not open" : "");
+    health.setCheck("tracksets",
+                    tracksets.openCount() < config.tracksets.size() ? node_health::State::degraded
+                                                                    : node_health::State::ok,
+                    tracksets.openCount() < config.tracksets.size()
+                        ? "a configured trackset did not open"
+                        : "");
+
     const auto statusInterval = std::chrono::milliseconds(config.services.statusIntervalMs);
     auto nextStatus = std::chrono::steady_clock::now();
 
+    health.markReady();
+
     while (gRunning.load())
     {
+        health.kick();
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
         {
