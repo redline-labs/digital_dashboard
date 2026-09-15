@@ -1,3 +1,9 @@
+---
+title: carplay
+parent: Nodes
+redirect_from: /carplay_bringup.html
+---
+
 # Wired CarPlay Bring-Up & Test Plan
 
 This is the iterative test plan for the native wired CarPlay stack. The code was

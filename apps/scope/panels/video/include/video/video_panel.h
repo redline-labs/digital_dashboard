@@ -63,7 +63,7 @@ class VideoPanel : public Panel
     static constexpr std::string_view kFriendlyName = "Video";
 
     // U+25A3 WHITE SQUARE CONTAINING BLACK SMALL SQUARE. Picked for the reason
-    // docs/scope.md gives: it has to be in the default font on every platform,
+    // docs/apps/scope.md gives: it has to be in the default font on every platform,
     // because a missing glyph renders as a blank box that reads as a broken
     // button rather than a plain one. The obvious alternatives are worse -- a
     // play triangle means "play", and the film/camera emoji are not in the

@@ -61,7 +61,7 @@ std::string dictString(const plist::Value& dict, const char* key);
 // Modern iPhones report a 24-character serial that libusbmuxd and the phone's
 // own lockdown service disagree about the spelling of; a pair record filed
 // under one form is invisible under the other. This cost a real hardware
-// session -- see docs/carplay_bringup.md stage 4.
+// session -- see docs/nodes/carplay.md stage 4.
 std::string alternateUdidForm(const std::string& udid);
 
 }  // namespace apple_usb::usbmuxd

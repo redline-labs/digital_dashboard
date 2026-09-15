@@ -48,7 +48,7 @@ struct DeviceConfig
     // THIS NODE NEVER CHANGES THE DEVICE'S BAUD RATE -- it only opens the port
     // at the rate the device is already using. Changing it needs SetPortConfig,
     // whose word layout the LLCP documents only as an image. See
-    // docs/mti610.md.
+    // docs/nodes/mti610_bridge.md.
     std::uint32_t baud { 115200 };
 
     std::uint32_t openTimeoutMs { 2000 };

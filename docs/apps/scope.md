@@ -1,3 +1,9 @@
+---
+title: scope
+parent: Apps
+redirect_from: /scope.html
+---
+
 # scope — the live time-series visualizer
 
 The third GUI application. `dashboard` shows what a value *is*; `scope` shows

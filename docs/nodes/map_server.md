@@ -1,5 +1,7 @@
 ---
-title: Offline maps
+title: map_server
+parent: Nodes
+redirect_from: /map.html
 ---
 
 # Offline maps
@@ -33,7 +35,7 @@ include tree. `libs/dashboard_widgets/widgets/map` asks `map_server`; `scope`'s 
 reads an `.mbtiles` directly. Neither transport is visible from inside
 `libs/map_render`.
 
-`scope`'s map panel is documented in [docs/scope.md](scope.md): it draws a whole
+`scope`'s map panel is documented in [docs/scope.md](../apps/scope.md): it draws a whole
 retention window as a trail rather than following a live vehicle, puts a marker
 on the shared time cursor, and lets a click on the trail move that cursor. It
 reads its archives with `scope::TileReader` and never opens a session for tiles.
@@ -468,7 +470,7 @@ The one program that calls these for a living is `nodes/bd992_mock`: it asks
 `map/route` for a road route and `map/nearest` for each segment's speed limit,
 then drives the result and publishes it as GNSS. `bd992_mock --route ... --check`
 exercises the whole routing half in one command and prints what came back — see
-[bd992.md](bd992.md). What follows is the same thing by hand.
+[bd992.md](bd992_bridge.md). What follows is the same thing by hand.
 
 `map/graph` first, because it names the graph and the profiles the other two
 calls have to match:
@@ -522,7 +524,7 @@ points `[segmentStarts[i], segmentStarts[i+1])`.
 
 ## Where an archive comes from
 
-`tools/map_build` — see [Building the map](map_build.md). It reads an OSM PBF and
+`tools/map_build` — see [Building the map](../tools/map_build.md). It reads an OSM PBF and
 writes the tiles, the routable road graph and the routing overlay from one
 classification pass, so the drawn road and the routable road can never disagree.
 `tilemaker` is no longer in the loop.

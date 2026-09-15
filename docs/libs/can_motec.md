@@ -1,3 +1,9 @@
+---
+title: can_motec
+parent: Libraries
+redirect_from: /motec_utc.html
+---
+
 # The MoTeC UTC
 
 A MoTeC UTC is a USB-to-CAN dongle: an FTDI FT245BM in front of a classic CAN

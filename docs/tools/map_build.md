@@ -1,5 +1,7 @@
 ---
-title: Building the map
+title: map_build
+parent: Tools
+redirect_from: /map_build.html
 ---
 
 # Building the map

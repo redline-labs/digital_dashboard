@@ -61,7 +61,7 @@ add_subdirectory(protowire)
 # reads an archive through it; nothing in the library itself depends on it.
 add_subdirectory(mvt)
 # OpenStreetMap PBF, decoded. The source everything on the map side is built
-# from; see docs/map_build.md.
+# from; see docs/tools/map_build.md.
 add_subdirectory(osm)
 # One set of rules for what OSM data is. Both the tiler and the graph builder
 # call it, which is the whole reason the extractor is ours.

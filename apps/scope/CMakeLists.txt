@@ -146,7 +146,7 @@ target_link_libraries(scope_core PUBLIC
     helpers
 
     # Map archives, read straight off disk. THE DELIBERATE EXCEPTION to
-    # "the vendored sqlite3 stays out of the GUI apps" (docs/map.md): that rule
+    # "the vendored sqlite3 stays out of the GUI apps" (docs/nodes/map_server.md): that rule
     # protects the dashboard, which reaches SQLite through Qt6::Sql and must
     # never meet a second copy. scope is a desktop review tool that opens
     # archives itself and links no Qt6::Sql, so the two cannot meet here.

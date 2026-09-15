@@ -12,7 +12,7 @@
 #
 # THE PANEL NAMES A TILESET, NEVER A PATH. That is what keeps this file openable
 # on someone else's machine: the name is here, the path is in their settings.
-# See the Settings section of docs/scope.md.
+# See the Settings section of docs/apps/scope.md.
 #
 # To make a recording to review, with no receiver:
 #

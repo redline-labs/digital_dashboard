@@ -14,7 +14,7 @@ project(mvt)
 # QT_QPA_PLATFORM=offscreen -- which would leave the map invisible to
 # ui_screenshot and to every `gui` test. A vector tile is protobuf with a
 # command-encoded geometry stream; that turned out to be a smaller thing to own
-# than the consequences of not owning it. See docs/map.md.
+# than the consequences of not owning it. See docs/nodes/map_server.md.
 add_library(mvt STATIC
     src/decode.cpp
     src/encode.cpp

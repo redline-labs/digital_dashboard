@@ -1,3 +1,9 @@
+---
+title: backlight
+parent: Nodes
+redirect_from: /backlight.html
+---
+
 # Display backlight node
 
 `nodes/backlight` puts a display module's backlight and the sensors on the

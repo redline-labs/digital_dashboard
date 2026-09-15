@@ -1,3 +1,9 @@
+---
+title: bag
+parent: Nodes
+redirect_from: /bag.html
+---
+
 # bag — recording and replaying the bus
 
 `bag` captures everything on the zenoh bus into a seekable, compressed file and

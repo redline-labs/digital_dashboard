@@ -41,7 +41,7 @@ void checkNear(double actual, double expected, double tolerance, const std::stri
 
 using bd992_mock::Path;
 
-// Irvine, the coordinate docs/map.md uses for everything in the SoCal archive.
+// Irvine, the coordinate docs/nodes/map_server.md uses for everything in the SoCal archive.
 constexpr double kIrvineLat = 33.6866;
 constexpr double kIrvineLon = -117.8558;
 
@@ -177,7 +177,7 @@ void test_a_closed_path_includes_the_closing_leg()
 
 void test_repeated_points_are_dropped()
 {
-    // docs/tracks.md: 87 of the 994 track outlines carry runs of identical
+    // docs/tools/tracks.md: 87 of the 994 track outlines carry runs of identical
     // consecutive vertices, one of them 2 346 long.
     const std::vector<std::int32_t> lonLat {
         road_graph::fromDegrees(kIrvineLon), road_graph::fromDegrees(kIrvineLat),

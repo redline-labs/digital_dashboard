@@ -4,7 +4,7 @@
 // be exercised on hardware independently of the rest of the pipeline.
 //
 // This is the replacement for the `idevice_id -l` sanity check in
-// docs/carplay_bringup.md stage 4. That check used libimobiledevice's tools to
+// docs/nodes/carplay.md stage 4. That check used libimobiledevice's tools to
 // prove our *server* worked; this one uses our client, so a green run means both
 // halves of the usbmux conversation are ours and agree.
 //

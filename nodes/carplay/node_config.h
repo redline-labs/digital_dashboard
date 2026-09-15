@@ -118,7 +118,7 @@ struct NodeConfig
 
     // Draw CarPlay's own UI in its night theme. There is no light sensor here
     // yet, so this is whatever the vehicle is configured with; see
-    // docs/carplay_bringup.md stage 11 for hooking it to the headlights.
+    // docs/nodes/carplay.md stage 11 for hooking it to the headlights.
     bool night_mode = false;
 
     // The node's defaults deliberately differ from the library's: a head unit
@@ -135,7 +135,7 @@ struct NodeConfig
     // Not in the config file: these exist to take one layer at a time during a
     // hardware session, and a shipped vehicle wants the defaults.
 
-    // Highest docs/carplay_bringup.md stage to attempt (2..7). Lower values stop
+    // Highest docs/nodes/carplay.md stage to attempt (2..7). Lower values stop
     // early, which keeps a failure at one layer from being masked by the noise
     // of the next one failing as a consequence.
     int max_stage = 7;

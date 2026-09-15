@@ -9,7 +9,7 @@
 // partial the way they do on a real port, and closing the far end produces the
 // same end-of-file a device being unplugged produces. What it cannot test is
 // the baud rate, which a pty ignores -- that is on the hardware list in
-// docs/mti610.md.
+// docs/nodes/mti610_bridge.md.
 //
 // The pattern -- bind in the constructor so the address is known before
 // anything connects, serve on a background thread, tear down in the destructor

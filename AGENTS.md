@@ -61,7 +61,7 @@ because it makes the bug look covered.
 
 `dashboard`, `editor`, `scope` and `switchboard` are the GUI applications, and
 they are what the agent control interface exists for. (`switchboard` calls the
-services advertised on the bus; see `docs/switchboard.md`.) A widget change is not done when it builds;
+services advertised on the bus; see `docs/apps/switchboard.md`.) A widget change is not done when it builds;
 it is done when you have looked at it.
 
 **The round trip before saying it works:**
@@ -84,7 +84,7 @@ the min/max actually received -- which is a far stronger statement and the one
 a test can assert. `scope.stats` is the type-agnostic version, and it is the one
 to use for anything that is not a plot: for a `table` panel it reports the value
 behind each cell, the TEXT the cell prints (an enum reads as its name), and how
-old the reading is. `docs/scope.md` has the rest.
+old the reading is. `docs/apps/scope.md` has the rest.
 
 Scope can also be driven over a **recording** rather than the bus, which is the
 faster loop when the data matters more than the timing: `bag record` a few
@@ -98,7 +98,7 @@ GUI code that is *not* about pixels — selector parsing, message framing, a con
 codec — still gets a plain unit test. `libs/agent_control/`'s own suites are the
 model: pure logic under the `unit` label, widget-tree behaviour under `gui`.
 
-**Read `docs/agent_control.md` before using the tools.** It has every method, the
+**Read `docs/developing/agent-control.md` before using the tools.** It has every method, the
 selector grammar, the coordinate contract, and the gotchas that otherwise cost an
 afternoon — animated widgets defeating single-screenshot comparisons, zenoh
 discovery seeing only live traffic, and what `accepted: false` and
@@ -145,7 +145,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   its answer uninterpreted — because the moment that interface knows what a
   `CarPlayVideo` is, one panel's schema is in the interface every panel shares.
   Two flag bits are reserved: `kSeekPoint` ("you can start here") and `kPreamble`
-  ("replay me before the seek point after me"). See `docs/scope.md`.
+  ("replay me before the seek point after me"). See `docs/apps/scope.md`.
 - **Adding a widget** is a 5-step registration documented at the top of
   `libs/dashboard_widgets/include/dashboard/widget_registry.h`. Follow it exactly; several
   generated things (the config variant, the palette, the YAML decoder) derive
@@ -171,7 +171,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   checked in and SYNTHETIC vectors, labelled as such, cover their arithmetic
   instead. The *command* encodings carry the opposite caveat, stated in their
   test: no receiver has ever seen those bytes,
-  and as of 2026-08-23 no port on ours accepts them. See `docs/bd992.md`.
+  and as of 2026-08-23 no port on ours accepts them. See `docs/nodes/bd992_bridge.md`.
 - **`libs/xbus`'s fp16.32 byte order cannot be checked by round-tripping.**
   Xsens sends the low six bytes of `round(v * 2^32)` in the order
   `[b3,b2,b1,b0,b5,b4]` -- fraction first, then integer. A plain six-byte
@@ -181,7 +181,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   the decodes to match: there is no byte order the two can be wrong in
   together. Removing the swizzle breaks the build at four `static_assert`s.
   The same cross-check at the item level is what proves a payload is sized by
-  the format nibble rather than by a constant. See docs/mti610.md.
+  the format nibble rather than by a constant. See docs/nodes/mti610_bridge.md.
 - **An MTi has two states and one port, and that shapes the whole node.** It
   answers configuration only in Config state and emits data only in Measurement
   state, so reconfiguring STOPS THE DATA and whoever owns the port owns the
@@ -204,7 +204,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   them fails SILENTLY: the radio drops the frame, or answers the previous
   question. `xpr_test_radio`'s fake radio enforces all five the way the real
   one does -- by refusing to answer -- so they cannot regress into a timeout
-  nobody can explain. See docs/xpr.md.
+  nobody can explain. See docs/nodes/xpr_bridge.md.
 - **The radio is read-only apart from the channel.** `libs/mototrbo` builds no
   PTT, no Transmit, no RF tuning and no codeplug write; `xcmp.h` lists the
   destructive opcodes that exist on the radio and are deliberately not
@@ -226,7 +226,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   flip lives in `mbtiles::Archive::tile()` and nowhere else. A second one
   anywhere in the path renders a perfect map mirrored about the equator, which
   nobody reads as a coordinate bug -- so `mbtiles_test_archive` writes archives
-  in TMS and asserts in XYZ. See `docs/map.md`.
+  in TMS and asserts in XYZ. See `docs/nodes/map_server.md`.
 - **The map renderer is ours, and it is on the GPU.** `libs/mvt` decodes Mapbox
   Vector Tiles, `libs/map_render` tessellates them and draws them through
   **QRhi against an offscreen texture** -- never a `QRhiWidget` or a
@@ -235,14 +235,14 @@ discovery seeing only live traffic, and what `accepted: false` and
   surface-bound renderer hands back a null map there, which would leave the map
   invisible to `ui_screenshot` and to every `gui` test. Labels stay on QPainter
   because they must not rotate with the map and their collision is
-  viewport-global. See `docs/map.md`.
+  viewport-global. See `docs/nodes/map_server.md`.
 - **CAN adapter register fields are counted from zero, and getting it wrong is
   silent.** The PCAN uCAN timing command encodes sjw, tseg1, tseg2 AND brp each
   one less than its value. Encoding only brp that way asked a controller for
   952 kbit/s where 1 Mbit/s was configured, and nothing anywhere reported it:
   a controller that cannot hold sync never wins arbitration, so the channel
   transmits nothing, receives nothing and stays error-free. Two dongles on one
-  bus is what found it -- see `docs/motec_utc.md`. When a CAN link carries no
+  bus is what found it -- see `docs/libs/can_motec.md`. When a CAN link carries no
   traffic and reports no errors, suspect the timing encoding before the cable.
 - **A latched MoTeC UTC is recovered through `tag`, not through USB.** The
   device can refuse every command on the normal tag with `0x21`, `Open`
@@ -250,9 +250,9 @@ discovery seeing only live traffic, and what `accepted: false` and
   disable, not a host reboot -- because the FT245BM in front is only a FIFO
   bridge. Tag 0 is a separate endpoint that stays responsive, and an `Open`
   there clears it; `can_motec` does this automatically. See
-  `docs/motec_utc.md`.
+  `docs/libs/can_motec.md`.
 - **A MoTeC UTC cannot be told its bit rate, and says so.** The protocol
-  (`libs/can_motec`, reverse-engineered -- see `docs/motec_utc.md`) has no known
+  (`libs/can_motec`, reverse-engineered -- see `docs/libs/can_motec.md`) has no known
   command for it, so `set_bitrate()` FAILS rather than accepting a number it
   cannot apply, and the backend warns at every open. That is the opposite of
   the bug the SocketCAN backend had, where the truth was available over netlink
@@ -277,7 +277,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   `detail::BytePublisher`, so a picker can list a topic before it has published
   anything. That is additive, not a replacement: the per-sample encoding stays
   authoritative, and both are derived from the same constructor arguments so
-  they cannot disagree. See `docs/scope.md`.
+  they cannot disagree. See `docs/apps/scope.md`.
 - **Three liveliness key spaces**, all under a leading `@` segment so zenoh
   treats them as verbatim and no `**` subscriber ever sees them as topics:
   `@redline/adv/<Schema>/<topic>/<zid>` (per publisher),
@@ -348,26 +348,26 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     apple_usb, plist, canopen, dbc_parser, cli (verb dispatch),
                     bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
-                  (CAN channels) -- docs/motec_utc.md for the MoTeC one,
+                  (CAN channels) -- docs/libs/can_motec.md for the MoTeC one,
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
                     xbus (Xsens XBus, constexpr) + mti610 (its SERIAL transport,
-                    the tree's only termios code) -- docs/mti610.md,
+                    the tree's only termios code) -- docs/nodes/mti610_bridge.md,
                     mototrbo (XNL/XCMP, constexpr) + xpr (the radio's session)
-                  -- docs/xpr.md,
-                    mbtiles (the map archive) + mvt (vector tiles) -- docs/map.md,
+                  -- docs/nodes/xpr_bridge.md,
+                    mbtiles (the map archive) + mvt (vector tiles) -- docs/nodes/map_server.md,
                     protowire (protobuf reader) + osm (PBF) + map_rules
                     (tag -> classification, ONE table) + road_graph (routable
-                    graph, contraction hierarchy) -- docs/map_build.md
+                    graph, contraction hierarchy) -- docs/tools/map_build.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay
-                    it -- see docs/bag.md)
+                    it -- see docs/nodes/bag.md)
 schemas/            .capnp definitions; drop a file in and build -- the registry
                     is generated from the schemas themselves
 configs/dashboard/  runtime YAML layouts
 configs/scope/      runtime YAML workspaces
 tools/              WORKSTATION ONLY, never shipped: map_build (OSM PBF in,
-                    tiles + road graph + routing overlay out -- docs/map_build.md)
+                    tiles + road graph + routing overlay out -- docs/tools/map_build.md)
                     and mcp_dashboard (the MCP server, Python, uv)
 docs/               architecture and bring-up notes
 ```
@@ -381,6 +381,6 @@ are its main consumer. `qt_helpers` is the Qt-using sibling of the Qt-free
 fonts. Anything an app needs that is not about *that* app belongs in one of
 these two, not in the app's include tree.
 
-`docs/carplay_bringup.md` is the deepest doc in the tree and doubles as design
+`docs/nodes/carplay.md` is the deepest doc in the tree and doubles as design
 rationale for the zenoh, threading and paint-lock decisions. Read it before
 changing anything in the CarPlay path.

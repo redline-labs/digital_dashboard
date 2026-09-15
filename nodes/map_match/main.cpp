@@ -41,7 +41,7 @@ void handleSignal(int)
 
 // Open the graph and say what is in it, without touching the bus. The fastest
 // way to find out whether a path is right -- the same idea as map_server's
-// --check, which docs/map.md calls exactly that.
+// --check, which docs/nodes/map_server.md calls exactly that.
 int runCheck(const map_match::NodeConfig& config)
 {
     auto graph = road_graph::Graph::open(config.graphPath);

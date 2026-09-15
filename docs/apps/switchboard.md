@@ -1,3 +1,9 @@
+---
+title: switchboard
+parent: Apps
+redirect_from: /switchboard.html
+---
+
 # switchboard — call the services on the bus
 
 The fourth GUI application. `inspect call <key> --data '{json}'` can call any

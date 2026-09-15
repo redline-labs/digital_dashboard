@@ -92,7 +92,7 @@ inline constexpr std::array<std::uint8_t, 5> kReqOutputConfiguration =
 // serial port, whose BIT LAYOUT THIS LIBRARY DOES NOT DECODE -- the LLCP
 // documents it only as Figure 2, an image with no accompanying text, and
 // guessing at it would mis-set a baud rate in a way that leaves the device
-// unreachable. The words are round-tripped opaquely. See docs/mti610.md.
+// unreachable. The words are round-tripped opaquely. See docs/nodes/mti610_bridge.md.
 inline constexpr std::array<std::uint8_t, 5> kReqPortConfig = detail::bare(MessageId::PortConfig);
 
 inline constexpr std::array<std::uint8_t, 5> kReqConfiguration =

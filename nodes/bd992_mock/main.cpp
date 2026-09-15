@@ -89,7 +89,7 @@ bool parseLatLon(const std::string& text, double& latitudeDeg, double& longitude
 // Warn if something is already publishing the epoch topic.
 //
 // Two publishers on one key is the trap documented for map_server in
-// docs/map_build.md: nothing errors, the consumer takes whichever sample
+// docs/tools/map_build.md: nothing errors, the consumer takes whichever sample
 // arrives, and a screenshot "proving" the mock works may be showing the real
 // receiver. Best-effort -- observeTopics can only report what published during
 // its window -- so this warns rather than refusing.

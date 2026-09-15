@@ -1,3 +1,9 @@
+---
+title: mti610_bridge
+parent: Nodes
+redirect_from: /mti610.html
+---
+
 # Xsens MTi-610
 
 An inertial measurement unit on a serial port, bridged onto the zenoh bus.

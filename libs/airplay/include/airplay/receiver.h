@@ -3,7 +3,7 @@
 // The AirPlay receiver: the RTSP server the phone connects to on port 7000 of
 // the accessory's NCM link-local address, after CarPlayStartSession.
 //
-// Stage 7 of docs/carplay_bringup.md.
+// Stage 7 of docs/nodes/carplay.md.
 #ifndef AIRPLAY_RECEIVER_H_
 #define AIRPLAY_RECEIVER_H_
 

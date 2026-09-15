@@ -9,7 +9,7 @@
 # Paths: ${REDLINE_DATA_DIR} is /data on the target and, when the variable is unset
 # on a desktop, the per-user data directory (~/.local/share/redline on Linux,
 # ~/Library/Application Support/redline on macOS). Relative paths resolve against
-# this file. See docs/environment.md.
+# this file. See docs/reference/environment.md.
 tilesets:
   # The name is what clients ask for and what appears in a tile URL; the path
   # is nobody's business but this node's. Renaming the file changes one line

@@ -124,7 +124,7 @@ Then, in order:
 2. Delete each synthetic vector only once a captured one covers the same
    identifier — not before, because the synthetic ones also cover malformed
    input a healthy device never produces.
-3. Re-check every item in the "deferred to hardware" list in `docs/mti610.md`.
+3. Re-check every item in the "deferred to hardware" list in `docs/nodes/mti610_bridge.md`.
    Several of them (the real sample rates, whether `AccelerationHR` arrives in
    its own packet, the `SampleTimeFine` wrap point) are answered by a long
    enough capture and by nothing else.

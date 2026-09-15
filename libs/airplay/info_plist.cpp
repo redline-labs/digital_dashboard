@@ -144,7 +144,7 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
     // The wired phone routes all music through type 100 as PCM and works
     // cleanly; type 102 AAC-LC is advertised as a fallback for any phone that
     // does send it (verified on hardware not to be used on this wired path --
-    // see docs/carplay_bringup.md stage 9).
+    // see docs/nodes/carplay.md stage 9).
     info.set("audioFormats",
              plist::Value::array({audio_format(100, "compatibility", kPcm, kPcmMono),
                                   audio_format(101, "compatibility", kPcm, 0),

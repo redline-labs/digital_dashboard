@@ -82,7 +82,7 @@ void computeDistances(Path& path);
 //
 // Not cosmetic: a zero-length leg makes the three-point curvature circle
 // degenerate and would report a corner where the road is straight.
-// docs/tracks.md records 87 of the 994 track outlines carrying runs of
+// docs/tools/tracks.md records 87 of the 994 track outlines carrying runs of
 // identical consecutive vertices, one of them 2 346 long.
 void dropRepeatedPoints(Path& path);
 

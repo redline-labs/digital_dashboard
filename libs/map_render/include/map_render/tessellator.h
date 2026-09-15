@@ -118,7 +118,7 @@ const char* to_string(MapLayer layer);
 //
 // The user's threshold, from MapStyle_t::detail. The archive's own per-layer
 // minzoom still applies underneath it, so the effective floor is whichever is
-// higher -- see docs/map.md.
+// higher -- see docs/nodes/map_server.md.
 double layerMinZoom(MapLayer layer, const MapStyle_t& style);
 
 // Half-width in screen pixels at full scale, from MapStyle_t::widths. Zero for
@@ -147,7 +147,7 @@ std::uint64_t nextSerial();
 // route a driver is following, and the road they are on, come back from
 // `map/nearest` and `map/route` as way ids, and highlighting them means
 // recolouring geometry that is already on the GPU rather than overlaying a
-// second polyline that can diverge from it (docs/map_build.md).
+// second polyline that can diverge from it (docs/tools/map_build.md).
 //
 // Roads only. Recording a range for every landcover polygon would double the
 // size of this for something nothing joins on.

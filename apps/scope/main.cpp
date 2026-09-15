@@ -54,7 +54,7 @@ int main(int argc, char** argv)
     // (SessionManager::getOrCreate), and scope starts OFFLINE -- a process that
     // joined the bus at startup would make "Offline" a label rather than a
     // fact. ScopeWindow::goOnline() announces the process the first time it
-    // actually attaches. See pub_sub/node_identity.h and docs/scope.md.
+    // actually attaches. See pub_sub/node_identity.h and docs/apps/scope.md.
 
     // Set BEFORE QStandardPaths is asked anything: it builds the per-user
     // config path out of these, so settingsPath() would otherwise resolve

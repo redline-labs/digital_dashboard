@@ -6,7 +6,7 @@
 // rate of turn and magnetic field, the strapdown increments, barometric
 // pressure and temperature. It has NO ORIENTATION FILTER, so there is no
 // quaternion and no Euler angle on any of these topics -- that is a 620, 630
-// or 670. See docs/mti610.md.
+// or 670. See docs/nodes/mti610_bridge.md.
 //
 // Modes, in the order you would use them on a bench:
 //

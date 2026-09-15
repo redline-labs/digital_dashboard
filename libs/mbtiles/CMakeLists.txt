@@ -15,7 +15,7 @@ project(mbtiles)
 #
 # `scope` is the deliberate exception. It is a desktop review tool that opens
 # archives itself rather than asking a node, and it links no Qt6::Sql, so the
-# two copies cannot meet there. See apps/scope/CMakeLists.txt and docs/scope.md.
+# two copies cannot meet there. See apps/scope/CMakeLists.txt and docs/apps/scope.md.
 add_library(mbtiles STATIC
     src/archive.cpp
     src/writer.cpp

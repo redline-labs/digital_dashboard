@@ -49,7 +49,7 @@
 //
 // DO NOT carry those proportions to other hardware. On unified memory a
 // readback is a copy in shared RAM; on a discrete or low-power integrated GPU
-// it crosses a bus. docs/map.md records 2.44 ms fixed + 3.51 ms/Mpx on an Intel
+// it crosses a bus. docs/nodes/map_server.md records 2.44 ms fixed + 3.51 ms/Mpx on an Intel
 // UHD 630 through Mesa -- seven times the per-pixel cost and a fixed stall
 // three times larger. On that class of hardware the readback IS the frame. Multisampling is not the cost -- forcing sampleCount to 1 moves a
 // 5120x2880 frame by under a millisecond -- which is why the sample count is

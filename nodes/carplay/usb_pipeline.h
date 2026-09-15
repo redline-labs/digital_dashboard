@@ -8,7 +8,7 @@
 // (The name is historical -- this began as the USB half. What it owns now is
 // the session, of which USB is the bottom layer.)
 //
-// The stage numbering matches docs/carplay_bringup.md so a bring-up session can
+// The stage numbering matches docs/nodes/carplay.md so a bring-up session can
 // stop at whichever layer is under investigation, and the stages appear in
 // runAttachedSession in the order they must be *started*, which is not their
 // numeric order: 3, 4, 6, 7, then 5.
@@ -26,7 +26,7 @@ namespace carplay
 {
 
 // Runs the pipeline up to config.max_stage, logging each stage with the
-// prefixes docs/carplay_bringup.md greps for. Blocks until `stop` is set once
+// prefixes docs/nodes/carplay.md greps for. Blocks until `stop` is set once
 // the requested stages have come up. Returns true if every attempted stage
 // succeeded.
 //

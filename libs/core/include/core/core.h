@@ -12,7 +12,7 @@
 // Nothing here assumes a target. On a developer machine no REDLINE_* variable
 // is set and every function falls back to something sensible for a checkout;
 // on the LattePanda image the units set REDLINE_DATA_DIR=/data and systemd
-// provides NOTIFY_SOCKET. docs/environment.md lists the variables.
+// provides NOTIFY_SOCKET. docs/reference/environment.md lists the variables.
 namespace core
 {
 

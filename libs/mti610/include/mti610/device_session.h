@@ -67,7 +67,7 @@ struct DeviceInfo
     // Deliberately a report rather than a refusal. A 620 or a 630 speaks the
     // same protocol and its extra outputs land on the raw topic; refusing to
     // talk to one would be worse than saying so and carrying on. See
-    // docs/mti610.md.
+    // docs/nodes/mti610_bridge.md.
     bool looksLikeMti610() const;
 };
 

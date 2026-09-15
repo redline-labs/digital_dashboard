@@ -29,7 +29,7 @@
 //
 // Adding them is not a matter of adding rows: an MTi-620, -630 or -670 has
 // outputs this library has never seen a byte of, and a row here is a claim
-// that the struct beneath it was checked against something. See docs/mti610.md.
+// that the struct beneath it was checked against something. See docs/nodes/mti610_bridge.md.
 
 #ifndef XBUS_DATA_TABLE_H
 #define XBUS_DATA_TABLE_H

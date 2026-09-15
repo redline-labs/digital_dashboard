@@ -1,3 +1,10 @@
+---
+title: Config on the target
+parent: dashboard
+grand_parent: Apps
+redirect_from: /config-on-target.html
+---
+
 # Changing the dashboard's config on a running board
 
 The config the image ships lives in the read-only slot,
@@ -26,7 +33,7 @@ and prints the reasons when it refuses.
 ## What happens with a bad override
 
 The override is **rejected** when the loader refuses it (the rules in
-[displays.md](displays.md): unknown keys, duplicate window names, two windows on
+[displays.md](windows.md): unknown keys, duplicate window names, two windows on
 one display...) or when any of its widgets fails to construct. The dashboard
 then:
 

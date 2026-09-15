@@ -1,3 +1,9 @@
+---
+title: Agent control (--mcp)
+parent: Developing
+redirect_from: /agent_control.html
+---
+
 # Agent control interface (`--mcp`)
 
 The `dashboard`, `editor`, `scope` and `switchboard` all ship with a control
@@ -103,7 +109,7 @@ widget produces a confident wrong conclusion, which is worse than failing.
 Both apps name widgets by the same rule (`libs/dashboard_widgets/include/dashboard/widget_identity.h`),
 so one selector addresses the same widget in the dashboard and in the editor.
 
-**A config with several windows** (see [displays.md](displays.md)) gives the
+**A config with several windows** (see [displays.md](../apps/dashboard/windows.md)) gives the
 dashboard several `MainWindow` roots. Each window's objectName is its `name:`
 from the config, so `#carplay` addresses the window. Derived names count per
 window, so `static_text#0` can exist in two windows. A selector that matches

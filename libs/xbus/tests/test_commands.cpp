@@ -16,7 +16,7 @@
 //   * The PAYLOAD CONTENT of the two commands that have one --
 //     SetOutputConfiguration and SetOptionFlags -- rests on the LLCP's tables
 //     alone. That is exactly the class of claim that was wrong for the BD992,
-//     and docs/mti610.md lists it as deferred to hardware.
+//     and docs/nodes/mti610_bridge.md lists it as deferred to hardware.
 
 #include "xbus/commands.h"
 

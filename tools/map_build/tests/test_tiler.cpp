@@ -4,7 +4,7 @@
 //
 //   The PROJECTION decides which tile a feature lands in. Wrong, and the map
 //   draws beautifully somewhere else -- so it is anchored against the tile
-//   libs/mvt and docs/map.md already name for Irvine.
+//   libs/mvt and docs/nodes/map_server.md already name for Irvine.
 //
 //   SIMPLIFICATION drops points. Too aggressive and roads wander off the
 //   junctions they meet; too timid and every tile carries points nobody can see.
@@ -49,7 +49,7 @@ void check(bool condition, const std::string& what)
     }
 }
 
-// docs/map.md's anchor: Irvine, which the existing archive carries at
+// docs/nodes/map_server.md's anchor: Irvine, which the existing archive carries at
 // z14/2828/6562.
 constexpr std::int32_t kIrvineLat = 336865966;
 constexpr std::int32_t kIrvineLon = -1178557874;
@@ -183,7 +183,7 @@ void test_a_feature_lands_in_the_tile_the_rest_of_the_stack_expects()
         return;
     }
 
-    // z14/2828/6562, in XYZ -- the tile docs/map.md names and libs/mvt pulls
+    // z14/2828/6562, in XYZ -- the tile docs/nodes/map_server.md names and libs/mvt pulls
     // out of the real archive.
     auto tile = archive->tile(14, 2828, 6562);
     check(tile.has_value() && tile->has_value(),
@@ -315,7 +315,7 @@ void test_a_tile_decodes_with_the_attributes_a_style_reads()
 // carried into Tiler::Prepared and then, for a long time, dropped on the floor:
 // two fields populated for 11.7 M features and never written to a tag.
 //
-// docs/map_build.md cites "no oneway, no maxspeed" as a reason tilemaker was
+// docs/tools/map_build.md cites "no oneway, no maxspeed" as a reason tilemaker was
 // replaced, so the claim was untrue in the direction that flatters us.
 void test_the_posted_speed_limit_reaches_the_tile()
 {

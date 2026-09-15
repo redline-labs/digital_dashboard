@@ -1,7 +1,7 @@
 @0x872e12aeddb4c406;
 
 # A display module's backlight and the sensors on the module, as published by
-# nodes/backlight from what the rootfs bound at boot. See docs/backlight.md.
+# nodes/backlight from what the rootfs bound at boot. See docs/nodes/backlight.md.
 #
 # Topics hang off the node's prefix, nodes/backlight/<role> by default:
 #   <prefix>/status          DisplayBacklightStatus, every poll period

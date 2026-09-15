@@ -8,7 +8,7 @@
 // the bridge to share its publishers would couple a mock to the shape of the
 // real node's internals. The price is that the two can drift -- a field this
 // forgets to set, or sets differently, is silent, because capnp reads a
-// half-filled message as zeroes rather than as an error. docs/bd992.md's
+// half-filled message as zeroes rather than as an error. docs/nodes/bd992_bridge.md's
 // key/schema table is the reference, and `inspect echo` against both is how a
 // divergence gets noticed.
 //

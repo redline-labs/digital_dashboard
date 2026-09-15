@@ -18,7 +18,7 @@ using Tiles = import "map_tiles.capnp";
 #
 # Nothing in the dashboard consumes the lap-shaped half of this yet. It is on
 # the wire now so that whatever eventually does is not blocked behind a
-# re-ingest and a schema change -- see docs/tracks.md.
+# re-ingest and a schema change -- see docs/tools/tracks.md.
 
 # Why a track has no usable centreline.
 #

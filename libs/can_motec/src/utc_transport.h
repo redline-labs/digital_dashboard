@@ -16,7 +16,7 @@
 //
 // The UDP path is not incidental: it is the only one that can be exercised
 // without a dongle, and it is what the session sequence in utc_backend.cpp was
-// developed against. See docs/motec_utc.md.
+// developed against. See docs/libs/can_motec.md.
 #ifndef CAN_MOTEC_UTC_TRANSPORT_H
 #define CAN_MOTEC_UTC_TRANSPORT_H
 

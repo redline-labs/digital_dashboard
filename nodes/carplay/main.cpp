@@ -6,7 +6,7 @@
 //
 // Ported from the LIVI project (https://github.com/f-io/LIVI, GPL-3.0-or-later).
 //
-// See docs/carplay_bringup.md for the hardware bring-up procedure. Until the
+// See docs/nodes/carplay.md for the hardware bring-up procedure. Until the
 // USB pipeline is verified on a Linux host, --simulate exercises the whole
 // dashboard side without any hardware.
 
@@ -64,7 +64,7 @@ int main(int argc, char** argv)
         ("sim-width", "Simulated video width", cxxopts::value<int>()->default_value("800"))
         ("sim-height", "Simulated video height", cxxopts::value<int>()->default_value("600"))
         ("sim-fps", "Simulated video frame rate", cxxopts::value<int>()->default_value("30"))
-        ("max-stage", "Highest docs/carplay_bringup.md stage to attempt (2-7)",
+        ("max-stage", "Highest docs/nodes/carplay.md stage to attempt (2-7)",
          cxxopts::value<int>()->default_value("7"))
         ("iap2-allow-missing-mfi",
          "Continue iAP2 identification without the MFi coprocessor (CarPlay will not start)")
@@ -202,7 +202,7 @@ int main(int argc, char** argv)
     const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, &g_recording);
     if (!usb_ok)
     {
-        SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/carplay_bringup.md");
+        SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/nodes/carplay.md");
     }
 
     // Stages 5+ (iAP2/MFi, NCM, AirPlay) are not wired up yet; the pipeline

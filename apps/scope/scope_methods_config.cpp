@@ -282,7 +282,7 @@ void registerConfigMethods(const FlushedRegistrar& registerFlushed, ScopeWindow&
     });
 
     // The historical name for the time-series half of scope.stats, kept because
-    // docs/scope.md and AGENTS.md both point at it as the first thing to reach
+    // docs/apps/scope.md and AGENTS.md both point at it as the first thing to reach
     // for and existing loops use it.
     //
     // Its OUTPUT IS UNCHANGED, including that t_first/t_last/min/max/last are

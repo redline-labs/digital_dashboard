@@ -5,7 +5,7 @@
 // Everything the map draws comes from nodes/map_server over zenoh. There is no
 // URL here and no style document: the tiles are asked for by tileset name and
 // z/x/y, and the look is the nested MapStyle_t, which the editor's properties
-// panel edits like any other field. See docs/map.md.
+// panel edits like any other field. See docs/nodes/map_server.md.
 //
 // The default centre is Irvine, CA, because the archive on the bench covers
 // Southern California and a map widget that opens on null island looks broken

@@ -10,7 +10,7 @@
 # Where the radio is, in its own terms.
 #
 # Zone and channel are the radio's indices, not names. Names live in the
-# codeplug, which this build deliberately does not read -- see docs/xpr.md.
+# codeplug, which this build deliberately does not read -- see docs/nodes/xpr_bridge.md.
 struct XprChannel {
   zone @0 :UInt16;
   channel @1 :UInt16;

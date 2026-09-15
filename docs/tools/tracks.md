@@ -1,3 +1,9 @@
+---
+title: tracks
+parent: Tools
+redirect_from: /tracks.html
+---
+
 # Race tracks
 
 994 tracks, worldwide — circuits and point-to-point courses — in a 42 MB file
@@ -247,7 +253,7 @@ eventually does is not blocked behind a re-ingest.
 "Willow Springs"` fetches the centreline and drives a car round it, publishing
 the GNSS topics as it goes. It uses the geometry rather than the distances, and
 `--check` reports the derived length against the catalogue's own as a
-cross-check — see [bd992.md](bd992.md).
+cross-check — see [bd992.md](../nodes/bd992_bridge.md).
 
 ## Drawing it
 

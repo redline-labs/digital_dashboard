@@ -1,13 +1,33 @@
-title: Digital Dashboard
-description: Instrument cluster widgets, CarPlay, and more.
-remote_theme: just-the-docs/just-the-docs
+title: Redline Digital Dash
+description: An open, hackable instrument cluster for vehicles, and the nodes and libraries behind it.
+url: https://dashboard-docs.redline-labs.com
+# Pinned: an unpinned remote_theme tracks the theme's main branch, so the site
+# could change shape on a push that touched no docs.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
 markdown: kramdown
 plugins:
-  - jekyll-feed
   - jekyll-remote-theme
+  - jekyll-redirect-from
+
+aux_links:
+  Source on GitHub: https://github.com/redline-labs/digital_dashboard
+
+# Short standalone tips and gotchas use these; anything longer gets a heading.
+callouts:
+  note:
+    title: Note
+    color: blue
+  tip:
+    title: Tip
+    color: green
+  warning:
+    title: Warning
+    color: yellow
+  important:
+    title: Important
+    color: red
 
 exclude:
   - Gemfile
   - Gemfile.lock
-
-
+  - README.md

@@ -1,3 +1,9 @@
+---
+title: bd992_bridge
+parent: Nodes
+redirect_from: /bd992.html
+---
+
 # Trimble BD992
 
 A GNSS receiver on the vehicle's Ethernet, publishing GSOF records as Cap'n

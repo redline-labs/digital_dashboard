@@ -54,7 +54,7 @@ public:
         return unsupported(fmt::format(
             "a MoTeC UTC's bit rate cannot be set over this protocol -- the Set command's "
             "register map is not known. The device runs at whatever MoTeC's own tool last "
-            "configured it for; set it to {} there. See docs/motec_utc.md",
+            "configured it for; set it to {} there. See docs/libs/can_motec.md",
             bitrate.toString()));
     }
 
@@ -492,7 +492,7 @@ Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions
             return protocol_error(fmt::format(
                 "the gateway is latched and the management tag refused to clear it (status "
                 "0x{:02X}). Unplug the dongle and plug it back in -- nothing else resets it; "
-                "see docs/motec_utc.md",
+                "see docs/libs/can_motec.md",
                 cleared->status().value_or(0xFF)));
         }
 

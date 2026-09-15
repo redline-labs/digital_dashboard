@@ -1,3 +1,9 @@
+---
+title: xpr_bridge
+parent: Nodes
+redirect_from: /xpr.html
+---
+
 # Motorola MOTOTRBO
 
 A handheld or mobile radio on the vehicle's USB, publishing what it is doing

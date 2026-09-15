@@ -96,7 +96,7 @@ inline constexpr std::array<std::uint8_t, 16> kFirmwareRevReply {
 //
 // THIS IS THE ONLY VENDOR EVIDENCE FOR THE OUTPUT-CONFIGURATION ENTRY LAYOUT.
 // Everything else about SetOutputConfiguration rests on the LLCP's tables, and
-// docs/mti610.md lists it as deferred to hardware. This much -- that an entry
+// docs/nodes/mti610_bridge.md lists it as deferred to hardware. This much -- that an entry
 // is a big-endian identifier followed by a big-endian frequency, four bytes,
 // and that a reply's length is a whole number of them -- is now settled.
 inline constexpr std::array<std::uint8_t, 9> kOutputConfigAckReply {

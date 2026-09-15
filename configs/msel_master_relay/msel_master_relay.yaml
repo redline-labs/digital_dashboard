@@ -9,7 +9,7 @@
 #     ./build/nodes/msel_master_relay/msel_master_relay \
 #         --config configs/msel_master_relay/msel_master_relay.yaml
 #
-# See docs/msel_master_relay.md for what the settings services do, and for the
+# See docs/nodes/msel_master_relay.md for what the settings services do, and for the
 # one thing that cannot be done from here: every configuration change needs a
 # human holding the external kill switch on the relay while the command is sent.
 

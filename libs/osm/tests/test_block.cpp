@@ -34,7 +34,7 @@ void check(bool condition, const std::string& what)
 }
 
 // Irvine, the anchor this whole map stack is tested against: the same point
-// libs/mvt pulls out of the real archive and the same tile docs/map.md names.
+// libs/mvt pulls out of the real archive and the same tile docs/nodes/map_server.md names.
 constexpr std::int64_t kIrvineLat = 336865966;
 constexpr std::int64_t kIrvineLon = -1178557874;
 

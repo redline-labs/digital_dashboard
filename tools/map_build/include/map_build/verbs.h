@@ -18,7 +18,7 @@ namespace map_build
 //
 // The fastest way to find out whether a file is what you think it is, and the
 // only place the dangling-reference split is visible. Modelled on
-// map_server's --check, which docs/map.md calls the fastest way to find out
+// map_server's --check, which docs/nodes/map_server.md calls the fastest way to find out
 // whether a path is right.
 void addVerifyOptions(cxxopts::Options& options);
 int runVerify(cli::Context& context);

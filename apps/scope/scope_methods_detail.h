@@ -5,7 +5,7 @@
 // files rather than under include/scope/, because nothing outside them may
 // depend on it. registerScopeMethods() (scope_methods.cpp) is the public face;
 // the verbs themselves are registered by one file per area, mirroring the
-// grouping docs/scope.md documents:
+// grouping docs/apps/scope.md documents:
 //
 //   scope_methods_panels.cpp  -- composition: panels, signals, the browser
 //   scope_methods_time.cpp    -- the shared clock: time_base, density

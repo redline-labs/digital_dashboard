@@ -9,7 +9,7 @@
 // Which physical display a window belongs on. These are the rootfs's role names:
 // fixed aliases for port pairs on the housing, published per boot as
 // REDLINE_DISPLAY_<ROLE>_CONNECTOR by redline-display. Off the target nothing
-// publishes them and the role is ignored. See docs/displays.md.
+// publishes them and the role is ignored. See docs/apps/dashboard/windows.md.
 REFLECT_ENUM(display_role_t, primary, secondary)
 
 // How a window's design size meets the display it is bound to. `fit` scales

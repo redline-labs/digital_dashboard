@@ -606,7 +606,7 @@ bool buildTrackPath(const ServicesConfig& services, const TrackOptions& options,
         // corpus has no centreline, and the catalogue says why.
         report.error = "track '" + chosen.id + "' (" + chosen.name +
                        ") has no centreline to drive: " + toString(chosen.quality) +
-                       ". See docs/tracks.md.";
+                       ". See docs/tools/tracks.md.";
         return false;
     }
 
@@ -733,7 +733,7 @@ bool buildTrackPath(const ServicesConfig& services, const TrackOptions& options,
 
     if (!path.closed)
     {
-        // docs/tracks.md: the two folds of an open centreline are
+        // docs/tools/tracks.md: the two folds of an open centreline are
         // interchangeable, so index zero is not "the start of the course" --
         // it is just an end. Say which way we are going rather than implying
         // the data knows.

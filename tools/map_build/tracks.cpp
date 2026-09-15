@@ -675,7 +675,7 @@ int runTracks(cli::Context& context)
         //
         // The catalogue row is kept, with its quality verdict, so the track is
         // diagnosable rather than silently missing. Corruption confirmed
-        // upstream in the source vectors; see docs/tracks.md.
+        // upstream in the source vectors; see docs/tools/tracks.md.
         if (t.derived.quality == track::Quality::MultipleLoops)
         {
             ++suppressed;

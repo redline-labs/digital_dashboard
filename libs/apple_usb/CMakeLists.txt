@@ -96,7 +96,7 @@ target_link_libraries(apple_usb_muxctl PRIVATE
 # thing to run when hardware finally shows up: it exercises the whole libusb
 # discovery path -- port paths, configuration descriptors, interface classes,
 # endpoints, CDC functional descriptors -- without claiming anything or
-# changing any state on the phone. See docs/carplay_bringup.md stage 1.
+# changing any state on the phone. See docs/nodes/carplay.md stage 1.
 add_executable(apple_usb_usbprobe usbprobe.cpp)
 target_link_libraries(apple_usb_usbprobe PRIVATE
     apple_usb

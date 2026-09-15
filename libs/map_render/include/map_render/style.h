@@ -14,12 +14,12 @@
 // that you cannot drop in someone else's style.
 //
 // The field names are OpenMapTiles layer and class names, because that is the
-// schema the archive is built to. See docs/map.md.
+// schema the archive is built to. See docs/nodes/map_server.md.
 //
 // WHAT IS NOT HERE, and cannot be: the archive decides which features exist at
 // which zoom, and no setting can add back what tilemaker dropped. Lowering
 // `detail.building` below the archive's own z13 draws nothing extra. The
-// thresholds here can only ever be stricter than the data; docs/map.md has the
+// thresholds here can only ever be stricter than the data; docs/nodes/map_server.md has the
 // measured table.
 #ifndef MAP_STYLE_H
 #define MAP_STYLE_H

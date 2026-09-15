@@ -3,7 +3,7 @@
 // An offline map, with the vehicle on it.
 //
 // Everything it draws comes from nodes/map_server over zenoh: no HTTP, and no
-// off-the-shelf map widget. See docs/map.md.
+// off-the-shelf map widget. See docs/nodes/map_server.md.
 //
 // THIS CLASS NO LONGER DRAWS THE MAP. It drives one: paintEvent works out the
 // camera, asks for the tiles, lays out the labels and hands the result to a

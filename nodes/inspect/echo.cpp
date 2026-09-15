@@ -62,7 +62,7 @@ void addEchoOptions(cxxopts::Options& options)
         ("hex", "Always hex-dump, never decode.",
             cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
 
-    // So `inspect echo vehicle/engine/rpm` works. docs/carplay_bringup.md has
+    // So `inspect echo vehicle/engine/rpm` works. docs/nodes/carplay.md has
     // documented that form for a long time; no verb actually accepted it, and
     // the key was silently dropped into unmatched().
     options.parse_positional({"key"});

@@ -14,7 +14,7 @@
 //
 // Written to the platform's per-user config location (see settingsPath), not
 // to configs/. Nothing in this tree used QStandardPaths before this; the
-// resolved paths are printed in docs/scope.md so there is one place to look
+// resolved paths are printed in docs/apps/scope.md so there is one place to look
 // when a setting appears not to stick.
 #include "config_codec/config_validation.h"
 #include "config_codec/config_yaml.h"

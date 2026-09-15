@@ -77,10 +77,10 @@ void logAvailability(const iap2::csm::Message& message, const iap2::CarPlayAvail
         // proper one-byte boolean. Kept as a loud warning because the failure
         // it causes is otherwise silent: availability decodes as absent and
         // CarPlayStartSession is simply never sent. See
-        // docs/carplay_bringup.md if this ever fires.
+        // docs/nodes/carplay.md if this ever fires.
         SPDLOG_WARN("[iap2] CarPlayAvailability wired parameter is ZERO LENGTH -- decoded as "
                     "absent, so CarPlayStartSession will be skipped and the session will "
-                    "never start. See docs/carplay_bringup.md.");
+                    "never start. See docs/nodes/carplay.md.");
     }
 
     SPDLOG_INFO("[iap2] CarPlayAvailability: has_wired={} wired_available={} usb_transport_id={}",

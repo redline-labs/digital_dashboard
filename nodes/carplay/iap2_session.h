@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Stage 5 of docs/carplay_bringup.md: the iAP2 link layer, accessory
+// Stage 5 of docs/nodes/carplay.md: the iAP2 link layer, accessory
 // identification, and MFi authentication, carried over the lockdown/carkit TLS
 // channel established in stage 4.
 #ifndef CARPLAY_IAP2_SESSION_H_

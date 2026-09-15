@@ -59,7 +59,7 @@ std::filesystem::path extractPath()
     return "/Users/ryan/Documents/map_data/socal-260813.osm.pbf";
 }
 
-// The anchor, in 1e-7 degrees. docs/map.md's Irvine, z14/2828/6562.
+// The anchor, in 1e-7 degrees. docs/nodes/map_server.md's Irvine, z14/2828/6562.
 constexpr osm::Coord kIrvineLat = 336865966;
 constexpr osm::Coord kIrvineLon = -1178557874;
 

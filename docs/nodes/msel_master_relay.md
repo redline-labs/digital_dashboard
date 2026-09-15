@@ -1,3 +1,9 @@
+---
+title: msel_master_relay
+parent: Nodes
+redirect_from: /msel_master_relay.html
+---
+
 # msel_master_relay — the MSEL solid state battery isolator
 
 The MSEL Master Relay is a solid state battery isolator that reports over CAN.

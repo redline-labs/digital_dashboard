@@ -426,7 +426,7 @@ struct PacketCounter
 // 0xFFFFFFFF and the 10/100-series exactly one day (864000000 ticks) and says
 // nothing about the 600s. So the ticks are reported raw and unwrapping is left
 // to a consumer that knows which assumption it wants to make. See
-// docs/mti610.md.
+// docs/nodes/mti610_bridge.md.
 struct SampleTimeFine
 {
     static constexpr DataId kId = DataId::SampleTimeFine;

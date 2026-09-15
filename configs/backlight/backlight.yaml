@@ -5,7 +5,7 @@
 # On the target this runs as redline-node@backlight, with
 # /opt/redline/nodes/backlight.args holding REDLINE_NODE_ARGS=--config <this file>.
 # With no display module in the slot there is no record, and the node says so
-# and exits cleanly. See docs/backlight.md.
+# and exits cleanly. See docs/nodes/backlight.md.
 
 # Which display: names the record redline-display-setup writes per boot.
 role: primary

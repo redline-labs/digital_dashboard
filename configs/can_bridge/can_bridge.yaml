@@ -18,7 +18,7 @@
 #     sudo cp nodes/can_bridge/udev/99-can-usb.rules /etc/udev/rules.d/
 #     sudo udevadm control --reload-rules && sudo udevadm trigger
 #
-# See "Access" in docs/motec_utc.md.
+# See "Access" in docs/libs/can_motec.md.
 
 # One entry per CAN bus.
 channels:
@@ -49,7 +49,7 @@ channels:
 
     # A MoTeC UTC IGNORES the bit rate below -- it runs at whatever MoTeC's own
     # tool configured, and the protocol has no command to change or read it. The
-    # node warns at startup; see docs/motec_utc.md.
+    # node warns at startup; see docs/libs/can_motec.md.
 
     # CAN FD data-phase rate. Omit, or set 0, for classic CAN -- eight bytes
     # maximum and no bit-rate switching. Setting it asks the adapter for FD,
@@ -82,7 +82,7 @@ channels:
     # Do not shrink this for a motec: channel. That device hands over records
     # in batches -- around 60 at once on a busy bus -- and the whole batch is
     # queued before anything drains it, so a depth below the batch size drops
-    # frames even on a quiet bus. See docs/motec_utc.md.
+    # frames even on a quiet bus. See docs/libs/can_motec.md.
     # rx_queue_depth: 8192
 
     # publish_rx: false turns off publishing entirely -- for a channel that

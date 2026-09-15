@@ -1,3 +1,10 @@
+---
+title: Windows and displays
+parent: dashboard
+grand_parent: Apps
+redirect_from: /displays.html
+---
+
 # Windows and displays
 
 One dashboard config can open several windows. Each window has a design size and
@@ -72,7 +79,7 @@ REDLINE_DISPLAY_PRIMARY_MODE=1920x720
   `/etc/redline/display.conf` (`primary = i2c-11:0x0c HDMI-A-2`,
   `secondary = i2c-12:0x0c HDMI-A-1`). They are never inferred.
 - The per-display records in `/run/redline/displays/<role>` are read by
-  [the backlight node](backlight.md). The dashboard reads only the environment.
+  [the backlight node](../../nodes/backlight.md). The dashboard reads only the environment.
 
 ## How a window is placed
 
@@ -137,7 +144,7 @@ The editor holds the whole document and shows one window at a time.
 The agent interface has the same operations: `editor.windows`,
 `editor.select_window`, `editor.add_window` and `editor.remove_window`. Every
 other editor verb acts on the window being shown. See
-[agent_control.md](agent_control.md).
+[agent_control.md](../../developing/agent-control.md).
 
 ## Still to do on the target
 

@@ -35,7 +35,7 @@
 //   known and one of them is presumably RTR; guessing would put a data frame
 //   on the bus where a request was meant.
 //
-// See docs/motec_utc.md for the protocol, its provenance, and what would be
+// See docs/libs/can_motec.md for the protocol, its provenance, and what would be
 // needed to close each gap.
 #ifndef CAN_MOTEC_UTC_BACKEND_H
 #define CAN_MOTEC_UTC_BACKEND_H

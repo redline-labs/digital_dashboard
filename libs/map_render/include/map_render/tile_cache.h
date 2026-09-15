@@ -60,7 +60,7 @@ class TileCache
     // the drive went. The byte bound alone would let a city of tiny tiles grow
     // the map itself without limit.
     // The byte figure is set against what a dense tile actually weighs.
-    // docs/map.md measures four z14 tiles at 96 822 vertices, so ~24k each,
+    // docs/nodes/map_server.md measures four z14 tiles at 96 822 vertices, so ~24k each,
     // which is ~865 kB of MapVertex before the decoded features are counted --
     // call it 1.5 MB for downtown. 256 of those is nearly 400 MB, which is what
     // the count bound alone was quietly permitting.

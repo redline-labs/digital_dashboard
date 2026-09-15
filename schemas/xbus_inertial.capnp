@@ -8,7 +8,7 @@ using Common = import "xbus_common.capnp";
 # AXIS CONVENTION IS THE DEVICE'S OWN and is NOT verified. No MTi has been on
 # the bench, so which way x points relative to the housing, and the sign of a
 # rotation about it, are taken from the datasheet and nothing else. It is on
-# the hardware list in docs/mti610.md, and it is the kind of thing that is
+# the hardware list in docs/nodes/mti610_bridge.md, and it is the kind of thing that is
 # obvious in thirty seconds with a device and invisible without one.
 
 # XDI 0x4020. Calibrated acceleration.

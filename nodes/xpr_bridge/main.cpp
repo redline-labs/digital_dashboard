@@ -9,7 +9,7 @@
 // thing worth changing -- the channel.
 //
 // WHAT IT DELIBERATELY DOES NOT DO. It does not read the codeplug, it never
-// keys the transmitter, and it sends no RF tuning command. See docs/xpr.md.
+// keys the transmitter, and it sends no RF tuning command. See docs/nodes/xpr_bridge.md.
 //
 // Modes:
 //   --probe    connect, print identity and channel, exit. The first thing to

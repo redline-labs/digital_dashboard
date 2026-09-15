@@ -4,7 +4,7 @@
 #
 # Three services, all query/reply rather than pub/sub, because a map is pulled
 # and not pushed -- a client asks for the handful of tiles under its viewport
-# and nothing else. See docs/map.md.
+# and nothing else. See docs/nodes/map_server.md.
 
 enum MapStatus {
   # Never sent. Present so a default-constructed response is not silently "ok".
@@ -24,7 +24,7 @@ enum MapStatus {
   # or a coordinate that is not a tile at all: z past 22, or x/y outside 2^z.
   # A bug in the client, rather than a fact about the archive.
   badRequest @5;
-  # The server tried and failed. See docs/map.md; this is the one worth a log
+  # The server tried and failed. See docs/nodes/map_server.md; this is the one worth a log
   # line. Named `failed` rather than `error` because capnp generates enumerants
   # in SCREAMING_SNAKE and ERROR is a macro on more platforms than it should be.
   failed @6;

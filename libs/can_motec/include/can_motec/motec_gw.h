@@ -19,7 +19,7 @@
 // list is short but real: the meaning of the Rx subscribe payload, the RTR
 // bit, the upper bits of the flags byte, and the register map behind the Set
 // command -- which is why this backend cannot set a bit rate. See
-// docs/motec_utc.md.
+// docs/libs/can_motec.md.
 //
 // Envelope, indexed from the start of the datagram:
 //

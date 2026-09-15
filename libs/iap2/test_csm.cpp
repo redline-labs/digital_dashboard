@@ -99,7 +99,7 @@ int main()
                "a header-only parameter is legal");
     }
 
-    // Zero-length booleans. docs/carplay_bringup.md calls this out as a
+    // Zero-length booleans. docs/nodes/carplay.md calls this out as a
     // hardware suspect: the iAP2 spec allows presence to mean true, and we
     // follow LIVI in treating it as absent instead. If a phone ever does send
     // one, CarPlayAvailability reads falsy and the session silently never

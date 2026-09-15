@@ -33,7 +33,7 @@ namespace
 // go. macOS has no such thing: it *captures the whole device* at once
 // (kUSBReEnumerateCaptureDeviceMask), and it needs either root or the
 // com.apple.vm.device-access entitlement, which Apple grants to virtualization
-// vendors and not to us. Root it is -- see docs/carplay_bringup.md.
+// vendors and not to us. Root it is -- see docs/nodes/carplay.md.
 //
 // Three consequences worth having written down, because all three are load
 // bearing and none is obvious from the libusb API:

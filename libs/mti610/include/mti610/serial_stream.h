@@ -47,7 +47,7 @@ namespace mti610
 // (LLCP Table 7, where 115200 is 0x02 and 921600 is 0x80) and is not used
 // here: this library never changes the device's baud rate, because doing so
 // needs SetPortConfig, whose word layout the LLCP documents only as an image.
-// See docs/mti610.md.
+// See docs/nodes/mti610_bridge.md.
 //
 // 115200 is the factory default in serial mode.
 bool is_supported_baud(unsigned baud);
