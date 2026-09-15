@@ -216,9 +216,9 @@ uint16_t encodeConfigWord(const Config& config);
 // what actually arrived instead of "unknown".
 struct StatusFrame
 {
-    double voltageOut { 0.0 };           // V, on the output terminal
-    double loadCurrent { 0.0 };          // A, positive when discharging
-    double temperatureInternal { 0.0 };  // degrees C
+    float voltageOut { 0.0f };           // V, on the output terminal
+    float loadCurrent { 0.0f };          // A, positive when discharging
+    float temperatureInternal { 0.0f };  // degrees C
     uint8_t warnings { 0u };             // bitmask of Warning
     uint8_t statusRaw { 0u };
     std::optional<Status> status;
@@ -226,7 +226,7 @@ struct StatusFrame
 
 struct InfoFrame
 {
-    double voltageIn { 0.0 };            // V, on the input (battery) terminal
+    float voltageIn { 0.0f };            // V, on the input (battery) terminal
     uint16_t serialNo { 0u };
     Config config;
     std::chrono::milliseconds timeSinceShutdown { 0 };

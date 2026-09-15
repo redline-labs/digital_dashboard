@@ -56,7 +56,7 @@ int main(int argc, char** argv)
 
     using namespace dbc_megasquirt_dash_data;
 
-    double t = 0.0;
+    float t = 0.0f;
     const auto frame_period = 50ms;
     const auto inter_frame_delay = 5ms; // between messages
 
@@ -67,10 +67,10 @@ int main(int argc, char** argv)
         // dash0
         {
             megasquirt_dash0_t m{};
-            m.tps = static_cast<double>(50.0 + 30.0 * std::sin(t));
-            m.clt = static_cast<double>(190.0 + 10.0 * std::sin(t * 0.2)); // F
-            m.rpm = static_cast<uint64_t>(1500 + 500 * std::sin(t * 0.5));
-            m.map = static_cast<double>(100.0 + 20.0 * std::sin(t * 0.3));  // kPa
+            m.tps = 50.0f + 30.0f * std::sin(t);
+            m.clt = 190.0f + 10.0f * std::sin(t * 0.2f); // F
+            m.rpm = static_cast<uint16_t>(1500.0f + 500.0f * std::sin(t * 0.5f));
+            m.map = 100.0f + 20.0f * std::sin(t * 0.3f);  // kPa
             set_payload(pub, megasquirt_dash0_t::id, m.encode());
             pub.put();
         }
@@ -79,10 +79,10 @@ int main(int argc, char** argv)
         // dash1
         {
             megasquirt_dash1_t m{};
-            m.adv_deg = static_cast<double>(10.0 + 5.0 * std::sin(t * 0.4));
-            m.mat = static_cast<double>(100.0 + 10.0 * std::sin(t * 0.25)); // F
-            m.pw2 = static_cast<double>(3.0 + 0.5 * std::sin(t * 0.6));
-            m.pw1 = static_cast<double>(3.0 + 0.5 * std::cos(t * 0.6));
+            m.adv_deg = 10.0f + 5.0f * std::sin(t * 0.4f);
+            m.mat = 100.0f + 10.0f * std::sin(t * 0.25f); // F
+            m.pw2 = 3.0f + 0.5f * std::sin(t * 0.6f);
+            m.pw1 = 3.0f + 0.5f * std::cos(t * 0.6f);
             set_payload(pub, megasquirt_dash1_t::id, m.encode());
             pub.put();
         }
@@ -91,11 +91,13 @@ int main(int argc, char** argv)
         // dash2
         {
             megasquirt_dash2_t m{};
-            m.pwseq1 = static_cast<double>(2.0 + 0.2 * std::sin(t * 0.8));
-            m.egt1 = static_cast<double>(1200.0 + 50.0 * std::sin(t * 0.15)); // F
-            m.egocor1 = static_cast<double>(100.0 + 2.0 * std::sin(t * 0.7)); // %
-            m.AFR1 = static_cast<uint64_t>(static_cast<uint64_t>(140 + 2 * std::sin(t * 0.33))); // 14.0 ..
-            m.afrtgt1 = static_cast<uint64_t>(145); // 14.5 target
+            m.pwseq1 = 2.0f + 0.2f * std::sin(t * 0.8f);
+            m.egt1 = 1200.0f + 50.0f * std::sin(t * 0.15f); // F
+            m.egocor1 = 100.0f + 2.0f * std::sin(t * 0.7f); // %
+            // Physical units. These were raw-looking 140 and 145, which a 0.1 scale
+            // saturated to 25.5.
+            m.AFR1 = 14.0f + 0.2f * std::sin(t * 0.33f);
+            m.afrtgt1 = 14.5f;
             set_payload(pub, megasquirt_dash2_t::id, m.encode());
             pub.put();
         }
@@ -104,10 +106,10 @@ int main(int argc, char** argv)
         // dash3
         {
             megasquirt_dash3_t m{};
-            m.knk_rtd = static_cast<double>(0.0);
-            m.sensors2 = static_cast<double>(1.23 + 0.1 * std::sin(t));
-            m.sensors1 = static_cast<double>(2.34 + 0.1 * std::cos(t));
-            m.batt = static_cast<double>(13.8 + 0.2 * std::sin(t * 0.5));
+            m.knk_rtd = 0.0f;
+            m.sensors2 = 1.23f + 0.1f * std::sin(t);
+            m.sensors1 = 2.34f + 0.1f * std::cos(t);
+            m.batt = 13.8f + 0.2f * std::sin(t * 0.5f);
             set_payload(pub, megasquirt_dash3_t::id, m.encode());
             pub.put();
         }
@@ -116,9 +118,9 @@ int main(int argc, char** argv)
         // dash4
         {
             megasquirt_dash4_t m{};
-            m.launch_timing = static_cast<double>(0.0);
-            m.tc_retard = static_cast<double>(0.0);
-            m.VSS1 = static_cast<double>(10.0 + 2.0 * std::sin(t * 0.9)); // m/s
+            m.launch_timing = 0.0f;
+            m.tc_retard = 0.0f;
+            m.VSS1 = 10.0f + 2.0f * std::sin(t * 0.9f); // m/s
             set_payload(pub, megasquirt_dash4_t::id, m.encode());
             pub.put();
         }
@@ -130,7 +132,7 @@ int main(int argc, char** argv)
             std::this_thread::sleep_for(frame_period - elapsed);
         }
 
-        t += 0.05;
+        t += 0.05f;
     }
 
     return 0;

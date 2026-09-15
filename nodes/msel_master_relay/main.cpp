@@ -358,9 +358,9 @@ int main(int argc, char** argv)
         out.setDriverKill((frame.warnings & static_cast<uint8_t>(msel::Warning::DriverSwitchKill)) != 0u);
         out.setExternalKill((frame.warnings & static_cast<uint8_t>(msel::Warning::ExternalSwitchKill)) != 0u);
         out.setCanKill((frame.warnings & static_cast<uint8_t>(msel::Warning::CanTriggerKill)) != 0u);
-        out.setTemperatureInternal(static_cast<float>(frame.temperatureInternal));
-        out.setLoadCurrent(static_cast<float>(frame.loadCurrent));
-        out.setVoltageOut(static_cast<float>(frame.voltageOut));
+        out.setTemperatureInternal(frame.temperatureInternal);
+        out.setLoadCurrent(frame.loadCurrent);
+        out.setVoltageOut(frame.voltageOut);
         statusPublisher.put();
     };
 
@@ -378,7 +378,7 @@ int main(int argc, char** argv)
         out.setConfigCanBaud(frame.config.baudRaw);
         out.setConfigOutputDrive(frame.config.outputDriveRaw);
         out.setSerialNo(frame.serialNo);
-        out.setVoltageIn(static_cast<float>(frame.voltageIn));
+        out.setVoltageIn(frame.voltageIn);
         infoPublisher.put();
 
         fillConfig(frame.config, configPublisher.fields());

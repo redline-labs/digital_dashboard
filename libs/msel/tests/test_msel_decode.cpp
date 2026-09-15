@@ -30,6 +30,7 @@
 
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -540,11 +541,11 @@ void test_dbc_agrees_with_the_hand_written_config_word()
         }
 
         const auto mine = msel::decodeConfigWord(word);
-        const auto dbcCanKill = static_cast<uint8_t>(static_cast<int64_t>(msg.config_CAN_kill));
-        const auto dbcBaud = static_cast<uint8_t>(static_cast<int64_t>(msg.config_CAN_baud));
-        const auto dbcDrive = static_cast<uint8_t>(static_cast<int64_t>(msg.config_output_drive));
+        const auto dbcCanKill = std::to_underlying(msg.config_CAN_kill);
+        const auto dbcBaud = std::to_underlying(msg.config_CAN_baud);
+        const auto dbcDrive = std::to_underlying(msg.config_output_drive);
         const auto dbcDelay =
-            std::chrono::milliseconds { std::llround(msg.config_shutdown_delay * 10.0) * 100 };
+            std::chrono::milliseconds { std::llround(msg.config_shutdown_delay * 10.0f) * 100 };
 
         if (dbcCanKill != mine.canKillRaw || dbcBaud != mine.baudRaw ||
             dbcDrive != mine.outputDriveRaw || dbcDelay != mine.shutdownDelay)

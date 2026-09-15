@@ -3,6 +3,7 @@
 #include "msel/decoder.h"
 
 #include <cmath>
+#include <utility>
 
 #include "dbc_msel_master_relay.h"
 
@@ -14,12 +15,12 @@ namespace
 
 namespace dbc = dbc_msel_master_relay;
 
-// The DBC carries these as scaled doubles, but they are whole tenths on the
+// The DBC carries these as scaled floats, but they are whole tenths on the
 // wire. Recovering the tenth and multiplying up avoids handing on a duration of
 // 999ms where the device said 1.0 seconds.
-std::chrono::milliseconds tenthsToMilliseconds(double seconds)
+std::chrono::milliseconds tenthsToMilliseconds(float seconds)
 {
-    const auto tenths = std::llround(seconds * 10.0);
+    const auto tenths = std::llround(seconds * 10.0f);
     return std::chrono::milliseconds { tenths * 100 };
 }
 
@@ -33,14 +34,14 @@ uint8_t warningsMaskOf(const dbc::Master_Relay_Status_t& msg)
         }
     };
 
-    set(msg.over_temp_warn != 0u, Warning::OverTemperature);
-    set(msg.over_current_warn != 0u, Warning::OverCurrent);
-    set(msg.low_voltage_warn != 0u, Warning::LowVoltage);
-    set(msg.high_voltage_warn != 0u, Warning::HighVoltage);
-    set(msg.over_temp_kill != 0u, Warning::OverTemperatureKill);
-    set(msg.driver_kill != 0u, Warning::DriverSwitchKill);
-    set(msg.external_kill != 0u, Warning::ExternalSwitchKill);
-    set(msg.CAN_kill != 0u, Warning::CanTriggerKill);
+    set(msg.over_temp_warn, Warning::OverTemperature);
+    set(msg.over_current_warn, Warning::OverCurrent);
+    set(msg.low_voltage_warn, Warning::LowVoltage);
+    set(msg.high_voltage_warn, Warning::HighVoltage);
+    set(msg.over_temp_kill, Warning::OverTemperatureKill);
+    set(msg.driver_kill, Warning::DriverSwitchKill);
+    set(msg.external_kill, Warning::ExternalSwitchKill);
+    set(msg.CAN_kill, Warning::CanTriggerKill);
 
     return mask;
 }
@@ -104,7 +105,7 @@ Decoder::Accepted Decoder::onFrame(const helpers::CanFrame& frame)
         out.loadCurrent = msg.load_current;
         out.temperatureInternal = msg.temperature_internal;
         out.warnings = warningsMaskOf(msg);
-        out.statusRaw = static_cast<uint8_t>(static_cast<int64_t>(msg.status));
+        out.statusRaw = std::to_underlying(msg.status);
         out.status = statusFromRaw(out.statusRaw);
 
         mSnapshot.status = out;
@@ -125,11 +126,11 @@ Decoder::Accepted Decoder::onFrame(const helpers::CanFrame& frame)
 
         InfoFrame out;
         out.voltageIn = msg.voltage_in;
-        out.serialNo = static_cast<uint16_t>(msg.serial_no);
+        out.serialNo = msg.serial_no;
         out.timeSinceShutdown = tenthsToMilliseconds(msg.time_since_shutdown);
-        out.shutdownCauseRaw = static_cast<uint8_t>(static_cast<int64_t>(msg.shutdown_cause));
+        out.shutdownCauseRaw = std::to_underlying(msg.shutdown_cause);
         out.shutdownCause = statusFromRaw(out.shutdownCauseRaw);
-        out.shutdownCause2Raw = static_cast<uint8_t>(static_cast<int64_t>(msg.shutdown_cause_2));
+        out.shutdownCause2Raw = std::to_underlying(msg.shutdown_cause_2);
         out.shutdownCause2 = statusFromRaw(out.shutdownCause2Raw);
 
         // Taken from the raw bytes through decodeConfigWord rather than from
@@ -158,7 +159,7 @@ Decoder::Accepted Decoder::onFrame(const helpers::CanFrame& frame)
         }
 
         SwitchStateFrame out;
-        out.switchStateRaw = static_cast<uint8_t>(msg.current_switch_state);
+        out.switchStateRaw = std::to_underlying(msg.current_switch_state);
         out.switchState = switchStateFromRaw(out.switchStateRaw);
 
         mSnapshot.switchState = out;

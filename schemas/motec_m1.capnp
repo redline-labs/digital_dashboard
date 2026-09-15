@@ -18,11 +18,13 @@ struct MotecM1FuelStatus {
 }
 
 struct MotecM1Temperatures {
-  coolantTempC @0 : Int8;               # Coolant_Temperature (C)
-  engineOilTempC @1 : Int8;             # Engine_Oil_Temperature (C)
-  fuelTempC @2 : Int8;                  # Fuel_Temperature (C)
-  ambientTempC @3 : Int8;               # Ambient_Temperature (C)
-  airboxTempC @4 : Int8;                # Airbox_Temperature (C)
+  # Int16, not Int8: an 8 bit field with a -40 offset reads -40..215 C, and
+  # anything over 127 C used to wrap negative on its way into Int8.
+  coolantTempC @0 : Int16;               # Coolant_Temperature (C)
+  engineOilTempC @1 : Int16;             # Engine_Oil_Temperature (C)
+  fuelTempC @2 : Int16;                  # Fuel_Temperature (C)
+  ambientTempC @3 : Int16;               # Ambient_Temperature (C)
+  airboxTempC @4 : Int16;                # Airbox_Temperature (C)
   ecuBatteryVolts @5 : Float32;         # ECU_Battery_Voltage (V)
   fuelUsedL @6 : Float32;               # Fuel_Used (L)
 }

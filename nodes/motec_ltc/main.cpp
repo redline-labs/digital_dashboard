@@ -20,10 +20,10 @@ static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::Zenoh
     using SensorState = dbc_motec_ltc_rev1::LTC_1_ID1_t::sig_LTC1_SensorState_t::Values;
 
     auto& out = pub.fields();
-    out.setIndex(static_cast<uint8_t>(m.LTC1_Index));
-    out.setLambda(static_cast<float>(m.LTC1_Lambda));
-    out.setIpn(static_cast<float>(m.LTC1_Ipn));
-    out.setInternalTempC(static_cast<float>(m.LTC1_InternalTemp));
+    out.setIndex(m.LTC1_Index);
+    out.setLambda(m.LTC1_Lambda);
+    out.setIpn(m.LTC1_Ipn);
+    out.setInternalTempC(m.LTC1_InternalTemp);
 
     out.setSensorControlFault(static_cast<bool>(m.LTC1_SensorControlFault));
     out.setInternalFault(static_cast<bool>(m.LTC1_InternalFault));
@@ -33,7 +33,7 @@ static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::Zenoh
     out.setHeaterShortToVbatt(static_cast<bool>(m.LTC1_HeaterShorttoVBATT));
     out.setHeaterShortToGnd(static_cast<bool>(m.LTC1_HeaterShorttoGND));
 
-    out.setHeaterDutyCyclePct(static_cast<float>(m.LTC1_HeaterDutyCycle));
+    out.setHeaterDutyCyclePct(m.LTC1_HeaterDutyCycle);
 
     switch (m.LTC1_SensorState)
     {
@@ -86,9 +86,9 @@ static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::Zenoh
             break;
     }
 
-    out.setBattVolts(static_cast<float>(m.LTC1_BattVolts));
-    out.setIp(static_cast<float>(m.LTC1_Ip));
-    out.setRi(static_cast<float>(m.LTC1_Ri));
+    out.setBattVolts(m.LTC1_BattVolts);
+    out.setIp(m.LTC1_Ip);
+    out.setRi(m.LTC1_Ri);
 
     pub.put();
 }
