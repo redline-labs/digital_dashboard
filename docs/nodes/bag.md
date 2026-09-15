@@ -87,6 +87,7 @@ Republishes the recording with its original timing.
 | `-k, --key` | everything | only replay these keys, repeatable |
 | `--remap old=new` | | republish `old` as `new`, repeatable |
 | `--prefix p` | | prepend to every key |
+| `--ignore-schema-change` | | replay messages whose schema has changed since recording; they decode into wrong values |
 
 A replayed topic also declares its liveliness advertisement, so scope's picker
 and `inspect list` see a replay exactly as they see a live publisher, with its

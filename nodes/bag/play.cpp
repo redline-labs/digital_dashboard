@@ -3,6 +3,8 @@
 #include "bag/playback.h"
 #include "bag/reader.h"
 
+#include "pub_sub/schema_layout.h"
+
 #include "cli/interrupt.h"
 #include "cli/output.h"
 
@@ -44,7 +46,10 @@ void addPlayOptions(cxxopts::Options& options)
         ("remap", "Republish 'old' as 'new'. Repeatable.",
             cxxopts::value<std::vector<std::string>>())
         ("prefix", "Prepend this to every key, so a replay does not collide with live nodes.",
-            cxxopts::value<std::string>());
+            cxxopts::value<std::string>())
+        ("ignore-schema-change", "Replay messages whose schema has changed since they were "
+                                 "recorded. They will decode into wrong values.",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
 
     options.parse_positional({"bag"});
 }
@@ -132,6 +137,42 @@ int runPlay(cli::Context& context)
     std::uint64_t published = 0;
     std::uint64_t skipped_unaligned = 0;
     std::uint64_t skipped_bad_key = 0;
+    std::uint64_t skipped_schema_changed = 0;
+
+    // A recording carries the schema it was written against, as data. Comparing
+    // that against this build's is the only way to notice that a field has
+    // moved since: the name is the same, the bytes are not, and a subscriber
+    // would decode them into plausible wrong values -- the M1's temperatures
+    // went from Int8 to Int16 exactly this way.
+    const bool ignore_schema_change = context.flag("ignore-schema-change");
+    std::map<std::string, bool> schema_usable;
+    const auto schemaStillMatches = [&](const std::string& schema_name) {
+        if (schema_name.empty())
+        {
+            return true;
+        }
+        const auto cached = schema_usable.find(schema_name);
+        if (cached != schema_usable.end())
+        {
+            return cached->second;
+        }
+
+        bool usable = true;
+        const std::optional<std::uint64_t> current = pub_sub::layoutHashFor(schema_name);
+        const std::optional<std::uint64_t> recorded =
+            pub_sub::layoutHashOfDescriptor(reader.descriptorFor(schema_name), schema_name);
+        if (current && recorded && *current != *recorded)
+        {
+            usable = ignore_schema_change;
+            SPDLOG_ERROR("'{}' was recorded against a different revision of that schema "
+                         "(recording {:016x}, this build {:016x}). {}",
+                         schema_name, *recorded, *current,
+                         ignore_schema_change ? "Replaying it anyway, as asked."
+                                              : "Skipping it; --ignore-schema-change replays it.");
+        }
+        schema_usable.emplace(schema_name, usable);
+        return usable;
+    };
 
     const bool loop = context.flag("loop");
 
@@ -177,6 +218,12 @@ int runPlay(cli::Context& context)
                     {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
+                }
+
+                if (!schemaStillMatches(std::string(message.schema)))
+                {
+                    ++skipped_schema_changed;
+                    return true;
                 }
 
                 const std::string key = bag::resolvePlaybackKey(message.key, remaps, prefix);

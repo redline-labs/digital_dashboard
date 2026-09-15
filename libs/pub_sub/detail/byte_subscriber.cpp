@@ -3,6 +3,7 @@
 #include <array>
 #include <vector>
 
+#include "pub_sub/schema_layout.h"
 #include "pub_sub/session_manager.h"
 #include "pub_sub/timestamp.h"
 #include "pub_sub/topic_key.h"
@@ -14,6 +15,8 @@
 #include <spdlog/spdlog.h>
 
 #include <memory>
+#include <mutex>
+#include <set>
 #include <utility>
 
 namespace pub_sub::detail
@@ -30,6 +33,27 @@ class ZenohSampleMeta final : public SampleMeta
     explicit ZenohSampleMeta(const zenoh::Sample& sample) : sample_(sample) {}
 
     std::string encoding() const override { return sample_.get_encoding().as_string(); }
+
+    std::optional<std::uint64_t> layout() const override
+    {
+        const auto attachment = sample_.get_attachment();
+        if (!attachment)
+        {
+            return std::nullopt;
+        }
+        const std::vector<std::uint8_t> bytes = attachment->get().as_vector();
+        if (bytes.size() != sizeof(std::uint64_t))
+        {
+            // Someone else's attachment on one of our topics. Not a fingerprint.
+            return std::nullopt;
+        }
+        std::uint64_t value = 0;
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+        {
+            value |= static_cast<std::uint64_t>(bytes[i]) << (i * 8);
+        }
+        return value;
+    }
 
     std::string_view keyexpr() const override { return sample_.get_keyexpr().as_string_view(); }
 
@@ -198,6 +222,43 @@ void warnPartialWordPayload(std::string_view keyexpr, std::size_t bytes)
     SPDLOG_WARN("Key '{}': payload of {} bytes is not a whole number of {}-byte capnp words; "
                 "ignoring this sample.",
                 keyexpr, bytes, sizeof(capnp::word));
+}
+
+bool layoutMatches(std::string_view keyexpr, std::string_view schema_name,
+                   std::optional<std::uint64_t> published)
+{
+    if (!published)
+    {
+        // Nothing stamped: a publisher from a build that predates fingerprints,
+        // or something that is not ours. Decoding it is the old behaviour, and
+        // refusing it here would take those publishers off the bus.
+        return true;
+    }
+
+    const std::optional<std::uint64_t> expected = layoutHashFor(schema_name);
+    if (!expected || *expected == *published)
+    {
+        return true;
+    }
+
+    // Once per key: this is on the sample path of a stream that may run at
+    // hundreds of hertz, and the second line would say nothing the first did
+    // not.
+    static std::mutex mutex;
+    static std::set<std::string> reported;
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        if (!reported.emplace(keyexpr).second)
+        {
+            return false;
+        }
+    }
+
+    SPDLOG_ERROR("Dropping samples on '{}': they are '{}' written against a different revision "
+                 "of that schema (publisher {:016x}, this build {:016x}). Decoding them would "
+                 "produce plausible wrong values; rebuild both sides from the same schemas.",
+                 keyexpr, schema_name, *published, *expected);
+    return false;
 }
 
 }  // namespace pub_sub::detail

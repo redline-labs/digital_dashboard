@@ -30,6 +30,11 @@ class SampleMeta
     // schemaNameFromEncoding() to get the schema half.
     virtual std::string encoding() const = 0;
 
+    // The publisher's schema layout fingerprint, from the sample's attachment.
+    // nullopt when the publisher stamped none, which is every publisher built
+    // before fingerprints existed and anything that is not one of ours.
+    virtual std::optional<std::uint64_t> layout() const = 0;
+
     // The key this sample was actually published on.
     //
     // NOT the same as the subscription's key expression whenever that contains a
@@ -101,6 +106,15 @@ class ByteSubscriber
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// True when a sample may be decoded as `schema_name`: either the publisher
+// stamped no fingerprint (an older build, or something that is not ours), or it
+// stamped the one this build computes for that schema.
+//
+// A mismatch is reported once per key -- a stream at 100 Hz would otherwise
+// fill the log with the same line -- and the sample is dropped by the caller.
+bool layoutMatches(std::string_view keyexpr, std::string_view schema_name,
+                   std::optional<std::uint64_t> published);
 
 // Logs "payload is not a whole number of capnp words" for `keyexpr`.
 //

@@ -86,6 +86,11 @@ class ExpressionEvaluator
     // otherwise churn the log at the sample rate.
     void checkPublishedSchema(std::string_view encoding);
 
+    // The same, plus the publisher's layout fingerprint: the same schema NAME
+    // from a node built against a different revision of it decodes into
+    // plausible wrong numbers, and this is where that is visible.
+    void checkPublishedSchema(std::string_view encoding, std::optional<std::uint64_t> layout);
+
     // Evaluate the expression against one payload.
     //
     // Returns nullopt when this sample produced no usable number -- deliberately

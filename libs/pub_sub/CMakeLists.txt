@@ -14,6 +14,10 @@ add_library(zenoh_pub_sub STATIC
     # once per key and evaluate several expressions per sample.
     expression_evaluator.cpp
 
+    # What a schema's bytes mean, as one number: the guard against a publisher
+    # and a subscriber built from different revisions of the same schema.
+    schema_layout.cpp
+
     # The public way to get raw payloads plus their schema name, for a consumer
     # that decodes them itself.
     raw_subscriber.cpp
@@ -110,6 +114,18 @@ target_link_libraries(pub_sub_test_can_frame PRIVATE
     zenoh_pub_sub
 )
 add_project_test(TARGET pub_sub_test_can_frame LABELS pub_sub unit)
+
+# The schema fingerprint, against the registry compiled into this build: stable,
+# distinct per schema, and the same whether computed from the schema or from a
+# recorded descriptor of it.
+add_executable(pub_sub_test_schema_layout
+    test_schema_layout.cpp
+)
+
+target_link_libraries(pub_sub_test_schema_layout PRIVATE
+    zenoh_pub_sub
+)
+add_project_test(TARGET pub_sub_test_schema_layout LABELS pub_sub unit)
 
 # NTP64 conversion. Pure arithmetic over a header, so `unit` -- and it has to be
 # a test rather than a careful reading, because every way of getting the

@@ -37,6 +37,26 @@ Decoding against the wrong schema does not throw. The field offsets land on
 different bytes and produce a plausible wrong number. The stamp is the only
 defence.
 
+The name says which message this is; it does not say which revision of it.
+Every sample therefore also carries an eight-byte **layout fingerprint** as a
+zenoh attachment: a hash of the compiled schema -- field names, offsets, types,
+and the same for nested structs. A subscriber whose build computes a different
+fingerprint for that name drops the sample and says so once per key, because
+those bytes do not mean what this build thinks they mean. A sample with no
+attachment is decoded as before, so a node built before fingerprints existed
+keeps working.
+
+### Changing a schema
+
+Adding a field to the end is what Cap'n Proto is designed for, and old readers
+ignore it -- but it still changes the fingerprint, so both sides have to be
+rebuilt together before they exchange that message again. Anything else --
+widening a field, reordering a union, changing a list's element type -- changes
+what existing bytes mean, and a recording made before the change decodes into
+wrong values afterwards. `bag play` compares the schema stored in the recording
+against this build's and skips a message whose schema has moved;
+`--ignore-schema-change` replays it anyway.
+
 ## Liveliness
 
 Three key spaces announce what is on the bus, all under a leading `@` segment so

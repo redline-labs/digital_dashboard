@@ -71,7 +71,7 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type,
             }
             // Latched inside the evaluator, so this costs one encoding copy on
             // the first sample and a predicted branch thereafter.
-            impl->evaluator->checkPublishedSchema(meta.encoding());
+            impl->evaluator->checkPublishedSchema(meta.encoding(), meta.layout());
             impl->handler(payload);
         });
 

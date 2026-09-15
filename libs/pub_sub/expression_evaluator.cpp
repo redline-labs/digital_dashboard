@@ -1,5 +1,7 @@
 #include "pub_sub/expression_evaluator.h"
 
+#include "pub_sub/schema_layout.h"
+
 #include "helpers/unit_conversion.h"
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_json.h"
@@ -498,6 +500,31 @@ const std::string& ExpressionEvaluator::getExpression() const
 const std::vector<std::string>& ExpressionEvaluator::variableNames() const
 {
     return impl_->variable_names;
+}
+
+void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding,
+                                              std::optional<std::uint64_t> layout)
+{
+    const bool first = !impl_->schema_checked;
+    checkPublishedSchema(encoding);
+
+    if (!first || !layout)
+    {
+        return;
+    }
+
+    const std::string_view configured =
+        reflection::enum_traits<pub_sub::schema_type_t>::to_string(impl_->schema_type);
+    const std::optional<std::uint64_t> expected = layoutHashFor(configured);
+    if (!expected || *expected == *layout)
+    {
+        return;
+    }
+
+    SPDLOG_ERROR("Key '{}' publishes '{}' written against a different revision of that schema "
+                 "(publisher {:016x}, this build {:016x}). Every value read from it will be "
+                 "wrong; rebuild both sides from the same schemas.",
+                 impl_->log_context, configured, *layout, *expected);
 }
 
 void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding)

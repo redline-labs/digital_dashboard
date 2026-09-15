@@ -74,6 +74,7 @@ RawSubscriber::RawSubscriber(const std::string& keyexpr, InfoHandler on_sample) 
             const SampleInfo info{
                 .keyexpr = meta.keyexpr(),
                 .schema_name = schemaNameFromEncoding(encoding),
+                .layout = meta.layout(),
                 .publish_time_nanos = meta.publishTimeNanos(),
                 .origin_zid = origin_zid,
             };

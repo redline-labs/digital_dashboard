@@ -59,6 +59,8 @@ class RawSubscriber
         // The half after the ';' of "application/capnp;EngineRpm". Empty when
         // the publisher named no schema.
         std::string_view schema_name;
+        // The publisher's schema revision, when it stamped one.
+        std::optional<std::uint64_t> layout;
 
         // When the publisher's session stamped it, nanoseconds since the UNIX
         // epoch. Empty when the sample arrived unstamped, which a consumer must

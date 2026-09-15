@@ -50,7 +50,7 @@ class ZenohTypedSubscriber
     ZenohTypedSubscriber(const std::string& zenoh_key, std::function<void(Reader)> on_message) :
         subscriber_(zenoh_key,
                     [cb = std::move(on_message), key = zenoh_key](
-                        const std::vector<std::uint8_t>& bytes, const detail::SampleMeta&) {
+                        const std::vector<std::uint8_t>& bytes, const detail::SampleMeta& meta) {
                         // A partial word cannot be a message. capnp would read the
                         // short buffer as one whose fields are all default, so a
                         // damaged packet would look like a healthy one reporting
@@ -59,6 +59,15 @@ class ZenohTypedSubscriber
                         if (aligned.empty())
                         {
                             detail::warnPartialWordPayload(key, bytes.size());
+                            return;
+                        }
+
+                        // Written against a different revision of this schema:
+                        // the name matches, the bytes do not mean the same
+                        // thing, and capnp would decode them into plausible
+                        // wrong numbers. Dropped, and said once per key.
+                        if (!detail::layoutMatches(key, schema_traits<SchemaT>::name, meta.layout()))
+                        {
                             return;
                         }
 
