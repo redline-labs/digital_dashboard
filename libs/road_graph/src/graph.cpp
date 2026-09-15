@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <ranges>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 
@@ -186,6 +187,16 @@ Result<void> Graph::bind()
             return malformed(std::string(name) + " section is " + std::to_string(bytes.size()) +
                              " bytes, not a multiple of " + std::to_string(sizeof(T)));
         }
+        // Read in place, so a section that does not start on an 8-byte boundary
+        // would be read through a misaligned pointer. Writers have aligned
+        // every section since format version 2; this is what makes that true
+        // rather than assumed.
+        if ((reinterpret_cast<std::uintptr_t>(bytes.data()) % kSectionAlignment) != 0)
+        {
+            return malformed(std::string(name) + " section is not " +
+                             std::to_string(kSectionAlignment) +
+                             "-byte aligned; rebuild it with tools/map_build");
+        }
         out = { reinterpret_cast<const T*>(bytes.data()), bytes.size() / sizeof(T) };
         return {};
     };
@@ -234,6 +245,12 @@ Result<void> Graph::bind()
             if (bytes.size() % sizeof(TurnRestrictionRecord) != 0)
             {
                 return malformed("turn restriction section is not a multiple of its record size");
+            }
+            if ((reinterpret_cast<std::uintptr_t>(bytes.data()) % kSectionAlignment) != 0)
+            {
+                return malformed("turn restriction section is not " +
+                                 std::to_string(kSectionAlignment) +
+                                 "-byte aligned; rebuild it with tools/map_build");
             }
             mRestrictions = { reinterpret_cast<const TurnRestrictionRecord*>(bytes.data()),
                               bytes.size() / sizeof(TurnRestrictionRecord) };

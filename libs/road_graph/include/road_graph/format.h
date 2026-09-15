@@ -93,7 +93,17 @@ inline constexpr char kMagic[8] = { 'R', 'L', 'G', 'R', 'A', 'P', 'H', '1' };
 // Bumped whenever a record layout changes. A mismatch is a loud refusal rather
 // than a reinterpretation: the artifact is disposable (the build is offline and
 // takes minutes), so there is never a reason to read an old one wrongly.
-inline constexpr std::uint32_t kFormatVersion = 1;
+//
+// 2: every section starts on an 8-byte boundary. Version 1 packed them end to
+// end, so everything after the variable-length string blob was read through a
+// misaligned pointer.
+inline constexpr std::uint32_t kFormatVersion = 2;
+
+// Where every section starts, in both this file and the overlay. Eight is the
+// widest alignment any record needs (SegmentId and osmWayId are 64-bit), and
+// the file is read in place rather than copied, so the boundary is what makes
+// reading a record defined behaviour.
+inline constexpr std::uint64_t kSectionAlignment = 8;
 
 enum class Section : std::uint32_t
 {

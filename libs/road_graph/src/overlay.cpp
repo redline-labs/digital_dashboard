@@ -2,6 +2,7 @@
 #include "road_graph/overlay.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <queue>
@@ -235,6 +236,14 @@ Result<void> Overlay::bind(const Graph& graph)
         {
             return malformed("section " + std::to_string(static_cast<std::uint32_t>(kind)) +
                              " is not a whole number of elements");
+        }
+        // Read in place; a section off a boundary is a misaligned read. Written
+        // aligned since overlay version 2.
+        if ((reinterpret_cast<std::uintptr_t>(bytes.data()) % kSectionAlignment) != 0)
+        {
+            return malformed("section " + std::to_string(static_cast<std::uint32_t>(kind)) +
+                             " is not " + std::to_string(kSectionAlignment) +
+                             "-byte aligned; rebuild the overlay");
         }
         out = { reinterpret_cast<const std::uint32_t*>(bytes.data()),
                 bytes.size() / sizeof(std::uint32_t) };

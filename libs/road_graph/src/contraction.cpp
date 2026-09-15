@@ -288,13 +288,24 @@ Result<void> writeSection(std::FILE* file, std::uint64_t& offset,
                           OverlaySection kind, std::uint32_t elementSize, const void* data,
                           std::uint64_t bytes)
 {
+    // Padded to a section boundary first: the overlay is mmap'd and read in
+    // place as arrays of uint32, and the header plus section table do not land
+    // on one by themselves. See kSectionAlignment.
+    const std::uint64_t start = (offset + kSectionAlignment - 1u) & ~(kSectionAlignment - 1u);
+    constexpr std::uint8_t kPadding[kSectionAlignment] = {};
+    const std::uint64_t pad = start - offset;
+    if (pad != 0 && std::fwrite(kPadding, 1, pad, file) != pad)
+    {
+        return not_readable("cannot pad before overlay section " +
+                            std::to_string(static_cast<std::uint32_t>(kind)));
+    }
     if (bytes != 0 && std::fwrite(data, 1, bytes, file) != bytes)
     {
         return not_readable("cannot write overlay section " +
                             std::to_string(static_cast<std::uint32_t>(kind)));
     }
-    table.emplace_back(kind, std::make_pair(elementSize, offset));
-    offset += bytes;
+    table.emplace_back(kind, std::make_pair(elementSize, start));
+    offset = start + bytes;
     return {};
 }
 

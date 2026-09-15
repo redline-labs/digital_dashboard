@@ -226,7 +226,7 @@ int main()
     if (!pub_sub::SessionManager::getOrCreate())
     {
         SPDLOG_WARN("No zenoh session available; skipping expression evaluation tests.");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     testAWellFormedSampleEvaluates();

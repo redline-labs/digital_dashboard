@@ -38,4 +38,4 @@ target_link_libraries(apple_mfi_ic_test PRIVATE
     apple_mfi_ic
     spdlog::spdlog
 )
-add_test(NAME apple_mfi_ic_test COMMAND apple_mfi_ic_test)
+add_project_test(TARGET apple_mfi_ic_test LABELS apple_mfi_ic unit)

@@ -111,6 +111,14 @@ int main()
 {
     spdlog::set_level(spdlog::level::info);
 
+    // Without an encoder there is no audio to decode, so nothing below would
+    // exercise the decoder. Reported as skipped, not passed.
+    if (avcodec_find_encoder(AV_CODEC_ID_AAC) == nullptr)
+    {
+        SPDLOG_WARN("SKIP: no AAC encoder in this libavcodec build");
+        return PROJECT_TEST_SKIP_CODE;
+    }
+
     for (const auto& [rate, channels] : {std::pair{44100, 2}, std::pair{48000, 2}})
     {
         const auto units = encodeSine(rate, channels, 20);

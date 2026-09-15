@@ -39,6 +39,17 @@
 # NAME defaults to TARGET, and must be given when registering a target twice --
 # ctest test names are unique. ENVIRONMENT entries are APPENDED to the ones this
 # function sets, never replacing them.
+#
+# A test that cannot run here -- no zenoh session, no codec, a data file that is
+# deliberately not in the repository -- returns PROJECT_TEST_SKIP_CODE, which
+# this function defines for the target. ctest then reports it as skipped rather
+# than passed, so a green run says what it actually exercised:
+#
+#     if (!pub_sub::SessionManager::getOrCreate())
+#     {
+#         SPDLOG_WARN("SKIP: no zenoh session on this host");
+#         return PROJECT_TEST_SKIP_CODE;
+#     }
 
 function(add_project_test)
     cmake_parse_arguments(PT "" "TARGET;NAME;TIMEOUT" "LABELS;ENVIRONMENT" ${ARGN})
@@ -56,6 +67,11 @@ function(add_project_test)
     if(NOT PT_NAME)
         set(PT_NAME ${PT_TARGET})
     endif()
+
+    # Defined whether or not tests are built, so a test source compiles the same
+    # way either way. 77 is the automake convention for "skipped".
+    set(PROJECT_TEST_SKIP_CODE 77)
+    target_compile_definitions(${PT_TARGET} PRIVATE PROJECT_TEST_SKIP_CODE=${PROJECT_TEST_SKIP_CODE})
 
     # -DBUILD_TESTING=OFF, in one place rather than in the forty-odd CMakeLists
     # that declare a test. The target stays DECLARED but drops out of `all`.
@@ -75,6 +91,7 @@ function(add_project_test)
         set(PT_TIMEOUT 120)
     endif()
     set_tests_properties(${PT_NAME} PROPERTIES TIMEOUT ${PT_TIMEOUT})
+    set_tests_properties(${PT_NAME} PROPERTIES SKIP_RETURN_CODE ${PROJECT_TEST_SKIP_CODE})
 
     # ACCUMULATED, because set_tests_properties(ENVIRONMENT) REPLACES rather than
     # appends -- setting it twice silently drops the first one.
@@ -103,6 +120,15 @@ function(add_project_test)
     # share a bus, so one test's samples land in another's subscriber. See the
     # note in pub_sub/session_manager.cpp.
     list(APPEND PT_ENVIRONMENT "PUB_SUB_NO_DISCOVERY=1")
+
+    # Under REDLINE_SANITIZE, a finding fails the test with a stack. Leak
+    # detection stays off because LeakSanitizer is unsupported on macOS, where
+    # this build is run; turn it on by hand on Linux if a leak is the question.
+    if(REDLINE_SANITIZE)
+        list(APPEND PT_ENVIRONMENT
+            "ASAN_OPTIONS=detect_leaks=0:abort_on_error=0:halt_on_error=1"
+            "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1")
+    endif()
 
     set_tests_properties(${PT_NAME} PROPERTIES ENVIRONMENT "${PT_ENVIRONMENT}")
 endfunction()

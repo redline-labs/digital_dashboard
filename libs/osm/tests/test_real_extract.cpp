@@ -140,7 +140,7 @@ int main()
         // that is deliberately not in the repository.
         SPDLOG_WARN("SKIPPED: no extract at {}", path.string());
         SPDLOG_WARN("Set OSM_TEST_EXTRACT to point at an .osm.pbf to run this.");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     Mapped file(path);

@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 namespace
@@ -339,7 +340,10 @@ void testConfigCodecDrivesKeyframeDetection()
 // confirm nothing crashes or reads out of bounds. Deterministic seed.
 void testMutationFuzz()
 {
-    const QuietLogs quiet;
+    // Quiet while the decoder complains about garbage, and loud again before
+    // the checks, so a failure is actually printed.
+    std::optional<QuietLogs> quiet;
+    quiet.emplace();
 
     const Bytes seeds[] = {
         makeAvcCRecord(),
@@ -356,7 +360,15 @@ void testMutationFuzz()
         return state;
     };
 
-    size_t results = 0;
+    const auto startsWithStartCode = [](const Bytes& out)
+    {
+        return out.size() >= 4 && out[0] == 0x00 && out[1] == 0x00 && out[2] == 0x00 && out[3] == 0x01;
+    };
+
+    size_t configs_accepted = 0;
+    size_t configs_rejected = 0;
+    size_t frames_converted = 0;
+    size_t violations = 0;
     for (size_t i = 0; i < 20000; ++i)
     {
         Bytes mutated = seeds[next() % 3];
@@ -369,22 +381,52 @@ void testMutationFuzz()
         {
             mutated.resize(1 + (next() % mutated.size()));
         }
-        // Only the absence of a crash matters; any outcome is legal.
-        if (airplay::nalu::configToAnnexB(mutated).has_value())
+        // Any accept or reject is legal for mutated bytes; these properties are
+        // not. Every emitted stream is start-code framed, and conversion never
+        // invents payload: each NAL unit costs at least length_size + 1 input
+        // bytes and gains at most 4 - length_size bytes of framing.
+        if (const auto config = airplay::nalu::configToAnnexB(mutated))
         {
-            ++results;
+            ++configs_accepted;
+            if (!startsWithStartCode(config->annex_b))
+            {
+                ++violations;
+            }
         }
-        results += airplay::nalu::avccFrameToAnnexB(mutated, 1 + (next() % 4)).size();
-        if (airplay::nalu::avccContainsKeyframe(mutated, Codec::H264))
+        else
         {
-            ++results;
+            ++configs_rejected;
         }
-        if (airplay::nalu::annexBContainsKeyframe(mutated, Codec::H265))
+
+        const size_t length_size = 1 + (next() % 4);
+        const Bytes annex_b = airplay::nalu::avccFrameToAnnexB(mutated, length_size);
+        const size_t max_units = mutated.size() / (length_size + 1);
+        if (annex_b.size() > mutated.size() + max_units * (4 - length_size))
         {
-            ++results;
+            ++violations;
         }
+        if (!annex_b.empty())
+        {
+            ++frames_converted;
+            if (!startsWithStartCode(annex_b))
+            {
+                ++violations;
+            }
+        }
+
+        // The two keyframe scans must agree on the same NAL units: a keyframe
+        // found in the length-prefixed frame is still a keyframe once reframed.
+        if (airplay::nalu::avccContainsKeyframe(mutated, Codec::H264, 4) &&
+            !airplay::nalu::annexBContainsKeyframe(airplay::nalu::avccFrameToAnnexB(mutated, 4), Codec::H264))
+        {
+            ++violations;
+        }
+        (void)airplay::nalu::annexBContainsKeyframe(mutated, Codec::H265);
     }
-    expect(results < SIZE_MAX, "mutation fuzz survived without crashing");
+    quiet.reset();
+    expect(violations == 0, "mutated input never breaks framing, size or keyframe agreement");
+    expect(configs_accepted > 0 && configs_rejected > 0, "config mutations take both branches");
+    expect(frames_converted > 0, "some mutated frames still convert");
 }
 
 }  // namespace

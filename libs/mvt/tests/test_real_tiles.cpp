@@ -284,7 +284,7 @@ int main()
         // checkout red for a file that is deliberately not in the repository.
         SPDLOG_WARN("SKIPPED: no archive at {}", path.string());
         SPDLOG_WARN("Set MVT_TEST_ARCHIVE to point at an .mbtiles to run this.");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     auto archive = mbtiles::Archive::open(path);

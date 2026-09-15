@@ -530,10 +530,19 @@ Result<void> Builder::write(const std::filesystem::path& path, std::int64_t buil
 
     header.sectionCount = static_cast<std::uint32_t>(blobs.size());
 
+    // EVERY SECTION STARTS ON AN 8-BYTE BOUNDARY. The file is mmap'd and each
+    // section is read in place as an array of its record type, so a section
+    // that starts at an odd offset is read through a misaligned pointer --
+    // undefined behaviour, and on a target that traps it, a crash. It happened
+    // to work because only the strings section has a length that is not a
+    // multiple of 8, and everything after it inherited the skew.
+    const auto aligned = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+
     std::vector<SectionEntry> table(blobs.size());
     std::uint64_t at = sizeof(FileHeader) + sizeof(SectionEntry) * blobs.size();
     for (std::size_t i = 0; i < blobs.size(); ++i)
     {
+        at = aligned(at);
         table[i].kind = static_cast<std::uint32_t>(blobs[i].kind);
         table[i].elementSize = blobs[i].elementSize;
         table[i].offset = at;
@@ -552,9 +561,14 @@ Result<void> Builder::write(const std::filesystem::path& path, std::int64_t buil
     };
 
     bool ok = put(&header, sizeof(header)) && put(table.data(), table.size() * sizeof(SectionEntry));
-    for (const Blob& blob : blobs)
+    std::uint64_t written = sizeof(FileHeader) + sizeof(SectionEntry) * blobs.size();
+    constexpr std::uint8_t kPadding[8] = {};
+    for (std::size_t i = 0; i < blobs.size(); ++i)
     {
-        ok = ok && put(blob.data, static_cast<std::size_t>(blob.bytes));
+        const std::uint64_t pad = table[i].offset - written;
+        ok = ok && put(kPadding, static_cast<std::size_t>(pad));
+        ok = ok && put(blobs[i].data, static_cast<std::size_t>(blobs[i].bytes));
+        written = table[i].offset + blobs[i].bytes;
     }
     std::fclose(file);
 

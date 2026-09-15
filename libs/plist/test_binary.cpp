@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 namespace
@@ -329,6 +330,12 @@ void testMalformed()
     overlong[8] = 0x5f;  // extended-count ASCII string, but no count follows
     expect(!plist::decodeBinary(overlong).has_value(), "overlong string is rejected");
 
+    // An ASCII string object holding a byte above 0x7f. Accepting it produced a
+    // std::string of malformed UTF-8 that could not be encoded again.
+    Bytes non_ascii = plist::encodeBinary(Value::string("ab"));
+    non_ascii[9] = 0xb0;  // magic (8 bytes), marker 0x52, then 'a'
+    expect(!plist::decodeBinary(non_ascii).has_value(), "non-ASCII byte in an ASCII string is rejected");
+
     // Unsupported object type (0xe).
     Bytes bad_type = good;
     bad_type[8] = 0xe0;
@@ -349,7 +356,10 @@ void testMalformed()
 // a failure is reproducible; worth running under ASan when this file changes.
 void testMutationFuzz()
 {
-    const QuietLogs quiet;
+    // Quiet while the decoder complains about garbage, and loud again before
+    // the checks, so a failure is actually printed.
+    std::optional<QuietLogs> quiet;
+    quiet.emplace();
 
     Value root = Value::dict();
     root.set("deviceid", Value::string("AA:BB:CC:DD:EE:FF"));
@@ -372,7 +382,9 @@ void testMutationFuzz()
         return state;
     };
 
-    size_t survived = 0;
+    size_t accepted = 0;
+    size_t rejected = 0;
+    size_t unstable = 0;
     for (size_t i = 0; i < 20000; ++i)
     {
         Bytes mutated = original;
@@ -385,13 +397,31 @@ void testMutationFuzz()
         {
             mutated.resize(1 + (next() % mutated.size()));
         }
-        // Only the absence of a crash matters; either outcome is legal.
-        if (plist::decodeBinary(mutated).has_value())
+        // Either outcome is legal for the mutated bytes. What is not legal is
+        // accepting something that does not survive its own round trip: a
+        // decoded value has to encode to bytes that decode back to the same
+        // encoding. Compared as bytes, because a mutated real can be NaN.
+        const std::optional<Value> decoded = plist::decodeBinary(mutated);
+        if (!decoded)
         {
-            ++survived;
+            ++rejected;
+            continue;
+        }
+        ++accepted;
+        const Bytes reencoded = plist::encodeBinary(*decoded);
+        const std::optional<Value> again = plist::decodeBinary(reencoded);
+        if (!again || plist::encodeBinary(*again) != reencoded)
+        {
+            ++unstable;
         }
     }
-    expect(survived <= 20000, "mutation fuzz survived without crashing");
+    quiet.reset();
+    SPDLOG_INFO("plist mutation fuzz: {} accepted, {} rejected, {} unstable", accepted, rejected,
+                unstable);
+    expect(unstable == 0, "every accepted mutation round-trips through its own encoding");
+    // A fuzz loop that only ever takes one branch is not exercising the decoder.
+    expect(accepted > 0, "some mutations still decode");
+    expect(rejected > 0, "some mutations are rejected");
 }
 
 }  // namespace

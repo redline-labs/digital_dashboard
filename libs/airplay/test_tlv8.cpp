@@ -3,6 +3,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstddef>
 #include <cstdlib>
 #include <numeric>
 
@@ -66,6 +67,76 @@ int main()
         const std::vector<Item> items = {{0x05, exact}, {0x06, {0x01}}};
         const auto decoded = decode(encode(items));
         expect(decoded == items, "exact 255 round trip");
+    }
+
+    // Malformed input comes straight off the pairing channel, so a short or
+    // lying buffer has to be dropped, never read past.
+    {
+        expect(decode({}).empty(), "empty input decodes to nothing");
+        expect(decode({0x01}).empty(), "a lone type byte is not an item");
+        expect(decode({0x01, 0x05, 0xaa, 0xbb}).empty(), "a length past the end is dropped");
+
+        const std::vector<uint8_t> good_then_truncated = {0x01, 0x01, 0x42, 0x02, 0x09, 0x00};
+        const auto decoded = decode(good_then_truncated);
+        expect(decoded.size() == 1 && decoded[0] == Item{0x01, {0x42}},
+               "a complete item survives a truncated one after it");
+    }
+
+    // Every prefix of a fragmented message: never more payload than bytes in.
+    {
+        std::vector<uint8_t> big(600);
+        std::iota(big.begin(), big.end(), 0);
+        const auto encoded = encode({{0x09, big}, {0x01, {0x42}}});
+
+        bool bounded = true;
+        for (size_t length = 0; length <= encoded.size(); ++length)
+        {
+            const std::vector<uint8_t> prefix(encoded.begin(),
+                                              encoded.begin() + static_cast<std::ptrdiff_t>(length));
+            size_t payload = 0;
+            for (const auto& item : decode(prefix))
+            {
+                payload += item.second.size() + 2;
+            }
+            if (payload > prefix.size())
+            {
+                bounded = false;
+            }
+        }
+        expect(bounded, "no prefix decodes to more bytes than it holds");
+    }
+
+    // Arbitrary bytes, deterministic seed: the same bound, over inputs no
+    // encoder would produce.
+    {
+        uint32_t state = 0x2545f491;
+        const auto next = [&state]
+        {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            return state;
+        };
+
+        bool bounded = true;
+        for (size_t round = 0; round < 5000; ++round)
+        {
+            std::vector<uint8_t> noise(next() % 300);
+            for (auto& byte : noise)
+            {
+                byte = static_cast<uint8_t>(next() & 0xff);
+            }
+            size_t payload = 0;
+            for (const auto& item : decode(noise))
+            {
+                payload += item.second.size() + 2;
+            }
+            if (payload > noise.size())
+            {
+                bounded = false;
+            }
+        }
+        expect(bounded, "random bytes never decode to more than they hold");
     }
 
     // find()

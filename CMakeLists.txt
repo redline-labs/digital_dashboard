@@ -126,6 +126,28 @@ include(ProjectTest)
 include(DashboardWidget)
 
 
+# Sanitizers, for our code and its tests only: this lands after
+# add_subdirectory(third_party), like the warning block below, so the vendored
+# libraries are not instrumented. Off by default; use a separate build tree:
+#
+#     cmake -S . -B build-asan -DREDLINE_SANITIZE=address,undefined
+#     cmake --build build-asan && ctest --test-dir build-asan -L unit
+#
+# Undefined behaviour aborts rather than printing and carrying on, so a test
+# that trips it fails. The release default compiles assert() and capnp's bounds
+# checks out; this is the build that notices an out-of-bounds read anyway.
+set(REDLINE_SANITIZE "" CACHE STRING
+    "Sanitizers for our code and tests, e.g. address,undefined (empty = off)")
+if(REDLINE_SANITIZE)
+    add_compile_options(
+        -fsanitize=${REDLINE_SANITIZE}
+        -fno-sanitize-recover=all
+        -fno-omit-frame-pointer
+        -g
+    )
+    add_link_options(-fsanitize=${REDLINE_SANITIZE})
+endif()
+
 # Additional compiler options for all our code.
 add_compile_options(
     #$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>

@@ -89,14 +89,14 @@ int main()
     if (!pub_sub::SessionManager::getOrCreate())
     {
         std::fprintf(stderr, "WARNING: no zenoh session available; skipping.\n");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     pub_sub::TopicDirectory directory;
     if (!directory.isValid())
     {
         std::fprintf(stderr, "WARNING: could not watch the advertisement space; skipping.\n");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     const std::string rpm_key = "test/directory/rpm";

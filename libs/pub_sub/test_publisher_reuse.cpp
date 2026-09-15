@@ -177,7 +177,7 @@ int main()
     if (!pub_sub::SessionManager::getOrCreate())
     {
         SPDLOG_WARN("No zenoh session available; skipping publisher reuse tests.");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     testConsecutiveMessagesDoNotBleed();

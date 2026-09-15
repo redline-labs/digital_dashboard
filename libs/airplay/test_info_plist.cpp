@@ -221,7 +221,10 @@ int main()
 
         airplay::ReceiverConfig hevc = makeConfig();
         hevc.allow_hevc = true;
-        const plist::Value* offered = at(buildInfoPlist(hevc), "hevcInfo");
+        // Named, not `at(buildInfoPlist(hevc), ...)`: the pointer points into
+        // the plist, and a temporary one is gone by the next statement.
+        const plist::Value hevc_info = buildInfoPlist(hevc);
+        const plist::Value* offered = at(hevc_info, "hevcInfo");
         expect(offered != nullptr, "and is offered when enabled");
         expect(offered != nullptr && offered->isDict(),
                "as a dict -- presence is the offer, it carries no parameters");

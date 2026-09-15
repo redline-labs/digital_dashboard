@@ -340,7 +340,11 @@ class Validator
             Cursor length_cursor(data + offset + 1, 8);
             const std::uint64_t length = length_cursor.u64();
 
-            if (offset + 9 + length > size)
+            // Subtraction, not `offset + 9 + length > size`: a record that
+            // claims a length near 2^64 makes that sum wrap, so the check
+            // passed and the walk read far past the buffer. offset + 9 <= size
+            // is established above, so this cannot underflow.
+            if (length > size - offset - 9)
             {
                 error("record 0x" + toHex(op) + " claims " + std::to_string(length) +
                       " bytes but only " + std::to_string(size - offset - 9) + " remain");

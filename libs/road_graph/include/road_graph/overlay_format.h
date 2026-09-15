@@ -59,7 +59,8 @@ namespace road_graph
 
 inline constexpr char kOverlayMagic[8] = { 'R', 'L', 'G', 'O', 'V', 'R', 'L', '1' };
 
-inline constexpr std::uint32_t kOverlayVersion = 1;
+// 2: sections are 8-byte aligned, like the graph's. See kSectionAlignment.
+inline constexpr std::uint32_t kOverlayVersion = 2;
 
 enum class OverlaySection : std::uint32_t
 {

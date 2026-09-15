@@ -822,6 +822,17 @@ private:
                     SPDLOG_ERROR("[airplay] plist decode: truncated ASCII string");
                     return std::nullopt;
                 }
+                // Refused rather than passed through: a byte above 0x7f is not
+                // ASCII, and copied into a std::string it is malformed UTF-8
+                // that encodeBinary() cannot write back out. Non-ASCII text has
+                // its own object type (0x6, UTF-16).
+                if (const auto first = buf_.begin() + static_cast<ptrdiff_t>(p);
+                    std::any_of(first, first + static_cast<ptrdiff_t>(*count),
+                                [](uint8_t byte) { return byte > 0x7f; }))
+                {
+                    SPDLOG_ERROR("[airplay] plist decode: non-ASCII byte in an ASCII string");
+                    return std::nullopt;
+                }
                 return Value::string(std::string(reinterpret_cast<const char*>(buf_.data() + p), *count));
             }
 

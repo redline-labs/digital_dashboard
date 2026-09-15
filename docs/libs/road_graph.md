@@ -87,9 +87,16 @@ The fastest free-flow speed is stored in the header for A*'s heuristic; a graph
 built before that field falls back to one scan at open, never per query, since
 the scan reads every 64-byte `SegmentRecord`.
 
+**Sections are 8-byte aligned.** The file is read in place, so a section that
+started at an odd offset would be read through a misaligned pointer. Format
+version 1 packed sections end to end, and everything after the variable-length
+string blob inherited its skew; version 2 pads each section to a boundary and
+both readers refuse a file that is not aligned.
+
 **Refusals.** A wrong magic or `kFormatVersion` is `NotAGraph` or
 `VersionMismatch`, not a reinterpretation; the artifact rebuilds offline in
-minutes. `Overlay::open()` checks the graph's counts, build time and
+minutes. A graph or overlay written before version 2 is refused with what to do
+about it. `Overlay::open()` checks the graph's counts, build time and
 `routingChecksum()` over the edges and the turn restrictions, and refuses a
 mismatch, because an overlay from another graph would return fast, confident,
 wrong routes. Two graphs differing only by one banned turn have byte-identical

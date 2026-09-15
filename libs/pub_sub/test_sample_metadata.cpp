@@ -376,7 +376,7 @@ int main()
     {
         SPDLOG_WARN("SKIP: no zenoh session could be opened on this host; "
                     "sample metadata not exercised");
-        return 0;
+        return PROJECT_TEST_SKIP_CODE;
     }
 
     g_samples = publishAndCollect(5);

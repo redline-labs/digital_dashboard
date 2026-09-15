@@ -20,4 +20,4 @@ target_link_libraries(core_test PRIVATE
     core
     spdlog::spdlog
 )
-add_test(NAME core_test COMMAND core_test)
+add_project_test(TARGET core_test LABELS core unit)
