@@ -42,7 +42,7 @@ image. [Agent control](agent-control.html) has the whole loop.
 | Page | What is in it |
 |---|---|
 | [Agent control (--mcp)](agent-control.html) | Every method, the selector grammar, the coordinate contract, and the gotchas. |
-| Adding a widget | The five-step registration. Not written yet; the header comment at the top of `libs/dashboard_widgets/include/dashboard/widget_registry.h` is the current source. |
-| Adding a scope panel | The three-step registration. Not written yet; see the top of `apps/scope/include/scope/panel_registry.h`. |
-| Adding a node | Node identity, `cli::Program`, dropping a schema in, the config directory, test labels. Not written yet. |
-| Writing docs | How this site builds, the front matter every page needs, which section a page belongs in. Not written yet. |
+| [Adding a widget](adding-a-widget.html) | The widget class, the table, the CMake helper, and how to check it. |
+| [Adding a scope panel](adding-a-scope-panel.html) | The panel class, the stats struct that is not optional, the table, the data source seam. |
+| [Adding a node](adding-a-node.html) | The shape of a node, node identity, schemas, configuration, `cli::Program`, tests. |
+| [Writing docs](writing-docs.html) | How this site builds, the front matter every page needs, which section a page belongs in, and the voice. |

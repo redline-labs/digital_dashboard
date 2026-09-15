@@ -1,140 +1,95 @@
 # Redline Labs Digital Dash
 
-A modern Qt6-based dashboard application.  Part of a larger project to create an embedded Linux distribution that will run on custom hardware.   The goal is to have a hackable digital dash for vehicles that people can use out of the box with a high amount of customization, or get their hands dirty and extend it to add whatever functionality they desire.
+An open, hackable instrument cluster for vehicles.
 
-All the gauges are drawn/rendered, no static images.  A YAML configuration file controls:
- - the composition of which widgets are shown and where.
- - Widget specific configurations, such as max RPM or where shift points are shown.
- - Data sources for each element within the widget.
+Every gauge is drawn, not a bitmap. One YAML file describes the whole layout:
+which widgets, where, how each one is configured, and which signal drives it.
+Anything on the vehicle bus can drive anything on the screen through a short
+expression. The same binaries run on the target hardware and on a desktop, so
+a layout can be built and checked on a laptop before it ever sees the car.
 
- Zenoh is used for pub/sub, and capnproto is used for serialization.  The widgets additionally have a flexible "expression parser" to where a user can specify a capnproto signal and any math expression to be used for the data source for a widget.
+It is for someone who wants a cluster that works out of the box and can be bent
+to their own car, from changing a redline to adding a widget or a hardware
+bridge that nobody has written yet.
 
-For the examples shown below, they are all the same `dashboard` binary, only different YAML configurations.  Multiple windows (displays) can also be supported in the same single configuration - for example, you can have one display be your instrument cluster, the other be a CarPlay window.  Each window names the display it belongs on (`primary` or `secondary`); on the target it is bound to that panel and scaled to fit, and on a desktop it simply opens as a window.  See [docs/apps/dashboard/windows.md](docs/apps/dashboard/windows.md).
+## What it looks like
 
-#### (Work in progress) Mercedes 190E Instrument Cluster
-With additional "sparklines" widget on the right.
-![Screengrab](/docs/images/mercedes_190e_demo_display.png)
+Mercedes 190E cluster, with a sparklines widget on the right:
 
-#### (Work in Progress) Motec CDL2
-![Screengrab](/docs/images/motec_cdl2_demo.png)
+![Mercedes 190E instrument cluster](docs/images/mercedes_190e_demo_display.png)
 
-#### (Work in Progress) Motec C125
-![Screengrab](/docs/images/motec_c125_dash_demo.png)
+MoTeC CDL2 and C125 layouts, the same binary with a different file:
 
-### (Work in Progress) CarPlay Window.
-Native wired CarPlay (no dongle required): the `carplay` driver node (Linux-only) talks to the iPhone directly over USB — Apple MFi authentication coprocessor required — and streams video/audio/metadata over zenoh to the dashboard widgets.  Ported to C++ from the [LIVI](https://github.com/f-io/LIVI) project (GPL-3.0-or-later).
-![Screengrab](/docs/images/carplay_demo.png)
+![MoTeC CDL2](docs/images/motec_cdl2_demo.png)
 
-## Dashboard Editor
-A very much work-in-progress dashboard editor is being pieced together.  This is a GUI to be able to drag and drop widgets into a dashboard.
+![MoTeC C125](docs/images/motec_c125_dash_demo.png)
 
-![Screengrab](/docs/images/dashboard_editor.png)
+Wired CarPlay, no dongle, as a window on the same display or a second one:
 
-## Switchboard
-A GUI for calling the services nodes advertise on the bus. Every service is listed. Selecting one builds a form from its request schema, and the reply comes back as fields. It is the form-driven counterpart to `inspect call`. See [docs/apps/switchboard.md](docs/apps/switchboard.md).
+![CarPlay window](docs/images/carplay_demo.png)
 
-## Documentation
-Work in progress, see [dashboard-docs](http://dashboard-docs.redline-labs.com).
+The layout editor:
 
-## Building Instructions
+![Dashboard editor](docs/images/dashboard_editor.png)
 
-### Prerequisites
+## What you get
 
-- **Qt6**: Core, Widgets, Multimedia, MultimediaWidgets, and Svg modules
-- **FFmpeg**
-- **CMake**: Version 3.10 or higher
-- **C++ Compiler**: Supporting C++23 standard
+The **dashboard** renders a layout across one or more displays, and the
+**editor** builds that layout by dragging widgets onto a canvas and setting
+their properties. Both work on a laptop with nothing attached.
 
-### macOS Setup
+**Native wired CarPlay.** The phone talks to a driver node over USB and its
+video, audio and metadata arrive on the bus like any other signal, so a
+supplemental widget can show what is playing without touching the projection.
 
-```bash
-# Install Qt6 via Homebrew
-brew install qt@6
-```
+**Offline maps with routing.** Tiles and a routable road graph are built from
+OpenStreetMap by the project's own tools, served from a file on the vehicle,
+and drawn on the GPU. No network, no account, no tile server.
 
-### Build Steps
+**scope** shows what any signal has been doing, live or from a recording, as
+plots, tables, video and a map. **switchboard** lists every service a node
+advertises and calls it from a form built from its schema. Recordings come from
+**bag**, which captures the whole bus and replays it with its timing.
 
-1. **Create build directory**:
-   ```bash
-   mkdir build
-   cd build
-   ```
+**Nodes for the hardware people actually run.** CAN adapters (PCAN, SocketCAN,
+MoTeC UTC), MoTeC M1, PDM and LTC, Megasquirt, RaceGrade, a Grayhill CANopen
+keypad, an MSEL battery isolator, a Trimble BD992 GNSS receiver, an Xsens
+MTi-610 IMU, and a Motorola MOTOTRBO radio. Each is a small program that puts
+one device on the bus, and a new one is a day's work rather than a fork.
 
-2. **Configure the project**:
-   ```bash
-   cmake ..
-   ```
-   
-   For debug builds:
-   ```bash
-   cmake -DCMAKE_BUILD_TYPE=Debug ..
-   ```
+## Why this and not a commercial dash
 
-3. **Build the application**:
-   ```bash
-   make -j$(nproc)
-   ```
+It is all yours. Every widget is C++ you can read and change; every message is
+a Cap'n Proto schema you can see on the bus; every layout is a text file you
+can diff. Adding a widget is one entry in a table and a directory, and it shows
+up in the editor, the YAML loader and the tooling without further work. Nothing
+phones home and nothing is locked to hardware you did not build.
 
-4. **Run the application**:
-   ```bash
-   ./apps/dashboard/dashboard -c <path_to_config>
-   ```
+## Status
 
-### Command Line Options
+As of September 2026 the software runs daily on a bench target and on
+developer machines. CarPlay, the MoTeC UTC, the BD992 and the MOTOTRBO radio
+have been driven against real hardware. The PCAN adapter and the MTi-610 have
+complete code and tests but no hardware run yet; their pages say what is
+unverified. The companion hardware is in design.
 
-- `-c`: Path to YAML configuration file (see config directory for examples)
-- `--debug`: Enable debug logging
+## Get started
 
-### Native Wired CarPlay
+Build instructions, a first layout and the test suite:
+[dashboard-docs.redline-labs.com/getting-started](https://dashboard-docs.redline-labs.com/getting-started/)
 
-CarPlay runs as a separate driver node that owns the USB/iAP2/AirPlay session with the
-iPhone and publishes video, audio, input and metadata over zenoh.  The dashboard widgets
-are thin subscribers, so supplemental widgets (e.g. `now_playing`) can consume CarPlay
-data without touching the projection stack.
+The documentation is organised by audience:
+[apps](https://dashboard-docs.redline-labs.com/apps/) for running the programs,
+[nodes](https://dashboard-docs.redline-labs.com/nodes/) for putting hardware on the bus,
+[libraries](https://dashboard-docs.redline-labs.com/libs/) for coding against the tree,
+and [developing](https://dashboard-docs.redline-labs.com/developing/) for changing it.
 
 ```bash
-# terminal 1 - the driver (Linux only; needs USB + TUN privileges)
-sudo ./nodes/carplay/carplay --verbose
-
-# terminal 2 - the dashboard
-./apps/dashboard/dashboard -c ../configs/dashboard/carplay_demo.yaml
+git clone https://github.com/redline-labs/digital_dashboard.git
 ```
 
-No hardware handy?  `--simulate` publishes a synthetic session (H.264 test pattern, audio
-tone, rotating metadata) on the real topics so the whole dashboard side can be exercised
-on any platform:
+## Licence
 
-```bash
-./nodes/carplay/carplay -c ../configs/carplay/carplay.yaml --simulate
-```
-
-Hardware bring-up is documented step-by-step in [docs/nodes/carplay.md](docs/nodes/carplay.md).
-Native CarPlay requires an Apple MFi authentication coprocessor (see `libs/apple_mfi_ic`).
-No `libimobiledevice`/`libplist` packages are needed — the property list codec,
-usbmux client and server, lockdown handshake, TLS and pairing are all in-tree
-(`libs/plist`, `libs/apple_usb`).
-
-
-## Third-Party Libraries
-The following libraries are fetched as part of a CMake step.  For complete license information, see the individual license files in the resulting `build/licenses/` directory. Patches (where applicable) are also available in the source directory under the `patches` directory, and also copied out to the `build/licenses` directory.
-
-| Library | Version | License | Purpose | Patched |
-|---------|---------|---------|---------|---------|
-| [Qt6](https://www.qt.io/) | 6.x | LGPL v3 / Commercial | GUI framework and multimedia support | N |
-| [spdlog](https://github.com/gabime/spdlog) | 1.15.3 | MIT | Fast C++ logging library | Y |
-| [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT | JSON parsing and serialization | N|
-| [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.8.0 | MIT | YAML configuration file parsing | N |
-| [cxxopts](https://github.com/jarro2783/cxxopts) | 3.3.1 | MIT | Command line argument parsing | N |
-| [capnproto](https://github.com/capnproto/capnproto) | 6846dff | MIT | Binary serialization and RPC framework | N |
-| [libusb-cmake](https://github.com/libusb/libusb-cmake) | 1.0.27 | LGPL v2.1+ | USB device communication | N |
-| [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp) | 1.10.0 | EPL-2.0 / Apache-2.0 | Zero overhead pub/sub messaging | N |
-| [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) | 1.10.0 | EPL-2.0 / Apache-2.0 | C API zenoh-cpp binds to; pulls the Rust `zenoh` crate | Y |
-| [hidapi](https://github.com/libusb/hidapi.git) | 0.15.0 | GPL3 | HID library | N |
-| [exprtk](https://github.com/ArashPartow/exprtk) | 245c0d5 | MIT | Mathematical expression parsing and evaluation | Y |
-
-## License
-
-See `COPYING` for license information.
-
-Runtime environment variables, data and log locations: [docs/reference/environment.md](docs/reference/environment.md).
-Changing the dashboard's config on a running board: [docs/apps/dashboard/on-target.md](docs/apps/dashboard/on-target.md).
+GPL-3.0-or-later; see `COPYING`. The libraries CMake fetches, with their
+versions and licences, are listed at
+[dashboard-docs.redline-labs.com/reference/third-party](https://dashboard-docs.redline-labs.com/reference/third-party.html).

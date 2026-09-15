@@ -4,142 +4,142 @@ parent: Nodes
 redirect_from: /carplay_bringup.html
 ---
 
-# Wired CarPlay Bring-Up & Test Plan
+# carplay
 
-This is the iterative test plan for the native wired CarPlay stack. The code was
-written in bulk on a macOS dev box **without** an iPhone, MFi coprocessor, or Linux
-host attached. This document is the script for stepping through the hardware
-paths, in order.
+## Overview
 
-Most of it assumes a Linux host, which is the target. Since 2026-08-01 **stages
-1–4 and 6 also run on macOS**, verified on hardware — see "Running on macOS"
-under Building. That is a genuinely different route through the same stack
-(macOS supplies both the mux and the NCM link), so read that section before
-following Linux-specific advice on a Mac.
+`nodes/carplay` is the wired CarPlay driver. It moves an iPhone into its CarPlay
+USB configuration, runs usbmux, lockdown and iAP2 over that link, authenticates
+as an accessory through an MFi coprocessor, and then hosts the AirPlay session
+the phone projects onto: H.264 or H.265 video, PCM audio, touch and the other
+HID inputs, and the now-playing, navigation and call metadata that arrive over
+iAP2. Everything the phone sends is published on zenoh and drawn by the
+`carplay` widget in the dashboard (`libs/dashboard_widgets/widgets/carplay`);
+touch, microphone audio and GPS fixes come back in on zenoh topics. The whole
+Apple-side stack is in this tree and there is no libimobiledevice dependency, so
+do not install `libimobiledevice-dev` or `libplist-dev` expecting them to be
+used. The history of the port and what was tried is in
+[CarPlay port](../design/carplay-port.html).
 
-**Reference implementation.** This stack is a port of LIVI
-(https://github.com/f-io/LIVI, GPL-3.0). Its AirPlay/RTSP layer lives in
-`src/main/services/projection/driver/cp/stack/` — `cpStack.ts` (request
-dispatch), `getInfo.ts` (the `/info` plist), `timingServer.ts`, `screenStream.ts`,
-`hid.ts`. When a handshake step is rejected by the phone and the reason is not
-observable, read the corresponding file there rather than permuting: the
-`/auth-setup` byte layout and the `/info` display keys were both settled that
-way in minutes after an hour of guessing.
+A real session needs a Linux host, an unlocked iPhone on a data cable, and an
+MFi authentication coprocessor reachable over I²C: an MCP2221A USB bridge on a
+desk, or the carrier's I²C header on the LattePanda. Since 2026-08-01 the full
+session also runs on macOS by a different route through the same stack; see
+[Building on macOS](#building-on-macos). Without any of that, `--simulate`
+publishes a synthetic session on the real topics, so the dashboard side can be
+run anywhere. The full pipeline has worked end to end since 2026-07-22, with
+audio, touch, metadata and the manufacturer button verified on hardware since.
+The stack is a port of LIVI (https://github.com/f-io/LIVI, GPL-3.0).
 
-**Status: the full pipeline works end to end (2026-07-22) — the CarPlay home
-screen renders live in the dashboard widget.** Stages 1–7 all run: USB config
-switch, usbmux, lockdown/carkit TLS, iAP2 + MFi auth, the NCM link, and the
-AirPlay session through to H.264 decoded and drawn on screen via zenoh. What
-remains: audio streams, and confirming touch round-trips.
+## Running it
 
-**Earlier status: stages 1–6 verified (2026-07-21)** — USB config switch,
-usbmux, the usbmuxd socket bridge, lockdown/carkit TLS, the iAP2 link,
-identification, MFi authentication, and the NCM ↔ TAP bridge. Stage 7 (the
-AirPlay session and video) landed the next day.
-
-Work the stages in sequence — each one depends on the previous. Every stage lists
-what to run, what you should observe, and how to triage the common failures.
-
-## 0. Conventions that make failures observable
-
-**Log prefixes.** Every layer tags its messages so `grep` isolates a stage:
-
-| Prefix | Layer | Source |
-|---|---|---|
-| `[usb]` | device detect, config-6 switch | `libs/apple_usb/usb_device.cpp` |
-| `[muxd]` | usbmux TCP-over-USB | `libs/apple_usb/muxd.cpp` |
-| `[usbmuxd]` | usbmuxd socket bridge | `libs/apple_usb/usbmuxd_server.cpp` |
-| `[carkit]` | lockdown / TLS / carkit service | `libs/apple_usb/lockdown.cpp` |
-| `[iap2]` | iAP2 link layer + control messages | `libs/iap2/` |
-| `[mfi]` | MFi coprocessor auth | `libs/iap2/mcp2221a_mfi_signer.cpp` |
-| `[ncm]` | NCM interface lookup | `nodes/carplay/usb_pipeline.cpp` (`AvLink`) |
-| `[airplay]` | RTSP/AirPlay session | `libs/airplay/` |
-| `[video]` / `[audio]` | media streams | `libs/airplay/` |
-| `[node]` | zenoh publishing / orchestration | `nodes/carplay/` |
-
-Run the driver with `--verbose` for `SPDLOG_DEBUG` output. Filter noise with e.g.
-`./nodes/carplay/carplay --verbose 2>&1 | grep -E '\[muxd\]|\[carkit\]'`.
-
-**Hardware-free unit tests.** These must pass before touching hardware — they are
-the regression net for the pure-logic layers:
+Build prerequisites on Linux, then build and run the hardware-free tests before
+touching a phone. A failure there is a logic bug, not a hardware problem.
 
 ```bash
-cmake --build build -j4     # -j unbounded OOMs on an 8 GB box; zenoh's Rust build is the hog
-ctest --test-dir build --output-on-failure
+sudo apt install libavcodec-dev libssl-dev iproute2
+cmake --build build -j4                  # -j unbounded OOMs on an 8 GB box
+ctest --test-dir build -L unit
 ```
 
-That runs every test in the repository, not just this stack's, in about seven
-seconds. To narrow it:
+The node needs raw USB access to the phone and an I²C adapter node for the
+coprocessor. Running as root covers both; to run unprivileged, install the udev
+rules and the module list once per machine. `udevadm trigger` re-applies the
+rules to already-plugged devices, and you must be in `plugdev`.
 
 ```bash
-ctest --test-dir build -L unit      # the 23 deterministic ones, well under a second
-ctest --test-dir build -L airplay   # just the AirPlay layer
-ctest --test-dir build -LE slow     # skip anything that measures real elapsed time
-ctest --test-dir build -j8          # they are independent; this is safe
-ctest --test-dir build -R pairing   # by name
+sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo cp nodes/carplay/udev/carplay-i2c.conf /etc/modules-load.d/
+sudo modprobe hid_mcp2221 && sudo modprobe i2c-dev
+i2cdetect -l                              # expect "MCP2221 usb-i2c bridge"
+i2cdetect -y 0                            # expect a device at 0x11 (maybe on the second run)
 ```
 
-Every test carries its component as a label plus at least one of `unit` (pure
-logic -- no sockets, clock, hardware or display), `net` (opens a zenoh session),
-`gui` (constructs Qt widgets, forced offscreen) and `slow`. The registration
-helper is `cmake/ProjectTest.cmake`; a new test is one `add_project_test()` line
-next to its `add_executable`.
+Mask the system `usbmuxd` (stopping it is not enough: its udev rule restarts it
+when the configuration switch re-enumerates the phone), and give the phone's NCM
+interface a link-local address with whichever profile matches who owns links on
+the machine.
 
-What the AirPlay layer covers:
+```bash
+sudo systemctl mask usbmuxd.socket usbmuxd.service
 
-| Test | Covers |
+# systemd-networkd (head unit, headless)
+sudo cp nodes/carplay/udev/80-carplay-ncm.network /etc/systemd/network/
+sudo systemctl restart systemd-networkd
+
+# NetworkManager (most desktops)
+sudo cp nodes/carplay/udev/carplay-ncm.nmconnection /etc/NetworkManager/system-connections/
+sudo chown root:root /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+sudo chmod 600 /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
+sudo nmcli connection reload
+```
+
+{: .warning }
+The `chmod 600` is not optional: NetworkManager silently ignores a keyfile that
+is group- or world-readable. Without the profile it treats the phone as an
+ethernet port, fails to get IPv4, and takes the IPv6 link-local down with it.
+
+Then plug in an unlocked, trusted iPhone and start the node and the dashboard.
+
+```bash
+./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose
+./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml
+```
+
+`--config` (short form `-c`) is required, including for `--simulate`, which does
+not read it. Everything the accessory tells the phone about itself comes from
+that file. The bring-up knobs stay on the command line, because they are about
+taking one layer at a time rather than about what the vehicle is.
+
+| Option | Meaning |
 |---|---|
-| `airplay_test_tlv8` | TLV8 encode/decode + fragmentation |
-| `airplay_test_crypto` | HKDF/ChaCha20/X25519/Ed25519/SRP known-answer vectors |
-| `airplay_test_channel_crypto` | encrypted-channel framing, and the nonce lockstep both ends depend on |
-| `airplay_test_pairing_session` | pair-setup/verify/auth-setup, driven from the phone's side |
-| `airplay_test_info_plist` | the GET /info capability declaration |
-| `airplay_test_hid` | HID descriptors against the reports sent on them |
-| `airplay_test_oem_button` | manufacturer button: /info keys + press decode |
-| `airplay_test_event_queue` | event-channel ordering, coalescing, priority, drops |
-| `airplay_test_rtsp` | message framing -- the parser every byte from the phone passes through |
-| `airplay_test_timing` | the NTP clock offset, whose absence tears the session down after RECORD |
-| `airplay_test_mic_uplink` | the microphone packet's wire format and framing |
-| `airplay_test_nalu` | avcC -> Annex-B rewrite |
-| `airplay_test_aac` | AAC-LC encode/decode round-trip (entertainment audio) |
+| `-c, --config <yaml>` | required; start from `configs/carplay/carplay.yaml` |
+| `--max-stage <2..7>` | stop the pipeline after a bring-up stage, so one layer's failure is not buried under the next |
+| `--iap2-allow-missing-mfi` | run iAP2 identification up to the certificate request with no coprocessor; CarPlay will not start |
+| `--mfi-i2c-device /dev/i2c-N` | which I²C adapter holds the coprocessor; defaults to `$REDLINE_MFI_I2C_DEV`, else auto-detect |
+| `--state-dir <dir>` | accessory identity and pair records; defaults to `<data dir>/carplay` (see [runtime environment](../reference/environment.html)) |
+| `--location "lat,lon[,alt_m,speed_kn,course_deg]"` | a static GPS fix for the location uplink, instead of a publisher on the location topic |
+| `--simulate`, `--sim-width`, `--sim-height`, `--sim-fps` | synthetic session, no phone |
+| `-v, --verbose` | `SPDLOG_DEBUG` output, including ffmpeg's as `[ffmpeg]` |
 
-and the layers underneath: `plist_test_{binary,xml,libplist_vectors}`,
-`iap2_test_{framing,csm,nmea}`,
-`apple_usb_test_{ncm_discovery,pair_record,usbmux_client}`, plus
-`carplay_test_node_config` for the config file and its PNG reader.
+{: .note }
+Auto-detection of the I²C adapter only knows to prefer an MCP2221A. With no
+bridge present it takes the first `/dev/i2c-N`, which on the LattePanda is the
+GPU's DDC bus, and every probe there NACKs like a dead coprocessor. Name the bus:
+the image sets `REDLINE_MFI_I2C_DEV=/dev/i2c-13` in the `redline-node@carplay`
+drop-in; the flag is for a bench. Leave both unset on a desktop with the bridge.
 
-`iap2_test_csm` is worth knowing about for one thing in particular: it pins the
-zero-length boolean named under stage 5 as a hardware suspect. We read one as
-*absent*, following LIVI, where the spec allows presence to mean true. If a
-phone ever sends one, `CarPlayAvailability` reads falsy and the session silently
-never starts.
+`configs/carplay/carplay.yaml` documents every field: the `vehicle:` block,
+`display:` geometry and `allow_hevc`, `device_id`, `night_mode`, and the
+`oem_button:` tile. The phone records some of the identity against the pairing,
+so change it before pairing a phone you care about. Enumerated keys are closed
+sets and a typo stops the node rather than taking a default; so does a zero in
+the display geometry. The values worth setting rather than leaving:
 
-There is no `airplay_test_plist` — the plist tests live in `libs/plist` under the
-`plist_test_*` names. If you have one in a `build/` directory, it is a stale
-binary from before the move and will keep passing after its target is gone; that
-is a good reason to reconfigure from scratch rather than trust an old build tree.
+| Key | Why |
+|---|---|
+| `vehicle.right_hand_drive` | CarPlay mirrors its own layout for it |
+| `vehicle.engine_type` | gas, diesel, electric or cng; affects what the phone offers |
+| `vehicle.serial_number` | how the phone tells two units apart |
+| `display.physical_width_mm` | CarPlay sizes text and touch targets from it |
+| `device_id` | give each unit its own if you run more than one |
 
-A failure here is a logic bug, not a hardware problem — fix before proceeding.
+## Running without hardware
 
-**Simulation mode — the dashboard side needs no hardware at all.** The driver
-node can publish a synthetic session (encoded H.264 test pattern, a 440 Hz PCM
-tone, and rotating now-playing/nav metadata) on the real zenoh topics:
+The node can publish a synthetic session on the real topics: an encoded H.264
+test pattern, a 440 Hz PCM tone, and rotating now-playing and navigation
+metadata.
 
 ```bash
-./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --simulate --verbose  # terminal 1
-./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml   # terminal 2
+./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --simulate --verbose   # terminal 1
+./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml              # terminal 2
 ```
 
 You should see the moving test pattern with a sweeping white box, hear the tone,
 and watch the now-playing widget cycle tracks. Touching the video area logs
-input events in terminal 1. `--sim-width/--sim-height/--sim-fps` adjust the
-stream. Use this to isolate *any* dashboard-side problem from the phone: if
-something is broken in simulation, it is not a CarPlay bug.
-
-**Already verified on macOS with simulation** (2026-07-20): video decode +
-render, audio sink startup, metadata → widget flow, widget instantiation from
-YAML, and the publish rates below. This means stages 8–10 are exercising only
-the *phone-side* half of those paths.
+input events in terminal 1. If something is broken in simulation, it is not a
+CarPlay bug. `--sim-width/--sim-height/--sim-fps` change the stream; the rates:
 
 ```
 inspect hz -k nodes/carplay/video       ->  30 msgs/s   (matches --sim-fps)
@@ -147,2425 +147,154 @@ inspect hz -k nodes/carplay/audio       ->  50 msgs/s   (20 ms PCM chunks)
 inspect hz -k nodes/carplay/nowplaying  ->   1 msgs/s
 ```
 
-This also retires the plan's "zenoh video throughput" risk: a 4 Mbit/s 30 fps
-H.264 stream rides zenoh peer-to-peer on localhost without backpressure, so the
-shared-memory fallback is not needed.
+## Bring-up checklist
 
-## 1. Host prerequisites (Linux)
+Work the stages in order; each depends on the previous, and `--max-stage N`
+stops after stage N. Every layer prefixes its log lines (`[usb]`, `[muxd]`,
+`[usbmuxd]`, `[carkit]`, `[lockdown]`, `[tls]`, `[iap2]`, `[mfi]`, `[ncm]`,
+`[airplay]`, `[video]`, `[audio]`, `[node]`), so `--verbose 2>&1 | grep
+'\[muxd\]'` isolates one.
 
-```bash
-sudo apt install libavcodec-dev libssl-dev iproute2
-```
+**1. Host.** The setup under Running it. Before touching the phone,
+`./build/libs/apple_usb/apple_usb_usbprobe --drivers` shows which interfaces
+already have something bound, and `./build/libs/apple_mfi_ic/apple_mfi_demo`
+reads the coprocessor's certificate on its own (`Valid: Yes`).
 
-**There is no libimobiledevice dependency.** The whole Apple-side stack is in
-this tree: property lists (`libs/plist`), the usbmux client and server, the
-lockdown handshake, client-certificate TLS, and pairing (`libs/apple_usb`). Do
-not install `libimobiledevice-dev` or `libplist-dev` expecting them to be used.
+**2. USB detection and the configuration switch** (`--max-stage 2`, grep
+`[usb]`). Expect the phone at VID `05ac` with its UDID and port path, the
+`0xC0/0x52` vendor request taking it from 5 advertised configurations to 6, and
+`bConfigurationValue` becoming 6 while the port path stays constant.
+`cat /sys/bus/usb/devices/<port>/bConfigurationValue` confirms it. Configuration
+6 is sticky across unplugs.
 
-It was a vendored dependency until 2026-07-31 and was removed once our
-implementation had replaced every part of it. What that dependency was for, and
-what replaced it, is in stage 4 below.
+**3. usbmux** (`--max-stage 3`, grep `[muxd]|[usbmuxd]`). Expect
+`mux on interface 1 (class ff/fe/02), bulk in 0x85 / out 0x04`, the handshake
+completing, and `[usbmuxd] serving <udid8> on /tmp/...sock` with the socket on
+disk. Any stock libimobiledevice tool works against it:
+`USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/<our-socket> idevice_id -l` lists the UDID.
 
-The stock `libimobiledevice` command-line tools remain useful for debugging
-because `UsbmuxdServer` speaks the standard usbmux protocol — if you happen to
-have them installed, `USBMUXD_SOCKET_ADDRESS=UNIX:<our-socket> ideviceinfo`
-still works against it. Nothing in the build needs them.
+**4. Lockdown and the carkit TLS channel** (`--max-stage 4`, grep `[carkit]`).
+Expect `[carkit] carkit TLS channel up (iAP2) udid=...` about 100 ms after
+start. A phone that has never been trusted prompts on screen; the pair record
+lands under `--state-dir`, and a phone that has revoked trust is re-paired
+automatically.
 
-### Building on macOS
+**5. iAP2 and MFi** (`--max-stage 5`, grep `[iap2]|[mfi]`). Expect the SYN/ACK
+negotiation, `identification ACCEPTED`, the coprocessor answering
+`RequestAuthenticationCertificate` (908 bytes) and the challenge (128 bytes),
+then `<- AuthenticationSucceeded`. The phone requests the certificate
+immediately after accepting identification, so nothing past this point can be
+reached without the coprocessor; `--iap2-allow-missing-mfi` runs up to it.
 
-`apple_usb` is no longer Linux-gated. The library splits along a hardware line:
+**6. NCM link** (`--max-stage 6`, grep `[ncm]`). Expect the first NCM function
+pair chosen (`control iface 3 ... iMACAddress string 18`), then an interface
+named after the phone's host MAC (`enx...`) up with a link-local, and the phone
+answering `ping6 -c3 ff02::1%<iface>`. No privilege is needed. Nothing else
+appears on the link until a session starts.
 
-- **Portable** — `muxd.cpp` (the usbmux state machine), `usbmuxd_server.cpp`
-  (the socket server), `usbmux_client.cpp`, `lockdown_client.cpp`,
-  `tls_stream.cpp`, `pair_record.cpp` and `carkit_channel.cpp`. Plain C++,
-  POSIX sockets and OpenSSL, and where the logic worth unit testing lives.
-- **Also portable since the libusb port** — `usb_device.cpp` and
-  `ncm_discovery.cpp`. libusb runs on macOS, so enumeration, descriptor parsing
-  and transfers are real there rather than stubbed. `usb_device_stub.cpp` is
-  gone, and so is `APPLE_USB_NO_TRANSPORT`.
-- **Nothing is Linux-only any more (2026-08-02).** `ncm_bridge.cpp` and
-  `ncm_frame.cpp` were the last platform split — TUN/TAP and userspace NTB16
-  framing — and both are gone, along with `ncm_bridge_null.cpp` and
-  `APPLE_USB_NO_NCM`. Stage 6 is an interface lookup on both platforms now, so
-  every file in this library compiles and is tested everywhere. See the end of
-  stage 6 for why.
+**7. AirPlay handshake** (`--max-stage 7`, grep `[airplay]`). Expect inbound TCP
+on `[fe80::...]:7000`, `/pair-setup`, `/pair-verify` and `/auth-setup`
+completing, `GET /info`, `SETUP`, `RECORD`, then `stream type 110`, `screen
+stream connected`, `codec config: H.264` and `FIRST FRAME decoded`.
 
-The practical consequence: **the entire `carplay` node builds and links on
-macOS**, `usb_pipeline.cpp` and `iap2_session.cpp` included. There is no
-`CARPLAY_HAVE_APPLE_USB` any more. Before this, those two files (~1,500 lines)
-were dropped from the macOS build purely because they sat in the same CMake
-`if(Linux)` block as the bridge — they had always compiled fine — so a refactor
-could break the bring-up path and nobody would find out until the next Linux
-build.
+**8. Video and touch.** Start the dashboard. Expect the CarPlay home screen to
+render and respond to taps and drags. Kill and restart the dashboard: video must
+recover within a second or two, because the node asks the phone for a fresh
+keyframe when a subscriber appears. Confirm the bus independently with
+`inspect hz nodes/carplay/video` (30 to 60 Hz) and `inspect echo
+nodes/carplay/input` while touching the widget.
 
-`apple_usb_usbprobe` also genuinely enumerates a phone on macOS, which makes
-step 1 of stage 1b a check you can run off the Linux box.
+**9. Audio.** Play music or start navigation; an idle screen requests no audio
+stream. Expect `audio stream type 100 'media' -> 44100 Hz 2 ch` and sound from
+the widget's sink. Triggering Siri opens the microphone uplink (`mic uplink
+up: ...`) and the widget starts capture.
 
-Anything from stage 2 onward still needs the phone; stage 6 onward also needs
-Linux. On macOS, `--max-stage 5` stops cleanly before the bridge.
+**10. Metadata.** `inspect echo nodes/carplay/nowplaying` while music plays,
+`.../nav` during turn-by-turn, `.../call` during a call. Navigation also makes
+the phone request location; with `--location` set, expect `[iap2] location
+requested` followed by an NMEA uplink at about 1 Hz.
 
-### Running on macOS — the full session works
+## What it publishes
 
-**Status: verified 2026-08-01** against iPhone `00008140…` (`05ac:12a8`), the
-same phone as the Linux sessions. **Stages 1–7 all run on macOS**, through iAP2
-authentication with the real MFi coprocessor to decoded H.264 — one run streamed
-975 frames before it was stopped.
+Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
+`schemas/carplay_*.capnp`.
 
-```
-[usb]    found 05ac:12a8 at port 1-1 (config 6 of 6)
-[usb]    already in configuration 6
-[muxd]   using the system usbmuxd at /var/run/usbmuxd for udid=00008140
-[lockdown] session 3FA8D8C8-…-09170E3755AC up with TLS
-[carkit] com.apple.carkit.service is on port 52113 (ssl=true)
-[carkit] carkit TLS channel up (iAP2) udid=00008140
-[ncm]    NCM function control if3 data if4 (of 2 function(s))
-[ncm]    en9 up, accessory link-local fe80::1ca1:5cd0:be56:35c6
-[airplay] RTSP receiver listening on fe80::1ca1:5cd0:be56:35c6%en9:7000
-[mfi]    using the shared coprocessor, protocol major 2
-[iap2]   link NEGOTIATED (SYN/ACK complete)
-[iap2]   identification ACCEPTED
-[mfi]    answering RequestAuthenticationCertificate      # 908 bytes
-[mfi]    answering RequestAuthenticationChallengeResponse # 128 bytes
-[iap2]   <- AuthenticationSucceeded (0xaa05)
-[video]  screen stream closed after 975 frames
-```
+| Key | Schema | Direction | Notes |
+|---|---|---|---|
+| `video` | `CarPlayVideo` | out | Annex-B access units, H.264 or H.265; parameter sets are re-sent before every keyframe |
+| `audio` | `CarPlayAudio` | out | S16LE PCM, 20 ms chunks in simulation |
+| `session` | `CarPlaySessionState` | out | device connected, bring-up phase, screen size, night mode, mic state |
+| `nowplaying` | `CarPlayNowPlaying` | out | merged partial updates, album art by sequence; re-published every 2 s |
+| `nav` | `CarPlayNav` | out | turn-by-turn metadata, re-published every 2 s |
+| `call` | `CarPlayCall` | out | call state, re-published every 2 s |
+| `input` | `CarPlayInput` | in | `touch`, `knob`, `mediaKey`, `telephony`, `siri`; `code` and `value` per kind are documented in the schema |
+| `mic` | `CarPlayAudio` | in | captured PCM while the phone has asked for the uplink |
+| `location` | `CarPlayLocation` | in | GPS fixes for the NMEA uplink |
 
-**Port 7000 is already taken on macOS.** The system AirPlay Receiver, inside
-`ControlCenter`, holds `*:7000`, so the receiver's wildcard bind fails with
-`EADDRINUSE`. Binding the NCM link-local specifically succeeds *alongside* it
-given `SO_REUSEADDR`, which the receiver already sets — measured:
+Nothing publishes `knob`, `mediaKey` or `telephony` yet; on hardware they are
+exercised by publishing to the topic directly.
 
-```
-bind [::]                      reuse=1 -> Address already in use
-bind fe80::1ca1:5cd0:be56:35c6 reuse=1 -> OK
-```
+## Troubleshooting
 
-So `ReceiverConfig::bind_address` is set to the link-local on macOS (it was
-declared but unused until now, and is resolved with `getaddrinfo` so the
-`%en9` scope comes with it). The phone only ever dials the address we
-advertised, so nothing is lost by not holding the wildcard. Turning AirPlay
-Receiver off in System Settings would also free the port, but is not required.
+Most failures are silent, or look like a different layer's fault. In stage order:
 
-**Root is needed exactly once, for the configuration switch.** Configuration 6
-is sticky across unplugs, so a single privileged run moves the phone into it and
-every run afterwards — stages 3 onwards — works unprivileged:
+| Symptom | What it is |
+|---|---|
+| Stuck at 5 configurations, `EPERM` | the vendor request needs root or the udev rules, and an unlocked, trusted phone |
+| `Failed to set configuration`, `EBUSY` | something holds an interface: the system `usbmuxd` (mask it), or `gvfsd-gphoto2` auto-mounting the PTP interface, which `systemctl` does not show; find it with `sudo fuser -v /dev/bus/usb/BBB/DDD` and kill it |
+| Phone vanishes after the switch and never returns | expected briefly (5 s window); if it stays gone, a charge-only cable, or a VM handing the re-enumerated device back to the host |
+| Stages 2 and 3 fine, stage 4 fails with `Password protected (-17)` | the phone's screen is locked. Trust does not clear it; enter the passcode and keep it awake |
+| `the phone rejected our pair record` | trust was revoked or the phone reset; the node re-pairs on its own |
+| No `[mfi]` certificate, every I²C probe NACKs | wrong bus (see the `REDLINE_MFI_I2C_DEV` note above), or `hid_mcp2221` not loaded. `apple_mfi_demo` and `i2cdetect -y N` are two independent implementations of the same probe |
+| One failed I²C transfer at startup, at debug; `i2cdetect` finds nothing the first run and `0x11` the second | normal: the coprocessor sleeps after 30 to 60 ms idle and NACKs the access that wakes it. `read_register` retries; at error level it is a logging regression, so check that `MFi coprocessor ready` follows |
+| `[iap2]` warning about a zero-length boolean, and no session | this phone did not do it, but a zero-length `CarPlayAvailability` decodes as absent and the session is never requested; the one-line fix is in `csm::getBool()` |
+| No `enx*` interface | the NCM function was never bound; confirm configuration 6 and that nothing captured the device |
+| Interface exists, `has no IPv6 link-local address`, link flapping | the network profile is missing or unapplied; `nmcli device status` showing `connecting (getting IP configuration)` is the tell |
+| Black video, no widget log | no `CarPlayVideo` arriving; check `inspect hz`, the keys in the dashboard config, zenoh |
+| `dropped N frame(s) waiting for a keyframe/config` persisting | the node is not requesting keyframes; expect `[node] video topic has subscriber(s)` then `a renderer connected; requesting a keyframe now` |
+| `first video frame decoded and rendered` but the screen is black | the picture is live; suspect widget geometry, not video. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard saves the exact image blitted |
+| Choppy audio, zero underruns, growing overruns | the host audio device drains slower than real time (an emulated device under load). `AIRPLAY_DUMP_AUDIO=/path.pcm` on the node gives raw S16LE for `aplay`; if that stutters too, it is the host |
+| Manufacturer tile shows an empty square | an icon with `prerendered: false`; the default is true, keep it |
+| Something holds port 7000 after a restart | `lsof -nP -iTCP:7000 -sTCP:LISTEN \| grep carplay`; count processes with `ps -eo pid=,comm= \| awk '$2 ~ /\/carplay$/'`, not `ps aux \| grep` |
 
-```bash
-sudo ./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --max-stage 2 --verbose  # once
-./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --max-stage 6 --verbose       # thereafter
-```
+The per-stage triage, and how to read a usbmon capture when the node's own log
+does not say why a transfer failed, are in
+[CarPlay port](../design/carplay-port.html).
 
-**`--config` (short form `-c`) is required**, including for `--simulate`, which does not read it.
-One rule is easier to remember than one rule with an exception, and everything
-the accessory tells the phone about itself now comes from that file rather than
-being half config and half built-in default. The bring-up knobs (`--max-stage`,
-`--state-dir`, `--location`, `--iap2-allow-missing-mfi`) stay on the command
-line, because they are about taking one layer at a time rather than about what
-the vehicle is.
+## Building on macOS
 
-**macOS needs less code than Linux, not more**, because it ships both of the
-things we hand-rolled. `usb_pipeline.cpp` selects between them with
-`CARPLAY_USE_SYSTEM_MUX` and `CARPLAY_USE_SYSTEM_NCM`, which default to the host
-and can be overridden so either branch type-checks from either platform:
+The whole node builds and links on macOS, and since 2026-08-01 stages 1 through
+7 run there against a real phone and coprocessor. macOS supplies two things
+Linux needs our code for, so `usb_pipeline.cpp` selects with
+`CARPLAY_USE_SYSTEM_MUX` and `CARPLAY_USE_SYSTEM_NCM`, defaulting to the host.
 
 | Stage | Linux | macOS |
 |---|---|---|
-| 2 — config switch | usbfs + udev rules | whole-device capture, root |
-| 3 — mux | our `MuxHost` drives If1 | the system usbmuxd already does |
-| 4 — usbmuxd socket | our `UsbmuxdServer` on a private path | `/var/run/usbmuxd` |
-| 4 — pair record | we mint one; phone prompts for trust | already exists; no prompt |
-| 6 — NCM link | `cdc_ncm` → `enx…`, plus a network profile | `AppleUSBNCM` → `en9` |
-| 7–10 | portable | portable |
+| 2, configuration switch | usbfs and udev rules | whole-device capture, root |
+| 3, mux | our `MuxHost` drives interface 1 | the system usbmuxd already does |
+| 4, usbmuxd socket | our `UsbmuxdServer` on a private path | `/var/run/usbmuxd` |
+| 4, pair record | we mint one; the phone prompts for trust | already exists; no prompt |
+| 6, NCM link | `cdc_ncm` and a network profile | `AppleUSBNCM`, addressed by the system |
+| 7 onward | portable | portable |
 
-**Why not fight the system daemon.** Taking If1 from macOS's usbmuxd would mean
-capturing the whole device, and capture is all-or-nothing — it would also strip
-the NCM interfaces from `AppleUSBNCM`, which is precisely what stage 6 wants to
-keep. Stopping the daemon is not an option either: `launchctl bootout
-system/com.apple.usbmuxd` is refused (`150: Operation not permitted while System
-Integrity Protection is engaged`). Using it is both the cheapest and the only
-route that leaves stage 6 intact.
-
-**Which interface is the AV link.** `AppleUSBNCM` binds *both* NCM pairs and
-creates an interface for each. Pick by MAC, from `iMACAddress` in the CDC
-Ethernet functional descriptor — never by "the interface that just appeared".
-The iAP interface (If2) brings up an `AppleUSBEthernetHost` interface too:
-
-```
-Apple USB Multiplexor@1  +-o usbmuxd  <AppleUSBHostInterfaceUserClient>
-AppleUSBEthernet@2       +-o AppleUSBEthernetHostAQM  +-o en7   <- not this
-NCM Control@3 / Data@4   +-o AppleUSBNCMData          +-o en9   <- first pair
-NCM Control@5 / Data@6   +-o AppleUSBNCMData          +-o en8   <- second pair
-```
-
-`en9`'s MAC `ca:1f:e8:0f:24:b1` shares an allocation with the phone's own
-address, which is the same tell the Linux session used to pick the first pair.
-Note its link-local is a `secured` (RFC 7217) address, *not* the EUI-64 of the
-MAC — same as Linux, and the reason both platforms advertise whatever the kernel
-actually assigned rather than a derived address.
-
-**Why root, specifically, for stage 2.** The configuration switch has to take
-the phone away from whatever already owns it, and the two platforms do that very
-differently:
-
-| | Linux | macOS |
-|---|---|---|
-| Granularity | one interface at a time | the **whole device** at once |
-| Permission | udev rules are enough | root, or `com.apple.vm.device-access` |
-| Re-enumerates? | no | no (see below) |
-| Who is holding it | `ipheth`, `cdc_ncm`, an earlier client | macOS's own `usbmuxd`, always running |
-
-`com.apple.vm.device-access` is a restricted entitlement Apple issues to
-virtualization vendors, so root is the only route open to us. `usbprobe` reports
-whether the current process has what it needs, and it answers with no phone
-attached:
-
-```
-$ ./build/libs/apple_usb/apple_usb_usbprobe
-Device capture: UNAVAILABLE -- macOS only lets root take a USB device away from
-its own drivers ... Re-run the node with sudo.
-```
-
-**Three things about macOS capture that are easy to get wrong**, all verified
-against libusb's darwin backend rather than assumed:
-
-1. **It does not re-enumerate.** `kUSBReEnumerateCaptureDeviceMask` seizes the
-   device, and libusb follows it with `darwin_restore_state()`, which reopens the
-   IOKit objects behind the *same* `libusb_device_handle` and restores the
-   previous configuration. So the handle survives, and the "must not
-   re-enumerate" property the configuration switch is built around holds on both
-   platforms. (An earlier version of this note claimed capture invalidated the
-   handle. It does not.)
-2. **It is refcounted on libusb's cached device, not on the handle**, and
-   `darwin_close()` never releases it. One capture at stage 2 therefore covers
-   the whole session — the mux, the lockdown channel and the NCM bridge each open
-   their own handle and none needs to capture again.
-3. **Never call `libusb_attach_kernel_driver()` or enable
-   `libusb_set_auto_detach_kernel_driver()`.** Either drops the refcount
-   mid-session, and macOS's `usbmuxd` will take the phone back immediately.
-
-Caveats worth knowing before you blame the code:
-
-- The default state dir is `<data dir>/carplay`, where the data dir is
-  `REDLINE_DATA_DIR` or the per-user location (`libs/core`, see
-  `docs/environment.md`). Under `sudo`, `$HOME` may be `/var/root`, which moves
-  it. On macOS this matters less than it looks — the pair record comes from the system
-  usbmuxd, not from our state dir — but pass `--state-dir` explicitly if you
-  want one shared location.
-- The vendor request `0x52` triggers a real bus re-enumeration, unlike capture.
-  That can drop the capture taken before it; the configuration switch simply
-  takes it again, which is why the code captures on both sides of the request.
-- **String descriptors are padded.** This phone reports its 24-character UDID in
-  a 40-character field, space filled, and libusb returns all 40. That is
-  invisible in a terminal and harmless while both ends of the usbmux
-  conversation are ours — `UsbmuxdServer` echoes back the same padded string, so
-  the comparison matches. Against the system usbmuxd it fails as *"the mux does
-  not list udid=…"*, which reads like a mux fault and is a string fault.
-  `readSerial()` and `readStringDescriptor()` trim; do not undo that.
-
-**Sanity checks that need no phone-side setup.** `usbprobe` reports whether this
-process can capture, and `--drivers` shows which interfaces already have
-something bound — the two questions that decide whether stage 2 can run:
+Root is needed exactly once, for the configuration switch, because macOS only
+lets root take a USB device away from its own drivers. Configuration 6 is sticky,
+so every later run is unprivileged, and the MCP2221A needs no privilege either.
 
 ```bash
-./build/libs/apple_usb/apple_usb_usbprobe --drivers
+sudo ./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --max-stage 2 --verbose  # once
+./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml --verbose                     # thereafter
 ```
 
-`muxctl` points our own usbmux client at any usbmuxd, ours or Apple's, and a
-second argument checks `findDevice()` — the lookup stage 4 depends on, and the
-one the UDID padding above breaks:
-
-```bash
-./build/libs/apple_usb/apple_usb_muxctl /var/run/usbmuxd 00008140000138EE0184801C
-```
-
-**Why there is no NCM backend on either platform any more.** There used to be a
-Linux-only userspace bridge here, and a note explaining that macOS could not
-have one because it has no TAP device. That turned out to be the wrong way
-round: macOS did not need one because `AppleUSBNCM` already builds the link, and
-neither does Linux, because `cdc_ncm` does the same. Stage 6 is an interface
-lookup on both. See the end of stage 6.
-
-**Privileges.** The driver needs raw USB access (usbfs) for the phone and an I²C
-adapter node for the MFi coprocessor. (It used to need TUN as well, for the NCM
-bridge; that is gone.) Running as root covers
-all three. To run unprivileged instead, install the rules shipped in the repo —
-this is a one-time step per machine. (On macOS there is no unprivileged option at
-all; see "Running stages 2–5 on macOS" above.)
-
-```bash
-sudo cp nodes/carplay/udev/99-carplay.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-`udevadm trigger` re-applies the rules to already-plugged devices, so you do not
-have to unplug anything. Verify — the phone's node should be group `plugdev`
-with an ACL (the trailing `+`):
-
-```bash
-ls -l /dev/bus/usb/002/007          # crw-rw----+ 1 usbmux plugdev
-```
-
-The devnum changes on every re-enumeration (and the config switch in stage 2
-forces one), so that path moves; the rule is keyed on the Apple VID, so it
-follows. You must be in `plugdev` (`id -nG | grep plugdev`).
-
-This covers stages 2–5, and stage 6 as well provided the persistent TAP is set
-up as described there — **verified unprivileged end to end on 2026-08-01**.
-
-Older revisions of this document said stage 6 needed root. It does not, and the
-reason it looked that way is worth knowing: the failure it produces is an
-`Operation not permitted` on adding the link-local, which invites `sudo` when
-the actual cause is the TAP's MAC being pinned too late. See the
-`CARPLAY_TAP_MAC` discussion in stage 6. Address configuration is done in-process
-(`SIOCSIFADDR`/`SIOCSIFHWADDR`), not by shelling out; the only remaining
-shell-out is a best-effort `nmcli` call to stop NetworkManager touching the
-link, and it is fine for that to fail.
-
-**The MFi coprocessor is reached over I²C.** On Linux the in-kernel
-`hid_mcp2221` driver binds the MCP2221A and registers it as a standard I²C
-adapter, which `i2c-dev` exposes as `/dev/i2c-N`; the driver talks to the
-coprocessor through that. macOS has no such driver and drives the bridge over
-USB HID from userspace instead. The backend follows the host platform; what *is*
-configurable is which adapter the Linux backend opens, because a deployed board
-has several and auto-detection only knows to prefer an MCP2221A. With no bridge
-present it takes the first `/dev/i2c-N` it finds, which on the LattePanda is the
-GPU's DDC bus — every probe there NACKs and the failure looks exactly like a
-dead coprocessor. Name the bus instead, in one of two ways:
-
-```bash
-apple_mfi_demo /dev/i2c-13                   # the LattePanda carrier's I2C4 header
-carplay --config ... --mfi-i2c-device /dev/i2c-13
-REDLINE_MFI_I2C_DEV=/dev/i2c-13 carplay ...  # what the image's unit does
-```
-
-The environment variable is the deployment's knob (the image sets it in the
-`redline-node@carplay` drop-in, next to `REDLINE_DATA_DIR`); the flag and the
-demo argument are for a bench. Unset on a desktop with the MCP2221A, where
-auto-detection is right.
-
-Load the two modules (they are not autoloaded by anything here):
-
-```bash
-sudo cp nodes/carplay/udev/carplay-i2c.conf /etc/modules-load.d/
-sudo modprobe hid_mcp2221 && sudo modprobe i2c-dev
-i2cdetect -l          # expect "MCP2221 usb-i2c bridge"
-i2cdetect -y 0        # expect a device at 0x11
-```
-
-`i2c-tools` is worth installing purely as an independent cross-check of the
-driver: two separate implementations probing the same bus is the fastest way to
-tell a wiring fault from a software one.
-
-**The userspace MCP2221A driver was broken until 2026-08-01, and it failed in a
-way that looked exactly like a wiring fault.** Every scan found zero devices and
-every read to 0x11 returned `0x41` forever. That is worth knowing about, because
-"a full-bus scan finds nothing" is *not* the hardware tell it appears to be.
-
-Three separate bugs, all in `libs/mcp2221a/mcp2221a.cpp`:
-
-1. **Every transfer went to the general-call address 0x00.** The report builders
-   were explicit specialisations of a variadic `make_report<Cmd>()`, and a
-   specialisation only matches when the deduced argument types match *exactly*.
-   Call sites passed promoted `int`s — `make_report<I2CWriteData>(0, addr << 1)`
-   deduces `<int, int>`, not `<uint16_t, uint8_t>` — so the specialisation was
-   skipped, the primary template packed the arguments consecutively from byte 1,
-   and the address landed in the length-MSB field while the address byte stayed
-   zero. Nothing ever answered because nothing was ever addressed. Replaced with
-   named builders (`makeI2cWrite` etc.) whose parameter types cannot silently
-   change the overload.
-2. **The ACK test read the wrong thing.** `ack_status` was the whole of response
-   byte 20 compared against zero. DS20005565E table 3-2 says byte 20 carries the
-   ACK status in **bit 6 only** — "if ACK was received from client value is 0,
-   else 1" — with bit 7 and bits 5-0 explicitly "don't care", and they are not
-   zero in practice. Measured: `0x00` when 0x11 answers, `0x40` when nothing
-   does. Now masked.
-3. **A NACK latches the engine and the scan never unwound it.** An unanswered
-   address parks the state machine at `AddressNACKed` (0x25), and while it is
-   parked *every* transfer command is refused with 0x01. `clear_i2c_engine()`
-   now cancels back to idle before each probe.
-
-Plus a timing detail: the write command being accepted only means the engine
-took it, not that the address has been clocked out. Reading the ACK bit
-immediately gives a stale answer, so the scan settles 2 ms first.
-
-With those fixed, on the same hardware that had been "failing" all along:
-
-```
-$ ./build/libs/mcp2221a/mcp2221a_i2c_scan
-Found 1 devices:
- - 0x11
-
-$ ./build/libs/apple_mfi_ic/apple_mfi_demo
-Device Version: 0x05   Authentication Protocol Version: 2.0
-Subject: /C=US/O=Apple Inc./OU=Apple iPod Accessories/CN=IPA_1212AA…
-Valid: Yes
-Signature: [6c, 94, 27, 27, …]        # 128-byte challenge response
-```
-
-**A single failed transfer at startup is normal, not a fault.** The coprocessor
-sleeps after even a short idle period and **NACKs the first access, waking on
-it** — so the opening read fails and the retry succeeds a few milliseconds
-later. `AppleMFIIC::read_register` retries the write/read pair as a unit (8
-attempts, 20 ms apart) precisely for this, and only logs an error once all of
-them are gone. The MCP2221A layer therefore reports these at DEBUG: it signals
-failure through its return value, and only the caller knows whether a failure
-is terminal. If you see
-
-```
-[error] I2C read from 0x11 failed ... the client did not acknowledge its address
-```
-
-at ERROR level, that is a regression in the logging level, not a bus problem —
-check whether `MFi coprocessor ready` follows shortly after.
-
-**Triage order, corrected.** Before suspecting the bus, prove the driver: a scan
-that finds *nothing at all* is as likely to be an addressing bug as an
-electrical one. Genuine bus faults show up as SCL or SDA stuck low, which the
-status response reports directly in bytes 22 and 23 — on a healthy idle bus both
-read 1. Only once those look right do pull-ups, power, a swapped SDA/SCL pair
-and a held reset line become the likely causes.
-
-Note the MCP2221A backend needs **no privilege** on macOS, unlike the phone.
-
-**Conflicting daemons (Linux).** The system `usbmuxd` will fight us for the phone
-(this is the core reason we run our own mux there). It is not merely untidy: it
-holds interface 1, the exact vendor-specific interface our mux claims
-(`kMuxInterface = 1`). Stop it before testing:
-
-```bash
-sudo systemctl stop usbmuxd.socket usbmuxd.service
-```
-
-On **macOS this is inverted**: the system usbmuxd is not a conflict, it is the
-mux we use. Do not try to stop it — SIP refuses, and stopping it would gain
-nothing, since taking If1 requires whole-device capture which would also strip
-the NCM interfaces we depend on. See "Running on macOS" above.
-
-Some distros ship only the service unit and no socket unit; drop
-`usbmuxd.socket` from the command if systemd reports it does not exist. If the
-service comes back on its own, socket activation restarted it — `sudo systemctl
-mask usbmuxd.socket usbmuxd.service` (reverse with `unmask`).
-
-**`systemctl stop` alone is not enough, and the reason is not obvious.** The
-package ships `/usr/lib/udev/rules.d/39-usbmuxd.rules`, which contains:
-
-```
-ACTION=="add", ... ATTR{bConfigurationValue}="0", OWNER="usbmux",
-                   ENV{SYSTEMD_WANTS}="usbmuxd.service"
-```
-
-The stage 2 config switch *deliberately re-enumerates the phone*, which fires
-`add`, which restarts usbmuxd mid-test — it then claims interface 1 and the
-next `libusb_set_configuration` fails with `EBUSY`. Observed exactly this on
-2026-08-01: stopped at 13:18:59, restarted by udev at 13:21:50, six seconds
-after the vendor request. The same rule also sets `bConfigurationValue=0`,
-unconfiguring the phone on plug.
-
-So **mask it or remove it**; stopping it will not survive a single stage 2 run.
-Removing the package is safe and does not cascade — `libimobiledevice-utils`
-stays, and device-node access comes from our own `99-carplay.rules`
-(`GROUP="plugdev"`, `TAG+="uaccess"`), not from the rule's `OWNER="usbmux"`.
-Beware `apt autoremove` afterwards: it will offer to take `libssl-dev` with it,
-which is a stage 1 prerequisite.
-
-**`gvfsd-gphoto2` is the other one, and it is easy to misread as usbmuxd.**
-Configuration 6 keeps a PTP/imaging interface at interface 0, so GNOME
-auto-mounts the phone as a camera and holds a usbfs claim on it. Any claimed
-interface makes `libusb_set_configuration` return `EBUSY`, so this blocks
-stage 2 exactly the way usbmuxd does — but `systemctl` shows nothing wrong and
-`lsusb -t` reports the interface as `usbfs`, not as a named driver.
-
-Find it by owner rather than by guessing:
-
-```bash
-ls -l /proc/*/fd 2>/dev/null | grep /dev/bus/usb    # or: sudo fuser -v /dev/bus/usb/BBB/DDD
-kill <the gvfsd-gphoto2 pid>
-```
-
-`libusb_detach_kernel_driver` cannot help here: a live usbfs claim by another
-*process* is not a kernel driver, and no ioctl takes it away.
-
-**Running in a VM.** USB passthrough works, but the stage 2 config switch
-deliberately re-enumerates the phone, and hypervisors commonly hand a
-re-enumerating device back to the *host* instead of the guest. If the phone
-disappears and never returns within the code's 5 s window, suspect passthrough
-before suspecting the driver — re-attach it to the guest and confirm with
-`lsusb` that the VID is still visible from inside.
-
-## 1b. Re-verifying the libusb transport port (do this first)
-
-**Status: re-verified on hardware 2026-08-01** against iPhone `00008140…`, the
-same phone as the 2026-07-21 session. All five steps below pass, plus a full
-`--max-stage 7` session to decoded video. The libusb port introduced no
-regression: every failure hit during the re-verification was environmental (see
-the conflicting-daemons notes in stage 1) except one genuine bug, in the TAP
-link-local derivation, which was in unchanged code and is written up in stage 6.
-
-Stages 2, 3 and 6 had been verified on 2026-07-21 against the *old* usbfs/sysfs
-transport; those markers are now good again. Nothing above the transport
-changed.
-
-**What changed.** Enumeration, descriptor parsing, configuration selection,
-driver detach and every transfer now go through libusb (already vendored for
-hidapi, `third_party/libusb.cmake`). Three consequences worth knowing before you
-start reading logs:
-
-1. **Devices are tracked by physical port, not by serial.** `DeviceInfo` carries
-   a `PortPath` (`bus-port.port`, e.g. `1-4.2`) which is stable across the
-   re-enumeration the vendor request triggers, whereas the device address is
-   not. The port path prints the same way the kernel names the sysfs directory,
-   so `/sys/bus/usb/devices/1-4.2` is still the thing to `cat`.
-2. **Enumeration no longer reports a UDID.** Reading it costs a device open, so
-   it happens once, in `populateSerial()`, *before* the config switch. A phone
-   whose UDID cannot be read is now rejected at detection rather than later.
-3. **Interfaces and endpoints come from the configuration descriptor.** The mux
-   interface is found by its `255/254/2` class triple and the NCM pair by
-   walking CDC descriptors, instead of being hardcoded (`muxd.cpp`) or read out
-   of sysfs. The 2026-07-21 session recorded that the real
-   phone matches both — this port is what makes the code rely on that rather
-   than on constants that happened to agree.
-
-### Order to verify in
-
-Each step isolates one assumption, so a failure names its own cause. Do not skip
-ahead: step 1 is read-only and will tell you whether steps 2–4 are even worth
-attempting.
-
-**Step 1 — descriptors, without touching anything.** `apple_usb_usbprobe` claims
-nothing and changes nothing; it only enumerates and dumps.
-
-```bash
-./build/libs/apple_usb/apple_usb_usbprobe            # read-only
-./build/libs/apple_usb/apple_usb_usbprobe --serial   # + opens each device for its UDID
-```
-
-Check, in this order:
-
-| Check | Expected | If wrong |
-|---|---|---|
-| Device listed at all | `05ac:…` with a port path | udev rules (stage 1) |
-| `port=` matches sysfs | same string as the `/sys/bus/usb/devices` dir | port-path formatting bug |
-| `nconfigs` | 5 before the vendor request, 6 after | stage 2 triage |
-| `--serial` prints a UDID | 24/25 chars | `populateSerial` will reject the phone |
-| An interface annotated `<- usbmux` | present in config 6 | `muxd` falls back; see below |
-| Two `<- CDC-NCM control` interfaces | present in config 6 | NCM discovery will find fewer |
-| Bulk endpoints on data **alt 1** | `ep 0x…  bulk` under `alt 1` | `hasBulkPair()` fails |
-| `cdc_subtype=0x0f (Ethernet Networking, iMACAddress=N)` | `N` non-zero | host MAC unreadable |
-
-**Reconciled against real configuration 6 on 2026-08-01 — the fixture was
-right.** `carPlayLikeConfig()` matches a real iPhone in configuration 6 exactly:
-all 11 interface alt settings, the `0xff/0xfd` iAP interface with its three
-altsettings, endpoints `0x87`/`0x88`/`0x06`/`0x89`/`0x07`, `iMACAddress` 18 on
-the first NCM function and 16 on the second, an interrupt endpoint on the first
-NCM control interface and none on the second, and every functional-descriptor
-byte including `wMaxSegmentSize` `0x3e8e` and the NCM functional `06 24 1a 00 01
-3b`. Nothing needed correcting. The comment claiming it is "byte-for-byte what
-the phone reports" is now verified rather than asserted.
-
-Configuration 5 (what the phone boots into) is the same layout **minus** the iAP
-interface, so every interface number and endpoint address below If2 shifts down
-by one. Do not mistake a config-5 dump for a config-6 one.
-
-**Then reconcile against the unit tests.** `test_ncm_discovery.cpp` encodes the
-descriptor shape this port *assumes* (`carPlayLikeConfig()`). If the probe output
-disagrees with it — different interface numbers, endpoints on a different
-altsetting, a third NCM pair — correct that fixture first and let the tests fail,
-then fix the code. Those tests are the only reason any of this was verifiable
-without a phone; keeping them honest is what keeps that true.
-
-**Step 2 — the config switch (stage 2).** This is the step most likely to
-regress, because `libusb_set_configuration` replaces a hand-written
-`USBDEVFS_SETCONFIGURATION` ioctl. On Linux libusb issues that same ioctl, so
-the property the old code was careful about — that selecting a configuration
-does **not** re-enumerate, unlike writing sysfs — is preserved. Confirm it:
-
-```bash
-./build/nodes/carplay/carplay --max-stage 2 --verbose 2>&1 | grep '\[usb\]'
-```
-
-Watch for the port path staying *constant* across the vendor request while the
-config goes 4 → 6. A changing port path means the phone was re-plugged or a hub
-re-enumerated, and the rediscovery keyed on it will time out.
-
-**Step 3 — the mux (stage 3).** The line to look for is new:
-
-```
-[muxd] mux on interface 1 (class ff/fe/02), bulk in 0x85 / out 0x04
-```
-
-Those must match the hardcoded values the old code used and the 2026-07-21
-session confirmed (If1, `0x85`/`0x04`). **If instead you see** `no ff/fe/02
-interface in configuration 6; falling back to interface 1`, the descriptor
-lookup is wrong for this phone — the fallback keeps the stack working, but note
-it and fix the lookup rather than leaving the fallback as the live path.
-
-**Step 4 — NCM (stage 6).** Two new lines replace the old sysfs walk. These are
-the real ones, from hardware on 2026-08-01:
-
-```
-[ncm] 2 NCM function pairs present; taking the first (control interface 3). Override with CARPLAY_NCM_CTRL_IF.
-[ncm] NCM pair in configuration 6: control iface 3 (status ep 0x87), data iface 4 (bulk in 0x88 / out 0x06), iMACAddress string 18
-```
-
-Compare every field against step 1's probe output. Then confirm the two
-behaviours the old code got right, because both are easy to lose in a rewrite:
-
-- **The first pair is selected, not the second.** The phone exposes two and the
-  system NCM driver binds the first, which is the one we want. If the log shows
-  a control interface higher than the first NCM one, descriptor discovery picked
-  wrong. `CARPLAY_NCM_CTRL_IF=<n>` pins it while you investigate.
-
-**Step 5 — throughput under load.** This was the one change with a genuine
-performance question, because the AV data path used to run as two synchronous
-libusb pumps on one handle: libusb serialises its sync API on an event lock, so
-one pump could service the other's completions where the old usbfs ioctls were
-independent. Measured 2026-08-01 and found not to starve (3443 NTBs out / 3467
-in, zero errors, 2294 frames over ~100 s).
-
-**The question is moot since 2026-08-02.** The AV data path is the kernel's now,
-not ours — see the end of stage 6 — so the only libusb traffic left is the mux
-and lockdown, both low-rate. There is nothing here to starve, and the async
-migration this section used to recommend is not needed.
-
-### What this port did *not* change
-
-Nothing above the transport: usbmux framing, plists, lockdown, TLS, pairing,
-iAP2 and AirPlay. If a failure
-appears in those layers after this port, suspect the transport underneath rather
-than the layer reporting it — with one exception: a phone rejected at detection
-for an unreadable UDID never reaches them at all.
-
-## 2. USB detection and the config-6 switch
-
-Plug in an unlocked, trusted iPhone.
-
-```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep '\[usb\]'
-```
-
-**Expect:** the phone enumerated at VID `05ac` with its UDID, then a transition to
-`bConfigurationValue` 6. Verify independently:
-
-```bash
-cat /sys/bus/usb/devices/<dev>/bNumConfigurations   # want >= 6 after the vendor request
-cat /sys/bus/usb/devices/<dev>/bConfigurationValue  # want 6
-```
-
-**Verified on hardware (2026-07-21)**, iPhone `00008140…` — the constants in
-`usb_device.h`/`muxd.cpp` are all correct for this generation:
-
-| Expectation | Result |
-|---|---|
-| `0xC0/0x52` reveals extra configurations | ✓ 5 → **6** configurations |
-| `kCarPlayConfiguration = 6` | ✓ config 6 = `PTP + Apple Mobile Device + Apple USB Ethernet + NCM` |
-| mux at If1, `kEpOut 0x04` / `kEpIn 0x85` | ✓ If1, vendor-specific 255/254/2 |
-| `kNcmDataAltSetting = 1` | ✓ bulk endpoints live on alt 1 |
-
-Two of those rows are no longer constants: since the libusb port the mux
-interface is *found* by its `255/254/2` triple and its endpoints read from the
-descriptor, rather than assumed to be If1/`0x04`/`0x85`. The hardware row above
-is what says that lookup will land on the same place. See stage 1b.
-
-Note the vendor request is *sticky but not idempotent-looking*: before it the
-phone advertises 5 configurations (config 5 is `…+ NCM`, which looks tempting
-but is **not** the CarPlay config), after it 6. Do not "fix" the constant to 5.
-
-**Applying the configuration needs the kernel drivers out of the way.** The
-switch is done with `libusb_set_configuration`, which on Linux issues
-`USBDEVFS_SETCONFIGURATION` on the usbfs node — a udev rule can grant that to a
-normal user, unlike the root-only sysfs attribute. The kernel returns **`EBUSY`
-while any interface is claimed**, so every bound driver is released first with
-`libusb_detach_kernel_driver` (also `USBDEVFS_DISCONNECT` underneath); `ipheth`
-and an earlier usbfs client both hold interfaces in config 4. Unlike the vendor
-request this does **not** re-enumerate the device — config 6 is active in ~100 ms
-and, on a VM, the passthrough binding survives. There is **no fallback**: the
-root-only sysfs `bConfigurationValue` write inherited from the usbfs
-implementation was removed on 2026-08-01, once libusb had been verified against
-hardware. It covered a nearly empty case (root can open the usbfs node anyway)
-and reached the configuration by re-enumerating — the one thing this step is
-careful to avoid.
-
-**Triage.**
-- Stuck at 4 configurations → the `0xC0/0x52` vendor request failed; check for
-  `EPERM` (run as root) or that the phone is unlocked and trusted.
-- `Failed to set configuration …` → libusb could not open the device, or the
-  device rejected the request. Install the udev rules from stage 1, or run as
-  root.
-- Config reverts to 4 → something re-enumerated it, usually the system usbmuxd
-  (stage 1) or `usb_storage`/`ipheth` grabbing the device.
-- Device vanishes after the switch → expected briefly; the code waits up to 5s for
-  re-enumeration. If it never returns, try a different cable/port (some cables are
-  charge-only).
-
-## 3. usbmux TCP-over-USB
-
-```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep -E '\[muxd\]|\[usbmuxd\]'
-```
-
-**Expect:** interface 1 claimed, the version/setup handshake completing, then
-`[usbmuxd] serving <udid8> on /tmp/...sock`, and the socket present on disk.
-
-**Triage.**
-- `could not claim mux interface` → another driver holds it; check `lsusb -t` and
-  unbind the kernel driver, or confirm stage 1's usbmuxd stop.
-- `usb reader ended` immediately → wrong endpoints for this device generation;
-  confirm `EP_IN 0x85` / `EP_OUT 0x04` against `lsusb -v` for config 6.
-- Connect attempts time out (`mux connect ... failed`) → the SYN/ACK handshake
-  isn't completing; enable debug and check `[muxd]` RST logs. An immediate RST
-  usually means the phone rejected the port (wrong lockdown port) rather than a
-  framing bug.
-
-## 4. Lockdown pairing + carkit TLS channel
-
-This is the stage that runs the lockdown handshake over *our* mux socket.
-
-```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep '\[carkit\]'
-```
-
-**Expect:** `[carkit] carkit TLS channel up (iAP2) udid=xxxxxxxx`.
-
-Sanity-check our socket independently with the stock tools — this isolates
-"our mux is broken" from "our lockdown call is broken":
-
-```bash
-USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/<our-socket> idevice_id -l   # should list the UDID
-USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/<our-socket> ideviceinfo     # should dump device info
-```
-
-**Verified on hardware (2026-07-21):** `idevice_id -l` returns the UDID through
-our socket and `[carkit] carkit TLS channel up (iAP2)` appears ~113 ms after
-start. This exercised the whole chain — mux, the plist framing, the `Connect`
-relay, lockdown pairing and TLS — so stages 3 and 4 are no longer speculative.
-
-**The phone must be UNLOCKED, not merely trusted.** These are different things
-and only one of them prompts you. With the screen locked, lockdown returns
-`Password protected (-17)` and every stage-4 attempt fails while stages 2–3 look
-perfect. Tapping "Trust" does not clear it — enter the passcode and keep the
-phone awake.
-
-**UDID form matters.** libusbmuxd normalises a modern 24-character serial into
-the 25-character `XXXXXXXX-XXXXXXXXXXXXXXXX` form, and `idevice_new_with_options`
-matches against *that*. The serial we read from sysfs has no dash, so it is
-converted in `openCarkitChannel` before the lookup. Verified differentially:
-
-```
-ideviceinfo -u 00008140000138EE0184801C   -> ERROR: Device ... not found!
-ideviceinfo -u 00008140-000138EE0184801C  -> reaches lockdownd
-```
-
-Without that conversion stage 4 fails at `idevice_new` with a "device not found"
-that looks like a mux bug but is a string-format bug.
-
-**Triage.**
-- `idevice_id -l` empty → our `UsbmuxdServer` ListDevices reply is wrong; check the
-  plist packet header framing (little-endian length/version/message/tag).
-- `Password protected (-17)` → the phone's screen is locked. Unlock it.
-- Handshake fails with a pairing error → tap "Trust" on the phone; confirm pair
-  records are being written under `--state-dir`. Delete the state dir to force a
-  fresh pair.
-- `could not start com.apple.carkit.service` → the phone did not expose the service.
-  Confirm it is genuinely in config 6 (stage 2) — carkit only exists there.
-- TLS enable fails → check `[tls]` at `--verbose`; the handshake logs the
-  negotiated version and cipher, and the client certificate comes from the pair
-  record's root key pair.
-
-### How stage 4 replaced libimobiledevice
-
-Stage 4 is `UsbmuxClient` for the transport, `LockdownClient` for the handshake,
-`TlsStream` for both TLS sessions (the lockdown session and the carkit service
-connection), and `PairRecord` for the identity — including minting one, so a
-device that has never been trusted pairs on our code.
-
-This section is history rather than instructions: libimobiledevice is gone. It is
-kept because the two bugs below were found by diffing against its source, and
-because both are the kind that will be reintroduced by anyone who assumes the
-obvious implementation is correct.
-
-Verified on hardware 2026-07-31:
-
-- **Pairing from nothing.** With the state dir emptied, stage 4 reads the
-  device public key, mints a root/host/device certificate set, sends `Pair`, and
-  stores the record the device's answer completes. The result is byte-compatible
-  with libimobiledevice's: same fields, same sizes (root 948, host 964, device
-  1005, keys 1704, escrow bag 32), same extensions, same `sha256WithRSAEncryption`.
-- **Interop both directions**, while libimobiledevice was still present to
-  check against: it ran a full session to `AuthenticationSucceeded` on a record
-  we generated, without re-pairing, and we did the same on a record it wrote.
-  Records written by either remain readable.
-- **Stability.** 25 consecutive `--max-stage 5` runs with no channel loss, plus
-  a 150-second single session. Before the fix below it was 6 failures in 13.
-
-The certificates carry **empty subject and issuer names**, which is Apple's
-design and what libimobiledevice does too. `openssl verify` therefore reports
-"self-signed certificate" for the host and device certificates -- it cannot build
-a chain by name. That is expected, identical for libimobiledevice's own records,
-and not a defect; `X509_verify` against the root's key is the real check, and
-`apple_usb_test_pair_record` does exactly that.
-
-Both of the robustness bugs below were found by diffing against
-libimobiledevice's source while it was still vendored. If stage 4 regresses and
-the cause is not obvious, that source is still the best reference — the relevant
-functions are `idevice_connection_receive_timeout`, `lockdownd_start_session`
-and `pair_record_generate_keys_and_certs`.
-
-#### The read-ordering bug, and why the reference's semantics matter
-
-Two fixes took stage 4 from intermittently broken to solid. Both came out of
-reading libimobiledevice's source rather than from the symptom.
-
-1. **`recv` must gather, not return the first chunk.** This was the whole
-   intermittency: 6 failures in 13 runs before, 0 in 25 after. The phone would
-   reset the carkit connection about 0.9 s after the channel came up, on the
-   first session of a process.
-
-   `idevice_connection_receive_timeout` loops `SSL_read` until the caller's
-   buffer is *full*, returning a partial buffer only once a read times out, and
-   the iAP2 link layer was written against those semantics. Returning the first
-   available chunk instead hands back as little as a dozen bytes per call with a
-   full link-layer poll cycle between calls, so a burst -- the post-authentication
-   flurry, or a 60 KB album artwork frame -- leaves the socket backed up. Our own
-   `UsbmuxdServer` relay then blocks writing into that socket, which stalls the
-   thread pumping the USB mux, which stalls every other stream on it.
-
-   Recorded because it was tested and **rejected**: this is not about ACK volume.
-   Runs that died sent 8 ACKs between channel-up and the reset; healthy runs send
-   11 over the same span. Fewer, not more.
-
-2. **`SSL_read` before `poll`, never after.** OpenSSL buffers whole records, so
-   once a large message is split across reads the remaining plaintext is already
-   decrypted and held while the socket has nothing to report. Polling first waits
-   out the entire timeout before returning data it was already holding. The fix
-   is `SSL_read` first and `poll` only on `WANT_READ`, which needs a non-blocking
-   socket. This alone took the failure rate from 3/4 to 1/4.
-
-Two more differences from the reference, both found the same way and both real:
-
-- **A service dies with the session that started it.** Dropping the
-  `LockdownClient` once `StartService` returned killed the carkit channel about a
-  second later, every time. `NativeCarkitChannel` owns it for exactly that
-  reason, and `LockdownClient`'s destructor sends `StopSession` the way
-  `lockdownd_client_free` does.
-- **No escrow bag on `StartService`.** libimobiledevice's
-  `lockdownd_start_service` passes `send_escrow_bag=0`; ours originally sent one.
-  It did not turn out to affect stability, but matching the reference is correct.
-
-**Triage.**
-- `the phone is locked` → lockdown returned `PasswordProtected`. Unlock the phone
-  and keep it awake. This is reported before the trust prompt can appear, and it
-  is *not* cleared by tapping Trust.
-- `the phone rejected our pair record` → the record is stale (phone reset, trust
-  revoked). `native` re-pairs automatically; no need to delete the state dir.
-- Anything else at stage 4 → run with `--verbose` and read the `[carkit]`,
-  `[lockdown]` and `[tls]` lines in order; each stage of the handshake logs where
-  it got to. `apple_usb_muxctl` isolates the transport underneath it.
-
-## 5. iAP2 link layer, identification, MFi auth
-
-```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep -E '\[iap2\]|\[mfi\]'
-```
-
-**Expect:** link SYN/ACK established, identification accepted, MFi certificate read
-and a challenge signed, then the phone reporting CarPlay availability.
-
-**Verified on hardware (2026-07-21)** up to the MFi handshake — the link layer
-and the wired identification encoding are correct:
-
-```
-carkit > SYN     seq=99  ack=0   len=29
-carkit < SYN|ACK seq=101 ack=99  len=29
-carkit > ACK     seq=99  ack=101
-[iap2] link negotiated (state -> normal)
-[iap2] IdentificationInformation encoded: 344 bytes, 19 params
-[iap2] <- StartIdentification (0x1d00)
-[iap2] <- IdentificationAccepted (0x1d02)     <- accepted first try, no rejection
-[iap2] <- RequestAuthenticationCertificate (0xaa00)
-```
-
-The phone advertises `max_outgoing=4 max_len=65535 rto=0ms ack_timeout=0ms
-max_retransmissions=0 max_ack=0` and three sessions (10 control v2, 11 external
-accessory v1, 12 file transfer v2). Two of the caveats below are settled by those
-numbers: `max_len` really is 65535 so the fragmentation off-by-ten is invisible,
-and the phone advertises **zero** retransmissions/acks, confirming the wired path
-never exercises the retransmission/EAK timers.
-
-**The phone requests the MFi certificate immediately after accepting
-identification**, before sending anything else. So `CarPlayAvailability` — and
-with it the zero-length-boolean question below — **cannot be reached until the
-coprocessor works**. `--iap2-allow-missing-mfi` runs everything up to that point
-anyway, which is the right way to exercise the link while the board is out.
-
-**Isolating the MFi board (do this before blaming iAP2).** The bridge and the
-coprocessor are separate failure domains, and the MCP2221A tells you which one
-is at fault if you read its status. `apple_mfi_demo` narrates both:
-
-| Symptom | Layer | Meaning |
-|---|---|---|
-| `MCP2221A device not found` | host | no `/dev/hidraw` node — `hid_mcp2221` is still bound (see stage 1) |
-| `I2C engine is in state 0x62, not idle; resetting` | bridge | expected once after an unclean exit; the driver self-heals |
-| `I2C speed set to 100000 Hz` | bridge | **bridge is fully healthy from here on** |
-| `state: 0x25` (`AddressNACKed`) | board | nothing is answering at that address |
-
-`mcp2221a_i2c_scan` finding **no** devices while the bridge reports
-`SCL=1 SDA=1` means the I²C lines are pulled up and free but the coprocessor is
-not acknowledging — i.e. a board problem (power, wiring, or the MFi RESET pin
-held asserted), not a software one. Note the library has no GPIO support, so if
-your breakout wires MFi RESET to one of the bridge's GP0–GP3 pins, nothing
-releases it and every address will NACK.
-
-**The coprocessor sleeps, and the first access after it wakes is NACKed.**
-This is the single most misleading behaviour on this board. A bus scan that
-probes each address once walks straight past it: the wake-up NACK at `0x11` is
-read as "nothing here" and the scan moves on to `0x12`, never coming back. Two
-consecutive `i2cdetect` runs show it clearly — the first finds nothing, the
-second finds `0x11`. It also re-sleeps quickly. Measured on the LattePanda
-(DesignWare controller at 100 kHz, 2026-09-13, with a probe that kept the bus
-open and timed each transaction):
-
-| | |
-|---|---|
-| sleeps after | ~30–60 ms idle |
-| first START after sleep | NACKed, or ACKed with a ~12 ms clock stretch |
-| responsive again after a NACK | ~0.5 ms |
-| after a **successful** register-select write | busy ~0.8–1.5 ms, NACKs everything; the pointer stays set |
-| after a **NACKed** write | pointer NOT set — a following read returns garbage |
-
-The last two rows are what broke the first native-controller attempt: the read
-came straight after the write, inside the busy window, and re-issuing the
-*pair* on every failure just reopened it, so the demo never read a byte even
-though `i2cdetect` saw the part. Over the MCP2221A the USB round trip had
-hidden the window. `AppleMFIIC::read_register` therefore retries a NACKed
-write (pointer unset) but retries the *read alone* after a good write, 0.5 ms
-apart for up to 25 ms, before redoing the pair. Do not "simplify" that away,
-and do not put the read back-to-back with the write.
-
-The read retry is bounded by *time*, not by a count, because one failed read
-costs ~0.2 ms on the native controller and ~12 ms over the hidapi bridge (the
-engine latches on a NACK and has to be polled back to idle). A count tuned for
-one transport is useless or a stall on the other; 25 ms is under the part's
-idle-to-sleep threshold on both. The same logic serves both paths — the Linux
-controller and the MCP2221A are just different `i2c::Bus` backends — and
-`libs/apple_mfi_ic/tests/test_apple_mfi_ic.cpp` drives it against a fake
-coprocessor with the measured timing on a native-shaped and a bridge-shaped
-transport, checking device info, a full challenge, and the wall time of each.
-One physical limit the fake makes explicit: a transport whose NACK recovery
-takes longer than the part's ~30 ms sleep threshold can never wake it, because
-the recovery itself is idle time. The hidapi backend's ~12 ms is inside that;
-keep it there.
-
-**Two MCP2221A behaviours worth knowing.** These bit us on the userspace hidapi
-path used on macOS; the kernel driver handles both itself, so they are invisible
-on Linux:
-
-- *A cancel issued while the I²C engine is Idle wedges it.* The engine drives a
-  STOP that never completes and latches `StopTimeout` (0x62), which refuses
-  every later parameter change and survives process exit. `MCP2221A::cancel()`
-  therefore returns early when already idle — do not "helpfully" remove that
-  guard.
-- *Only a device Reset clears a latched 0x62.* Cancel does not; five consecutive
-  cancels were acknowledged and left the state unchanged. Reset costs a full USB
-  re-enumeration (measured ~6 s through VMware USB passthrough, and the hidraw
-  node path is recycled, so a handle opened too early lands on the dying node),
-  so `open()` resets **only** when it finds the engine non-idle.
-
-**Triage.**
-- No `[mfi]` certificate → coprocessor not reachable. Test it standalone first with
-  the existing demo: `./build/libs/apple_mfi_ic/apple_mfi_demo` (verifies the
-  MCP2221A bridge and I²C address 0x11 independently of CarPlay).
-- Identification rejected → the phone lists which components it refused; the code
-  logs them. Usually a required message is missing from the sent/received lists.
-- Challenge signature rejected → check the protocol major version (2 ⇒ SHA-1/20B,
-  3 ⇒ SHA-256/32B); signing the wrong digest length fails silently-ish.
-- Link resets repeatedly → checksum or sequence handling; `iap2_test_framing`
-  should have caught pure framing bugs, so suspect retransmission/EAK logic.
-
-**⚠ If the phone reports CarPlay availability but the session never starts,
-check this first.** LIVI decodes a zero-length `bool` iAP2 parameter as `None`,
-which makes `CarPlayAvailability.wired_available` falsy and silently skips
-sending `CarPlayStartSession`. That behaviour was ported faithfully (returns
-`nullopt`), but the spec arguably intends presence-as-value here.
-
-**Not observed on the phone tested during bring-up** — it sends a proper
-one-byte boolean (`wired=true available=1`), so this did not fire. It is not
-worth a runtime switch, but it is worth recognising: `runIap2Session` logs a
-loud warning naming the zero-length case specifically, because the resulting
-failure is otherwise completely silent — availability simply decodes as absent
-and no session is ever requested. If that warning appears, changing
-`csm::getBool()` to treat a zero-length boolean as `true` is the one-line fix.
-
-**Other iAP2 caveats to keep in mind:**
-- Outbound fragmentation chunks at `max_len - 10` (header+checksum overhead),
-  where LIVI chunks at `max_len`. Invisible on the wired path (65535, small
-  messages) but it matters if a phone advertises a small `max_len`.
-- Only the *wired* carkit identification is implemented. Bluetooth/wireless
-  transport components are deliberately not encoded.
-- Retransmission/EAK timers are a structural port that has never run against a
-  phone in either codebase — only the zero-ack wired path is exercised in
-  practice. Suspect them if the link is unstable under load rather than at setup.
-- ~~The link layer treats an empty `recv()` as "no data yet", never as EOF.~~
-  **Fixed.** This was real: `LibimobiledeviceCarkitChannel::recv()` returned an
-  empty vector for both a timeout and a hard error, and a failed `send()` was
-  discarded, so a dead link would have spun forever. `CarkitChannel` now exposes
-  `alive()`, which the stage 5 transport adapter checks every poll.
-
-**Verified without hardware:** `iap2_test_framing` covers 20 groups / ~150
-assertions — byte-exact checksums, header round-trips, the full start sequence,
-SYN|ACK negotiation, RST, corrupted-payload drop-and-retransmit, inbound
-reassembly (1 CSM over 3 packets, 2 CSMs in 1 packet), outbound fragmentation
-against a 64-byte device, out-of-sequence hold/release, EAK emission and
-EAK-driven retransmission, the CSM parameter codec incl. nested groups,
-identification encode + rejection handling, route-guidance merge in both arrival
-orders, call/power/cellular decode, the MFi authenticator on both protocol
-majors, and an end-to-end identification+auth handshake over the link layer.
-
-## 6. NCM link
-
-```bash
-./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose 2>&1 | grep '\[ncm\]'
-ip -br addr show                          # expect an enx* interface, UP, with an fe80::/64
-ping6 -c3 ff02::1%<iface>                 # the phone answers from its own link-local
-```
-
-**Expect:** an interface named after the phone's host MAC, up, carrying a
-link-local, and the phone answering on it. No privilege of any kind is needed.
-
-**There is no bridge here, and that is the whole design.** When the phone is put
-into the CarPlay configuration, the system's own NCM driver binds the first NCM
-function and creates a normal ethernet interface for it — `AppleUSBNCM` on
-macOS, `cdc_ncm` on Linux. The handshake needs exactly one thing from that
-interface: an IPv6 link-local to put in `CarPlayStartSession`, which the phone
-then dials on port 7000. So stage 6 is a *lookup*, not a datapath:
-
-1. Read the configuration descriptor and find the first NCM function.
-2. Read its `iMACAddress` string descriptor — that is the host MAC the system
-   driver gave its interface.
-3. Find the interface with that MAC, and read its link-local.
-
-Do not pick "the interface that just appeared". The iAP interface brings one up
-too (`AppleUSBEthernetHost` on macOS, `ipheth` on Linux) and it is not this one.
-
-**Verified on hardware.** macOS 2026-08-01: `en9` / `ca:1f:e8:0f:24:b1` /
-`fe80::1ca1:5cd0:be56:35c6`. Linux 2026-08-02: `enxca1fe80f24b1` /
-`fe80::c81f:e8ff:fe0f:24b1`, 4713 frames over three minutes with no errors.
-
-**The one piece of setup: the interface has to be addressed.** The NCM driver
-creates the interface but does not bring it up. macOS does that itself. On Linux
-it takes a one-line network profile, and which one depends on who owns links on
-the machine:
-
-```bash
-# systemd-networkd (head unit, headless)
-sudo cp nodes/carplay/udev/80-carplay-ncm.network /etc/systemd/network/
-sudo systemctl restart systemd-networkd
-
-# NetworkManager (most desktops, so most development machines)
-sudo cp nodes/carplay/udev/carplay-ncm.nmconnection /etc/NetworkManager/system-connections/
-sudo chown root:root /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
-sudo chmod 600 /etc/NetworkManager/system-connections/carplay-ncm.nmconnection
-sudo nmcli connection reload
-```
-
-Both say the same thing: link-local addressing only, no DHCP, EUI-64 generation.
-The `chmod 600` is not optional — NetworkManager silently ignores a keyfile that
-is group- or world-readable.
-
-**⚠ Without that profile, NetworkManager actively breaks stage 6, and it does
-not look like a NetworkManager problem.** It treats the phone's NCM interface as
-an ordinary ethernet port and tries to get IPv4 configuration from it. There is
-no DHCP server on the link, so activation fails, NM deactivates the interface,
-and **the IPv6 link-local it had already assigned goes away with it**. Then it
-retries, forever. The symptoms are a stream of link up/down notifications and a
-bring-up that fails with `no IPv6 link-local address` — except when it happens
-to run inside one of the connected windows, which makes it look intermittent
-rather than systematic. `nmcli device status` showing `connecting (getting IP
-configuration)` on the phone's interface is the tell.
-
-**⚠ Wait for duplicate address detection before binding.** A fresh link-local
-spends about a second `tentative` while DAD runs. `getifaddrs` reports a
-tentative address exactly like a finished one, but `bind()` rejects it with
-`EADDRNOTAVAIL` — so taking the first address you see races DAD, and the
-AirPlay listener fails to start on a fresh plug perhaps half the time. The
-address flags are the only way to tell, and on Linux they are visible only in
-`/proc/net/if_inet6` (column 5), not through `getifaddrs`:
-
-| flag | meaning |
-|---|---|
-| `0x40` | `IFA_F_TENTATIVE` — DAD still running, `bind()` will fail |
-| `0x08` | `IFA_F_DADFAILED` — someone answered for it; it will never work |
-| `0x80` | `IFA_F_PERMANENT` — usable |
-
-`linkLocalOf()` skips anything tentative or DAD-failed, so the existing 200 ms
-poll simply waits DAD out. Observed directly on 2026-08-02: `flags=c0`
-(permanent|tentative) at T+1.0 s, `flags=80` at T+2.0 s, with the node picking
-the address up at T+1.4 s only after it cleared.
-
-**Two NCM pairs.** The CarPlay configuration exposes two, and the system driver
-claims the first as soon as the configuration is applied — which is the one we
-want: its host MAC shares an allocation with the phone's own address
-(`ca:1f:e8:0f:…` here) while the second pair's is unrelated. On Linux the second
-pair is simply left unbound. `CARPLAY_NCM_CTRL_IF` pins the pair if you need to
-re-test that.
-
-**Triage.**
-- No `enx*`/`en*` interface for the phone → the NCM function was never bound.
-  Confirm the phone really is in configuration 6, and that nothing captured the
-  device away from the system driver.
-- `no NCM function in configuration 6` → descriptor discovery found nothing; run
-  `apple_usb_usbprobe` and compare against stage 1b's table.
-- Interface exists but `has no IPv6 link-local address` → the network profile
-  above is not installed or not applied. On NetworkManager check
-  `nmcli device status`; anything other than `connected` with the `carplay-ncm`
-  profile means it is still fighting you.
-- `bind(...) failed: Cannot assign requested address` → a tentative address got
-  through; see DAD above.
-- Ping works but no inbound TCP → check that `CarPlayStartSession` was sent with
-  the correct accessory `fe80::` address and port 7000.
-- Nothing at all on the link before a session → expected, not a fault. The phone
-  only powers up its NCM data path once a CarPlay session is actually running.
-
-**Debugging USB with usbmon.** When a transfer fails and the cause is not
-visible from the driver's own logs, look at the bus:
-
-```bash
-sudo modprobe usbmon
-sudo setcap cap_net_raw,cap_net_admin+eip $(which tcpdump)
-sudo chgrp plugdev /dev/usbmon* && sudo chmod g+r /dev/usbmon*   # not persistent
-tcpdump -i usbmon2 -w /tmp/usb.pcap -s 256      # bus 2; match your phone's bus
-```
-
-Decode with the summary script pattern: the URB status is what matters.
-`ENOENT`/`ECONNRESET` on completion means *we* cancelled it (our timeout fired
-and the device never responded); `EPIPE` means the device stalled; `OK` on a
-sibling endpoint proves the device is servicing the bus generally.
-
-### What used to be here, and why it is gone
-
-Until 2026-08-02 Linux ran its own NCM implementation: `NcmBridge` took the NCM
-pair away from `cdc_ncm`, drove NTB16 framing in userspace over usbfs, and
-bridged that to a TAP device created by a root `carplay-tap.service`. About 1900
-lines, plus a systemd unit and a `/dev/net/tun` dependency.
-
-It was inherited from the LIVI Python port, where a userspace bridge was the
-only option available. It was never a considered choice against the kernel
-driver — and the macOS port, which had to use `AppleUSBNCM` because nothing else
-exists there, is what made that visible: the same lookup works on Linux, because
-`cdc_ncm` does the same job.
-
-Measured before deleting it, same phone, same three-minute soak:
-
-| path | frames | fps | errors |
-|---|---|---|---|
-| kernel `cdc_ncm` | 4713 | 25.24 | 0 |
-| userspace TAP bridge | 4625 | 24.75 | 0 |
-
-So the kernel path is not slower, needs no privilege, and deletes the TAP
-service. Two classes of bug went with it, both of which had cost real debugging
-time:
-
-- **The interrupt-endpoint drain.** CDC devices announce link state on the
-  control interface's interrupt endpoint, and if the host never reads it the
-  phone stops servicing the bulk OUT endpoint entirely — every write times out
-  while reads keep working. Diagnosing that took a usbmon capture and most of a
-  day. The kernel driver always keeps a URB queued there, so the failure cannot
-  occur.
-- **The link-local generation race.** addrconf derives the link-local when the
-  interface is brought up, from whatever MAC is set at that instant, and never
-  revises it. On a persistent TAP that raced the bridge setting the
-  phone-dictated MAC — non-deterministically, differently across boots on the
-  same machine. The system driver sets the MAC before the interface exists, so
-  there is nothing to race.
-
-**Known limitation of the old path, recorded in case it ever comes back:** TX
-sent one ethernet frame per NTB block with no aggregation, i.e. one bulk
-transfer per frame. `cdc_ncm` aggregates properly, which is the likeliest reason
-the kernel path measured marginally faster despite doing the same work.
-
-
-## 7. AirPlay handshake through RECORD
-
-```bash
-sudo ./build/nodes/carplay/carplay --verbose 2>&1 | grep '\[airplay\]'
-```
-
-**Expect, in order:** inbound TCP on `[fe80::...]:7000`, `/pair-setup` (SRP)
-completing, `/pair-verify` completing, `/auth-setup` (MFiSAP) completing,
-`GET /info` answered, `SETUP` for stream 110 (main screen), `RECORD`, then a
-`VideoConfig` (avcC) arriving.
-
-**Verified on hardware (2026-07-21):** the complete handshake runs and the phone
-streams H.264. In order: `/pair-setup` M1→M6, `/pair-verify` M1→M4, the encrypted
-control channel, `/auth-setup`, session `SETUP`, `GET /info`, `RECORD`,
-`POST /command`, stream `SETUP` (type 110), then a video data connection
-carrying the avcC config and encrypted frames:
-
-```
-[airplay] stream type 110 -> dataPort 35141 (connectionID 7411721103110128217)
-[video]   screen stream connected
-[video]   codec config: H.264 (32 bytes Annex-B)
-[video]   FIRST FRAME decoded: 116 bytes Annex-B
-```
-
-**`viewAreas` is what unblocked the stream.** Before it, the phone accepted
-everything through `RECORD` and then sent `TEARDOWN` ~1 ms later without ever
-requesting a stream. The display entry must carry `viewAreas` (with a nested
-`safeArea`) and `initialViewArea` — we were advertising `viewAreas` in the
-session SETUP `enabledFeatures` while supplying none, which is worse than not
-claiming it at all.
-
-**The screen stream format:** a 128-byte header followed by a body whose length
-is the header's leading little-endian `uint32`. `header[4]` is the opcode: 1 is
-the codec config (an avcC atom, in the clear), 0 is a frame, ChaCha20-Poly1305
-sealed with the entire 128-byte header as AAD and a counter nonce that advances
-**only on frames**.
-
-**The first message on the stream is an empty config, and that is normal.**
-The phone opens with a well-formed opcode-1 header carrying a zero-length body:
-
-```
-header 00 00 00 00 op=01 | 00 56 01 c5      <- length 0, opcode 1
-```
-
-The real 33-byte avcC follows ~60 ms later. This is not a framing desync and not
-a preamble being misread — the length field really is zero, and the stream stays
-aligned either way, which is why it is easy to misdiagnose. `configToAnnexB()`
-rejects anything below 9 bytes up front (nothing shorter can be avcC or hvcC)
-and logs it at debug. Before that guard existed it fell through to a speculative
-bare-`hvcC` parse, which logged `nalu: hvcC atom too short (0 bytes)` at **error**
-in a session that only ever advertises H.264 — an H.265 complaint about a codec
-nobody sent, once per connection. If you see that line again, the guard has been
-removed. The key is
-`HKDF-SHA512(pair-verify shared, "DataStream-Salt<streamConnectionID>",
-"DataStream-Output-Encryption-Key", 32)`.
-
-**The event channel** is encrypted from the first byte with keys derived from
-the pair-verify shared secret: `HKDF-SHA512(shared, "Events-Salt",
-"Events-Write-Encryption-Key"|"Events-Read-Encryption-Key")`. Unlike the control
-channel these are **not** swapped — the accessory writes with Events-Write and
-reads with Events-Read. HID input (touch) is pushed over it as a
-`POST /command` with an `hidSendReport` plist: `{type, uuid, hidReport}`, where
-`hidReport` is the multitouch report matching the descriptor in `/info` (six
-bytes per contact: `[index, down, x-lo, x-hi, y-lo, y-hi]`, pixel coordinates).
-
-**⚠ `streamConnectionID` is unsigned.** It goes into that salt as a decimal
-string, and roughly half of all sessions produce a value above `INT64_MAX`,
-which a signed plist decode renders negative — a different salt, a different
-key, and every frame failing to decrypt. Verified on hardware:
-`4663436911794014275` worked, `-3498692594036096197` (really
-`14948051479673455419`) did not. Format it as `uint64_t`.
-
-Details worth not rediscovering:
-
-- **pair-setup is transient SRP with password `3939`.** Username is
-  `Pair-Setup`, as the triage note below says. M5/M6 exchange long-term Ed25519
-  identities under `Pair-Setup-Encrypt-Salt`/`-Info` with nonces `PS-Msg05`/`06`.
-- **`A` is occasionally 383 bytes, not 384.** Roughly one run in 256 the phone
-  strips a leading zero from its SRP public key. `srp::Server::verify()` re-pads
-  from the BIGNUM so this is handled, but a 456-byte M3 body instead of 457 is
-  the tell if a proof is ever rejected for no apparent reason.
-- **After pair-verify M4 the control channel is encrypted** and stays that way:
-  2-byte little-endian length, ciphertext, 16-byte Poly1305 tag, the length
-  doubling as AAD, separate counter nonces per direction starting at zero. The
-  accessory *sends* with `Control-Read-Encryption-Key` and *receives* with
-  `Control-Write-Encryption-Key` — the naming is from the controller's point of
-  view. Get this wrong and the phone simply goes quiet, because our parser sits
-  waiting for an RTSP header that never comes.
-- **`/auth-setup` layout**, which is not guessable and cost the most time:
-  request is `<1 mode><32 device X25519 pk>`; response is
-  `<32 our pk><4 cert length BE><cert><4 signature length BE><signature>`. The
-  signature is over `SHA-1(our_pk | their_pk)` signed by the coprocessor, then
-  **encrypted with AES-128-CTR** where the key is `SHA-1("AES-KEY" | shared)[0:16]`
-  and the IV is `SHA-1("AES-IV" | shared)[0:16]`. Note SHA-**1**, not SHA-512 —
-  that single mistake looks identical to every other failure mode from outside.
-- **The clock sync is mandatory.** The session SETUP body carries the phone's
-  `timingPort`; we must bind our own UDP port, advertise it, and drive RTCP-style
-  type-210 requests at it (see `libs/airplay/timing.cpp`). LIVI's comment is
-  explicit that the phone tears the session down without it.
-
-**The crypto primitives are proven; suspect labels and framing, not math.**
-`airplay_test_crypto` is 90 assertions against published vectors: SHA-1/256/512,
-HKDF-SHA512 (RFC 5869 TC1, plus multi-block expansion and the real
-`Pair-Setup-Encrypt` / `Control-Salt` labels), X25519 (RFC 7748 §5.2 and §6.1
-both sides, plus low-order-key rejection), Ed25519 (RFC 8032 §7.1 key/sign/verify
-plus mangled-signature/message/key rejection), ChaCha20-Poly1305 (RFC 8439
-§2.8.2 plus AAD/tag/nonce tamper rejection), AES-128-CTR (NIST SP 800-38A
-F.5.1), `nonce64`/`nonceLabel` byte layout, and a **full SRP-6a KAT** — verifier
-`v`, server `B`, client `A`, session key `K`, and both proofs `M1`/`M2` — with
-negative tests for `A = 0`, `A = N`, wrong password, wrong username, and mangled
-proofs.
-
-So if pair-setup or pair-verify fails on hardware, the arithmetic is almost
-certainly fine. Look at message framing, TLV ordering, and which bytes get fed
-to each hash — not the primitives.
-
-**Triage.**
-- pair-setup fails → check the TLV8 sequence and that the SRP username is
-  exactly `Pair-Setup`; the SRP math itself is KAT-verified.
-- pair-verify fails → X25519/Ed25519 key handling or the HKDF labels
-  (`Pair-Verify-*`, `Control-Salt`, `Events-Salt`).
-- auth-setup fails → MFi signature over the wrong bytes; stage 5 must pass first.
-- `/info` accepted but no SETUP → the phone rejected our advertised capabilities;
-  we advertise **H.264 only** by design (no `hevcInfo`). Log the raw `/info` we sent
-  and compare against a known-good capture.
-- Everything up to RECORD but no video → check the event channel keying.
-
-## 8. Video + touch (usable CarPlay)
-
-Terminal 1: `sudo ./build/nodes/carplay/carplay --verbose`
-Terminal 2: `./build/apps/dashboard/dashboard -c configs/dashboard/carplay_demo.yaml`
-
-Independently confirm the zenoh contract before blaming the widget:
-
-```bash
-./build/nodes/inspect/inspect hz   nodes/carplay/video    # expect ~30-60 Hz
-./build/nodes/inspect/inspect echo nodes/carplay/session
-./build/nodes/inspect/inspect echo nodes/carplay/input    # then touch the widget
-```
-
-**Expect:** the CarPlay UI renders and responds to touch. Kill and restart the
-dashboard — video must recover (the driver keeps the phone session; the widget
-waits for the next config+keyframe).
-
-**Triage a black video area by reading the widget's log** — it narrates every
-stage of the video path, so you can tell exactly where it stops:
-
-| Log line | Meaning |
-|---|---|
-| (nothing) | no `CarPlayVideo` messages arriving — check `inspect hz`, keys, zenoh |
-| `video decoder ready (H.264)` | messages arrive, decoder opened |
-| `dropped N frame(s) waiting for a keyframe/config` | arriving but no sync point yet — **the driver must publish config or a keyframe periodically, not once** |
-| `video synced on parameter sets/keyframe` | sync achieved |
-| `decoder rejected N packet(s)` | bitstream problem — bad Annex-B rewrite, or parameter sets fed as a standalone access unit |
-| `cannot convert decoded frame to RGB` | decoded, but swscale could not build a converter for that pixel format / geometry |
-| `first video frame decoded and rendered (WxH)` | **the picture is live**; if the screen is still black, suspect widget geometry/layout, not video |
-
-**Colours look wrong?** Channel order is swscale's problem now, not ours, so a
-red/blue swap is no longer a failure mode. What *is* worth checking is colour
-**range**: `renderFrameToBackBuffer()` normalises the deprecated `YUVJ*` formats
-to their plain equivalents and drives the range via `sws_setColorspaceDetails`,
-full range for `YUVJ420P` or `color_range == AVCOL_RANGE_JPEG` and limited
-otherwise. Real CarPlay is full-range; the `--simulate` x264 stream is
-limited-range. Getting this backwards shows up as washed-out or over-contrasty
-video, not wrong hues. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard grabs
-the exact `QImage` the widget blits, to check pixel values without a screenshot
-tool.
-
-Historical note: the original hand-rolled converter wrote into a
-`Format_RGB888` buffer and swapped red and blue for a while. Greens were
-unaffected (the middle byte is always G) and the test pattern was white-on-grey,
-so it survived until a real CarPlay frame — a blue Maps dot rendering red was
-the giveaway. swscale replaced that loop.
-
-### How video reaches the screen
-
-The decode thread converts each `AVFrame` with libswscale straight into one of
-two reused `QImage`s (`Format_RGB32`, Qt's native raster format), then takes
-`_frame_mutex` only long enough to flip a front/back index — no pixels are
-copied to publish a frame. `paintEvent` holds that same lock across its
-`drawImage`, which is what stops the decoder from overwriting a buffer mid-draw.
-
-**swscale converts *and* scales in one pass, to the widget's size, not the
-stream's.** The widget publishes its geometry into an atomic on resize and the
-decode thread scales to it. This is deliberate: swscale has to walk every pixel
-for the colour conversion regardless, so folding the resize in is close to free,
-whereas leaving it to `drawImage(rect(), img)` costs a *second* full transform
-pass — on the GUI thread, on **every repaint**, not once per decoded frame. With
-overlays composited above the video that repaint independently of the frame
-rate, that difference compounds. The steady-state paint is now always a straight
-blit. Verified with `--sim-width 640 --sim-height 480` against the 800x600
-widget: the log reads `video scaler ready: 640x480 yuv420p -> 800x600 RGB32` and
-the dumped frame is 800x600.
-
-`SWS_POINT` is used when the sizes match (swscale's optimised unscaled
-converter) and `SWS_BILINEAR` when a real resize is needed. The scaler context
-is rebuilt only when source geometry, target geometry, pixel format or colour
-range actually changes.
-
-Because rendering goes through `QPainter` into the normal widget backing store,
-**ordinary Qt Z-ordering applies** — sibling widgets can be `raise()`d over the
-video and will be visible. (A `QVideoWidget` was tried here and reverted for
-exactly this reason: its surface composited on top of any overlapping sibling,
-even a raised one, so nothing could be layered above the video.)
-
-**Three bugs stood between "frames arriving" and "picture on screen"**, all
-found running the real dashboard against a live phone (2026-07-22):
-
-1. **The phone sends exactly one keyframe.** A static CarPlay screen produces one
-   IDR at session start and then only P-frames (verified: 1 × NAL type 5, 100 ×
-   type 1 in a capture). A dashboard that subscribes late never sees it. Fix: the
-   driver asks the phone for a fresh keyframe periodically via a `forceKeyFrame`
-   command on the encrypted event channel (`Receiver::requestKeyframe`, every
-   1 s). The phone then re-sends parameter sets + an IDR, and any late subscriber
-   syncs within a second.
-2. **CarPlay decodes to `YUVJ420P` (pix_fmt 12), not `YUV420P` (0).** The widget's
-   converter rejected anything but format 0 and dropped every frame with
-   `cannot convert decoded frame to RGB`. The two formats share layout and the
-   converter's coefficients were already full-range, so the fix was simply to
-   accept format 12 as well.
-3. **The driver published `VideoConfig` once and cached it silently.** It must be
-   published as its own message *and* re-published before every keyframe, since
-   zenoh has no retained messages.
-
-**Design requirement this exposed:** zenoh has no retained/latched messages, so
-a one-shot `VideoConfig` leaves any subscriber that starts later — or restarts —
-permanently black. The driver **must republish the parameter sets before every
-keyframe** (the simulator does this; the real AirPlay path must too), and the
-widget syncs on either config *or* a keyframe since Annex-B keyframes carry
-SPS/PPS in band. Verified: a dashboard started 8 s into a running session syncs
-within one GOP (~2 s) and renders.
-
-Also note the widget caches a config message and prepends it to the next access
-unit rather than feeding it to the decoder alone — parameter sets by themselves
-are not a decodable access unit and produce `AVERROR_INVALIDDATA`.
-- Frames stall after a while → zenoh backpressure on large keyframes; measure
-  before switching to shared memory.
-- Touch does nothing → verify `nodes/carplay/input` carries events (`inspect echo`),
-  then check the 0..10000 → 0..1 rescale and HID report.
-
-### How touch reaches the phone, and why it is rate limited
-
-Each touch report costs far more than it looks. `Receiver::sendTouch()` builds a
-plist, `plist::encode()`s it, wraps it in an RTSP POST, runs it through
-`encryptFrames()`, and writes it to the event channel socket. That channel is
-**shared with `requestKeyframe()`** — the thing that recovers a black screen for
-a late-joining renderer. Unthrottled touch on a 500–1000 Hz mouse can therefore
-delay the keyframe request, which is a much worse failure than a slightly
-coarser drag.
-
-Two independent limits, at different altitudes:
-
-1. **The widget paces itself to 60 Hz** (`kTouchPublishHz`). Leading edge, so a
-   drag starts responding immediately, with coalescing and a trailing flush for
-   everything inside the interval.
-2. **The node enforces a 125 Hz ceiling** in `eventSendLoop()`. This is a
-   guardrail, not a second throttle — it sits well above the widget's rate so it
-   never engages in normal operation, and exists only to bound a publisher that
-   ignores its own limit.
-
-**60, not 30.** The phone derives scroll momentum from the last few samples of a
-gesture; at 30 Hz a quick flick only lands two or three, so fling velocity comes
-out noisy. The symptom is taps and slow drags feeling fine while flicks feel
-inconsistent — easy to misread as a phone-side problem. We also advertise
-high-fidelity touch in `/info`, so 30 would undersell what we claim.
-
-The two limits share only the spacing decision, as `helpers::RateGate`
-(`libs/helpers/include/helpers/rate_gate.h`) — a header-only "may I send at
-`now`, and if not how long until I may". They are otherwise different animals
-and are deliberately not unified: `airplay::EventQueue` is a bounded
-multi-producer queue drained by a writer thread that limits *every* report
-including down and up, while `TouchThrottle`
-(`libs/dashboard_widgets/widgets/carplay/include/carplay/touch_throttle.h`) is single
-threaded, holds at most one deferred position, and never delays a down or an up.
-Folding the widget onto `EventQueue` would also mean the dashboard linking the
-AirPlay stack to get a rate limiter.
-
-Three invariants that a naive throttle breaks, all covered by
-`carplay_test_touch_throttle` (exact, time injected) and again by
-`carplay_test_touch_rate` (through a real widget, real wall clock):
-
-- **Down and up are never rate limited.** They are state transitions, not
-  samples.
-- **A drag that stops moving still reports where it came to rest.** Without the
-  trailing flush the last move is swallowed and no further events arrive, so the
-  phone's idea of the finger stays an interval behind indefinitely. This is the
-  one that bites.
-- **Motion never coalesces across a down or an up.** Collapsing a down into a
-  following move relocates the press and turns a drag into a tap somewhere else.
-  This is why `sendTouch()` takes a `TouchPhase` rather than the old bare `down`
-  bool — the receiver could not otherwise tell a down from a move, since both
-  set the same bit on the wire.
-
-**Nothing blocks on the socket.** A single writer thread (`eventSendLoop()`)
-owns the event channel; `sendTouch()` and `requestKeyframe()` enqueue and
-return, so the zenoh subscriber thread and the keyframe thread can no longer
-stall on a congested `send()` or on each other. Keyframe requests are held as an
-idempotent flag rather than queued, and jump ahead of pending touch — they carry
-no ordering relationship to a gesture, so there is nothing to gain by making
-them wait behind a drag.
-
-The queue is what bounds a misbehaving publisher: consecutive moves coalesce
-onto the tail, so flooding costs a memory write rather than an unbounded queue,
-and what the phone eventually sees is where the finger actually is. Only
-down/up can accumulate; past 64 queued reports they are dropped with a
-rate-limited warning (`event channel backed up`), which only happens if the link
-itself has stalled. The queue is also cleared when the event channel closes, so
-a gesture orphaned by a disconnect cannot inject a phantom contact into the next
-session.
-
-All of those rules live in `airplay::EventQueue` (`libs/airplay/event_queue.h`),
-which deliberately holds no mutex, no clock and no socket — `Receiver` supplies
-all three. `take(now)` is a pure decision given the queue state and an injected
-time, so `airplay_test_event_queue` covers ordering, coalescing, keyframe
-priority, the rate limit and the drop path with no threads and no hardware.
-`eventSendLoop()` is left with only threading and I/O.
-
-One thing that extraction turned up: the "last touch sent" timestamp used to be
-left at its default, which is the clock epoch — making *never sent*
-indistinguishable from *sent at time zero*, so the first report of a session was
-rate limited against it. Real `steady_clock` values are far enough past the
-epoch that this never showed up in practice. It now lives in `RateGate` as an
-explicit flag, fixed once for both users, and both test suites assert at the
-epoch precisely because that is the value that breaks.
-
-### Testing the touch path without hardware
-
-Three levels, none of which need a phone, the driver node, or the dashboard:
-
-| Test | Scope | Cost |
-|---|---|---|
-| `carplay_test_touch_throttle` | widget throttle policy, time injected — interval boundaries to the nanosecond, deferral state machine, gesture transitions | instant |
-| `airplay_test_event_queue` | node queue policy, time injected — ordering, coalescing, keyframe priority, drop path | instant |
-| `carplay_test_touch_rate` | a real `CarPlayWidget` and a real zenoh subscriber driven with synthetic mouse events, headless | ~2.3 s of wall clock |
-
-The first two are where behaviour is pinned; the third is what proves the policy
-is actually wired to the timer and the publisher, which a pure unit test cannot
-see. Keep it, but do not add cases to it that the unit tests could hold
-exactly — its rate assertion has to use loose bounds because it measures real
-elapsed time on a possibly-loaded machine.
-
-### The non-touch input devices (knob, media keys, telephony, Siri)
-
-Touch is not the only input CarPlay takes. Since 2026-08-02 the accessory
-advertises **four** HID devices in `/info` rather than one — a touchscreen, a
-rotary controller (select/home/back, a pointer, a detent wheel), consumer media
-keys, and a telephony keypad — all in `libs/airplay/hid.cpp`. Siri is not HID;
-it is a `requestSiri` command on the same event channel.
-
-This is what the `knob`, `mediaKey`, `telephony` and `siri` kinds on
-`nodes/carplay/input` have always claimed to be for. They previously fell
-through a `break` in `usb_pipeline.cpp` and went nowhere.
-
-`schemas/carplay_input.capnp` documents what `code` and `value` mean per kind.
-The media and telephony codes **are the HID usage indices** in the descriptors
-we advertise, so they cannot be renumbered independently of `hid.h`.
-
-Nothing publishes these events yet — no widget has a knob or hard keys wired to
-it — so on hardware this is exercised by publishing to the topic directly.
-
-Two things make an input device fail silently, and both are what
-`airplay_test_hid` checks:
-
-- **A descriptor that disagrees with the report.** The phone accepts the device,
-  then discards every report whose length does not match what the descriptor
-  declared, with no diagnostic anywhere. The test parses each descriptor's item
-  stream, sums its Input item bits, and compares against the report the code
-  actually builds.
-- **A uuid that does not match.** The device's `uuid` in `/info` and the `uuid`
-  on the report are matched as strings, so `2a2a2a2b` and `0x2A2A2A2B` are two
-  different devices, one of which does not exist.
-
-Momentary presses are sent as press-then-release pairs, because the phone acts
-on the transition: a media key that is never released is a key the phone stops
-believing in. The knob's wheel and pointer are *relative*, so a turn is one
-report and needs no release — but `sendKnob()` sends the all-clear anyway, since
-the same report carries the button levels.
-
-## 9. Audio downlink
-
-**Expect:** music and navigation prompts play through the widget's `QAudioSink`;
-`inspect hz nodes/carplay/audio` shows a steady rate matching the sample rate.
-
-**Verified on hardware (2026-07-22): LPCM audio works.** Playing music opened a
-type-100 `media` stream at 44.1 kHz stereo, ~134 packets/s decrypted with zero
-failures, published on zenoh and played through the sink:
-
-```
-[airplay] audio stream type 100 'media' -> 44100 Hz 2 ch, dataPort ...
-[audio]   first packet on type 100 'media' (44100 Hz, 2 ch)
-[carplay] audio sink started: 44100 Hz / 2 ch
-```
-
-**How audio differs from video:**
-- **Streams are on-demand.** The phone opens an audio stream only when there is
-  something to play. An idle CarPlay screen requests no audio stream at all —
-  play music or start navigation to trigger one. Do not expect audio at RECORD.
-- **Transport is UDP, not TCP.** Each audio SETUP asks for a `dataPort` *and* a
-  `controlPort` (both UDP); the response must echo `streamConnectionID` or the
-  phone tears the stream down.
-- **Packet layout** is `[12B RTP header][ciphertext][16B tag][8B nonce LE]`,
-  ChaCha20-Poly1305 with AAD = the RTP header's timestamp+SSRC (bytes 4..12) and
-  nonce = four zero bytes + the 8-byte tail. Same per-stream
-  `DataStream-Salt<id>` / `DataStream-Output-Encryption-Key` derivation as video.
-- **PCM is 16-bit big-endian on the wire** and must be byte-swapped to S16LE for
-  the sink.
-
-**Only LPCM is decoded.** `/info` advertises PCM formats for stream types 100 and
-101 (nav prompts, Siri, calls, alerts, and PCM music), so those work with no
-codec dependency. **Type 102 (buffered entertainment/music) is AAC-LC only** in
-CarPlay and is not decoded yet — a type-102 SETUP is answered so the session
-stays healthy, but produces no sound. Decoding it needs an AAC-LC decoder
-(libavcodec has one); see LIVI `rtpAudioDecoder.ts` for the RTP jitter-buffer
-pacing. The mic uplink (`DataStream-Input-Encryption-Key`, OPUS/PCM encode for
-Siri and calls) is also not implemented.
-
-**Playback architecture.** The widget plays through `QAudioSink` in **pull
-mode**: the network thread pushes decrypted PCM into a thread-safe ring
-(`libs/dashboard_widgets/widgets/carplay/audio_ring.*`) and the sink's own audio thread pulls
-at the sample-clock rate, with a short priming cushion and silence-fill on
-shortfall. This decouples the bursty network delivery from steady playback and,
-unlike the earlier push-mode path, never silently drops samples on a short
-write. `AIRPLAY_DUMP_AUDIO=/path.pcm` on the driver writes the raw S16LE for
-`aplay -f S16_LE -r <rate> -c <ch>` — the definitive way to isolate playback
-from data.
-
-**⚠ Choppy audio is usually the host, not this code.** Verified 2026-07-22 on a
-VMware guest: the LPCM data was clean (0 decrypt failures, 0 source-side gaps,
-delivered at exactly 1.0× real time), yet playback stuttered — and so did a
-YouTube video and a raw `aplay` of the dumped PCM. The tell in the ring stats is
-**zero underruns but steadily growing overruns**: the audio device is draining
-*slower than real time*, so the ring fills and drops the oldest samples. That is
-a host problem — an emulated audio device (VMware HD Audio) under CPU contention
-(load ~3.2 on 4 vCPUs) cannot sustain real-time playback. No amount of buffering
-fixes a device that will not drain at 1×. Remedy at the VM/host level (more
-vCPUs, a lighter load, host audio backend, larger PipeWire quantum), not here.
-Genuinely choppy *data* would instead show `[audio] inter-packet gap` warnings
-from the driver.
-
-## 10. Metadata, mic, and supplemental widgets
-
-```bash
-./build/nodes/inspect/inspect echo nodes/carplay/nowplaying   # play music
-./build/nodes/inspect/inspect echo nodes/carplay/nav          # start navigation
-./build/nodes/inspect/inspect echo nodes/carplay/call         # place a call
-```
-
-**Now-playing is wired and verified (2026-07-22).** Metadata comes over the
-**iAP2 carkit channel** (stage 5), *not* AirPlay: after MFi auth succeeds the
-session sends `StartNowPlayingUpdates`, then decodes each `NowPlayingUpdate`
-(0x5001) and publishes to `nodes/carplay/nowplaying`. Two things to know:
-
-- **Updates are partial.** A track change carries title/artist/album/duration;
-  a tick may carry only `elapsed`. `usb_pipeline.cpp` merges each update into a
-  persistent state before publishing, so absent fields are not cleared.
-- **They are re-published every 2 s.** zenoh has no retained messages, so a
-  dashboard that connects while a track is *paused* (no fresh updates) would
-  otherwise show nothing. The republish keeps late joiners fed.
-
-Verified on hardware: a paused Music track published
-`American Dream / Alabama Shakes / I Must Be Dreaming`, merged from separate
-partial updates, with duration and elapsed for the progress bar.
-
-**Album artwork is wired and verified (2026-07-22).** After a track change the
-phone pushes the cover image over the iAP2 **file-transfer session** (id 12),
-automatically — no per-track request. The receiver in `iap2_session.cpp` handles
-the datagram protocol (`SETUP`→ack `START`, accumulate `FIRST/DATA/LAST`,
-complete→ack `SUCCESS`) and hands the assembled JPEG to the artwork handler,
-which folds it into the now-playing state and bumps `album_art_seq`. The widget
-caches by that sequence and only re-decodes on change, so the 2 s metadata
-republish does not thrash it. Verified: a 99,563-byte JPEG arrived intact and
-matched the track (Alabama Shakes cover).
-
-**Microphone uplink is implemented; control path verified on hardware
-(2026-07-22).** When the phone wants mic audio (Siri, a call) its main-audio
-(type 100) SETUP carries a `dataPort` of *its own* — that is the signal to send
-captured audio there. The receiver then:
-
-1. derives the **input** key (same `DataStream-Salt<id>`, `-Input-Encryption-Key`
-   rather than `-Output-`),
-2. fires `MicStatusHandler` → session `mic_active` → the widget starts its
-   `QAudioSource` and publishes captured PCM on `nodes/carplay/mic`,
-3. `feedMic()` frames that PCM (framesPerPacket, else 20 ms) and RTP+encrypts
-   each frame to the phone — an exact mirror of the working downlink (BE PCM,
-   AAD = RTP timestamp+SSRC, `nonce64` counter, `[hdr][ct+tag][nonce8]`).
-
-Verified on hardware up to the audio: triggering Siri opened the uplink
-(`[audio] mic uplink up: [fe80::…]:62672 44100 Hz 1 ch, 882 samples/frame`), the
-widget started capture, and the framing/keying matched the downlink. **End-to-end
-voice was not confirmed on the VM** — its microphone is near-silent (peak ~194)
-on the same emulated audio stack that stutters playback, and the capture happens
-in the *dashboard*, which runs on the Mac. Like audio playback (which the VM
-mangled but the Mac plays cleanly), confirm Siri/calls on real host audio.
-
-**Navigation and call metadata are wired and verified on hardware (2026-07-23).**
-Both follow the now-playing pattern: after auth the session subscribes
-(`StartRouteGuidanceUpdates`, `StartCallStateUpdates`) and routes decoded updates
-to `nodes/carplay/nav` and `nodes/carplay/call`, merged and re-published every 2 s.
-
-Verified with a live route and a real call:
-
-```
-[iap2] navigation: state=1 road '...' -> 'Wagyu Factory'
-[node] nav publish: active=true dest='Wagyu Factory' toManeuver=19m remain=30337m eta_in=1860s
-[iap2] call: active ('(714) 338-2330' / '7143382330')
-[iap2] call: ended ('' / '')
-```
-
-Two field-mapping details that hardware settled:
-
-- **`nav.active` derives from the route-guidance `state`.** Observed values:
-  `0` = not routing, `1` = actively guiding (destination present), `3` =
-  transient (calculating). `active = state != 0` is correct — during navigation
-  the phone holds `state=1`.
-- **`nav` distances are named the opposite of intuition in the iAP2 struct.**
-  `distance_remaining_m` is total-to-destination, `distance_to_maneuver_m` is to
-  the next turn (`usb_pipeline.cpp` maps them correctly).
-- **`current_road_name` is only sent when the phone knows the current road** —
-  i.e. when it can place the car on a road from GPS/movement. On a stationary
-  bench phone it is often empty; it populated as "Canyon Rd" when the
-  route start resolved. Not a bug: the field decodes correctly, the phone just
-  omits it.
-
-To re-check, run the driver (`--max-stage 5`+), start turn-by-turn in Maps and
-place/receive a call, then `inspect echo -k nodes/carplay/nav` /
-`.../call`, and watch the `[iap2] navigation:` / `[iap2] call:` log lines.
-
-**AAC-LC entertainment audio (type 102) is implemented; not yet hardware-tested
-(2026-07-23).** The buffered music stream is AAC-LC, not PCM. `/info` now
-advertises AAC-LC (0x400000) for type 102, and `libs/airplay/aac_decoder.cpp`
-decodes each raw access unit to S16 PCM with libavcodec (no GStreamer/external
-process — libavcodec is already linked for video). The decrypted RTP payload is
-a *raw* AAC-LC access unit (no ADTS), so the decoder is configured with a
-2-byte AudioSpecificConfig built from the negotiated rate/channels.
-
-The decode path is **unit-tested without hardware** by `airplay_test_aac`, which
-encodes a 440 Hz tone to AAC-LC and round-trips it through the decoder at 44.1k
-and 48k — proving the ASC/extradata and the float→S16 conversion.
-
-**⚠ Hardware finding (2026-07-23): this wired iPhone never uses the AAC stream.**
-It routes all music through **type 100 as PCM**, even when `/info` advertises
-AAC-LC for type 102. This was probed by temporarily withdrawing the PCM `media`
-option from type 100, leaving only type-102 AAC: the phone did *not* switch to
-AAC — it declined to route audio to CarPlay at all and fell back to playing
-through its own speaker. So AAC-LC (type 102) is a **wireless-path codec** in
-practice; the wired path we drive uses PCM and it works cleanly. The decoder
-stays as a verified-correct fallback for any phone that does send type 102, but
-it could not be exercised end-to-end here (withdrawing PCM just breaks wired
-audio, so type 102 stays advertised only as an addition, never a replacement).
-
-**GPS location uplink is implemented; not yet hardware-tested (2026-07-23).**
-CarPlay lets the head unit feed the phone the car's own GPS so the phone can
-dead-reckon where its signal is weak (tunnels, garages). The phone requests it
-with `StartLocationInformation` (0xFFFA), naming which NMEA families it wants
-(GGA/RMC/GSV/VTG as presence flags); the session answers with
-`LocationInformation` messages carrying NMEA sentences at ~1 Hz until
-`StopLocationInformation`.
-
-- **Sentence generation** lives in `libs/iap2/location_nmea.cpp` (GGA + RMC,
-  which cover what the phone needs; GSV/VTG are not generated). Unit-tested by
-  `iap2_test_nmea` — coordinate `ddmm.mmmm` encoding, hemispheres, all fields,
-  and the XOR checksum, against a known fix.
-- **The fix source is a zenoh topic**, `nodes/carplay/location`
-  (`CarPlayLocation` schema): any GPS source publishes fixes, the driver caches
-  the latest and uplinks it. This mirrors how mic/input come from the dashboard
-  side.
-
-*To test on hardware without a GPS device*, feed a static fix and start
-navigation (which is what makes the phone ask for location):
-
-```bash
-./build/nodes/carplay/carplay --location "37.3349,-122.00902,5,12.3,87.6" --verbose
-# lat,lon[,altitude_m,speed_knots,course_deg]
-```
-
-Start turn-by-turn in Maps, then watch the driver log for
-`[iap2] location requested: GGA=... RMC=...` followed by the ~1 Hz uplink. A
-real GPS source instead publishes `CarPlayLocation` on `nodes/carplay/location`.
-
-**Nav/maps rendering — what the phone actually provides.** Over iAP2 the phone
-sends turn-by-turn *metadata* (road name, next-maneuver type, turn angle,
-distance-to-turn, distance/time remaining, ETA) — already decoded and published
-on `nodes/carplay/nav`. It does **not** send map imagery over iAP2; the live map
-is inside the CarPlay video stream we already render. So a richer nav experience
-is a *dashboard widget* concern (a cluster-style turn-by-turn card rendering the
-`nav` topic), not more protocol. There is no such widget yet.
-
-**Still not done:** the OPUS codec (wireless-only; the wired path we drive uses
-PCM/AAC), a dedicated turn-by-turn nav widget, and GSV/VTG NMEA sentences (the
-phone works with GGA+RMC).
-
-## 10b. Session lifecycle, night mode, and the phone's own commands
-
-Three things the session layer owed the phone, added 2026-08-02. None is
-hardware-verified.
-
-**TEARDOWN is now read, not just acknowledged.** A TEARDOWN naming streams
-closes those streams; one with no stream list ends the session. Both were
-previously answered with a bare 200 and nothing else, so the dashboard was told
-the session had ended only when the *node* shut down — a phone that unplugged
-left the widget showing a live session forever.
-
-`endSession()` is the single place that reports it, and is idempotent: a polite
-TEARDOWN and the control connection closing behind it are the same session
-ending, and the dashboard should hear about it once. It also drops the queued
-event-channel work, stops the mic uplink, and clears the audio-stream registry.
-
-**`POST /feedback` now answers with the open audio streams** (`{type,
-sampleRate}` each) instead of an empty 200. An empty answer reads to the phone
-as "that stream is gone", and it tears the stream down and re-opens it every few
-seconds. What a full answer would add is a playback anchor — a timestamp and the
-sample the sink is currently playing — which paces the phone to real time. We
-have none: the PCM goes to the dashboard over zenoh and is played there, so this
-side does not know where playback has reached. Inventing one would be worse than
-omitting it. If a buffered stream (type 102) is ever exercised end to end and
-drifts, this is the first thing to revisit.
-
-**Night mode** switches CarPlay's own UI between its day and night themes:
-
-Set `night_mode:` in the config. There is no command-line override -- what the
-accessory presents to the phone comes from one place. It is pushed at RECORD — the phone ignores event
-commands sent before the session starts, and older iOS stalls the bring-up ~5 s
-on one — and re-sent every session, because the phone does not remember ours and
-assumes day. It is also reflected in `CarPlaySessionState.nightMode`, a field
-that has existed since the schema was written and was until now always false.
-
-There is no light sensor wired to it. Hooking it to the vehicle's headlight
-state is a `Receiver::setNightMode()` call from whatever publishes that.
-
-**The phone's own commands** are now routed rather than logged as unhandled:
-
-| Command | What we do |
-|---|---|
-| `requestUI` | manufacturer button, or an app naming a url — see stage 11 |
-| `modesChanged` | tracks `speechMode` on appStateID 1, so Siri listening/speaking is logged on the transition |
-| `duckAudio` / `unduckAudio` | logged with the computed linear level. **Not acted on**: this is the phone asking the head unit to attenuate *its own* sources, and there are none — the phone mixes its music and prompts before sending them to us |
-| `suggestUI` | logged with the url count; the dashboard decides what it shows |
-| `disableBluetooth` | logged. Not applicable on the wired path: iAP2 already runs over USB, so there is no Bluetooth link of ours to drop |
-| anything else | acknowledged, and logged **with its full body**, which is how the next one gets identified |
-
-**A keepalive port is now advertised.** `/info` has always claimed
-`keepAliveLowPower`, and the SETUP response never gave the phone anywhere to
-send them. A UDP socket is now bound and its port returned when the phone's
-SETUP asks for it. Nothing reads the datagrams — their arrival is the whole
-message.
-
-## 10c. What the vehicle tells the phone about itself
-
-The accessory's identity reaches the phone by two routes: iAP2 identification
-during bring-up, and `GET /info` afterwards. Both are driven from one
-`vehicle:` block in the config (2026-08-02) -- before that, `/info` carried
-hard-coded strings and iAP2 identification still used the defaults it was ported
-with, so a phone paired with this stack recorded the accessory as **`LIVI`,
-serial `0123456`**.
-
-The phone records some of this against the pairing, so change it *before*
-pairing a phone you care about, or that phone remembers the old identity.
-
-Worth setting rather than leaving:
-
-| Key | Why |
-|---|---|
-| `vehicle.right_hand_drive` | CarPlay mirrors its own layout for it |
-| `vehicle.engine_type` | gas / diesel / electric / cng; affects what the phone offers |
-| `vehicle.serial_number` | how the phone tells two units apart |
-| `display.physical_width_mm` | CarPlay sizes text and touch targets from it, so a wrong value gives a UI legible on a desk and not at arm's length |
-| `device_id` | give each unit its own if you run more than one |
-
-Enumerated keys are closed sets and a typo stops the node rather than silently
-taking a default. So does a zero in the display geometry: it would be advertised
-as a panel the phone cannot draw on, and the session comes up and produces
-nothing.
-
-Deliberately *not* configurable: the protocol constants -- feature bitfields,
-audio format masks, `sourceVersion`, the resource arbitration table. Those are
-negotiated behaviour rather than vehicle configuration, and a wrong value there
-ends the session rather than looking wrong.
-
-## 11. The manufacturer button
-
-CarPlay draws one tile on its own home screen for the vehicle manufacturer. The
-user presses it to hand the screen back to the head unit's native UI. Both
-halves are implemented (2026-08-01), neither is hardware-verified.
-
-**What we advertise.** `GET /info` carries `oemIconVisible`, `oemIconLabel` and
-an `oemIcons` array (one entry per rendition: `imageData`, `widthPixels`,
-`heightPixels`, `prerendered`). Built by `addOemButtonInfo()` in
-`libs/airplay/oem_button.cpp` and unit-tested by `airplay_test_oem_button`.
-
-Those key names are not guesses — they match LIVI's `getInfo.ts` exactly, which
-is a working implementation.
-
-**`prerendered` must be true. Verified both ways on hardware 2026-08-02**
-(iPhone17,1, AirPlay 950.7.1). With `prerendered: false` the tile appears and is
-correctly labelled, and the artwork is **an empty square**. The identical PNG
-with `prerendered: true` renders correctly.
-
-The name misleads. It reads as "should CarPlay apply its own corner mask and
-shine, as it does for app icons" — so false looks like the tasteful choice for a
-full-bleed square image. It is not: CarPlay appears to decline to draw the icon
-at all. LIVI hard-codes true, which is why LIVI's icons work; we defaulted to
-false and shipped an empty tile until a phone said otherwise.
-
-Both `airplay::OemIcon::prerendered` and the config parser's default for an
-absent key are now true, and `airplay_test_oem_button` asserts it with this
-paragraph's reasoning attached — the failure mode is invisible in code review
-and a future reader would otherwise reasonably flip it back.
-
-It is advertised **once**, at `/info` time. There is no way to show or hide the
-button mid-session, so a config change needs a new session to take effect.
-
-**How the press comes back.** The phone posts `requestUI` on the encrypted event
-channel. The *same* command carries an app asking the head unit to open a
-specific url, so the two are told apart by whether `params.url` is present and
-non-empty — no url means the button. `isOemButtonPress()` is the predicate;
-`Receiver::handleEventCommand()` routes it to the `OemButtonHandler`, which
-today only logs:
-
-```
-[airplay] manufacturer button pressed -- phone is asking for the vehicle's own UI
-[node] manufacturer button pressed -- returning to the vehicle's UI is not wired up yet
-```
-
-Nothing is hooked to it yet. The action belongs in the node's handler in
-`usb_pipeline.cpp` — for this dashboard, telling the widget stack to leave the
-CarPlay page.
-
-**Configuring it.**
-
-```bash
-./build/nodes/carplay/carplay --config configs/carplay/carplay.yaml --verbose
-```
-
-`oem_button.enabled` and `oem_button.label` in the config control it. There are
-no command-line overrides: everything the accessory presents to the phone comes
-from the config file, so what a vehicle showed is answerable from the file alone.
-
-`configs/carplay/carplay.yaml` documents every field the node exposes -- the
-vehicle's identity, the panel's geometry, and the button below. The artwork it points at is
-generated by `configs/carplay/make_oem_icon.py` (a steering wheel, at 60/120/180
-px) — re-run that only if the icons change; the PNGs are committed. Icon
-dimensions are read from each file's PNG header, so a config only names paths.
-Without `--config` the button is still advertised, with the default label and no
-artwork; the node warns, because CarPlay then draws its own placeholder, which
-looks enough like a working button to hide the mistake.
-
-**Status: fully verified on hardware (2026-08-02)** — the tile, its label, its
-artwork, and the press. Pressing it on the phone produces exactly:
-
-```
-[airplay] manufacturer button pressed -- phone is asking for the vehicle's own UI
-[node] manufacturer button pressed -- returning to the vehicle's UI is not wired up yet
-```
-
-so `requestUI` with no url is confirmed as the wire form of the press, and
-`isOemButtonPress()` recognises the real thing rather than only the synthetic
-one in its test. What remains is only that nothing is hooked to the handler.
-
-If artwork ever goes missing again, the encoding is not the place to look. It
-was ruled out by dumping the exact `/info` we send and reading it with macOS's
-own parser:
-
-```bash
-plutil -p /tmp/info.plist    # oemIcons -> imageData = {length = 819, bytes = 0x89504e47...}
-```
-
-Apple's parser reading our plist correctly means the plist library, the data
-encoding and the PNG bytes are all fine, and the problem is in how CarPlay is
-being *asked* to treat the icon — which is how `prerendered` was found.
-
-## 11b. Persistent pairing, and what it does not buy
-
-The accessory used to generate a fresh Ed25519 identity on every run. It now
-loads one from `<state_dir>/airplay_identity` (0600), and files each phone's
-long-term public key in `<state_dir>/airplay_pairings`. Added 2026-08-02;
-`libs/airplay/pairing_store.cpp`, tested by `airplay_test_pairing_store`.
-
-**It does not stop the phone re-pairing, and that was the expectation going in.**
-Measured on hardware: with a stable identity and the phone's key on file, the
-next session still ran a full pair-setup M1–M6. The phone sends
-`X-Apple-HKP: 0` — *transient* pairing — because wired CarPlay has no Bonjour
-advertisement carrying our pairing id and public key, so it has nothing to
-recognise us by before it connects. LIVI persists these for its **wireless**
-path, where they do appear in the TXT records.
-
-What it does buy, both confirmed on hardware:
-
-- The identity stops changing on every restart. Correct in itself, and a
-  prerequisite for ever offering wireless.
-- **pair-verify M3 is now enforced.** It used to be checked against the key from
-  the same session's pair-setup, which proves nothing about continuity, so a
-  mismatch was logged and ignored. It is now checked against the stored key and
-  a mismatch is refused. The log says which key was used:
-
-```
-[airplay] pair-verify M3 signature verified against the stored key
-```
-
-If a phone ever legitimately rotates its key it will fail here until it redoes
-pair-setup, which files the new one. That is the intended behaviour, and
-`airplay_test_pairing_session` covers both the returning phone and the impostor.
-
-To force a clean slate, delete the two files.
-
-## 11c. We were inviting the phone to try wireless CarPlay
-
-The phone asked for our Wi-Fi configuration
-(`RequestAccessoryWiFiConfigurationInformation`) on **every single session**, and
-we declined every time. That is not the phone being speculative -- it is
-answering something we said.
-
-iAP2 identification declares two message lists: what the accessory sends and
-what it can receive. Ours listed:
-
-| Direction | Message | Meaning |
-|---|---|---|
-| we **send** | `AccessoryWiFiConfigurationInformation` | "I will hand over Wi-Fi credentials" |
-| we receive | `RequestAccessoryWiFiConfigurationInformation` | "you may ask me for them" |
-| we receive | `WirelessCarPlayUpdate` | "tell me about wireless availability" |
-
-The first is the invitation. Claiming to *send* the credentials message is
-exactly how an accessory says it can take part in a handover to wireless
-CarPlay, so the phone dutifully opened that conversation on every connect.
-
-All three are now behind `IdentificationConfig::advertise_wireless_carplay`,
-default **false**. `DeviceTransportIdentifierNotification` deliberately stays in
-the received list regardless: it also carries the phone's *USB* transport id,
-which is about the link we are actually on.
-
-We never advertised a wireless or Bluetooth transport *component* -- only the
-USB one -- so the message lists were the whole of it. `/info`'s `bluetoothIDs`
-is unrelated: it is how the phone correlates the accessory, and LIVI sends it
-too on the wired path.
-
-**Verified on hardware 2026-08-02.** Both messages disappear from the session
-and identification is unaffected:
-
-| | before | after |
-|---|---|---|
-| `RequestAccessoryWiFiConfigurationInformation` | every session | **none** |
-| `WirelessCarPlayUpdate` | every session | **none** |
-| `identification ACCEPTED` | yes | yes |
-
-The rest of the session is untouched -- twenty distinct inbound messages, vehicle
-status subscribed and answered, RECORD, video decoding. So the phone does not
-require those declarations; it was simply taking us up on an offer.
-
-If a future iOS *does* reject identification without them, set
-`advertise_wireless_carplay = true` to restore the old behaviour.
-
-## 12. What LIVI has that we do not, and why
-
-The stack was compared against LIVI's `src/main/services/projection/driver/cp/`
-on 2026-08-02, feature by feature. Everything meaningful that was missing has
-been closed (stages 10b, 11, and the non-touch HID devices under stage 8). What
-follows is what LIVI has and we deliberately do not, so the next person to read
-its source does not re-derive the same conclusions.
-
-**Not applicable to this stack:**
-
-- **The iAP2-over-AirPlay tunnel** (`iapTunnel.ts`, stream type 130, and the
-  `iAPSendMessage` relay). This exists because the phone moves iAP2 off
-  Bluetooth after `disableBluetooth`, and LIVI's dongle path has no wired iAP2
-  channel to fall back on. Ours does: iAP2 runs over USB on the carkit channel
-  the whole time. We open and answer a type-130 SETUP so the phone does not tear
-  the session down, and interpret nothing on it.
-- **The Bluetooth stack** (`BluezDeviceClient`, `BtPairedRegistry`,
-  `disableBluetooth` acting on a real link). No Bluetooth here.
-- **The dongle protocol** (`messages/sendable.ts`, `DongleState`, the Carlinkit
-  transport). We speak to the phone directly. Worth knowing that the dongle's
-  `SendIconConfig` is where the manufacturer-button key names came from
-  originally — the dongle passes them into its own AirPlay server.
-- **Android Auto** (`driver/aa/`). Out of scope.
-
-**Closed since the first pass (2026-08-02):**
-
-- **Persistent pairing** (`identity.ts`, `pairings.ts`) — see stage 11b.
-- **Vehicle status.** We advertised a VehicleStatusComponent declaring range and
-  outside temperature, the phone subscribed with `StartVehicleStatusUpdates` on
-  every single session, and nothing ever answered — despite
-  `encodeVehicleStatusUpdate()` being written and unit-tested. It is now driven
-  from `vehicle.status` in the config, and the component is advertised **only**
-  when something is configured, because declaring a capability and then ignoring
-  the subscription is a promise broken every session. Values are static for now;
-  the shape is the one a live vehicle-state source would fill.
-- **The four inbound messages the phone sends that went nowhere.**
-  `StartVehicleStatusUpdates` is answered; `WirelessCarPlayUpdate` and
-  `DeviceTransportIdentifierNotification` are decoded and logged (we had the
-  decoders and never called them); `RequestAccessoryWiFiConfigurationInformation`
-  is an explicit, logged decline — it is the first step of a handover to wireless
-  CarPlay and this accessory has no Wi-Fi to offer. The phone carries on over USB
-  regardless, which is what we want.
-
-**Applicable, deliberately not done:**
-
-- **The instrument-cluster display** (alt screen, stream type 111, `showUI` /
-  `stopUI` / `ALT_UUID`, `cluster-video-config`). A second CarPlay surface for a
-  digital gauge cluster. This dashboard drives one screen. Adding it is a second
-  `displayEntry` in `/info` plus a second screen stream — no new protocol layer,
-  so it is a day's work whenever a second panel exists.
-- ~~HEVC~~ — **done and hardware-verified 2026-08-02.** See stage 15.
-- **A 48 kHz entertainment rate.** LIVI picks 44.1 or 48 kHz for the type-102
-  stream; we advertise 44.1 only. Type 102 has never been exercised on the wired
-  path at all (stage 9), so a second untested variant of it is not worth having.
-- **`disableAudioOutput`.** LIVI can mask the audio feature bits to advertise a
-  head unit with no audio. A CarPlay head unit that carries no audio is not a
-  configuration this vehicle wants.
-- **A playback anchor in `POST /feedback`.** See stage 10b — we cannot produce
-  one honestly, because playback happens on the far side of zenoh.
-- **`encodePowerUpdate` / `encodeCommunicationsUpdate`.** Written and tested in
-  `libs/iap2`, never called. Unlike vehicle status these are not advertised and
-  the phone has never asked for them across every session logged, so they are
-  dead code for an unrequested feature rather than a broken promise. Left in
-  place: the encoding is the hard part and it is done.
-
-## 13. Where the code lives
-
-Restructured 2026-08-02. `libs/airplay/receiver.cpp` had grown to 2870 lines
-holding five separable jobs behind four mutexes, and nothing inside it could be
-tested without a socket. It is now 1324 lines of RTSP server -- accept, frame,
-dispatch, session lifecycle -- and the rest are units that can be driven from a
-test. That is the whole point of the split: **every concern that came out of the
-receiver gained a test, and everything still inside it has none.**
-
-| Unit | What it owns | Test |
-|---|---|---|
-| `config.h` | what the accessory is, as the phone sees it | — |
-| `info_plist.cpp` | the GET /info capability declaration | `airplay_test_info_plist` |
-| `pairing_session.cpp` | pair-setup, pair-verify, auth-setup, accessory identity | `airplay_test_pairing_session` |
-| `channel_crypto.cpp` | the framed ChaCha20-Poly1305 transport both encrypted channels use | `airplay_test_channel_crypto` |
-| `event_channel.cpp` | the input/command connection, its queue and its two threads | `airplay_test_event_queue` (policy) |
-| `hid.cpp` | the four input devices: descriptors, /info entries, reports | `airplay_test_hid` |
-| `oem_button.cpp` | the manufacturer button, both directions | `airplay_test_oem_button` |
-| `media_stream.cpp` | the screen and audio receive loops | — |
-| `mic_uplink.cpp` | captured audio going back to the phone | `airplay_test_mic_uplink` |
-| `net.cpp` | the two socket shapes (dual-stack, ephemeral port) | — |
-| `timing.cpp`, `nalu.cpp`, `crypto.cpp`, `srp.cpp`, `tlv8.cpp`, `aac_decoder.cpp` | as before | yes |
-| `rtsp.cpp` | RTSP message framing | `airplay_test_rtsp` |
-| `timing.cpp` | NTP clock sync; the arithmetic is split from the socket | `airplay_test_timing` |
-| `receiver.cpp` | the RTSP server and session lifecycle that wires the above | — |
-
-Two things are worth knowing before changing any of it:
-
-- **A second display is now a data change** in `info_plist.cpp` plus a second
-  screen stream, rather than surgery on the RTSP server. That was the point of
-  extracting it (see stage 12 on the cluster display).
-- **Night mode is split on purpose.** `EventChannel::setNightMode()` records it
-  and `pushNightMode()` sends it, because *when* to send is the session's
-  business: the phone ignores an event command sent before RECORD, and older iOS
-  stalls the bring-up for seconds on one. The channel cannot see that signal.
-
-On the node side, `runAttachedSession` went from 645 lines to 146 by naming its
-two largest stages -- `startAirPlayReceiver` and `runIap2Stage`. The stages run
-3, 4, 6, 7, 5, which is deliberate: the phone dials the AirPlay port within
-milliseconds of the `CarPlayStartSession` that stage 5 sends, so 6 and 7 have to
-be listening first. `UsbPipelineOptions` is gone; `NodeConfig` is the one config
-struct, filled once in `main()`.
-
-**None of this was verified against a phone.** It is code motion checked by the
-build, the thirteen unit suites, and `--simulate`. If a hardware session
-regresses after 2026-08-02 and the symptom is in the handshake, the pairing and
-event-channel commits are where to look first.
-
-## 14. Hardware session, 2026-08-02 — findings
-
-The first hardware run after a large refactor and a feature-parity pass. iPhone
-`00008140…` (iPhone17,1, AirPlay 950.7.1) and the real MFi coprocessor, on
-macOS. Everything from USB detection through H.264 ran, and three bugs came out
-that no amount of desk-checking had.
-
-**1. An event-channel feedback loop (introduced by the refactor, fixed).**
-
-The event channel is the only bidirectional one: the phone sends its own
-commands *and* replies to ours. The inbound handling added with the manufacturer
-button only considered requests — and a status line (`RTSP/1.0 200 OK`) has the
-same three space-separated tokens as a request line, so `parseRequest` accepts
-it with `method="RTSP/1.0"`. We answered its replies; it answered ours.
-
-Measured: **~1000 messages/second for the entire session**, 27,082 error lines in
-35 seconds, a 54,847-line log. Video kept flowing throughout, which is exactly
-why only hardware found it. `rtsp::Message::isResponse()` now names the
-distinction; the same run afterwards logged 672 lines and zero errors. LIVI's
-`cpStack.ts` has this guard and it had not been ported.
-
-**2. The clock sync had never worked on the first sample (pre-existing, fixed).**
-
-Our clock counts from boot; the phone's timestamps are NTP, seconds since 1900.
-That is ~126 years apart — past the ±2³¹ second window a signed 64-bit
-fixed-point difference can represent — so the first offset **wrapped and came
-back with the wrong sign**: a true gap of +3.99e9 s computed as −3.05e8 s. The
-1/8 slew then crawled toward correct over ninety-odd seconds, having stepped the
-wrong way first, and `syncedNtp()` compounded it by casting a negative
-nanosecond count to `uint64_t`.
-
-The first sample now *adopts* the phone's clock via `ntp::toNanos()` instead of
-stepping by a difference that cannot express the gap. On hardware:
-`clock adopted from the phone (offset 2207213529.836 s)` — 69.9 years, the NTP
-epoch offset — and zero large phase errors, down from 96.
-
-`airplay_test_timing` had asserted this case was *"not reachable in practice"*.
-It is reached on every session. The test now says so.
-
-**3. `prerendered: false` renders an empty tile.** See stage 11.
-
-**Retracted: the node does not shut down slowly.** An earlier version of this
-section reported that it could take more than five seconds to exit on SIGTERM,
-after three `carplay` processes survived a `pkill` and a five-second wait and
-one kept holding the link-local `:7000`.
-
-Measured properly on 2026-08-02 with the hardware back:
-
-| Case | SIGTERM to exit |
-|---|---|
-| healthy session, streaming video | 1.19 s |
-| failed bring-up, inside the retry backoff | 0.60 s |
-| a user's own `^C` on a live session | 1.79 s |
-
-and three start/`pkill`/restart cycles left zero stray processes.
-
-The original claim rested on a check that could not have worked: macOS `pgrep`
-has no `-c` flag, so `pgrep -c -f ... || echo 0` printed a usage error and then
-"0" from the fallback. That "0" was read as "no processes left". The strays were
-almost certainly accumulated by starting nodes in the background across several
-steps without reliably killing the previous one — test hygiene, not the product.
-
-Two things worth keeping from it, since the symptom is real when it happens:
-
-```bash
-lsof -nP -iTCP:7000 -sTCP:LISTEN | grep carplay    # who holds the port
-ps -eo pid=,comm= | awk '$2 ~ /\/carplay$/'         # exact count, no zsh wrappers
-```
-
-`ps aux | grep carplay` is not one of them: it also matches the shell whose
-command line contains the path, which inflates the count and was the second
-wrong number in the same investigation.
-
-**A note on method.** Two of the three findings were mine, and both were the
-same shape: code that is obviously correct in isolation, wrong against a real
-peer. The event-channel loop needed a phone that replies; the clock needed a
-phone whose epoch is not ours. Simulation cannot produce either, because
-`--simulate` has no peer. That is the limit of the hardware-free test net, and
-worth remembering before the next "this is desk-checkable" judgement.
-
-## 15. HEVC, the swscale warning, and shared memory
-
-**HEVC is implemented and verified (2026-08-02).** It was only ever the
-advertisement: `nalu.cpp` already rewrote hvcC as well as avcC and knew HEVC's
-different keyframe rule (IRAP 16..23 rather than a single NAL type), the codec
-travels on every packet, and the widget already picked `AV_CODEC_ID_HEVC` from
-it. Two keys turn it on together — `hevcInfo` in `GET /info` and `"hevc"` in the
-SETUP `enabledFeatures` — and sending one without the other leaves the phone on
-H.264 with nothing to explain why.
-
-Set `display.allow_hevc` in the config. With it on, the phone chose H.265
-immediately and it rendered end to end:
-
-```
-[video]   codec config: H.265 (106 bytes Annex-B)
-[video]   FIRST FRAME decoded: 331 bytes Annex-B
-[carplay] CarPlay video decoder ready (HEVC)
-[carplay] first video frame decoded and rendered (800x600)
-```
-
-It is an offer, not a demand: the phone chooses, and it takes the offer when
-made. Shipped **off**, because H.264 is the path with every other hardware
-session behind it and one HEVC session is not yet a basis for switching the
-default.
-
-**The swscale "no accelerated colorspace conversion" warning cannot be fixed,
-and does not matter.** Probed on this machine: *every* 32-bit destination
-format falls back to the C path for `yuv420p` input.
-
-| dst | bgra | rgba | argb | abgr | bgr0 | rgb0 | 0rgb | 0bgr | rgb24 | bgr24 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| arm64 | C | C | C | C | C | C | C | C | C | C |
-
-swscale's accelerated yuv2rgb converters are x86 SIMD; the aarch64 coverage does
-not include them. So there is no destination format to switch to. Measured cost
-of the C path:
-
-| resolution | per frame | at 30 fps |
-|---|---|---|
-| 800x600 | 0.137 ms | 0.4% of one core |
-| 1280x720 | 0.170 ms | 0.5% |
-| 1920x720 | 0.214 ms | 0.6% |
-
-The only way to avoid it entirely is to stop converting on the CPU — the
-GPU/`QVideoWidget` path, which was implemented and then reverted in `4d143ae`
-because nothing can be layered over that surface. Trading the z-ordering
-constraint for 0.4% of a core is not a trade worth making.
-
-What *was* worth fixing is that the message, and libavcodec's output generally,
-went straight to stderr — untimestamped and unfilterable, in the middle of our
-own logs. `helpers::routeFfmpegLogsToSpdlog()` now maps them into spdlog, with
-ffmpeg's `AV_LOG_INFO` (where codecs put their per-run statistics) landing at
-debug. A `--simulate` run used to carry a wall of raw `[libx264 @ 0x...]` lines;
-it now carries none, and `--verbose` shows them as `[ffmpeg]` at debug.
-
-**Shared-memory transport: not worth enabling.** zenoh-c has
-`ZENOHC_BUILD_WITH_SHARED_MEMORY`, and it is off. Turning it on is not a flag
-flip: the publisher must allocate its payload from an SHM provider instead of a
-normal buffer, both ends must have the feature and be on the same host, and it
-means rebuilding zenoh's Rust from scratch.
-
-The reason not to is the payload. We publish **compressed** video:
-
-| | |
-|---|---|
-| video payload | ~16 KB per frame, ~488 KB/s |
-| a memcpy of that | ~0.0025% of one core |
-| node CPU, real session | ~0.4% |
-| raw RGBA at the same size and rate | 55 MB/s — *this* is what SHM is for |
-
-SHM's benefit scales with payload size, and ours is three orders of magnitude
-below where it starts to matter. Revisit only if something ever publishes raw
-frames.
-
-## What exists today (read before starting)
-
-Not all stages below are implemented yet. Current state:
-
-| Layer | State |
-|---|---|
-| **USB transport (libusb)** | **rewritten 2026-08-01, NOT re-verified on hardware** — see stage 1b. Descriptor discovery unit-tested (`apple_usb_test_ncm_discovery`); stages 2, 3 and 6 need re-running |
-| USB detect, config-6 switch, usbmux, usbmuxd socket | verified on hardware 2026-07-21 (stages 2–3), **against the pre-libusb transport** |
-| Property lists (binary + XML), ours | **replaces libplist** in the usbmuxd server; differential-tested against libplist, verified on hardware |
-| usbmux client, ours | **replaces libusbmuxd**'s role; mock-tested and verified on hardware via `apple_usb_muxctl` |
-| lockdown client + TLS + pair record + pairing, ours | **the only implementation** — libimobiledevice removed 2026-07-31. Pairs from scratch; 25 consecutive clean runs |
-| iAP2 link layer, identification, MFi auth | **verified on hardware 2026-07-21** (stage 5 complete) |
-| iAP2 metadata decode | written, unit-tested |
-| NCM link | **rebuilt on the system NCM driver 2026-08-02** — the userspace bridge and its TAP are deleted; verified on hardware, 4713 frames over three minutes with no errors, and measured against the old path (see stage 6) |
-| NTB16 framing | **deleted 2026-08-02** — the kernel NCM driver frames the AV path now, so this code and its unit suite are gone along with the bridge |
-| **macOS stages 1–7** | **verified on hardware 2026-08-01** — config switch under root, then system usbmuxd + lockdown TLS + carkit + `AppleUSBNCM` + iAP2/MFi auth + 975 decoded video frames, all unprivileged after the one-time switch. See "Running on macOS" |
-| MCP2221A userspace driver | **three bugs fixed 2026-08-01** — every transfer was addressed to 0x00, the ACK bit was unmasked, and a NACK latched the engine. Presented as a wiring fault for a long time; it was not |
-| AirPlay crypto/SRP/plist/NALU foundation | written, KAT-verified |
-| **AirPlay RTSP session**: framing, pair-setup, pair-verify, encrypted channel, auth-setup, /info, SETUP, RECORD, clock sync | **written; handshake verified on hardware** |
-| **AirPlay screen stream** (H.264 decode to Annex-B, published on zenoh) | **working, verified on hardware** |
-| **Late-joining renderer sync** | working — periodic `forceKeyFrame` over the event channel |
-| **Widget render (YUVJ420P)** | working — full CarPlay home screen renders |
-| **Event channel + touch HID** | **verified on hardware** (single-touch + drag) |
-| **Knob / media key / telephony HID + Siri** | written 2026-08-02, unit-tested (`airplay_test_hid`), **not hardware-verified**. Advertised in `/info` and wired to the `input` topic; nothing publishes them yet |
-| **Event channel inbound commands** | written 2026-08-01 — the phone's own commands are now parsed and acknowledged (they were previously read and discarded). `requestUI`, `modesChanged`, `duckAudio`/`unduckAudio`, `suggestUI` and `disableBluetooth` routed 2026-08-02; see stage 10b |
-| **Session lifecycle (TEARDOWN)** | written 2026-08-02 — TEARDOWN was acknowledged and otherwise ignored, so the dashboard never learned a session had ended. Not hardware-verified |
-| **`POST /feedback` media clock** | written 2026-08-02 — names the open audio streams instead of answering empty. No playback anchor; see stage 10b |
-| **Night mode** | written 2026-08-02, set by `night_mode:` in the config and reflected in `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
-| **Keepalive port** | written 2026-08-02 — `/info` advertised `keepAliveLowPower` with no port behind it |
-| **Cluster (alt) display, HEVC advertisement, 48 kHz entertainment audio** | deliberately not done; see stage 12 |
-| **Manufacturer button** (`/info` advertisement + press decode) | **fully verified on hardware 2026-08-02** — tile, label, artwork (needs `prerendered: true`) and the press. Nothing is hooked to the handler yet. See stages 11 and 14 |
-| **AirPlay audio downlink (PCM)** | **verified on hardware** (types 100/101) |
-| **HEVC (H.265)** | **verified on hardware 2026-08-02**; off by default, `display.allow_hevc` turns it on. See stage 15 |
-| **AirPlay audio downlink (AAC-LC, type 102)** | decode unit-tested (`airplay_test_aac`); the wired iPhone never routes music as AAC (uses PCM), so end-to-end unexercised — see stage 9 |
-| **Microphone uplink** | written; control path verified on hardware; end-to-end voice pending real host audio |
-| **Now-playing metadata + album art** | **verified on hardware** |
-| **Navigation + call metadata** | **verified on hardware 2026-07-23** |
-| **GPS location uplink** (car → phone, NMEA) | written; NMEA unit-tested (`iap2_test_nmea`); not yet hardware-tested |
-| **Node orchestration**, stages 2–7 + metadata | done — `usb_pipeline.cpp` + `iap2_session.cpp`, driven by `--max-stage` |
-| **Node orchestration** wiring NCM → airplay | **NOT YET WRITTEN** |
-| zenoh bridge, widgets, audio, metadata topics | done, verified via `--simulate` |
-
-Stages 2–4 run today via `--max-stage`, which stops the pipeline at a chosen
-stage so a failure at one layer is not buried under the next layer failing as a
-consequence:
-
-```bash
-./build/nodes/carplay/carplay --max-stage 2 --verbose   # detect + config switch
-./build/nodes/carplay/carplay --max-stage 3 --verbose   # + mux + usbmuxd socket
-./build/nodes/carplay/carplay --max-stage 4 --verbose   # + lockdown/carkit TLS
-./build/nodes/carplay/carplay --max-stage 5 --verbose   # + iAP2 link, identification, MFi
-
-# While the MFi board is out, run everything up to the certificate request:
-./build/nodes/carplay/carplay --max-stage 5 --iap2-allow-missing-mfi --verbose
-```
-
-No `sudo` is needed for these once the stage 1 udev rules are installed.
-**Stages 5–10 still need code**: the carkit channel is not yet wired to
-`Iap2Transport`, and the AirPlay session layer does not exist. Until then the
-driver publishes only idle session state, and `--simulate` exercises the
-dashboard.
-
-## Known-unverified list
-
-Everything from USB up to the carkit TLS channel has run against a phone, but
-**the USB transport underneath was replaced on 2026-08-01 and has not**. That is
-now the top unverified item — see stage 1b for the ordered re-verification, and
-note that its three highest risks are: the mux interface lookup landing somewhere
-other than If1, the NCM detach-then-select ordering picking the second pair, and
-NCM throughput under libusb's synchronous API.
-
-Ranked by remaining uncertainty (highest first):
-
-**The end-to-end path is proven: the CarPlay home screen renders in the
-dashboard widget.** Driver → USB → AirPlay → zenoh → widget → screen. Remaining:
-
-1. **Audio streams.** The video path is complete; audio (stream types 100–102,
-   PCM/OPUS/AAC-LC) is not implemented. `audioFormats` is already advertised in
-   `/info`, so the phone may request an audio stream SETUP — handle it in
-   `handleSetup` alongside type 110. See LIVI `audioStream.ts` / `rtpAudioDecoder.ts`.
-2. **Touch round-trip.** The encrypted event channel is up and `sendTouch()`
-   pushes `hidSendReport` multitouch reports over it, wired to the dashboard's
-   input topic. Confirm on screen that taps register.
-
-### Keyframes are gated on somebody actually rendering (2026-08-02)
-
-zenoh has no retained messages, so a renderer that joins mid-stream has nothing
-to decode until the next keyframe -- and on a static CarPlay screen (a menu, a
-stationary map) the phone emits none of its own. The driver therefore asks for
-one, and used to ask on a timer alone: roughly every 1.5-2 s, forever, whether
-or not anything was subscribed.
-
-It is now driven by whether anything is listening, using zenoh's publisher
-matching status on `nodes/carplay/video`:
-
-| State | Behaviour |
-|---|---|
-| nothing subscribed | no keyframe requests at all |
-| first subscriber arrives | one requested immediately |
-| something subscribed | the 1.5 s staleness poll, as before |
-
-**The poll is still needed, and this is the reason.** zenoh reports a *boolean* --
-"is anything subscribed" -- so the notification fires on the first subscriber
-arriving and the last one leaving, and **not** when a second joins alongside a
-first. Running `inspect echo -k nodes/carplay/video` while the dashboard is
-already up produces no event, so that renderer syncs via the poll. Verified
-against zenoh 1.9.0, cross-process:
-
-```
-initial matching=false
-subscriber A connects   -> event, matching=true
-subscriber B connects   -> nothing
-A drops (B remains)     -> nothing
-B drops (last one)      -> event, matching=false
-```
-
-To watch it on a bench, run the driver and attach and detach a subscriber:
-
-```bash
-./build/nodes/carplay/carplay --verbose        # terminal 1
-./build/nodes/inspect/inspect echo -k nodes/carplay/video   # terminal 2, then Ctrl-C
-```
-
-Terminal 1 logs `[node] video topic has subscriber(s)` and then
-`[airplay] a renderer connected; requesting a keyframe now`, and the matching
-pair when the subscriber goes away. If the first line appears and the second
-does not, the receiver is not wired to the bridge; if neither appears, the
-matching listener is not being declared (it is declared lazily, on the first
-`setVideoSubscriberHandler` call).
-
-**Lifetime note.** The bridge outlives any one session, and a background
-matching listener cannot be undeclared, so the listener is declared once and
-dispatches through whatever handler is installed. `runAttachedSession` detaches
-it at teardown alongside the mic, input and location handlers -- the same
-reason: they capture session-scoped state that is about to be destroyed.
-
-**The "one frame then stops" earlier symptom was `viewAreas`, now fixed** — see
-above. With it in place the phone streams continuously (100+ frames observed).
-2. **Audio pacing** — timing-dependent, cannot be desk-checked.
-
-**Retired by the 2026-07-21 hardware session:**
-- ~~usbmuxd socket bridge~~ — `idevice_id -l` and `ideviceinfo` both work through
-  our socket, exercising the plist framing and the `Connect` relay.
-- ~~Lockdown/carkit glue~~ — compiles and reaches
-  `[carkit] carkit TLS channel up (iAP2)`. One real bug found and fixed: the
-  sysfs UDID needs the libusbmuxd dash normalisation (stage 4).
-- ~~iAP2 link layer and wired identification~~ — negotiates against a real phone
-  and identification is **accepted first try**, no rejection round needed.
-- ~~iAP2 retransmission/EAK timers~~ — not a risk on this path: the phone
-  advertises `max_retransmissions=0 max_ack=0`, so they never run.
-- ~~Outbound fragmentation off-by-ten~~ — `max_len` is 65535 as assumed.
-- ~~NCM enumeration / altsetting / pair selection~~ — all correct on hardware.
-  The real defect was the undrained interrupt endpoint, which no amount of
-  framing verification would have caught.
-- ~~NTB16 framing on the wire~~ — 3960 blocks accepted by the phone with no
-  errors, confirming the differential testing against LIVI.
-- ~~MFi authentication~~ — certificate (908 B) accepted and a 20-byte SHA-1
-  challenge signed; the phone answers `AuthenticationSucceeded`. Protocol major
-  is **2** on this CP2.0C part, so the SHA-1/20-byte branch is the live one.
-- ~~Zero-length iAP2 bools~~ — **did not occur.** The phone sends a proper
-  1-byte boolean, so `wired_available` decodes as `true` and
-  `CarPlayStartSession` is not suppressed. See the note under stage 5: the
-  behaviour is still worth knowing, because it fails silently if a different
-  phone does send one.
-
-Deliberately *lower* risk than they look, because they are verified:
-NTB16 framing (byte-identical to LIVI across 30 cases), the crypto primitives
-and SRP (90 KAT assertions), iAP2 framing/reassembly/fragmentation (~150
-assertions), and the entire dashboard-side pipeline (`--simulate`).
+{: .warning }
+Do not stop the system usbmuxd on macOS. It is the mux we use, SIP refuses
+`launchctl bootout` anyway, and taking interface 1 from it would need
+whole-device capture, which also strips the NCM interfaces stage 6 depends on.
+
+The system AirPlay Receiver holds `*:7000`, so the node binds the NCM
+link-local specifically rather than the wildcard; the phone only ever dials the
+address we advertised. Under `sudo`, `$HOME` may be `/var/root`, which moves the
+default state dir; pass `--state-dir` for one shared location.
+`apple_usb_usbprobe` reports whether this process can capture, and
+`apple_usb_muxctl <socket> <udid>` points our usbmux client at any daemon, ours
+or Apple's; neither needs phone-side setup.

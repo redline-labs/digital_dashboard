@@ -41,7 +41,7 @@ answered at all, which looks exactly like a node that is not running.
 
 **A settings call waits for the relay to answer and tells you what it said.**
 `ok` means the relay accepted the change, not that bytes were transmitted. So
-the intended sequence is simply: hold the switch, make the call, read the reply.
+the intended sequence is: hold the switch, make the call, read the reply.
 
 A command that is never answered is therefore an ordinary outcome rather than an
 error, and it is reported as one — `answered: false` with a plain explanation.

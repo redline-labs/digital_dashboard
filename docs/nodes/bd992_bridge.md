@@ -4,68 +4,77 @@ parent: Nodes
 redirect_from: /bd992.html
 ---
 
-# Trimble BD992
+# bd992_bridge
 
-A GNSS receiver on the vehicle's Ethernet, publishing GSOF records as Cap'n
-Proto messages and exposing its own configuration as zenoh services.
+## Overview
 
-Three pieces:
+A Trimble BD992 GNSS receiver on the vehicle's Ethernet, publishing GSOF
+records as Cap'n Proto messages and exposing the receiver's own configuration
+as zenoh services. The node is the top of three layers:
+[gsof](../libs/gsof.html) is the protocol, [bd992](../libs/bd992.html) is the
+TCP transport and the read-before-write configuration logic, and
+`nodes/bd992_bridge` maps records onto schemas and reads the YAML. The
+rationale, the live-hardware findings and the open questions are in the
+[design notes](../design/bd992.html).
 
-| | |
-| --- | --- |
-| `libs/gsof` | The Trimble protocol. No sockets, no threads — and `constexpr`, so a wrong field offset is a build error. |
-| `libs/bd992` | TCP, reconnection, and the read-before-write configuration logic. |
-| `nodes/bd992_bridge` | The process: YAML in, topics and services out. |
-
-The split is the one `can` makes from `can_pcan`: bytes on one side, transports
-on the other. `bd992` depends on `gsof`; `gsof` depends on nothing.
-
-## Bringing one up
-
-The receiver is a **TCP server** and the node connects to it. Nothing leaves the
+The receiver is a TCP server and the node connects to it. Nothing leaves the
 receiver until something attaches, which keeps the vehicle network quiet and
 makes the node the only thing that has to be running.
 
-1. In the receiver's web interface, **I/O Configuration → Port Summary**, add an
-   IP socket in TCP server mode. Note its port number and which socket it is —
-   the first three IP sockets are port indices **20, 21, 22** on the wire, and
-   Trimble's own prose numbers them from one.
-2. Point `configs/bd992/bd992.yaml` at the receiver and run `--probe`:
+## Running it
 
-   ```bash
-   ./build/nodes/bd992_bridge/bd992_bridge --config configs/bd992/bd992.yaml --probe
-   ```
+In the receiver's web interface, under I/O Configuration and Port Summary, add
+an IP socket in TCP server mode and note its port number and which socket it
+is. The first three IP sockets are port indices `20`, `21` and `22` on the
+wire; Trimble's own prose numbers them from one. Then point
+`configs/bd992/bd992.yaml` at the receiver and probe it before running it:
 
-   This prints what each stored application file contains, and is the first
-   thing to run because it answers the two questions the ICD does not.
-3. `--check` diffs the receiver against the config and exits non-zero on drift.
-4. Then run it.
+```bash
+./build/nodes/bd992_bridge/bd992_bridge --config configs/bd992/bd992.yaml --probe
+./build/nodes/bd992_bridge/bd992_bridge --config configs/bd992/bd992.yaml --check
+./build/nodes/bd992_bridge/bd992_bridge --config configs/bd992/bd992.yaml
+```
 
-### The two things the ICD does not document
+| Option | |
+| --- | --- |
+| `--config <file>` | The YAML below. |
+| `--probe` | Print what each stored application file contains and exit. The first thing to run, because it answers the two questions the ICD does not. |
+| `--check` | Diff the receiver against the config and exit non-zero on drift. |
+| `--replay <file>` | Replay a captured GSOF byte stream instead of connecting. |
+| `--loop` | With `--replay`, start again at the end of the capture. |
+| `--replay-delay-ms <n>` | With `--replay`, milliseconds between chunks. `0` replays as fast as the bus will take it. |
+| `--dump-gsof <file>` | Write the raw received bytes to a file. |
+| `--debug` | Verbose logging. |
 
-Both are config fields rather than code, and `--probe` is how you settle them.
+The config has three sections. `receiver` names the host and two ports:
+`stream_port` is the socket configured to output GSOF, `control_port` the one
+that accepts command and report packets. Whether one socket can do both is
+still unknown (see the design notes); if you want to try, configure it for
+input and output and point both keys at it. `reconnect_backoff_ms` is tried in
+order and then the last value repeats.
 
-- **Which TCP port serves the command interface**, and whether one IP socket can
-  carry both GSOF output and inbound commands. **Still open.**
+`configuration` decides what the node does to the receiver. `mode: enforce`
+reads the receiver's configuration, compares it against `outputs`, and writes
+only what differs; `report_only` stops after the comparison, and is the mode to
+use around a receiver somebody else owns. `port_index` is the zero-based wire
+index of the socket above. `port_policy: additive` (the default) leaves outputs
+the config does not mention alone and reports them; `exclusive` turns them off.
+Outputs on other ports are ignored in both directions. `appfile_index` is
+which stored application file holds the running configuration, which `--probe`
+is how you find out. `recheck_interval_s` re-reads and re-compares on a timer
+(`0` checks once, at startup), and `allow_raw_commands` gates the
+`send_command` service.
 
-  A `--probe` against a live receiver on 2026-08-23 timed out on every
-  application file index while that same socket streamed reports throughout —
-  but the socket had been **configured output-only**, so that is what a
-  correctly working receiver should do. It says nothing about whether a socket
-  configured for input *and* output would answer. Set one up that way and probe
-  it again; that is the experiment that settles it.
+Each entry in `outputs` is a record name from the GSOF record table and a
+named rate: `off`, `100hz`, `50hz`, `20hz`, `10hz`, `5hz`, `2hz`, `1hz`,
+`2s`, `5s`, `10s`, `15s`, `30s`, `60s`, `5min`, `10min` or `once`. An unknown
+record name is refused at load with the full list. The list is what this node
+insists on, not everything available; with `additive` the receiver may send
+more, and it will be decoded and published either way.
 
-  The run was not wasted, though, because of what the timeout does prove:
-  `ControlClient` skips GENOUT packets while waiting for a reply, so it read
-  every report that arrived during the three-second window and correctly
-  declined to mistake any of them for an answer. A control client without that
-  filter would have returned the first GSOF report as if it were an application
-  file.
-
-- **Which application file index holds the running configuration.** Trimble
-  documents index 0 as the factory defaults and says nothing about the rest.
-  `--probe` walks 0–4 and prints what it finds. **Still open** — it cannot be
-  answered until there is a socket configured to accept commands.
+`publish` sets `topic_prefix` (default `nodes/bd992`), `status_key`,
+`status_interval_ms` and `publish_unknown_records`, which puts records this
+build does not model on `<prefix>/gsof/raw` as bytes.
 
 ## Without a receiver
 
@@ -77,21 +86,17 @@ The whole decode and publish path runs over a captured byte stream:
     --replay mock_data/data/bd992_gsof_capture.bin --loop --replay-delay-ms 20
 ```
 
-This is the `trc:` replay of the GNSS stack — the same framer, page assembler,
-record parsers and publishers a live receiver drives, so the topics are the real
-thing. `--dump-gsof <file>` writes the raw stream, so a minute from a vehicle
-becomes a fixture. Without `--replay-delay-ms` it replays as fast as the bus
-will take it, which is right for a test and far too fast to watch.
+The bytes go through the same framer, page assembler, record parsers and
+publishers a live receiver drives, so the topics are the real thing.
+`--dump-gsof <file>` writes the raw stream, so a minute from a vehicle becomes
+a fixture. Services are not offered in replay mode: there is no receiver to
+answer with, and a service that could only ever fail is worse than none.
 
-Services are **not** offered in replay mode: there is no receiver to answer with,
-and a service that could only ever fail is worse than none.
+### bd992_mock
 
-## Driving a road the map really has
-
-The capture above is 837 bytes — a handful of transmissions from a receiver that
-was sitting still. For anything downstream of position that is not data, it is a
-fixed point. `nodes/bd992_mock` fills that gap: it asks `nodes/map_server` where
-to drive and then drives it.
+The capture above is 837 bytes from a receiver that was sitting still. For
+anything downstream of position, `nodes/bd992_mock` asks `nodes/map_server`
+where to drive and then drives it:
 
 ```bash
 ./build/nodes/map_server/map_server --config configs/map_server.yaml   # first
@@ -100,55 +105,43 @@ to drive and then drives it.
 ./build/nodes/bd992_mock/bd992_mock --track "Willow Springs"
 ```
 
-`--check` resolves the path, reports it and exits without publishing — the
-fastest way to find out whether map_server can answer at all. `--config` is
-optional; `configs/bd992/mock.yaml` documents every default and is worth reading
-before changing a number. The graph name is discovered by querying `map/graph`,
-so nothing has to be named twice.
+| Option | |
+| --- | --- |
+| `--route <lat,lon> --to <lat,lon>` | Drive a road route from `map/route`, with posted speed limits from `map/nearest`. |
+| `--track <id or name>` | Drive a race track's centreline from `map/track_catalog` and `map/track_detail`. A circuit laps; a point-to-point course runs once. |
+| `--profile <name>` | Routing cost profile. Empty means the graph's default. |
+| `--loop` | Start again on reaching the end. |
+| `--no-speed-limits` | Skip the `map/nearest` pass and drive at the cruise speed. |
+| `--check` | Resolve the path, report it and exit without publishing. The fastest way to find out whether map_server can answer at all. |
+| `--config <file>` | Optional. `configs/bd992/mock.yaml` documents every default. |
 
-**A route** comes from `map/route`, then one `map/nearest` query per distinct
-segment picks up the posted speed limits. **A track** comes from
-`map/track_catalog` and `map/track_detail` and is driven along its centreline;
-a circuit laps, a point-to-point course runs once. This node is the first caller
-of any of those four services anywhere in the tree.
+The vehicle is a point mass on the line: position, speed and heading all come
+from one distance-along-path and one speed, so they cannot disagree. Speed is
+capped by the local curvature (`v = sqrt(a_lat * R)`) and by the posted limit,
+and braking starts before a corner rather than at it. Set
+`vehicle.lateral_accel_mps2` to `8` to `12` for a circuit; the `3.0` default is
+a road car and makes for a slow lap. There is no elevation in either source, so
+`ellipsoidHeightM` is a constant and vertical velocity is zero, and the fix is
+always RTK-fixed with a fixed correction age.
 
-The vehicle is a point mass on that line, and that is the whole point: position,
-speed and heading are all derived from one distance-along-path and one speed, so
-they cannot disagree with each other. Speed is capped by the local curvature
-(`v = sqrt(a_lat * R)`) and by the posted limit, and the profile is relaxed
-backwards so braking starts *before* a corner rather than at it. Set
-`vehicle.lateral_accel_mps2` to 8–12 for a circuit; the 3.0 default is a road
-car and makes for a slow lap.
+The mock publishes five of the topics below (`position_time`,
+`lat_long_height`, `velocity`, `position_type`, `position_sigma`) on the real
+`nodes/bd992` prefix, which is what makes `nodes/map_match` and the dashboard
+map widget work with no configuration change. It announces itself as
+`bd992_mock`, so `inspect nodes` always says which one you are looking at.
 
-Two things it does not model, both deliberate: there is no elevation in either
-source, so `ellipsoidHeightM` is a constant and vertical velocity is zero; and
-the fix is always RTK-fixed with a fixed correction age, so nothing exercises a
-consumer's degraded-accuracy path.
-
-> **It publishes on the real `nodes/bd992` prefix**, which is what makes
-> `nodes/map_match` and the dashboard map widget work with no configuration
-> change at all — and is the one thing to be careful of. **Do not run it
-> alongside a real `bd992_bridge`**: two publishers on one key interleave,
-> consumers take whichever sample arrives first, and nothing is logged. The node
-> watches the bus at startup and warns, but it cannot see a publisher that
-> happens to be quiet just then. It announces itself as `bd992_mock`, so
-> `inspect nodes` always says which one you are looking at.
-
-It is a **second implementation** of the topic contract `publishers.cpp`
-implements, not a reuse of it — the mock never sees a GSOF byte, so there is
-nothing to hand that decoder. The two can therefore drift, which is accepted:
-the table below is the contract, and `inspect echo` against the mock and against
-`--replay` is how a divergence gets noticed.
+{: .warning }
+Do not run `bd992_mock` alongside a real `bd992_bridge`. Two publishers on one
+key interleave, consumers take whichever sample arrives first, and nothing is
+logged. The mock warns at startup if it sees another publisher, but it cannot
+see one that happens to be quiet just then.
 
 ## Topics
 
-One per GSOF record type, mirroring the ICD, under `nodes/bd992/gsof/`.
-
-> **A live BD992 with every message type enabled sends 30 of these.** The
-> decode path was validated against one on 2026-08-23 — 8 820 records over five
-> minutes with zero unknown, zero malformed, zero resyncs and zero discarded
-> pages. Eleven of those record types were unmodelled before that session, and
-> nothing but a receiver with everything switched on would have shown it.
+One topic per GSOF record type, under `<topic_prefix>/gsof/`. A record named
+`some_record` in the table is published on `<prefix>/gsof/some_record` with
+schema `GsofSomeRecord`; unmodelled records go on `<prefix>/gsof/raw` as
+`GsofRawRecord`, and `status_key` carries a `Bd992Status`.
 
 ```
 position_time  lat_long_height  ecef_position  ecef_delta  tangent_plane_delta
@@ -158,123 +151,36 @@ receiver_diagnostics  all_sv_brief  all_sv_detailed  received_base
 battery_memory  position_type  lband_status  base_position  all_sv_detailed_page
 ins_full_nav  ins_rms  code_position  lat_long_msl_height  second_antenna_sigma
 nav_message_auth  ionoguard_info  ionoguard_summary
-raw            unmodelled record types, as bytes
 ```
 
-plus `nodes/bd992/status`.
+A consumer wanting position and fix quality subscribes to two topics. Nothing
+in the node decides which fields belong together, and nothing in it depends on
+which messages the receiver has enabled or at what rate: records are published
+as they are parsed, publishers are created on first sight of their record, and
+`status.seen[]` reports which record types have arrived and how long ago.
 
-**The mapping is strictly one topic per record type.** A consumer wanting
-position *and* fix quality subscribes to two topics. That is the trade taken
-deliberately: a new record type is then a schema and a table row and nothing
-else, and nothing in this node decides which fields belong together — that is a
-vehicle state estimator's job, and it wants the records rather than the bridge's
-guess at which of them matter.
+Everything published is in degrees. The wire is radians in records 2, 27 and
+41 and degrees in record 49; the conversion happens once, in the node. Heights
+are above the WGS-84 ellipsoid everywhere except `lat_long_msl_height`, which
+is the one record that carries an orthometric height and the geoid model
+behind it. The difference is tens of metres (about 34.5 m in southern
+California, with MSL the larger), so feed `lat_long_msl_height.mslHeightM` to
+an altimeter and `lat_long_height` to a map. GPS time is published as week plus
+milliseconds, not converted to Unix time; consumers wanting wall-clock time
+have the zenoh sample stamp.
 
-### Mixed rates, and who decides what belongs together
-
-The receiver is normally configured with position fast and status slow — 50 Hz
-position against 1 Hz accuracy is a reasonable setup — and which messages are
-enabled changes whenever someone changes their mind about what they need.
-
-**Nothing in this node depends on either.** Records are decoded and published as
-they are parsed; publishers are created on first sight; no code here knows what
-the receiver was asked to emit. Enabling a message, disabling one, or moving one
-from 1 Hz to 50 Hz changes what appears on the bus and changes nothing in the
-node. `status.seen[]` reports which record types have arrived and how long ago,
-which is where a configuration change becomes visible.
-
-Deciding which records describe one instant is therefore a consumer's problem,
-and past a single record that means a vehicle state estimator. Two notes for
-whoever writes it:
-
-- **Most records carry no time.** Record 2 is three doubles of position and
-  nothing else; records 8, 12 and 38 are the same for velocity, accuracy and fix
-  quality. Only 1, 16, 41, 62, 91 and 92 carry a GPS time, so a consumer that
-  needs one has to get it from a record that has it.
-- **Pair on arrival age, not on batch membership.** GSOF batches records into
-  transmissions, and it is tempting to treat that grouping as the answer — this
-  node briefly stamped a transmission number on every record for exactly that.
-  It does not survive mixed rates: at 50 Hz position against 10 Hz velocity, a
-  same-transmission rule discards a heading that is 20 ms old and perfectly
-  usable, leaving four positions in five with no heading at all. Worse, it
-  changes behaviour silently when a rate changes. Age asks the question actually
-  being asked — is this value still describing the same moment? — and answers it
-  the same way at any rate. `nodes/map_match/fix_assembler.h` is the worked
-  example, including counting how often a pairing failed so a reconfiguration
-  shows up rather than degrading quietly.
-
-**Publishers are created on first sight of their record**, so the liveliness
-advertisements name exactly what the receiver is really sending. A topic that
-exists but has never published looks identical, in every picker in this tree, to
-one whose receiver went quiet.
-
-The fields to watch:
-
-- `position_type.positionFixType` — the whole ICD list, including the RTX and
-  INS forms. It was once trimmed to "what a BD992 in a vehicle can produce", and
-  the first live receiver reported `rtxFastLowLatency` (33) — which was not in
-  the trimmed list — within the hour. `positionFixTypeRaw` always carries the
-  wire byte, so a firmware newer than this build is reported rather than lost.
-- `position_type.rtkFixed` — clear is RTK float, set is RTK fixed, and the
-  difference is two orders of magnitude of accuracy. **It is not a general
-  "is the fix good" flag**: an RTX fix holds decimetre accuracy with this bit
-  clear. Read `positionFixType` for what kind of solution it is and
-  `position_sigma` for how good.
-- `position_type.correctionAgeS` — climbing means the correction link has gone
-  and the fix is coasting.
-- `attitude_info.yawDeg` — where the vehicle **points**. `velocity.headingDeg` is
-  a course over ground and is meaningless when stopped.
-- `status.seen[].ageMs` — the field that distinguishes "the receiver is fine"
-  from "the receiver quietly stopped sending record 27".
-- `nav_message_auth.anyFailed` — set means a satellite's navigation message
-  failed authentication, which is a spoofer. Nothing else in the stream shows
-  it: the fix type, the sigmas and the satellite count all stay healthy while
-  the position is fabricated.
-
-### Units
-
-Everything published is **degrees**. The wire is radians in records 2, 27 and 41
-and degrees in record 49; the conversion happens once, in the node. The library
-structs keep wire units so they still describe the bytes — see the header comment
-in `libs/gsof/include/gsof/records.h`.
-
-Heights are above the WGS-84 **ellipsoid**, not above sea level — everywhere
-except `lat_long_msl_height`, which is the one record that carries an
-orthometric height and the geoid model behind it. The difference is tens of
-metres (about 34.5 m in southern California, with MSL the **larger**), so feed
-`lat_long_msl_height.mslHeightM` to an altimeter and `lat_long_height` to a map.
-
-GPS time is published as week plus milliseconds, not converted to Unix time. The
-conversion needs the leap-second offset, which only record 16 carries, and a node
-that guessed it would publish a timestamp wrong by 18 seconds that looks right.
-Consumers wanting wall-clock time have the zenoh sample stamp.
-
-## Configuration, and why it reads before it writes
-
-`configuration.mode: enforce` does **not** rewrite the receiver on every connect.
-It reads the current configuration, compares it against the list in the YAML, and
-writes only what differs. Applying an application file restarts outputs; doing it
-every time anything reconnected would make "the node corrected a drift" a message
-nobody reads. Instead it is rare, and therefore worth something —
-`status.outputsCorrected` climbing means something else keeps changing the
-receiver back.
-
-`report_only` stops after the comparison. Use it around a receiver somebody else
-owns.
-
-`port_policy` decides what happens to outputs the receiver has that the config
-does not mention. `additive` (the default) leaves them alone and reports them:
-the receiver may legitimately be feeding an NTRIP server or a second consumer,
-and a list of what *this* node needs is no basis for deciding those are wrong.
-`exclusive` turns them off. **Outputs on other ports are ignored entirely**, in
-both directions.
-
-The comparison itself — `bd992::diff` and `bd992::plan_writes` — has no I/O in it,
-which is why every interesting case is a plain unit test.
+| Field | |
+| --- | --- |
+| `position_type.positionFixType` | The whole ICD list, including the RTX and INS forms. `positionFixTypeRaw` always carries the wire byte, so a firmware newer than this build is reported rather than lost. |
+| `position_type.rtkFixed` | Clear is RTK float, set is RTK fixed. Not a general "is the fix good" flag: an RTX fix holds decimetre accuracy with this bit clear. |
+| `position_type.correctionAgeS` | Climbing means the correction link has gone and the fix is coasting. |
+| `attitude_info.yawDeg` | Where the vehicle points. `velocity.headingDeg` is a course over ground and is meaningless when stopped. |
+| `status.seen[].ageMs` | Distinguishes "the receiver is fine" from "the receiver quietly stopped sending record 27". |
+| `nav_message_auth.anyFailed` | A satellite's navigation message failed authentication, which is a spoofer. Nothing else in the stream shows it. |
 
 ## Services
 
-Siblings of the topics, as `can_bridge` and `grayhill_keypad` do it:
+Siblings of the topics under `<topic_prefix>`:
 
 | Key | |
 | --- | --- |
@@ -289,108 +195,38 @@ inspect call nodes/bd992/get_output_config --data '{}'
 inspect call nodes/bd992/set_output_config --data '{"dryRun":true,"outputs":[...]}'
 ```
 
-`send_command` is what stops every future ICD packet being a code change. It is
-refused unless `allow_raw_commands` is set, because an arbitrary command can
-leave a receiver unreachable. `set_output_config` will not write while the node
-is in `report_only` mode — a mode a service could override would be a suggestion.
+`send_command` is refused unless `allow_raw_commands` is set, because an
+arbitrary command can leave a receiver unreachable. `set_output_config` will
+not write while the node is in `report_only` mode.
 
-## The protocol, briefly
+## Troubleshooting
 
-```
-STX(0x02) | STATUS | TYPE | LENGTH | DATA | CHECKSUM | ETX(0x03)
-```
+**`--probe` times out on every application file index** while the stream port
+is delivering reports. The commands are not reaching a listener, whatever the
+port number says. The socket is most likely configured output-only; configure
+one for input and output and point `control_port` at it.
 
-`CHECKSUM = (STATUS + TYPE + LENGTH + sum(DATA)) mod 256` — everything between STX
-and the checksum, and neither frame marker. Big-endian throughout.
+**A topic is missing.** Publishers are created on first sight of their record,
+so a topic that has never published looks identical, in every picker in this
+tree, to one whose receiver went quiet. Read `status.seen[]` to see what is
+arriving, and check the receiver's own output list with
+`get_output_config`.
 
-The DATA of both GENOUT (0x40, the report stream) and APPFILE (0x64,
-configuration in **both** directions) begins with `TX_NUM | PAGE_IDX |
-MAX_PAGE_IDX`, so one page assembler serves both. Inside a reassembled payload,
-records are `TYPE | LENGTH | BODY` back to back — the same framing application
-files use, which is why the walk lives once in `gsof/tlv.h`.
+**`status.outputsCorrected` keeps climbing.** Something else keeps changing the
+receiver back. Correcting a drift is meant to be rare; if it is not, find the
+other writer or move to `port_policy: exclusive` on a port this node owns.
 
-Six things that are easy to get wrong and are each a test:
+**The height is tens of metres off.** You are comparing an ellipsoid height
+with a sea-level one. Only `lat_long_msl_height` is orthometric.
 
-- **A record can straddle a page boundary.** Pages must be concatenated before
-  any record header is read. Parsing per page works perfectly on every small
-  record and corrupts exactly the large ones.
-- **Variable-length records are distinguished by length alone.** Record 8 is 13
-  or 17 bytes, record 27 is 42 or 70. There is no flag.
-- **Record 1 is the only record with time-of-week before the week number.**
-- **Record 48 pages are not transport pages.** The transport paging above is
-  reassembled before any record is read. Record 48 has *its own*, inside the
-  record: several complete, separately framed GSOF 48 records arrive in one
-  transmission, each carrying "page N of M". A consumer joins them itself.
-- **A record 48 entry is a signal group, not a satellite.** The same PRN can
-  appear on more than one page with the same elevation and azimuth but a
-  different SNR triple. On the bench, 31 entries covered 28 satellites. Joining
-  the pages into a PRN-keyed map silently drops entries.
-- **Record 70's geoid model name has no length prefix and no terminator.** It
-  runs from byte 26 to the end of the record, so its length is the record length
-  minus 24 — the name cannot be read without trusting the length byte.
+**An unknown fix type.** `positionFixTypeRaw` has the wire byte. The enum was
+once trimmed to what a vehicle receiver "can" produce, and a live receiver
+reported `rtxFastLowLatency` (33) within the hour.
 
-Records longer than the ICD says are accepted and their tails ignored: Trimble
-extends records in place, and a parser that refused would turn a firmware update
-into an outage.
+**Two nodes on one prefix.** If the map widget stutters between two positions,
+a `bd992_mock` is running alongside the bridge. `inspect nodes` tells them
+apart.
 
-## Why the parsers are constexpr
-
-A wrong GNSS field offset produces a *plausible latitude*, not a crash. It cannot
-be caught by looking at the output, and it is not reliably caught by a runtime
-assertion someone stops running. So every parser in `libs/gsof` is `constexpr`,
-and `libs/gsof/tests/test_records.cpp` asserts against real captures at **compile
-time**. If it builds, the offsets are right.
-
-The captures come from real receivers rather than being hand-written, because a
-vector authored from the same reading of the ICD as the parser agrees with the
-parser by construction — including where both are wrong. These cross-check each
-other: records 35 and 41 report the same base station bit for bit, and record 7's
-tangent-plane baseline is the distance between record 2's rover and that base.
-`libs/gsof/tests/golden/README.md` has the provenance and how to regenerate.
-
-**The records added for a BD992 have no such capture behind them, and that is a
-known gap.** Records 13, 14, 28, 48, 62, 70, 74, 91, 92 and 96 *were* validated
-against a live receiver — that is where their layouts came from, and where the
-cross-checks that confirmed them were run — but the capture was taken privately
-and is not in the repository. **A GSOF capture is a position fix**, and not only
-through the position records: the satellite azimuths and elevations in records
-33, 34 and 48, taken against the timestamp in record 1, pin the observer down on
-their own, so scrubbing the position records does not make one safe to publish.
-
-What stands in for it in `test_records.cpp` is a set of **synthetic** vectors,
-labelled as such, covering the parsers' arithmetic: the nested variable lengths
-in record 91, the page nibbles in 48, the model name in 70 whose length is the
-record length minus the fixed part, the strides in 13 and 14, and the epoch
-count in 74 that is reported only at the documented length. Those catch a logic
-error. They cannot catch a field offset that is wrong the same way in both the
-parser and the vector, which is what a real capture is for —
-`libs/gsof/tests/golden/README.md` has the procedure for taking one somewhere
-publishable.
-
-**The command encodings are the weak spot, and are marked as such.** They are
-checked against the ICD's tables and against their own decoders — not against a
-receiver, because the only socket tried so far was configured output-only. Same
-caveat as
-the PCAN opcodes in the CAN stack: if a BD992 ignores a configuration command,
-the constants in `gsof/commands.h` are the first thing to suspect, and `--probe`
-is the tool. **The record parsers no longer share this caveat** — every one of
-them has now been run against a live BD992 emitting every message type it has.
-
-**One record layout is still unsettled: 74, second-antenna sigma.** The ICD gives
-it 38 body bytes ending in a two-byte epoch count; our receiver sends 42, with a
-float where that count should be. Which four bytes moved cannot be determined
-from a receiver whose second antenna is disconnected, because every field but a
-saturated range RMS reads zero. The parser therefore reports the epoch count as
-*absent* rather than guessing, and `hasEpochCount` says so. Connect a second
-antenna and it settles in one epoch.
-
-## Tests
-
-```bash
-ctest --test-dir build -L gsof      # framing, pages, records, commands
-ctest --test-dir build -L bd992     # output config, stream/control, node YAML
-```
-
-`bd992_test_stream` is labelled `net`: it opens loopback sockets against a
-scripted receiver, which is how the reconnect path is exercised without unplugging
-anything.
+**The raw topic is busy.** The receiver is emitting a record type this build
+does not model. The bytes are on `<prefix>/gsof/raw`; adding the record is one
+row in the record table plus a struct in `libs/gsof`.

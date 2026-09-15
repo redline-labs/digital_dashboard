@@ -171,7 +171,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   checked in and SYNTHETIC vectors, labelled as such, cover their arithmetic
   instead. The *command* encodings carry the opposite caveat, stated in their
   test: no receiver has ever seen those bytes,
-  and as of 2026-08-23 no port on ours accepts them. See `docs/nodes/bd992_bridge.md`.
+  and as of 2026-08-23 no port on ours accepts them. See `docs/libs/gsof.md`.
 - **`libs/xbus`'s fp16.32 byte order cannot be checked by round-tripping.**
   Xsens sends the low six bytes of `round(v * 2^32)` in the order
   `[b3,b2,b1,b0,b5,b4]` -- fraction first, then integer. A plain six-byte
@@ -181,7 +181,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   the decodes to match: there is no byte order the two can be wrong in
   together. Removing the swizzle breaks the build at four `static_assert`s.
   The same cross-check at the item level is what proves a payload is sized by
-  the format nibble rather than by a constant. See docs/nodes/mti610_bridge.md.
+  the format nibble rather than by a constant. See docs/libs/xbus.md.
 - **An MTi has two states and one port, and that shapes the whole node.** It
   answers configuration only in Config state and emits data only in Measurement
   state, so reconfiguring STOPS THE DATA and whoever owns the port owns the
@@ -204,7 +204,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   them fails SILENTLY: the radio drops the frame, or answers the previous
   question. `xpr_test_radio`'s fake radio enforces all five the way the real
   one does -- by refusing to answer -- so they cannot regress into a timeout
-  nobody can explain. See docs/nodes/xpr_bridge.md.
+  nobody can explain. See docs/design/mototrbo.md.
 - **The radio is read-only apart from the channel.** `libs/mototrbo` builds no
   PTT, no Transmit, no RF tuning and no codeplug write; `xcmp.h` lists the
   destructive opcodes that exist on the radio and are deliberately not
@@ -226,7 +226,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   flip lives in `mbtiles::Archive::tile()` and nowhere else. A second one
   anywhere in the path renders a perfect map mirrored about the equator, which
   nobody reads as a coordinate bug -- so `mbtiles_test_archive` writes archives
-  in TMS and asserts in XYZ. See `docs/nodes/map_server.md`.
+  in TMS and asserts in XYZ. See `docs/libs/mbtiles.md`.
 - **The map renderer is ours, and it is on the GPU.** `libs/mvt` decodes Mapbox
   Vector Tiles, `libs/map_render` tessellates them and draws them through
   **QRhi against an offscreen texture** -- never a `QRhiWidget` or a
@@ -235,14 +235,14 @@ discovery seeing only live traffic, and what `accepted: false` and
   surface-bound renderer hands back a null map there, which would leave the map
   invisible to `ui_screenshot` and to every `gui` test. Labels stay on QPainter
   because they must not rotate with the map and their collision is
-  viewport-global. See `docs/nodes/map_server.md`.
+  viewport-global. See `docs/libs/map_render.md`.
 - **CAN adapter register fields are counted from zero, and getting it wrong is
   silent.** The PCAN uCAN timing command encodes sjw, tseg1, tseg2 AND brp each
   one less than its value. Encoding only brp that way asked a controller for
   952 kbit/s where 1 Mbit/s was configured, and nothing anywhere reported it:
   a controller that cannot hold sync never wins arbitration, so the channel
   transmits nothing, receives nothing and stays error-free. Two dongles on one
-  bus is what found it -- see `docs/libs/can_motec.md`. When a CAN link carries no
+  bus is what found it -- see `docs/design/motec-utc-protocol.md`. When a CAN link carries no
   traffic and reports no errors, suspect the timing encoding before the cable.
 - **A latched MoTeC UTC is recovered through `tag`, not through USB.** The
   device can refuse every command on the normal tag with `0x21`, `Open`
@@ -252,7 +252,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   there clears it; `can_motec` does this automatically. See
   `docs/libs/can_motec.md`.
 - **A MoTeC UTC cannot be told its bit rate, and says so.** The protocol
-  (`libs/can_motec`, reverse-engineered -- see `docs/libs/can_motec.md`) has no known
+  (`libs/can_motec`, reverse-engineered -- see `docs/design/motec-utc-protocol.md`) has no known
   command for it, so `set_bitrate()` FAILS rather than accepting a number it
   cannot apply, and the backend warns at every open. That is the opposite of
   the bug the SocketCAN backend had, where the truth was available over netlink
@@ -322,6 +322,14 @@ discovery seeing only live traffic, and what `accepted: false` and
   shape.
 - Logging is `SPDLOG_*`, never `std::cout` -- see the stdout carve-out above for
   tool *results*. CLI parsing is cxxopts, through `libs/cli` for multi-verb tools.
+- **`docs/` is a public website.** It is built by GitHub Pages on every push to
+  `main` and served at dashboard-docs.redline-labs.com, so adding a file there
+  publishes it. Every page needs front matter (`title`, `parent`), and which
+  section a page goes in is decided by its reader, not its subsystem: apps and
+  nodes for people running things, libs for people coding against them, design
+  for the reasoning. `docs/developing/writing-docs.md` has the rules and the
+  voice; a node or library without a page still gets a row in its section's
+  index.
 - Comments in this codebase explain *why*, especially where a past bug informed
   the shape of the code. Keep that up; it is the most valuable thing in the tree.
   **Keep them short.** A comment earns its length by what a reader would
@@ -369,7 +377,8 @@ configs/scope/      runtime YAML workspaces
 tools/              WORKSTATION ONLY, never shipped: map_build (OSM PBF in,
                     tiles + road graph + routing overlay out -- docs/tools/map_build.md)
                     and mcp_dashboard (the MCP server, Python, uv)
-docs/               architecture and bring-up notes
+docs/               the public site, one section per audience -- see
+                    docs/developing/writing-docs.md before adding a page
 ```
 
 `config_codec` and `qt_helpers` are the shared layer between the GUI apps.
@@ -381,6 +390,7 @@ are its main consumer. `qt_helpers` is the Qt-using sibling of the Qt-free
 fonts. Anything an app needs that is not about *that* app belongs in one of
 these two, not in the app's include tree.
 
-`docs/nodes/carplay.md` is the deepest doc in the tree and doubles as design
-rationale for the zenoh, threading and paint-lock decisions. Read it before
-changing anything in the CarPlay path.
+`docs/design/carplay-port.md` is the deepest doc in the tree and doubles as
+design rationale for the zenoh, threading and paint-lock decisions. Read it
+before changing anything in the CarPlay path; `docs/nodes/carplay.md` is the
+how-to-run-it side.

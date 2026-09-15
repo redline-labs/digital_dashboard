@@ -12,7 +12,7 @@ else: each is its own executable with its own page.
 | App | What it is for | Page |
 |---|---|---|
 | `dashboard` | Renders a layout: the instrument cluster itself, on one or more displays. | [dashboard](dashboard/) |
-| `editor` | Edits a layout by dragging widgets onto a canvas and setting their properties. | not written yet |
+| `editor` | Edits a layout by dragging widgets onto a canvas and setting their properties. | [editor](editor.html) |
 | `scope` | Watches any signal on the bus, live or from a recording, as plots, tables, video and a map. | [scope](scope.html) |
 | `switchboard` | Lists every service advertised on the bus and calls one from a form built from its request schema. | [switchboard](switchboard.html) |
 

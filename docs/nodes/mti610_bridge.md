@@ -4,272 +4,180 @@ parent: Nodes
 redirect_from: /mti610.html
 ---
 
-# Xsens MTi-610
+# mti610_bridge
 
-An inertial measurement unit on a serial port, bridged onto the zenoh bus.
+## Overview
 
-```
-libs/xbus          the XBus protocol: framing, MTData2, commands. constexpr, no I/O
-libs/mti610        the serial port, the reader thread, the Config/Measurement handshake
-nodes/mti610_bridge  MTData2 items onto capnp schemas
-configs/mti610/    mti610.yaml (a device) and replay.yaml (a capture)
-```
+An Xsens MTi-610 inertial measurement unit on a serial port, bridged onto the
+zenoh bus. The node is the top of three layers: [xbus](../libs/xbus.html) is
+the XBus protocol, [mti610](../libs/mti610.html) is the serial port, the
+reader thread and the Config/Measurement handshake, and `nodes/mti610_bridge`
+maps MTData2 items onto capnp schemas and reads the YAML. The traps the
+protocol sets, the gaps in the documentation and what is still waiting for
+hardware are in the [design notes](../design/mti610.html).
 
-Same three-layer split as the BD992, for the same reason: a wrong field offset
-in a protocol like this yields a plausible number, not a crash, so the half
-that can be `constexpr` is made `constexpr` and asserted at compile time.
-
-## What an MTi-610 is, and is not
-
-**The 610 is the IMU member of the 600-series. It has no orientation filter.**
+The 610 is the IMU member of the 600-series and has no orientation filter.
 There is no quaternion, no Euler angle, no rotation matrix and no free
-acceleration on any topic here, because the device cannot produce them. Two
-independent places in the LLCP say so: Table 17's product columns, and the
-default-configuration table in section 4.2, which groups "MTi-1/10/100/610 IMU"
-with Delta_q, Delta_v and Mag Field and gives it no quaternion.
-
+acceleration on any topic here, because the device cannot produce them.
 Orientation is a 620 (VRU), 630 (AHRS) or 670 (GNSS/INS). If you have one of
-those, this stack will talk to it and decode everything it models — the node
-says so at startup and puts the rest on the raw topic — but the outputs it does
+those, this stack will talk to it and decode everything it models; the node
+says so at startup and puts the rest on the raw topic, but the outputs it does
 not model have never been seen by this code.
 
-What a 610 gives you, and the fifteen data identifiers behind it:
-
-| XDI | Name | Topic | Note |
-|---|---|---|---|
-| `0x4020` | Acceleration | `acceleration` | **includes gravity** |
-| `0x8020` | RateOfTurn | `rate_of_turn` | rad/s |
-| `0xC020` | MagneticField | `magnetic_field` | **arbitrary units** |
-| `0x4010` | DeltaV | `delta_v` | strapdown increment |
-| `0x8030` | DeltaQ | `delta_q` | strapdown increment |
-| `0x4040` | AccelerationHR | `acceleration_hr` | ~2000 Hz, **not time-aligned** |
-| `0x8040` | RateOfTurnHR | `rate_of_turn_hr` | ~1600 Hz, **not time-aligned** |
-| `0x3010` | BaroPressure | `baro_pressure` | whole pascals |
-| `0x0810` | Temperature | `temperature` | the SENSOR, not the ambient |
-| `0x1010` | UtcTime | `utc_time` | free-running; no GNSS behind it |
-| `0x1020` | PacketCounter | — | packet header |
-| `0x1060` | SampleTimeFine | — | packet header |
-| `0x1070` | SampleTimeCoarse | — | packet header |
-| `0xE010` | StatusByte | — | packet header |
-| `0xE020` | StatusWord | — | packet header |
-
-## Topics and schemas
-
-All under a configurable `topic_prefix`, default `nodes/mti610`.
-
-| Key | Schema |
-|---|---|
-| `nodes/mti610/mtdata2/acceleration` | `XbusAcceleration` |
-| `nodes/mti610/mtdata2/rate_of_turn` | `XbusRateOfTurn` |
-| `nodes/mti610/mtdata2/delta_v` | `XbusDeltaV` |
-| `nodes/mti610/mtdata2/delta_q` | `XbusDeltaQ` |
-| `nodes/mti610/mtdata2/acceleration_hr` | `XbusAccelerationHr` |
-| `nodes/mti610/mtdata2/rate_of_turn_hr` | `XbusRateOfTurnHr` |
-| `nodes/mti610/mtdata2/magnetic_field` | `XbusMagneticField` |
-| `nodes/mti610/mtdata2/temperature` | `XbusTemperature` |
-| `nodes/mti610/mtdata2/baro_pressure` | `XbusBaroPressure` |
-| `nodes/mti610/mtdata2/utc_time` | `XbusUtcTime` |
-| `nodes/mti610/mtdata2/raw` | `XbusRawItem` |
-| `nodes/mti610/status` | `Mti610Status` |
-
-Services: `get_output_config`, `set_output_config`, `apply_config`,
-`get_device_info`. **Every one of them stops the data stream** for as long as it
-takes — see "The device has two states" below.
-
-### The packet header rides on every message
-
-This is the one place the design departs from `nodes/bd992_bridge`, and
-deliberately. A GSOF record carries its own `gpsTimeMs`, so publishing one
-record per topic with no shared context loses nothing. **An MTData2 item does
-not.** The packet counter, the sample time and the status word are properties of
-the *packet*, shared by every measurement beside them. Putting them on their own
-topics would leave a consumer unable to say which acceleration belongs to which
-instant except by arrival order — the pair-by-arrival guess `libs/map_match` has
-to make for GNSS, and does not have to make here.
-
-So every message carries `XbusSampleHeader`. It is the join key. Everything else
-about the BD992 model is kept: one topic per identifier, publishers created on
-first sight, no fusing, no batching.
-
-## Bringing up a device
+## Running it
 
 ```bash
-mti610_bridge --probe --config configs/mti610/mti610.yaml
+./build/nodes/mti610_bridge/mti610_bridge --config configs/mti610/mti610.yaml --probe
+./build/nodes/mti610_bridge/mti610_bridge --config configs/mti610/mti610.yaml --check
+./build/nodes/mti610_bridge/mti610_bridge --config configs/mti610/mti610.yaml
 ```
 
-Identifies the device, prints what it is currently configured to output, and
-leaves it measuring. A clean `no goto_config_ack from the device` on every
-attempt means the bytes are not reaching a listener — almost always the baud
-rate or the wrong `/dev` node.
+| Option | |
+| --- | --- |
+| `--config <file>` | The YAML below. |
+| `--probe` | Identify the device, print what it is currently configured to output, leave it measuring, and exit. |
+| `--check` | The same, exiting non-zero if the device does not match the config. For a health check. |
+| `--replay <file>` | Replay a captured byte stream instead of opening a port. |
+| `--loop` | Replay the capture repeatedly. |
+| `--dump-xbus <file>` | Write every received byte to this file. |
+| `--debug` | Verbose logging. |
 
-`--check` does the same and exits non-zero on drift, for a health check.
+`device` names the `port` and `baud`. Linux is `/dev/ttyUSB0` for an FTDI
+adapter or `/dev/ttyACM0` for CDC-ACM; on macOS use `/dev/cu.usbserial-XXXX`.
+`115200` is the factory default in serial mode. `reopen_backoff_ms` is tried
+in order and then the last value repeats.
 
-macOS: use `/dev/cu.usbserial-XXXX`, **not** `/dev/tty.*`. Opening the `tty`
-variant blocks waiting for carrier detect on a device that never asserts it.
+{: .warning }
+On macOS open the `cu` device, not `tty`. Opening the `tty` variant blocks
+waiting for carrier detect on a device that never asserts it.
+
+The node never changes the device's baud rate. It opens the port at whatever
+the YAML says and expects the device to already be there. Use MT Manager to
+move a device off `115200`, then update the config.
+
+`configuration` works as it does for the BD992. `mode: enforce` reads the
+device's output configuration and writes only what differs from `outputs`;
+`report_only` reads and reports and changes nothing. `port_policy: additive`
+(the default) leaves outputs not listed alone and reports them; `exclusive`
+turns them off. `recheck_interval_s` re-reads on a timer (`0` checks once),
+and `reply_timeout_ms` and `retries` bound each exchange.
+
+{: .important }
+A re-check, and every service call, stops the data stream for as long as it
+takes. The device answers configuration messages only in Config state and
+emits data only in Measurement state. That is why `recheck_interval_s`
+defaults to a minute and not a second.
+
+Each `outputs` entry is a data name from the XBus data table, a `rate` in Hz
+(or `max`) and an optional `precision` of `float32`, `fp1632`, `fp1220` or
+`float64`. `fp1632` resolves 2^-32, finer than `float32` anywhere above 1.0,
+for two extra bytes per component. The three packet-metadata entries
+(`packet_counter`, `sample_time_fine`, `status_word`) take `rate: max`
+because the device ignores their rate. Watch the total rate: the device
+answers a configuration it cannot carry with error `0x1E`, or silently clamps
+a rate and keeps going. The node warns when what comes back differs from what
+was asked, and the status message carries the effective rates.
+`acceleration_hr` and `rate_of_turn_hr` are deliberately not in the shipped
+config: they run at about 2000 Hz and 1600 Hz, are not time-aligned with
+anything else, and will not fit down a 115200-baud link alongside the rest.
+
+`publish` sets `topic_prefix` (default `nodes/mti610`), `status_key`,
+`status_interval_ms` and `publish_unknown_items`, which puts items this build
+does not model on `<prefix>/mtdata2/raw`. On an MTi-610 a busy raw topic means
+the device is not a 610.
 
 ## Running without hardware
 
-There is no MTi-610 on the bench, so this is the only way to run the node end to
-end:
+There is no MTi-610 on the bench, so this is the only way to run the node end
+to end:
 
 ```bash
-mti610_bridge --config configs/mti610/replay.yaml --replay /tmp/mti610.bin
+./build/nodes/mti610_bridge/mti610_bridge --config configs/mti610/replay.yaml --replay /tmp/mti610.bin
 inspect echo nodes/mti610/mtdata2/acceleration
 ```
 
-`--dump-xbus <file>` writes every received byte, which is how a capture gets
-made once a device exists.
+`configs/mti610/replay.yaml` sets `report_only` with no `outputs`: a capture
+cannot answer, so the node skips the handshake and reads. `--dump-xbus <file>`
+is how a capture gets made once a device exists.
 
-## Five traps this protocol sets
+## Topics
 
-**1. fp16.32 is not a 48-bit big-endian integer.** `round(v * 2^32)` as an
-int64, of which the low six bytes are sent *in the order `[b3,b2,b1,b0,b5,b4]`*
-— the fractional part first, then the integer part. A plain six-byte big-endian
-read compiles, runs, and returns a plausible wrong number for every value: 9.81
-m/s² reads back as −12451.84.
+All under `topic_prefix`. Every measurement message carries an
+`XbusSampleHeader` (packet counter, sample time, status word), which is the
+join key: those are properties of the packet, shared by every measurement
+beside them, and without them a consumer could not say which acceleration
+belongs to which instant except by arrival order. Publishers are created on
+first sight; nothing is fused or batched.
 
-Round-tripping does **not** catch this. An encoder and decoder that share the
-same wrong byte order agree perfectly. What catches it is the cross-check in
-`libs/xbus/tests/test_fixed_point.cpp`: encode one value as float32 *and* as
-fp16.32 and require the decodes to agree. There is no byte order the two can be
-wrong in together. Removing the swizzle breaks the build at four
-`static_assert`s — verified.
+| Key | Schema | XDI | Note |
+|---|---|---|---|
+| `nodes/mti610/mtdata2/acceleration` | `XbusAcceleration` | `0x4020` | m/s², includes gravity |
+| `nodes/mti610/mtdata2/rate_of_turn` | `XbusRateOfTurn` | `0x8020` | rad/s |
+| `nodes/mti610/mtdata2/magnetic_field` | `XbusMagneticField` | `0xC020` | arbitrary units |
+| `nodes/mti610/mtdata2/delta_v` | `XbusDeltaV` | `0x4010` | strapdown increment |
+| `nodes/mti610/mtdata2/delta_q` | `XbusDeltaQ` | `0x8030` | strapdown increment |
+| `nodes/mti610/mtdata2/acceleration_hr` | `XbusAccelerationHr` | `0x4040` | ~2000 Hz, not time-aligned |
+| `nodes/mti610/mtdata2/rate_of_turn_hr` | `XbusRateOfTurnHr` | `0x8040` | ~1600 Hz, not time-aligned |
+| `nodes/mti610/mtdata2/baro_pressure` | `XbusBaroPressure` | `0x3010` | whole pascals |
+| `nodes/mti610/mtdata2/temperature` | `XbusTemperature` | `0x0810` | the sensor's, not the ambient |
+| `nodes/mti610/mtdata2/utc_time` | `XbusUtcTime` | `0x1010` | free-running; no GNSS behind it |
+| `nodes/mti610/mtdata2/raw` | `XbusRawItem` | | items this build does not model |
+| `nodes/mti610/status` | `Mti610Status` | | |
 
-**2. Message ids alias, and only the length tells them apart.**
-`ReqOutputConfiguration` and `SetOutputConfiguration` are both `0xC0`;
-`ReqBaudrate` and `SetBaudrate` are both `0x18`. Around thirty such pairs exist
-in the SDK's `xsxbusmessageid.h`. A message id alone does not name a message —
-`describe_host_message(id, hasPayload)` is what turns it into something a human
-should read.
+The five remaining identifiers a 610 emits (`0x1020` PacketCounter, `0x1060`
+SampleTimeFine, `0x1070` SampleTimeCoarse, `0xE010` StatusByte, `0xE020`
+StatusWord) are the packet header and ride on every message rather than
+having topics of their own. `SampleTimeFine` is published raw because where it
+wraps on a 600-series is undocumented.
 
-**3. `0xFA` appears inside payloads.** There is no escaping and no trailer, so a
-preamble byte inside an accelerometer reading is ordinary. The framer resyncs by
-dropping exactly *one* byte and revalidating, never by scanning ahead to the
-next preamble — scanning would skip real messages. A corollary that looks like a
-bug the first time you see it: a false preamble claiming a long payload makes
-the framer wait rather than guess, and everything behind it arrives at once when
-the candidate fails its checksum.
+Anything integrating motion should use `delta_v` and `delta_q` rather than
+integrating `acceleration`: they are already multiplied by the sample
+interval, which makes them immune to the aliasing a sampled acceleration
+suffers under vibration. `temperature` reads high by whatever the device is
+dissipating, and is the thing to look at when a gyro bias drifts. Do not pair
+`acceleration_hr` with `acceleration` by packet counter: that pairs two
+different moments.
 
-**4. `SetOutputConfiguration` replaces the whole list.** XBus has no way to
-change one output. So `port_policy: additive` — "leave what I did not mention
-alone" — means the node *re-sends* those entries. Getting it backwards switches
-off somebody else's data with no error anywhere. This is the opposite of how the
-BD992's APPFILE works.
+## Services
 
-**5. The device ignores the frequency on packet metadata**, answering `0xFFFF`
-whatever was asked. A configuration check comparing raw numbers would find drift
-on every pass, rewrite, and find it again a minute later, forever.
-`normalise_frequency()` exists for this; so does the test named after it.
+| Key | |
+| --- | --- |
+| `nodes/mti610/get_output_config` | What the device is configured to emit. |
+| `nodes/mti610/set_output_config` | Change it. Reads first, writes the whole list with only the difference applied. |
+| `nodes/mti610/apply_config` | Re-run the pass from the node's own YAML, now. |
+| `nodes/mti610/get_device_info` | What `--probe` prints: the device's identity and firmware. |
 
-## The device has two states, and one port
+Every one of them stops the data stream for as long as it takes, for the
+reason above. Services are not offered in replay mode.
 
-A BD992 configures itself over a *second* socket while the first keeps
-streaming. An MTi has one port and two mutually exclusive states: it answers
-configuration messages only in Config, and emits MTData2 only in Measurement.
+## Troubleshooting
 
-So whoever owns the port owns the handshake, or the two race for the same bytes.
-`StreamClient` runs both on its reader thread, and reconfiguration is a
-*request* — `requestReconfigure()` raises a flag acted on at the top of the
-next loop. This is why `recheck_interval_s` defaults to a minute and not a
-second, and why every service call costs data.
+**`no goto_config_ack from the device` on every attempt.** The bytes are not
+reaching a listener. Almost always the baud rate or the wrong `/dev` node; on
+macOS, the `tty` device instead of `cu`.
 
-**An unsolicited `WakeUp` means the device reset.** It must be answered within
-500 ms or the device enters Measurement with its *stored* configuration — which
-is exactly what the handshake spent its time replacing. Miss this and the node
-keeps publishing, with the wrong outputs at the wrong rates, and nothing
-anywhere says so. `mti610_test_stream` has a fake device that brown-outs
-mid-stream to keep this honest.
+**The port opens and nothing arrives.** On macOS you opened `/dev/tty.*`,
+which blocks on carrier detect. Elsewhere, check that the device is in serial
+mode at the configured rate; the node will not change the rate for you.
 
-## Where the protocol knowledge came from
+**Drift on every check, rewritten, and drift again a minute later.** The
+device answers `0xFFFF` for the frequency of packet metadata whatever was
+asked. The node normalises these before comparing; if you see this on a
+non-metadata entry, the rate you asked for is one the device clamped. Lower it
+or drop an output.
 
-Two independent sources, which is the point.
+**Error `0x1E` from the device.** Timer overflow: the requested outputs do not
+fit. Lower a rate, use `float32` instead of `fp1632`, or drop an output.
 
-- **The LLCP** (*MT Low Level Communication Protocol Documentation*, MT0101P rev
-  2019.C) for prose and payload layouts.
-- **The SDK's own headers** for every numeric constant:
-  `xstypes/xsxbusmessageid.h`, `xstypes/xsdataidentifier.h`,
-  `xstypes/xsmessage.h`, extracted from `xsens-xme-sdk`. Used as a constants
-  oracle only — nothing linked, no code copied.
+**The outputs are wrong after a power dip.** An unsolicited `WakeUp` means the
+device reset, and if it is not acknowledged within 500 ms the device enters
+Measurement with its stored configuration. The node answers it and re-runs the
+handshake; if the status shows the old configuration, the acknowledgement was
+missed.
 
-Five complete messages that Xsens printed with their checksums are in
-`libs/xbus/tests/golden/golden_messages.h`, and `make_message()` reproduces all
-five byte for byte. Two of the *synthetic* checksums in the first draft of that
-file were wrong; the vendor vectors are what caught it.
+**A busy raw topic.** The device is emitting identifiers this build does not
+model. On a 610 that means the device is not a 610.
 
-**The SDK also ships two multi-megabyte `.mtb` logs, which are raw XBus
-streams.** Both frame end to end with every byte accounted for — 15,325
-messages, 15,321 of them extended-length — and the C++ framer and an
-independent Python one agree exactly. That is what extended-length framing
-rests on; before it, the long form was covered only by vectors written here.
-Two small complete messages lifted out of those logs settle the `FirmwareRev`
-layout and the output-configuration entry layout, both of which were previously
-only a reading of a table. The logs are Xsens-licensed and not checked in;
-`libs/xbus/tests/golden/tools/verify_sdk_corpus.py` re-runs the check.
-
-`libs/xbus/tests/golden/README.md` has the full provenance argument.
-
-## Two gaps in the documentation
-
-Both are handled by refusing to guess.
-
-**`SetPortConfig`'s word layout is Figure 2 of the LLCP — an image with no
-accompanying text.** The bit layout is unknown, so `PortConfig` words are read
-and round-tripped opaquely and never composed. **This node therefore never
-changes the device's baud rate**; it opens the port at whatever the YAML says.
-Use MT Manager to move a device off 115200, then update the config. Sourcing the
-MTi-600 HW Integration Manual would close this.
-
-**LLCP Table 15, the `CONFIGURATION` message for the 600-series, is internally
-inconsistent** — an 8-byte field at offset 98 and a 12-byte field at offset 102,
-which overlap. Nothing here parses past offset 96.
-
-## Deferred to hardware
-
-None of this can be proved by anything in the test suite. In rough order of how
-much it would change:
-
-- [ ] **Every command encoding.** No MTi has seen these bytes. The framing rests
-      on seven vendor vectors and 15,325 vendor messages (below); the *payload
-      content* of `SetOptionFlags` still rests on the LLCP's table alone, and
-      nothing has confirmed that a 610 accepts any of these in sequence. Same
-      caveat `libs/gsof`'s command test carries, and that library earned it.
-- [ ] **Axis convention and sign**, against a known physical orientation.
-      Obvious in thirty seconds with a device, invisible without one.
-- [ ] **Magnetic field scaling.** "Arbitrary units" is all the LLCP offers.
-- [ ] **Real rates versus requested.** The device clamps rather than refusing,
-      so a rate the link cannot carry becomes a lower rate and no error. The
-      node warns when the echo differs; nobody has seen it happen.
-- [ ] **Whether `AccelerationHR` and `RateOfTurnHR` arrive in their own packets**
-      as the LLCP implies, and what header they carry.
-- [ ] **Where `SampleTimeFine` wraps on a 600-series.** Documented for the
-      1-series (`0xFFFFFFFF`) and the 10/100-series (one day), unstated for the
-      600s. Published raw for that reason.
-- [ ] **Whether the `Configuration` message a 610 sends** matches Table 15's
-      self-contradictory offsets.
-- [ ] **The `SetPortConfig` word layout**, above.
-- [ ] **Baud rates above 115200.** A pty ignores baud, so the termios path is
-      exercised but the rate is not. macOS above 230400 goes through
-      `IOSSIOSPEED`; that path has never carried a byte.
-- [ ] Capture a real stream with `--dump-xbus`, promote the synthetic goldens
-      with `libs/xbus/tests/golden/tools/gen_golden.py`, and delete the
-      `SYNTHETIC` labels that no longer apply.
-
-A capture of an IMU is not location-bearing the way a GNSS capture is, so the
-rule that keeps BD992 captures out of the tree does not apply — but a capture
-taken while the device is bolted to a moving vehicle is a trajectory. Look at
-what is in it before committing it.
-
-## Tests
-
-```bash
-ctest --test-dir build -L xbus --output-on-failure     # 4 binaries, all compile-time heavy
-ctest --test-dir build -L mti610 --output-on-failure   # 3 binaries, one drives a pty
-```
-
-`mti610_test_stream` runs a scripted MTi on the far end of a real pty, so
-termios setup, partial reads and end-of-file are exercised for real. The fake
-device *enforces* the protocol rather than assuming it — it answers only valid
-BIDs, only in the state each message is valid in, and refuses configuration
-while measuring. Each of those is a rule this library has to obey and none fails
-loudly if it does not: a device that simply does not answer is what a wrong
-assumption looks like. Same argument as `libs/xpr`'s fake radio.
+**A topic never appears.** Publishers are created on first sight, so an output
+that is not in the device's configuration has no topic at all. Read
+`get_output_config`.

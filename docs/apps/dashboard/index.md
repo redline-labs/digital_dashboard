@@ -37,9 +37,9 @@ that widget type declares. Data sources are expressions over bus signals, so a
 gauge can show `rpm`, or `(coolant_temp_c * 9 / 5) + 32`, or anything else the
 expression parser accepts.
 
-The example layouts in `configs/dashboard/` are the best reference while the
-widget catalogue is being written: each one exercises a different set of
-widgets, and the [editor](../) will show every field a widget accepts.
+Every widget type and its configuration keys are listed in
+[Widgets](widgets.html); the example layouts in `configs/dashboard/` show them
+in use, and the [editor](../editor.html) shows every field a widget accepts.
 
 {: .note }
 Set an `id:` on any widget you will want to address again, whether from the
