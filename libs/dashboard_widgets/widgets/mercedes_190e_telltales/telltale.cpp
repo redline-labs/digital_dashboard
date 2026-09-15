@@ -6,7 +6,10 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
 #include "qt_helpers/widget_colors.h"
+
+#include <chrono>
 
 // Colors
 static constexpr QColor kAssertedIcon = QColor(255, 255, 255);        // White when asserted
@@ -20,7 +23,8 @@ Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& c
 {
     _expression_parser = dashboard::makeExpressionSubscription<bool>(
         _cfg.schema_type, _cfg.condition_expression, _cfg.zenoh_key,
-        this, &Mercedes190ETelltale::setAsserted, "telltale condition");
+        this, &Mercedes190ETelltale::setAsserted, &Mercedes190ETelltale::setConditionStale,
+        std::chrono::milliseconds(_cfg.stale_after_ms), "telltale condition");
 
 
     // Select SVG alias based on telltale type
@@ -76,8 +80,43 @@ void Mercedes190ETelltale::setAsserted(bool asserted)
     }
 }
 
+void Mercedes190ETelltale::setConditionStale(bool stale)
+{
+    if (mStale == stale)
+    {
+        return;
+    }
+    mStale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    updateColors();
+    invalidateStaticCache();  // Colours are baked into the cached layer
+    update();
+}
+
+void Mercedes190ETelltale::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "condition")
+    {
+        setConditionStale(stale);
+    }
+}
+
+bool Mercedes190ETelltale::isBindingStale(std::string_view binding) const
+{
+    return binding == "condition" && mStale;
+}
+
 void Mercedes190ETelltale::updateColors()
 {
+    if (mStale)
+    {
+        // Neither the warning colour nor the off colour: the lamp is showing
+        // that it has nothing to show.
+        mBackgroundColor = qt_helpers::toQColor(_cfg.normal_color).darker(150);
+        mIconColor = gauge_paint::kStaleColor;
+        return;
+    }
+
     if (mAsserted)
     {
         mBackgroundColor = qt_helpers::toQColor(_cfg.warning_color);
@@ -109,8 +148,11 @@ void Mercedes190ETelltale::paintStaticUnderlay(QPainter& painter)
     // Draw background rectangle with rounded corners
     painter.fillRect(widgetRect, mBackgroundColor);
     
-    // Optionally add a subtle border
-    painter.setPen(QPen(QColor(40, 40, 40), 1));
+    // Optionally add a subtle border. While the condition is stale it is
+    // dashed, so "no data" reads differently from "off" even in a photograph.
+    QPen border(mStale ? gauge_paint::kStaleColor : QColor(40, 40, 40), mStale ? 2 : 1);
+    border.setStyle(mStale ? Qt::DashLine : Qt::SolidLine);
+    painter.setPen(border);
     painter.drawRect(widgetRect.adjusted(0, 0, -1, -1));
     
     // Calculate icon size and position (centered, with some margin)

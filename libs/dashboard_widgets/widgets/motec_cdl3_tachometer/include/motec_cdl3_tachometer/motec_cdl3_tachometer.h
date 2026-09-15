@@ -1,6 +1,9 @@
 #ifndef MOTEC_CDL3_TACHOMETER_H
 #define MOTEC_CDL3_TACHOMETER_H
 
+#include "dashboard/stale_aware.h"
+
+#include <vector>
 #include "motec_cdl3_tachometer/config.h"
 #include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
@@ -19,7 +22,7 @@
 
 class QPainter;
 
-class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget {
+class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware {
     Q_OBJECT
 
 public:
@@ -40,6 +43,14 @@ protected:
 private:
     void setRpm(float rpm);
 
+    // Every segment dark: on a bar graph that is what no signal looks like, and
+    // a bar frozen at its last height is a reading.
+    void setRpmStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"rpm"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
+
     // transform helpers
     QRectF computeContentBounds() const; // world-space rect that bounds all drawn content
 
@@ -50,6 +61,7 @@ private:
 
     MotecCdl3TachometerConfig_t _cfg;
     float _rpm; // current rpm
+    bool _rpm_stale = false;
 
     // The only thing the dynamic layer actually draws: how many of the 46
     // segments are lit. Derived from _rpm when it is set, so the whole display

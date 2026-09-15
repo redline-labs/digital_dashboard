@@ -51,6 +51,23 @@ void clampInto(T& value, T lo, T hi, const char* field, std::vector<std::string>
     }
 }
 
+// A binding's loss-of-comm timeout, in milliseconds. Zero is meaningful and
+// stays: it is how a binding says never. Anything else is pulled into a range
+// a person could have meant -- under 50 ms is inside three delivery ticks, so
+// the gauge would flicker between fresh and stale on a healthy stream.
+inline constexpr std::uint32_t kMinStaleAfterMs = 50;
+inline constexpr std::uint32_t kMaxStaleAfterMs = 600000;
+
+inline void clampStaleAfter(std::uint32_t& value, const char* field,
+                            std::vector<std::string>& notes)
+{
+    if (value == 0)
+    {
+        return;
+    }
+    clampInto<std::uint32_t>(value, kMinStaleAfterMs, kMaxStaleAfterMs, field, notes);
+}
+
 // A gauge's full-scale value. Zero is the dangerous one: it is the divisor in
 // every "how far round the dial is this" calculation.
 template <typename T>

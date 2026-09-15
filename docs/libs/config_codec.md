@@ -5,6 +5,15 @@ parent: Libraries
 
 # config_codec
 
+## Limits
+
+`config_codec::limits` holds the clamps a widget's `validate()` calls:
+`clampInto`, `clampFullScale`, `orderRange`, and `clampStaleAfter` for a
+binding's loss-of-comm timeout. That last one keeps zero, which means never,
+and pulls anything else into 50 ms to ten minutes: under 50 ms is inside three
+delivery ticks, so a gauge on a healthy stream would flicker between fresh and
+stale.
+
 ## Overview
 
 Serialization, validation and clamping for configuration built out of

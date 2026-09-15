@@ -2,6 +2,7 @@
 
 #include <QPainter>
 
+#include <chrono>
 #include <cmath>
 
 #include <spdlog/spdlog.h>
@@ -92,7 +93,8 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
 
     _expression_parser = dashboard::makeExpressionSubscription<float>(
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &MotecC125Tachometer::setRpm, "C125 tachometer rpm");
+        this, &MotecC125Tachometer::setRpm, &MotecC125Tachometer::setRpmStale,
+        std::chrono::milliseconds(_cfg.stale_after_ms), "C125 tachometer rpm");
 }
 
 void MotecC125Tachometer::setRpm(float rpm)
@@ -119,8 +121,39 @@ void MotecC125Tachometer::paintStaticUnderlay(QPainter& painter)
     drawBaseArc(&painter);
 }
 
+void MotecC125Tachometer::setRpmStale(bool stale)
+{
+    if (_rpm_stale == stale)
+    {
+        return;
+    }
+    _rpm_stale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void MotecC125Tachometer::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "rpm")
+    {
+        setRpmStale(stale);
+    }
+}
+
+bool MotecC125Tachometer::isBindingStale(std::string_view binding) const
+{
+    return binding == "rpm" && _rpm_stale;
+}
+
 void MotecC125Tachometer::paintDynamic(QPainter& painter)
 {
+    // An empty channel rather than an arc frozen at the last reading.
+    if (_rpm_stale)
+    {
+        gauge_paint::drawNoDataLegend(painter, QRectF(-70.0, 30.0, 140.0, 24.0), painter.font());
+        return;
+    }
+
     drawValueArc(&painter);
 }
 

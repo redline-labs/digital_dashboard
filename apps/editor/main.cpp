@@ -1,3 +1,4 @@
+#include "dashboard/staleness.h"
 #include "pub_sub/node_identity.h"
 #include <QApplication>
 #include <QCoreApplication>
@@ -135,6 +136,11 @@ int main(int argc, char** argv)
     // app subscribes but never publishes, so without it the process is
     // invisible on the bus entirely. See pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("editor");
+
+    // The editor previews a layout with no bus behind it, so every binding
+    // would go stale and every widget would draw its no-data look. Off for this
+    // process only; the dashboard never sets it.
+    dashboard::staleness::setSuppressed(true);
 
     QApplication app(argc, argv);
 

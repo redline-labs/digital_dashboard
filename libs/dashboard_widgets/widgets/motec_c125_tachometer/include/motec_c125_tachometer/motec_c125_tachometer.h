@@ -1,6 +1,9 @@
 #ifndef MOTEC_C125_TACHOMETER_H
 #define MOTEC_C125_TACHOMETER_H
 
+#include "dashboard/stale_aware.h"
+
+#include <vector>
 #include "motec_c125_tachometer/config.h"
 #include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
@@ -15,7 +18,7 @@
 
 class QPainter;
 
-class MotecC125Tachometer : public qt_helpers::CachedPaintWidget
+class MotecC125Tachometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 
@@ -28,6 +31,14 @@ public:
     const config_t& getConfig() const { return _cfg; }
 
     void setRpm(float rpm);
+
+    // The yellow value arc is what this dial says; with no stream there is
+    // nothing to fill, so the channel is left empty.
+    void setRpmStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"rpm"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
 
 protected:
     void applyPaintTransform(QPainter& painter) const override;
@@ -48,6 +59,7 @@ private:
 
     MotecC125TachometerConfig_t _cfg;
     float _rpm; // current rpm
+    bool _rpm_stale = false;
 
     // Fonts
     QFont _digitFont;

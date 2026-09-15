@@ -1,4 +1,8 @@
 #include "sparkline/sparkline.h"
+
+#include "dashboard/gauge_painting.h"
+
+#include <chrono>
 #include <QHBoxLayout>
 #include <QFont>
 #include <QPen>
@@ -73,7 +77,8 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
 
     _expression_parser = dashboard::makeExpressionSubscription<double>(
         _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-        this, &SparklineItem::setLatestValue, "sparkline value");
+        this, &SparklineItem::setLatestValue, &SparklineItem::setValueStale,
+        std::chrono::milliseconds(_cfg.stale_after_ms), "sparkline value");
 
     // Initialize and start the repaint timer
     m_repaintTimer = new QTimer(this);
@@ -98,16 +103,42 @@ void SparklineItem::setLatestValue(double value) {
     // The actual data points are shifted in forceRepaint.
 }
 
+void SparklineItem::setValueStale(bool stale)
+{
+    if (m_stale == stale)
+    {
+        return;
+    }
+    m_stale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void SparklineItem::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "value")
+    {
+        setValueStale(stale);
+    }
+}
+
+bool SparklineItem::isBindingStale(std::string_view binding) const
+{
+    return binding == "value" && m_stale;
+}
+
 void SparklineItem::forceRepaint() {
     // This method is called by the timer at 30Hz
     // To simulate continuous scrolling, we shift the data
-    if (!dataPoints.isEmpty()) {
+    // Frozen while the stream is quiet: shifting the last value in again would
+    // draw a flat line to the right, which reads as a steady reading.
+    if (!dataPoints.isEmpty() && !m_stale) {
         dataPoints[m_writeIndex] = m_lastValue;
         m_writeIndex = (m_writeIndex + 1) % dataPoints.size();
     }
 
     // Only touch the QLabel (relayout/repaint) when the displayed text changes.
-    QString valueText = QString::number(m_lastValue, 'f', 1);
+    QString valueText = m_stale ? gauge_paint::staleDashes(3) : QString::number(m_lastValue, 'f', 1);
     if (valueText != m_lastValueText)
     {
         m_lastValueText = valueText;
@@ -204,8 +235,19 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     // Fill the area under the line
     painter.fillPath(fillPath, QBrush(gradient));
 
-    // Draw the line itself on top
-    painter.setPen(m_linePen);
+    // Draw the line itself on top, in the stale colour while the stream is
+    // quiet: the history is still worth seeing, and the colour says it is
+    // history rather than a live trace.
+    if (m_stale)
+    {
+        QPen stale_pen(m_linePen);
+        stale_pen.setColor(gauge_paint::kStaleColor);
+        painter.setPen(stale_pen);
+    }
+    else
+    {
+        painter.setPen(m_linePen);
+    }
     painter.drawPath(linePath);
 }
 

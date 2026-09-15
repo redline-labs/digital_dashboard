@@ -18,6 +18,7 @@
 // reaches the bus through, so what it drags in is paid for across the whole
 // dashboard. ZenohTypedSubscriber lives in the other one and needs capnp in its
 // header; nothing here does.
+#include "dashboard/staleness.h"
 #include "pub_sub/expression_subscriber.h"
 #include "reflection/reflection.h"
 
@@ -55,8 +56,13 @@ class ExpressionSubscription
                            const std::string& expression,
                            const std::string& zenoh_key,
                            std::function<void(T)> deliver,
+                           std::chrono::milliseconds stale_after = std::chrono::milliseconds{0},
+                           std::function<void(bool)> on_stale = {},
                            std::chrono::milliseconds interval = kDeliveryInterval)
         : deliver_{std::move(deliver)}
+        , on_stale_{std::move(on_stale)}
+        , staleness_{staleness::suppressed() ? std::chrono::milliseconds{0} : stale_after,
+                     std::chrono::steady_clock::now()}
     {
         subscriber_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(schema_type, expression, zenoh_key);
         if (!subscriber_->isValid())
@@ -87,19 +93,18 @@ class ExpressionSubscription
 
     bool isValid() const { return subscriber_ && subscriber_->isValid(); }
 
+    // True once nothing has arrived for the binding's timeout. Always false for
+    // a binding that did not ask for one.
+    bool isStale() const { return staleness_.isStale(); }
+
     // How long since this subscription last produced a usable value, or nullopt
     // if it never has.
     //
-    // Nothing in the dashboard notices when a publisher stops: every gauge holds
-    // its last reading indefinitely, so a dead sensor and a steady one look
-    // identical. That is the wrong failure for a vehicle display, and it gets
-    // more likely with every stream added.
-    //
-    // This is the measurement, deliberately without a policy attached. What
-    // counts as "too long" is per-stream -- an odometer that publishes on change
-    // and a 100 Hz wheel speed cannot share a threshold -- and how a stale gauge
-    // should *look* is a design decision per widget. Both belong with whoever is
-    // adding the streams, not baked in here.
+    // The raw measurement, for a caller that wants its own rule. The policy is
+    // `stale_after` above: what counts as too long is per stream -- an odometer
+    // that publishes on change and a 100 Hz wheel speed cannot share a
+    // threshold -- so it comes from the binding's own config, and how a stale
+    // gauge looks is each widget's decision.
     std::optional<std::chrono::steady_clock::duration> sinceLastSample() const
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -119,11 +124,26 @@ class ExpressionSubscription
             value.swap(pending_);
         }
 
+        // The staleness edges are detected here, on the GUI thread, so the
+        // widget's hook runs where its painting does. A value that arrives
+        // counts as fresh even if the widget then discards it: what is being
+        // measured is the stream, not the reading.
+        const auto now = std::chrono::steady_clock::now();
+        if (value && staleness_.onSample(now) == StalenessTracker::Edge::became_fresh && on_stale_)
+        {
+            on_stale_(false);
+        }
+
         // Nothing arrived since the last tick: an idle subscription costs a
         // mutex acquire and no repaint.
         if (value)
         {
             deliver_(*value);
+        }
+
+        if (staleness_.poll(now) == StalenessTracker::Edge::became_stale && on_stale_)
+        {
+            on_stale_(true);
         }
     }
 
@@ -131,6 +151,8 @@ class ExpressionSubscription
     std::optional<T> pending_;
     std::optional<std::chrono::steady_clock::time_point> last_sample_;
     std::function<void(T)> deliver_;
+    std::function<void(bool)> on_stale_;
+    StalenessTracker staleness_;
     QTimer timer_;
 
     // Declared last so it is destroyed FIRST. zenoh's undeclare joins in-flight
@@ -177,6 +199,59 @@ ExpressionSubscriptionPtr<T> makeExpressionSubscription(
     }
 
     return subscription;
+}
+
+// The same, with a loss-of-comm timeout. `stale_setter` is called with true
+// when nothing has arrived for `stale_after`, and with false when a reading
+// arrives again -- always on the GUI thread, before the value is delivered.
+//
+// A binding that is configured but cannot be built reports stale once: a gauge
+// bound to an expression that does not compile shows no data, which is what it
+// has. Zero means never stale, which is also what the editor forces.
+template <typename T, typename Receiver, typename Setter, typename StaleSetter>
+ExpressionSubscriptionPtr<T> makeExpressionSubscription(
+    pub_sub::schema_type_t schema_type,
+    const std::string& expression,
+    const std::string& zenoh_key,
+    Receiver* receiver,
+    Setter setter,
+    StaleSetter stale_setter,
+    std::chrono::milliseconds stale_after,
+    const char* log_context)
+{
+    ExpressionSubscriptionPtr<T> subscription;
+    try
+    {
+        subscription = std::make_unique<ExpressionSubscription<T>>(
+            schema_type, expression, zenoh_key,
+            [receiver, setter](T value) { std::invoke(setter, receiver, value); }, stale_after,
+            [receiver, stale_setter](bool stale) { std::invoke(stale_setter, receiver, stale); });
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("{}: failed to initialize expression subscriber: {}", log_context, e.what());
+    }
+
+    if (subscription && subscription->isValid())
+    {
+        return subscription;
+    }
+
+    if (!subscription)
+    {
+        // Already logged above.
+    }
+    else
+    {
+        SPDLOG_ERROR("{}: invalid expression '{}' for schema '{}'", log_context, expression,
+                     reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type));
+    }
+
+    if (stale_after.count() > 0 && !staleness::suppressed())
+    {
+        std::invoke(stale_setter, receiver, true);
+    }
+    return nullptr;
 }
 
 }  // namespace dashboard

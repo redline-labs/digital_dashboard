@@ -5,8 +5,11 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 
+#include "config_codec/config_limits.h"
 #include "helpers/color.h"
 #include "reflection/reflection.h"
+
+#include <vector>
 
 REFLECT_ENUM(Mercedes190ETelltaleType,
     battery,
@@ -27,7 +30,17 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),
     (std::string, condition_expression, "",
-        "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero")
+        "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, stale_after_ms, 0,
+        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
 )
+
+inline std::vector<std::string> validate(Mercedes190ETelltaleConfig_t& cfg)
+{
+    std::vector<std::string> notes;
+    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
+    return notes;
+}
 
 #endif // MERCEDES_190E_TELLTALES_CONFIG_H

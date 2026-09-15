@@ -10,6 +10,7 @@
 #include "qt_helpers/widget_fonts.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerConfig_t& cfg, QWidget *parent):
@@ -20,11 +21,13 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
 {
     speed_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         cfg_.schema_type, cfg_.speed_expression, cfg_.zenoh_key,
-        this, &Mercedes190ESpeedometer::setSpeed, "speedometer speed");
+        this, &Mercedes190ESpeedometer::setSpeed, &Mercedes190ESpeedometer::setSpeedStale,
+        std::chrono::milliseconds(cfg_.speed_stale_after_ms), "speedometer speed");
 
     odometer_expression_parser_ = dashboard::makeExpressionSubscription<int>(
         cfg_.odometer_schema_type, cfg_.odometer_expression, cfg_.odometer_zenoh_key,
-        this, &Mercedes190ESpeedometer::setOdometerValue, "speedometer odometer");
+        this, &Mercedes190ESpeedometer::setOdometerValue, &Mercedes190ESpeedometer::setOdometerStale,
+        std::chrono::milliseconds(cfg_.odometer_stale_after_ms), "speedometer odometer");
 
     QString font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
@@ -105,9 +108,57 @@ void Mercedes190ESpeedometer::paintStaticUnderlay(QPainter& painter)
     drawOverlayText(&painter);
 }
 
+void Mercedes190ESpeedometer::setSpeedStale(bool stale)
+{
+    if (speed_stale_ == stale)
+    {
+        return;
+    }
+    speed_stale_ = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void Mercedes190ESpeedometer::setOdometerStale(bool stale)
+{
+    if (odometer_stale_ == stale)
+    {
+        return;
+    }
+    odometer_stale_ = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void Mercedes190ESpeedometer::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "speed")
+    {
+        setSpeedStale(stale);
+    }
+    else if (binding == "odometer")
+    {
+        setOdometerStale(stale);
+    }
+}
+
+bool Mercedes190ESpeedometer::isBindingStale(std::string_view binding) const
+{
+    return (binding == "speed" && speed_stale_) || (binding == "odometer" && odometer_stale_);
+}
+
 void Mercedes190ESpeedometer::paintDynamic(QPainter& painter)
 {
     drawOdometer(&painter); // Dynamic digits
+
+    // No needle at all while the speed stream is quiet: a needle parked at zero
+    // is a reading, and this dial has no other way to say it has none.
+    if (speed_stale_)
+    {
+        gauge_paint::drawNoDataLegend(painter, QRectF(-70.0, 30.0, 140.0, 24.0), painter.font());
+        return;
+    }
+
     drawNeedle(&painter); // Draw needle last so it's on top
 }
 
@@ -149,7 +200,9 @@ void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
     constexpr float digitStartX = cutoutX + cutoutPadding;
     constexpr float digitStartY = cutoutY + cutoutPadding;
 
-    QString odoStr = QString::number(odometer_value_).rightJustified(kNumDigits, '0');
+    QString odoStr = odometer_stale_
+                         ? QString(kNumDigits, QLatin1Char('-'))
+                         : QString::number(odometer_value_).rightJustified(kNumDigits, '0');
 
     painter->setFont(odo_font_);
     QFontMetricsF fm(odo_font_);

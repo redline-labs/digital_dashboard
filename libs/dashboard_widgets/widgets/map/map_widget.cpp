@@ -2,6 +2,8 @@
 
 #include "map/map_widget.h"
 
+#include "dashboard/gauge_painting.h"
+
 #include "map_render/labels.h"
 
 #include <capnp/message.h>
@@ -187,19 +189,25 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         {
             mLatitudeSubscription = dashboard::makeExpressionSubscription<double>(
                 mConfig.position_schema_type, mConfig.latitude_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setLatitude, "map latitude");
+                mConfig.position_zenoh_key, this, &MapWidget::setLatitude,
+                &MapWidget::setPositionStale,
+                std::chrono::milliseconds(mConfig.position_stale_after_ms), "map latitude");
         }
         if (!mConfig.longitude_expression.empty())
         {
             mLongitudeSubscription = dashboard::makeExpressionSubscription<double>(
                 mConfig.position_schema_type, mConfig.longitude_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setLongitude, "map longitude");
+                mConfig.position_zenoh_key, this, &MapWidget::setLongitude,
+                &MapWidget::setPositionStale,
+                std::chrono::milliseconds(mConfig.position_stale_after_ms), "map longitude");
         }
         if (!mConfig.heading_expression.empty())
         {
             mHeadingSubscription = dashboard::makeExpressionSubscription<double>(
                 mConfig.position_schema_type, mConfig.heading_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setHeading, "map heading");
+                mConfig.position_zenoh_key, this, &MapWidget::setHeading,
+                &MapWidget::setPositionStale,
+                std::chrono::milliseconds(mConfig.position_stale_after_ms), "map heading");
         }
 
         if (mConfig.orientation == MapOrientation_t::heading_up &&
@@ -1228,10 +1236,46 @@ void MapWidget::paintDiagnostic(QPainter& painter)
     painter.drawText(rect(), Qt::AlignCenter, message);
 }
 
+void MapWidget::setPositionStale(bool stale)
+{
+    if (mPositionStale == stale)
+    {
+        return;
+    }
+    mPositionStale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void MapWidget::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "position")
+    {
+        setPositionStale(stale);
+    }
+}
+
+bool MapWidget::isBindingStale(std::string_view binding) const
+{
+    return binding == "position" && mPositionStale;
+}
+
 void MapWidget::paintMarker(QPainter& painter, const map_render::Projection& projection)
 {
     if (!hasPosition())
     {
+        return;
+    }
+
+    // A hollow grey marker, no heading arrow and no trail: the map still says
+    // where the vehicle last was, and stops implying it is there now.
+    if (mPositionStale)
+    {
+        const auto last = projection.screenFor(map_render::Coordinate { *mLatitude, *mLongitude });
+        painter.setPen(QPen(gauge_paint::kStaleColor, 2.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(QPointF(last.x, last.y), static_cast<double>(mConfig.marker_size),
+                            static_cast<double>(mConfig.marker_size));
         return;
     }
 

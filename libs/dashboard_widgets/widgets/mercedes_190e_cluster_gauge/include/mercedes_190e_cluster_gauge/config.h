@@ -18,7 +18,10 @@ REFLECT_STRUCT(sub_gauge_config_t,
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),
     (std::string, value_expression, "",
-        "Value Expression", "Expression evaluated against the message to produce the reading")
+        "Value Expression", "Expression evaluated against the message to produce the reading"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, stale_after_ms, 0,
+        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
 )
 
 // The bottom sub-gauge on a real 190E cluster is not a tick scale. It is a
@@ -67,6 +70,14 @@ inline std::vector<std::string> validate(Mercedes190EClusterGaugeConfig_t& cfg)
                                   "bottom_gauge", notes);
     config_codec::limits::orderRange(cfg.left_gauge.min_value, cfg.left_gauge.max_value,
                                   "left_gauge", notes);
+    config_codec::limits::clampStaleAfter(cfg.fuel_gauge.stale_after_ms, "fuel_gauge.stale_after_ms",
+                                          notes);
+    config_codec::limits::clampStaleAfter(cfg.right_gauge.stale_after_ms,
+                                          "right_gauge.stale_after_ms", notes);
+    config_codec::limits::clampStaleAfter(cfg.bottom_gauge.stale_after_ms,
+                                          "bottom_gauge.stale_after_ms", notes);
+    config_codec::limits::clampStaleAfter(cfg.left_gauge.stale_after_ms, "left_gauge.stale_after_ms",
+                                          notes);
     // Drives where along the band the red fill starts. Outside [0, 1] it either
     // runs backwards off the band or paints past its end.
     config_codec::limits::clampInto(cfg.economy_sweep.red_start_fraction, 0.0f, 1.0f,

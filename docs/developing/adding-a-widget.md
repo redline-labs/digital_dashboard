@@ -14,6 +14,29 @@ the steps is the comment at the top of
 `libs/dashboard_widgets/include/dashboard/widget_registry.h`; this page is the
 same recipe with more room.
 
+## Bindings and loss of comm
+
+A widget that reads a topic carries three things per binding: the `zenoh_key`
+and expression it subscribes with, a `stale_after_ms` field beside them, and an
+implementation of `dashboard::StaleAware` naming that binding. Build the
+subscription with the overload that takes a stale setter:
+
+```cpp
+_expression_parser = dashboard::makeExpressionSubscription<double>(
+    _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
+    this, &MyWidget::setValue, &MyWidget::setValueStale,
+    std::chrono::milliseconds(_cfg.stale_after_ms), "my widget");
+```
+
+`validate()` calls `config_codec::limits::clampStaleAfter()`, and the stale
+setter calls `dashboard::publishStaleProperties()` before `update()`.
+
+{: .warning }
+Draw something different. `dashboard_widgets_test_stale_render` renders each
+binding fresh and stale and fails if the images match: a widget that flips a
+flag and paints the same picture leaves a dead sensor looking like a steady
+reading, which is the whole failure this exists to retire.
+
 ## Overview
 
 Every widget lives in its own directory under `libs/dashboard_widgets/widgets/`

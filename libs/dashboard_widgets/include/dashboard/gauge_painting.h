@@ -18,6 +18,32 @@ namespace gauge_paint {
 inline constexpr QColor kNeedleColor(255, 165, 0);
 inline constexpr QColor kPivotColor(40, 40, 40);
 
+// One look for "this reading has stopped arriving", shared by every widget, so
+// a driver learns it once. Grey rather than a warning colour: the gauge is not
+// reporting a fault, it is reporting that it has nothing to report.
+inline constexpr QColor kStaleColor(105, 105, 105);
+inline constexpr qreal kStaleOpacity = 0.4;
+
+// Dashes in place of a number, one per digit the readout would have shown.
+inline QString staleDashes(int cells)
+{
+    return QString(qMax(1, cells), QLatin1Char('-'));
+}
+
+// "NO DATA", centred in `rect`, in the stale colour. Drawn instead of the
+// reading rather than over it: a legend on top of a parked needle reads as a
+// value of zero with a caption.
+inline void drawNoDataLegend(QPainter& painter, const QRectF& rect, const QFont& font)
+{
+    painter.save();
+    QFont legend(font);
+    legend.setBold(true);
+    painter.setFont(legend);
+    painter.setPen(kStaleColor);
+    painter.drawText(rect, Qt::AlignCenter, QStringLiteral("NO DATA"));
+    painter.restore();
+}
+
 // Centers the painter on the widget and scales uniformly so drawing code can
 // work on a fixed logical canvas (default 200x200, i.e. radius 100).
 inline void applyCenteredScale(QPainter& painter, const QWidget& widget, qreal logical_size = 200.0)

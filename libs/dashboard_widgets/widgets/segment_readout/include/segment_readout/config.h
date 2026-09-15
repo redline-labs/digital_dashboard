@@ -41,6 +41,9 @@ REFLECT_STRUCT(SegmentReadoutConfig_t,
         "Schema Type", "Data schema type for the subscription"),
     (std::string, value_expression, "",
         "Value Expression", "Expression to compute the displayed value"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, stale_after_ms, 0,
+        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
 
     // Shown instead of a subscribed value when there is no expression. This is
     // how the fixed alphanumeric fields ("OILPRESS") are set.
@@ -90,6 +93,7 @@ inline std::vector<std::string> validate(SegmentReadoutConfig_t& cfg)
     std::vector<std::string> notes;
     config_codec::limits::clampInto<uint16_t>(cfg.digits, 1u, 16u, "digits", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
+    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 

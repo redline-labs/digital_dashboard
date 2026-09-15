@@ -5,10 +5,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include "dashboard/gauge_painting.h"
 #include "qt_helpers/widget_colors.h"
 #include "qt_helpers/widget_fonts.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace
@@ -30,7 +32,8 @@ CenterBarWidget::CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent) 
 
     _expression_parser = dashboard::makeExpressionSubscription<double>(
         _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-        this, &CenterBarWidget::setValue, "center bar");
+        this, &CenterBarWidget::setValue, &CenterBarWidget::setValueStale,
+        std::chrono::milliseconds(_cfg.stale_after_ms), "center bar");
 }
 
 void CenterBarWidget::setValue(double value)
@@ -50,6 +53,30 @@ void CenterBarWidget::setValue(double value)
     }
     _value = clamped;
     update();
+}
+
+void CenterBarWidget::setValueStale(bool stale)
+{
+    if (_stale == stale)
+    {
+        return;
+    }
+    _stale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void CenterBarWidget::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "value")
+    {
+        setValueStale(stale);
+    }
+}
+
+bool CenterBarWidget::isBindingStale(std::string_view binding) const
+{
+    return binding == "value" && _stale;
 }
 
 void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
@@ -86,6 +113,14 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
                    Qt::AlignRight | Qt::AlignVCenter, right_label);
     }
 
+    // Before the track is laid out: a strip too narrow for its labels draws no
+    // track at all, and "no data" still has to be sayable in that box.
+    if (_stale)
+    {
+        gauge_paint::drawNoDataLegend(p, bounds, label_font);
+        return;
+    }
+
     const qreal track_height = bounds.height() * kTrackHeightFraction;
     const QRectF track(bounds.left() + left_width,
                        bounds.center().y() - track_height / 2.0,
@@ -99,7 +134,8 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
     }
 
     p.setPen(Qt::NoPen);
-    p.setBrush(qt_helpers::toQColor(_cfg.track_color));
+    p.setBrush(_stale ? gauge_paint::kStaleColor.darker(200)
+                      : qt_helpers::toQColor(_cfg.track_color));
     p.drawRoundedRect(track, track_height / 2.0, track_height / 2.0);
 
     // Centre tick: the zero the marker is read against.

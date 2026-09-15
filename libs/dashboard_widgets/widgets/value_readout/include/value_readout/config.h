@@ -34,6 +34,9 @@ REFLECT_STRUCT(ValueReadoutConfig_t,
         "Schema Type", "Data schema type for the subscription"),
 	(std::string, value_expression, "",
 	    "Value Expression", "Expression to extract/compute the value to display"),
+	// How long a gap in the stream means "no data". 0 never reports one.
+	(uint32_t, stale_after_ms, 0,
+	    "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
 
 	(ValueReadoutFormat, format, ValueReadoutFormat::number,
 	    "Format", "number, or lap_time to render seconds as m:ss.SS"),
@@ -65,6 +68,7 @@ inline std::vector<std::string> validate(ValueReadoutConfig_t& cfg)
 {
 	std::vector<std::string> notes;
 	config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
+	config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
 	return notes;
 }
 

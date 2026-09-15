@@ -1,6 +1,9 @@
 #ifndef SPEEDOMETERWIDGETMPH_H
 #define SPEEDOMETERWIDGETMPH_H
 
+#include "dashboard/stale_aware.h"
+
+#include <vector>
 #include "mercedes_190e_speedometer/config.h"
 #include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/gauge_painting.h"
@@ -24,7 +27,7 @@
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget
+class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 public:
@@ -37,6 +40,15 @@ public:
 
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     void setOdometerValue(int value); // Setter for odometer
+
+    // The two streams are independent: a speedometer whose odometer topic has
+    // stopped still shows the speed, and the drums show dashes.
+    void setSpeedStale(bool stale);
+    void setOdometerStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"speed", "odometer"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
     
 protected:
     void applyPaintTransform(QPainter& painter) const override;
@@ -98,6 +110,8 @@ private:
     config_t cfg_;
 
     uint32_t odometer_value_; // Stores the odometer reading, 0..999999
+    bool speed_stale_ = false;
+    bool odometer_stale_ = false;
 
     QFont odo_font_;
     QFont mph_font_;

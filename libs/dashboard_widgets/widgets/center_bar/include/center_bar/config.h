@@ -21,6 +21,9 @@ REFLECT_STRUCT(CenterBarConfig_t,
         "Schema Type", "Data schema type for the subscription"),
     (std::string, value_expression, "",
         "Value Expression", "Expression to compute the signed value"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, stale_after_ms, 0,
+        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
 
     // Full-scale deflection either side of centre, in the value's own units.
     (float, range, 1.0,
@@ -54,6 +57,7 @@ REFLECT_STRUCT(CenterBarConfig_t,
 inline std::vector<std::string> validate(CenterBarConfig_t& cfg)
 {
     std::vector<std::string> notes;
+    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     if (!(cfg.range > 0.0f))
     {
         notes.push_back("range was " + std::to_string(cfg.range) +

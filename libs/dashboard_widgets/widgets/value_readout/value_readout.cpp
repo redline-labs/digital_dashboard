@@ -5,9 +5,11 @@
 #include <spdlog/spdlog.h>
 
 #include "dashboard/expression_subscription.h"
+#include "dashboard/gauge_painting.h"
 #include "qt_helpers/widget_colors.h"
 #include "qt_helpers/widget_fonts.h"
 
+#include <chrono>
 #include <cmath>
 
 ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent)
@@ -22,7 +24,8 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 
 	_expression_parser = dashboard::makeExpressionSubscription<double>(
 		_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-		this, &ValueReadoutWidget::setValue, "value readout");
+		this, &ValueReadoutWidget::setValue, &ValueReadoutWidget::setValueStale,
+		std::chrono::milliseconds(_cfg.stale_after_ms), "value readout");
 }
 
 QString ValueReadoutWidget::renderValue(const ValueReadoutConfig_t& cfg, double value)
@@ -96,6 +99,30 @@ void ValueReadoutWidget::setValue(double value)
 	_rendered_text = rendered;
 	_value_valid = true;
 	update();
+}
+
+void ValueReadoutWidget::setValueStale(bool stale)
+{
+	if (_stale == stale)
+	{
+		return;
+	}
+	_stale = stale;
+	dashboard::publishStaleProperties(*this, *this);
+	update();
+}
+
+void ValueReadoutWidget::setBindingStale(std::string_view binding, bool stale)
+{
+	if (binding == "value")
+	{
+		setValueStale(stale);
+	}
+}
+
+bool ValueReadoutWidget::isBindingStale(std::string_view binding) const
+{
+	return binding == "value" && _stale;
 }
 
 void ValueReadoutWidget::paintEvent(QPaintEvent* e)
@@ -188,7 +215,14 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 	// The pre-rendered text, not a fresh conversion of _value: the formatting
 	// has already been done where the value arrived, and doing it again here
 	// would be per-frame work for a string that rarely changes.
-	const QString valueText = _value_valid ? _rendered_text : renderValue(_cfg, 0.0);
+	//
+	// While the stream is quiet the last reading is replaced rather than
+	// dimmed: a number in grey is still a number, and a driver reads it.
+	const QString valueText =
+		_stale ? (_cfg.format == ValueReadoutFormat::lap_time ? QStringLiteral("--:--.--")
+		                                                      : gauge_paint::staleDashes(
+		                                                            static_cast<int>(_cfg.decimals) + 3))
+		       : (_value_valid ? _rendered_text : renderValue(_cfg, 0.0));
 
 	// Shrink the value until it fits the space the label left over. A readout
 	// that silently draws wider than its own widget is how a "-48" ends up
@@ -208,7 +242,7 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 		value_pt = std::max<qreal>(kMinPt, value_pt * 0.92);
 	}
 
-	painter->setPen(valueColor);
+	painter->setPen(_stale ? gauge_paint::kStaleColor : valueColor);
 	painter->setFont(scaledValue);
 	painter->drawText(valueRect, textFlags, valueText);
 

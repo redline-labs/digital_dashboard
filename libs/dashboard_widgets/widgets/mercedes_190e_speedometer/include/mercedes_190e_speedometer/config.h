@@ -31,7 +31,13 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
     // the file and a different list on the way back in. Nothing here needs to be
     // one byte wide, and a wider type keeps the YAML numeric.
     (std::vector<uint16_t>, shift_box_markers, {},
-        "Shift Markers", "Speeds, in dial units, at which to draw a shift box on the face")
+        "Shift Markers", "Speeds, in dial units, at which to draw a shift box on the face"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, speed_stale_after_ms, 0,
+        "Speed Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, odometer_stale_after_ms, 0,
+        "Odometer Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
 )
 
 // max_speed scales the dial and divides the needle position. The odometer
@@ -45,6 +51,9 @@ inline std::vector<std::string> validate(Mercedes190ESpeedometerConfig_t& cfg)
     config_codec::limits::clampInto<uint32_t>(cfg.odometer_value, 0u, 999999u, "odometer_value", notes);
     config_codec::limits::capLength(cfg.shift_box_markers, config_codec::limits::kMaxMarkers,
                                  "shift_box_markers", notes);
+    config_codec::limits::clampStaleAfter(cfg.speed_stale_after_ms, "speed_stale_after_ms", notes);
+    config_codec::limits::clampStaleAfter(cfg.odometer_stale_after_ms, "odometer_stale_after_ms",
+                                          notes);
     return notes;
 }
 

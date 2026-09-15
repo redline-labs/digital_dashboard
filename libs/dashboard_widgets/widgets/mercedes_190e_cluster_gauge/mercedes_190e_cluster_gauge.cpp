@@ -10,6 +10,7 @@
 #include "qt_helpers/widget_fonts.h"
 #include "helpers/unit_conversion.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <vector>
@@ -297,19 +298,23 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
 
     top_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.fuel_gauge.schema_type, m_config.fuel_gauge.value_expression, m_config.fuel_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setFuelGaugeValue, "cluster top gauge");
+        this, &Mercedes190EClusterGauge::setFuelGaugeValue, &Mercedes190EClusterGauge::setFuelGaugeStale,
+        std::chrono::milliseconds(m_config.fuel_gauge.stale_after_ms), "cluster top gauge");
 
     right_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.right_gauge.schema_type, m_config.right_gauge.value_expression, m_config.right_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setOilPressureGaugeValue, "cluster right gauge");
+        this, &Mercedes190EClusterGauge::setOilPressureGaugeValue, &Mercedes190EClusterGauge::setOilPressureGaugeStale,
+        std::chrono::milliseconds(m_config.right_gauge.stale_after_ms), "cluster right gauge");
 
     bottom_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.bottom_gauge.schema_type, m_config.bottom_gauge.value_expression, m_config.bottom_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setEconomyGaugeValue, "cluster bottom gauge");
+        this, &Mercedes190EClusterGauge::setEconomyGaugeValue, &Mercedes190EClusterGauge::setEconomyGaugeStale,
+        std::chrono::milliseconds(m_config.bottom_gauge.stale_after_ms), "cluster bottom gauge");
 
     left_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.left_gauge.schema_type, m_config.left_gauge.value_expression, m_config.left_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue, "cluster left gauge");
+        this, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeStale,
+        std::chrono::milliseconds(m_config.left_gauge.stale_after_ms), "cluster left gauge");
 
     // Initialize SVG renderers
     fuel_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));
@@ -391,13 +396,103 @@ void Mercedes190EClusterGauge::applyPaintTransform(QPainter& painter) const
     gauge_paint::applyCenteredScale(painter, *this, kCanvasLogicalSize);
 }
 
+void Mercedes190EClusterGauge::setFuelGaugeStale(bool stale)
+{
+    if (fuel_gauge_stale_ != stale)
+    {
+        fuel_gauge_stale_ = stale;
+        dashboard::publishStaleProperties(*this, *this);
+        update();
+    }
+}
+
+void Mercedes190EClusterGauge::setOilPressureGaugeStale(bool stale)
+{
+    if (oil_pressure_gauge_stale_ != stale)
+    {
+        oil_pressure_gauge_stale_ = stale;
+        dashboard::publishStaleProperties(*this, *this);
+        update();
+    }
+}
+
+void Mercedes190EClusterGauge::setCoolantTemperatureGaugeStale(bool stale)
+{
+    if (coolant_temperature_gauge_stale_ != stale)
+    {
+        coolant_temperature_gauge_stale_ = stale;
+        dashboard::publishStaleProperties(*this, *this);
+        update();
+    }
+}
+
+void Mercedes190EClusterGauge::setEconomyGaugeStale(bool stale)
+{
+    if (economy_gauge_stale_ != stale)
+    {
+        economy_gauge_stale_ = stale;
+        dashboard::publishStaleProperties(*this, *this);
+        update();
+    }
+}
+
+void Mercedes190EClusterGauge::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "fuel")
+    {
+        setFuelGaugeStale(stale);
+    }
+    else if (binding == "right")
+    {
+        setOilPressureGaugeStale(stale);
+    }
+    else if (binding == "bottom")
+    {
+        setEconomyGaugeStale(stale);
+    }
+    else if (binding == "left")
+    {
+        setCoolantTemperatureGaugeStale(stale);
+    }
+}
+
+bool Mercedes190EClusterGauge::isBindingStale(std::string_view binding) const
+{
+    return (binding == "fuel" && fuel_gauge_stale_) ||
+           (binding == "right" && oil_pressure_gauge_stale_) ||
+           (binding == "bottom" && economy_gauge_stale_) ||
+           (binding == "left" && coolant_temperature_gauge_stale_);
+}
+
 void Mercedes190EClusterGauge::paintDynamic(QPainter& painter)
 {
+    // Per sub-gauge: a needle is simply absent while its own stream is quiet.
+    // The dial face behind it stays, so the cluster reads as three gauges and a
+    // gap rather than as four gauges, one of which says zero.
     float subGaugeRadius = kSubGaugeRadius;
-    drawFuelGaugeNeedle(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);
-    drawOilPressureGaugeNeedle(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
-    drawCoolantTemperatureGaugeNeedle(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f);
-    drawEconomyGaugeNeedle(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius);
+    if (!fuel_gauge_stale_)
+    {
+        drawFuelGaugeNeedle(&painter, m_config.fuel_gauge, 0.0f, -subGaugeRadius);
+    }
+    if (!oil_pressure_gauge_stale_)
+    {
+        drawOilPressureGaugeNeedle(&painter, m_config.right_gauge, subGaugeRadius, 0.0f);
+    }
+    if (!coolant_temperature_gauge_stale_)
+    {
+        drawCoolantTemperatureGaugeNeedle(&painter, m_config.left_gauge, -subGaugeRadius, 0.0f);
+    }
+    if (!economy_gauge_stale_)
+    {
+        drawEconomyGaugeNeedle(&painter, m_config.bottom_gauge, 0.0f, subGaugeRadius);
+    }
+
+    // All four at once is one failure, not four, and worth saying in words.
+    if (fuel_gauge_stale_ && oil_pressure_gauge_stale_ && coolant_temperature_gauge_stale_ &&
+        economy_gauge_stale_)
+    {
+        gauge_paint::drawNoDataLegend(painter, QRectF(-60.0, -10.0, 120.0, 20.0), painter.font());
+    }
 }
 
 void Mercedes190EClusterGauge::paintStaticUnderlay(QPainter& painter)

@@ -12,6 +12,9 @@
 #include <string_view>
 #include <map>
 #include <memory>
+#include <vector>
+
+#include "dashboard/stale_aware.h"
 
 // Forward declarations
 class QSvgRenderer;
@@ -19,7 +22,7 @@ class QSvgRenderer;
 #include "dashboard/expression_subscription.h"
 
 
-class Mercedes190ETelltale : public qt_helpers::CachedPaintWidget
+class Mercedes190ETelltale : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 
@@ -33,6 +36,15 @@ public:
     ~Mercedes190ETelltale();
 
     void setAsserted(bool asserted);
+
+    // A third state, distinct from both on and off: a lamp that is dark because
+    // nothing is reporting looks exactly like one that is dark because the
+    // condition is false, and those mean opposite things.
+    void setConditionStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"condition"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
 
     QSize sizeHint() const override;
 
@@ -49,6 +61,7 @@ private:
 
     QSvgRenderer *mSvgRenderer;
     bool mAsserted;
+    bool mStale = false;
     QColor mBackgroundColor;
     QColor mIconColor;
     QString mSvgAlias;

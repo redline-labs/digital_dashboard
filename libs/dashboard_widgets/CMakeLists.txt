@@ -109,6 +109,35 @@ target_link_libraries(dashboard_widgets PUBLIC
 # they are unit-testable without a display. Their coverage is driven by
 # DASHBOARD_WIDGET_TABLE, which is why they live with the widgets rather than
 # with either app.
+# The loss-of-comm state machine. Pure chrono arithmetic over an injected
+# clock, so the boundaries can be pinned exactly rather than waited for.
+add_executable(dashboard_widgets_test_staleness tests/test_staleness.cpp)
+target_link_libraries(dashboard_widgets_test_staleness PRIVATE
+    dashboard_widgets
+)
+add_project_test(TARGET dashboard_widgets_test_staleness LABELS dashboard_widgets unit)
+
+# Loss of comm, over the whole widget table: a widget that reads a topic has to
+# implement StaleAware, and going stale has to change what it draws. A stale
+# look that renders identically is the failure this test exists for.
+add_executable(dashboard_widgets_test_stale_render tests/test_stale_render.cpp)
+target_link_libraries(dashboard_widgets_test_stale_render PRIVATE
+    dashboard_widgets
+    spdlog::spdlog
+)
+add_project_test(TARGET dashboard_widgets_test_stale_render LABELS dashboard_widgets gui)
+
+# The hook against a real publisher: no flicker on a live stream, stale once it
+# stops, fresh again when it resumes, and silent under the editor's suppression.
+add_executable(dashboard_widgets_test_subscription_stale tests/test_subscription_stale.cpp)
+target_link_libraries(dashboard_widgets_test_subscription_stale PRIVATE
+    dashboard_widgets
+    zenoh_pub_sub
+    spdlog::spdlog
+)
+add_project_test(TARGET dashboard_widgets_test_subscription_stale
+                 LABELS dashboard_widgets net gui)
+
 foreach(config_test roundtrip validation colors)
     add_executable(dashboard_widgets_test_config_${config_test}
         tests/test_config_${config_test}.cpp)

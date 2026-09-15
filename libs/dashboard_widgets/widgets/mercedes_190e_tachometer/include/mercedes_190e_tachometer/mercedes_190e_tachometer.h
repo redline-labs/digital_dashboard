@@ -1,6 +1,9 @@
 #ifndef TACHOMETERWIDGET_H
 #define TACHOMETERWIDGET_H
 
+#include "dashboard/stale_aware.h"
+
+#include <vector>
 #include "mercedes_190e_tachometer/config.h"
 #include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
@@ -22,7 +25,7 @@ class QPainter;
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget
+class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 
@@ -35,6 +38,14 @@ public:
     const config_t& getConfig() const { return _cfg; }
 
     void setRpm(float rpm); // Expects RPM value e.g., 0 to 7000
+
+    // The needle goes away while the stream is quiet; the clock, which does not
+    // come off the bus, keeps running.
+    void setRpmStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"rpm"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
     float getRpm() const;
 
 protected:
@@ -52,6 +63,8 @@ private:
     void drawClock(QPainter *painter);
 
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
+
+    bool m_rpm_stale = false;
 
     // Drawing parameters based on the new reference image
     const float m_angleStart_deg;    // Angle for 0 RPM

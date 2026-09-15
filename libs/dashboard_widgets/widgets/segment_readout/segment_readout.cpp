@@ -1,5 +1,7 @@
 #include "segment_readout/segment_readout.h"
 
+#include "dashboard/gauge_painting.h"
+
 #include <QFontMetricsF>
 #include <QPainter>
 
@@ -9,6 +11,7 @@
 #include "qt_helpers/widget_fonts.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace
@@ -99,8 +102,33 @@ SegmentReadoutWidget::SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QW
     {
         _expression_parser = dashboard::makeExpressionSubscription<double>(
             _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-            this, &SegmentReadoutWidget::setValue, "segment readout");
+            this, &SegmentReadoutWidget::setValue, &SegmentReadoutWidget::setValueStale,
+            std::chrono::milliseconds(_cfg.stale_after_ms), "segment readout");
     }
+}
+
+void SegmentReadoutWidget::setValueStale(bool stale)
+{
+    if (_stale == stale)
+    {
+        return;
+    }
+    _stale = stale;
+    dashboard::publishStaleProperties(*this, *this);
+    update();
+}
+
+void SegmentReadoutWidget::setBindingStale(std::string_view binding, bool stale)
+{
+    if (binding == "value")
+    {
+        setValueStale(stale);
+    }
+}
+
+bool SegmentReadoutWidget::isBindingStale(std::string_view binding) const
+{
+    return binding == "value" && _stale;
 }
 
 void SegmentReadoutWidget::setValue(double value)
@@ -245,6 +273,16 @@ void SegmentReadoutWidget::paintEvent(QPaintEvent* /*event*/)
     {
         p.setPen(qt_helpers::toQColor(_cfg.ghost_color));
         p.drawText(value_area, Qt::AlignRight | Qt::AlignVCenter, _ghost);
+    }
+
+    // Dashes while the stream is quiet, in the stale colour: one per cell, so
+    // the readout keeps its shape and cannot be read as a number.
+    if (_stale)
+    {
+        p.setPen(gauge_paint::kStaleColor);
+        p.drawText(value_area, Qt::AlignRight | Qt::AlignVCenter,
+                   gauge_paint::staleDashes(static_cast<int>(_cfg.digits)));
+        return;
     }
 
     p.setPen(qt_helpers::toQColor(_cfg.lit_color));

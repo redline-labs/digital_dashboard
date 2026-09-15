@@ -2,6 +2,7 @@
 #define SEGMENT_READOUT_WIDGET_H
 
 #include "segment_readout/config.h"
+#include "dashboard/stale_aware.h"
 #include "dashboard/widget_types.h"
 #include "dashboard/expression_subscription.h"
 
@@ -12,10 +13,11 @@
 
 #include <memory>
 #include <string_view>
+#include <vector>
 
 class QPainter;
 
-class SegmentReadoutWidget : public QWidget
+class SegmentReadoutWidget : public QWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 
@@ -29,6 +31,15 @@ class SegmentReadoutWidget : public QWidget
 
   public slots:
     void setValue(double value);
+
+  public:
+    // Every cell goes dark: on a seven-segment display that is what no signal
+    // looks like, and the ghosts behind it keep the shape of the readout.
+    void setValueStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"value"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -45,6 +56,8 @@ class SegmentReadoutWidget : public QWidget
     QString _text;
     QString _ghost;
     QString _prefix;
+
+    bool _stale = false;
 
     QString _segment_family;
     QString _caption_family;

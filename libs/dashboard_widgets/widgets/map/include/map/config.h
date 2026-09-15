@@ -119,6 +119,10 @@ REFLECT_STRUCT(MapConfig_t,
         "Longitude Expression", "Expression yielding degrees east, e.g. longitudeDeg"),
     (std::string, heading_expression, "",
         "Heading Expression", "Expression yielding degrees clockwise from north. Optional"),
+    // How long a gap in the position stream means "no data". 0 never reports
+    // one. Latitude, longitude and heading share the topic, so they share this.
+    (uint32_t, position_stale_after_ms, 0,
+        "Position Stale After (ms)", "Grey the vehicle marker when no position arrives for this long; 0 = never"),
 
     (std::string, highlight_zenoh_key, "",
         "Highlight Zenoh Key", "Topic carrying the matcher's horizon (MapHorizon), e.g. nodes/map_match/horizon. The matched road ahead lights up in the highlight colour. Way ids only survive in tiles at z13 and deeper, so the highlight quietly disappears when zoomed shallower. Empty disables it"),
@@ -169,6 +173,8 @@ inline std::vector<std::string> validate(MapConfig_t& config)
     config_codec::limits::clampInto<double>(config.track_opacity, 0.0, 1.0, "track_opacity", notes);
     config_codec::limits::clampInto<uint16_t>(config.request_timeout_ms, 100u, 30000u,
                                               "request_timeout_ms", notes);
+    config_codec::limits::clampStaleAfter(config.position_stale_after_ms, "position_stale_after_ms",
+                                          notes);
     config_codec::limits::clampInto<double>(config.highlight_extra_width, 0.0, 20.0,
                                             "highlight_extra_width", notes);
     config_codec::limits::clampInto<uint16_t>(config.tile_fade_ms, 0u, 1000u, "tile_fade_ms",

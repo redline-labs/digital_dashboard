@@ -54,6 +54,7 @@ class RawSubscriber;
 #include "dashboard/widget_types.h"
 
 #include "map/config.h"
+#include "dashboard/stale_aware.h"
 #include "map_render/labels.h"
 #include "map_render/map_pass.h"
 #include "map_render/projection.h"
@@ -64,7 +65,7 @@ class RawSubscriber;
 #include "map_controls/zoom_button.h"
 #include "map/tile_source.h"
 
-class MapWidget : public QWidget
+class MapWidget : public QWidget, public dashboard::StaleAware
 {
     Q_OBJECT
 
@@ -181,6 +182,18 @@ class MapWidget : public QWidget
     void setLatitude(double degrees);
     void setLongitude(double degrees);
     void setHeading(double degrees);
+
+  public:
+    // The position stream having stopped is the one thing a moving map cannot
+    // show by itself: a marker parked on the last fix looks like a stationary
+    // vehicle. Latitude, longitude and heading share a topic and a timeout.
+    void setPositionStale(bool stale);
+
+    std::vector<std::string_view> staleBindings() const override { return {"position"}; }
+    void setBindingStale(std::string_view binding, bool stale) override;
+    bool isBindingStale(std::string_view binding) const override;
+
+  private:
 
     // Both coordinates seen at least once. Until then there is no position,
     // only half of one -- and acting on half puts the vehicle on the prime
@@ -391,6 +404,7 @@ class MapWidget : public QWidget
     // frame.
     std::vector<std::vector<map_render::TileId>> mVisible;
 
+    bool mPositionStale = false;
     std::optional<double> mLatitude;
     std::optional<double> mLongitude;
     std::optional<double> mHeading;

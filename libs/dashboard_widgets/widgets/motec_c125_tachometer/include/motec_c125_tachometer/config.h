@@ -43,7 +43,10 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (helpers::Color, ring_color, "#C8C8C8",
         "Ring Color", "Colour of the outer ring and the tick marks"),
     (helpers::Color, digit_color, "#FFFFFF",
-        "Digit Color", "Colour of the centre digit and the dial labels")
+        "Digit Color", "Colour of the centre digit and the dial labels"),
+    // How long a gap in the stream means "no data". 0 never reports one.
+    (uint32_t, stale_after_ms, 0,
+        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
 )
 
 // max_rpm divides the needle position and bounds both the tick loop and the
@@ -55,6 +58,7 @@ inline std::vector<std::string> validate(MotecC125TachometerConfig_t& cfg)
     std::vector<std::string> notes;
     config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
     config_codec::limits::clampInto<uint32_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
+    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 
