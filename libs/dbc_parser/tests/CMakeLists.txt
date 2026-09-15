@@ -30,6 +30,20 @@ target_link_libraries(dbc_parser_test_golden
 
 add_project_test(TARGET dbc_parser_test_golden LABELS dbc_parser unit)
 
+# Every raw value of the type-boundary signals through decode and back, with
+# and without a fused multiply-add, and the rounding and saturation cases
+# cantools cannot vouch for.
+add_executable(dbc_parser_test_precision
+    test_precision.cpp
+)
+
+target_link_libraries(dbc_parser_test_precision
+    PRIVATE
+    dbc_test_precision
+)
+
+add_project_test(TARGET dbc_parser_test_precision LABELS dbc_parser unit)
+
 # Frame length checks, handler registration and multiplex gating -- behaviour
 # the differential test cannot observe, since it only compares numbers.
 add_executable(dbc_parser_test_generated_api
