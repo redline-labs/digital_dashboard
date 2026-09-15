@@ -58,10 +58,6 @@ page carries the serial and firmware; both publish together. An output status
 is one of `off`, `on`, `faultError`, `overCurrentError` or `retriesReached`;
 any other raw value is published as `off`.
 
-{: .note }
-As of 2026-09-14 the node allocates 24 entries for `inputs`, which the schema
-declares as 23; the last entry is never written and reads as false.
-
 ## Services
 
 None.
