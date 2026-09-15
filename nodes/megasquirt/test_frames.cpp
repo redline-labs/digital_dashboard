@@ -19,17 +19,14 @@ static void set_payload(pub_sub::ZenohPublisher<CanFrame>& pub,
 {
     pub.fields().setId(id);
     pub.fields().setLen(8u);
-    // initData every frame, not getData: ZenohPublisher::put() reconstructs the
-    // message arena and re-inits the root, so any list allocated for a previous
-    // frame is gone by now and getData() would hand back a zero-length list.
-    // capnp's bounds check on set() is KJ_IREQUIRE, which is compiled out in a
-    // release build, so writing into that list is a straight out-of-bounds
-    // store rather than an assertion failure.
-    auto data = pub.fields().initData(8u);
-    for (size_t i = 0; i < 8u; ++i)
-    {
-        data.set(i, bytes[i]);
-    }
+    // setData every frame, never getData and set(): ZenohPublisher::put()
+    // reconstructs the message arena and re-inits the root, so any list
+    // allocated for a previous frame is gone by now and getData() would hand
+    // back a zero-length list. capnp's bounds check on set() is KJ_IREQUIRE,
+    // which is compiled out in a release build, so writing into that list is a
+    // straight out-of-bounds store rather than an assertion failure. setData
+    // allocates the list and copies in one step.
+    pub.fields().setData(kj::arrayPtr(bytes.data(), bytes.size()));
 }
 
 int main(int argc, char** argv)

@@ -164,9 +164,10 @@ void test_fd_frames()
     frame.isFD = true;
     frame.isBRS = true;
     frame.len = 48;
-    for (int i = 0; i < 48; ++i)
+    uint8_t next = 0u;
+    for (uint8_t& byte : frame.data_span())
     {
-        frame.data[i] = static_cast<uint8_t>(i);
+        byte = next++;
     }
 
     std::array<uint8_t, can::socketcan::kFdFrameSize> buffer {};

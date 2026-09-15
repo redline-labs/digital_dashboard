@@ -81,8 +81,9 @@ float Mercedes190ESpeedometer::valueToAngle(float value, float maxVal)
 
 void Mercedes190ESpeedometer::setOdometerValue(int value)
 {
-    // Six digits are rendered, so anything past that is not displayable.
-    const int clamped = std::clamp(value, 0, 999999);
+    // Six digits are rendered, so anything past that is not displayable. The
+    // clamp also makes the value non-negative, so it fits the unsigned member.
+    const auto clamped = static_cast<uint32_t>(std::clamp(value, 0, 999999));
     if (clamped == odometer_value_)
     {
         return;
@@ -179,7 +180,7 @@ void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
     painter->restore();
 }
 
-void Mercedes190ESpeedometer::drawBoxesAtMPH(QPainter *painter, float mphValue, int numBoxes)
+void Mercedes190ESpeedometer::drawBoxesAtMPH(QPainter *painter, float mphValue, std::size_t numBoxes)
 {
     float rawAngle = valueToAngle(mphValue, static_cast<float>(cfg_.max_speed));
     
@@ -187,7 +188,8 @@ void Mercedes190ESpeedometer::drawBoxesAtMPH(QPainter *painter, float mphValue, 
     painter->rotate(-rawAngle); // Rotate context so the direction of the value is along the +X axis
     painter->translate(kBoxMarkerRadius, 0); // Move out to the radius along this new +X axis
 
-    float totalTangentialLength = numBoxes * kMarkerBoxSquareSize + (numBoxes - 1) * kBoxSpacing;
+    const float boxCount = static_cast<float>(numBoxes);
+    float totalTangentialLength = boxCount * kMarkerBoxSquareSize + (boxCount - 1.0f) * kBoxSpacing;
     float startY = -totalTangentialLength / 2.0f + kMarkerBoxSquareSize / 2.0f;
 
     // The rectangle is defined with its center at (0,0) in its own local space before translation
@@ -199,9 +201,9 @@ void Mercedes190ESpeedometer::drawBoxesAtMPH(QPainter *painter, float mphValue, 
         kMarkerBoxSquareSize
     );
 
-    for (int i = 0; i < numBoxes; ++i)
+    for (std::size_t i = 0u; i < numBoxes; ++i)
     {
-        float currentBoxCenterY = startY + i * (kMarkerBoxSquareSize + kBoxSpacing);
+        float currentBoxCenterY = startY + static_cast<float>(i) * (kMarkerBoxSquareSize + kBoxSpacing);
         
         painter->save();
         painter->translate(0, currentBoxCenterY); // Translate tangentially for this specific box
@@ -235,7 +237,7 @@ void Mercedes190ESpeedometer::drawMphTicksAndNumbers(QPainter *painter)
     // and this loop never ended.
     for (std::size_t i = 0; i < cfg_.shift_box_markers.size(); ++i)
     {
-        drawBoxesAtMPH(painter, static_cast<float>(cfg_.shift_box_markers[i]), static_cast<int>(i) + 1);
+        drawBoxesAtMPH(painter, static_cast<float>(cfg_.shift_box_markers[i]), i + 1u);
     }
 
     painter->restore(); // Restores pen and brush settings set before drawing markers

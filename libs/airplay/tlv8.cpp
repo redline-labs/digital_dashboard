@@ -3,6 +3,7 @@
 #include "airplay/tlv8.h"
 
 #include <algorithm>
+#include <span>
 
 namespace airplay::tlv8
 {
@@ -25,7 +26,8 @@ std::vector<uint8_t> encode(const std::vector<Item>& items)
             const size_t fragment = std::min<size_t>(255, value.size() - offset);
             out.push_back(type);
             out.push_back(static_cast<uint8_t>(fragment));
-            out.insert(out.end(), value.begin() + offset, value.begin() + offset + fragment);
+            const auto piece = std::span<const uint8_t>(value).subspan(offset, fragment);
+            out.insert(out.end(), piece.begin(), piece.end());
             offset += fragment;
         }
     }
@@ -46,16 +48,17 @@ std::vector<Item> decode(const std::vector<uint8_t>& data)
             break;  // Truncated input; drop the partial item.
         }
 
+        const auto piece = std::span<const uint8_t>(data).subspan(offset, length);
+
         // A 255-byte fragment followed by the same type is a continuation.
         if (!items.empty() && items.back().first == type && items.back().second.size() % 255 == 0 &&
             !items.back().second.empty())
         {
-            items.back().second.insert(items.back().second.end(),
-                                       data.begin() + offset, data.begin() + offset + length);
+            items.back().second.insert(items.back().second.end(), piece.begin(), piece.end());
         }
         else
         {
-            items.emplace_back(type, std::vector<uint8_t>(data.begin() + offset, data.begin() + offset + length));
+            items.emplace_back(type, std::vector<uint8_t>(piece.begin(), piece.end()));
         }
         offset += length;
     }

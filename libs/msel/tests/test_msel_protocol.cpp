@@ -313,7 +313,7 @@ void test_config_response_recognition()
     // The property the whole scheme rests on: no documented response code is
     // also a valid status enumeration, so a status frame can never be uniform
     // in one of them. If a firmware ever adds status 0x11, this breaks.
-    for (const uint8_t code : { 0x00u, 0x11u, 0x22u, 0x33u })
+    for (const uint8_t code : std::array<uint8_t, 4> { 0x00, 0x11, 0x22, 0x33 })
     {
         check(!msel::statusFromRaw(code).has_value(),
               "response code 0x" + std::to_string(code) + " must not be a valid status");

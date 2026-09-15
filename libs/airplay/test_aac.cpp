@@ -137,8 +137,9 @@ int main()
         // The encoder primes with a couple of silent frames; require that the
         // bulk decoded and produced a plausible amount of 16-bit stereo PCM.
         expect(decoded_units >= units.size() / 2, "most access units decoded");
-        expect(pcm.size() % (channels * 2) == 0, "PCM is whole S16 frames");
-        expect(pcm.size() > static_cast<size_t>(channels) * 2 * 1024 * 5,
+        const size_t bytes_per_frame = static_cast<size_t>(channels) * 2u;
+        expect(pcm.size() % bytes_per_frame == 0, "PCM is whole S16 frames");
+        expect(pcm.size() > bytes_per_frame * 1024u * 5u,
                "produced several frames of PCM");
 
         // The 440 Hz tone should have real amplitude somewhere (not all zero).

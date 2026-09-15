@@ -26,10 +26,19 @@ prints and always returns 0 is a demo, and registering it makes a green run mean
 nothing.
 
 New code compiles with `-Werror -Wshadow -Wold-style-cast -Wswitch-enum
--Wsuggest-override`, plus a block of flags that makes clang here and GCC on the
-Yocto builder diagnose the same set; read its comment in the root `CMakeLists.txt`
-before adding or removing one. **A warning in our own code gets fixed, never
-downgraded** — only system and third-party headers get waived.
+-Wsuggest-override -Wconversion -Wsign-conversion`, plus a block of flags that
+makes clang here and GCC on the Yocto builder diagnose the same set; read its
+comment in the root `CMakeLists.txt` before adding or removing one. **A warning
+in our own code gets fixed, never downgraded** — only system and third-party
+headers get waived.
+
+**Fix a conversion warning with the right type before reaching for a cast.**
+Index with `size_t`, do Qt geometry in `qreal`, time with
+`std::chrono::duration<double>`, slice with `std::span`, and copy a capnp
+`CanFrame` with `pub_sub::fromCapnp`/`toCapnp`. A `static_cast` is for a
+conversion that is meant, at the one place it happens, with a comment when why
+it is safe is not obvious. Vendored headers that warn get a patch under
+`patches/`, as yaml-cpp has.
 
 **Spell out every case in a `switch` over an enum.** Do not
 dodge `-Wswitch-enum` by rewriting the switch as an if-chain, and do not add a

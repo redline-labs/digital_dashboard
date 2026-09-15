@@ -65,17 +65,23 @@ const char* to_string(Code code)
 
 uint16_t crc16_ccitt(std::span<const uint8_t> bytes)
 {
-    uint16_t crc = 0xFFFF;
+    // Worked in uint32_t so no step promotes to int; masked back to 16 bits on
+    // every shift, so the one narrowing at the end loses nothing.
+    uint32_t crc = 0xFFFFu;
     for (const uint8_t byte : bytes)
     {
-        crc ^= static_cast<uint16_t>(static_cast<uint16_t>(byte) << 8);
+        crc ^= uint32_t{byte} << 8u;
         for (int bit = 0; bit < 8; ++bit)
         {
-            crc = (crc & 0x8000u) != 0 ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
-                                       : static_cast<uint16_t>(crc << 1);
+            const bool carry = (crc & 0x8000u) != 0u;
+            crc = (crc << 1u) & 0xFFFFu;
+            if (carry)
+            {
+                crc ^= 0x1021u;
+            }
         }
     }
-    return crc;
+    return static_cast<uint16_t>(crc);
 }
 
 std::optional<uint8_t> Frame::status() const

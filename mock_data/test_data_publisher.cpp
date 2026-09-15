@@ -95,9 +95,8 @@ public:
         
         while (mRunning) {
             auto current_time = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                current_time - start_time
-            ).count() / 1000.0; // Convert to seconds
+            const double elapsed =
+                std::chrono::duration<double>(current_time - start_time).count();
             
             // Generate simulated vehicle data
             generateAndPublishData(elapsed);

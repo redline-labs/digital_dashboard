@@ -197,11 +197,11 @@ void testUnstampedAreCounted()
         for (int i = 0; i < 10; ++i)
         {
             const std::vector<std::uint8_t> payload = payloadFor(i, 32);
+            const std::uint64_t logTime = kBase + static_cast<std::uint64_t>(i);
             // Half stamped, half not.
             const std::optional<std::uint64_t> publish =
-                i % 2 == 0 ? std::optional<std::uint64_t>(kBase + i) : std::nullopt;
-            writer.write("t", "EngineRpm", payload, kBase + static_cast<std::uint64_t>(i),
-                         publish, "");
+                i % 2 == 0 ? std::optional<std::uint64_t>(logTime) : std::nullopt;
+            writer.write("t", "EngineRpm", payload, logTime, publish, "");
         }
         writer.close();
     }

@@ -386,7 +386,10 @@ void testMutationFuzz()
             mutated.resize(1 + (next() % mutated.size()));
         }
         // Only the absence of a crash matters; either outcome is legal.
-        survived += plist::decodeBinary(mutated).has_value() ? 1 : 0;
+        if (plist::decodeBinary(mutated).has_value())
+        {
+            ++survived;
+        }
     }
     expect(survived <= 20000, "mutation fuzz survived without crashing");
 }

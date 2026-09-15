@@ -50,7 +50,7 @@ private:
     QColor m_gradientStartColor;
     QColor m_gradientEndColor;
     QPen m_linePen;
-    int m_writeIndex = 0;
+    qsizetype m_writeIndex = 0;
     static const int MAX_DATA_POINTS = 100; // Max points to display in sparkline
 
     // Expression parser owned subscription if configured

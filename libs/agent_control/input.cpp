@@ -383,7 +383,9 @@ Result<json> sendKeySequence(QWidget* widget, const QString& sequence)
     }
 
     json applied = json::array();
-    for (int i = 0; i < parsed.count(); ++i)
+    // QKeySequence counts in int and indexes in uint; count() is never negative.
+    const uint combinations = static_cast<uint>(parsed.count());
+    for (uint i = 0u; i < combinations; ++i)
     {
         const QKeyCombination combo = parsed[i];
         const int key = combo.key();

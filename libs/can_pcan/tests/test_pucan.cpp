@@ -604,8 +604,8 @@ void test_tx_encoding()
     check(((buffer[12] >> 4) & 0x0F) == 3, "with DLC 3");
     check(buffer[20] == 0x11 && buffer[22] == 0x33, "and the payload follows the header");
 
-    const uint32_t encodedId = static_cast<uint32_t>(buffer[16]) | (buffer[17] << 8)
-        | (buffer[18] << 16) | (buffer[19] << 24);
+    const uint32_t encodedId = uint32_t{buffer[16]} | (uint32_t{buffer[17]} << 8u)
+        | (uint32_t{buffer[18]} << 16u) | (uint32_t{buffer[19]} << 24u);
     check(encodedId == 0x1AB, "with the identifier little-endian at offset 16");
 }
 

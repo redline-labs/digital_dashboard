@@ -284,7 +284,7 @@ std::optional<MCP2221AStatus> MCP2221A::get_status_set_parameters(bool cancel_i2
     // I2C Status
     status.i2c_cancel_response = static_cast<I2CCancelResponse>(response[2]);
     status.i2c_speed_response = static_cast<I2CSpeedResponse>(response[3]);
-    status.speed_hz = 12000000 / (response[4] + 3);
+    status.speed_hz = 12'000'000u / (response[4] + 3u);
     status.i2c_state = static_cast<I2CState>(response[8]);
     // Byte 20 bit 6 only; the surrounding bits are documented "don't care" and
     // are set in practice. See MCP2221AStatus::address_acked.

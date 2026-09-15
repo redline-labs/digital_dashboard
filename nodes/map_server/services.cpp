@@ -491,7 +491,7 @@ void Services::handleNearest(const MapNearestRequest::Reader& request,
         where.setForward(!heading.has_value() ||
                          road_graph::bearingDeltaDeg(*heading, match.bearingDeg) <= 90.0);
 
-        out.setOsmWayId(segment.osmWayId);
+        out.setOsmWayId(map_wire::osmWayIdOf(segment));
         out.setDistanceM(static_cast<float>(match.distanceM));
         out.setHeadingDeg(static_cast<float>(match.bearingDeg));
         out.setName(std::string(entry->graph->nameOf(segment)));

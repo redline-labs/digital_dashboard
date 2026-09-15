@@ -78,4 +78,9 @@ void fillSpeed(::MapSpeed::Builder speed, const road_graph::SegmentRecord& segme
     speed.setFreeFlowKph(segment.freeFlowSpeedKph);
 }
 
+std::uint64_t osmWayIdOf(const road_graph::SegmentRecord& segment)
+{
+    return static_cast<std::uint64_t>(segment.osmWayId);
+}
+
 } // namespace map_wire

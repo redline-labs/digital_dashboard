@@ -60,7 +60,7 @@ size_t width_for(DataType type, size_t fallback)
 {
     if (auto bits = data_type_bits(type))
     {
-        return (*bits + 7) / 8;
+        return (size_t{*bits} + 7u) / 8u;
     }
     return fallback;
 }
@@ -334,9 +334,19 @@ void StubDevice::handle_sdo(const helpers::CanFrame& frame)
         helpers::CanFrame response {};
         response.id = SdoClient::kResponseCobIdBase + nodeId_;
         response.len = 8;
-        response.data[0] = static_cast<uint8_t>(kScsUploadSegment
-                                                | (segmented_.toggle ? kToggle : 0)
-                                                | ((7 - size) << 1) | (last ? kSizeIndicated : 0));
+        // Bits 3..1 say how many of the seven data bytes carry nothing; size <= 7.
+        const auto unused = static_cast<uint8_t>(7u - size);
+        uint8_t segmentHeader = kScsUploadSegment;
+        if (segmented_.toggle)
+        {
+            segmentHeader |= kToggle;
+        }
+        if (last)
+        {
+            segmentHeader |= kSizeIndicated;
+        }
+        segmentHeader |= static_cast<uint8_t>(unused << 1u);
+        response.data[0] = segmentHeader;
         for (size_t i = 0; i < size; ++i)
         {
             response.data[1 + i] = segmented_.bytes[segmented_.offset + i];

@@ -133,7 +133,7 @@ void testLastChannelLandsInLastSlot()
     }
     {
         PDM_Input_Voltage_0x505_t m{};
-        m.PDM_Input_Voltage_23 = 12.4;
+        m.PDM_Input_Voltage_23 = 12.4f;
         capnp::MallocMessageBuilder message;
         auto root = message.initRoot<MotecPdmInputVoltage>();
         fillInputVoltage(m, root);

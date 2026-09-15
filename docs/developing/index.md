@@ -29,6 +29,11 @@ Mac and GCC on the Yocto builder diagnose the same set. A warning in our own
 code gets fixed, never downgraded; only system and third-party headers are
 waived.
 
+{: .tip }
+`-Wconversion` and `-Wsign-conversion` are on, so an implicit narrowing, sign
+change or lossy int-to-float does not compile. Change the type first, and keep a
+`static_cast` for a conversion that is meant.
+
 ## How to prove a change works
 
 Code under `libs/` and `nodes/` is protocol parsing, framing, decoding, maths

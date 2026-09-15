@@ -138,8 +138,13 @@ add_compile_options(
     # the vendored deps (libusb, capnproto) keep warning without failing us.
     -Werror
     #-Wcast-align
-    #-Wconversion
-    #-Wsign-conversion
+    # Both, because the compilers draw the line differently: clang's
+    # -Wconversion already includes the sign changes, GCC's leaves them to
+    # -Wsign-conversion. A narrowing, a sign flip or an int-to-float that can
+    # lose precision has to be written out where it is meant, so the ones that
+    # are not meant stop compiling.
+    -Wconversion
+    -Wsign-conversion
     -Wuninitialized
     -Wmissing-field-initializers
     # -Wmissing-field-initializers means two different things. Both compilers

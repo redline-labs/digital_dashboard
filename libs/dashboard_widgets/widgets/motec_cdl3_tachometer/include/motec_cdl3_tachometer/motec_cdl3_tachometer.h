@@ -12,6 +12,7 @@
 #include <memory>
 #include <string_view>
 #include <array>
+#include <cstddef>
 #include <vector>
 
 #include "dashboard/expression_subscription.h"
@@ -54,7 +55,7 @@ private:
     // segments are lit. Derived from _rpm when it is set, so the whole display
     // has at most kSegments + 1 distinct states and a repaint is only worth
     // asking for when this number moves -- not on every sample.
-    int _on_segments = 0;
+    std::size_t _on_segments = 0u;
 
     // Fonts
     QFont _segmentFont; // DSEG-like font for labels
@@ -63,7 +64,7 @@ private:
     dashboard::ExpressionSubscriptionPtr<float> _expression_parser;
 
     // LUT storage
-    static constexpr int kLutSamples = 512;
+    static constexpr std::size_t kLutSamples = 512u;
     std::array<float, kLutSamples> _lutAngles{};
     std::array<float, kLutSamples> _lutLengths{};
 
@@ -72,7 +73,7 @@ private:
     // 70 is the CDL3's own number: MoTeC specify the panel as a "70 segment bar
     // graph". At this count the segments read as a bar rather than as a row of
     // blocks, which is most of what makes the real display recognisable.
-    static constexpr int kSegments = 70;
+    static constexpr std::size_t kSegments = 70u;
     std::array<float, kSegments> _segmentStartAngles{};  // a0 per segment
     std::array<float, kSegments> _segmentSpanDeg{};      // span (deg) per segment
     std::array<float, kSegments> _segmentLengthPx{};     // pen width per segment

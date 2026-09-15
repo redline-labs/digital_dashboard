@@ -262,8 +262,7 @@ int runRoute(cli::Context& context)
             auto route = road_graph::findRoute(*graph, from, to);
             const auto elapsed = std::chrono::steady_clock::now() - started;
 
-            sample.millis =
-                std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count() / 1000.0;
+            sample.millis = std::chrono::duration<double, std::milli>(elapsed).count();
             if (route)
             {
                 sample.found = true;
@@ -276,8 +275,7 @@ int runRoute(cli::Context& context)
                 auto viaOverlay = road_graph::findRouteVia(*graph, *overlay, from, to);
                 const auto overlayElapsed = std::chrono::steady_clock::now() - overlayStarted;
                 sample.overlayMillis =
-                    std::chrono::duration_cast<std::chrono::microseconds>(overlayElapsed).count() /
-                    1000.0;
+                    std::chrono::duration<double, std::milli>(overlayElapsed).count();
                 sample.overlayFound = viaOverlay.has_value();
                 if (route && viaOverlay)
                 {

@@ -16,6 +16,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
+#include <span>
 #include <utility>
 
 namespace airplay
@@ -101,11 +103,13 @@ void runScreenStream(int listen_fd, Bytes key, const std::atomic<bool>& run,
                     break;
                 }
 
-                const Bytes header(buffer.begin(), buffer.begin() + kHeaderLength);
-                const Bytes body(buffer.begin() + kHeaderLength,
-                                 buffer.begin() + kHeaderLength + body_size);
-                buffer.erase(buffer.begin(),
-                             buffer.begin() + static_cast<long>(kHeaderLength + body_size));
+                const auto message =
+                    std::span<const uint8_t>(buffer).first(kHeaderLength + body_size);
+                const auto header_bytes = message.first(kHeaderLength);
+                const auto body_bytes = message.subspan(kHeaderLength);
+                const Bytes header(header_bytes.begin(), header_bytes.end());
+                const Bytes body(body_bytes.begin(), body_bytes.end());
+                buffer.erase(buffer.begin(), buffer.begin() + std::ssize(message));
 
                 const auto mark_sync_point = [&on_keyframe] {
                     if (on_keyframe)

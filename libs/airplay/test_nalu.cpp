@@ -370,10 +370,19 @@ void testMutationFuzz()
             mutated.resize(1 + (next() % mutated.size()));
         }
         // Only the absence of a crash matters; any outcome is legal.
-        results += airplay::nalu::configToAnnexB(mutated).has_value() ? 1 : 0;
+        if (airplay::nalu::configToAnnexB(mutated).has_value())
+        {
+            ++results;
+        }
         results += airplay::nalu::avccFrameToAnnexB(mutated, 1 + (next() % 4)).size();
-        results += airplay::nalu::avccContainsKeyframe(mutated, Codec::H264) ? 1 : 0;
-        results += airplay::nalu::annexBContainsKeyframe(mutated, Codec::H265) ? 1 : 0;
+        if (airplay::nalu::avccContainsKeyframe(mutated, Codec::H264))
+        {
+            ++results;
+        }
+        if (airplay::nalu::annexBContainsKeyframe(mutated, Codec::H265))
+        {
+            ++results;
+        }
     }
     expect(results < SIZE_MAX, "mutation fuzz survived without crashing");
 }

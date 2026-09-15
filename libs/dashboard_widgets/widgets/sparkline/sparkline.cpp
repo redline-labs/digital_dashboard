@@ -157,39 +157,31 @@ void SparklineItem::paintEvent(QPaintEvent *event) {
     QPainterPath linePath;
     // Ensure MAX_DATA_POINTS is greater than 1 to avoid division by zero if graphRect.width() is > 0
     // And also that graphRect.width() > 0
-    float xStep = (MAX_DATA_POINTS > 1 && graphRect.width() > 0) ? 
-                  (static_cast<float>(graphRect.width()) / (MAX_DATA_POINTS - 1)) : 
-                  0.0f;
+    const qreal xStep = (MAX_DATA_POINTS > 1 && graphRect.width() > 0) ?
+                        (graphRect.width() / (MAX_DATA_POINTS - 1)) :
+                        0.0;
 
-    float yRange = maxVal - minVal;
-    // yRange should not be zero here due to the check above
+    // Not zero, because of the check above.
+    const double yRange = maxVal - minVal;
 
     // dataPoints should always contain MAX_DATA_POINTS elements now
-    int pointsToDraw = dataPoints.size(); // Should be MAX_DATA_POINTS
+    const qsizetype pointsToDraw = dataPoints.size(); // Should be MAX_DATA_POINTS
     if (pointsToDraw < 2) return; 
-    const auto getPoint = [&](int i) -> double {
-        const int idx = (m_writeIndex + i) % dataPoints.size();
-        return dataPoints[idx];
+    const auto getPoint = [&](qsizetype i) -> double {
+        return dataPoints[(m_writeIndex + i) % dataPoints.size()];
+    };
+    // Not clamped: a value outside [min_value, max_value] draws outside the
+    // graph rectangle.
+    const auto yFor = [&](double value) -> qreal {
+        return graphRect.bottom() - ((value - minVal) / yRange) * graphRect.height();
     };
 
-    float currentX = graphRect.left();
-    // Clamp the y-value calculation to the graphRect boundaries
-    // This prevents drawing outside the box if data points exceed _cfg.min_value/_cfg.max_value
-    float firstDataY = static_cast<float>(getPoint(0));
-    float firstNormY = (firstDataY - minVal) / yRange;
-    // float firstClampedNormY = qBound(0.0f, static_cast<float>(firstNormY), 1.0f);
-    // float currentY = graphRect.bottom() - (firstClampedNormY * graphRect.height());
-    float currentY = graphRect.bottom() - (static_cast<float>(firstNormY) * graphRect.height());
-    linePath.moveTo(currentX, currentY);
+    qreal currentX = graphRect.left();
+    linePath.moveTo(currentX, yFor(getPoint(0)));
 
-    for (int i = 1; i < pointsToDraw; ++i) {
+    for (qsizetype i = 1; i < pointsToDraw; ++i) {
         currentX += xStep;
-        float dataY = static_cast<float>(getPoint(i));
-        float normY = (dataY - minVal) / yRange;
-        // float clampedNormY = qBound(0.0f, static_cast<float>(normY), 1.0f);
-        // float yPos = graphRect.bottom() - (clampedNormY * graphRect.height());
-        float yPos = graphRect.bottom() - (static_cast<float>(normY) * graphRect.height());
-        linePath.lineTo(currentX, yPos);
+        linePath.lineTo(currentX, yFor(getPoint(i)));
     }
 
     // Create the fill path

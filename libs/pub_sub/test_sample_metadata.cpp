@@ -153,7 +153,7 @@ std::vector<Captured> publishAndCollect(int count)
         pub_sub::ZenohPublisher<VehicleSpeed> speed(kTestKeyB);
         for (int i = 0; i < count; ++i)
         {
-            rpm.fields().setRpm(1000.0F + static_cast<float>(i));
+            rpm.fields().setRpm(1000u + static_cast<std::uint32_t>(i));
             rpm.put();
             speed.fields().setSpeedMps(10.0F + static_cast<float>(i));
             speed.put();

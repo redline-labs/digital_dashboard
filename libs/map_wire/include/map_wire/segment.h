@@ -55,6 +55,14 @@ namespace map_wire
 // wrong matters. See map_common.capnp.
 void fillSpeed(::MapSpeed::Builder speed, const road_graph::SegmentRecord& segment);
 
+// The OSM way a segment came from, as the wire carries it.
+//
+// The graph keeps OSM's signed int64 and the schema says UInt64. Every way id
+// in a graph is non-negative: road_graph::makeSegmentId packs it into the top
+// 44 bits of an unsigned segment id, so a negative one would already have
+// corrupted the segment's identity before it got here.
+std::uint64_t osmWayIdOf(const road_graph::SegmentRecord& segment);
+
 } // namespace map_wire
 
 #endif // MAP_WIRE_SEGMENT_H

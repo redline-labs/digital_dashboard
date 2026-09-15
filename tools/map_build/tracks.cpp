@@ -603,8 +603,7 @@ int runTracks(cli::Context& context)
         return cli::kFailure;
     }
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started);
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
 
     std::map<std::string, std::size_t> byQuality;
     std::map<std::string, std::size_t> byGate;
@@ -616,7 +615,7 @@ int runTracks(cli::Context& context)
         ++venues[t.venueId];
     }
 
-    cli::out("read in {:.1f} s\n", elapsed.count() / 1000.0);
+    cli::out("read in {:.1f} s\n", elapsed.count());
     cli::out("tracks     {}\n", tracks.size());
     cli::out("skipped    {}\n", skipped.size());
     cli::out("venues     {}\n", venues.size());

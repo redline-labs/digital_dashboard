@@ -16,6 +16,8 @@
 #include <QFontMetrics>
 #include <QPixmap>
 
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <memory>
 
@@ -84,7 +86,7 @@ private:
 
     void drawMphTicksAndNumbers(QPainter *painter);
     void drawKmhTicksAndNumbers(QPainter *painter);
-    void drawBoxesAtMPH(QPainter *painter, float mphValue, int numBoxes);
+    void drawBoxesAtMPH(QPainter *painter, float mphValue, std::size_t numBoxes);
     void drawNeedle(QPainter *painter);
     void drawOverlayText(QPainter *painter); // For "miles", "km/h mph" stack etc.
     void drawOdometer(QPainter *painter); // New method for odometer
@@ -95,7 +97,7 @@ private:
 
     config_t cfg_;
 
-    int odometer_value_; // Stores the odometer reading
+    uint32_t odometer_value_; // Stores the odometer reading, 0..999999
 
     QFont odo_font_;
     QFont mph_font_;

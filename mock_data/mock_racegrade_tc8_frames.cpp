@@ -67,9 +67,10 @@ int main(int argc, char** argv)
 
         iteration += 0.01f;
 
-        for (const auto& multiplexor_index : dbc_motec_e888_rev1::Inputs_t::multiplexor_group_indexes)
+        for (const auto multiplexor_index : dbc_motec_e888_rev1::Inputs_t::multiplexor_group_indexes)
         {
-            msg.mux() = multiplexor_index;
+            // The group index is the multiplexor's raw bits, mux() its value.
+            msg.mux() = from_raw(dbc_motec_e888_rev1::Inputs_t::sig_Index0F0_t{}, multiplexor_index);
 
             const std::array<uint8_t, 8u> payload = msg.encode();
 
@@ -79,11 +80,7 @@ int main(int argc, char** argv)
             pub.fields().setId(dbc_motec_e888_rev1::Inputs_t::id);
             pub.fields().setLen(static_cast<uint8_t>(payload.size()));
 
-            auto data = pub.fields().initData(payload.size());
-            for (size_t i = 0u; i < payload.size(); ++i)
-            {
-                data.set(i, payload[i]);
-            }
+            pub.fields().setData(kj::arrayPtr(payload.data(), payload.size()));
 
             pub.put();
             std::this_thread::sleep_for(std::chrono::milliseconds(5));

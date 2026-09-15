@@ -684,10 +684,7 @@ Result<ContractionStats> buildOverlay(const Graph& graph, const std::filesystem:
     }
 
     stats.buildSeconds =
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                              started)
-            .count() /
-        1000.0;
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return stats;
 }
 

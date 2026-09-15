@@ -11,6 +11,7 @@
 #include "helpers/unit_conversion.h"
 
 #include <cmath>
+#include <cstddef>
 #include <vector>
 #include <algorithm>
 
@@ -180,7 +181,7 @@ static void drawGaugeBase(
     float centerX,
     float centerY,
     GaugeOrientation orientation,
-    int numTicks,
+    std::size_t numTicks,
     bool alternateTickThickness,
     const std::vector<const char*>& labels)
 {
@@ -188,10 +189,15 @@ static void drawGaugeBase(
     const auto info = getOrientationInfo(orientation);
     const float gaugeStartAngle = info.orientationAngleDeg - (kGaugeSpanDegrees / 2.0f);
 
-    for (int i = 0; i < numTicks; ++i)
+    // Where tick i sits along the sweep, 0 at one end and 1 at the other.
+    const auto mappedRatio = [&](std::size_t i) -> float {
+        const float valueRatio = static_cast<float>(i) / static_cast<float>(numTicks - 1u);
+        return info.invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+    };
+
+    for (std::size_t i = 0u; i < numTicks; ++i)
     {
-        float valueRatio = static_cast<float>(i) / (numTicks - 1);
-        float mapped = info.invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+        float mapped = mappedRatio(i);
         float tickAngle = gaugeStartAngle + (mapped * kGaugeSpanDegrees);
         float tickAngleRad = degrees_to_radians(tickAngle);
 
@@ -202,11 +208,9 @@ static void drawGaugeBase(
                           kOuterTickRadius * std::sin(projectedAngle));
 
         QPointF dirToSubGaugeCenter = QPointF(centerX, centerY) - tickOuter;
-        float dirLength = std::sqrt(dirToSubGaugeCenter.x() * dirToSubGaugeCenter.x() +
-                                     dirToSubGaugeCenter.y() * dirToSubGaugeCenter.y());
-        if (dirLength > 0.0f) {
-            dirToSubGaugeCenter.setX(dirToSubGaugeCenter.x() / dirLength);
-            dirToSubGaugeCenter.setY(dirToSubGaugeCenter.y() / dirLength);
+        const qreal dirLength = std::hypot(dirToSubGaugeCenter.x(), dirToSubGaugeCenter.y());
+        if (dirLength > 0.0) {
+            dirToSubGaugeCenter /= dirLength;
         }
 
         QPointF tickInner = tickOuter + dirToSubGaugeCenter * kTickLength;
@@ -226,11 +230,10 @@ static void drawGaugeBase(
         painter->setPen(Qt::white);
         QFontMetricsF fm(labelFont);
 
-        for (int i = 0; i < numTicks && i < static_cast<int>(labels.size()); ++i)
+        for (std::size_t i = 0u; i < numTicks && i < labels.size(); ++i)
         {
             if (labels[i] == nullptr) continue;
-            float valueRatio = static_cast<float>(i) / (numTicks - 1);
-            float mapped = info.invertValueMapping ? (1.0f - valueRatio) : valueRatio;
+            float mapped = mappedRatio(i);
             float labelAngle = gaugeStartAngle + (mapped * kGaugeSpanDegrees);
             float labelAngleRad = degrees_to_radians(labelAngle);
             float projectedAngle = std::atan2(centerY + info.projectionSign * kNeedleLength * std::sin(labelAngleRad),

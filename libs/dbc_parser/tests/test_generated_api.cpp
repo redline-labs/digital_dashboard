@@ -114,7 +114,7 @@ void testHandlersAccumulate()
     parser.on_Multiplexed([&](const Multiplexed_t &) { second += 1; });
 
     // A whole batch, so the complete-batch handlers fire exactly once.
-    for (uint8_t group : Multiplexed_t::multiplexor_group_indexes)
+    for (const auto group : Multiplexed_t::multiplexor_group_indexes)
     {
         const auto frame = statusFrame(group);
         parser.handle_can_frame(Multiplexed_t::id, frame);
@@ -139,7 +139,7 @@ void testMultiplexGatingPolicies()
     // Only the first group, repeatedly: the batch never completes.
     for (int i = 0; i < 3; ++i)
     {
-        const auto frame = statusFrame(static_cast<uint8_t>(groups[0]));
+        const auto frame = statusFrame(groups[0]);
         parser.handle_can_frame(Multiplexed_t::id, frame);
     }
 
@@ -149,7 +149,7 @@ void testMultiplexGatingPolicies()
     // Now finish the batch.
     for (size_t i = 1; i < groups.size(); ++i)
     {
-        const auto frame = statusFrame(static_cast<uint8_t>(groups[i]));
+        const auto frame = statusFrame(groups[i]);
         parser.handle_can_frame(Multiplexed_t::id, frame);
     }
 
@@ -282,16 +282,17 @@ void testAggregatorSeesDecodedValues()
 
 void testRoundTrip()
 {
-    for (uint32_t group : Multiplexed_t::multiplexor_group_indexes)
+    for (const auto group : Multiplexed_t::multiplexor_group_indexes)
     {
+        // Group indexes are raw bit patterns; the member is the physical value.
+        const Multiplexed_t::sig_MuxIndex_t mux{};
         Multiplexed_t message;
-        message.MuxIndex = group;
+        message.MuxIndex = from_raw(mux, group);
         const auto encoded = message.encode();
 
         Multiplexed_t decoded;
         check(decoded.decode(encoded), "a self-encoded frame should decode");
-        check(static_cast<uint64_t>(decoded.MuxIndex) == group,
-              "the multiplexor should survive a round trip");
+        check(to_raw(mux, decoded.MuxIndex) == group, "the multiplexor should survive a round trip");
     }
 }
 

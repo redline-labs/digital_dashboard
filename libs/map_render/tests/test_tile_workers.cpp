@@ -53,7 +53,10 @@ void test_every_index_runs_exactly_once()
         std::size_t wrong = 0;
         for (const auto& v : visits)
         {
-            wrong += (v.load() != 1) ? 1 : 0;
+            if (v.load() != 1)
+            {
+                ++wrong;
+            }
         }
         check(wrong == 0, "with " + std::to_string(threads) + " threads every index ran once, " +
                               std::to_string(wrong) + " did not");
@@ -168,7 +171,10 @@ void test_a_straggler_cannot_leak_into_the_next_batch()
     std::size_t wrong = 0;
     for (int batch = 0; batch < kBatches; ++batch)
     {
-        wrong += (ran[std::size_t(batch)].load() != int(kCount)) ? 1 : 0;
+        if (ran[std::size_t(batch)].load() != int(kCount))
+        {
+            ++wrong;
+        }
     }
     check(wrong == 0, "no batch ran more or fewer jobs than it was given, " +
                           std::to_string(wrong) + " did");

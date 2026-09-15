@@ -67,8 +67,7 @@ int runGraph(cli::Context& context)
         return cli::kFailure;
     }
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started);
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
 
     // Reopened rather than trusted. The build is offline and takes minutes, so
     // proving the artifact loads costs nothing next to shipping one that does
@@ -84,7 +83,7 @@ int runGraph(cli::Context& context)
     std::error_code ec;
     const auto bytes = std::filesystem::file_size(*output, ec);
 
-    cli::out("built in {:.1f} s\n", elapsed.count() / 1000.0);
+    cli::out("built in {:.1f} s\n", elapsed.count());
     cli::out("segments   {}\n", graph->header().segmentCount);
     cli::out("junctions  {}\n", graph->header().nodeCount);
     cli::out("edges      {}\n", graph->header().edgeCount);

@@ -401,7 +401,7 @@ Bytes objectMarker(uint8_t type, size_t count)
     Bytes out;
     if (count < 0x0f)
     {
-        out.push_back(static_cast<uint8_t>((type << 4) | count));
+        out.push_back(static_cast<uint8_t>((size_t{type} << 4u) | count));
         return out;
     }
 

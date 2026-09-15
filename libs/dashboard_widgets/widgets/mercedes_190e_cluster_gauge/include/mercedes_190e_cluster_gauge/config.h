@@ -31,7 +31,7 @@ REFLECT_STRUCT(economy_sweep_config_t,
         "Label", "Text printed above the sweep; ECONOMY on a stock cluster"),
     // Where the red section starts, as a fraction of the sweep from the
     // economical end. 0 paints the whole band red, 1 paints none of it.
-    (float, red_start_fraction, 0.60,
+    (float, red_start_fraction, 0.60f,
         "Red Start", "Fraction along the sweep where the red section begins (0-1)"),
     (helpers::Color, outline_color, "#FFFFFF",
         "Outline Color", "Colour of the band outline and the label"),

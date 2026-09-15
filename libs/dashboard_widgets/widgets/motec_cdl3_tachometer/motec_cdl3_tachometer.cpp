@@ -63,7 +63,7 @@ void MotecCdl3Tachometer::setRpm(float rpm)
     // Clamp as a float, then cast. Casting first meant a non-finite or
     // out-of-range intermediate reached static_cast<int>, which is undefined --
     // the clamp afterwards was too late to help.
-    const int on_segments = static_cast<int>(
+    const auto on_segments = static_cast<std::size_t>(
         gauge_paint::clampToRange(std::floor(p_now * static_cast<float>(kSegments) + 1e-4f),
                                   0.0f, static_cast<float>(kSegments)));
 
@@ -117,18 +117,24 @@ void MotecCdl3Tachometer::buildArcLUT()
     constexpr float sweep_cw = (kSweepStartDeg >= kSweepEndDeg) ? (kSweepStartDeg - kSweepEndDeg) : (kSweepStartDeg + 360.0f - kSweepEndDeg);
 
     _lutAngles[0] = kSweepStartDeg;
-    auto pointOnEllipse = [&](float deg) -> QPointF {
-        float t = degrees_to_radians(deg);
-        return QPointF(kEllipseA * std::cos(t), kEllipseB * std::sin(t));
+    // In float throughout, like the LUT it fills.
+    struct EllipsePoint
+    {
+        float x;
+        float y;
     };
-    QPointF prev = pointOnEllipse(_lutAngles[0]);
+    auto pointOnEllipse = [&](float deg) -> EllipsePoint {
+        float t = degrees_to_radians(deg);
+        return {kEllipseA * std::cos(t), kEllipseB * std::sin(t)};
+    };
+    EllipsePoint prev = pointOnEllipse(_lutAngles[0]);
     _lutLengths[0] = 0.0f;
-    const float step = sweep_cw / static_cast<float>(kLutSamples - 1);
-    for (int i = 1; i < kLutSamples; ++i)
+    const float step = sweep_cw / static_cast<float>(kLutSamples - 1u);
+    for (std::size_t i = 1u; i < kLutSamples; ++i)
     {
         _lutAngles[i] = kSweepStartDeg - step * static_cast<float>(i);
-        QPointF p = pointOnEllipse(_lutAngles[i]);
-        _lutLengths[i] = _lutLengths[i - 1] + std::hypot(p.x() - prev.x(), p.y() - prev.y());
+        const EllipsePoint p = pointOnEllipse(_lutAngles[i]);
+        _lutLengths[i] = _lutLengths[i - 1u] + std::hypot(p.x - prev.x, p.y - prev.y);
         prev = p;
     }
 }
@@ -137,11 +143,11 @@ float MotecCdl3Tachometer::angleAtU(float u) const
 {
     const float totalLen = _lutLengths.back();
     float target = std::clamp(u, 0.0f, 1.0f) * totalLen;
-    int lo = 0, hi = kLutSamples - 1;
+    std::size_t lo = 0u, hi = kLutSamples - 1u;
 
-    while (lo + 1 < hi)
+    while (lo + 1u < hi)
     {
-        int mid = (lo + hi) / 2;
+        std::size_t mid = (lo + hi) / 2u;
         if (_lutLengths[mid] < target)
         {
             lo = mid;
@@ -167,16 +173,16 @@ void MotecCdl3Tachometer::buildStaticGeometry()
 
     // Why: Use a tiny constant pixel gap along the baseline path for even spacing
     constexpr float gap_px = 0.1f;
-    constexpr float total_gaps = static_cast<float>(kSegments - 1) * gap_px;
+    constexpr float total_gaps = static_cast<float>(kSegments - 1u) * gap_px;
     const float alloc_for_segments = std::max(0.0f, totalLen - total_gaps);
     const float seg_len_px = (kSegments > 0) ? (alloc_for_segments / static_cast<float>(kSegments)) : 0.0f;
 
     // Helper: map arc-length s (0..totalLen) to an angle using LUT (inverse of _lutLengths)
     auto angleAtArcLen = [&](float arcLen) -> float {
         float target = std::clamp(arcLen, 0.0f, totalLen);
-        int lo = 0, hi = kLutSamples - 1;
-        while (lo + 1 < hi) {
-            int mid = (lo + hi) / 2;
+        std::size_t lo = 0u, hi = kLutSamples - 1u;
+        while (lo + 1u < hi) {
+            std::size_t mid = (lo + hi) / 2u;
             if (_lutLengths[mid] < target) lo = mid; else hi = mid;
         }
         float denom = std::max(1e-6f, (_lutLengths[hi] - _lutLengths[lo]));
@@ -188,7 +194,7 @@ void MotecCdl3Tachometer::buildStaticGeometry()
     float curArc = 0.0f;
     _maxOuterA = 0.0f;
     _maxOuterB = 0.0f;
-    for (int i = 0; i < kSegments; ++i) {
+    for (std::size_t i = 0u; i < kSegments; ++i) {
         float segStartArc = curArc;
         float segEndArc = std::min(totalLen, segStartArc + seg_len_px);
         float a_start = angleAtArcLen(segStartArc);
@@ -201,7 +207,7 @@ void MotecCdl3Tachometer::buildStaticGeometry()
         _segmentSpanDeg[i] = span_deg;
 
         // Why: Slightly increase segment thickness along the sweep for a dynamic taper.
-        const float s = static_cast<float>(i) / static_cast<float>(kSegments - 1);
+        const float s = static_cast<float>(i) / static_cast<float>(kSegments - 1u);
         const float length_px = length_min + (length_max - length_min) * s;
         _segmentLengthPx[i] = length_px;
         const float center_offset = inner_gap + 0.5f * length_px;
@@ -267,7 +273,7 @@ void MotecCdl3Tachometer::paintDynamic(QPainter& painter)
 
     // Each segment is either on or off (no partials). The count is computed in
     // setRpm, which is also what decides whether a repaint was worth asking for.
-    for (int i = 0; i < _on_segments; ++i)
+    for (std::size_t i = 0u; i < _on_segments; ++i)
     {
         const float a0 = _segmentStartAngles[i];
         const float span = _segmentSpanDeg[i];
@@ -307,13 +313,13 @@ void MotecCdl3Tachometer::paintStaticOverlay(QPainter& p) {
         // Outward normal (based on gradient of implicit ellipse x^2/a^2 + y^2/b^2 = 1)
         QPointF n(base_point.x() / (kEllipseA * kEllipseA), base_point.y() / (kEllipseB * kEllipseB));
         // Normalize for outward
-        float nlen = std::hypot(n.x(), n.y());
-        if (nlen > 0.0f) { n.setX(n.x() / nlen); n.setY(n.y() / nlen); }
+        const qreal nlen = std::hypot(n.x(), n.y());
+        if (nlen > 0.0) { n /= nlen; }
 
         // Tangent direction (derivative w.r.t angle parameter) with vertical mirror
         QPointF td(-kEllipseA * std::sin(t), -kEllipseB * std::cos(t));
-        float tlen = std::hypot(td.x(), td.y());
-        if (tlen > 0.0f) { td.setX(td.x() / tlen); td.setY(td.y() / tlen); }
+        const qreal tlen = std::hypot(td.x(), td.y());
+        if (tlen > 0.0) { td /= tlen; }
 
         // Make triangles smaller at low RPM and larger at high RPM
         constexpr float tri_length = 2.0f;

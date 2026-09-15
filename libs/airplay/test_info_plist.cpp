@@ -113,7 +113,8 @@ int main()
         {
             const double pixel_ratio = static_cast<double>(config.width) / config.height;
             const double physical_ratio =
-                static_cast<double>(width_physical->asInteger()) / height_physical->asInteger();
+                static_cast<double>(width_physical->asInteger()) /
+                static_cast<double>(height_physical->asInteger());
             expect(std::abs(pixel_ratio - physical_ratio) < 0.05,
                    "physical size keeps the pixel aspect ratio");
         }

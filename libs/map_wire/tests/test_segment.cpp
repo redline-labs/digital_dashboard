@@ -123,6 +123,20 @@ void test_a_speed_without_a_posted_flag_says_so()
     check(speed.asReader().getPostedKph() == 0, "with the zero carried through");
 }
 
+// A real way id, past 2^31 as OSM's are heading, reaches the wire unchanged
+// and agrees with the id the segment itself was built from.
+void test_the_way_id_reaches_the_wire_unchanged()
+{
+    constexpr std::int64_t kWayId = 3'000'000'123;
+
+    road_graph::SegmentRecord segment {};
+    segment.osmWayId = kWayId;
+    segment.id = road_graph::makeSegmentId(kWayId, 7u);
+
+    check(map_wire::osmWayIdOf(segment) == 3'000'000'123u, "the way id is carried as is");
+    check(road_graph::wayOf(segment.id) == kWayId, "and matches the segment id's way");
+}
+
 } // namespace
 
 int main()
@@ -133,6 +147,7 @@ int main()
     test_every_road_class_maps_to_its_own_wire_value();
     test_every_speed_source_maps_to_its_own_wire_value();
     test_a_speed_without_a_posted_flag_says_so();
+    test_the_way_id_reaches_the_wire_unchanged();
 
     if (failures != 0)
     {

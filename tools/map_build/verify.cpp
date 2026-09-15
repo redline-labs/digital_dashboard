@@ -45,10 +45,9 @@ int runVerify(cli::Context& context)
         SPDLOG_ERROR("{}", osm::to_string(stats.error()));
         return cli::kFailure;
     }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started);
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
 
-    cli::out("read in {:.1f} s\n", elapsed.count() / 1000.0);
+    cli::out("read in {:.1f} s\n", elapsed.count());
     cli::out("blocks     {}\n", stats->blocks);
     cli::out("nodes      {}\n", stats->nodes);
     cli::out("ways       {}\n", stats->ways);

@@ -66,6 +66,32 @@ constexpr int kTransactionAttempts = 8;
 constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(2);
 constexpr auto kReadAfterWriteWindow = std::chrono::milliseconds(25);
 constexpr auto kReadAfterWriteDelay = std::chrono::microseconds(500);
+
+// The coprocessor's length registers are two bytes, most significant first.
+uint16_t big_endian_u16(const std::vector<uint8_t>& bytes)
+{
+    return static_cast<uint16_t>((uint32_t{bytes[0]} << 8u) | bytes[1]);
+}
+
+// What OpenSSL printed into a memory BIO. BIO_get_mem_data returns a long and
+// is negative on failure, so that case is an empty string rather than a huge
+// unsigned length.
+std::string asn1_time_string(const ASN1_TIME* time)
+{
+    std::string text;
+    BIO* bio = BIO_new(BIO_s_mem());
+    if (bio != nullptr && ASN1_TIME_print(bio, time))
+    {
+        char* data = nullptr;
+        const long length = BIO_get_mem_data(bio, &data);
+        if (length > 0 && data != nullptr)
+        {
+            text.assign(data, static_cast<size_t>(length));
+        }
+    }
+    BIO_free(bio);
+    return text;
+}
 }  // namespace
 
 bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
@@ -259,7 +285,7 @@ std::vector<uint8_t> AppleMFIIC::read_certificate_data()
 
     // TODO Do sanity check on the length based on the device protocol version.
 
-    uint16_t cert_length = (value->data()[0] << 8) | value->data()[1];
+    uint16_t cert_length = big_endian_u16(*value);
     SPDLOG_DEBUG("Accessory Certificate Data Length: {} bytes", cert_length);
 
     std::vector<uint8_t> certificate_data;
@@ -368,23 +394,11 @@ std::optional<AppleMFIIC::CertificateInfo> AppleMFIIC::parse_certificate(const s
     const ASN1_TIME* not_after = X509_get0_notAfter(cert);
     
     if (not_before) {
-        BIO* time_bio = BIO_new(BIO_s_mem());
-        if (ASN1_TIME_print(time_bio, not_before)) {
-            char* time_str;
-            long time_len = BIO_get_mem_data(time_bio, &time_str);
-            info.not_before = std::string(time_str, time_len);
-        }
-        BIO_free(time_bio);
+        info.not_before = asn1_time_string(not_before);
     }
     
     if (not_after) {
-        BIO* time_bio = BIO_new(BIO_s_mem());
-        if (ASN1_TIME_print(time_bio, not_after)) {
-            char* time_str;
-            long time_len = BIO_get_mem_data(time_bio, &time_str);
-            info.not_after = std::string(time_str, time_len);
-        }
-        BIO_free(time_bio);
+        info.not_after = asn1_time_string(not_after);
     }
     
     // Extract public key algorithm
@@ -559,7 +573,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
         return std::nullopt;
     }
     
-    uint16_t actual_response_length = (response_length->data()[0] << 8) | response_length->data()[1];
+    uint16_t actual_response_length = big_endian_u16(*response_length);
     SPDLOG_DEBUG("Challenge response data length: {} bytes", actual_response_length);
     
     // Step 6: Read Challenge Response Data (0x12)

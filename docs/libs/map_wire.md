@@ -24,7 +24,7 @@ without a bus. It links `map_rules`, [road_graph](road_graph.html) and
 
 | Header | Declares |
 |---|---|
-| `map_wire/segment.h` | `classOf()` from `map_rules::RouteClass` or the raw byte a `SegmentRecord` stores, `speedSourceOf()` likewise, and `fillSpeed()` from a `road_graph::SegmentRecord` into a `MapSpeed::Builder`. |
+| `map_wire/segment.h` | `classOf()` from `map_rules::RouteClass` or the raw byte a `SegmentRecord` stores, `speedSourceOf()` likewise, `fillSpeed()` from a `road_graph::SegmentRecord` into a `MapSpeed::Builder`, and `osmWayIdOf()` for the schema's unsigned way id. |
 
 ## Using it
 
@@ -59,7 +59,7 @@ getting it wrong matters.
 
 | Target | Labels | Proves |
 |---|---|---|
-| `map_wire_test_segment` | `map_wire unit` | Every `RouteClass` and every `SpeedSource` maps to its own wire value, checked value by value rather than for a couple of classes; a speed without the posted flag says so on the wire. |
+| `map_wire_test_segment` | `map_wire unit` | Every `RouteClass` and every `SpeedSource` maps to its own wire value, checked value by value rather than for a couple of classes; a speed without the posted flag says so on the wire; a way id past 2^31 reaches the wire unchanged. |
 
 The switch makes adding a value a build failure; this test makes reordering one
 a test failure.

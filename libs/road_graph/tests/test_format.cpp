@@ -11,8 +11,10 @@
 // ever published. The test for it is to build the same roads twice in different
 // orders and require the ids to mean the same thing.
 
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -229,9 +231,9 @@ void test_a_ways_segments_are_contiguous_and_ordered()
     }
 
     bool contiguous = true;
-    for (std::size_t i = 1; i < pieces.size(); ++i)
+    for (auto index = pieces.begin(); std::next(index) != pieces.end(); ++index)
     {
-        if (pieces[i] != pieces[i - 1] + 1)
+        if (*std::next(index) != *index + 1)
         {
             contiguous = false;
         }
@@ -239,13 +241,15 @@ void test_a_ways_segments_are_contiguous_and_ordered()
     check(contiguous, "and they are contiguous in the file");
 
     bool ordered = true;
-    for (std::size_t i = 0; i < pieces.size(); ++i)
+    std::uint32_t ordinal = 0u;
+    for (const auto index : pieces)
     {
-        const auto& segment = graph->segments()[pieces[i]];
-        if (road_graph::ordinalOf(segment.id) != i)
+        const auto& segment = graph->segments()[index];
+        if (road_graph::ordinalOf(segment.id) != ordinal)
         {
             ordered = false;
         }
+        ++ordinal;
     }
     check(ordered, "and in order along the way, whatever order they were added in");
 

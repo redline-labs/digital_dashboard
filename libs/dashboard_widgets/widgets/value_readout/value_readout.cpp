@@ -134,20 +134,25 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 	}
 
 	// Scale fonts relative to a reference design size
-	constexpr float kBaseWidth = 140.0f;
-	constexpr float kBaseHeight = 90.0f;
-	constexpr float kBaseLabelPt = 14.0f;
-	constexpr float kBaseValuePt = 40.0f;
-	constexpr float kMinPt = 6.0f;
+	// qreal, like the geometry and point sizes Qt hands back.
+	constexpr qreal kBaseWidth = 140.0;
+	constexpr qreal kBaseHeight = 90.0;
+	constexpr qreal kBaseLabelPt = 14.0;
+	constexpr qreal kBaseValuePt = 40.0;
+	constexpr qreal kMinPt = 6.0;
 	// Breathing space between the label baseline and the top of the value.
-	constexpr float kGapFraction = 0.04f;
+	constexpr qreal kGapFraction = 0.04;
 	// Horizontal inset, so text never butts up against the widget's edge and
 	// look like it has been cut off by its neighbour.
-	constexpr float kInsetFraction = 0.02f;
+	constexpr qreal kInsetFraction = 0.02;
 
-	const float sx = bounds.width() / kBaseWidth;
-	const float sy = bounds.height() / kBaseHeight;
-	const float s = std::min(sx, sy);
+	const qreal sx = bounds.width() / kBaseWidth;
+	const qreal sy = bounds.height() / kBaseHeight;
+	const qreal s = std::min(sx, sy);
+
+	// QPainter::drawText takes its alignment as int flags; Qt::Alignment holds
+	// them unsigned. Every Qt::AlignmentFlag fits an int.
+	const int textFlags = static_cast<int>((hAlign | Qt::AlignVCenter).toInt());
 
 	QFont scaledLabel = _labelFont;
 	scaledLabel.setPointSizeF(std::max(kMinPt, kBaseLabelPt * s));
@@ -176,7 +181,7 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 		painter->setFont(scaledLabel);
 		// Elided, not wrapped: a label that wrapped would push into the value's
 		// half of the widget and collide with it.
-		painter->drawText(labelRect, hAlign | Qt::AlignVCenter,
+		painter->drawText(labelRect, textFlags,
 		                  label_fm.elidedText(labelText, Qt::ElideRight, labelRect.width()));
 	}
 
@@ -205,7 +210,7 @@ void ValueReadoutWidget::drawContents(QPainter* painter)
 
 	painter->setPen(valueColor);
 	painter->setFont(scaledValue);
-	painter->drawText(valueRect, hAlign | Qt::AlignVCenter, valueText);
+	painter->drawText(valueRect, textFlags, valueText);
 
 	painter->restore();
 }

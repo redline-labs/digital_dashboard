@@ -1,0 +1,31 @@
+Backport of upstream yaml-cpp master: std::streamsize precision passed to
+FpToString(size_t) without a conversion, which -Wsign-conversion reports in
+every translation unit that includes yaml-cpp. Drop this patch when the pin
+moves past 0.9.0.
+
+diff --git a/include/yaml-cpp/emitter.h b/include/yaml-cpp/emitter.h
+index 67810ef..f508e97 100644
+--- a/include/yaml-cpp/emitter.h
++++ b/include/yaml-cpp/emitter.h
+@@ -187,7 +187,7 @@ inline Emitter& Emitter::WriteStreamable(T value) {
+   }
+ 
+   if (!special) {
+-    stream << FpToString(value, stream.precision());
++    stream << FpToString(value, static_cast<size_t>(stream.precision()));
+   }
+   m_stream << stream.str();
+ 
+diff --git a/include/yaml-cpp/node/convert.h b/include/yaml-cpp/node/convert.h
+index 0f04ea6..fbec7bb 100644
+--- a/include/yaml-cpp/node/convert.h
++++ b/include/yaml-cpp/node/convert.h
+@@ -130,7 +130,7 @@ inner_encode(const T& rhs, std::stringstream& stream){
+       stream << ".inf";
+     }
+   } else {
+-    stream << FpToString(rhs, stream.precision());
++    stream << FpToString(rhs, static_cast<size_t>(stream.precision()));
+   }
+ }
+ 

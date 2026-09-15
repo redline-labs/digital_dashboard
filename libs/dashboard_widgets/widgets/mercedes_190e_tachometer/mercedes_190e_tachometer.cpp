@@ -100,6 +100,9 @@ void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
 
     // We iterate based on the *displayed* scale (0-70 for labels/major ticks).
     float displayedMax = _cfg.max_rpm / 100.0f; // e.g., 70.0f
+    // The same limit for the whole-number labels: n <= displayedMax exactly
+    // when n <= floor(displayedMax).
+    const int displayedMaxWhole = static_cast<int>(std::floor(displayedMax));
 
     // Revised loop for clarity: Iterate for ticks based on displayed values (0, 1, 2, ..., displayedMax)
     for (float displayed_val_iter = 0; displayed_val_iter <= displayedMax; displayed_val_iter += 5.0f) {
@@ -113,7 +116,7 @@ void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
         // val_for_logic is on the 0-70 scale for determining tick type and number labels
         int val_for_logic = static_cast<int>(std::round(displayed_val_iter));
 
-        bool isMajor = (val_for_logic == 0 || val_for_logic == 5 || (val_for_logic >= 10 && val_for_logic <= displayedMax && val_for_logic % 10 == 0));
+        bool isMajor = (val_for_logic == 0 || val_for_logic == 5 || (val_for_logic >= 10 && val_for_logic <= displayedMaxWhole && val_for_logic % 10 == 0));
         
         tickLength = 12.0f; // Longest
         currentPen.setWidthF(isMajor ? 3.0f : 1.75f);
@@ -124,7 +127,7 @@ void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
         painter->drawLine(p1, p2);
 
         // Draw numbers for: 5, 10, 20, 30, 40, 50, 60, 70 (NOT 0) - these are from val_for_logic
-        if (val_for_logic == 5 || (val_for_logic >= 10 && val_for_logic <= displayedMax && val_for_logic % 10 == 0))
+        if (val_for_logic == 5 || (val_for_logic >= 10 && val_for_logic <= displayedMaxWhole && val_for_logic % 10 == 0))
         {
             QString numStr = QString::number(val_for_logic); // Use val_for_logic for the text
             QRectF textRect = fm.boundingRect(numStr);
@@ -170,11 +173,11 @@ void Mercedes190ETachometer::drawStaticText(QPainter *painter) {
     QPointF basePos(radialDist * std::cos(textAngleRad), radialDist * std::sin(textAngleRad));
     
     QRect textRect1 = fm.boundingRect(text1);
-    QPointF textPos1(basePos.x() - textRect1.width() / 2.0f, basePos.y() - textRect1.height() / 2.0f - fm.descent());
+    QPointF textPos1(basePos.x() - textRect1.width() / 2.0, basePos.y() - textRect1.height() / 2.0 - fm.descent());
     painter->drawText(textPos1, text1);
 
     QRect textRect2 = fm.boundingRect(text2);
-    QPointF textPos2(basePos.x() - textRect2.width() / 2.0f, basePos.y() + textRect2.height() / 2.0f - fm.descent());
+    QPointF textPos2(basePos.x() - textRect2.width() / 2.0, basePos.y() + textRect2.height() / 2.0 - fm.descent());
     painter->drawText(textPos2, text2);
 
     painter->restore();
@@ -256,14 +259,14 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
     
     // Draw hour hand
     painter->save();
-    float hourAngle = (m_currentTime.hour() % 12 + m_currentTime.minute() / 60.0f) * 30.0f - 90.0f; // 30 degrees per hour, -90 to start at 12
+    const qreal hourAngle = (m_currentTime.hour() % 12 + m_currentTime.minute() / 60.0) * 30.0 - 90.0; // 30 degrees per hour, -90 to start at 12
     painter->rotate(hourAngle);
     gauge_paint::drawTaperedNeedle(*painter, hourHandLength, hourHandBaseWidth, hourHandTipWidth, handColor);
     painter->restore();
 
     // Draw minute hand
     painter->save();
-    float minuteAngle = (m_currentTime.minute()) * 6.0f - 90.0f; // 6 degrees per minute, -90 to start at 12
+    const qreal minuteAngle = m_currentTime.minute() * 6.0 - 90.0; // 6 degrees per minute, -90 to start at 12
     painter->rotate(minuteAngle);
     gauge_paint::drawTaperedNeedle(*painter, minuteHandLength, minuteHandBaseWidth, minuteHandTipWidth, handColor);
     painter->restore();

@@ -121,15 +121,13 @@ void testConsecutiveMessagesDoNotBleed()
         auto& fields = pub.fields();
         fields.setId(expected.id);
         fields.setLen(static_cast<uint8_t>(len & 0xFF));
-        auto data = fields.initData(len);
         for (size_t i = 0; i < len; ++i)
         {
             // Vary with both the message index and the offset, so a stale byte
             // from the previous message is a mismatch rather than a coincidence.
-            const auto byte = static_cast<uint8_t>((i * 7 + n * 31 + 1) & 0xFF);
-            data.set(i, byte);
-            expected.data.push_back(byte);
+            expected.data.push_back(static_cast<uint8_t>((i * 7 + n * 31 + 1) & 0xFF));
         }
+        fields.setData(kj::arrayPtr(expected.data.data(), expected.data.size()));
         pub.put();
         want.push_back(std::move(expected));
     }

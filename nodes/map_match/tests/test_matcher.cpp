@@ -95,7 +95,7 @@ std::filesystem::path buildStraightRoad(const std::string& name)
     builder.add(line(1, 0, 1, 2, kLat, kLon, 6, "Main Street"));
     builder.add(line(1, 1, 2, 3, kLat + 5 * kStep, kLon, 6, "Main Street"));
     builder.add(line(1, 2, 3, 4, kLat + 10 * kStep, kLon, 6, "Main Street"));
-    builder.write(path, 0);
+    check(builder.write(path, 0).has_value(), "the test graph writes");
     return path;
 }
 
@@ -234,7 +234,7 @@ void test_heading_decides_between_parallel_roads()
     south.name = "Southbound";
     builder.add(std::move(south));
 
-    builder.write(path, 0);
+    check(builder.write(path, 0).has_value(), "the test graph writes");
 
     auto graph = road_graph::Graph::open(path);
     if (!graph)
@@ -286,7 +286,7 @@ void test_a_stationary_vehicle_is_not_re_matched_on_noise()
     road_graph::Builder builder;
     builder.add(line(1, 0, 1, 2, kLat, kLon, 8, "Northbound"));
     builder.add(line(2, 0, 3, 4, kLat, kLon + 2 * kStep, 8, "Parallel"));
-    builder.write(path, 0);
+    check(builder.write(path, 0).has_value(), "the test graph writes");
 
     auto graph = road_graph::Graph::open(path);
     if (!graph)
@@ -468,7 +468,7 @@ void test_the_horizon_stops_at_a_fork()
     right.name = "Right";
     builder.add(std::move(right));
 
-    builder.write(path, 0);
+    check(builder.write(path, 0).has_value(), "the test graph writes");
 
     auto graph = road_graph::Graph::open(path);
     if (!graph)

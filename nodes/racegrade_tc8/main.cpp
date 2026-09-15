@@ -1,3 +1,4 @@
+#include "pub_sub/can_frame.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -58,8 +59,10 @@ static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t&
 {
     auto& outputs = diagnostics_pub.fields();
     outputs.setColdJunctionComp1(msg.Cold_Junct_Comp1);
-    outputs.setColdJunctionComp2(msg.Cold_Junct_Comp2);
-    outputs.setE888IntTemp(msg.E888_Int_Temp);
+    // Whole degrees from a 16-bit field offset by -200, so int32_t in the
+    // decoder. Every value in that range is exact in the schema's Float32.
+    outputs.setColdJunctionComp2(static_cast<float>(msg.Cold_Junct_Comp2));
+    outputs.setE888IntTemp(static_cast<float>(msg.E888_Int_Temp));
     outputs.setDig1InState(msg.Dig_1_In_State);
     outputs.setDig2InState(msg.Dig_2_In_State);
     outputs.setDig3InState(msg.Dig_3_In_State);
@@ -134,22 +137,13 @@ int main(int argc, char** argv)
     // Subscribe to CAN frames and feed parser using typed subscriber
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         "vehicle/can0/rx",
-        [&parser](CanFrame::Reader frame)
+        [&parser](CanFrame::Reader message)
         {
-            uint32_t id = frame.getId();
-            uint8_t len = frame.getLen();
-            auto dataList = frame.getData();
-
-            std::array<uint8_t, 8u> bytes{};
-            const size_t n = std::min<size_t>(8u, std::min<size_t>(len, dataList.size()));
-            for (size_t i = 0; i < n; ++i)
-            {
-                bytes[i] = static_cast<uint8_t>(dataList[i]);
-            }
-            // The real length, not the padded buffer: a frame shorter than the
+            // The real length, not a padded buffer: a frame shorter than the
             // message it claims to be must be rejected, not decoded as though
             // the padding were readings.
-            parser.handle_can_frame(id, std::span<const uint8_t>(bytes.data(), n));
+            const helpers::CanFrame frame = pub_sub::fromCapnp(message);
+            parser.handle_can_frame(frame.id, frame.data_span());
         });
 
     // Keep the process alive; Ctrl+C to exit

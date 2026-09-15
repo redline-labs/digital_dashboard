@@ -20,10 +20,10 @@ inline constexpr QColor kPivotColor(40, 40, 40);
 
 // Centers the painter on the widget and scales uniformly so drawing code can
 // work on a fixed logical canvas (default 200x200, i.e. radius 100).
-inline void applyCenteredScale(QPainter& painter, const QWidget& widget, float logical_size = 200.0f)
+inline void applyCenteredScale(QPainter& painter, const QWidget& widget, qreal logical_size = 200.0)
 {
-    const int side = std::min(widget.width(), widget.height());
-    painter.translate(widget.width() / 2.0f, widget.height() / 2.0f);
+    const qreal side = std::min(widget.width(), widget.height());
+    painter.translate(widget.width() / 2.0, widget.height() / 2.0);
     painter.scale(side / logical_size, side / logical_size);
 }
 

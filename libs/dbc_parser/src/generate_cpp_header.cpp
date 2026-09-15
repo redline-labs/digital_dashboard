@@ -706,9 +706,6 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     {
         fmt::print(out, "    static constexpr std::string_view multiplexor_name = {};\n",
                    stringLiteral(muxSignal->name));
-        fmt::print(out, "    static constexpr std::array<uint32_t, {}> multiplexor_group_indexes = {{{}}};\n",
-                   muxGroups.size(), fmt::join(muxGroups, ", "));
-        fmt::print(out, "    static constexpr uint32_t start_mux_group_index = {}u;\n", startMuxGroup);
     }
 
     fmt::print(out, "\n");
@@ -725,6 +722,18 @@ void generateMessageHeader(const dbc_parser::Message &message, const std::string
     for (const auto &signal : message.signals)
     {
         generateSignalTraits(signal, planSignal(signal), out);
+    }
+
+    if (multiplexed)
+    {
+        // Group indexes are raw multiplexor bit patterns, which is what the
+        // gating compares, so they are typed as the multiplexor's Raw. They
+        // come after the traits because the array's element type needs them.
+        fmt::print(out, "    static constexpr std::array<sig_{}_t::Raw, {}u> multiplexor_group_indexes = {{{}}};\n",
+                   muxSignal->name, muxGroups.size(), fmt::join(muxGroups, ", "));
+        fmt::print(out, "    static constexpr sig_{}_t::Raw start_mux_group_index = {}u;\n", muxSignal->name,
+                   startMuxGroup);
+        fmt::print(out, "\n");
     }
 
     for (const auto &signal : message.signals)

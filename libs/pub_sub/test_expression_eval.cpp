@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -129,7 +130,8 @@ void testTruncatedAndMisalignedPayloadsAreRejected()
            "word-aligned garbage is rejected rather than throwing or reading as zero");
 
     // Truncated mid-message, which is what a severed transfer looks like.
-    std::vector<uint8_t> half(good.begin(), good.begin() + (good.size() / 2 / 8) * 8);
+    const auto halfBytes = std::span<const uint8_t>(good).first((good.size() / 2 / 8) * 8);
+    const std::vector<uint8_t> half(halfBytes.begin(), halfBytes.end());
     (void)sub->evaluate<float>(half);  // may or may not decode; must not crash
 
     // The subscriber still works afterwards: a bad sample must not poison it.

@@ -297,10 +297,12 @@ bool runSimulation(ZenohBridge& bridge, std::atomic<bool>& stop, int width, int 
 
             NavGuidance nav;
             nav.active = true;
-            nav.road_name = kRoads[(elapsed / 10) % std::size(kRoads)];
-            nav.after_road_name = kRoads[((elapsed / 10) + 1) % std::size(kRoads)];
+            // A new road every ten seconds. elapsed counts up from zero.
+            const auto step = static_cast<std::size_t>(elapsed / 10);
+            nav.road_name = kRoads[step % std::size(kRoads)];
+            nav.after_road_name = kRoads[(step + 1u) % std::size(kRoads)];
             nav.destination_name = "Home";
-            nav.maneuver_type = static_cast<uint16_t>((elapsed / 10) % 8);
+            nav.maneuver_type = static_cast<uint16_t>(step % 8u);
             nav.maneuver_angle_deg = static_cast<int16_t>(-90 + (elapsed % 180));
             nav.distance_to_maneuver_m = 800.0f - static_cast<float>(elapsed % 800);
             nav.distance_remaining_m = 12000.0f - static_cast<float>(elapsed * 5);

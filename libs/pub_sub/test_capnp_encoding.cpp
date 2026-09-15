@@ -155,11 +155,7 @@ void testDynamicDecodeAgainstResolvedSchema()
     auto frame = message.initRoot<CanFrame>();
     frame.setId(kId);
     frame.setLen(kLen);
-    auto data = frame.initData(payload.size());
-    for (size_t i = 0; i < payload.size(); ++i)
-    {
-        data.set(i, payload[i]);
-    }
+    frame.setData(kj::arrayPtr(payload.data(), payload.size()));
 
     const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
     const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
@@ -185,7 +181,7 @@ void testDynamicDecodeAgainstResolvedSchema()
     auto decoded = root.get("data").as<capnp::DynamicList>();
     expectEq(static_cast<size_t>(decoded.size()), payload.size(),
              "dynamic decode reads the full payload");
-    for (size_t i = 0; i < payload.size() && i < decoded.size(); ++i)
+    for (capnp::uint i = 0u; i < decoded.size() && i < payload.size(); ++i)
     {
         expectEq(decoded[i].as<uint8_t>(), payload[i],
                  "dynamic decode reads payload byte " + std::to_string(i));

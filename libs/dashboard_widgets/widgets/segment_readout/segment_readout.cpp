@@ -49,8 +49,8 @@ constexpr int kFitIterations = 12;
 constexpr qreal kMinPointSize = 4.0;
 constexpr qreal kMaxPointSize = 400.0;
 
-constexpr float kCaptionFractionOfHeight = 0.24f;
-constexpr float kCaptionGapFraction = 0.10f;
+constexpr qreal kCaptionFractionOfHeight = 0.24;
+constexpr qreal kCaptionGapFraction = 0.10;
 
 }  // namespace
 
