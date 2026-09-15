@@ -162,6 +162,17 @@ at once on any change:
 Every one of them stops the data stream for as long as it takes, for the
 reason above. Services are not offered in replay mode.
 
+## Tests
+
+```bash
+ctest --test-dir build -L mti610
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `mti610_test_config` | `mti610 unit` | The YAML config without a device. |
+| `mti610_test_fields` | `mti610 unit` | Each XBus item onto its schema, one distinct number per axis: two axes swapped is a vehicle that corners when it brakes, and every value stays plausible. |
+
 ## Troubleshooting
 
 **`no goto_config_ack from the device` on every attempt.** The bytes are not

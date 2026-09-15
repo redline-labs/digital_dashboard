@@ -48,3 +48,25 @@ target_link_libraries(xpr_test_config
 )
 
 add_project_test(TARGET xpr_test_config LABELS xpr unit)
+
+# The radio's state onto its schemas. Recompiles publishers.cpp directly, like
+# the config test above: zone and channel are adjacent small integers and the
+# four identity strings all look alike, so a transposition is invisible on the
+# bus.
+add_executable(xpr_test_publishers
+    tests/test_publishers.cpp
+    publishers.cpp
+)
+
+target_include_directories(xpr_test_publishers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(xpr_test_publishers
+    PRIVATE
+        xpr
+        zenoh_pub_sub
+        schemas
+        capnp
+        spdlog::spdlog
+)
+
+add_project_test(TARGET xpr_test_publishers LABELS xpr unit)

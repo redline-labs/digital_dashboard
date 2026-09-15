@@ -212,6 +212,17 @@ inspect call nodes/bd992/set_output_config --data '{"dryRun":true,"outputs":[...
 arbitrary command can leave a receiver unreachable. `set_output_config` will
 not write while the node is in `report_only` mode.
 
+## Tests
+
+```bash
+ctest --test-dir build -L bd992
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `bd992_test_config` | `bd992 unit` | The YAML config, exercised without a receiver: every field, the defaults, and what a bad file reports. |
+| `bd992_test_fields` | `bd992 unit` | Each GSOF record onto its schema, with the radians-to-degrees conversion pinned: a position published in radians is still a plausible position, thousands of kilometres away. |
+
 ## Troubleshooting
 
 **`--probe` times out on every application file index** while the stream port

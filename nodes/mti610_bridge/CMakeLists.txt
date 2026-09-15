@@ -11,6 +11,7 @@ project(mti610_bridge)
 # the same split as `bd992` and `bd992_bridge`.
 add_executable(mti610_bridge
     main.cpp
+    xbus_fields.cpp
     node_config.cpp
     publishers.cpp
     services.cpp
@@ -49,3 +50,23 @@ target_link_libraries(mti610_test_config
 )
 
 add_project_test(TARGET mti610_test_config LABELS mti610 unit)
+
+# One XBus item onto its schema. The axes and the units are the whole content of
+# an inertial reading, so a transposed pair reads as a vehicle doing something
+# else entirely.
+add_executable(mti610_test_fields
+    tests/test_fields.cpp
+    xbus_fields.cpp
+)
+
+target_include_directories(mti610_test_fields PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(mti610_test_fields
+    PRIVATE
+        xbus
+        schemas
+        capnp
+        spdlog::spdlog
+)
+
+add_project_test(TARGET mti610_test_fields LABELS mti610 unit)

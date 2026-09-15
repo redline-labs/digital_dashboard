@@ -116,6 +116,17 @@ cannot be changed over this link at all, and a request for another one is
 refused rather than approximated by stepping in the hope of crossing a
 boundary.
 
+## Tests
+
+```bash
+ctest --test-dir build -L xpr
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `xpr_test_config` | `xpr unit` | The YAML config without a radio. |
+| `xpr_test_publishers` | `xpr unit` | The channel and identity mappings shared by the topics and the service replies: zone and channel are adjacent small integers, and the four identity strings all look alike. |
+
 ## Troubleshooting
 
 **`ping 192.168.10.1` does not answer.** The problem is the RNDIS interface,

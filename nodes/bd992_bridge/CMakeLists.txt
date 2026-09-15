@@ -11,6 +11,7 @@ project(bd992_bridge)
 # links -- the same split as `can` and `can_bridge`.
 add_executable(bd992_bridge
     main.cpp
+    gsof_fields.cpp
     node_config.cpp
     publishers.cpp
     services.cpp
@@ -49,3 +50,23 @@ target_link_libraries(bd992_test_config
 )
 
 add_project_test(TARGET bd992_test_config LABELS bd992 unit)
+
+# One GSOF record onto its schema. Recompiles gsof_fields.cpp directly, like the
+# config test: radians to degrees happens here and nowhere else, and a position
+# published in radians is still a plausible position.
+add_executable(bd992_test_fields
+    tests/test_fields.cpp
+    gsof_fields.cpp
+)
+
+target_include_directories(bd992_test_fields PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(bd992_test_fields
+    PRIVATE
+        gsof
+        schemas
+        capnp
+        spdlog::spdlog
+)
+
+add_project_test(TARGET bd992_test_fields LABELS bd992 unit)
