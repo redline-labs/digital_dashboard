@@ -9,8 +9,9 @@ BU_ : ECU
 BO_ 768 Multiplexed: 8 ECU
  SG_ MuxIndex M : 0|4@0+ (1,0) [0|15] "" ECU
  SG_ Always : 8|8@0+ (1,0) [0|255] "" ECU
- SG_ Group0 m0 : 24|8@1+ (1,0) [0|255] "" ECU
- SG_ Group1 m2 : 32|16@0+ (1,0) [0|65535] "" ECU
+ SG_ Group1 m1 : 16|16@0+ (1,0) [0|65535] "" ECU
+ SG_ Group2 m2 : 40|12@1- (1,0) [-2048|2047] "" ECU
+ SG_ Group0 m0 : 52|8@1+ (1,0) [0|255] "" ECU
  SG_ Group3 m3 : 3|3@0- (1,0) [-4|3] "" ECU
 
 BO_ 769 WithValues: 8 ECU

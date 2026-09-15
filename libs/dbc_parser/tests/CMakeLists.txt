@@ -8,6 +8,9 @@
 generate_dbc_code(dbc_test_layout ${CMAKE_CURRENT_SOURCE_DIR}/dbcs/dbc_test_layout.dbc)
 generate_dbc_code(dbc_test_scaling ${CMAKE_CURRENT_SOURCE_DIR}/dbcs/dbc_test_scaling.dbc)
 generate_dbc_code(dbc_test_features ${CMAKE_CURRENT_SOURCE_DIR}/dbcs/dbc_test_features.dbc)
+# Signals on either side of every type-selection boundary: float vs double at
+# R' = 2^20, and each integer width a scaled field can need.
+generate_dbc_code(dbc_test_precision ${CMAKE_CURRENT_SOURCE_DIR}/dbcs/dbc_test_precision.dbc)
 
 # Differential test against cantools, over the synthetic sweep.
 add_executable(dbc_parser_test_golden
@@ -21,6 +24,7 @@ target_link_libraries(dbc_parser_test_golden
     dbc_test_layout
     dbc_test_scaling
     dbc_test_features
+    dbc_test_precision
     helpers
 )
 

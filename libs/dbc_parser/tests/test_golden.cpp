@@ -12,6 +12,7 @@
 
 #include "dbc_test_features.h"
 #include "dbc_test_layout.h"
+#include "dbc_test_precision.h"
 #include "dbc_test_scaling.h"
 
 #include <cstdio>
@@ -83,6 +84,8 @@ int main()
         "dbc_test_scaling", golden_data::k_dbc_test_scaling);
     failures += golden::replay<dbc_test_features::dbc_test_features_t>(
         "dbc_test_features", golden_data::k_dbc_test_features);
+    failures += golden::replay<dbc_test_precision::dbc_test_precision_t>(
+        "dbc_test_precision", golden_data::k_dbc_test_precision);
 
     if (failures != 0)
     {

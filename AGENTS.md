@@ -217,7 +217,11 @@ discovery seeing only live traffic, and what `accepted: false` and
   cantools' and are embedded in `tests/golden_data.h`. Nothing under `tests/`
   reads `dbcs/`, so editing a vendor DBC cannot break a parser test. cantools is
   not a build dependency — regenerate only when changing the sweep:
-  `python3 -m venv /tmp/ct && /tmp/ct/bin/pip install cantools && /tmp/ct/bin/python libs/dbc_parser/tests/gen_golden.py`.
+  `python3 -m venv /tmp/ct && /tmp/ct/bin/pip install cantools==44.0.0 && /tmp/ct/bin/python libs/dbc_parser/tests/gen_golden.py`.
+  The version is pinned and the script refuses any other: cantools rounds half
+  to even and raises on out-of-range values, where the generated code rounds
+  half away from zero and saturates, so no golden starts from a tie or from
+  outside the field.
   Dropping product-DBC round-trip coverage is only safe while that sweep stays
   *generated*; hand-picking cases would break the argument.
 - **Tile coordinates are XYZ everywhere except on disk.** An `.mbtiles` file
