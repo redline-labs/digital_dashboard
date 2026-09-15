@@ -1,4 +1,5 @@
 #include "dbc_motec_ltc_rev1_parser.h"
+#include "motec_ltc_messages.h"
 
 #include "cli/interrupt.h"
 #include "node_health/reporter.h"
@@ -20,89 +21,20 @@
 
 static void publish_ltc(const dbc_motec_ltc_rev1::LTC_1_ID1_t& m, pub_sub::ZenohPublisher<MotecLtcTelemetry>& pub)
 {
-    using SensorState = dbc_motec_ltc_rev1::LTC_1_ID1_t::sig_LTC1_SensorState_t::Values;
-
-    auto& out = pub.fields();
-    out.setIndex(m.LTC1_Index);
-    out.setLambda(m.LTC1_Lambda);
-    out.setIpn(m.LTC1_Ipn);
-    out.setInternalTempC(m.LTC1_InternalTemp);
-
-    out.setSensorControlFault(static_cast<bool>(m.LTC1_SensorControlFault));
-    out.setInternalFault(static_cast<bool>(m.LTC1_InternalFault));
-    out.setSensorWireShort(static_cast<bool>(m.LTC1_SensorWireShort));
-    out.setHeaterFailedToHeat(static_cast<bool>(m.LTC1_HeaterFailedtoHeat));
-    out.setHeaterOpenCircuit(static_cast<bool>(m.LTC1_HeaterOpenCircuit));
-    out.setHeaterShortToVbatt(static_cast<bool>(m.LTC1_HeaterShorttoVBATT));
-    out.setHeaterShortToGnd(static_cast<bool>(m.LTC1_HeaterShorttoGND));
-
-    out.setHeaterDutyCyclePct(m.LTC1_HeaterDutyCycle);
-
-    switch (m.LTC1_SensorState)
-    {
-        case SensorState::START:
-            out.setSensorState(LtcSensorState::START);
-            break;
-
-        case SensorState::DIAGNOSTICS:
-            out.setSensorState(LtcSensorState::DIAGNOSTICS);
-            break;
-
-        case SensorState::PRE_CAL:
-            out.setSensorState(LtcSensorState::PRE_CAL);
-            break;
-
-        case SensorState::CALIBRATION:
-            out.setSensorState(LtcSensorState::CALIBRATION);
-            break;
-
-        case SensorState::POST_CAL:
-            out.setSensorState(LtcSensorState::POST_CAL);
-            break;
-
-        case SensorState::PAUSED:
-            out.setSensorState(LtcSensorState::PAUSED);
-            break;
-
-        case SensorState::HEATING:
-            out.setSensorState(LtcSensorState::HEATING);
-            break;
-
-        case SensorState::RUNNING:
-            out.setSensorState(LtcSensorState::RUNNING);
-            break;
-
-        case SensorState::COOLING:
-            out.setSensorState(LtcSensorState::COOLING);
-            break;
-
-        case SensorState::PUMP_START:
-            out.setSensorState(LtcSensorState::PUMP_START);
-            break;
-
-        case SensorState::PUMP_OFF:
-            out.setSensorState(LtcSensorState::PUMP_OFF);
-            break;
-
-        default:
-            out.setSensorState(LtcSensorState::START);
-            break;
-    }
-
-    out.setBattVolts(m.LTC1_BattVolts);
-    out.setIp(m.LTC1_Ip);
-    out.setRi(m.LTC1_Ri);
-
+    motec_ltc::fillTelemetry(m, pub.fields());
     pub.put();
 }
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::debug);
-    core::setupLogging({.program = "motec_ltc"});
-
     cxxopts::Options options("motec_ltc", "MoTeC LTC node");
     options.add_options()
+        ("s,source", "Zenoh key carrying CAN frames",
+            cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
+        ("p,prefix", "Zenoh key prefix for this node's topics",
+            cxxopts::value<std::string>()->default_value("nodes/motec_ltc"))
+        ("debug", "Debug logging.",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("h,help", "Print usage");
 
     auto result = options.parse(argc, argv);
@@ -112,6 +44,13 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    // Logging is set up AFTER the parse, so --debug decides the level rather
+    // than the level being forced before anyone can ask for anything else.
+    core::setupLogging({.program = "motec_ltc", .debug = result["debug"].as<bool>()});
+
+    const std::string can_key = result["source"].as<std::string>();
+    const std::string prefix = result["prefix"].as<std::string>();
+
     // Announce this process so tools can put a name to the session id that
     // appears on every topic it advertises and every sample it stamps. See
     // pub_sub/node_identity.h.
@@ -120,7 +59,10 @@ int main(int argc, char** argv)
     // SIGINT and SIGTERM both set the flag the loop below polls.
     cli::installInterruptHandler();
 
-    pub_sub::ZenohPublisher<MotecLtcTelemetry> ltc_pub("vehicle/lambda0");
+    // `nodes/<node>/<stream>`, like every other node. This used to publish on
+    // `vehicle/lambda0`, which read as a vehicle-wide signal rather than as one
+    // node's output; --prefix restores the old key for a config that wants it.
+    pub_sub::ZenohPublisher<MotecLtcTelemetry> ltc_pub(prefix + "/telemetry");
 
     dbc_motec_ltc_rev1::dbc_motec_ltc_rev1_parser parser;
     parser.on_LTC_1_ID1([&](const dbc_motec_ltc_rev1::LTC_1_ID1_t& msg){
@@ -136,7 +78,7 @@ int main(int argc, char** argv)
     auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
 
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
-        "vehicle/can0/rx",
+        can_key,
         [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
             frames_in.touch();

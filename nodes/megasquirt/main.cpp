@@ -1,4 +1,5 @@
 #include "dbc_megasquirt_dash_data_parser.h"
+#include "megasquirt_messages.h"
 
 #include "cli/interrupt.h"
 #include "node_health/reporter.h"
@@ -23,55 +24,22 @@
 
 using namespace dbc_megasquirt_dash_data;
 
-static void publish_dash(const dbc_megasquirt_dash_data_parser::db_t& db, pub_sub::ZenohPublisher<MegasquirtDash>& pub)
+static void publish_dash(const dbc_megasquirt_dash_data::dbc_megasquirt_dash_data_parser::db_t& db, pub_sub::ZenohPublisher<MegasquirtDash>& pub)
 {
-    auto& out = pub.fields();
-    const auto& dash0 = db.megasquirt_dash0;
-    const auto& dash1 = db.megasquirt_dash1;
-    const auto& dash2 = db.megasquirt_dash2;
-    const auto& dash3 = db.megasquirt_dash3;
-    const auto& dash4 = db.megasquirt_dash4;
-
-    // Frame 0
-    out.setRpm(dash0.rpm);
-    out.setMapKpa(dash0.map);
-    out.setTpsPct(dash0.tps);
-    out.setCoolantTempF(dash0.clt);
-
-    // Frame 1
-    out.setIgnitionAdvanceDeg(dash1.adv_deg);
-    out.setIntakeAirTempF(dash1.mat);
-    out.setInjPw1Ms(dash1.pw1);
-    out.setInjPw2Ms(dash1.pw2);
-
-    // Frame 2
-    out.setSeqPw1Ms(dash2.pwseq1);
-    out.setEgt1F(dash2.egt1);
-    out.setEgoCorrectionPct(dash2.egocor1);
-    out.setAfr1(dash2.AFR1);
-    out.setAfrTarget1(dash2.afrtgt1);
-
-    // Frame 3
-    out.setKnockRetardDeg(dash3.knk_rtd);
-    out.setSensor1(dash3.sensors1);
-    out.setSensor2(dash3.sensors2);
-    out.setBatteryVolts(dash3.batt);
-
-    // Frame 4
-    out.setLaunchTimingDeg(dash4.launch_timing);
-    out.setTcRetard(dash4.tc_retard);
-    out.setVssMps(dash4.VSS1);
-
+    megasquirt::fillDash(db, pub.fields());
     pub.put();
 }
 
 int main(int argc, char** argv)
 {
-    spdlog::set_level(spdlog::level::debug);
-    core::setupLogging({.program = "megasquirt"});
-
     cxxopts::Options options("megasquirt", "Megasquirt dash node");
     options.add_options()
+        ("s,source", "Zenoh key carrying CAN frames",
+            cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
+        ("p,prefix", "Zenoh key prefix for this node's topics",
+            cxxopts::value<std::string>()->default_value("nodes/megasquirt"))
+        ("debug", "Debug logging.",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("h,help", "Print usage");
 
     auto result = options.parse(argc, argv);
@@ -81,6 +49,13 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    // Logging is set up AFTER the parse, so --debug decides the level rather
+    // than the level being forced before anyone can ask for anything else.
+    core::setupLogging({.program = "megasquirt", .debug = result["debug"].as<bool>()});
+
+    const std::string can_key = result["source"].as<std::string>();
+    const std::string prefix = result["prefix"].as<std::string>();
+
     // Announce this process so tools can put a name to the session id that
     // appears on every topic it advertises and every sample it stamps. See
     // pub_sub/node_identity.h.
@@ -89,7 +64,7 @@ int main(int argc, char** argv)
     // SIGINT and SIGTERM both set the flag the loop below polls.
     cli::installInterruptHandler();
 
-    pub_sub::ZenohPublisher<MegasquirtDash> dash_pub("nodes/megasquirt/dash");
+    pub_sub::ZenohPublisher<MegasquirtDash> dash_pub(prefix + "/dash");
 
     dbc_megasquirt_dash_data_parser parser;
 
@@ -114,7 +89,7 @@ int main(int argc, char** argv)
     auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
 
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
-        "vehicle/can0/rx",
+        can_key,
         [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
             frames_in.touch();

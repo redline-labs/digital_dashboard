@@ -18,8 +18,9 @@ other DBC in that directory describes.
 
 ## Running it
 
-The node takes only command-line options, and the only one is `--help`. The
-frame topic and the output topic are fixed in the source.
+The node takes only command-line options. The frame topic it reads and the
+prefix it publishes under are both configurable; the defaults are what a
+standard bring-up uses.
 
 ```bash
 ./build/nodes/megasquirt/megasquirt
@@ -27,9 +28,12 @@ frame topic and the output topic are fixed in the source.
 
 | Option | Meaning |
 |---|---|
+| `-s`, `--source` | Zenoh key carrying CAN frames (default `vehicle/can0/rx`) |
+| `-p`, `--prefix` | Key prefix for this node's topics (default `nodes/megasquirt`) |
+| `--debug` | Debug logging |
 | `-h`, `--help` | Print usage and exit |
 
-Logging is at debug level from the start; there is no flag to quieten it.
+Logging is at info level unless `--debug` is given.
 
 ### Running without hardware
 
@@ -85,6 +89,20 @@ monitor reads a deliberate stop as `exited` rather than as a crash.
 ## Services
 
 None.
+
+## Tests
+
+```bash
+ctest --test-dir build -L megasquirt
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `megasquirt_test_messages` | `megasquirt unit` | Every field of the dash message, with a different number in each source field so a reading taken from the wrong frame, or two fields transposed, reads as the wrong value rather than as a coincidence. |
+
+The mapping lives in its own library (`megasquirt_messages.h`) so it can be tested
+without a bus: the generated decoder is checked against cantools and the schema
+round-trips itself, but the wiring between the two is only checked here.
 
 ## Troubleshooting
 

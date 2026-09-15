@@ -14,8 +14,10 @@ the part that cannot.
 
 ## The shape of one
 
-`nodes/motec_m1/main.cpp` is a good model for a CAN decoder, and
-`nodes/mti610_bridge/` for a node that owns a serial port and answers services.
+`nodes/motec_pdm/` is the model for a CAN decoder -- the mapping from decoded
+messages to schemas lives in its own library so it can be tested without a bus
+-- and `nodes/mti610_bridge/` for a node that owns a serial port and answers
+services.
 The pieces every node has:
 
 ```cpp

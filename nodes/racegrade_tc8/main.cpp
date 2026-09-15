@@ -7,6 +7,7 @@
 #include "racegrade_tc8_configure.capnp.h"
 #include "racegrade_tc8_signals.capnp.h"
 #include "dbc_motec_e888_rev1_parser.h"
+#include "racegrade_tc8_messages.h"
 #include "pub_sub/zenoh_subscriber.h"
 #include "can_frame.capnp.h"
 
@@ -32,49 +33,13 @@ static void handle_service_request(const RaceGradeTc8ConfigureRequest::Reader& r
 
 static void handle_input_message(const dbc_motec_e888_rev1::Inputs_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Inputs>& inputs_pub)
 {
-    auto& outputs = inputs_pub.fields();
-    outputs.setVoltage1(msg.AV1);
-    outputs.setVoltage2(msg.AV2);
-    outputs.setVoltage3(msg.AV3);
-    outputs.setVoltage4(msg.AV4);
-    outputs.setVoltage5(msg.AV5);
-    outputs.setVoltage6(msg.AV6);
-    outputs.setVoltage7(msg.AV7);
-    outputs.setVoltage8(msg.AV8);
-    outputs.setTemperature1(msg.TC1);
-    outputs.setTemperature2(msg.TC2);
-    outputs.setTemperature3(msg.TC3);
-    outputs.setTemperature4(msg.TC4);
-    outputs.setTemperature5(msg.TC5);
-    outputs.setTemperature6(msg.TC6);
-    outputs.setTemperature7(msg.TC7);
-    outputs.setTemperature8(msg.TC8);
-    outputs.setFrequency1(msg.Freq1);
-    outputs.setFrequency2(msg.Freq2);
-    outputs.setFrequency3(msg.Freq3);
-    outputs.setFrequency4(msg.Freq4);
-
+    racegrade_tc8::fillInputs(msg, inputs_pub.fields());
     inputs_pub.put();
 }
 
 static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t& msg, pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics>& diagnostics_pub)
 {
-    auto& outputs = diagnostics_pub.fields();
-    outputs.setColdJunctionComp1(msg.Cold_Junct_Comp1);
-    // Whole degrees from a 16-bit field offset by -200, so int32_t in the
-    // decoder. Every value in that range is exact in the schema's Float32.
-    outputs.setColdJunctionComp2(static_cast<float>(msg.Cold_Junct_Comp2));
-    outputs.setE888IntTemp(static_cast<float>(msg.E888_Int_Temp));
-    outputs.setDig1InState(msg.Dig_1_In_State);
-    outputs.setDig2InState(msg.Dig_2_In_State);
-    outputs.setDig3InState(msg.Dig_3_In_State);
-    outputs.setDig4InState(msg.Dig_4_In_State);
-    outputs.setDig5InState(msg.Dig_5_In_State);
-    outputs.setDig6InState(msg.Dig_6_In_State);
-    outputs.setBatteryVolts(msg.Battery_Volts);
-    outputs.setE888StatusFlags(msg.E888_Status_Flags);
-    outputs.setFirmwareVersion(msg.Firmware_Version);
-
+    racegrade_tc8::fillDiagnostics(msg, diagnostics_pub.fields());
     diagnostics_pub.put();
 }
 
@@ -87,6 +52,10 @@ int main(int argc, char** argv)
     // the program that owns the options.
     cxxopts::Options options("racegrade_tc8", "RaceGrade TC8 node");
     options.add_options()
+        ("s,source", "Zenoh key carrying CAN frames",
+            cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
+        ("p,prefix", "Zenoh key prefix for this node's topics",
+            cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8"))
         ("debug", "Enable debug logging.",
             cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("h,help", "Print usage");
@@ -120,9 +89,12 @@ int main(int argc, char** argv)
     // SIGINT and SIGTERM both set the flag the loop below polls.
     cli::installInterruptHandler();
 
+    const std::string can_key = args["source"].as<std::string>();
+    const std::string prefix = args["prefix"].as<std::string>();
+
     // Create the publishers for the Inputs and Diagnostics messages
-    pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub("nodes/racegrade_tc8/inputs");
-    pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub("nodes/racegrade_tc8/diagnostics");
+    pub_sub::ZenohPublisher<RaceGradeTc8Inputs> inputs_pub(prefix + "/inputs");
+    pub_sub::ZenohPublisher<RaceGradeTc8Diagnostics> diagnostics_pub(prefix + "/diagnostics");
 
     dbc_motec_e888_rev1::dbc_motec_e888_rev1_parser parser;
     parser.on_Inputs([&inputs_pub](const dbc_motec_e888_rev1::Inputs_t& msg){
@@ -132,8 +104,9 @@ int main(int argc, char** argv)
         handle_diagnostics_message(msg, diagnostics_pub);
     });
 
-// Open a zenoh session with default config
-    const char* keyexpr = "nodes/racegrade_tc8/hello";
+    // `configure`, not the `hello` this was scaffolded with: the key is the
+    // service's name to everything that discovers it.
+    const std::string keyexpr = prefix + "/configure";
     SPDLOG_INFO("Declaring queryable on '{}'", keyexpr);
 
     pub_sub::ZenohService<RaceGradeTc8ConfigureRequest, RaceGradeTc8ConfigureResponse> service(
@@ -149,7 +122,7 @@ int main(int argc, char** argv)
     auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
 
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
-        "vehicle/can0/rx",
+        can_key,
         [&parser, &frames_in, &decoded](CanFrame::Reader message)
         {
             frames_in.touch();

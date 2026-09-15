@@ -15,7 +15,7 @@ int main(int argc, char** argv)
 
     cxxopts::Options options("racegrade_tc8_querier", "Querier for racegrade_tc8 node");
     options.add_options()
-        ("k,key", "Key expression to query", cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8/hello"))
+        ("k,key", "Key expression to query", cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8/configure"))
         ("h,help", "Print usage");
 
     auto result = options.parse(argc, argv);

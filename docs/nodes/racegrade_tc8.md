@@ -27,6 +27,8 @@ frame topic and the output topics are fixed in the source.
 
 | Option | Meaning |
 |---|---|
+| `-s`, `--source` | Zenoh key carrying CAN frames (default `vehicle/can0/rx`) |
+| `-p`, `--prefix` | Key prefix for this node's topics (default `nodes/racegrade_tc8`) |
 | `--debug` | Debug logging |
 | `-h`, `--help` | Print usage and exit |
 
@@ -82,13 +84,27 @@ monitor reads a deliberate stop as `exited` rather than as a crash.
 
 | Key | Request | Response |
 |---|---|---|
-| `nodes/racegrade_tc8/hello` | `RaceGradeTc8ConfigureRequest` | `RaceGradeTc8ConfigureResponse` |
+| `nodes/racegrade_tc8/configure` | `RaceGradeTc8ConfigureRequest` | `RaceGradeTc8ConfigureResponse` |
 
 The request names a message format (`e888Id0x0F0` to `e888Id0x0FC`, or a
 user-selectable output in temperature or millivolts), a transmit rate from
 50 Hz down to once a minute, and a CAN id. As of 2026-09-14 the handler logs
 those three fields and replies `response: true` without transmitting anything
 to the TC8, so calling it changes nothing on the device.
+
+## Tests
+
+```bash
+ctest --test-dir build -L racegrade_tc8
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `racegrade_tc8_test_messages` | `racegrade_tc8 unit` | Eight voltages, eight thermocouples and four frequencies, each given a value nothing else has: the numbers themselves cannot say which channel they came from. |
+
+The mapping lives in its own library (`racegrade_tc8_messages.h`) so it can be tested
+without a bus: the generated decoder is checked against cantools and the schema
+round-trips itself, but the wiring between the two is only checked here.
 
 ## Troubleshooting
 

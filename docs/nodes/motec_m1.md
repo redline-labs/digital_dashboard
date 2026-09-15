@@ -26,6 +26,9 @@ frame topic and every output topic are fixed in the source.
 
 | Option | Meaning |
 |---|---|
+| `-s`, `--source` | Zenoh key carrying CAN frames (default `vehicle/can0/rx`) |
+| `-p`, `--prefix` | Key prefix for this node's topics (default `nodes/motec_m1`) |
+| `--debug` | Debug logging |
 | `-h`, `--help` | Print usage and exit |
 
 Logging is at debug level from the start.
@@ -114,6 +117,20 @@ monitor reads a deliberate stop as `exited` rather than as a crash.
 ## Services
 
 None.
+
+## Tests
+
+```bash
+ctest --test-dir build -L motec_m1
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `motec_m1_test_messages` | `motec_m1 unit` | Which signal becomes which field, for one message of each shape and for all four messages assembled from two frames -- where a field taken from the wrong frame is otherwise invisible. |
+
+The mapping lives in its own library (`motec_m1_messages.h`) so it can be tested
+without a bus: the generated decoder is checked against cantools and the schema
+round-trips itself, but the wiring between the two is only checked here.
 
 ## Troubleshooting
 

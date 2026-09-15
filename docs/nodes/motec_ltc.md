@@ -17,8 +17,9 @@ configure the module and decodes exactly one module, the one the DBC calls
 
 ## Running it
 
-The node takes only command-line options, and the only one is `--help`. The
-frame topic and the output topic are fixed in the source.
+The node takes only command-line options. The frame topic it reads and the
+prefix it publishes under are both configurable; the defaults are what a
+standard bring-up uses.
 
 ```bash
 ./build/nodes/motec_ltc/motec_ltc
@@ -26,6 +27,9 @@ frame topic and the output topic are fixed in the source.
 
 | Option | Meaning |
 |---|---|
+| `-s`, `--source` | Zenoh key carrying CAN frames (default `vehicle/can0/rx`) |
+| `-p`, `--prefix` | Key prefix for this node's topics (default `nodes/motec_ltc`) |
+| `--debug` | Debug logging |
 | `-h`, `--help` | Print usage and exit |
 
 Logging is at debug level from the start.
@@ -44,7 +48,7 @@ sample appears.
 
 | Topic | Schema | Contents |
 |---|---|---|
-| `vehicle/lambda0` | `MotecLtcTelemetry` | Module index, lambda, pump currents `ipn` and `ip` in mA, cell resistance `ri` in ohm, internal temperature in C, heater duty %, battery volts, the sensor state, and seven fault flags: sensor control, internal, sensor wire short, heater failed to heat, open circuit, short to battery, short to ground |
+| `nodes/motec_ltc/telemetry` | `MotecLtcTelemetry` | Module index, lambda, pump currents `ipn` and `ip` in mA, cell resistance `ri` in ohm, internal temperature in C, heater duty %, battery volts, the sensor state, and seven fault flags: sensor control, internal, sensor wire short, heater failed to heat, open circuit, short to battery, short to ground |
 
 The topic sits under `vehicle/`, not under `nodes/motec_ltc/`, unlike the
 other decoders.
@@ -77,9 +81,23 @@ monitor reads a deliberate stop as `exited` rather than as a crash.
 
 None.
 
+## Tests
+
+```bash
+ctest --test-dir build -L motec_ltc
+```
+
+| Target | Labels | Proves |
+|---|---|---|
+| `motec_ltc_test_messages` | `motec_ltc unit` | Each of the seven fault flags on its own, with the others clear; every sensor state mapped to its own wire value; and the two pump currents kept apart. |
+
+The mapping lives in its own library (`motec_ltc_messages.h`) so it can be tested
+without a bus: the generated decoder is checked against cantools and the schema
+round-trips itself, but the wiring between the two is only checked here.
+
 ## Troubleshooting
 
-**Nothing on `vehicle/lambda0`.** The topic is advertised as soon as the node
+**Nothing on `nodes/motec_ltc/telemetry`.** The topic is advertised as soon as the node
 starts, so `inspect list` proves only that the node is up. `inspect hz
 vehicle/can0/rx` says whether frames arrive at all; none means can_bridge is
 not running or the module is on a channel with another topic name, and this
