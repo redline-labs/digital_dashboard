@@ -506,10 +506,14 @@ SIG_VALTYPE_ 205 Ieee : 1;
     expectTrait("SIG_VALTYPE_ 1 is an IEEE float", ieee, "using Type = float;");
     expectTrait("an IEEE signal is never railed", ieee, "static constexpr bool has_range = false;");
 
-    // The rail itself, once, in the shared detail header.
-    expectContains("the rail is emitted", out, "constexpr typename Sig::Type rail(typename Sig::Type value)");
-    expectContains("decode rails", out, "return rail<Sig>(from_raw_unrailed<Sig>(raw));");
-    expectContains("encode rails", out, "value = rail<Sig>(value);");
+    // The rail helper is emitted, but NOT applied. Railing to a declared range
+    // corrupts good data: msel_master_relay.dbc declares a signed temperature
+    // sensor as [0|125], so a real -10C reading clamps to 0. Decode and encode
+    // must stay faithful to what the bus said.
+    expectContains("the rail helper is emitted", out,
+                   "constexpr typename Sig::Type rail(typename Sig::Type value)");
+    expectAbsent("decode does not rail", out, "rail<Sig>(from_raw");
+    expectAbsent("encode does not rail", out, "value = rail<Sig>(value);");
 }
 
 int main()
