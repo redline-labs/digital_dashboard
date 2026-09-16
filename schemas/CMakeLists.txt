@@ -68,8 +68,37 @@ set(REGISTRY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/schema_registry.cpp")
 # capnp writes into a staging directory and cmake -E copy_if_different promotes
 # the results. Without that, touching any schema would rewrite
 # pub_sub/schema_registry.h, and every widget in the tree includes it.
+#
+# The rule's only OUTPUT is a stamp file; the generated sources and headers are
+# BYPRODUCTS. That split is what makes the build settle, and it is worth
+# spelling out, because the obvious spelling -- list the generated files as the
+# OUTPUTs -- does not.
+#
+# copy_if_different deliberately leaves an unchanged file's mtime alone, and a
+# build tool decides whether a rule is done by looking at exactly that. With the
+# generated files as OUTPUTs, the rule's own outputs came back older than the
+# schemas that produced them, so it was never satisfied. Worse, the Makefile
+# generator runs each target's build.make twice, once for `depend` and once for
+# `build`, as two separate make processes -- so capnp ran twice on every build,
+# up to date or not. A stamp whose mtime always moves is the thing make can
+# actually see finish.
+#
+# BYPRODUCTS rather than OUTPUTS for the real files also avoids the Makefile
+# generator's other habit: it gives the first OUTPUT the recipe and hangs
+# `touch_nocreate` stubs for the rest off it, which would stamp a new mtime on
+# all 90 generated files any time the first one changed, undoing the promotion
+# above. The generated files still get marked GENERATED and still get cleaned;
+# `schemas` just reaches them through add_dependencies below instead of through
+# the output graph, and the compiler's own depfiles carry the header edges.
+set(CAPNP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/schemas.capnp.stamp")
+
 add_custom_command(
-    OUTPUT ${GENERATED_HEADERS} ${GENERATED_SOURCES} ${REGISTRY_HEADER} ${REGISTRY_SOURCE}
+    OUTPUT ${CAPNP_STAMP}
+    BYPRODUCTS ${GENERATED_HEADERS} ${GENERATED_SOURCES}
+               ${REGISTRY_HEADER} ${REGISTRY_SOURCE}
+               ${STAGED_OUTPUTS}
+               ${STAGE_DIR}/schema_registry.cpp
+               ${STAGE_DIR}/pub_sub/schema_registry.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${STAGE_DIR}
     # Both generators are named by path. `-oc++` would make capnp search $PATH
     # for capnpc-c++, which the old build handled by wrapping the whole command
@@ -95,6 +124,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${STAGED_OUTPUTS}
             ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${CAPNP_STAMP}
     # capnp_tool and capnpc_cpp are listed because the generated code is tied to
     # the compiler that produced it. Without them, bumping capnproto's GIT_TAG
     # leaves every .capnp.h stale against the new runtime.
@@ -104,7 +134,13 @@ add_custom_command(
     VERBATIM
 )
 
+add_custom_target(schemas_codegen DEPENDS ${CAPNP_STAMP})
+
 add_library(schemas STATIC ${GENERATED_SOURCES} ${REGISTRY_SOURCE})
+
+# The ordering edge the output graph no longer provides: the .capnp.c++ files
+# have to exist before this library compiles them.
+add_dependencies(schemas schemas_codegen)
 
 target_include_directories(schemas PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}
