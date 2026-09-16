@@ -1300,27 +1300,6 @@ void test_the_widget_constructs_without_a_server()
 // The map cannot say "no position" by moving a needle: its marker either sits
 // somewhere or it does not. What is pinned here is the state an agent and a
 // screenshot read; the look itself is in paintMarker.
-void test_a_stale_position_is_reported()
-{
-    MapConfig_t config;
-    config.position_zenoh_key.clear();
-
-    MapWidget widget(config);
-    widget.resize(320, 240);
-
-    auto& stale_aware = static_cast<dashboard::StaleAware&>(widget);
-    check(!stale_aware.anyBindingStale(), "a fresh map reports no stale binding");
-
-    stale_aware.setBindingStale("position", true);
-    check(stale_aware.isBindingStale("position"), "the position binding goes stale");
-    check(widget.property("stale").toBool(), "and says so in the property an agent reads");
-    check(widget.property("stale_bindings").toString() == QStringLiteral("position"),
-          "naming the binding that stopped");
-
-    stale_aware.setBindingStale("position", false);
-    check(!widget.property("stale").toBool(), "and clears when a position arrives again");
-}
-
 void test_a_bad_expression_does_not_take_the_widget_down()
 {
     // A layout can name an expression that does not compile against the schema.
@@ -2730,7 +2709,6 @@ int main(int argc, char** argv)
     test_a_motorway_name_outranks_a_side_street();
 
     test_the_widget_constructs_without_a_server();
-    test_a_stale_position_is_reported();
     test_a_bad_expression_does_not_take_the_widget_down();
     test_the_widget_paints_offscreen();
     test_the_widget_paints_at_its_screens_ratio();

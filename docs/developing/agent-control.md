@@ -30,14 +30,6 @@ change without a rebuild.
 > USB-to-I2C bridge driver and the collision would be confusing. The user-facing
 > flag is still `--mcp`.
 
-## Stale bindings in a snapshot
-
-A widget whose reading has stopped arriving carries `stale: true` in its
-`ui_snapshot` row, and `stale_bindings` naming which of its bindings are
-affected. The fields appear only for widgets that report it, and agent_control
-reads them as Qt properties, so it still knows nothing about widgets.
-[dashboard_widgets](../libs/dashboard_widgets.html) has the contract.
-
 ## Running it by hand
 
 ```bash

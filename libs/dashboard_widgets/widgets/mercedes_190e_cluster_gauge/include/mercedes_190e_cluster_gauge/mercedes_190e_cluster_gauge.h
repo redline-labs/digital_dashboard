@@ -1,7 +1,6 @@
 #ifndef MERCEDES_190E_CLUSTER_GAUGE_H
 #define MERCEDES_190E_CLUSTER_GAUGE_H
 
-#include "dashboard/stale_aware.h"
 
 #include <vector>
 #include "mercedes_190e_cluster_gauge/config.h"
@@ -25,7 +24,7 @@
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190EClusterGauge : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
+class Mercedes190EClusterGauge : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 public:
@@ -42,21 +41,6 @@ private slots:
     void setOilPressureGaugeValue(float value);
     void setCoolantTemperatureGaugeValue(float value);
     void setEconomyGaugeValue(float value);
-
-    // Four sub-gauges, four streams, four independent answers: the cluster is
-    // often bound to four different nodes, and one of them stopping should not
-    // blank the other three.
-    void setFuelGaugeStale(bool stale);
-    void setOilPressureGaugeStale(bool stale);
-    void setCoolantTemperatureGaugeStale(bool stale);
-    void setEconomyGaugeStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override
-    {
-        return {"fuel", "right", "bottom", "left"};
-    }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
 
 protected:
     void applyPaintTransform(QPainter& painter) const override;
@@ -95,16 +79,25 @@ private:
 
     // Economy gauge current value
     float economy_gauge_current_value_;
-    bool fuel_gauge_stale_ = false;
-    bool oil_pressure_gauge_stale_ = false;
-    bool coolant_temperature_gauge_stale_ = false;
-    bool economy_gauge_stale_ = false;
 
     // Expression parsers for each sub-gauge
     dashboard::ExpressionSubscriptionPtr<float> top_gauge_expression_parser_;
     dashboard::ExpressionSubscriptionPtr<float> right_gauge_expression_parser_;
     dashboard::ExpressionSubscriptionPtr<float> bottom_gauge_expression_parser_;
     dashboard::ExpressionSubscriptionPtr<float> left_gauge_expression_parser_;
+
+    // Four sub-gauges, four streams, four independent answers: the cluster is
+    // often bound to four different nodes, and one of them stopping should not
+    // blank the other three. Each subscription is the only place its own answer
+    // is recorded.
+    static bool isStale(const dashboard::ExpressionSubscriptionPtr<float>& parser)
+    {
+        return parser && parser->isStale();
+    }
+    bool fuelGaugeStale() const { return isStale(top_gauge_expression_parser_); }
+    bool oilPressureGaugeStale() const { return isStale(right_gauge_expression_parser_); }
+    bool economyGaugeStale() const { return isStale(bottom_gauge_expression_parser_); }
+    bool coolantTemperatureGaugeStale() const { return isStale(left_gauge_expression_parser_); }
 
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;

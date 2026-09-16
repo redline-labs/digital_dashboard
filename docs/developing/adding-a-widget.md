@@ -16,26 +16,31 @@ same recipe with more room.
 
 ## Bindings and loss of comm
 
-A widget that reads a topic carries three things per binding: the `zenoh_key`
-and expression it subscribes with, a `stale_after_ms` field beside them, and an
-implementation of `dashboard::StaleAware` naming that binding. Build the
-subscription with the overload that takes a stale setter:
+A widget that reads a topic carries two things per binding: the `zenoh_key` and
+expression it subscribes with, and a `stale_after_ms` field beside them. Build
+the subscription with the overload that takes the timeout:
 
 ```cpp
 _expression_parser = dashboard::makeExpressionSubscription<double>(
     _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-    this, &MyWidget::setValue, &MyWidget::setValueStale,
-    std::chrono::milliseconds(_cfg.stale_after_ms), "my widget");
+    this, &MyWidget::setValue,
+    std::chrono::milliseconds(_cfg.stale_after_ms));
 ```
 
-`validate()` calls `config_codec::limits::clampStaleAfter()`, and the stale
-setter calls `dashboard::publishStaleProperties()` before `update()`.
+That is the whole wiring. The subscription repaints the widget when the answer
+changes; the widget asks it where it paints:
+
+```cpp
+bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+```
+
+`validate()` calls `config_codec::limits::clampStaleAfter()`.
 
 {: .warning }
-Draw something different. `dashboard_widgets_test_stale_render` renders each
-binding fresh and stale and fails if the images match: a widget that flips a
-flag and paints the same picture leaves a dead sensor looking like a steady
-reading, which is the whole failure this exists to retire.
+Draw something different. A widget that reads `isStale()` and paints the same
+picture leaves a dead sensor looking like a steady reading, which is the whole
+failure this exists to retire. Nothing sweeps the widget table for it any more,
+so check it by eye when you add a binding.
 
 ## Overview
 

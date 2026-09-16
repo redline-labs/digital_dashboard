@@ -33,7 +33,7 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
         "Condition Expression", "Expression evaluated against the message; the lamp lights when it is non-zero"),
     // How long a gap in the stream means "no data". 0 never reports one.
     (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+        "Stale After (ms)", "Light the lamp when nothing arrives for this long; 0 = never")
 )
 
 inline std::vector<std::string> validate(Mercedes190ETelltaleConfig_t& cfg)

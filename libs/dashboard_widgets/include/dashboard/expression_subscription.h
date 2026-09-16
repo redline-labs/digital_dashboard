@@ -56,29 +56,31 @@ class ExpressionSubscription
                            const std::string& expression,
                            const std::string& zenoh_key,
                            std::function<void(T)> deliver,
-                           std::chrono::milliseconds stale_after = std::chrono::milliseconds{0},
-                           std::function<void(bool)> on_stale = {},
+                           std::chrono::milliseconds stale_after,
+                           std::function<void()> on_stale_edge,
                            std::chrono::milliseconds interval = kDeliveryInterval)
         : deliver_{std::move(deliver)}
-        , on_stale_{std::move(on_stale)}
+        , on_stale_edge_{std::move(on_stale_edge)}
         , staleness_{staleness::suppressed() ? std::chrono::milliseconds{0} : stale_after,
                      std::chrono::steady_clock::now()}
     {
         subscriber_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(schema_type, expression, zenoh_key);
-        if (!subscriber_->isValid())
+        if (subscriber_->isValid())
         {
-            return;
+            // Runs on the zenoh RX thread. It takes a short mutex and nothing
+            // else: no allocation, no Qt call, no event posted.
+            subscriber_->setResultCallback<T>([this](T value)
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                pending_ = value;
+            });
         }
 
-        // Runs on the zenoh RX thread. It takes a short mutex and nothing else:
-        // no allocation, no Qt call, no event posted.
-        subscriber_->setResultCallback<T>([this](T value)
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            pending_ = value;
-            last_sample_ = std::chrono::steady_clock::now();
-        });
-
+        // Started even when the expression did not compile, so that a binding
+        // which cannot ever deliver goes stale like one that has stopped. A
+        // gauge reading zero because its expression is broken is worse than one
+        // saying it has no data.
+        //
         // The timer is a plain member, so it belongs to the thread that
         // constructed this -- the GUI thread -- and it is also the connection's
         // context object, so the connection dies with it.
@@ -94,26 +96,14 @@ class ExpressionSubscription
     bool isValid() const { return subscriber_ && subscriber_->isValid(); }
 
     // True once nothing has arrived for the binding's timeout. Always false for
-    // a binding that did not ask for one.
-    bool isStale() const { return staleness_.isStale(); }
-
-    // How long since this subscription last produced a usable value, or nullopt
-    // if it never has.
+    // a binding that did not ask for one, and in a process that suppressed
+    // staleness.
     //
-    // The raw measurement, for a caller that wants its own rule. The policy is
-    // `stale_after` above: what counts as too long is per stream -- an odometer
-    // that publishes on change and a 100 Hz wheel speed cannot share a
-    // threshold -- so it comes from the binding's own config, and how a stale
-    // gauge looks is each widget's decision.
-    std::optional<std::chrono::steady_clock::duration> sinceLastSample() const
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        if (!last_sample_)
-        {
-            return std::nullopt;
-        }
-        return std::chrono::steady_clock::now() - *last_sample_;
-    }
+    // This is where a widget reads its no-data state: it holds the
+    // subscription, so it asks the subscription. There is no second copy of the
+    // flag on the widget to keep in step, and the edge hook exists only to
+    // schedule the repaint that will come here and ask.
+    bool isStale() const { return staleness_.isStale(); }
 
   private:
     void drain()
@@ -125,14 +115,15 @@ class ExpressionSubscription
         }
 
         // The staleness edges are detected here, on the GUI thread, so the
-        // widget's hook runs where its painting does. A value that arrives
+        // repaint is scheduled where the painting happens. A value that arrives
         // counts as fresh even if the widget then discards it: what is being
         // measured is the stream, not the reading.
+        //
+        // The hook says only THAT the answer changed, never what it is. The
+        // widget reads isStale() when it next paints.
         const auto now = std::chrono::steady_clock::now();
-        if (value && staleness_.onSample(now) == StalenessTracker::Edge::became_fresh && on_stale_)
-        {
-            on_stale_(false);
-        }
+        const bool became_fresh =
+            value && staleness_.onSample(now) == StalenessTracker::Edge::became_fresh;
 
         // Nothing arrived since the last tick: an idle subscription costs a
         // mutex acquire and no repaint.
@@ -141,17 +132,18 @@ class ExpressionSubscription
             deliver_(*value);
         }
 
-        if (staleness_.poll(now) == StalenessTracker::Edge::became_stale && on_stale_)
+        const bool became_stale = staleness_.poll(now) == StalenessTracker::Edge::became_stale;
+
+        if ((became_fresh || became_stale) && on_stale_edge_)
         {
-            on_stale_(true);
+            on_stale_edge_();
         }
     }
 
     mutable std::mutex mutex_;
     std::optional<T> pending_;
-    std::optional<std::chrono::steady_clock::time_point> last_sample_;
     std::function<void(T)> deliver_;
-    std::function<void(bool)> on_stale_;
+    std::function<void()> on_stale_edge_;
     StalenessTracker staleness_;
     QTimer timer_;
 
@@ -166,9 +158,24 @@ using ExpressionSubscriptionPtr = std::unique_ptr<ExpressionSubscription<T>>;
 
 // Builds a coalescing subscription for `expression`, validates it, and delivers
 // results of type T to `setter` on `receiver` -- always on the GUI thread.
-// Returns nullptr, with the error logged under `log_context`, if construction
-// or validation fails. `setter` is a member-function pointer of Receiver (or any
-// callable invocable as setter(receiver, value)).
+// `setter` is a member-function pointer of Receiver (or any callable invocable
+// as setter(receiver, value)).
+//
+// After `stale_after` with nothing arriving, isStale() turns true and the
+// widget is repainted; both reverse when a reading returns. The widget asks
+// isStale() where it paints -- that is the only copy of the answer, so there is
+// no flag on the widget to keep in step with it. Zero means never stale, which
+// is also what the editor forces process-wide.
+//
+// Returns nullptr only if construction threw. An expression that does not
+// compile still yields a subscription, because that subscription is what
+// reports no data: a gauge showing zero for a broken binding is worse than one
+// showing nothing.
+//
+// Failures name the key. It is what a config author wrote, what `inspect echo`
+// takes, and what tells two bindings of the same widget apart -- which a label
+// passed in by the caller could only do by being kept in step with the code by
+// hand.
 template <typename T, typename Receiver, typename Setter>
 ExpressionSubscriptionPtr<T> makeExpressionSubscription(
     pub_sub::schema_type_t schema_type,
@@ -176,48 +183,7 @@ ExpressionSubscriptionPtr<T> makeExpressionSubscription(
     const std::string& zenoh_key,
     Receiver* receiver,
     Setter setter,
-    const char* log_context)
-{
-    ExpressionSubscriptionPtr<T> subscription;
-    try
-    {
-        subscription = std::make_unique<ExpressionSubscription<T>>(
-            schema_type, expression, zenoh_key,
-            [receiver, setter](T value) { std::invoke(setter, receiver, value); });
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("{}: failed to initialize expression subscriber: {}", log_context, e.what());
-        return nullptr;
-    }
-
-    if (!subscription->isValid())
-    {
-        SPDLOG_ERROR("{}: invalid expression '{}' for schema '{}'", log_context, expression,
-                     reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type));
-        return nullptr;
-    }
-
-    return subscription;
-}
-
-// The same, with a loss-of-comm timeout. `stale_setter` is called with true
-// when nothing has arrived for `stale_after`, and with false when a reading
-// arrives again -- always on the GUI thread, before the value is delivered.
-//
-// A binding that is configured but cannot be built reports stale once: a gauge
-// bound to an expression that does not compile shows no data, which is what it
-// has. Zero means never stale, which is also what the editor forces.
-template <typename T, typename Receiver, typename Setter, typename StaleSetter>
-ExpressionSubscriptionPtr<T> makeExpressionSubscription(
-    pub_sub::schema_type_t schema_type,
-    const std::string& expression,
-    const std::string& zenoh_key,
-    Receiver* receiver,
-    Setter setter,
-    StaleSetter stale_setter,
-    std::chrono::milliseconds stale_after,
-    const char* log_context)
+    std::chrono::milliseconds stale_after)
 {
     ExpressionSubscriptionPtr<T> subscription;
     try
@@ -225,33 +191,26 @@ ExpressionSubscriptionPtr<T> makeExpressionSubscription(
         subscription = std::make_unique<ExpressionSubscription<T>>(
             schema_type, expression, zenoh_key,
             [receiver, setter](T value) { std::invoke(setter, receiver, value); }, stale_after,
-            [receiver, stale_setter](bool stale) { std::invoke(stale_setter, receiver, stale); });
+            [receiver]() { receiver->update(); });
     }
     catch (const std::exception& e)
     {
-        SPDLOG_ERROR("{}: failed to initialize expression subscriber: {}", log_context, e.what());
+        SPDLOG_ERROR("'{}': failed to initialize expression subscriber: {}", zenoh_key,
+                     e.what());
+        return nullptr;
     }
 
-    if (subscription && subscription->isValid())
+    // Returned even when the expression did not compile, unlike the overload
+    // above: the subscription is what reports no data, so throwing it away
+    // would leave the gauge showing zero rather than showing nothing. The error
+    // is still said once, here.
+    if (!subscription->isValid())
     {
-        return subscription;
-    }
-
-    if (!subscription)
-    {
-        // Already logged above.
-    }
-    else
-    {
-        SPDLOG_ERROR("{}: invalid expression '{}' for schema '{}'", log_context, expression,
+        SPDLOG_ERROR("'{}': invalid expression '{}' for schema '{}'", zenoh_key, expression,
                      reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type));
     }
 
-    if (stale_after.count() > 0 && !staleness::suppressed())
-    {
-        std::invoke(stale_setter, receiver, true);
-    }
-    return nullptr;
+    return subscription;
 }
 
 }  // namespace dashboard

@@ -2,7 +2,6 @@
 #define VALUE_READOUT_WIDGET_H
 
 #include "value_readout/config.h"
-#include "dashboard/stale_aware.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -17,7 +16,7 @@
 
 class QPainter;
 
-class ValueReadoutWidget : public QWidget, public dashboard::StaleAware
+class ValueReadoutWidget : public QWidget
 {
 	Q_OBJECT
 
@@ -30,14 +29,6 @@ public:
 	const config_t& getConfig() const { return _cfg; }
 
 	void setValue(double value);
-
-	// The one binding this widget has. Dashes replace the number while the
-	// stream is quiet: a readout holding its last value looks like a reading.
-	void setValueStale(bool stale);
-
-	std::vector<std::string_view> staleBindings() const override { return {"value"}; }
-	void setBindingStale(std::string_view binding, bool stale) override;
-	bool isBindingStale(std::string_view binding) const override;
 
 protected:
 	void paintEvent(QPaintEvent* event) override;
@@ -59,12 +50,16 @@ private:
 	// comparing a rounded integer only covered the integer one.
 	QString _rendered_text;
 	bool _value_valid = false;
-	bool _stale = false;
 
 	QFont _labelFont;
 	QFont _valueFont;
 
     dashboard::ExpressionSubscriptionPtr<double> _expression_parser;
+
+	// Dashes replace the number while the stream is quiet: a readout holding
+	// its last value looks like a reading. The subscription is the only place
+	// this is recorded, so there is nothing here to keep in step with it.
+	bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
 };
 
 #endif // VALUE_READOUT_WIDGET_H

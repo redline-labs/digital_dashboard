@@ -45,13 +45,22 @@ painter.setPen(qt_helpers::toQColor(cfg.needle_color));
 
 ## Behaviour worth knowing
 
-The cached layers are keyed on the widget size and the device pixel ratio.
-Without the DPR a window dragged between a Retina display and an external
-monitor kept its old layers and drew them soft or oversharp. Call
-`invalidateStaticCache()` after a state change that alters static content, and
-override `hasStaticOverlay()` to return true if you use the overlay hook, or
-it is never rendered. `paintEvent` is `final`, and the class has no `Q_OBJECT`;
+The cached layers are keyed on the widget size and the device pixel ratio, and
+on nothing else. Without the DPR a window dragged between a Retina display and
+an external monitor kept its old layers and drew them soft or oversharp.
+Override `hasStaticOverlay()` to return true if you use the overlay hook, or it
+is never rendered. `paintEvent` is `final`, and the class has no `Q_OBJECT`;
 subclasses keep their own meta-object through `QWidget`.
+
+{: .warning }
+Only inherit this if your picture changes more often than it is repainted. The
+cache earns its place on a gauge whose needle moves at 60 Hz over a dial face
+that never changes: the face is drawn once, the needle every frame. A widget
+whose whole picture depends on its own state gets nothing from it, because its
+`paintEvent` fires exactly when that state changes. `mercedes_190e_telltales`
+inherited it, drew everything in the static layer with an empty `paintDynamic`,
+and had to throw the cache away on every change -- 10 microseconds of saving for
+an API that existed to undo the caching. It is a plain `QWidget` now.
 
 {: .warning }
 `toQColor` splits `#RRGGBBAA` by hand. `helpers::Color` documents that form

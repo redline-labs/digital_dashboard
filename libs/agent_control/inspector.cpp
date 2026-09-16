@@ -90,19 +90,6 @@ json rowFor(WidgetLocator& locator, QWidget* widget)
     row["window_rect"] =
         json::array({origin.x(), origin.y(), widget->width(), widget->height()});
 
-    // Only when the widget sets it (dashboard::publishStaleProperties). Kept
-    // generic on purpose: agent_control knows nothing about widgets, and a
-    // property is how a widget says something about itself.
-    if (const QVariant stale = widget->property("stale"); stale.isValid())
-    {
-        row["stale"] = stale.toBool();
-        const QVariant bindings = widget->property("stale_bindings");
-        if (bindings.isValid() && !bindings.toString().isEmpty())
-        {
-            row["stale_bindings"] = bindings.toString().toStdString();
-        }
-    }
-
     row["visible"] = widget->isVisible();
     row["enabled"] = widget->isEnabled();
     row["focus"] = widget->hasFocus();

@@ -1,7 +1,6 @@
 #ifndef TACHOMETERWIDGET_H
 #define TACHOMETERWIDGET_H
 
-#include "dashboard/stale_aware.h"
 
 #include <vector>
 #include "mercedes_190e_tachometer/config.h"
@@ -25,7 +24,7 @@ class QPainter;
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
+class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 
@@ -41,11 +40,6 @@ public:
 
     // The needle goes away while the stream is quiet; the clock, which does not
     // come off the bus, keeps running.
-    void setRpmStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"rpm"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
     float getRpm() const;
 
 protected:
@@ -64,7 +58,6 @@ private:
 
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
 
-    bool m_rpm_stale = false;
 
     // Drawing parameters based on the new reference image
     const float m_angleStart_deg;    // Angle for 0 RPM
@@ -93,6 +86,12 @@ private:
 
     // Expression parser for RPM calculation
     dashboard::ExpressionSubscriptionPtr<float> rpm_expression_parser_;
+
+    // No needle at all while the stream is quiet: a needle parked at zero is a
+    // reading, and this dial has no other way to say it has none.
+    // The subscription is the only place this is recorded, so there is
+    // nothing here to keep in step with it.
+    bool rpmStale() const { return rpm_expression_parser_ && rpm_expression_parser_->isStale(); }
 };
 
 #endif // TACHOMETERWIDGET_H 

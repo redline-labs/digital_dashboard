@@ -2,7 +2,6 @@
 #define CENTER_BAR_WIDGET_H
 
 #include "center_bar/config.h"
-#include "dashboard/stale_aware.h"
 #include "dashboard/widget_types.h"
 #include "dashboard/expression_subscription.h"
 
@@ -14,7 +13,7 @@
 
 class QPainter;
 
-class CenterBarWidget : public QWidget, public dashboard::StaleAware
+class CenterBarWidget : public QWidget
 {
     Q_OBJECT
 
@@ -32,11 +31,6 @@ class CenterBarWidget : public QWidget, public dashboard::StaleAware
   public:
     // The marker is hidden rather than parked at centre: centre means zero
     // gain, which is a reading, and a strip cannot say "no data" any other way.
-    void setValueStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"value"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -44,11 +38,16 @@ class CenterBarWidget : public QWidget, public dashboard::StaleAware
   private:
     CenterBarConfig_t _cfg;
     double _value = 0.0;
-    bool _stale = false;
 
     QFont _label_font;
 
     dashboard::ExpressionSubscriptionPtr<double> _expression_parser;
+
+    // The marker goes away and the track greys while the stream is quiet: a
+    // marker parked at centre is a reading.
+    // The subscription is the only place this is recorded, so there is
+    // nothing here to keep in step with it.
+    bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
 };
 
 #endif // CENTER_BAR_WIDGET_H

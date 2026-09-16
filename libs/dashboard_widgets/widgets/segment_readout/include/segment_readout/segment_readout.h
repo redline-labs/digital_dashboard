@@ -2,7 +2,6 @@
 #define SEGMENT_READOUT_WIDGET_H
 
 #include "segment_readout/config.h"
-#include "dashboard/stale_aware.h"
 #include "dashboard/widget_types.h"
 #include "dashboard/expression_subscription.h"
 
@@ -17,7 +16,7 @@
 
 class QPainter;
 
-class SegmentReadoutWidget : public QWidget, public dashboard::StaleAware
+class SegmentReadoutWidget : public QWidget
 {
     Q_OBJECT
 
@@ -35,11 +34,6 @@ class SegmentReadoutWidget : public QWidget, public dashboard::StaleAware
   public:
     // Every cell goes dark: on a seven-segment display that is what no signal
     // looks like, and the ghosts behind it keep the shape of the readout.
-    void setValueStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"value"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -57,7 +51,6 @@ class SegmentReadoutWidget : public QWidget, public dashboard::StaleAware
     QString _ghost;
     QString _prefix;
 
-    bool _stale = false;
 
     QString _segment_family;
     QString _caption_family;
@@ -66,6 +59,11 @@ class SegmentReadoutWidget : public QWidget, public dashboard::StaleAware
     QSize _font_size_for;
 
     dashboard::ExpressionSubscriptionPtr<double> _expression_parser;
+
+    // Every cell shows a dash in the stale colour while the stream is quiet.
+    // The subscription is the only place this is recorded, so there is
+    // nothing here to keep in step with it.
+    bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
 };
 
 #endif // SEGMENT_READOUT_WIDGET_H

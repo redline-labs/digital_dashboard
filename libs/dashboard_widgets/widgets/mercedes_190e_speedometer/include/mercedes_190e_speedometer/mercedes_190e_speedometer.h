@@ -1,7 +1,6 @@
 #ifndef SPEEDOMETERWIDGETMPH_H
 #define SPEEDOMETERWIDGETMPH_H
 
-#include "dashboard/stale_aware.h"
 
 #include <vector>
 #include "mercedes_190e_speedometer/config.h"
@@ -27,7 +26,7 @@
 // Forward declarations
 #include "dashboard/expression_subscription.h"
 
-class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
+class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget
 {
     Q_OBJECT
 public:
@@ -41,14 +40,6 @@ public:
     void setSpeed(float speed); // Assume input speed is in MPH for this widget
     void setOdometerValue(int value); // Setter for odometer
 
-    // The two streams are independent: a speedometer whose odometer topic has
-    // stopped still shows the speed, and the drums show dashes.
-    void setSpeedStale(bool stale);
-    void setOdometerStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"speed", "odometer"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
     
 protected:
     void applyPaintTransform(QPainter& painter) const override;
@@ -110,8 +101,6 @@ private:
     config_t cfg_;
 
     uint32_t odometer_value_; // Stores the odometer reading, 0..999999
-    bool speed_stale_ = false;
-    bool odometer_stale_ = false;
 
     QFont odo_font_;
     QFont mph_font_;
@@ -125,6 +114,15 @@ private:
     // Expression parsers for speed and odometer calculations
     dashboard::ExpressionSubscriptionPtr<float> speed_expression_parser_;
     dashboard::ExpressionSubscriptionPtr<int> odometer_expression_parser_;
+
+    // The two streams are independent: a speedometer whose odometer topic has
+    // stopped still shows the speed, and the drums show dashes. Each
+    // subscription is the only place its own answer is recorded.
+    bool speedStale() const { return speed_expression_parser_ && speed_expression_parser_->isStale(); }
+    bool odometerStale() const
+    {
+        return odometer_expression_parser_ && odometer_expression_parser_->isStale();
+    }
 };
 
 #endif // SPEEDOMETERWIDGETMPH_H 

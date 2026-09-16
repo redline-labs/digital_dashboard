@@ -32,8 +32,8 @@ CenterBarWidget::CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent) 
 
     _expression_parser = dashboard::makeExpressionSubscription<double>(
         _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-        this, &CenterBarWidget::setValue, &CenterBarWidget::setValueStale,
-        std::chrono::milliseconds(_cfg.stale_after_ms), "center bar");
+        this, &CenterBarWidget::setValue, 
+        std::chrono::milliseconds(_cfg.stale_after_ms));
 }
 
 void CenterBarWidget::setValue(double value)
@@ -53,30 +53,6 @@ void CenterBarWidget::setValue(double value)
     }
     _value = clamped;
     update();
-}
-
-void CenterBarWidget::setValueStale(bool stale)
-{
-    if (_stale == stale)
-    {
-        return;
-    }
-    _stale = stale;
-    dashboard::publishStaleProperties(*this, *this);
-    update();
-}
-
-void CenterBarWidget::setBindingStale(std::string_view binding, bool stale)
-{
-    if (binding == "value")
-    {
-        setValueStale(stale);
-    }
-}
-
-bool CenterBarWidget::isBindingStale(std::string_view binding) const
-{
-    return binding == "value" && _stale;
 }
 
 void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
@@ -115,7 +91,7 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
 
     // Before the track is laid out: a strip too narrow for its labels draws no
     // track at all, and "no data" still has to be sayable in that box.
-    if (_stale)
+    if (valueStale())
     {
         gauge_paint::drawNoDataLegend(p, bounds, label_font);
         return;
@@ -134,7 +110,7 @@ void CenterBarWidget::paintEvent(QPaintEvent* /*event*/)
     }
 
     p.setPen(Qt::NoPen);
-    p.setBrush(_stale ? gauge_paint::kStaleColor.darker(200)
+    p.setBrush(valueStale() ? gauge_paint::kStaleColor.darker(200)
                       : qt_helpers::toQColor(_cfg.track_color));
     p.drawRoundedRect(track, track_height / 2.0, track_height / 2.0);
 

@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The loss-of-comm hook against a real publisher.
+// Loss of comm against a real publisher, end to end.
 //
-// The unit test pins the state machine; this pins the wiring around it: that
+// The unit test pins the state machine; this pins everything around it: that
 // the edges are detected on the delivery tick, on the GUI thread, that a widget
 // bound to a live topic never goes stale while samples keep arriving, and that
 // suppression silences the whole mechanism for a process (which is what the
 // editor relies on to preview a layout with no bus behind it).
+//
+// It compares what the widget DRAWS rather than reading a flag off it. The flag
+// lives in the subscription and the widget asks for it where it paints, so the
+// picture is the only place the two meet -- and a stale look that renders the
+// same as a fresh one is the failure worth catching. It cost three widgets when
+// this was first written.
 #include "dashboard/staleness.h"
 #include "value_readout/value_readout.h"
+
+#include <QImage>
 
 #include "engine_rpm.capnp.h"
 #include "pub_sub/session_manager.h"
@@ -68,6 +76,14 @@ void publish(pub_sub::ZenohPublisher<EngineRpm>& publisher, std::uint32_t rpm)
     publisher.put();
 }
 
+QImage renderOf(QWidget& widget)
+{
+    QImage canvas(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::black);
+    widget.render(&canvas);
+    return canvas;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -86,29 +102,38 @@ int main(int argc, char** argv)
 
     {
         ValueReadoutWidget widget(configFor(key, 300));
+        widget.resize(240, 160);
         pub_sub::ZenohPublisher<EngineRpm> publisher(key);
         pump(300ms);  // let the pair match
 
-        // Samples keep arriving: the widget must never report stale, which is
-        // the failure that would have every gauge flickering on a healthy bus.
-        bool went_stale = false;
+        // A reading on the dial, and the picture of it. Everything below is
+        // compared against this.
+        publish(publisher, 1000);
+        pump(50ms);
+        const QImage fed = renderOf(widget);
+
+        // Samples keep arriving: the widget must never draw its no-data look,
+        // which is the failure that would have every gauge flickering on a
+        // healthy bus.
+        bool flickered = false;
         for (int i = 0; i < 20; ++i)
         {
-            publish(publisher, static_cast<std::uint32_t>(1000 + i));
+            publish(publisher, 1000);
             pump(25ms);
-            went_stale = went_stale || widget.isBindingStale("value");
+            flickered = flickered || renderOf(widget) != fed;
         }
-        check(!went_stale, "a binding fed every 25 ms never goes stale on a 300 ms timeout");
+        check(!flickered, "a binding fed every 25 ms never goes stale on a 300 ms timeout");
 
         // Stop, and it goes stale within the timeout plus a delivery tick.
         pump(400ms);
-        check(widget.isBindingStale("value"), "and goes stale once the samples stop");
-        check(widget.property("stale").toBool(), "with the property an agent can read");
+        const QImage stale = renderOf(widget);
+        check(stale != fed, "and draws differently once the samples stop");
 
-        // Resume, and it comes back.
-        publish(publisher, 2000);
+        // Resume, and it comes back -- to the same picture, not merely a
+        // different one.
+        publish(publisher, 1000);
         pump(100ms);
-        check(!widget.isBindingStale("value"), "and comes back when a sample arrives");
+        check(renderOf(widget) == fed, "and draws as it did before when a sample arrives");
     }
 
     {
@@ -116,18 +141,25 @@ int main(int argc, char** argv)
         // draw every widget as dead.
         dashboard::staleness::setSuppressed(true);
         ValueReadoutWidget widget(configFor(key, 100));
+        widget.resize(240, 160);
+        const QImage before = renderOf(widget);
         pump(400ms);
-        check(!widget.isBindingStale("value"), "suppression keeps a silent binding fresh");
+        check(renderOf(widget) == before, "suppression keeps a silent binding fresh");
         dashboard::staleness::setSuppressed(false);
     }
 
     {
         // A binding that cannot be built at all -- an expression that does not
-        // compile -- has no data and says so, rather than showing a zero.
+        // compile -- has no data and says so, rather than showing a zero. It is
+        // the same path as a stream that stopped, because a binding that can
+        // never deliver has been quiet since it was created.
         ValueReadoutConfig_t broken = configFor(key, 250);
         broken.value_expression = "this is not an expression";
         ValueReadoutWidget widget(broken);
-        check(widget.isBindingStale("value"), "a binding that failed to build reports no data");
+        widget.resize(240, 160);
+        const QImage before = renderOf(widget);
+        pump(400ms);
+        check(renderOf(widget) != before, "a binding that failed to build reports no data");
     }
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);

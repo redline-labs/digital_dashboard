@@ -8,11 +8,16 @@
 namespace qt_helpers {
 
 // QWidget base that composes a repaint as: cached static underlay pixmap →
-// per-frame dynamic content → optional cached static overlay pixmap. The
-// static layers are rendered through the subclass hooks only when the widget
-// size changes (or invalidateStaticCache() is called), so per-frame work is
-// limited to paintDynamic(). All hooks receive a painter with
-// applyPaintTransform() already applied.
+// per-frame dynamic content → optional cached static overlay pixmap. The static
+// layers are rendered through the subclass hooks only when the widget size or
+// device pixel ratio changes, so per-frame work is limited to paintDynamic().
+// All hooks receive a painter with applyPaintTransform() already applied.
+//
+// "Static" means exactly that: content that depends on nothing but the size and
+// the DPR. A widget whose picture changes with its own state does not belong
+// here -- it would have to force the cache to re-render on every change, which
+// is the caching undone by hand. mercedes_190e_telltales used to, and is a
+// plain QWidget now.
 //
 // No Q_OBJECT: subclasses keep their own meta-object via QWidget.
 class CachedPaintWidget : public QWidget {
@@ -33,10 +38,6 @@ class CachedPaintWidget : public QWidget {
     // Subclasses that use it must also override hasStaticOverlay().
     virtual void paintStaticOverlay(QPainter&) {}
     virtual bool hasStaticOverlay() const { return false; }
-
-    // Force the static layers to re-render on the next repaint (e.g. after a
-    // state change that alters static content).
-    void invalidateStaticCache() { cached_size_ = QSize(); }
 
     void paintEvent(QPaintEvent*) final
     {

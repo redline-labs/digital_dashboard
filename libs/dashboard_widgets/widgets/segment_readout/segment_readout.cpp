@@ -102,33 +102,9 @@ SegmentReadoutWidget::SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QW
     {
         _expression_parser = dashboard::makeExpressionSubscription<double>(
             _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-            this, &SegmentReadoutWidget::setValue, &SegmentReadoutWidget::setValueStale,
-            std::chrono::milliseconds(_cfg.stale_after_ms), "segment readout");
+            this, &SegmentReadoutWidget::setValue, 
+            std::chrono::milliseconds(_cfg.stale_after_ms));
     }
-}
-
-void SegmentReadoutWidget::setValueStale(bool stale)
-{
-    if (_stale == stale)
-    {
-        return;
-    }
-    _stale = stale;
-    dashboard::publishStaleProperties(*this, *this);
-    update();
-}
-
-void SegmentReadoutWidget::setBindingStale(std::string_view binding, bool stale)
-{
-    if (binding == "value")
-    {
-        setValueStale(stale);
-    }
-}
-
-bool SegmentReadoutWidget::isBindingStale(std::string_view binding) const
-{
-    return binding == "value" && _stale;
 }
 
 void SegmentReadoutWidget::setValue(double value)
@@ -277,7 +253,7 @@ void SegmentReadoutWidget::paintEvent(QPaintEvent* /*event*/)
 
     // Dashes while the stream is quiet, in the stale colour: one per cell, so
     // the readout keeps its shape and cannot be read as a number.
-    if (_stale)
+    if (valueStale())
     {
         p.setPen(gauge_paint::kStaleColor);
         p.drawText(value_area, Qt::AlignRight | Qt::AlignVCenter,

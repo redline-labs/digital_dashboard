@@ -117,18 +117,11 @@ target_link_libraries(dashboard_widgets_test_staleness PRIVATE
 )
 add_project_test(TARGET dashboard_widgets_test_staleness LABELS dashboard_widgets unit)
 
-# Loss of comm, over the whole widget table: a widget that reads a topic has to
-# implement StaleAware, and going stale has to change what it draws. A stale
-# look that renders identically is the failure this test exists for.
-add_executable(dashboard_widgets_test_stale_render tests/test_stale_render.cpp)
-target_link_libraries(dashboard_widgets_test_stale_render PRIVATE
-    dashboard_widgets
-    spdlog::spdlog
-)
-add_project_test(TARGET dashboard_widgets_test_stale_render LABELS dashboard_widgets gui)
-
-# The hook against a real publisher: no flicker on a live stream, stale once it
-# stops, fresh again when it resumes, and silent under the editor's suppression.
+# Loss of comm against a real publisher, end to end: no flicker on a live
+# stream, a different picture once it stops, the original one back when it
+# resumes, and nothing at all under the editor's suppression. Renders the widget
+# rather than reading a flag off it, because a stale look that draws the same
+# picture is the failure worth catching.
 add_executable(dashboard_widgets_test_subscription_stale tests/test_subscription_stale.cpp)
 target_link_libraries(dashboard_widgets_test_subscription_stale PRIVATE
     dashboard_widgets

@@ -33,8 +33,8 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
 {
     rpm_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &Mercedes190ETachometer::setRpm, &Mercedes190ETachometer::setRpmStale,
-        std::chrono::milliseconds(_cfg.stale_after_ms), "tachometer rpm");
+        this, &Mercedes190ETachometer::setRpm, 
+        std::chrono::milliseconds(_cfg.stale_after_ms));
 
     m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf");
     // Adjusted font sizes based on new reference image (numbers are quite large)
@@ -84,30 +84,6 @@ void Mercedes190ETachometer::paintStaticUnderlay(QPainter& painter)
     drawStaticText(&painter);
 }
 
-void Mercedes190ETachometer::setRpmStale(bool stale)
-{
-    if (m_rpm_stale == stale)
-    {
-        return;
-    }
-    m_rpm_stale = stale;
-    dashboard::publishStaleProperties(*this, *this);
-    update();
-}
-
-void Mercedes190ETachometer::setBindingStale(std::string_view binding, bool stale)
-{
-    if (binding == "rpm")
-    {
-        setRpmStale(stale);
-    }
-}
-
-bool Mercedes190ETachometer::isBindingStale(std::string_view binding) const
-{
-    return binding == "rpm" && m_rpm_stale;
-}
-
 void Mercedes190ETachometer::paintDynamic(QPainter& painter)
 {
     if (_cfg.show_clock == true)
@@ -117,7 +93,7 @@ void Mercedes190ETachometer::paintDynamic(QPainter& painter)
 
     // No needle while the stream is quiet. The clock is not on the bus, so it
     // keeps going -- which is also what tells the two apart at a glance.
-    if (m_rpm_stale)
+    if (rpmStale())
     {
         gauge_paint::drawNoDataLegend(painter, QRectF(-70.0, 30.0, 140.0, 24.0), painter.font());
         return;

@@ -42,8 +42,8 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
 
     _expression_parser = dashboard::makeExpressionSubscription<float>(
         _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &MotecCdl3Tachometer::setRpm, &MotecCdl3Tachometer::setRpmStale,
-        std::chrono::milliseconds(_cfg.stale_after_ms), "CDL3 tachometer rpm");
+        this, &MotecCdl3Tachometer::setRpm, 
+        std::chrono::milliseconds(_cfg.stale_after_ms));
     // Why: Precompute a LUT and static geometry so drawing stays O(segments)
     // with consistent visual spacing, regardless of widget size.
     buildArcLUT();
@@ -261,35 +261,11 @@ void MotecCdl3Tachometer::paintStaticUnderlay(QPainter& painter)
     painter.restore(); // undo vertical mirror
 }
 
-void MotecCdl3Tachometer::setRpmStale(bool stale)
-{
-    if (_rpm_stale == stale)
-    {
-        return;
-    }
-    _rpm_stale = stale;
-    dashboard::publishStaleProperties(*this, *this);
-    update();
-}
-
-void MotecCdl3Tachometer::setBindingStale(std::string_view binding, bool stale)
-{
-    if (binding == "rpm")
-    {
-        setRpmStale(stale);
-    }
-}
-
-bool MotecCdl3Tachometer::isBindingStale(std::string_view binding) const
-{
-    return binding == "rpm" && _rpm_stale;
-}
-
 void MotecCdl3Tachometer::paintDynamic(QPainter& painter)
 {
     // Nothing lit while the stream is quiet; the baseline track underneath
     // stays, so the bar still reads as a bar with nothing in it.
-    if (_rpm_stale)
+    if (rpmStale())
     {
         gauge_paint::drawNoDataLegend(painter, _contentBounds, painter.font());
         return;

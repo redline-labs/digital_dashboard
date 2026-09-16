@@ -1,7 +1,6 @@
 #ifndef MOTEC_CDL3_TACHOMETER_H
 #define MOTEC_CDL3_TACHOMETER_H
 
-#include "dashboard/stale_aware.h"
 
 #include <vector>
 #include "motec_cdl3_tachometer/config.h"
@@ -22,7 +21,7 @@
 
 class QPainter;
 
-class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware {
+class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget {
     Q_OBJECT
 
 public:
@@ -45,11 +44,6 @@ private:
 
     // Every segment dark: on a bar graph that is what no signal looks like, and
     // a bar frozen at its last height is a reading.
-    void setRpmStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"rpm"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
 
     // transform helpers
     QRectF computeContentBounds() const; // world-space rect that bounds all drawn content
@@ -61,7 +55,6 @@ private:
 
     MotecCdl3TachometerConfig_t _cfg;
     float _rpm; // current rpm
-    bool _rpm_stale = false;
 
     // The only thing the dynamic layer actually draws: how many of the 46
     // segments are lit. Derived from _rpm when it is set, so the whole display
@@ -74,6 +67,12 @@ private:
 
     // Optional live data
     dashboard::ExpressionSubscriptionPtr<float> _expression_parser;
+
+    // The bar is cleared and its outline takes the stale colour while the
+    // stream is quiet.
+    // The subscription is the only place this is recorded, so there is
+    // nothing here to keep in step with it.
+    bool rpmStale() const { return _expression_parser && _expression_parser->isStale(); }
 
     // LUT storage
     static constexpr std::size_t kLutSamples = 512u;

@@ -110,23 +110,33 @@ memory grew. It is not copyable or movable, because the callback captures
 null with the error logged if the expression or the subscription failed.
 `sinceLastSample()` is the raw measurement. The policy above it is
 `stale_after_ms`, a field beside every binding's `zenoh_key`: after that long
-with nothing arriving, the subscription calls the widget's stale hook on the
-delivery tick, and calls it again with false when a reading returns. Zero, the
-default, never reports one, and the editor turns the whole mechanism off for its
-process so a preview with no bus behind it does not draw every widget as dead.
-A binding that cannot be built at all -- an expression that does not compile --
-reports stale once, because a gauge showing zero for a broken binding is worse
-than one showing nothing.
+with nothing arriving, `ExpressionSubscription::isStale()` turns true on the
+delivery tick and the subscription schedules a repaint, and both reverse when a
+reading returns. Zero, the default, never goes stale, and the editor turns the
+whole mechanism off for its process so a preview with no bus behind it does not
+draw every widget as dead. A binding that cannot be built at all -- an
+expression that does not compile -- goes stale the same way, because a gauge
+showing zero for a broken binding is worse than one showing nothing.
 
-Widgets implement `dashboard::StaleAware`: one name per binding, so a
-speedometer whose odometer topic has stopped still shows the speed. The look is
-the widget's own, from one shared vocabulary in `gauge_painting.h`
-(`kStaleColor`, `staleDashes()`, `drawNoDataLegend()`): needles and markers go
-away rather than parking at zero, readouts show dashes, the telltale takes a
-third state that is neither on nor off, and the sparkline stops scrolling.
-`publishStaleProperties()` mirrors the state onto Qt properties, so
-`ui_snapshot` reports it without agent_control knowing what a widget is. The header
-includes `pub_sub/expression_subscriber.h`, the lean one, on purpose; a widget
+The subscription is the only place the answer is kept. A widget holds its
+subscriptions, so it asks one where it paints:
+
+```cpp
+bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+```
+
+One subscription per binding means the bindings are independent for free: a
+speedometer whose odometer topic has stopped still shows the speed. There is no
+interface to implement, no flag on the widget to keep in step, and nothing to
+mirror. The look is the widget's own, from one shared vocabulary in
+`gauge_painting.h` (`kStaleColor`, `staleDashes()`, `drawNoDataLegend()`):
+needles and markers go away rather than parking at zero, readouts show dashes,
+and the sparkline stops scrolling. A warning lamp is the exception: the telltale
+lights rather than greying, because a dark lamp says the condition is false and
+that is the one answer a brake or battery lamp must not give when nothing has
+reported.
+
+The header includes `pub_sub/expression_subscriber.h`, the lean one, on purpose; a widget
 that includes `zenoh_subscriber.h` pays for capnp in every translation unit.
 
 Fonts and SVGs are added with `qt_add_resources`, not by listing a `.qrc` as a
@@ -170,7 +180,6 @@ and validated without a new test.
 | `dashboard_widgets_test_config_validation` | `dashboard_widgets unit` | `validate_app_config()` names the field in its message for each class of bad config the loader used to accept in silence. |
 | `dashboard_widgets_test_config_colors` | `dashboard_widgets unit` | A configured colour turns into the channel values the file asked for, eight-digit form included. |
 | `dashboard_widgets_test_staleness` | `dashboard_widgets unit` | The loss-of-comm state machine at its boundaries: disabled at zero, stale exactly at the timeout and not a tick before, one edge per transition, and the timeout measured from the newest sample. |
-| `dashboard_widgets_test_stale_render` | `dashboard_widgets gui` | Over the whole widget table: a widget that reads a topic implements `StaleAware`, and each binding renders differently fresh and stale. A stale look that draws the same picture fails here. |
 | `dashboard_widgets_test_subscription_stale` | `dashboard_widgets net gui` | Against a real publisher: no flicker on a stream arriving every 25 ms, stale once it stops, fresh again when it resumes, silent under the editor's suppression, and stale for a binding that could not be built. |
 
 The `carplay` and `carplay_nav` widget directories register tests of their own

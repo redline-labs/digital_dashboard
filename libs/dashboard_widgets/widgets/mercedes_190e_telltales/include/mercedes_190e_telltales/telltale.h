@@ -2,7 +2,6 @@
 #define TELLTALEWIDGET_H
 
 #include <mercedes_190e_telltales/config.h>
-#include "qt_helpers/cached_paint_widget.h"
 #include "dashboard/widget_types.h"
 
 #include <QWidget>
@@ -14,7 +13,6 @@
 #include <memory>
 #include <vector>
 
-#include "dashboard/stale_aware.h"
 
 // Forward declarations
 class QSvgRenderer;
@@ -22,7 +20,7 @@ class QSvgRenderer;
 #include "dashboard/expression_subscription.h"
 
 
-class Mercedes190ETelltale : public qt_helpers::CachedPaintWidget, public dashboard::StaleAware
+class Mercedes190ETelltale : public QWidget
 {
     Q_OBJECT
 
@@ -37,37 +35,39 @@ public:
 
     void setAsserted(bool asserted);
 
-    // A third state, distinct from both on and off: a lamp that is dark because
-    // nothing is reporting looks exactly like one that is dark because the
-    // condition is false, and those mean opposite things.
-    void setConditionStale(bool stale);
-
-    std::vector<std::string_view> staleBindings() const override { return {"condition"}; }
-    void setBindingStale(std::string_view binding, bool stale) override;
-    bool isBindingStale(std::string_view binding) const override;
-
     QSize sizeHint() const override;
 
 protected:
-    // The whole telltale (background, border, tinted icon) only changes with
-    // size or asserted state, so it is all cached static content.
-    void paintStaticUnderlay(QPainter& painter) override;
-    void paintDynamic(QPainter& painter) override;
+    // Painted outright rather than through qt_helpers::CachedPaintWidget. The
+    // whole lamp -- background, border, tinted icon -- depends on whether it is
+    // lit, which is neither size nor DPR, so it was never static content: it
+    // sat in the cached layer and threw that cache away on every change. A
+    // telltale repaints only when it lights or goes out, and the paint is a
+    // fill, a rect and a 64x64 SVG.
+    void paintEvent(QPaintEvent* event) override;
 
 private:
-    void updateColors();
-
     Mercedes190ETelltaleConfig_t _cfg;
 
     QSvgRenderer *mSvgRenderer;
     bool mAsserted;
-    bool mStale = false;
-    QColor mBackgroundColor;
-    QColor mIconColor;
     QString mSvgAlias;
 
     // Expression parser for condition evaluation
     dashboard::ExpressionSubscriptionPtr<bool> _expression_parser;
+
+    // Nothing is reporting the condition. The subscription is the only place
+    // this is recorded.
+    bool conditionStale() const { return _expression_parser && _expression_parser->isStale(); }
+
+    // A warning lamp fails lit. A dark lamp says the condition is false, and
+    // saying that when nothing has reported for seconds is the one answer a
+    // brake or battery lamp must never give -- so a stream that has stopped
+    // lights it, the same as the condition holding would.
+    bool lit() const { return mAsserted || conditionStale(); }
+
+    QColor backgroundColor() const;
+    QColor iconColor() const;
 };
 
 #endif // TELLTALEWIDGET_H
