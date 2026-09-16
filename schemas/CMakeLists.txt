@@ -19,7 +19,18 @@ endif()
 
 # The generator. Built for the host and run at build time, exactly like the
 # capnpc-c++ that ships with capnproto -- it is the same plugin interface.
-add_executable(capnpc_schema_registry tools/schema_registry_plugin.cpp)
+#
+# schema_layout_hash.cpp comes along as a source file, not as a link against
+# zenoh_pub_sub: that library consumes the registry this plugin generates, so
+# depending on it would be a cycle. The file is written to be compiled twice for
+# exactly this reason -- the fingerprints baked into the registry and the ones a
+# running program computes from a recorded descriptor have to come out of one
+# implementation.
+add_executable(capnpc_schema_registry
+    tools/schema_registry_plugin.cpp
+    ../libs/pub_sub/schema_layout_hash.cpp
+)
+target_include_directories(capnpc_schema_registry PRIVATE ../libs/pub_sub/include)
 target_link_libraries(capnpc_schema_registry PRIVATE capnp kj)
 
 # ... unless the host is not the target, in which case none of the three tools

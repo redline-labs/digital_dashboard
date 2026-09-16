@@ -109,12 +109,19 @@ class ByteSubscriber
 
 // True when a sample may be decoded as `schema_name`: either the publisher
 // stamped no fingerprint (an older build, or something that is not ours), or it
-// stamped the one this build computes for that schema.
+// stamped `expected`, this build's fingerprint for that schema.
+//
+// `expected` is passed in rather than looked up here because the caller knows
+// the schema as a TYPE and so has it as a constant --
+// `schema_traits<SchemaT>::layout`. This runs on every sample of every
+// subscription, and looking a name up per sample is the cost that constant
+// exists to avoid. kNoLayout means this build does not know the schema, which
+// is not a mismatch.
 //
 // A mismatch is reported once per key -- a stream at 100 Hz would otherwise
 // fill the log with the same line -- and the sample is dropped by the caller.
 bool layoutMatches(std::string_view keyexpr, std::string_view schema_name,
-                   std::optional<std::uint64_t> published);
+                   std::uint64_t expected, std::optional<std::uint64_t> published);
 
 // Logs "payload is not a whole number of capnp words" for `keyexpr`.
 //

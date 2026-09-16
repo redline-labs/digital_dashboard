@@ -13,6 +13,11 @@
 // The fingerprint is computed from the compiled schema, not from the .capnp
 // text: comments, field order in the file and formatting do not change it, and
 // anything that moves a byte does.
+//
+// For a schema this build registers, it is computed when the schemas are
+// compiled and reaches the program as a constant. Only a descriptor from
+// SOMEWHERE ELSE -- a recording written by another build -- is hashed at run
+// time, because that is the only one whose value this build cannot know.
 #ifndef PUB_SUB_SCHEMA_LAYOUT_H_
 #define PUB_SUB_SCHEMA_LAYOUT_H_
 
@@ -32,11 +37,23 @@ inline constexpr std::uint64_t kNoLayout = 0;
 // Over the struct's own id, and for each field its name, index, ordinal,
 // discriminant and type -- following struct and list-of-struct fields to a
 // bounded depth, so a change inside a nested message counts too.
+//
+// Defined in schema_layout_hash.cpp, which is compiled into both this library
+// and the registry generator: the constants below are produced by this exact
+// function at build time.
 std::uint64_t layoutHash(capnp::StructSchema schema);
 
-// The fingerprint of a registered schema, computed once per process. nullopt
-// when the name is not in this build's registry, which is how a sample from a
-// newer node reads.
+// The fingerprint of a registered schema. nullopt when the name is not in this
+// build's registry, which is how a sample from a newer node reads.
+//
+// A lookup, not a computation. The generator hashed every registered schema
+// while it had capnp's parse in hand, so the answer is a constant in the
+// generated registry.
+//
+// Prefer pub_sub::schema_traits<T>::layout wherever the schema is known as a
+// type, which is nearly everywhere: both the typed publisher and the typed
+// subscriber use it. This is for the callers that genuinely have only a name --
+// `bag play`, republishing whatever a recording holds.
 std::optional<std::uint64_t> layoutHashFor(std::string_view schema_name);
 
 // The fingerprint of a schema as some OTHER build defined it, from a stored

@@ -16,7 +16,12 @@ add_library(zenoh_pub_sub STATIC
 
     # What a schema's bytes mean, as one number: the guard against a publisher
     # and a subscriber built from different revisions of the same schema.
+    #
+    # The walk lives in its own file because schemas/CMakeLists.txt compiles it
+    # into the registry generator as well, which is what lets the fingerprint of
+    # a schema this build knows be a constant instead of a startup computation.
     schema_layout.cpp
+    schema_layout_hash.cpp
 
     # The public way to get raw payloads plus their schema name, for a consumer
     # that decodes them itself.

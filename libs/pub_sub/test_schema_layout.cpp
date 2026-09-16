@@ -10,9 +10,20 @@
 // properties that makes usable: the same schema always hashes the same, and a
 // descriptor recorded by another build hashes to the same value as the schema
 // it describes.
+//
+// The fingerprints of registered schemas are CONSTANTS, computed by the
+// registry generator while it had capnp's parse in hand. That makes the check
+// below the load-bearing one: the generator hashes a schema it loaded out of a
+// CodeGeneratorRequest, and this hashes the schema the compiler generated code
+// for. Those are two different capnp::StructSchema objects reached two
+// different ways, and every fingerprint in the build is wrong if they disagree.
+// The same equivalence is what layoutHashOfDescriptor() depends on.
 #include "pub_sub/schema_layout.h"
 
+#include "pub_sub/detail/byte_subscriber.h"
 #include "pub_sub/schema_registry.h"
+
+#include "engine_rpm.capnp.h"
 
 #include <capnp/schema.h>
 
@@ -40,6 +51,33 @@ void expect(bool condition, const std::string& what)
 
 int main()
 {
+    // Generated constants against the linked schemas, for every schema in the
+    // registry rather than a sample of them: this is the only place the two
+    // halves of the fingerprint meet, and a schema with unusual shape (a union,
+    // a group, a nested struct, a list of structs) is exactly where a loaded
+    // schema and a compiled one could diverge.
+    for (const std::string_view name : pub_sub::get_available_schemas())
+    {
+        const std::optional<capnp::Schema> schema = pub_sub::get_schema(name);
+        expect(schema.has_value(), std::string(name) + " resolves to a schema");
+        if (!schema)
+        {
+            continue;
+        }
+        expect(pub_sub::schema_layout_hash(name) == pub_sub::layoutHash(schema->asStruct()),
+               std::string(name) + "'s generated fingerprint matches the schema it links");
+    }
+
+    // The compile-time form. schema_traits<T>::layout is usable in a constant
+    // expression, which is the point of generating it at all.
+    static_assert(pub_sub::schema_traits<::EngineRpm>::layout != pub_sub::kNoLayout,
+                  "a registered schema's fingerprint is a constant, and not the unknown value");
+    expect(pub_sub::schema_traits<::EngineRpm>::layout == pub_sub::schema_layout_hash("EngineRpm"),
+           "the traits constant and the name lookup are the same number");
+
+    expect(pub_sub::schema_layout_hash("NoSuchSchema") == pub_sub::kNoLayout,
+           "an unknown name has no fingerprint in the generated table either");
+
     // Stable: the same schema, asked twice, in two ways.
     const auto rpm = pub_sub::layoutHashFor("EngineRpm");
     expect(rpm.has_value(), "a registered schema has a fingerprint");
@@ -94,6 +132,20 @@ int main()
     expect(pub_sub::layoutHashOfDescriptor(pub_sub::schema_descriptor("EngineRpm"),
                                            "NoSuchSchema") == std::nullopt,
            "and neither does a name this build does not know");
+
+    // The decision the fingerprint exists to make. layoutMatches() takes the
+    // expected value as an argument -- the typed subscriber passes
+    // schema_traits<T>::layout, a constant -- so what happens on a mismatch can
+    // be checked here without a bus.
+    const std::uint64_t engine_rpm = pub_sub::schema_traits<::EngineRpm>::layout;
+    expect(pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, engine_rpm),
+           "a sample stamped with this build's fingerprint is decoded");
+    expect(!pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, engine_rpm + 1),
+           "a sample stamped with another revision's is dropped");
+    expect(pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, std::nullopt),
+           "an unstamped sample is decoded, so a publisher predating this keeps working");
+    expect(pub_sub::detail::layoutMatches("a/key", "Whatever", pub_sub::kNoLayout, engine_rpm),
+           "a schema this build does not know is not a mismatch");
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

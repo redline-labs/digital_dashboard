@@ -29,9 +29,16 @@
 //   pub_sub/schema_registry.h    enum + traits + declarations
 //   schema_registry.cpp          the capnp::Schema::from<>() table
 //
+// It also computes each schema's LAYOUT FINGERPRINT here, at schema-compile
+// time, rather than leaving every process to walk the schema graph for it. See
+// computeLayoutHashes() below.
+//
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "pub_sub/schema_layout.h"
+
 #include <capnp/message.h>
+#include <capnp/schema-loader.h>
 #include <capnp/schema.capnp.h>
 #include <capnp/serialize.h>
 
@@ -39,6 +46,7 @@
 #include <kj/main.h>
 #include <kj/string.h>
 
+#include <cstdio>
 #include <map>
 #include <optional>
 #include <set>
@@ -75,6 +83,11 @@ struct Entry
     // the root node by; the id is where the transitive closure starts.
     uint64_t node_id = 0;
     std::string display_name;
+
+    // The layout fingerprint, from pub_sub::layoutHash() -- the same function
+    // the runtime links, compiled into this plugin. Filled in by
+    // computeLayoutHashes() once every node has been collected.
+    uint64_t layout = pub_sub::kNoLayout;
 };
 
 struct SourceFile
@@ -92,6 +105,16 @@ struct SourceFile
     // today, so in practice the header forward declares everything.
     bool needs_include = false;
 };
+
+// A uint64 as a C++ literal, so a fingerprint in the generated header reads as
+// the opaque number it is rather than as nineteen decimal digits.
+std::string hexLiteral(uint64_t value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "0x%016llxull",
+                  static_cast<unsigned long long>(value));
+    return buffer;
+}
 
 class SchemaRegistryMain
 {
@@ -182,6 +205,11 @@ private:
         if (entries_.empty())
         {
             return kj::str("no struct types found -- refusing to generate an empty registry");
+        }
+
+        if (const auto error = computeLayoutHashes())
+        {
+            return kj::str(*error);
         }
 
         writeFile("pub_sub/schema_registry.h", header());
@@ -279,6 +307,48 @@ private:
         return std::nullopt;
     }
 
+
+    // -------------------------------------------------- layout fingerprints
+    //
+    // A schema's fingerprint says which REVISION of a message a sample was
+    // written against: the name has never carried that, so widening a field
+    // leaves an old reader decoding new bytes into plausible wrong numbers.
+    //
+    // It is computed here because here is where it is already known. The
+    // alternative -- and what this replaced -- was every process walking the
+    // schema graph for it on the first publish and on the first sample of each
+    // subscription, behind a mutex and a cache, to arrive at a number that
+    // cannot change after the schemas are compiled.
+    //
+    // pub_sub::layoutHash() is not reimplemented here: schema_layout_hash.cpp
+    // is compiled into this plugin, so the number below and the number a
+    // running program computes from a recorded descriptor come out of the same
+    // code. pub_sub_test_schema_layout checks that against the linked schemas.
+    //
+    // The loader is fed the whole request rather than each entry's closure:
+    // SchemaLoader resolves a field's type by id when the field is reached, so
+    // a type left out would throw partway through a hash.
+    std::optional<std::string> computeLayoutHashes()
+    {
+        capnp::SchemaLoader loader;
+        try
+        {
+            for (const auto& [id, node] : nodes_)
+            {
+                loader.load(node);
+            }
+
+            for (Entry& entry : entries_)
+            {
+                entry.layout = pub_sub::layoutHash(loader.get(entry.node_id).asStruct());
+            }
+        }
+        catch (const kj::Exception& e)
+        {
+            return std::string("could not fingerprint the schemas: ") + e.getDescription().cStr();
+        }
+        return std::nullopt;
+    }
 
     // ------------------------------------------------------ schema descriptors
     //
@@ -766,6 +836,16 @@ private:
             "std::span<const std::uint8_t> schema_descriptor(schema_type_t schema_type);\n"
             "std::span<const std::uint8_t> schema_descriptor(std::string_view schema_name);\n"
             "\n"
+            "// The layout fingerprint: which REVISION of a schema, where the name only says\n"
+            "// which schema. Computed when these schemas were compiled, by the same\n"
+            "// pub_sub::layoutHash() a running program applies to a recorded descriptor.\n"
+            "//\n"
+            "// Zero (pub_sub::kNoLayout) when the name is unknown to this build. For a type\n"
+            "// known at compile time, schema_traits<T>::layout is the same number without\n"
+            "// the lookup.\n"
+            "std::uint64_t schema_layout_hash(schema_type_t schema_type);\n"
+            "std::uint64_t schema_layout_hash(std::string_view schema_name);\n"
+            "\n"
             "// capnp's own qualified name, e.g. \"can_frame.capnp:CanFrame\".\n"
             "//\n"
             "// NOT the registry name. A consumer reading a descriptor resolves the root node\n"
@@ -789,6 +869,9 @@ private:
             "\n"
             "// Specialized only for registered schemas, so publishing an unregistered type\n"
             "// is a compile error rather than a message nothing can decode.\n"
+            "//\n"
+            "// ::layout is the schema's fingerprint as a constant -- usable in a constant\n"
+            "// expression, and the reason nothing has to walk a schema graph to get it.\n"
             "template <typename Schema>\n"
             "struct schema_traits;\n"
             "\n";
@@ -796,7 +879,8 @@ private:
         {
             out += "template <> struct schema_traits<" + entry.cxx_name +
                    "> { static constexpr std::string_view name = \"" + entry.registry_name +
-                   "\"; };\n";
+                   "\"; static constexpr std::uint64_t layout = " + hexLiteral(entry.layout) +
+                   "; };\n";
         }
         out +=
             "\n"
@@ -879,6 +963,35 @@ private:
             "    }\n"
             "\n"
             "    return {};\n"
+            "}\n"
+            "\n"
+            "// Same switch shape again. The numbers are literals because they were computed\n"
+            "// when these schemas were compiled; see the generator for why that is not left\n"
+            "// to each process to work out.\n"
+            "std::uint64_t schema_layout_hash(schema_type_t schema_type)\n"
+            "{\n"
+            "    switch (schema_type)\n"
+            "    {\n";
+        for (const auto& entry : entries_)
+        {
+            out += "        case schema_type_t::" + entry.registry_name + ": return " +
+                   hexLiteral(entry.layout) + ";\n";
+        }
+        out +=
+            "    }\n"
+            "\n"
+            "    return 0;\n"
+            "}\n"
+            "\n"
+            "std::uint64_t schema_layout_hash(std::string_view schema_name)\n"
+            "{\n"
+            "    if (const auto schema_type = "
+            "reflection::enum_traits<schema_type_t>::try_from_string(schema_name))\n"
+            "    {\n"
+            "        return schema_layout_hash(*schema_type);\n"
+            "    }\n"
+            "\n"
+            "    return 0;\n"
             "}\n"
             "\n"
             "std::string_view schema_display_name(schema_type_t schema_type)\n"

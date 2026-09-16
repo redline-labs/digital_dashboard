@@ -239,8 +239,13 @@ int runPlay(cli::Context& context)
                         ++skipped_bad_key;
                         return true;
                     }
+                    // The one publisher in the tree that knows its schema only
+                    // as a string: what is republished is whatever the recording
+                    // holds. A schema this build does not know leaves the
+                    // samples unstamped rather than stopping the replay.
                     auto publisher = std::make_unique<pub_sub::detail::BytePublisher>(
-                        key, message.schema);
+                        key, message.schema,
+                        pub_sub::layoutHashFor(message.schema).value_or(pub_sub::kNoLayout));
                     found = publishers.emplace(key, std::move(publisher)).first;
                 }
 

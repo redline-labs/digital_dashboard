@@ -42,7 +42,7 @@ here, so the two halves cannot disagree as they once did.
 | `pub_sub/topic_discovery.h` | `observeTopics()` and `readOneSample()`: what is flowing, over a window. |
 | `pub_sub/timestamp.h` | `ntp64ToUnixNanos()` and its inverse, with what the clock does and does not mean. |
 | `pub_sub/capnp_encoding.h` | `kCapnpEncodingMime` and `schemaNameFromEncoding()`. |
-| `pub_sub/schema_layout.h` | `layoutHash()`, `layoutHashFor()`, `layoutHashOfDescriptor()`: which revision of a schema some bytes were written against. |
+| `pub_sub/schema_layout.h` | `layoutHash()`, `layoutHashFor()`, `layoutHashOfDescriptor()`: which revision of a schema some bytes were written against. Registered schemas are fingerprinted by the registry generator at build time; `layoutHashFor()` is a table lookup. |
 | `pub_sub/capnp_payload.h` | `WordAlignedPayload`: word-aligned capnp access to any byte buffer. |
 | `pub_sub/zenoh_payload.h` | `ZenohPayload`: the same over a live `zenoh::Bytes`, borrowing rather than copying. |
 | `pub_sub/can_frame.h` | `fromCapnp()` and `toCapnp()` between the `CanFrame` schema and `helpers::CanFrame`. The length copied is what was both declared and supplied, capped at 64. |
@@ -153,7 +153,7 @@ on a host where none can be opened.
 | `pub_sub_test_capnp_json` | `pub_sub unit` | JSON to capnp and back over a fixture with every field shape, parsed at test time so it never appears in a picker. |
 | `pub_sub_test_can_frame` | `pub_sub unit` | The `CanFrame` conversion: a declared length and a supplied payload that disagree come out as the bytes that exist. |
 | `pub_sub_test_timestamp` | `pub_sub unit` | The NTP64 conversion, where every wrong answer is a plausible number. |
-| `pub_sub_test_schema_layout` | `pub_sub unit` | The schema fingerprint: stable across calls, distinct for every schema in the registry, and the same computed from a stored descriptor as from the compiled schema. |
+| `pub_sub_test_schema_layout` | `pub_sub unit` | The schema fingerprint: every generated constant matches the schema this build links, distinct for every schema in the registry, and the same computed from a stored descriptor as from the compiled schema. |
 | `pub_sub_test_topic_key` | `pub_sub unit` | Key validation and mangling, round-tripped over every key in `configs/`. |
 | `pub_sub_test_expression_evaluator` | `pub_sub unit` | Decode and evaluate against `ExpressionEvaluator` directly, with no session. |
 | `pub_sub_test_sample_metadata` | `pub_sub net` | Zenoh stamps our samples at all, which only a real bus can say. |

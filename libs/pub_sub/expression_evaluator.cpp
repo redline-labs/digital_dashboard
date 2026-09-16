@@ -515,8 +515,10 @@ void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding,
 
     const std::string_view configured =
         reflection::enum_traits<pub_sub::schema_type_t>::to_string(impl_->schema_type);
-    const std::optional<std::uint64_t> expected = layoutHashFor(configured);
-    if (!expected || *expected == *layout)
+    // The schema is held as an enum here, so the generated table answers
+    // directly rather than through a name.
+    const std::uint64_t expected = schema_layout_hash(impl_->schema_type);
+    if (expected == kNoLayout || expected == *layout)
     {
         return;
     }
@@ -524,7 +526,7 @@ void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding,
     SPDLOG_ERROR("Key '{}' publishes '{}' written against a different revision of that schema "
                  "(publisher {:016x}, this build {:016x}). Every value read from it will be "
                  "wrong; rebuild both sides from the same schemas.",
-                 impl_->log_context, configured, *layout, *expected);
+                 impl_->log_context, configured, *layout, expected);
 }
 
 void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding)

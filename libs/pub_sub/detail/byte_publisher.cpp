@@ -51,13 +51,13 @@ struct BytePublisher::Impl
     std::optional<zenoh::LivelinessToken> advertisement;
 };
 
-BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_name) :
+BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_name,
+                             std::uint64_t layout) :
     impl_(std::make_unique<Impl>())
 {
     impl_->keyexpr = std::string(keyexpr);
     impl_->schema_name = std::string(schema_name);
-    // Looked up once here, not per sample: it is a map lookup and a schema walk.
-    impl_->layout = layoutHashFor(impl_->schema_name).value_or(kNoLayout);
+    impl_->layout = layout;
 
     // Checked here, at the point a key enters the system, rather than assumed.
     // Refusing outright is deliberate: every way a bad key can be wrong is a

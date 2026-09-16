@@ -46,6 +46,13 @@ those bytes do not mean what this build thinks they mean. A sample with no
 attachment is decoded as before, so a node built before fingerprints existed
 keeps working.
 
+The fingerprint of a schema this build knows is a constant: the registry
+generator computes it when `schemas/*.capnp` are compiled and emits it as
+`pub_sub::schema_traits<T>::layout`. Nothing walks a schema graph at startup to
+find out. The only fingerprint computed at run time is one for a schema from
+somewhere else -- the descriptor stored in a recording -- because that is the
+only one this build cannot already know.
+
 ### Changing a schema
 
 Adding a field to the end is what Cap'n Proto is designed for, and old readers

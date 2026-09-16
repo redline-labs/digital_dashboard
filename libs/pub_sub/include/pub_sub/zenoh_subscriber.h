@@ -66,7 +66,8 @@ class ZenohTypedSubscriber
                         // the name matches, the bytes do not mean the same
                         // thing, and capnp would decode them into plausible
                         // wrong numbers. Dropped, and said once per key.
-                        if (!detail::layoutMatches(key, schema_traits<SchemaT>::name, meta.layout()))
+                        if (!detail::layoutMatches(key, schema_traits<SchemaT>::name,
+                                                   schema_traits<SchemaT>::layout, meta.layout()))
                         {
                             return;
                         }

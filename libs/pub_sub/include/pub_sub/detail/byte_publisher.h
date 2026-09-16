@@ -5,6 +5,7 @@
 
 #include <kj/array.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string_view>
@@ -28,7 +29,14 @@ class BytePublisher
   public:
     // `schema_name` is stamped on every sample's encoding, which is what lets a
     // subscriber identify a topic from the first message it happens to catch.
-    BytePublisher(std::string_view keyexpr, std::string_view schema_name);
+    //
+    // `layout` is the fingerprint stamped beside it -- which REVISION of that
+    // schema these bytes are. It is passed in rather than looked up from the
+    // name because the caller usually knows the schema as a TYPE and so has it
+    // as a constant: ZenohPublisher passes schema_traits<SchemaT>::layout.
+    // kNoLayout leaves samples unstamped, which is how a subscriber reads a
+    // publisher that predates fingerprints.
+    BytePublisher(std::string_view keyexpr, std::string_view schema_name, std::uint64_t layout);
     ~BytePublisher();
 
     BytePublisher(const BytePublisher&) = delete;

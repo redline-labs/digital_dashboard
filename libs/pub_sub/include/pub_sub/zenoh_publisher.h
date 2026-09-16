@@ -46,7 +46,7 @@ public:
     using SchemaBuilder = typename SchemaT::Builder;
 
     explicit ZenohPublisher(std::string_view keyexpr) :
-        mPublisher(keyexpr, schema_traits<SchemaT>::name),
+        mPublisher(keyexpr, schema_traits<SchemaT>::name, schema_traits<SchemaT>::layout),
         mScratch(zeroedScratch(kInitialScratchWords)),
         mMessage(mScratch, ::capnp::AllocationStrategy::GROW_HEURISTICALLY),
         mBuilder(mMessage.initRoot<SchemaT>())
