@@ -44,3 +44,6 @@ target_link_libraries(msel_test_node_config PRIVATE
 )
 
 add_project_test(TARGET msel_test_node_config LABELS msel unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET msel_master_relay COMPONENT nodes)

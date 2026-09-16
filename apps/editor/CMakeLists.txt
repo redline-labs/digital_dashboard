@@ -95,3 +95,6 @@ target_compile_definitions(editor_test_roundtrip PRIVATE
     DASHBOARD_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/dashboard")
 target_link_libraries(editor_test_roundtrip PRIVATE editor_core)
 add_project_test(TARGET editor_test_roundtrip LABELS editor gui)
+
+# SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
+redline_install(TARGET editor COMPONENT gui)

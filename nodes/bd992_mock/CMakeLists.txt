@@ -60,3 +60,6 @@ target_include_directories(bd992_mock_test_config PRIVATE ${CMAKE_CURRENT_SOURCE
 target_link_libraries(bd992_mock_test_config PRIVATE
     road_graph zenoh_pub_sub spdlog::spdlog yaml-cpp::yaml-cpp)
 add_project_test(TARGET bd992_mock_test_config LABELS bd992_mock unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET bd992_mock COMPONENT nodes)

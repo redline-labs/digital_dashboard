@@ -58,3 +58,6 @@ target_link_libraries(can_bridge_test_recorder
 )
 
 add_project_test(TARGET can_bridge_test_recorder LABELS can_bridge unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET can_bridge COMPONENT nodes)

@@ -38,3 +38,6 @@ target_link_libraries(backlight_test_node_config PRIVATE
 )
 
 add_project_test(TARGET backlight_test_node_config LABELS backlight unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET backlight COMPONENT nodes)

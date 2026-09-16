@@ -66,3 +66,6 @@ target_compile_definitions(carplay_test_node_config PRIVATE
     CARPLAY_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/carplay"
 )
 add_project_test(TARGET carplay_test_node_config LABELS carplay unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET carplay COMPONENT nodes)

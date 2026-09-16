@@ -76,3 +76,10 @@ target_compile_definitions(grayhill_test_reconfigure PRIVATE
 )
 
 add_project_test(TARGET grayhill_test_reconfigure LABELS grayhill canopen unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET grayhill_keypad COMPONENT nodes)
+
+# SHIPPED in a component of its own, because it is the one binary that embeds an absolute
+# build path (the --eds default) and the image QA waiver for that can only be per package.
+redline_install(TARGET grayhill_keypad_reconfigure COMPONENT grayhill)

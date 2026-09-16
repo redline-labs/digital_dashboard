@@ -63,3 +63,6 @@ target_include_directories(inspect_test_key_match PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 add_project_test(TARGET inspect_test_key_match LABELS inspect unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET inspect COMPONENT nodes)

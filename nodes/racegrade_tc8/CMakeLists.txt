@@ -64,3 +64,7 @@ target_link_libraries(racegrade_tc8_test_messages PRIVATE
 )
 
 add_project_test(TARGET racegrade_tc8_test_messages LABELS racegrade_tc8 unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET racegrade_tc8 COMPONENT nodes)
+redline_install(TARGET test_racegrade_tc8_query COMPONENT nodes)

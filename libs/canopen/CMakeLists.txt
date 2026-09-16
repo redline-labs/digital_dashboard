@@ -160,3 +160,6 @@ target_compile_definitions(canopen_test_runtime PRIVATE
 
 add_project_test(TARGET canopen_test_runtime LABELS canopen unit)
 add_project_test(TARGET canopen_test_eds_parse LABELS canopen unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET canopen_code_gen COMPONENT nodes)

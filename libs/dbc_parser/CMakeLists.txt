@@ -113,3 +113,7 @@ endfunction()
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET dbc_code_gen COMPONENT nodes)
+redline_install(TARGET dbc_parser_parse COMPONENT nodes)

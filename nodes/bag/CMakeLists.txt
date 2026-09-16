@@ -31,3 +31,6 @@ target_link_libraries(bag_tool PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
 )
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET bag_tool COMPONENT nodes)

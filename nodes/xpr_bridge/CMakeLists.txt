@@ -70,3 +70,6 @@ target_link_libraries(xpr_test_publishers
 )
 
 add_project_test(TARGET xpr_test_publishers LABELS xpr unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET xpr_bridge COMPONENT nodes)

@@ -70,3 +70,6 @@ target_link_libraries(mti610_test_fields
 )
 
 add_project_test(TARGET mti610_test_fields LABELS mti610 unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET mti610_bridge COMPONENT nodes)

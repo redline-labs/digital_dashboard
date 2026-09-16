@@ -84,3 +84,6 @@ target_link_libraries(dashboard_test_config_override PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET dashboard_test_config_override LABELS dashboard unit)
+
+# SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
+redline_install(TARGET dashboard COMPONENT gui)

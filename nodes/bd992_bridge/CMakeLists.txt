@@ -70,3 +70,6 @@ target_link_libraries(bd992_test_fields
 )
 
 add_project_test(TARGET bd992_test_fields LABELS bd992 unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET bd992_bridge COMPONENT nodes)

@@ -23,3 +23,5 @@ target_link_libraries(mcp2221a_i2c_scan PRIVATE
     # Link common logging interface (wraps spdlog) - defined in parent CMakeLists.txt
     spdlog::spdlog
 ) 
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET mcp2221a_i2c_scan COMPONENT nodes)

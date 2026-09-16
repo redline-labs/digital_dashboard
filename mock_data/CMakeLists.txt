@@ -24,3 +24,8 @@ target_link_libraries(mock_racegrade_tc8_frames PRIVATE
     cxxopts::cxxopts
     dbc_motec_e888_rev1
 )
+
+# SHIPPED as bring-up tooling, in its own component so a production image can drop it
+# without a recipe change: nothing that invents vehicle data belongs on a shipping cluster.
+redline_install(TARGET test_data_publisher COMPONENT mockdata)
+redline_install(TARGET mock_racegrade_tc8_frames COMPONENT mockdata)

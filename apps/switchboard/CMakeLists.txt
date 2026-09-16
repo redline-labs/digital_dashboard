@@ -110,3 +110,6 @@ target_link_libraries(switchboard_test_window PRIVATE
 )
 
 add_project_test(TARGET switchboard_test_window LABELS switchboard gui net)
+
+# SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
+redline_install(TARGET switchboard COMPONENT gui)

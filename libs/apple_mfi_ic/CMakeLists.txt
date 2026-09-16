@@ -39,3 +39,6 @@ target_link_libraries(apple_mfi_ic_test PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET apple_mfi_ic_test LABELS apple_mfi_ic unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET apple_mfi_demo COMPONENT nodes)

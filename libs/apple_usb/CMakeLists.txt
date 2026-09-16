@@ -111,3 +111,7 @@ target_link_libraries(apple_usb_test_usbmuxd_framing PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET apple_usb_test_usbmuxd_framing LABELS apple_usb unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET apple_usb_muxctl COMPONENT nodes)
+redline_install(TARGET apple_usb_usbprobe COMPONENT nodes)

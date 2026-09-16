@@ -163,3 +163,6 @@ target_link_libraries(map_server_test_route_geometry
 )
 
 add_project_test(TARGET map_server_test_route_geometry LABELS map unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET map_server COMPONENT nodes)

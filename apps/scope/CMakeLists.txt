@@ -384,3 +384,6 @@ target_link_libraries(scope_test_panels PRIVATE
 )
 
 add_project_test(TARGET scope_test_panels LABELS scope gui)
+
+# SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
+redline_install(TARGET scope COMPONENT gui)

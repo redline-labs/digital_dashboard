@@ -123,6 +123,8 @@ if(BUILD_TESTING)
 endif()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 include(ProjectTest)
+# What ships on a board, declared next to each target. See the file.
+include(ProjectInstall)
 include(DashboardWidget)
 
 

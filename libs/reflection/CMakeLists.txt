@@ -14,3 +14,6 @@ target_link_libraries(test_reflection
 )
 
 
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET test_reflection COMPONENT nodes)

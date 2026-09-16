@@ -61,3 +61,7 @@ target_link_libraries(megasquirt_test_messages PRIVATE
 )
 
 add_project_test(TARGET megasquirt_test_messages LABELS megasquirt unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET megasquirt COMPONENT nodes)
+redline_install(TARGET megasquirt_test_frames COMPONENT nodes)

@@ -92,3 +92,6 @@ target_link_libraries(map_match_test_matcher
 )
 
 add_project_test(TARGET map_match_test_matcher LABELS map_match unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET map_match COMPONENT nodes)

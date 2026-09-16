@@ -51,3 +51,6 @@ target_link_libraries(motec_ltc_test_messages PRIVATE
 )
 
 add_project_test(TARGET motec_ltc_test_messages LABELS motec_ltc unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET motec_ltc COMPONENT nodes)

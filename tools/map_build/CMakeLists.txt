@@ -135,3 +135,6 @@ target_link_libraries(map_build_test_track_geometry
 )
 
 add_project_test(TARGET map_build_test_track_geometry LABELS map_build unit)
+
+# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
+redline_install(TARGET map_build COMPONENT nodes)
