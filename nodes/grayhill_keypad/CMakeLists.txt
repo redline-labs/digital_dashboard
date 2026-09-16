@@ -80,6 +80,8 @@ add_project_test(TARGET grayhill_test_reconfigure LABELS grayhill canopen unit)
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET grayhill_keypad COMPONENT nodes)
 
-# SHIPPED in a component of its own, because it is the one binary that embeds an absolute
-# build path (the --eds default) and the image QA waiver for that can only be per package.
-redline_install(TARGET grayhill_keypad_reconfigure COMPONENT grayhill)
+# SHIPPED. It had a component of its own until 2026-09-16, because its --eds default was a
+# path on the build machine and the image's QA waiver for an embedded build path can only be
+# applied per package. The default is core::paths::resource() now, the binary embeds no such
+# path, and it packages like any other tool.
+redline_install(TARGET grayhill_keypad_reconfigure COMPONENT nodes)

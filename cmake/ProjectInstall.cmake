@@ -25,9 +25,6 @@
 #             on every variant.
 #   mockdata  publishers that invent vehicle data for bring-up. Separable so a
 #             shipping image can leave them out without a recipe change.
-#   grayhill  grayhill_keypad_reconfigure alone, which is packaged by itself
-#             because it is the one binary that embeds an absolute build path
-#             and the QA waiver for that can only be applied per package.
 #
 # NOT every executable belongs here. A test registered with add_project_test()
 # never does. Neither does a benchmark (map_bench, map_surface_bench are
@@ -42,7 +39,7 @@
 #     DESTDIR=<staging> cmake --install <build> --prefix /opt/redline \
 #         --component nodes
 
-set(REDLINE_INSTALL_COMPONENTS gui nodes mockdata grayhill
+set(REDLINE_INSTALL_COMPONENTS gui nodes mockdata
     CACHE INTERNAL "Valid redline_install() components")
 
 function(redline_install)
