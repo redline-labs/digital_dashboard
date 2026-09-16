@@ -248,6 +248,13 @@ struct NegativeFour
     static constexpr int32_t offset = 0;
     static constexpr int16_t phys_min = -508;
     static constexpr int16_t phys_max = 512;
+
+    // This fixture measures rounding, not railing, so the declared range is
+    // inert: rail() needs these members to exist, and has_range keeps it a
+    // no-op so every value below still reaches the arithmetic under test.
+    static constexpr int16_t minimum = 0;
+    static constexpr int16_t maximum = 0;
+    static constexpr bool has_range = false;
 };
 
 // Exact ties. cantools would round these half to even.

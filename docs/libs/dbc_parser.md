@@ -91,10 +91,24 @@ conditionally. `decode()` and `encode()` are usable in constant expressions.
 
 Each signal gets the narrowest C++ type that holds every value its raw field
 can produce, and arithmetic in that type's domain. The range comes from the raw
-bit range, scale and offset. The DBC's declared `[min|max]` is ignored, because
-it is `[0|0]` in about half the files in the tree. The choice is on the
+bit range, scale and offset, never from the DBC's declared `[min|max]`, which
+is `[0|0]` in about half the files in the tree. The choice is on the
 signal's traits as `domain`, `Raw` and `Type`, plus `Work` for integer
 arithmetic or `Conv` for floating-point rounding.
+
+The declared range is still emitted, as `minimum` and `maximum`, and since
+2026-09-16 it carries the signal's own type rather than always being `double`:
+an integer signal's limits are its `Type`, a float signal's are `float`. A
+limit in a wider type than the value it bounds forced every comparison through
+floating point, and for a float signal it put the boundary between two
+representable values.
+
+A declared limit that an integer signal's type cannot hold, or that is not a
+whole number, is not an error. The generator has no diagnostic channel, and
+failing a consumer's build over a vendor DBC nobody here controls is the wrong
+trade. Such a signal keeps `double` limits, is not railed, and says so in a
+`NOTE:` comment in its generated traits. No signal in the DBCs in this tree
+hits it.
 
 | Domain | When | Type | Arithmetic |
 | --- | --- | --- | --- |
@@ -118,6 +132,20 @@ Encoding saturates to the field and rounds half away from zero. An integer
 signal is clamped to its physical range first and then divided with exact
 integer rounding. NaN encodes as the bottom of the field. Multiplex groups are
 selected by the multiplexor's raw bits.
+
+A signal whose file declares a real range is also railed to it, on decode and
+on encode. The gate is the `has_range` trait, which the generator sets only
+when the declared minimum and maximum differ, so the `[0|0]` half of the
+signals are unaffected and a file that does declare limits gets them enforced.
+Railing happens before the field saturation on encode, so the arithmetic still
+only meets values the generator sized `Work` for. `Bool`, `Enum` and the `SIG_VALTYPE_`
+domains are never railed. A `bool` cannot leave its range, and a declared
+numeric bound on an enum class need not be an enumerator. An IEEE signal's
+declared range describes its raw field rather than its value: the test corpus
+declares a float32 signal as `[-2147483648|2147483647]`, the int32 span of its
+32 bits, while the value itself runs to 3.4e38. Railing to that would destroy
+every large reading, and measurably did: it put 302 disagreements into the
+cantools golden corpus, on the three IEEE signals and nothing else.
 
 `to_raw(tag, value)` and `from_raw(tag, raw)` convert one signal without a
 frame. The signal's traits type is the tag, so both are found by

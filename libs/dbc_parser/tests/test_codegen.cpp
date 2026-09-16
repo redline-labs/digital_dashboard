@@ -441,6 +441,77 @@ BO_ 200 Two: 8 ECU
 
 } // namespace
 
+// The file's declared [min|max]: emitted in the signal's own type, and railing
+// the value only when the file actually set one. Half the signals in the wild
+// declare [0|0], and those must stay inert.
+void testDeclaredRange()
+{
+    const std::string out = generate(R"(BO_ 200 Ranged: 8 ECU
+ SG_ Ranged : 0|8@1+ (1,0) [10|200] "" ECU
+BO_ 201 Unset: 8 ECU
+ SG_ Unset : 0|8@1+ (1,0) [0|0] "" ECU
+BO_ 202 Offsetted: 8 ECU
+ SG_ Offsetted : 0|8@1+ (1,-40) [-20|100] "C" ECU
+BO_ 203 Scaled: 8 ECU
+ SG_ Scaled : 0|16@1+ (0.1,0) [0|1000] "" ECU
+BO_ 204 Flag: 8 ECU
+ SG_ Flag : 0|1@1+ (1,0) [0|1] "" ECU
+BO_ 205 Ieee: 8 ECU
+ SG_ Ieee : 0|32@1- (1,0) [-2147483648|2147483647] "" ECU
+SIG_VALTYPE_ 205 Ieee : 1;
+)");
+
+    // An integer signal's limits are its own type, not double, so railing it
+    // never goes through floating point.
+    const std::string ranged = signalBlock(out, "Ranged");
+    expectTrait("declared range takes the signal's type", ranged, "using Type = uint8_t;");
+    expectTrait("declared minimum is typed", ranged, "static constexpr uint8_t minimum = 10;");
+    expectTrait("declared maximum is typed", ranged, "static constexpr uint8_t maximum = 200;");
+    expectTrait("a real declaration rails", ranged, "static constexpr bool has_range = true;");
+
+    // [0|0] is "unset" in about half the files. It must not rail everything to
+    // zero, which is the whole reason the gate exists.
+    const std::string unset = signalBlock(out, "Unset");
+    expectTrait("an unset range is still typed", unset, "static constexpr uint8_t minimum = 0;");
+    expectTrait("an unset range does not rail", unset, "static constexpr bool has_range = false;");
+
+    // A negative offset makes the type signed, and the limits follow it.
+    const std::string offsetted = signalBlock(out, "Offsetted");
+    expectTrait("negative offset gives a signed type", offsetted, "using Type = int16_t;");
+    expectTrait("declared minimum follows the signed type", offsetted,
+                "static constexpr int16_t minimum = -20;");
+    expectTrait("declared maximum follows the signed type", offsetted,
+                "static constexpr int16_t maximum = 100;");
+
+    // A float signal's limits are float, so the rail boundary is a value the
+    // signal can actually take rather than one between two of them.
+    const std::string scaled = signalBlock(out, "Scaled");
+    expectTrait("a fractional scale is a float signal", scaled, "using Type = float;");
+    expectTrait("declared minimum is a float literal", scaled, "static constexpr float minimum = 0.0f;");
+    expectTrait("declared maximum is a float literal", scaled, "static constexpr float maximum = 1000.0f;");
+    expectTrait("a real declaration rails", scaled, "static constexpr bool has_range = true;");
+
+    // A bool cannot leave its range, so it is never railed however the file
+    // declares it.
+    const std::string flag = signalBlock(out, "Flag");
+    expectTrait("one unsigned bit is a bool", flag, "using Type = bool;");
+    expectTrait("a bool keeps double limits", flag, "static constexpr double minimum = 0.0;");
+    expectTrait("a bool is never railed", flag, "static constexpr bool has_range = false;");
+
+    // A SIG_VALTYPE_ signal's declared range describes its raw field, not its
+    // value: this one says [-2147483648|2147483647], the int32 span of its 32
+    // bits, while the value is an IEEE float running to 3.4e38. Railing to that
+    // would destroy every large reading, so IEEE is never railed.
+    const std::string ieee = signalBlock(out, "Ieee");
+    expectTrait("SIG_VALTYPE_ 1 is an IEEE float", ieee, "using Type = float;");
+    expectTrait("an IEEE signal is never railed", ieee, "static constexpr bool has_range = false;");
+
+    // The rail itself, once, in the shared detail header.
+    expectContains("the rail is emitted", out, "constexpr typename Sig::Type rail(typename Sig::Type value)");
+    expectContains("decode rails", out, "return rail<Sig>(from_raw_unrailed<Sig>(raw));");
+    expectContains("encode rails", out, "value = rail<Sig>(value);");
+}
+
 int main()
 {
     testStringEscaping();
@@ -458,6 +529,7 @@ int main()
     testMultiplexGatesOnRawBits();
     testLocalsDoNotShadowSignals();
     testHelpersAreShared();
+    testDeclaredRange();
 
     if (failures != 0)
     {

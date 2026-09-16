@@ -193,6 +193,23 @@ std::optional<IntChoice> smallestHolding(i128 lo, i128 hi)
     return std::nullopt;
 }
 
+// Whether a named integer type can hold a value. The declared [min|max] is
+// checked against the signal's own type before being emitted in it.
+bool fitsType(std::string_view name, i128 value)
+{
+    for (const auto &table : {kUnsignedTypes, kSignedTypes})
+    {
+        for (const auto &entry : table)
+        {
+            if (entry.name == name)
+            {
+                return (value >= entry.lo) && (value <= entry.hi);
+            }
+        }
+    }
+    return false;
+}
+
 // A DBC number as an exact integer, if it is one small enough to multiply a
 // 64 bit raw value by without leaving 128 bits.
 bool asInteger(double value, i128 &out)
@@ -327,9 +344,10 @@ void setIntegerConstants(SignalPlan &plan, std::string_view constantType, i128 s
     plan.offset = integerLiteral(offset);
 }
 
-// The type rules, in order. Ranges always come from the raw bit range: the
-// DBC's declared minimum and maximum are [0|0] in about half of the files this
-// runs on, and nothing checks them.
+// The type rules, in order. Ranges always come from the raw bit range, never
+// from the DBC's declared minimum and maximum, which are [0|0] in about half of
+// the files this runs on. Those are emitted separately, in the signal's own
+// type, and rail the value only when the file actually set them.
 SignalPlan planSignal(const dbc_parser::Signal &signal)
 {
     SignalPlan plan;
@@ -545,6 +563,94 @@ std::vector<std::string> enumeratorNames(const dbc_parser::Signal &signal)
     return names;
 }
 
+
+// The file's declared [min|max], in the signal's own type.
+//
+// It used to be double for every signal. A limit wider than the value it
+// bounds forces every comparison through floating point, and on a float signal
+// it puts the boundary between two representable values.
+//
+// has_range is what gates the rail in the generated code. It is false when the
+// file declares [0|0], which is about half the signals in the wild, so an
+// unset declaration stays inert and a real one becomes enforcement.
+//
+// Bool and Enum keep double limits and are never railed: a bool cannot leave
+// its range, and a declared numeric bound on an enum class need not be an
+// enumerator.
+//
+// A declared limit an integer signal's type cannot hold is NOT an error. This
+// generator has no diagnostic channel, and failing a consumer's build over a
+// vendor DBC nobody here controls is the wrong trade. Such a signal keeps
+// double limits, is not railed, and says so in the generated header.
+struct DeclaredLimits
+{
+    std::string type;
+    std::string min;
+    std::string max;
+    bool hasRange{false};
+    std::string note;
+};
+
+DeclaredLimits declaredLimits(const dbc_parser::Signal &signal, const SignalPlan &plan)
+{
+    DeclaredLimits limits;
+
+    if ((plan.domain == Domain::Bool) || (plan.domain == Domain::Enum))
+    {
+        limits.type = "double";
+        limits.min = doubleLiteral(signal.minimum);
+        limits.max = doubleLiteral(signal.maximum);
+        return limits;
+    }
+
+    if (plan.domain == Domain::Integer)
+    {
+        i128 lo = 0;
+        i128 hi = 0;
+        if (asInteger(signal.minimum, lo) && asInteger(signal.maximum, hi) && fitsType(plan.type, lo) &&
+            fitsType(plan.type, hi))
+        {
+            limits.type = plan.type;
+            limits.min = integerLiteral(lo);
+            limits.max = integerLiteral(hi);
+            limits.hasRange = (lo != hi);
+            return limits;
+        }
+
+        limits.type = "double";
+        limits.min = doubleLiteral(signal.minimum);
+        limits.max = doubleLiteral(signal.maximum);
+        limits.note = "the declared range does not fit this signal's type, so it is not railed";
+        return limits;
+    }
+
+    // Compared AFTER narrowing: two declared doubles can land on one float, and
+    // railing to a single point is not what the file meant.
+    const bool asFloat = (plan.type == "float");
+    limits.type = plan.type;
+    limits.min = asFloat ? floatLiteral(signal.minimum) : doubleLiteral(signal.minimum);
+    limits.max = asFloat ? floatLiteral(signal.maximum) : doubleLiteral(signal.maximum);
+
+    // A SIG_VALTYPE_ signal is NEVER railed, whatever the file declares.
+    //
+    // Its [min|max] describes the field as though the bits were an integer:
+    // dbc_test_features declares AsFloat as [-2147483648|2147483647], the int32
+    // span of its 32 bits, and dbc_test_precision declares IeeeScaled as
+    // rawMin*0.5+10 .. rawMax*0.5+10. The bits are an IEEE float, so the value
+    // runs to 3.4e38 and the declaration is not in the same units as the value.
+    // Railing to it destroys every large reading. MEASURED: doing so put 302
+    // disagreements into the cantools golden corpus, on all three IEEE signals
+    // and on nothing else.
+    if ((plan.domain == Domain::IeeeFloat) || (plan.domain == Domain::IeeeDouble))
+    {
+        return limits;
+    }
+
+    limits.hasRange = asFloat ? (static_cast<float>(signal.minimum) != static_cast<float>(signal.maximum))
+                              : (signal.minimum != signal.maximum);
+    return limits;
+}
+
 void generateSignalTraits(const dbc_parser::Signal &signal, const SignalPlan &plan, std::ostream &out)
 {
     fmt::print(out, "    struct sig_{}_t\n", signal.name);
@@ -614,10 +720,16 @@ void generateSignalTraits(const dbc_parser::Signal &signal, const SignalPlan &pl
     }
     fmt::print(out, "\n");
 
-    fmt::print(out, "        // As declared in the DBC. Nothing in the generated code reads these:\n");
-    fmt::print(out, "        // half the files in the wild declare [0|0].\n");
-    fmt::print(out, "        static constexpr double minimum = {};\n", doubleLiteral(signal.minimum));
-    fmt::print(out, "        static constexpr double maximum = {};\n", doubleLiteral(signal.maximum));
+    const DeclaredLimits limits = declaredLimits(signal, plan);
+    if (!limits.note.empty())
+    {
+        fmt::print(out, "        // NOTE: {}.\n", limits.note);
+    }
+    fmt::print(out, "        // As declared in the DBC, in this signal's own type. has_range is\n");
+    fmt::print(out, "        // false when the file declares [0|0], which is about half of them.\n");
+    fmt::print(out, "        static constexpr {} minimum = {};\n", limits.type, limits.min);
+    fmt::print(out, "        static constexpr {} maximum = {};\n", limits.type, limits.max);
+    fmt::print(out, "        static constexpr bool has_range = {};\n", limits.hasRange);
     fmt::print(out, "\n");
 
     fmt::print(out, "        static constexpr std::array<std::string_view, {}> receivers =\n",
@@ -957,7 +1069,8 @@ namespace @BASE@
 
 // How a signal's raw bits become its value. The generator picks one per signal
 // from the field's raw bit range -- never from the DBC's declared minimum and
-// maximum, which are [0|0] in half the files in the wild:
+// maximum, which are [0|0] in half the files in the wild. Those still rail the
+// decoded and encoded value when the file set them; see rail():
 //
 //   Bool        one unsigned bit, no scaling, no value table
 //   Enum        a value table on an unscaled field
@@ -1092,9 +1205,33 @@ constexpr Int round_saturate(Fp q, Int lo, Int hi)
     return truncated;
 }
 
-// Raw bits to the value they mean.
+// The file's declared [min|max], applied to a value. Inert unless the file set
+// one: has_range is false when the declaration is [0|0].
+//
+// Bool, Enum and the SIG_VALTYPE_ domains are never railed, so has_range is
+// false for them whatever the file said: a bool cannot leave its range, a
+// declared numeric bound on an enum class need not be an enumerator, and an
+// IEEE signal's declared range describes its raw field rather than its value.
 template <typename Sig>
-constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
+constexpr typename Sig::Type rail(typename Sig::Type value)
+{
+    if constexpr (Sig::has_range)
+    {
+        if (value < Sig::minimum)
+        {
+            return Sig::minimum;
+        }
+        if (value > Sig::maximum)
+        {
+            return Sig::maximum;
+        }
+    }
+    return value;
+}
+
+// Raw bits to the value they mean, before the declared range is applied.
+template <typename Sig>
+constexpr typename Sig::Type from_raw_unrailed(typename Sig::Raw raw)
 {
     const acc_t<Sig> bits = raw;
 
@@ -1187,11 +1324,22 @@ constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
     }
 }
 
+// Raw bits to the value they mean, railed to the file's declared range.
+template <typename Sig>
+constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
+{
+    return rail<Sig>(from_raw_unrailed<Sig>(raw));
+}
+
 // A value to the raw bits that encode it: saturated to the field, rounded
 // half away from zero where the scale leaves a fraction.
 template <typename Sig>
 constexpr typename Sig::Raw to_raw(typename Sig::Type value)
 {
+    // Before the field saturation below, so the arithmetic still only meets
+    // values the generator sized Work for.
+    value = rail<Sig>(value);
+
     if constexpr (Sig::domain == value_domain::Bool)
     {
         return static_cast<typename Sig::Raw>(value ? 1u : 0u);
