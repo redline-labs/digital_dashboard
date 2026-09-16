@@ -1205,29 +1205,8 @@ constexpr Int round_saturate(Fp q, Int lo, Int hi)
     return truncated;
 }
 
-// The file's declared [min|max], applied to a value. PROVIDED BUT NOT APPLIED.
-//
-// Nothing calls this. decode and encode deliberately do not rail, because the
-// declared range in real files is not trustworthy as a value constraint, and
-// clamping to it silently rewrites good data:
-//
-//   msel_master_relay.dbc declares temperature_internal, a SIGNED 16-bit field,
-//   as [0|125]. A cold car reads -10C. Railing to the declaration reports 0C --
-//   a plausible number, silently wrong, on an ordinary signal. Its neighbour
-//   load_current is declared [-255|600] and is fine, so the difference is only
-//   whether the author happened to write a sensible bound.
-//
-//   A SIG_VALTYPE_ signal is worse: its [min|max] describes the raw field, not
-//   the value, so railing destroyed every large reading and put 302
-//   disagreements into the cantools golden corpus.
-//
-// Encode has the same exposure as decode: a caller that legitimately sends -10
-// would have it clamped to 0 on the way to the wire. Call this explicitly if a
-// particular consumer wants the policy; do not wire it back into from_raw or
-// to_raw without first establishing that the files being read declare ranges
-// that mean what they say.
-//
-// has_range is false when the declaration is [0|0].
+// The file's declared [min|max], applied to a value. Inert unless the file set
+// one: has_range is false when the declaration is [0|0].
 //
 // Bool, Enum and the SIG_VALTYPE_ domains are never railed, so has_range is
 // false for them whatever the file said: a bool cannot leave its range, a
@@ -1250,9 +1229,9 @@ constexpr typename Sig::Type rail(typename Sig::Type value)
     return value;
 }
 
-// Raw bits to the value they mean.
+// Raw bits to the value they mean, before the declared range is applied.
 template <typename Sig>
-constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
+constexpr typename Sig::Type from_raw_unrailed(typename Sig::Raw raw)
 {
     const acc_t<Sig> bits = raw;
 
@@ -1345,11 +1324,22 @@ constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
     }
 }
 
+// Raw bits to the value they mean, railed to the file's declared range.
+template <typename Sig>
+constexpr typename Sig::Type from_raw(typename Sig::Raw raw)
+{
+    return rail<Sig>(from_raw_unrailed<Sig>(raw));
+}
+
 // A value to the raw bits that encode it: saturated to the field, rounded
 // half away from zero where the scale leaves a fraction.
 template <typename Sig>
 constexpr typename Sig::Raw to_raw(typename Sig::Type value)
 {
+    // Before the field saturation below, so the arithmetic still only meets
+    // values the generator sized Work for.
+    value = rail<Sig>(value);
+
     if constexpr (Sig::domain == value_domain::Bool)
     {
         return static_cast<typename Sig::Raw>(value ? 1u : 0u);

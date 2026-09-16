@@ -44,7 +44,7 @@ BO_ 1764 Master_Relay_Status: 8 Master_Relay
    SG_ low_voltage_warn : 50|1@0+ (1,0) [0|1] "" Vector__XXX
    SG_ over_current_warn : 49|1@0+ (1,0) [0|1] "" Vector__XXX
    SG_ over_temp_warn : 48|1@0+ (1,0) [0|1] "" Vector__XXX
-   SG_ temperature_internal : 39|16@0- (0.1,0) [0|125] "C" Vector__XXX
+   SG_ temperature_internal : 39|16@0- (0.1,0) [-40|125] "C" Vector__XXX
    SG_ load_current : 23|16@0- (0.1,0) [-255|600] "A" Vector__XXX
    SG_ voltage_out : 7|16@0+ (0.01,0) [0|655.35] "V" Vector__XXX
 
@@ -101,7 +101,12 @@ CM_ SG_ 1764 low_voltage_warn "Warning bit 0x04: below the 7V lower limit.";
 CM_ SG_ 1764 over_current_warn "Warning bit 0x02: over current.";
 CM_ SG_ 1764 over_temp_warn "Warning bit 0x01: above the 90C warning limit.";
 CM_ SG_ 1764 temperature_internal "Internal temperature. Sensitivity 0.2C,
-calibration error +/-3C, specified over 0 to 125C.";
+calibration error +/-3C. The vendor specifies ACCURACY over 0 to 125C; the
+declared range is wider because the device still reports below 0C in cold
+ambient conditions. The declared range is the contract the decoder enforces,
+so it must admit every value the ECU can send, not only the span over which
+the reading is guaranteed accurate. -40C is the conventional automotive floor
+and is not a vendor figure.";
 CM_ SG_ 1764 load_current "Current through the relay, positive when the battery
 is discharging and negative when it is being charged. Accurate to +/-10% or 1A,
 whichever is greater -- a total system draw indication, not a per-device

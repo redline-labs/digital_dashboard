@@ -133,31 +133,31 @@ signal is clamped to its physical range first and then divided with exact
 integer rounding. NaN encodes as the bottom of the field. Multiplex groups are
 selected by the multiplexor's raw bits.
 
-The declared range is NOT enforced. A `rail()` helper is emitted beside the
-decode and encode paths, but nothing calls it, and `decode()` and `encode()`
-stay faithful to what the bus said.
+A signal whose file declares a real range is also railed to it, on decode and
+on encode. The gate is the `has_range` trait, which the generator sets only
+when the declared minimum and maximum differ, so the `[0|0]` half of the
+signals are unaffected and a file that does declare limits gets them enforced.
+Railing happens before the field saturation on encode, so the arithmetic still
+only meets values the generator sized `Work` for. `Bool`, `Enum` and the `SIG_VALTYPE_`
+domains are never railed. A `bool` cannot leave its range, and a declared
+numeric bound on an enum class need not be an enumerator. An IEEE signal's
+declared range describes its raw field rather than its value: the test corpus
+declares a float32 signal as `[-2147483648|2147483647]`, the int32 span of its
+32 bits, while the value itself runs to 3.4e38. Railing to that would destroy
+every large reading, and measurably did: it put 302 disagreements into the
+cantools golden corpus, on the three IEEE signals and nothing else.
 
-That was tried and reverted on evidence. `has_range` gates it, and is set only
-when the declared minimum and maximum differ, on the theory that `[0|0]` means
-unset and anything else means the author stated a real bound. Real files break
-that theory in both directions:
-
-- `msel_master_relay.dbc` declares `temperature_internal`, a **signed** 16-bit
-  field, as `[0|125]`. A cold car reads -10C, and railing reports 0C: a
-  plausible number, silently wrong, on an entirely ordinary signal. Its
-  neighbour `load_current` is declared `[-255|600]` and is fine, so the only
-  difference is whether the author happened to write a sensible bound.
-- A `SIG_VALTYPE_` signal's `[min|max]` describes its raw field rather than its
-  value. The test corpus declares a float32 as `[-2147483648|2147483647]`, the
-  int32 span of its 32 bits, while the value runs to 3.4e38. Railing destroyed
-  every large reading and put 302 disagreements into the cantools golden corpus.
-
-Encode carries the same exposure as decode: a caller that legitimately sends
--10 would have it clamped to 0 on the way to the wire. So the policy is
-available to a consumer that wants it, by calling `rail()` explicitly, and is
-not wired into the conversion paths. Re-enabling it means first establishing
-that the files being read declare ranges that mean what they say.
-
+Because the declared range is enforced, it is a contract rather than a note:
+it must admit every value the ECU can actually send, not merely the span over
+which the vendor guarantees accuracy. Those are different things, and a file
+can state the narrower one in good faith. `msel_master_relay.dbc` declared
+`temperature_internal` as `[0|125]`, faithfully transcribing a datasheet line
+that specifies accuracy over 0 to 125C, while the sensor still reports below
+freezing on a cold morning. Enforcing the transcribed bound clamped a real
+-10C reading to 0C, which `msel_test_decode` caught. The declaration is now
+`[-40|125]`, with the vendor's accuracy figure kept in the signal's comment.
+Where a declared range and a datasheet disagree about what the device can
+emit, the declaration follows the device.
 
 `to_raw(tag, value)` and `from_raw(tag, raw)` convert one signal without a
 frame. The signal's traits type is the tag, so both are found by
