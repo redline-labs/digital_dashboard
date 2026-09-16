@@ -72,7 +72,7 @@ class TempDir
     std::filesystem::path path_;
 };
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;
 
 std::vector<std::uint8_t> payloadFor(int index, std::size_t size)
 {
@@ -101,8 +101,8 @@ void writeBag(const TempDir& dir, const std::string& codec, int count,
         const char* keys[] = {"a/one", "a/two", "a/three"};
         const char* schemas[] = {"EngineRpm", "VehicleSpeed", "EngineTemperature"};
         writer.write(keys[i % 3], schemas[i % 3], payloadFor(i, 256),
-                     kBase + static_cast<std::uint64_t>(i) * 1'000'000ull,
-                     kBase + static_cast<std::uint64_t>(i) * 1'000'000ull - 1000ull, "zid");
+                     kBase + static_cast<std::uint64_t>(i) * 1'000'000,
+                     kBase + static_cast<std::uint64_t>(i) * 1'000'000 - 1000, "zid");
     }
     writer.close();
 }

@@ -55,7 +55,7 @@ struct Lcg
 
     std::uint64_t next()
     {
-        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        state = state * 6364136223846793005 + 1442695040888963407;
         return state >> 16;
     }
 

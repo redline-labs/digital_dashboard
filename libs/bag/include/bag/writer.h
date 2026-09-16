@@ -27,10 +27,10 @@ struct WriterOptions
     // Uncompressed bytes buffered before a chunk is flushed. Bigger compresses
     // better; smaller bounds how much a torn tail costs, since a partial chunk
     // is unreadable in its entirety.
-    std::uint64_t chunk_bytes = 4ull * 1024 * 1024;
+    std::uint64_t chunk_bytes = std::uint64_t{4} * 1024 * 1024;
 
     // Roll to a new part past this size. Zero disables size rolling.
-    std::uint64_t max_part_bytes = 2ull * 1024 * 1024 * 1024;
+    std::uint64_t max_part_bytes = std::uint64_t{2} * 1024 * 1024 * 1024;
 
     // Roll to a new part past this many seconds. Zero disables time rolling.
     double max_part_seconds = 0.0;

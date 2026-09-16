@@ -40,7 +40,7 @@ std::string localTime(std::uint64_t unix_nanos)
     {
         return "-";
     }
-    const auto seconds = static_cast<std::time_t>(unix_nanos / 1'000'000'000ull);
+    const auto seconds = static_cast<std::time_t>(unix_nanos / 1'000'000'000);
     std::tm parts{};
     ::localtime_r(&seconds, &parts);
     char buffer[64];

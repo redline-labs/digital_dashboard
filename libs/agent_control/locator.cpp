@@ -418,7 +418,7 @@ void WidgetLocator::noteTreeState(const std::vector<QWidget*>& widgets)
     {
         const std::size_t h = std::hash<const void*>{}(static_cast<const void*>(widget)) ^
                               std::hash<std::string>{}(widget->objectName().toStdString());
-        signature = signature * 1099511628211ull ^ h;
+        signature = signature * 1099511628211 ^ h;
     }
 
     if (signature != signature_)

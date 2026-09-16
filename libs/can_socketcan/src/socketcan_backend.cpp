@@ -540,7 +540,7 @@ public:
                 {
                     timeval stamp {};
                     std::memcpy(&stamp, CMSG_DATA(header), sizeof(stamp));
-                    frame->timestampUs = static_cast<uint64_t>(stamp.tv_sec) * 1000000ull
+                    frame->timestampUs = static_cast<uint64_t>(stamp.tv_sec) * 1000000
                         + static_cast<uint64_t>(stamp.tv_usec);
                 }
             }

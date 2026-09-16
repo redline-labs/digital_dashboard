@@ -37,8 +37,8 @@ namespace
 // it next to a date.
 std::string formatTimestamp(std::uint64_t unix_nanos)
 {
-    const auto seconds = static_cast<std::time_t>(unix_nanos / 1'000'000'000ull);
-    const auto millis = static_cast<unsigned>((unix_nanos % 1'000'000'000ull) / 1'000'000ull);
+    const auto seconds = static_cast<std::time_t>(unix_nanos / 1'000'000'000);
+    const auto millis = static_cast<unsigned>((unix_nanos % 1'000'000'000) / 1'000'000);
 
     std::tm parts{};
     ::localtime_r(&seconds, &parts);

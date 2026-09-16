@@ -66,12 +66,12 @@ std::uint64_t routingChecksum(std::span<const EdgeRecord> edges,
     // FNV-1a over the fields that decide a route. Deliberately NOT over the
     // padding: a struct's pad bytes are whatever the allocator left there, and
     // hashing them would make the checksum differ between two identical graphs.
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = 1469598103934665603;
     const auto mix = [&hash](std::uint64_t value) {
         for (int byte = 0; byte < 8; ++byte)
         {
             hash ^= (value >> (byte * 8)) & 0xFFu;
-            hash *= 1099511628211ULL;
+            hash *= 1099511628211;
         }
     };
     for (const EdgeRecord& edge : edges)

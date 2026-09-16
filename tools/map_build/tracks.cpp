@@ -324,12 +324,12 @@ std::string makeBuildId(const std::filesystem::path& input, std::size_t trackCou
     // FNV-1a over the sorted file names and sizes. Not cryptographic and does
     // not need to be -- it exists to notice that two halves of one file came
     // from different runs, not to resist anybody.
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = 1469598103934665603;
     const auto mix = [&hash](std::string_view text) {
         for (const char c : text)
         {
             hash ^= static_cast<std::uint8_t>(c);
-            hash *= 1099511628211ULL;
+            hash *= 1099511628211;
         }
     };
     for (const auto& path : track::listSourceFiles(input))

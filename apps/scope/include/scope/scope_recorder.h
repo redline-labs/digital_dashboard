@@ -113,7 +113,7 @@ class CaptureProvider : public RecordedProvider
     // Mutable because caching does not change the observable answer. GUI
     // thread only, like every other read through this provider.
     mutable std::vector<TopicInfo> cached_topics_;
-    mutable std::uint64_t cached_topics_revision_ = ~0ull;
+    mutable std::uint64_t cached_topics_revision_ = ~std::uint64_t{0};
 };
 
 }  // namespace scope

@@ -702,7 +702,7 @@ void MapPanel::onFrame()
     // projection of every point, per frame, to reproduce the identical track.
     std::uint64_t signature = 0;
     const auto mix = [&signature](std::uint64_t v)
-    { signature ^= v + 0x9e3779b97f4a7c15ull + (signature << 6) + (signature >> 2); };
+    { signature ^= v + 0x9e3779b97f4a7c15 + (signature << 6) + (signature >> 2); };
     for (const Signal* signal : {&latitude_, &longitude_, &color_})
     {
         mix(reinterpret_cast<std::uintptr_t>(signal->buffer.get()));

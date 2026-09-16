@@ -32,7 +32,7 @@ QString formatWallClock(std::uint64_t unix_nanos)
         return {};
     }
     const QDateTime when =
-        QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(unix_nanos / 1'000'000ull));
+        QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(unix_nanos / 1'000'000));
     return when.toString(QStringLiteral("HH:mm:ss"));
 }
 

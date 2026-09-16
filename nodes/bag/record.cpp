@@ -98,8 +98,8 @@ int runRecord(cli::Context& context)
     bag::WriterOptions writer_options;
     writer_options.compression = context.stringOr("compression", "zstd");
     writer_options.compression_level = static_cast<int>(context.uintOr("compression-level", 0));
-    writer_options.chunk_bytes = context.uintOr("chunk-size", 4ull * 1024 * 1024);
-    writer_options.max_part_bytes = context.uintOr("max-size", 2ull * 1024 * 1024 * 1024);
+    writer_options.chunk_bytes = context.uintOr("chunk-size", std::uint64_t{4} * 1024 * 1024);
+    writer_options.max_part_bytes = context.uintOr("max-size", std::uint64_t{2} * 1024 * 1024 * 1024);
     writer_options.max_part_seconds = context.doubleOr("max-duration", 0.0);
     writer_options.recorder = "redline bag";
 

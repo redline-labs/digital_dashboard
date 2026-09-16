@@ -64,7 +64,7 @@ class TempDir
     std::filesystem::path path_;
 };
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;
 
 std::vector<std::uint8_t> payloadFor(int index, std::size_t size)
 {
@@ -166,7 +166,7 @@ void testManyTopics()
         for (int i = 0; i < kTopics; ++i)
         {
             writer.write("topic/" + std::to_string(i), "EngineRpm", payloadFor(i, 64),
-                         kBase + static_cast<std::uint64_t>(i) * 1000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1000, std::nullopt, "");
         }
         writer.close();
     }
@@ -202,7 +202,7 @@ void testRollingByDuration()
         for (int i = 0; i < 5; ++i)
         {
             writer.write("a/one", "EngineRpm", payloadFor(i, 64),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
         }
         writer.close();
@@ -298,7 +298,7 @@ void testBackwardsRangeReturnsNothing()
         for (int i = 0; i < 50; ++i)
         {
             writer.write("a/one", "EngineRpm", payloadFor(i, 32),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }
@@ -306,7 +306,7 @@ void testBackwardsRangeReturnsNothing()
     bag::BagReader reader(dir.str());
 
     std::size_t seen = 0;
-    reader.forEach(kBase + 40'000'000ull, kBase + 10'000'000ull,
+    reader.forEach(kBase + 40'000'000, kBase + 10'000'000,
                    [&](const bag::BagMessage&)
                    {
                        ++seen;
@@ -317,7 +317,7 @@ void testBackwardsRangeReturnsNothing()
     // A zero-width range at an exact message time returns that one message,
     // since the range is closed at both ends.
     std::size_t exact = 0;
-    const std::uint64_t at = kBase + 10'000'000ull;
+    const std::uint64_t at = kBase + 10'000'000;
     reader.forEach(at, at,
                    [&](const bag::BagMessage& message)
                    {
@@ -362,7 +362,7 @@ void testRepeatedAndConcurrentReads()
         for (int i = 0; i < 100; ++i)
         {
             writer.write("a/one", "EngineRpm", payloadFor(i, 32),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }

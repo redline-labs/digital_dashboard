@@ -56,7 +56,7 @@ void expect(bool condition, const std::string& what)
     }
 }
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;  // a plausible 2026 timestamp
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;  // a plausible 2026 timestamp
 
 // A real capnp EngineRpm payload, so the evaluator decodes it for real. A
 // hand-rolled byte buffer would exercise the plumbing and none of the decoding,
@@ -151,7 +151,7 @@ scope::SignalKey rpmKey()
 class SlowProvider : public StubProvider
 {
   public:
-    SlowProvider() : StubProvider(2000, 1'000'000ull) {}
+    SlowProvider() : StubProvider(2000, 1'000'000) {}
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
                  const std::function<bool(const bag::BagMessage&)>& visit) override
@@ -173,7 +173,7 @@ class SlowProvider : public StubProvider
 class GatedProvider : public StubProvider
 {
   public:
-    GatedProvider() : StubProvider(50, 100'000'000ull) {}
+    GatedProvider() : StubProvider(50, 100'000'000) {}
 
     void forEach(std::uint64_t t0_ns, std::uint64_t t1_ns,
                  const std::function<bool(const bag::BagMessage&)>& visit) override
@@ -401,7 +401,7 @@ bool isOrdered(const scope::SampleHistory& history)
 void testCapsDescribeTheRecording()
 {
     // 100 messages at 100 ms is 9.9 s from first to last.
-    auto provider = std::make_unique<StubProvider>(100, 100'000'000ull);
+    auto provider = std::make_unique<StubProvider>(100, 100'000'000);
     scope::RecordedSource source(std::move(provider));
 
     const scope::SourceCaps caps = source.caps();
@@ -418,7 +418,7 @@ void testCapsDescribeTheRecording()
 
 void testTopicsComeFromTheIndex()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000));
 
     const std::vector<scope::TopicInfo> topics = source.topics();
     expect(topics.size() == 2, "both topics are listed");
@@ -441,7 +441,7 @@ void testTopicsComeFromTheIndex()
 
 void testBindDecodesOnceForTheWholeRecording()
 {
-    auto owned = std::make_unique<StubProvider>(100, 100'000'000ull);
+    auto owned = std::make_unique<StubProvider>(100, 100'000'000);
     StubProvider* const provider = owned.get();
     scope::RecordedSource source(std::move(owned));
 
@@ -469,7 +469,7 @@ void testBindDecodesOnceForTheWholeRecording()
 
 void testABadExpressionIsRefusedImmediately()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000));
 
     scope::SignalKey key = rpmKey();
     key.value_expression = "no_such_field * 2";
@@ -488,7 +488,7 @@ void testSeekFillsTheWindow()
 {
     // 100 messages at 100 ms, retention 2 s -- so a window holds ~21 samples
     // and the retention limit genuinely bites.
-    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000));
 
     auto buffer = std::make_shared<scope::SignalBuffer>(2.0, 100000, 4096);
     const scope::SignalHandle handle = source.bind(rpmKey(), buffer);
@@ -537,7 +537,7 @@ void testSeekFillsTheWindow()
 //     assertions are here and not left to the ordering check.
 void testSeekingBackwardsKeepsTheBufferOrdered()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000));
 
     auto buffer = std::make_shared<scope::SignalBuffer>(2.0, 100000, 4096);
     const scope::SignalHandle handle = source.bind(rpmKey(), buffer);
@@ -577,7 +577,7 @@ void testSeekingBackwardsKeepsTheBufferOrdered()
 
 void testSeekingIsClampedToTheRecording()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(50, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(50, 100'000'000));
 
     source.seek(-100.0);
     expect(source.now() == 0.0, "seeking before the start clamps to the start");
@@ -592,7 +592,7 @@ void testSeekingIsClampedToTheRecording()
 
 void testPlaybackAdvancesAndStops()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(30, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(30, 100'000'000));
 
     auto buffer = std::make_shared<scope::SignalBuffer>(5.0, 100000, 4096);
     const scope::SignalHandle handle = source.bind(rpmKey(), buffer);
@@ -630,12 +630,12 @@ void testPlaybackAdvancesAndStops()
 
 void testWallClockIsTheRecordingsOwn()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(100, 100'000'000));
 
     expect(source.wallClockNanosAt(0.0) == kBase,
            "position zero is the first message's log time -- the absolute time a bag genuinely "
            "has and the live source does not");
-    expect(source.wallClockNanosAt(1.0) == kBase + 1'000'000'000ull,
+    expect(source.wallClockNanosAt(1.0) == kBase + 1'000'000'000,
            "and a second in is a second later");
 }
 
@@ -643,7 +643,7 @@ void testWallClockIsTheRecordingsOwn()
 
 void testAnEmptyRecordingIsSurvivable()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(0, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(0, 100'000'000));
 
     expect(source.caps().t_end == 0.0, "an empty recording has zero duration");
     expect(source.now() == 0.0, "and sits at zero");
@@ -662,7 +662,7 @@ void testAnEmptyRecordingIsSurvivable()
 
 void testReleaseIsIdempotent()
 {
-    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000ull));
+    scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000));
 
     auto buffer = std::make_shared<scope::SignalBuffer>(5.0, 1000, 4096);
     const scope::SignalHandle handle = source.bind(rpmKey(), buffer);
@@ -696,7 +696,7 @@ class WrongSchemaProvider : public scope::RecordedProvider
             message.key = "vehicle/engine/rpm";
             message.schema = "VehicleSpeed";  // NOT what the binding asks for.
             message.payload = payload_;
-            message.log_time_ns = kBase + static_cast<std::uint64_t>(i) * 100'000'000ull;
+            message.log_time_ns = kBase + static_cast<std::uint64_t>(i) * 100'000'000;
             message.publish_time_ns = message.log_time_ns;
             if (!visit(message))
             {
@@ -708,7 +708,7 @@ class WrongSchemaProvider : public scope::RecordedProvider
     std::vector<scope::TopicInfo> topics() const override { return {}; }
     std::pair<std::uint64_t, std::uint64_t> spanNanos() const override
     {
-        return {kBase, kBase + 900'000'000ull};
+        return {kBase, kBase + 900'000'000};
     }
 
   private:
@@ -762,7 +762,7 @@ void testRawBindingIndexesWithoutHoldingPayloads()
     // payloads are NOT held, which is the entire reason the raw path exists --
     // decoding a video topic the way bind() decodes a signal would be ~900 MB
     // for half an hour.
-    auto provider = std::make_unique<GopProvider>(4, 100'000'000ull);
+    auto provider = std::make_unique<GopProvider>(4, 100'000'000);
     GopProvider* raw_provider = provider.get();
     scope::RecordedSource source(std::move(provider));
 
@@ -781,7 +781,7 @@ void testRawBindingIndexesWithoutHoldingPayloads()
 
 void testSeekLoadsExactlyOneGop()
 {
-    auto provider = std::make_unique<GopProvider>(4, 100'000'000ull);
+    auto provider = std::make_unique<GopProvider>(4, 100'000'000);
     GopProvider* raw_provider = provider.get();
     scope::RecordedSource source(std::move(provider));
 
@@ -828,7 +828,7 @@ void testRawSeekingBackwardsMovesTheWindow()
     // t_last MOVED BACK, not that the buffer is still ordered. A buffer that
     // kept the group it came from stays perfectly ordered and is completely
     // wrong -- and on screen it is a picture, so nothing looks broken.
-    auto provider = std::make_unique<GopProvider>(5, 100'000'000ull);
+    auto provider = std::make_unique<GopProvider>(5, 100'000'000);
     scope::RecordedSource source(std::move(provider));
 
     auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
@@ -878,7 +878,7 @@ void testRawSkipsAMismatchedSchema()
     // A message recorded under a different schema is skipped rather than handed
     // over. Feeding a decoder another topic's bytes produces a plausible mess,
     // not an error.
-    auto provider = std::make_unique<GopProvider>(3, 100'000'000ull);
+    auto provider = std::make_unique<GopProvider>(3, 100'000'000);
     scope::RecordedSource source(std::move(provider));
 
     auto buffer = std::make_shared<scope::RawBuffer>(0.0, 0);
@@ -900,7 +900,7 @@ void testReleasingRawClearsThePendingCount()
     // erase the job and leave the count, so the flag never came back to zero and
     // anything waiting on it hung -- and rebinding every panel across a source
     // swap is exactly the case that hits it.
-    auto provider = std::make_unique<GopProvider>(3, 100'000'000ull);
+    auto provider = std::make_unique<GopProvider>(3, 100'000'000);
     scope::RecordedSource source(std::move(provider));
 
     auto first = std::make_shared<scope::RawBuffer>(0.0, 0);

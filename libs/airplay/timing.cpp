@@ -99,9 +99,9 @@ uint64_t TimingSync::syncedNtp() const
         // rather than a number the phone will act on.
         nanos = 0;
     }
-    const uint64_t seconds = static_cast<uint64_t>(nanos) / 1000000000ULL;
+    const uint64_t seconds = static_cast<uint64_t>(nanos) / 1000000000;
     const uint64_t fraction =
-        ((static_cast<uint64_t>(nanos) % 1000000000ULL) << 32) / 1000000000ULL;
+        ((static_cast<uint64_t>(nanos) % 1000000000) << 32) / 1000000000;
     return (seconds << 32) | fraction;
 }
 

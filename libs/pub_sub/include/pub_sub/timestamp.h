@@ -55,7 +55,7 @@ namespace pub_sub
 // truncate the whole fraction to zero.
 constexpr std::uint64_t ntp64ToUnixNanos(std::uint64_t ntp64)
 {
-    constexpr std::uint64_t kNanosPerSecond = 1'000'000'000ull;
+    constexpr std::uint64_t kNanosPerSecond = 1'000'000'000;
 
     const std::uint64_t seconds = ntp64 >> 32u;
     const std::uint64_t fraction = ntp64 & 0xFFFF'FFFFull;
@@ -69,7 +69,7 @@ constexpr std::uint64_t ntp64ToUnixNanos(std::uint64_t ntp64)
 // round trip through NTP64 may move by one nanosecond.
 constexpr std::uint64_t unixNanosToNtp64(std::uint64_t nanos)
 {
-    constexpr std::uint64_t kNanosPerSecond = 1'000'000'000ull;
+    constexpr std::uint64_t kNanosPerSecond = 1'000'000'000;
 
     const std::uint64_t seconds = nanos / kNanosPerSecond;
     const std::uint64_t remainder = nanos % kNanosPerSecond;

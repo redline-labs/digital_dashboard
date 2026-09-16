@@ -67,7 +67,7 @@ class TempDir
     std::filesystem::path path_;
 };
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;
 
 std::vector<std::uint8_t> payloadFor(int index, std::size_t size)
 {
@@ -92,7 +92,7 @@ void writeThenTruncate(const TempDir& dir, int count, double fraction, std::size
         for (int i = 0; i < count; ++i)
         {
             writer.write("vehicle/engine/rpm", "EngineRpm", payloadFor(i, 256),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }
@@ -191,7 +191,7 @@ void testMissingPart()
         for (int i = 0; i < 300; ++i)
         {
             writer.write("t", "EngineRpm", payloadFor(i, 512),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }

@@ -26,8 +26,8 @@ namespace
 // FNV-1a, 64-bit. Not a cryptographic hash and does not need to be: it defends
 // against an honest mismatch -- a node built from a different revision of the
 // schemas -- not against anyone trying to forge one.
-constexpr std::uint64_t kOffsetBasis = 1469598103934665603ull;
-constexpr std::uint64_t kPrime = 1099511628211ull;
+constexpr std::uint64_t kOffsetBasis = 1469598103934665603;
+constexpr std::uint64_t kPrime = 1099511628211;
 
 void mix(std::uint64_t& hash, std::uint64_t value)
 {

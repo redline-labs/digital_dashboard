@@ -87,7 +87,7 @@ std::vector<std::uint8_t> payloadFor(int index, std::size_t size)
     return payload;
 }
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;  // a plausible 2026 timestamp
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;  // a plausible 2026 timestamp
 
 // ---------------------------------------------------------------- round trip
 
@@ -107,9 +107,9 @@ void testRoundTrip()
             const std::vector<std::uint8_t> payload = payloadFor(i, 64);
             const bool ok = writer.write(i % 2 == 0 ? "vehicle/engine/rpm" : "vehicle/speed_mps",
                                          i % 2 == 0 ? "EngineRpm" : "VehicleSpeed", payload,
-                                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull,
-                                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull -
-                                             500'000ull,
+                                         kBase + static_cast<std::uint64_t>(i) * 1'000'000,
+                                         kBase + static_cast<std::uint64_t>(i) * 1'000'000 -
+                                             500'000,
                                          "abc123");
             if (!ok)
             {
@@ -166,7 +166,7 @@ void testRoundTrip()
                 schemas_match = false;
             }
 
-            if (message.publish_time_ns != message.log_time_ns - 500'000ull)
+            if (message.publish_time_ns != message.log_time_ns - 500'000)
             {
                 publish_times_match = false;
             }
@@ -249,7 +249,7 @@ void testSplitting()
         for (int i = 0; i < kCount; ++i)
         {
             writer.write("vehicle/engine/rpm", "EngineRpm", payloadFor(i, 1024),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }
@@ -348,7 +348,7 @@ void testIndexIsWrittenOnRoll()
     for (int i = 0; i < kCount; ++i)
     {
         writer.write("vehicle/engine/rpm", "EngineRpm", payloadFor(i, 1024),
-                     kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                     kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
     }
 
     bag::BagReader reader(dir.str());
@@ -448,7 +448,7 @@ void testRolledPartsAreSelfConsistent()
             const char* keys[] = {"a/one", "a/two", "a/three"};
             const char* schemas[] = {"EngineRpm", "VehicleSpeed", "EngineTemperature"};
             writer.write(keys[i % 3], schemas[i % 3], payloadFor(i, 512),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }
@@ -510,7 +510,7 @@ void testSeeking()
         for (int i = 0; i < kCount; ++i)
         {
             writer.write("vehicle/engine/rpm", "EngineRpm", payloadFor(i, 256),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         writer.close();
     }
@@ -523,8 +523,8 @@ void testSeeking()
     }
 
     // A window in the middle.
-    const std::uint64_t start = kBase + 200ull * 1'000'000ull;
-    const std::uint64_t end = kBase + 299ull * 1'000'000ull;
+    const std::uint64_t start = kBase + std::uint64_t{200} * 1'000'000;
+    const std::uint64_t end = kBase + std::uint64_t{299} * 1'000'000;
 
     std::vector<std::uint64_t> times;
     reader.forEach(start, end,
@@ -544,7 +544,7 @@ void testSeeking()
     // A window past the end returns nothing rather than everything, which is the
     // failure an off-by-one in the range check would produce.
     std::size_t past = 0;
-    reader.forEach(kBase + 10'000ull * 1'000'000ull,
+    reader.forEach(kBase + std::uint64_t{10'000} * 1'000'000,
                    std::numeric_limits<std::uint64_t>::max(),
                    [&](const bag::BagMessage&)
                    {

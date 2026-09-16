@@ -82,7 +82,7 @@ class TempDir
     std::filesystem::path path_;
 };
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;
 
 // Serialises a capnp message the way ZenohPublisher does, so what lands in the
 // bag is byte-identical to what a real node would have published.
@@ -92,7 +92,7 @@ std::vector<std::uint8_t> encodeRpm(std::uint64_t rpm, float oil_pressure)
     auto builder = message.initRoot<EngineRpm>();
     builder.setRpm(static_cast<std::uint32_t>(rpm));
     builder.setOilPressurePsi(oil_pressure);
-    builder.setTimestamp(kBase / 1'000'000ull);
+    builder.setTimestamp(kBase / 1'000'000);
 
     const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
     const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
@@ -191,9 +191,9 @@ void testMessagesDecodeFromTheRecordingAlone()
         for (int i = 0; i < kCount; ++i)
         {
             writer.write("vehicle/engine/rpm", "EngineRpm",
-                         encodeRpm(1000ull + static_cast<std::uint64_t>(i) * 100ull,
+                         encodeRpm(1000 + static_cast<std::uint64_t>(i) * 100,
                                    40.0F + static_cast<float>(i)),
-                         kBase + static_cast<std::uint64_t>(i) * 1'000'000ull, std::nullopt, "");
+                         kBase + static_cast<std::uint64_t>(i) * 1'000'000, std::nullopt, "");
         }
         expect(writer.close(), "the recording closes");
     }
@@ -242,13 +242,13 @@ void testMessagesDecodeFromTheRecordingAlone()
             const auto rpm = uintField(decoded, "rpm");
             const auto oil = floatField(decoded, "oilPressurePsi");
 
-            const std::uint64_t expected_rpm = 1000ull + static_cast<std::uint64_t>(index) * 100ull;
+            const std::uint64_t expected_rpm = 1000 + static_cast<std::uint64_t>(index) * 100;
             const double expected_oil = 40.0 + static_cast<double>(index);
 
             if (!rpm || *rpm != expected_rpm)
             {
                 std::fprintf(stderr, "  message %d: rpm decoded as %llu, expected %llu\n", index,
-                             rpm ? static_cast<unsigned long long>(*rpm) : 0ull,
+                             rpm ? static_cast<unsigned long long>(*rpm) : 0,
                              static_cast<unsigned long long>(expected_rpm));
                 all_correct = false;
             }

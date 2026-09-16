@@ -216,7 +216,7 @@ bool runSimulation(ZenohBridge& bridge, std::atomic<bool>& stop, int width, int 
                     vf.is_keyframe = isKeyframePacket(pkt);
                     vf.width_px = static_cast<uint16_t>(width);
                     vf.height_px = static_cast<uint16_t>(height);
-                    vf.pts_usec = static_cast<uint64_t>(index) * static_cast<uint64_t>(1'000'000) / static_cast<uint64_t>(fps);
+                    vf.pts_usec = static_cast<uint64_t>(index) * 1'000'000 / static_cast<uint64_t>(fps);
                     vf.data = pkt->data;
                     vf.len = static_cast<size_t>(pkt->size);
                     bridge.publishVideo(vf);

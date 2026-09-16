@@ -45,7 +45,7 @@ void expect(bool condition, const std::string& what)
     }
 }
 
-constexpr std::uint64_t kBase = 1'785'000'000'000'000'000ull;  // a plausible 2026 timestamp
+constexpr std::uint64_t kBase = 1'785'000'000'000'000'000;  // a plausible 2026 timestamp
 
 bag::QueuedMessage message(int index, std::size_t payload_bytes, std::uint64_t log_time_ns)
 {
@@ -78,7 +78,7 @@ void testRetainsInOrder()
 
     for (int i = 0; i < 100; ++i)
     {
-        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
     }
 
     expect(buffer.size() == 100, "everything is retained when neither bound applies");
@@ -109,11 +109,11 @@ void testRangeQuery()
     scope::CaptureBuffer buffer(0, 0.0);
     for (int i = 0; i < 100; ++i)
     {
-        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
     }
 
     std::size_t in_range = 0;
-    buffer.forEach(kBase + 10'000'000ull, kBase + 19'000'000ull,
+    buffer.forEach(kBase + 10'000'000, kBase + 19'000'000,
                    [&in_range](const bag::QueuedMessage&)
                    {
                        ++in_range;
@@ -123,7 +123,7 @@ void testRangeQuery()
            "a range is closed at both ends, like BagReader's (" + std::to_string(in_range) + ")");
 
     std::size_t past_end = 0;
-    buffer.forEach(kBase + 1'000'000'000ull, std::numeric_limits<std::uint64_t>::max(),
+    buffer.forEach(kBase + 1'000'000'000, std::numeric_limits<std::uint64_t>::max(),
                    [&past_end](const bag::QueuedMessage&)
                    {
                        ++past_end;
@@ -145,7 +145,7 @@ void testDensityAgainstBruteForce()
     scope::CaptureBuffer buffer(0, 0.0);
 
     std::mt19937 rng(20260807);
-    std::uniform_int_distribution<std::uint64_t> offset(0, 9'999'999'999ull);
+    std::uniform_int_distribution<std::uint64_t> offset(0, 9'999'999'999);
 
     std::vector<std::uint64_t> times;
     for (int i = 0; i < 500; ++i)
@@ -163,7 +163,7 @@ void testDensityAgainstBruteForce()
     for (const std::size_t buckets : {1u, 7u, 64u, 1000u})
     {
         const std::uint64_t t0 = kBase;
-        const std::uint64_t t1 = kBase + 10'000'000'000ull;
+        const std::uint64_t t1 = kBase + 10'000'000'000;
 
         std::vector<std::uint32_t> got;
         buffer.density(t0, t1, buckets, got);
@@ -198,11 +198,11 @@ void testDensityBoundaryConvention()
 
     // One message exactly on each edge, and one exactly on an internal boundary.
     buffer.push(message(0, 16, kBase));
-    buffer.push(message(1, 16, kBase + 5'000'000ull));
-    buffer.push(message(2, 16, kBase + 10'000'000ull));
+    buffer.push(message(1, 16, kBase + 5'000'000));
+    buffer.push(message(2, 16, kBase + 10'000'000));
 
     std::vector<std::uint32_t> got;
-    buffer.density(kBase, kBase + 10'000'000ull, 2, got);
+    buffer.density(kBase, kBase + 10'000'000, 2, got);
 
     // Bucket i covers [t0 + i*dt, t0 + (i+1)*dt), with the LAST closed at the
     // top -- the same convention decimateMinMax uses, so the strip and the plot
@@ -235,7 +235,7 @@ void testDensityOnAnEmptyBuffer()
 {
     scope::CaptureBuffer buffer(0, 0.0);
     std::vector<std::uint32_t> got;
-    buffer.density(kBase, kBase + 1'000'000ull, 8, got);
+    buffer.density(kBase, kBase + 1'000'000, 8, got);
 
     expect(got.size() == 8, "an empty buffer still fills the bucket vector");
     expect(std::all_of(got.begin(), got.end(), [](std::uint32_t c) { return c == 0; }),
@@ -252,7 +252,7 @@ void testEvictsByBytes()
 
     for (int i = 0; i < 50; ++i)
     {
-        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
     }
 
     expect(buffer.bytes() <= 1000, "the byte bound is respected (" +
@@ -287,7 +287,7 @@ void testAnOversizedMessageIsSurvivable()
     scope::CaptureBuffer buffer(1000, 0.0);
 
     buffer.push(message(0, 100, kBase));
-    buffer.push(message(1, 100'000, kBase + 1'000'000ull));
+    buffer.push(message(1, 100'000, kBase + 1'000'000));
 
     expect(buffer.size() <= 1,
            "an oversized message evicts everything else rather than looping (" +
@@ -295,7 +295,7 @@ void testAnOversizedMessageIsSurvivable()
     expect(countRetained(buffer) == buffer.size(), "and size() agrees with what is walkable");
 
     // Whatever survived, the buffer still accepts more.
-    buffer.push(message(2, 100, kBase + 2'000'000ull));
+    buffer.push(message(2, 100, kBase + 2'000'000));
     expect(buffer.size() >= 1, "and the buffer still accepts messages afterwards");
 }
 
@@ -307,7 +307,7 @@ void testEvictsByTime()
 
     for (int i = 0; i < 20; ++i)
     {
-        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000'000ull));
+        buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000'000));
     }
 
     expect(buffer.retainedSpanSeconds() <= 5.0 + 1e-9,
@@ -330,7 +330,7 @@ void testWhicheverBoundBindsFirstWins()
         scope::CaptureBuffer buffer(1024 * 1024, 5.0);
         for (int i = 0; i < 20; ++i)
         {
-            buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000'000ull));
+            buffer.push(message(i, 16, kBase + static_cast<std::uint64_t>(i) * 1'000'000'000));
         }
         expect(buffer.evicted() > 0 && buffer.bytes() < 1024 * 1024,
                "small slow messages are bounded by TIME -- a byte-only cap would let a long "
@@ -343,7 +343,7 @@ void testWhicheverBoundBindsFirstWins()
         scope::CaptureBuffer buffer(100'000, 3600.0);
         for (int i = 0; i < 50; ++i)
         {
-            buffer.push(message(i, 20'000, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+            buffer.push(message(i, 20'000, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
         }
         expect(buffer.bytes() <= 100'000 && buffer.retainedSpanSeconds() < 3600.0,
                "large fast messages are bounded by BYTES -- a time-only cap would be "
@@ -361,7 +361,7 @@ void testSmallTimestampsDoNotWrapTheCutoff()
 
     for (int i = 0; i < 10; ++i)
     {
-        buffer.push(message(i, 16, static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 16, static_cast<std::uint64_t>(i) * 1'000'000));
     }
 
     expect(buffer.size() == 10,
@@ -379,7 +379,7 @@ void testBoundsCanBeTightenedInPlace()
     scope::CaptureBuffer buffer(0, 0.0);
     for (int i = 0; i < 50; ++i)
     {
-        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
     }
     expect(buffer.size() == 50, "everything is retained under no bounds");
 
@@ -393,7 +393,7 @@ void testClearKeepsTheLifetimeCounters()
     scope::CaptureBuffer buffer(1000, 0.0);
     for (int i = 0; i < 50; ++i)
     {
-        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000ull));
+        buffer.push(message(i, 100, kBase + static_cast<std::uint64_t>(i) * 1'000'000));
     }
 
     const std::uint64_t evicted_before = buffer.evicted();
@@ -439,7 +439,7 @@ void testProducerAndConsumerUnderThreads()
         {
             for (int i = 0; i < kPushes; ++i)
             {
-                buffer.push(message(i, 64, kBase + static_cast<std::uint64_t>(i) * 1'000ull));
+                buffer.push(message(i, 64, kBase + static_cast<std::uint64_t>(i) * 1'000));
                 ++pushed;
             }
             done = true;

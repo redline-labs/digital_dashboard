@@ -70,7 +70,7 @@ inline std::vector<std::string> validate(VideoPanelConfig_t& config)
     // Not merely "small": below one frame the buffer evicts what it was just
     // given on every push, so the panel shows nothing and looks like a dead
     // publisher rather than a misconfigured limit.
-    constexpr std::uint64_t kMinUsefulBytes = 4ull * 1024 * 1024;
+    constexpr std::uint64_t kMinUsefulBytes = std::uint64_t{4} * 1024 * 1024;
     if (config.max_buffer_bytes != 0 && config.max_buffer_bytes < kMinUsefulBytes)
     {
         notes.push_back("max_buffer_bytes below 4 MiB cannot hold one keyframe; clamped");
