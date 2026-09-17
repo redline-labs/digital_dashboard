@@ -1,0 +1,29 @@
+# The web console: reflash, system info, node health and service calls, served
+# from the board.
+#
+# Shipped to /opt/redline/configs/web_console/web_console.yaml. The unit passes
+# it with --config; running the node without one uses the defaults in
+# node_config.h, which bind to loopback.
+
+# LISTENS ON EVERY INTERFACE. The code's default is 127.0.0.1 so that a
+# developer running this on a laptop is not exposed by accident; a board that
+# ships the console is meant to be reachable from the bench, so it is widened
+# here rather than in the code.
+#
+# This is not an access control. Until token_file below is populated, anything
+# that can reach the board can drive this. See docs and the TODO about the
+# image's bring-up features.
+bind_address: 0.0.0.0
+
+port: 8080
+
+# Empty means core::paths::resource("web"), which finds the assets next to the
+# executable on the image and in the checkout on a workstation. Point it at
+# /data/web somewhere writable to iterate on the frontend without rebuilding
+# the image.
+asset_dir: ""
+
+# One line, mode 0600, on the writable partition -- credentials do not belong in
+# a read-only rootfs. Absent means no authentication and a loud warning at
+# startup.
+token_file: "${REDLINE_DATA_DIR}/web_console/token"

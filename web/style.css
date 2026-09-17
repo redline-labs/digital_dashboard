@@ -1,0 +1,78 @@
+/* Mobile first: this is read on a phone at a bench far more often than on a
+   desktop, so the single column is the design rather than the fallback. */
+:root {
+  --bg: #14161a;
+  --panel: #1d2026;
+  --line: #2c313a;
+  --text: #e6e8ec;
+  --dim: #99a0ab;
+  --accent: #5db0ff;
+  --warn: #ffb457;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px 32px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-block: 16px;
+}
+h1 { font-size: 20px; margin: 0; letter-spacing: 0.02em; }
+#identity { color: var(--dim); font-size: 13px; }
+
+nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 20px; }
+.tab {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab.active { border-color: var(--accent); color: var(--accent); }
+.tab:disabled { color: #5b616b; cursor: not-allowed; }
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+     color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+dt { color: var(--dim); }
+dd { margin: 0; overflow-wrap: anywhere; }
+
+.row { padding: 8px 0; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; padding-top: 0; }
+.row-head { display: flex; justify-content: space-between; gap: 12px; }
+.muted { color: var(--dim); font-size: 13px; }
+
+/* A capacity bar reads faster than two numbers, which is the whole reason the
+   API reports bytes rather than a formatted string. */
+.bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar.high > span { background: var(--warn); }
+
+#error {
+  background: #3a1d1d; border: 1px solid #6b2b2b; color: #ffb4b4;
+  padding: 10px 12px; border-radius: 8px;
+}
+
+@media (min-width: 720px) {
+  body { max-width: 900px; margin: 0 auto; }
+}

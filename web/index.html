@@ -1,0 +1,46 @@
+<!-- The board's web console.
+     No bundler: a build step here would mean a third toolchain in the image's
+     recipe, on top of the cross compiler and Emscripten. Hand-written ES
+     modules and CSS until that stops being enough. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redline console</title>
+<link rel="stylesheet" href="style.css">
+
+<header>
+  <h1>Redline</h1>
+  <span id="identity">&hellip;</span>
+</header>
+
+<nav>
+  <button class="tab active" data-view="info">Info</button>
+  <button class="tab" data-view="update" disabled title="Arrives with the reflash route">Update</button>
+  <button class="tab" data-view="health" disabled title="Arrives with the wasm bus client">Health</button>
+  <button class="tab" data-view="services" disabled title="Arrives with the wasm bus client">Services</button>
+</nav>
+
+<main id="info">
+  <p id="error" hidden></p>
+
+  <section>
+    <h2>System</h2>
+    <dl id="system"></dl>
+  </section>
+
+  <section>
+    <h2>Storage</h2>
+    <div id="storage"></div>
+  </section>
+
+  <section>
+    <h2>Network</h2>
+    <div id="network"></div>
+  </section>
+
+  <section>
+    <h2>Temperatures</h2>
+    <div id="temperatures"></div>
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>

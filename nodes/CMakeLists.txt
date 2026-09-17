@@ -34,3 +34,7 @@ add_subdirectory(map_server)
 # directly rather than asking map_server -- a matcher makes dozens of lookups
 # per fix, and a read-only mmap is shareable between processes.
 add_subdirectory(map_match)
+# The board's web console: system info, node health, service calls and RAUC
+# reflash over HTTP. Not a bus gateway -- the browser is a real zenoh client,
+# so what this serves is the half that was never on the bus.
+add_subdirectory(web_console)
