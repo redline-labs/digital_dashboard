@@ -20,6 +20,11 @@ add_subdirectory(node_health)
 # Every reader takes its root so the parsers are testable against a fixture
 # tree; the web console serves it.
 add_subdirectory(system_info)
+
+# RAUC over D-Bus, for reflashing from the web console. The first and only
+# glib consumer in the tree; RAUC offers no library and no stable CLI output,
+# so its D-Bus API is the interface.
+add_subdirectory(rauc_client)
 # Recording and replay (MCAP). After config_codec (reflected YAML) and schemas
 # (the schema descriptors it embeds).
 add_subdirectory(bag)

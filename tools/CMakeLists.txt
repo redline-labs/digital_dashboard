@@ -10,3 +10,7 @@
 #
 # NOT globbed: tools/mcp_dashboard is a Python project with no CMakeLists.
 add_subdirectory(map_build)
+
+# A fake de.pengutronix.rauc on the session bus, so the web console's reflash
+# path is developable without a board.
+add_subdirectory(rauc_stub)
