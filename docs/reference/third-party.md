@@ -23,6 +23,7 @@ So are OpenSSL and zlib.
 | [zenoh](https://github.com/eclipse-zenoh/zenoh) | release/1.10.0 | EPL-2.0 / Apache-2.0 | The pub/sub and query transport (Rust crate, built by cargo) | yes: `patches/zenoh_abortable_gossip_connect.patch` |
 | [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) | 1.10.0 | EPL-2.0 / Apache-2.0 | The C API over the crate | no |
 | [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp) | 1.10.0 | EPL-2.0 / Apache-2.0 | The C++ binding the tree uses | no |
+| [zenoh-pico](https://github.com/eclipse-zenoh/zenoh-pico) | 1.10.0 | EPL-2.0 / Apache-2.0 | The browser's zenoh client, compiled to wasm for the web console. Never linked on the board -- that is zenoh-c's job | yes: `patches/zenoh_pico_emscripten_stddef.patch` |
 | [spdlog](https://github.com/gabime/spdlog) | v1.17.0 | MIT | Logging | yes: `patches/spdlog_tweakme.patch` |
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 (`55f9368`) | MIT | JSON for configs, the agent interface and tool output | no |
 | [yaml-cpp](https://github.com/jbeder/yaml-cpp) | 0.9.0 | MIT | Layout and node configuration files | no |

@@ -1,0 +1,29 @@
+Add <stddef.h> to the emscripten platform header.
+
+zenoh-pico/include/zenoh-pico/system/common/platform.h declares a dozen
+prototypes taking size_t, but includes only <stdbool.h> and <stdint.h>. Every
+other platform gets size_t transitively: platform.h lines 30-40 pull in the
+POSIX/Windows/Zephyr socket headers for ZENOH_LINUX, ZENOH_MACOS, ZENOH_BSD,
+ZENOH_WINDOWS and ZENOH_ZEPHYR. There is no such branch for ZENOH_EMSCRIPTEN.
+
+The emscripten platform header only includes <pthread.h> -- which would have
+supplied size_t -- under Z_FEATURE_MULTI_THREAD == 1. We build single-threaded
+on purpose (threads under emcc mean SharedArrayBuffer, which means the page
+needs COOP/COEP headers), so nothing defines size_t and the library does not
+compile:
+
+    platform.h:136:31: error: unknown type name 'size_t'
+
+Still present on 1.10.1, so this is not fixed by moving the pin. Upstreamable
+as-is.
+
+--- a/include/zenoh-pico/system/platform/emscripten.h
++++ b/include/zenoh-pico/system/platform/emscripten.h
+@@ -15,6 +15,7 @@
+ #ifndef ZENOH_PICO_SYSTEM_WASM_TYPES_H
+ #define ZENOH_PICO_SYSTEM_WASM_TYPES_H
+ 
++#include <stddef.h>
+ #include <stdint.h>
+ 
+ #include "zenoh-pico/config.h"
