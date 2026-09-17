@@ -37,6 +37,7 @@ So are OpenSSL and zlib.
 | [sqlite3](https://www.sqlite.org/) | 3.53.4 (amalgamation) | public domain | `.mbtiles` archives | no |
 | [earcut.hpp](https://github.com/mapbox/earcut.hpp) | v3.2.3 | ISC | Polygon tessellation for map tiles | no |
 | [lexy](https://github.com/foonathan/lexy) | v2025.05.0 | BSL-1.0 | The DBC and EDS parsers | no |
+| [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.56.0 | MIT | The web console's HTTP server. Header-only, and its ContentReader streams a ~338 MB RAUC bundle to disk instead of buffering it | no |
 
 The dashboard itself is GPL-3.0-or-later; see `COPYING` and `NOTICE` in the
 repository. The CarPlay stack was ported from

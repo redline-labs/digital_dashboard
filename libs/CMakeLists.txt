@@ -15,6 +15,11 @@ add_subdirectory(cli)
 # Node health: the reporter every node declares and the monitor `inspect health`
 # reads. After core (systemd notifications) and pub_sub.
 add_subdirectory(node_health)
+
+# What the board is and what it is doing, read from /proc, /sys and /etc.
+# Every reader takes its root so the parsers are testable against a fixture
+# tree; the web console serves it.
+add_subdirectory(system_info)
 # Recording and replay (MCAP). After config_codec (reflected YAML) and schemas
 # (the schema descriptors it embeds).
 add_subdirectory(bag)

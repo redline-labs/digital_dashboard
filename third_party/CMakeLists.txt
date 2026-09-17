@@ -42,5 +42,9 @@ include(sqlite3.cmake)
 # why this is not hand-rolled.
 include(earcut.cmake)
 
+# The web console's HTTP server. Header-only; see the file for why it is not
+# a SYSTEM include and where the warning suppression actually lives.
+include(cpp-httplib.cmake)
+
 # LGPL Compliance: Create source code availability notice
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/../NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)
