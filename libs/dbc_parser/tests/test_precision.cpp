@@ -249,11 +249,11 @@ struct NegativeFour
     static constexpr int16_t phys_min = -508;
     static constexpr int16_t phys_max = 512;
 
-    // This fixture measures rounding, not railing, so the declared range is
-    // inert: rail() needs these members to exist, and has_range keeps it a
-    // no-op so every value below still reaches the arithmetic under test.
-    static constexpr int16_t minimum = 0;
-    static constexpr int16_t maximum = 0;
+    // This fixture measures rounding, not railing, so it declares no range:
+    // has_range false makes rail() a no-op, and because Sig::minimum and
+    // Sig::maximum are only named inside its discarded `if constexpr`, the
+    // fixture never has to carry them. Every value below therefore reaches the
+    // arithmetic under test unclamped.
     static constexpr bool has_range = false;
 };
 
