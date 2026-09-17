@@ -83,10 +83,20 @@ function(redline_install)
     # "Dashboard Editor", and install(TARGETS) refuses a bundle target outright
     # if it is not told where one goes. The boards are Linux, where MACOSX_BUNDLE
     # is inert and RUNTIME DESTINATION is the one that applies.
+    # COMPONENT ONCE PER KIND, NOT ONCE AT THE END. install(TARGETS) binds
+    # COMPONENT to the most recently opened kind-block, so
+    #
+    #     RUNTIME DESTINATION bin BUNDLE DESTINATION bin COMPONENT nodes
+    #
+    # attaches the component to BUNDLE and leaves RUNTIME -- the one that
+    # applies on the Linux boards -- defaulted to "Unspecified". The generated
+    # cmake_install.cmake then guards every binary with
+    # `STREQUAL "Unspecified"`, so `cmake --install --component nodes` installs
+    # nothing and the image recipe's own "fewer than 30 binaries" check is what
+    # finally reports it, a long way from the cause.
     install(TARGETS ${RI_TARGET}
-            RUNTIME DESTINATION bin
-            BUNDLE DESTINATION bin
-            COMPONENT ${RI_COMPONENT})
+            RUNTIME DESTINATION bin COMPONENT ${RI_COMPONENT}
+            BUNDLE DESTINATION bin COMPONENT ${RI_COMPONENT})
 endfunction()
 
 # redline_install_program(PROGRAM <path> COMPONENT <component>)
@@ -123,4 +133,39 @@ function(redline_install_program)
     install(PROGRAMS ${RIP_PROGRAM}
             DESTINATION bin
             COMPONENT ${RIP_COMPONENT})
+endfunction()
+
+# redline_install_data(DIRECTORY <dir> DESTINATION <subdir> COMPONENT <component>)
+#
+# The same contract for a directory of files that are not built: the web
+# console's HTML, CSS, JavaScript and its wasm module. They ship exactly as the
+# binaries do -- declared next to the target that serves them -- and land under
+# the same prefix, so /opt/redline/bin has /opt/redline/web beside it and
+# core::paths::resource("web") finds it by walking up from the executable.
+#
+# Note for the image: FILES:${PN}-nodes is ${REDLINE_PREFIX}/bin only, so a
+# DESTINATION outside bin needs a matching FILES entry in the recipe or the
+# files are installed-but-not-shipped, which is an ERROR_QA by default.
+function(redline_install_data)
+    cmake_parse_arguments(RID "" "DIRECTORY;DESTINATION;COMPONENT" "" ${ARGN})
+
+    if(NOT RID_DIRECTORY)
+        message(FATAL_ERROR "redline_install_data: DIRECTORY is required")
+    endif()
+    if(NOT IS_DIRECTORY "${RID_DIRECTORY}")
+        message(FATAL_ERROR "redline_install_data: '${RID_DIRECTORY}' is not a directory")
+    endif()
+    if(NOT RID_DESTINATION)
+        message(FATAL_ERROR "redline_install_data(${RID_DIRECTORY}): DESTINATION is required")
+    endif()
+    if(NOT RID_COMPONENT IN_LIST REDLINE_INSTALL_COMPONENTS)
+        message(FATAL_ERROR "redline_install_data(${RID_DIRECTORY}): COMPONENT "
+                            "'${RID_COMPONENT}' is not one of: ${REDLINE_INSTALL_COMPONENTS}")
+    endif()
+
+    # Trailing slash: install the directory's CONTENTS into DESTINATION rather
+    # than nesting it one level deeper.
+    install(DIRECTORY "${RID_DIRECTORY}/"
+            DESTINATION "${RID_DESTINATION}"
+            COMPONENT ${RID_COMPONENT})
 endfunction()
