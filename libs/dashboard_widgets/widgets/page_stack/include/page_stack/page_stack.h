@@ -78,8 +78,9 @@ class PageStackWidget : public QWidget
     // position in that page's widget list, kept for rebuilds.
     void addChild(std::size_t page, QWidget* child, std::size_t config_index);
 
-    // For the editor, which builds no pages: what to write in the outline.
-    void setPlaceholderPageNames(std::vector<std::string> names);
+    // For the editor, which builds no pages: what to write in the outline, and
+    // which page it is previewing.
+    void setPlaceholderPageNames(std::vector<std::string> names, std::optional<std::size_t> shown = std::nullopt);
 
     // Shows the default page -- or `keep_page` when rebuilding a live stack --
     // subscribes to the command topic and the triggers, and starts publishing
@@ -144,6 +145,7 @@ class PageStackWidget : public QWidget
     std::vector<page_stack::PageNavigator::Page> _page_info;
     std::unique_ptr<page_stack::PageNavigator> _navigator;
     std::vector<std::string> _placeholder_names;
+    std::optional<std::size_t> _placeholder_shown;
 
     struct Child
     {

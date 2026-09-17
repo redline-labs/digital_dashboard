@@ -82,9 +82,10 @@ void PageStackWidget::addChild(std::size_t page_index, QWidget* child, std::size
     _children.push_back({QPointer<QWidget>(child), page_index, config_index});
 }
 
-void PageStackWidget::setPlaceholderPageNames(std::vector<std::string> names)
+void PageStackWidget::setPlaceholderPageNames(std::vector<std::string> names, std::optional<std::size_t> shown)
 {
     _placeholder_names = std::move(names);
+    _placeholder_shown = shown;
     update();
 }
 
@@ -391,12 +392,17 @@ void PageStackWidget::paintEvent(QPaintEvent* /*event*/)
     painter.drawRect(rect().adjusted(1, 1, -2, -2));
 
     QString names;
-    for (const std::string& name : _placeholder_names)
+    for (std::size_t i = 0; i < _placeholder_names.size(); ++i)
     {
-        names += (names.isEmpty() ? "" : " | ") + QString::fromStdString(name);
+        const QString name = QString::fromStdString(_placeholder_names[i]);
+        names += (names.isEmpty() ? "" : " | ") + (_placeholder_shown == i ? "[" + name + "]" : name);
     }
     const QString text = names.isEmpty() ? QStringLiteral("page stack") : QStringLiteral("pages: ") + names;
-    painter.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap, text);
+    // Top left, small: the page's own widgets usually cover the middle.
+    QFont font = painter.font();
+    font.setPointSize(10);
+    painter.setFont(font);
+    painter.drawText(rect().adjusted(6, 4, -6, -4), Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap, text);
 }
 
 #include "page_stack/moc_page_stack.cpp"

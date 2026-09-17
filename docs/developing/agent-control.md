@@ -305,7 +305,7 @@ Everything in the plan is implemented:
 | Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
 | Pages | `pages.list`, `pages.command` (dashboard only; see [Pages](../apps/dashboard/pages.html)) |
 | Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
-| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load`, `editor.windows`, `editor.select_window`, `editor.add_window`, `editor.remove_window` |
+| Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load`, `editor.windows`, `editor.select_window`, `editor.add_window`, `editor.remove_window`, `editor.pages`, `editor.add_page`, `editor.remove_page`, `editor.rename_page`, `editor.set_page`, `editor.move_page`, `editor.show_page`, `editor.move_to_page`, `editor.scope` |
 | Scope | `scope.panels`, `scope.add_panel`, `scope.remove_panel`, `scope.add_signal`, `scope.remove_signal`, `scope.browser`, `scope.browser_drag`, `scope.time_base`, `scope.panel_get_config`, `scope.panel_set_config`, `scope.panel_describe_config`, `scope.save`, `scope.load`, `scope.sample_stats` (see `docs/scope.md`) |
 | Switchboard | `switchboard.services`, `switchboard.select`, `switchboard.form`, `switchboard.set_fields`, `switchboard.reset`, `switchboard.submit`, `switchboard.result`, `switchboard.history` (see `docs/switchboard.md`) |
 | Meta | `rpc.methods` |

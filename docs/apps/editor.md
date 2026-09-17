@@ -156,6 +156,44 @@ the two, so the document never has two windows on one display. The display
 roles are `primary` and `secondary`; see [Windows and displays](dashboard/windows.html)
 for what they mean on the target.
 
+## Pages
+
+A [page_stack](dashboard/pages.html) is edited in place. A single click selects
+the stack like any widget. Double-click it to go inside: the stack gets an amber
+outline with the page being previewed named in its corner, and clicks then reach
+the widgets on that page. Clicking outside the stack, or Escape, comes back out;
+Escape on a page's widget selects its stack first. Selecting a page's widget any
+other way, from the agent interface for instance, also goes inside.
+
+A widget dragged from the palette onto a stack lands on the page it is showing,
+at a position relative to the stack. A `page_stack` dropped onto a stack lands on
+the window instead, because one stack cannot sit on another's page.
+
+With the stack selected, the properties panel has a **Pages** section under its
+settings. Choosing a page there previews it on the canvas, which is not an edit
+and is not saved; PageUp and PageDown do the same from the canvas. **Add**,
+**Remove**, **Up** and **Down** change the pages, the name field renames one and
+**In cycle** decides whether `next` and `prev` stop on it. Each is one undo step.
+A page widget's properties start with a **Page** picker that moves it to another
+page of the same stack.
+
+{: .note }
+Renaming a page follows it through the references to it: the stack's
+`default_page` and triggers, and every `page_button` and CarPlay return button in
+the document aimed at that stack. Removing the page a `default_page` names clears
+it. Triggers and buttons that name a removed page are left as they are, and the
+dashboard refuses the file until they are fixed.
+
+A new `page_stack` gets a free id (`pages`, `pages_2`, ...) and one page named
+`main`, since a stack without an id does not load. A widget added to a page
+without an id is named `<stack>:<page>:<type>#<n>` for this editing session; set
+an `id` on anything you will address again, because the dashboard derives the
+name from the page's current name and the widget's position.
+
+Undo on a page works as it does on the window: moving one widget there and
+undoing it rebuilds nothing else on the page, so a CarPlay preview stays
+connected.
+
 ## Agent control
 
 Under `--mcp` the editor registers the shared `app.*`, `ui.*`, `input.*`,
@@ -167,8 +205,8 @@ the document goes through the same undo history as the GUI.
 | Method | What it does |
 |---|---|
 | `editor.palette` | Lists every widget type with its friendly name. |
-| `editor.items` | Lists the widgets in the window on the canvas, with their rectangles and selection state. |
-| `editor.add_widget` | Adds a widget of `type` at `x`, `y`, optionally with `width` and `height`; otherwise the size hint is used. |
+| `editor.items` | Lists the widgets in the window on the canvas, page widgets included, with their rectangles and selection state. A page widget carries `container`, `page` and `visible`, and its rectangle is relative to the stack; `scope` names the stack being edited. |
+| `editor.add_widget` | Adds a widget of `type` at `x`, `y`, optionally with `width` and `height`; otherwise the size hint is used. With `container` (a stack selector) and optionally `page`, it goes on that page at a stack-relative position. |
 | `editor.palette_drag` | Adds a widget by feeding a synthesized drop, with the palette's payload, to the canvas's real drop handler. |
 | `editor.select` | Selects `target`. |
 | `editor.move` | Moves `target` to `x`, `y`. |
@@ -182,6 +220,15 @@ the document goes through the same undo history as the GUI.
 | `editor.select_window` | Shows the window named by index or name in `window`. |
 | `editor.add_window` | Adds a window, with optional `name`, `display`, `width` and `height`; refused when the name or display is taken. |
 | `editor.remove_window` | Removes the window named in `window`; the last one is refused. |
+| `editor.pages` | Lists the pages of the stack `target`: name, `in_cycle`, whether shown, and the widgets on each. |
+| `editor.add_page` | Adds a page to `target`, with an optional `name`; a repeated name is refused. |
+| `editor.remove_page` | Removes `page` (name or index) from `target`; the last page is refused. |
+| `editor.rename_page` | Renames `page` to `name`, following the references to it. |
+| `editor.set_page` | Sets `in_cycle` on `page`. |
+| `editor.move_page` | Moves `page` to position `index`. |
+| `editor.show_page` | Previews `page` on the canvas. Not an edit. |
+| `editor.move_to_page` | Moves the page widget `target` to `page` of its stack. |
+| `editor.scope` | Goes inside the stack `target`, or out with no target. |
 
 `widget.set_config` is the agent's equivalent of Apply, and like Apply it is
 refused when the configuration is for a different widget type than the target.

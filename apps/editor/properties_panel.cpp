@@ -20,7 +20,12 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QColorDialog>
+#include <QGroupBox>
+#include <QListWidget>
+#include <QMetaObject>
+#include <QPointer>
 
+#include <functional>
 #include <limits>
 
 #include "pub_sub/topic_key.h"
@@ -98,8 +103,187 @@ void PropertiesPanel::showHeading(SelectionFrame* frame)
 #undef FRIENDLY_NAME_CASE
 
     heading_->setText(friendly);
-    subheading_->setText(frame->objectName());
+    QString where = frame->objectName();
+    if (SelectionFrame* stack = frame->containerFrame())
+    {
+        if (const auto slot = stack->locateChild(frame))
+        {
+            where += QString(" \u00b7 on %1 / %2")
+                         .arg(stack->objectName(), QString::fromStdString(stack->pageName(slot->first)));
+        }
+    }
+    subheading_->setText(where);
 }
+
+namespace
+{
+
+// Runs a page edit after the current event returns. Every page edit re-emits the
+// selection, which rebuilds this panel's form -- including the button or field
+// whose signal is running right now. Deleting it from inside its own handler is
+// a use-after-free, so the edit waits for the handler to finish.
+void deferToCanvas(Canvas* canvas, std::function<void()> action)
+{
+    if (canvas == nullptr) return;
+    QMetaObject::invokeMethod(canvas, std::move(action), Qt::QueuedConnection);
+}
+
+// The pages of a selected page_stack: which one the canvas previews, and the
+// structure -- add, remove, reorder, rename, in or out of the cycle.
+QWidget* buildPagesEditor(QWidget* parent, Canvas* canvas, SelectionFrame* stack)
+{
+    auto* box = new QGroupBox("Pages", parent);
+    box->setObjectName("pages:editor");
+    auto* layout = new QVBoxLayout(box);
+
+    auto* list = new QListWidget(box);
+    list->setObjectName("pages:list");
+    list->setMaximumHeight(120);
+    for (std::size_t i = 0; i < stack->pageCount(); ++i)
+    {
+        QString label = QString::fromStdString(stack->pageName(i));
+        if (!stack->pageInCycle(i))
+        {
+            label += "  (not in cycle)";
+        }
+        list->addItem(label);
+    }
+    list->setCurrentRow(static_cast<int>(stack->shownPage()));
+    layout->addWidget(list);
+
+    auto* buttons = new QHBoxLayout();
+    const auto makeButton = [box, buttons](const char* text, const char* name, const char* tip)
+    {
+        auto* button = new QPushButton(text, box);
+        button->setObjectName(name);
+        button->setToolTip(tip);
+        buttons->addWidget(button);
+        return button;
+    };
+    QPushButton* add = makeButton("Add", "pages:add", "Add an empty page at the end");
+    QPushButton* remove = makeButton("Remove", "pages:remove", "Remove the selected page and its widgets");
+    QPushButton* up = makeButton("Up", "pages:up", "Move the selected page earlier in the cycle");
+    QPushButton* down = makeButton("Down", "pages:down", "Move the selected page later in the cycle");
+    layout->addLayout(buttons);
+
+    auto* form = new QFormLayout();
+    auto* name = new QLineEdit(box);
+    name->setObjectName("pages:name");
+    auto* inCycle = new QCheckBox("Stops here on next/prev", box);
+    inCycle->setObjectName("pages:in_cycle");
+    form->addRow("Name", name);
+    form->addRow("In cycle", inCycle);
+    layout->addLayout(form);
+
+    auto* hint = new QLabel("Double-click the stack on the canvas to edit this page's widgets. "
+                            "PageUp/PageDown change the page shown.", box);
+    hint->setWordWrap(true);
+    hint->setStyleSheet("color: palette(mid); font-size: 11px;");
+    layout->addWidget(hint);
+
+    const QPointer<SelectionFrame> guarded(stack);
+    const auto syncRow = [guarded, list, name, inCycle, remove, up, down]()
+    {
+        const int row = list->currentRow();
+        const bool valid = guarded && row >= 0 && static_cast<std::size_t>(row) < guarded->pageCount();
+        const QSignalBlocker b1(name);
+        const QSignalBlocker b2(inCycle);
+        name->setText(valid ? QString::fromStdString(guarded->pageName(static_cast<std::size_t>(row))) : QString());
+        inCycle->setChecked(valid && guarded->pageInCycle(static_cast<std::size_t>(row)));
+        remove->setEnabled(valid && guarded->pageCount() > 1);
+        up->setEnabled(valid && row > 0);
+        down->setEnabled(valid && static_cast<std::size_t>(row) + 1 < guarded->pageCount());
+    };
+    syncRow();
+
+    QObject::connect(list, &QListWidget::currentRowChanged, box, [canvas, guarded, syncRow](int row)
+    {
+        if (guarded && row >= 0)
+        {
+            canvas->showPage(guarded, static_cast<std::size_t>(row));
+        }
+        syncRow();
+    });
+    QObject::connect(add, &QPushButton::clicked, box, [canvas, guarded]()
+    {
+        deferToCanvas(canvas, [canvas, guarded]() { if (guarded) canvas->addPage(guarded); });
+    });
+    QObject::connect(remove, &QPushButton::clicked, box, [canvas, guarded, list]()
+    {
+        const int row = list->currentRow();
+        deferToCanvas(canvas, [canvas, guarded, row]()
+        {
+            if (guarded && row >= 0) canvas->removePage(guarded, static_cast<std::size_t>(row));
+        });
+    });
+    const auto move = [canvas, guarded, list](int delta)
+    {
+        const int row = list->currentRow();
+        deferToCanvas(canvas, [canvas, guarded, row, delta]()
+        {
+            if (guarded && row >= 0 && row + delta >= 0)
+            {
+                canvas->movePage(guarded, static_cast<std::size_t>(row), static_cast<std::size_t>(row + delta));
+            }
+        });
+    };
+    QObject::connect(up, &QPushButton::clicked, box, [move]() { move(-1); });
+    QObject::connect(down, &QPushButton::clicked, box, [move]() { move(+1); });
+    QObject::connect(name, &QLineEdit::editingFinished, box, [canvas, guarded, list, name]()
+    {
+        const int row = list->currentRow();
+        const std::string text = name->text().trimmed().toStdString();
+        if (!guarded || row < 0 || text.empty() || text == guarded->pageName(static_cast<std::size_t>(row)))
+        {
+            return;
+        }
+        deferToCanvas(canvas, [canvas, guarded, row, text]()
+        {
+            if (guarded) canvas->renamePage(guarded, static_cast<std::size_t>(row), text);
+        });
+    });
+    QObject::connect(inCycle, &QCheckBox::toggled, box, [canvas, guarded, list](bool on)
+    {
+        const int row = list->currentRow();
+        deferToCanvas(canvas, [canvas, guarded, row, on]()
+        {
+            if (guarded && row >= 0) canvas->setPageInCycle(guarded, static_cast<std::size_t>(row), on);
+        });
+    });
+    return box;
+}
+
+// For a widget on a page: which page it is on, and a way to move it.
+QWidget* buildPagePicker(QWidget* parent, Canvas* canvas, SelectionFrame* child, SelectionFrame* stack)
+{
+    auto* row = new QWidget(parent);
+    auto* form = new QFormLayout(row);
+    form->setContentsMargins(10, 4, 10, 4);
+    auto* combo = new QComboBox(row);
+    combo->setObjectName("page:move_to");
+    for (std::size_t i = 0; i < stack->pageCount(); ++i)
+    {
+        combo->addItem(QString::fromStdString(stack->pageName(i)));
+    }
+    if (const auto slot = stack->locateChild(child))
+    {
+        combo->setCurrentIndex(static_cast<int>(slot->first));
+    }
+    combo->setToolTip("The page of " + stack->objectName() + " this widget is on");
+    form->addRow("Page", combo);
+
+    const QPointer<SelectionFrame> guarded(child);
+    QObject::connect(combo, &QComboBox::currentIndexChanged, row, [canvas, guarded](int index)
+    {
+        deferToCanvas(canvas, [canvas, guarded, index]()
+        {
+            if (guarded && index >= 0) canvas->moveToPage(guarded, static_cast<std::size_t>(index));
+        });
+    });
+    return row;
+}
+
+}  // namespace
 
 void PropertiesPanel::setCanvas(Canvas* canvas)
 {
@@ -1058,6 +1242,21 @@ void PropertiesPanel::setSelectedWidget(QWidget* w)
 
     if (page)
     {
+        // A stack's pages, or a page widget's page, around the reflected form.
+        if (auto* frame = qobject_cast<SelectionFrame*>(w); frame && canvas_)
+        {
+            if (auto* vbox = qobject_cast<QVBoxLayout*>(page->layout()))
+            {
+                if (frame->isContainer())
+                {
+                    vbox->insertWidget(1, buildPagesEditor(page, canvas_, frame));
+                }
+                else if (SelectionFrame* stack = frame->containerFrame())
+                {
+                    vbox->insertWidget(0, buildPagePicker(page, canvas_, frame, stack));
+                }
+            }
+        }
         showPage(page);
         return;
     }

@@ -160,9 +160,9 @@ rebuild everything on its pages, so an embedded CarPlay widget reconnects.
 
 ## Editing
 
-The editor loads and saves stacks without losing their pages, and previews a
-stack as an outline naming its pages. Adding, removing and arranging the
-widgets on a page is done in the YAML for now.
+The editor edits stacks in place: double-click one to work on its pages, drag
+widgets onto the page it is showing, and manage the pages from the properties
+panel. See [Pages in the editor](../editor.html#pages).
 
 ## Troubleshooting
 

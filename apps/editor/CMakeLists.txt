@@ -96,5 +96,13 @@ target_compile_definitions(editor_test_roundtrip PRIVATE
 target_link_libraries(editor_test_roundtrip PRIVATE editor_core)
 add_project_test(TARGET editor_test_roundtrip LABELS editor gui)
 
+# A page_stack's pages in the editor: live frames, the scope clicks and drops go
+# into, page operations, the properties panel, and undo across all of it.
+qt_add_executable(editor_test_pages
+    tests/test_editor_pages.cpp
+)
+target_link_libraries(editor_test_pages PRIVATE editor_core)
+add_project_test(TARGET editor_test_pages LABELS editor gui)
+
 # SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
 redline_install(TARGET editor COMPONENT gui)

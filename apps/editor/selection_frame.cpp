@@ -3,8 +3,13 @@
 
 #include "dashboard/widget_factory.h"
 
+#include "dashboard/widget_identity.h"
+
 #include <QPainter>
 #include <QEvent>
+
+#include <algorithm>
+#include <map>
 
 namespace
 {
@@ -13,6 +18,8 @@ namespace
     // kUnselectedOutlineColor: Non-selected frame outline color in editor mode (dark gray)
     constexpr QColor kSelectedOutlineColor(0, 122, 255);
     constexpr QColor kUnselectedOutlineColor(80, 80, 80);
+    // kScopeOutlineColor: the page_stack being edited into (amber)
+    constexpr QColor kScopeOutlineColor(255, 176, 0);
 }
 
 SelectionFrame::SelectionFrame(widget_type_t type, QWidget* parent)
@@ -65,10 +72,318 @@ void SelectionFrame::setId(std::string id)
     }
 }
 
-void SelectionFrame::setPages(std::vector<widget_page_t> pages)
+std::vector<widget_page_t> SelectionFrame::pages() const
 {
-    pages_ = std::move(pages);
+    std::vector<widget_page_t> out;
+    out.reserve(pageSlots_.size());
+    for (const PageSlot& slot : pageSlots_)
+    {
+        widget_page_t page;
+        page.name = slot.name;
+        page.in_cycle = slot.in_cycle;
+        for (const auto& frame : slot.frames)
+        {
+            if (frame)
+            {
+                page.widgets.push_back(frame->toWidgetConfig(QRect(frame->pos(), frame->size())));
+            }
+        }
+        out.push_back(std::move(page));
+    }
+    return out;
+}
+
+std::vector<std::vector<QString>> SelectionFrame::pageChildNames() const
+{
+    std::vector<std::vector<QString>> out;
+    out.reserve(pageSlots_.size());
+    for (const PageSlot& slot : pageSlots_)
+    {
+        std::vector<QString> names;
+        for (const auto& frame : slot.frames)
+        {
+            if (frame)
+            {
+                names.push_back(frame->objectName());
+            }
+        }
+        out.push_back(std::move(names));
+    }
+    return out;
+}
+
+SelectionFrame* SelectionFrame::buildPageChild(const widget_config_t& cfg, const QString& name, bool editorMode)
+{
+    if (cfg.type == widget_type_t::unknown || cfg.type == widget_type_t::page_stack)
+    {
+        SPDLOG_WARN("'{}': a {} cannot be on a page; left out.", objectName().toStdString(),
+                    reflection::enum_to_string(cfg.type));
+        return nullptr;
+    }
+
+    auto* frame = new SelectionFrame(cfg.type, this);
+    frame->setId(cfg.id);
+    frame->setObjectName(name);
+    frame->applyStoredConfig(cfg.config);
+    frame->ensureChild();
+    frame->move(cfg.x, cfg.y);
+    frame->resize(cfg.width, cfg.height);
+    frame->setEditorModeCapture(editorMode);
+    return frame;
+}
+
+void SelectionFrame::applyPages(const std::vector<widget_page_t>& pages,
+                                const std::vector<std::vector<QString>>& names)
+{
+    if (!isContainer())
+    {
+        return;
+    }
+
+    // Every live frame, by name, wherever it is now: a widget moved to another
+    // page is still the same widget.
+    std::map<QString, SelectionFrame*> live;
+    for (const PageSlot& slot : pageSlots_)
+    {
+        for (const auto& frame : slot.frames)
+        {
+            if (frame)
+            {
+                live.emplace(frame->objectName(), frame.data());
+            }
+        }
+    }
+
+    bool names_fit = names.size() == pages.size();
+    for (std::size_t p = 0; names_fit && p < pages.size(); ++p)
+    {
+        names_fit = names[p].size() == pages[p].widgets.size();
+    }
+
+    std::vector<PageSlot> rebuilt;
+    rebuilt.reserve(pages.size());
+    std::size_t largest = 0;
+    for (std::size_t p = 0; p < pages.size(); ++p)
+    {
+        const widget_page_t& page = pages[p];
+        PageSlot slot{page.name, page.in_cycle, {}};
+        largest = std::max(largest, page.widgets.size());
+
+        for (std::size_t w = 0; w < page.widgets.size(); ++w)
+        {
+            const widget_config_t& cfg = page.widgets[w];
+            const QString name = names_fit ? names[p][w]
+                                           : dashboard::childWidgetObjectName(objectName(), page.name, cfg, w);
+
+            SelectionFrame* frame = nullptr;
+            if (const auto it = live.find(name); it != live.end() && it->second->type() == cfg.type)
+            {
+                frame = it->second;
+                live.erase(it);
+                if (!(frame->config() == cfg.config))
+                {
+                    frame->applyStoredConfig(cfg.config);
+                }
+                frame->setId(cfg.id);
+                frame->setObjectName(name);
+                const QRect target(cfg.x, cfg.y, cfg.width, cfg.height);
+                if (QRect(frame->pos(), frame->size()) != target)
+                {
+                    frame->move(target.topLeft());
+                    frame->resize(target.size());
+                }
+            }
+            else
+            {
+                frame = buildPageChild(cfg, name, editorMode_);
+            }
+
+            if (frame != nullptr)
+            {
+                slot.frames.push_back(frame);
+            }
+        }
+        rebuilt.push_back(std::move(slot));
+    }
+
+    // Whatever was not claimed is not in the new pages. Hidden now, deleted
+    // later: deleteLater leaves it in the tree until the event loop runs.
+    for (const auto& [name, frame] : live)
+    {
+        frame->hide();
+        frame->deleteLater();
+    }
+
+    pageSlots_ = std::move(rebuilt);
+    nextChildIndex_ = std::max(nextChildIndex_, largest);
+    if (shownPage_ >= pageSlots_.size())
+    {
+        shownPage_ = pageSlots_.empty() ? 0 : pageSlots_.size() - 1;
+    }
+    restack();
+    applyPageVisibility();
     labelPages();
+}
+
+std::vector<SelectionFrame*> SelectionFrame::pageFrames(std::size_t page) const
+{
+    std::vector<SelectionFrame*> out;
+    if (page >= pageSlots_.size())
+    {
+        return out;
+    }
+    for (const auto& frame : pageSlots_[page].frames)
+    {
+        if (frame)
+        {
+            out.push_back(frame);
+        }
+    }
+    return out;
+}
+
+std::optional<std::size_t> SelectionFrame::pageIndex(const std::string& name) const
+{
+    for (std::size_t i = 0; i < pageSlots_.size(); ++i)
+    {
+        if (pageSlots_[i].name == name)
+        {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void SelectionFrame::showPage(std::size_t page)
+{
+    if (page >= pageSlots_.size() || page == shownPage_)
+    {
+        return;
+    }
+    shownPage_ = page;
+    applyPageVisibility();
+    labelPages();
+    if (overlay_)
+    {
+        overlay_->update();
+    }
+}
+
+void SelectionFrame::applyPageVisibility()
+{
+    for (std::size_t p = 0; p < pageSlots_.size(); ++p)
+    {
+        for (const auto& frame : pageSlots_[p].frames)
+        {
+            if (frame)
+            {
+                frame->setVisible(p == shownPage_);
+            }
+        }
+    }
+}
+
+SelectionFrame* SelectionFrame::addPageChild(std::size_t page, widget_type_t type, const QPoint& localPos,
+                                             const QSize& size, bool editorMode)
+{
+    if (!isContainer() || page >= pageSlots_.size() || type == widget_type_t::unknown ||
+        type == widget_type_t::page_stack)
+    {
+        return nullptr;
+    }
+
+    widget_config_t cfg;
+    cfg.type = type;
+    cfg.config = default_widget_config(type);
+    cfg.x = static_cast<int16_t>(localPos.x());
+    cfg.y = static_cast<int16_t>(localPos.y());
+    const QSize chosen = size.isValid() && !size.isEmpty() ? size : QSize(200, 200);
+    cfg.width = static_cast<uint16_t>(chosen.width());
+    cfg.height = static_cast<uint16_t>(chosen.height());
+
+    // Named on the dashboard's rule for a widget on a page, with an index that
+    // only goes up -- see Canvas::addWidget for why not the page's size.
+    const QString name =
+        dashboard::childWidgetObjectName(objectName(), pageSlots_[page].name, cfg, nextChildIndex_++);
+    SelectionFrame* frame = buildPageChild(cfg, name, editorMode);
+    if (frame == nullptr)
+    {
+        return nullptr;
+    }
+    pageSlots_[page].frames.push_back(frame);
+    restack();
+    applyPageVisibility();
+    return frame;
+}
+
+bool SelectionFrame::removePageChild(SelectionFrame* child)
+{
+    const auto where = locateChild(child);
+    if (!where)
+    {
+        return false;
+    }
+    auto& frames = pageSlots_[where->first].frames;
+    frames.erase(frames.begin() + static_cast<std::ptrdiff_t>(where->second));
+    child->hide();
+    child->deleteLater();
+    return true;
+}
+
+std::optional<std::pair<std::size_t, std::size_t>> SelectionFrame::locateChild(const SelectionFrame* child) const
+{
+    for (std::size_t p = 0; p < pageSlots_.size(); ++p)
+    {
+        const auto& frames = pageSlots_[p].frames;
+        for (std::size_t w = 0; w < frames.size(); ++w)
+        {
+            if (frames[w] == child)
+            {
+                return std::make_pair(p, w);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+SelectionFrame* SelectionFrame::containerFrame() const
+{
+    return qobject_cast<SelectionFrame*>(parentWidget());
+}
+
+void SelectionFrame::setScopeActive(bool on)
+{
+    if (scopeActive_ == on)
+    {
+        return;
+    }
+    scopeActive_ = on;
+    if (overlay_)
+    {
+        overlay_->update();
+    }
+}
+
+void SelectionFrame::restack()
+{
+    if (child_)
+    {
+        child_->lower();
+    }
+    for (const PageSlot& slot : pageSlots_)
+    {
+        for (const auto& frame : slot.frames)
+        {
+            if (frame)
+            {
+                frame->raise();
+            }
+        }
+    }
+    if (overlay_)
+    {
+        overlay_->raise();
+    }
 }
 
 void SelectionFrame::labelPages()
@@ -76,11 +391,12 @@ void SelectionFrame::labelPages()
     if (auto* stack = qobject_cast<PageStackWidget*>(child_))
     {
         std::vector<std::string> names;
-        for (const widget_page_t& page : pages_)
+        for (const PageSlot& slot : pageSlots_)
         {
-            names.push_back(page.name);
+            names.push_back(slot.name);
         }
-        stack->setPlaceholderPageNames(std::move(names));
+        stack->setPlaceholderPageNames(std::move(names), pageSlots_.empty() ? std::nullopt
+                                                                             : std::optional<std::size_t>(shownPage_));
     }
 }
 
@@ -88,9 +404,9 @@ void SelectionFrame::ensureChild()
 {
     // A page_stack from the palette arrives with no pages, and a stack with none
     // does not load. Give it the one page a new stack starts with.
-    if (pages_.empty())
+    if (isContainer() && pageSlots_.empty())
     {
-        pages_ = default_widget_pages(type_);
+        applyPages(default_widget_pages(type_));
     }
 
     if (child_ != nullptr)
@@ -120,6 +436,7 @@ void SelectionFrame::rebuildChild()
     wc.type = type_;
     wc.config = config_;
     setChild(widget_factory::createWidgetFromConfig(wc, nullptr));
+    restack();
     labelPages();
 }
 
@@ -181,13 +498,22 @@ void SelectionFrame::setEditorModeCapture(bool on)
     {
         child_->setAttribute(Qt::WA_TransparentForMouseEvents, on);
     }
+    for (const PageSlot& slot : pageSlots_)
+    {
+        for (const auto& frame : slot.frames)
+        {
+            if (frame)
+            {
+                frame->setEditorModeCapture(on);
+            }
+        }
+    }
 
     update();
 }
 
-SelectionFrame::Handle SelectionFrame::hitTestCanvasPos(const QPoint& canvasPos) const
+SelectionFrame::Handle SelectionFrame::hitTestLocal(const QPoint& pos) const
 {
-    const QPoint pos = mapFromParent(canvasPos);
     const QRect r(0, 0, width(), height());
     const QRect tl(r.topLeft() - QPoint(kGrabHandleSizePx/2, kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
     const QRect tr(QPoint(r.right() - kGrabHandleSizePx/2, r.top() - kGrabHandleSizePx/2), QSize(kGrabHandleSizePx, kGrabHandleSizePx));
@@ -235,14 +561,38 @@ bool SelectionFrame::eventFilter(QObject* obj, QEvent* event)
         QPainter p(static_cast<QWidget*>(obj));
         p.setRenderHint(QPainter::Antialiasing);
         const bool drawHandles = selected_;
-        const QColor outline = selected_ ? kSelectedOutlineColor : kUnselectedOutlineColor;
+        const QColor outline = selected_ ? kSelectedOutlineColor
+                               : scopeActive_ ? kScopeOutlineColor
+                                              : kUnselectedOutlineColor;
         QPen pen(outline);
         pen.setWidth(2);
         pen.setCosmetic(true);
+        if (scopeActive_ && !selected_)
+        {
+            pen.setStyle(Qt::DashLine);
+        }
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         const QRect outer = static_cast<QWidget*>(obj)->rect().adjusted(0, 0, -1, -1);
         p.drawRect(outer);
+        if (scopeActive_ && shownPage_ < pageSlots_.size())
+        {
+            // Which page the widgets inside belong to, in the corner of the stack
+            // being edited.
+            const QString tag = QString("page %1/%2: %3")
+                                    .arg(shownPage_ + 1)
+                                    .arg(pageSlots_.size())
+                                    .arg(QString::fromStdString(pageSlots_[shownPage_].name));
+            QFont font = p.font();
+            font.setPointSize(10);
+            p.setFont(font);
+            const QRect tagRect = p.fontMetrics().boundingRect(tag).adjusted(-4, -2, 4, 2);
+            const QRect placed(outer.right() - tagRect.width() - 2, outer.top() + 2, tagRect.width(), tagRect.height());
+            p.fillRect(placed, kScopeOutlineColor);
+            p.setPen(Qt::black);
+            p.drawText(placed, Qt::AlignCenter, tag);
+            p.setPen(pen);
+        }
         if (drawHandles)
         {
             const QRect r = outer;

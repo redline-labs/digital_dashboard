@@ -738,21 +738,31 @@ def editor_add_widget(
         Field(default=None, description="Width; omit (with height) to use the size hint."),
     ] = None,
     height: Annotated[int | None, Field(default=None, description="Height.")] = None,
+    container: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="A page_stack selector to add the widget to one of its pages; x and y are then relative to the stack.",
+        ),
+    ] = None,
+    page: Annotated[
+        str | int | None,
+        Field(default=None, description="With container: the page name or index. Omit for the page being shown."),
+    ] = None,
 ) -> str:
     """Add a widget to the editor canvas and select it.
 
     Goes through the same Canvas::addWidget that a palette drag ends up calling,
-    so the result is identical to dragging one in by hand.
+    so the result is identical to dragging one in by hand. With `container` it
+    goes on a page_stack's page instead.
     """
+    params: dict[str, Any] = {"type": type, "x": x, "y": y, "width": width, "height": height}
+    if container is not None:
+        params["container"] = container
+        if page is not None:
+            params["page"] = page
     try:
-        return json.dumps(
-            _call(
-                "editor",
-                "editor.add_widget",
-                {"type": type, "x": x, "y": y, "width": width, "height": height},
-            ),
-            indent=2,
-        )
+        return json.dumps(_call("editor", "editor.add_widget", params), indent=2)
     except (AgentError, LaunchError, OSError) as exc:
         return _fail(exc)
 
@@ -812,6 +822,66 @@ def editor_select(target: Annotated[str, TARGET_FIELD]) -> str:
     """Select a widget on the canvas, as clicking it would."""
     try:
         return json.dumps(_call("editor", "editor.select", {"target": target}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_pages(target: Annotated[str, Field(description="A page_stack selector, e.g. '#main_pages'.")]) -> str:
+    """List a page_stack's pages in the editor: name, in_cycle, whether it is the
+    page being previewed, and the widgets on it."""
+    try:
+        return json.dumps(_call("editor", "editor.pages", {"target": target}), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_page_edit(
+    target: Annotated[str, Field(description="A page_stack selector.")],
+    action: Annotated[
+        Literal["add", "remove", "rename", "set_in_cycle", "move", "show"],
+        Field(
+            description=(
+                "add: a new page (optional `name`). remove: `page` (not the last). rename: `page` to `name`; "
+                "default_page, triggers and page buttons aimed at it follow. set_in_cycle: `page`, `in_cycle`. "
+                "move: `page` to position `index`. show: preview `page` (not an edit)."
+            )
+        ),
+    ],
+    page: Annotated[str | int | None, Field(default=None, description="Page name or index.")] = None,
+    name: Annotated[str | None, Field(default=None, description="For add and rename.")] = None,
+    in_cycle: Annotated[bool | None, Field(default=None, description="For set_in_cycle.")] = None,
+    index: Annotated[int | None, Field(default=None, description="For move: the new position, from 0.")] = None,
+) -> str:
+    """Change a page_stack's pages in the editor. Every change but `show` is one
+    undo step. Returns the pages afterwards."""
+    method = {
+        "add": "editor.add_page",
+        "remove": "editor.remove_page",
+        "rename": "editor.rename_page",
+        "set_in_cycle": "editor.set_page",
+        "move": "editor.move_page",
+        "show": "editor.show_page",
+    }[action]
+    params: dict[str, Any] = {"target": target}
+    for key, value in (("page", page), ("name", name), ("in_cycle", in_cycle), ("index", index)):
+        if value is not None:
+            params[key] = value
+    try:
+        return json.dumps(_call("editor", method, params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def editor_move_to_page(
+    target: Annotated[str, TARGET_FIELD],
+    page: Annotated[str | int, Field(description="The page name or index to move it to, on the same stack.")],
+) -> str:
+    """Move a widget on a page_stack's page to another page of that stack."""
+    try:
+        return json.dumps(_call("editor", "editor.move_to_page", {"target": target, "page": page}), indent=2)
     except (AgentError, LaunchError, OSError) as exc:
         return _fail(exc)
 

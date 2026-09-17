@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <algorithm>
 #include <map>
+#include <set>
 #include <variant>
 
 namespace {
@@ -49,6 +50,7 @@ void Canvas::clearAll()
     // Deselect existing
     if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
     selected_ = nullptr;
+    exitScope();
     // Delete widgets
     for (auto& frame : items_)
     {
@@ -300,7 +302,8 @@ void Canvas::loadWindow(const app_config_t& app_cfg)
         // frame without inventing an id that would then be written to the YAML.
         frame->setId(wcfg.id);
         frame->setObjectName(dashboard::widgetObjectName(wcfg, this_index));
-        frame->setPages(wcfg.pages);
+        // After naming: the widgets on a stack's pages are named after it.
+        frame->applyPages(wcfg.pages);
 
         // Apply typed widget configuration. A mismatch here means the config's
         // `type` and its `config` block disagree, which the YAML decoder should
@@ -360,6 +363,7 @@ Canvas::Snapshot Canvas::captureDocument() const
         if (frame)
         {
             state.names.push_back(frame->objectName());
+            state.page_names.push_back(frame->pageChildNames());
         }
     }
 
@@ -411,7 +415,12 @@ void Canvas::applyDocument(const Snapshot& state)
         {
             for (std::size_t i = 0; i < items_.size(); ++i)
             {
-                if (items_[i]) items_[i]->setObjectName(state.names[i]);
+                if (!items_[i]) continue;
+                items_[i]->setObjectName(state.names[i]);
+                if (i < state.page_names.size() && i < window.widgets.size())
+                {
+                    items_[i]->applyPages(window.widgets[i].pages, state.page_names[i]);
+                }
             }
         }
         nextNameIndex_ = std::max(nextNameIndex_, names_before);
@@ -460,22 +469,23 @@ void Canvas::applyDocument(const Snapshot& state)
             {
                 frame->applyStoredConfig(wcfg.config);
             }
-            if (!(frame->pages() == wcfg.pages))
-            {
-                frame->setPages(wcfg.pages);
-            }
         }
         else
         {
             frame = new SelectionFrame(wcfg.type, this);
-            frame->setPages(wcfg.pages);
+            frame->setObjectName(name);
             frame->applyStoredConfig(wcfg.config);
-            frame->ensureChild();
             frame->show();
         }
 
         frame->setId(wcfg.id);
         frame->setObjectName(name);
+
+        // Diffed by name like the window's own widgets, so undoing a move of one
+        // widget on a page leaves the rest of that page's live widgets alone.
+        static const std::vector<std::vector<QString>> kNoNames;
+        frame->applyPages(wcfg.pages, i < state.page_names.size() ? state.page_names[i] : kNoNames);
+        frame->ensureChild();
 
         const QRect target(wcfg.x, wcfg.y, wcfg.width, wcfg.height);
         if (widgetRect(frame) != target)
@@ -485,10 +495,6 @@ void Canvas::applyDocument(const Snapshot& state)
         }
         frame->setEditorModeCapture(editorMode_);
 
-        if (frame == selected_)
-        {
-            selection_survived = true;
-        }
         rebuilt.push_back(frame);
     }
 
@@ -499,6 +505,13 @@ void Canvas::applyDocument(const Snapshot& state)
     }
 
     items_ = std::move(rebuilt);
+
+    // A widget on a page survives if its stack kept it; containsFrame asks.
+    selection_survived = selected_ && containsFrame(selected_);
+    if (scope_ && !containsFrame(scope_))
+    {
+        exitScope();
+    }
 
     // Keep the naming counter ahead of anything the restored document uses, so a
     // widget added next cannot collide with one that came back from an undo.
@@ -617,6 +630,8 @@ void Canvas::setEditorMode(bool enabled)
     // Also update currently selected pointer
     if (!editorMode_)
     {
+        if (selected_) selected_->setSelected(false);
+        exitScope();
         selected_ = nullptr;
         dragMode_ = DragMode::None;
         emit selectionChanged(nullptr);
@@ -692,10 +707,6 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
         return nullptr;
     }
 
-    // Nothing here has a config to apply -- a palette drop and an agent add both
-    // want the widget's own defaults -- so this is the path that asks for them.
-    frame->ensureChild();
-
     // Name it on the same rule as a loaded widget, so something just added is
     // immediately addressable rather than only after a save and reload.
     //
@@ -706,6 +717,18 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
     widget_config_t naming_cfg;
     naming_cfg.type = type;
     frame->setObjectName(dashboard::widgetObjectName(naming_cfg, nextNameIndex_++));
+
+    // A page_stack does not load without an id -- it names the stack's topics --
+    // so a new one gets a free one rather than saving a file the loader refuses.
+    // Before the pages are built: their widgets are named after it.
+    if (type == widget_type_t::page_stack)
+    {
+        frame->setId(uniqueStackId());
+    }
+
+    // Nothing here has a config to apply -- a palette drop and an agent add both
+    // want the widget's own defaults -- so this is the path that asks for them.
+    frame->ensureChild();
 
     if (frame->child())
     {
@@ -741,6 +764,21 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
 
 void Canvas::selectFrame(SelectionFrame* frame)
 {
+    // The scope follows the selection: a widget on a page puts its stack in scope
+    // and brings its page up; anything outside that stack leaves it.
+    if (SelectionFrame* stack = frame ? frame->containerFrame() : nullptr)
+    {
+        enterScope(stack);
+        if (const auto where = stack->locateChild(frame))
+        {
+            stack->showPage(where->first);
+        }
+    }
+    else if (frame != scope_)
+    {
+        exitScope();
+    }
+
     if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
     selected_ = frame;
     if (frame != nullptr)
@@ -769,7 +807,20 @@ bool Canvas::removeFrame(SelectionFrame* frame)
     const auto it = std::find(items_.begin(), items_.end(), frame);
     if (it == items_.end())
     {
-        return false;
+        SelectionFrame* stack = frame->containerFrame();
+        if (stack == nullptr || !stack->locateChild(frame))
+        {
+            return false;
+        }
+        const auto tx = edit();
+        // Keep editing the page the widget was on.
+        if (selected_ == frame)
+        {
+            selectFrame(stack);
+        }
+        stack->removePageChild(frame);
+        update();
+        return true;
     }
 
     const auto tx = edit();
@@ -802,6 +853,412 @@ std::vector<SelectionFrame*> Canvas::frames() const
     return out;
 }
 
+std::vector<SelectionFrame*> Canvas::allFrames() const
+{
+    std::vector<SelectionFrame*> out;
+    for (SelectionFrame* frame : frames())
+    {
+        out.push_back(frame);
+        for (std::size_t p = 0; p < frame->pageCount(); ++p)
+        {
+            for (SelectionFrame* child : frame->pageFrames(p))
+            {
+                out.push_back(child);
+            }
+        }
+    }
+    return out;
+}
+
+bool Canvas::containsFrame(const SelectionFrame* frame) const
+{
+    if (frame == nullptr)
+    {
+        return false;
+    }
+    for (const auto& item : items_)
+    {
+        if (item == frame || (item && item->locateChild(frame)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::size_t> Canvas::topLevelIndex(const SelectionFrame* frame) const
+{
+    // The position in the exported window, which skips frames already gone.
+    std::size_t index = 0;
+    for (const auto& item : items_)
+    {
+        if (!item) continue;
+        if (item == frame) return index;
+        ++index;
+    }
+    return std::nullopt;
+}
+
+std::string Canvas::uniqueStackId() const
+{
+    std::set<std::string> ids;
+    for (const app_config_t& window : exportDocument().windows)
+    {
+        for (const widget_config_t& widget : window.widgets)
+        {
+            ids.insert(widget.id);
+            for (const widget_page_t& page : widget.pages)
+            {
+                for (const widget_config_t& child : page.widgets)
+                {
+                    ids.insert(child.id);
+                }
+            }
+        }
+    }
+    for (std::size_t n = 1;; ++n)
+    {
+        std::string candidate = n == 1 ? "pages" : "pages_" + std::to_string(n);
+        if (!ids.contains(candidate))
+        {
+            return candidate;
+        }
+    }
+}
+
+void Canvas::enterScope(SelectionFrame* stack)
+{
+    if (stack == scope_ || stack == nullptr || !stack->isContainer())
+    {
+        return;
+    }
+    exitScope();
+    scope_ = stack;
+    scope_->setScopeActive(true);
+}
+
+void Canvas::exitScope()
+{
+    if (scope_)
+    {
+        scope_->setScopeActive(false);
+    }
+    scope_ = nullptr;
+}
+
+bool Canvas::showPage(SelectionFrame* stack, std::size_t page)
+{
+    if (stack == nullptr || !stack->isContainer() || page >= stack->pageCount())
+    {
+        return false;
+    }
+    // A selected widget on a page going out of view would leave handles drawn on
+    // nothing; the stack takes the selection instead.
+    if (selected_ && selected_->containerFrame() == stack)
+    {
+        const auto where = stack->locateChild(selected_);
+        if (where && where->first != page)
+        {
+            stack->showPage(page);
+            selectFrame(stack);
+            return true;
+        }
+    }
+    stack->showPage(page);
+    return true;
+}
+
+SelectionFrame* Canvas::addWidgetToPage(SelectionFrame* stack, std::size_t page, widget_type_t type,
+                                        const QPoint& localPos, const QSize& size)
+{
+    if (stack == nullptr || !stack->isContainer() || !topLevelIndex(stack) || page >= stack->pageCount())
+    {
+        return nullptr;
+    }
+
+    const auto tx = edit();
+    SelectionFrame* child = stack->addPageChild(page, type, localPos, size, editorMode_);
+    if (child == nullptr)
+    {
+        return nullptr;
+    }
+    // Same sizing rule as a window widget: what was asked for, else the widget's
+    // own size hint.
+    if (!(size.isValid() && !size.isEmpty()) && child->child() && child->child()->sizeHint().isValid())
+    {
+        child->resize(child->child()->sizeHint());
+    }
+    stack->showPage(page);
+    update();
+    selectFrame(child);
+    return child;
+}
+
+bool Canvas::mutateDocument(const std::function<bool(Snapshot&)>& change)
+{
+    // Whatever is open closes first, so this edit is its own undo step.
+    commitEdit();
+    const auto tx = edit();
+    Snapshot state = captureDocument();
+    if (!change(state))
+    {
+        return false;
+    }
+    applyDocument(state);
+    return true;
+}
+
+namespace
+{
+
+// The window entry and the stack's position in it, inside a snapshot.
+widget_config_t* stackIn(EditorDocument::Snapshot& state, std::size_t window, std::size_t index)
+{
+    if (window >= state.doc.windows.size() || index >= state.doc.windows[window].widgets.size())
+    {
+        return nullptr;
+    }
+    widget_config_t& stack = state.doc.windows[window].widgets[index];
+    return stack.type == widget_type_t::page_stack ? &stack : nullptr;
+}
+
+bool pageNameTaken(const widget_config_t& stack, const std::string& name)
+{
+    return std::any_of(stack.pages.begin(), stack.pages.end(),
+                       [&](const widget_page_t& page) { return page.name == name; });
+}
+
+// Every page command in a widget's config that targets `stack_id`.
+std::vector<page_command_t*> commandsIn(widget_config_t& widget, const std::string& stack_id)
+{
+    std::vector<page_command_t*> out;
+    if (auto* button = std::get_if<PageButtonWidget::config_t>(&widget.config))
+    {
+        if (button->command.target == stack_id) out.push_back(&button->command);
+    }
+    if (auto* carplay = std::get_if<CarPlayWidget::config_t>(&widget.config))
+    {
+        if (carplay->return_button.command.target == stack_id) out.push_back(&carplay->return_button.command);
+    }
+    return out;
+}
+
+}  // namespace
+
+std::optional<std::size_t> Canvas::addPage(SelectionFrame* stack, std::string name)
+{
+    const auto index = topLevelIndex(stack);
+    if (!index)
+    {
+        return std::nullopt;
+    }
+
+    std::optional<std::size_t> added;
+    mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        if (cfg == nullptr)
+        {
+            return false;
+        }
+        if (name.empty())
+        {
+            for (std::size_t n = cfg->pages.size() + 1; name.empty() || pageNameTaken(*cfg, name); ++n)
+            {
+                name = "page_" + std::to_string(n);
+            }
+        }
+        else if (pageNameTaken(*cfg, name))
+        {
+            return false;
+        }
+        cfg->pages.push_back(widget_page_t{name, true, {}});
+        state.page_names[*index].push_back({});
+        added = cfg->pages.size() - 1;
+        return true;
+    });
+
+    if (added)
+    {
+        showPage(stack, *added);
+    }
+    return added;
+}
+
+bool Canvas::removePage(SelectionFrame* stack, std::size_t page)
+{
+    const auto index = topLevelIndex(stack);
+    if (!index)
+    {
+        return false;
+    }
+    return mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages.size() <= 1)
+        {
+            return false;
+        }
+        // A default that no longer exists would not load; the first page it is.
+        if (auto* stack_cfg = std::get_if<PageStackWidget::config_t>(&cfg->config);
+            stack_cfg && stack_cfg->default_page == cfg->pages[page].name)
+        {
+            stack_cfg->default_page.clear();
+        }
+        cfg->pages.erase(cfg->pages.begin() + static_cast<std::ptrdiff_t>(page));
+        auto& names = state.page_names[*index];
+        if (page < names.size())
+        {
+            names.erase(names.begin() + static_cast<std::ptrdiff_t>(page));
+        }
+        return true;
+    });
+}
+
+bool Canvas::renamePage(SelectionFrame* stack, std::size_t page, const std::string& name)
+{
+    const auto index = topLevelIndex(stack);
+    if (!index || name.empty())
+    {
+        return false;
+    }
+    return mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages[page].name == name || pageNameTaken(*cfg, name))
+        {
+            return false;
+        }
+        const std::string old_name = cfg->pages[page].name;
+        const std::string stack_id = cfg->id;
+        cfg->pages[page].name = name;
+
+        // Everything that names the page by its old name would otherwise refuse
+        // to load: the stack's own default and triggers, and the buttons aimed
+        // at it from anywhere in the document.
+        if (auto* stack_cfg = std::get_if<PageStackWidget::config_t>(&cfg->config))
+        {
+            if (stack_cfg->default_page == old_name) stack_cfg->default_page = name;
+            for (page_trigger_t& trigger : stack_cfg->triggers)
+            {
+                if (trigger.page == old_name) trigger.page = name;
+            }
+        }
+        if (!stack_id.empty())
+        {
+            for (app_config_t& window : state.doc.windows)
+            {
+                for (widget_config_t& widget : window.widgets)
+                {
+                    for (page_command_t* command : commandsIn(widget, stack_id))
+                    {
+                        if (command->page == old_name) command->page = name;
+                    }
+                    for (widget_page_t& other : widget.pages)
+                    {
+                        for (widget_config_t& child : other.widgets)
+                        {
+                            for (page_command_t* command : commandsIn(child, stack_id))
+                            {
+                                if (command->page == old_name) command->page = name;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    });
+}
+
+bool Canvas::setPageInCycle(SelectionFrame* stack, std::size_t page, bool in_cycle)
+{
+    const auto index = topLevelIndex(stack);
+    if (!index)
+    {
+        return false;
+    }
+    return mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages[page].in_cycle == in_cycle)
+        {
+            return false;
+        }
+        cfg->pages[page].in_cycle = in_cycle;
+        return true;
+    });
+}
+
+bool Canvas::movePage(SelectionFrame* stack, std::size_t from, std::size_t to)
+{
+    const auto index = topLevelIndex(stack);
+    if (!index)
+    {
+        return false;
+    }
+    const bool shown = stack->shownPage() == from;
+    const bool moved = mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        if (cfg == nullptr || from >= cfg->pages.size() || to >= cfg->pages.size() || from == to)
+        {
+            return false;
+        }
+        const auto reorder = [from, to](auto& list)
+        {
+            auto item = std::move(list[from]);
+            list.erase(list.begin() + static_cast<std::ptrdiff_t>(from));
+            list.insert(list.begin() + static_cast<std::ptrdiff_t>(to), std::move(item));
+        };
+        reorder(cfg->pages);
+        if (state.page_names[*index].size() > std::max(from, to))
+        {
+            reorder(state.page_names[*index]);
+        }
+        return true;
+    });
+    if (moved && shown)
+    {
+        showPage(stack, to);
+    }
+    return moved;
+}
+
+bool Canvas::moveToPage(SelectionFrame* child, std::size_t page)
+{
+    SelectionFrame* stack = child ? child->containerFrame() : nullptr;
+    const auto index = stack ? topLevelIndex(stack) : std::nullopt;
+    const auto where = stack ? stack->locateChild(child) : std::nullopt;
+    if (!index || !where || where->first == page)
+    {
+        return false;
+    }
+    const bool moved = mutateDocument([&](Snapshot& state)
+    {
+        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
+        auto& names = state.page_names[*index];
+        if (cfg == nullptr || page >= cfg->pages.size() || where->first >= names.size() ||
+            where->second >= names[where->first].size())
+        {
+            return false;
+        }
+        auto& from_widgets = cfg->pages[where->first].widgets;
+        auto& from_names = names[where->first];
+        cfg->pages[page].widgets.push_back(from_widgets[where->second]);
+        names[page].push_back(from_names[where->second]);
+        from_widgets.erase(from_widgets.begin() + static_cast<std::ptrdiff_t>(where->second));
+        from_names.erase(from_names.begin() + static_cast<std::ptrdiff_t>(where->second));
+        return true;
+    });
+    if (moved)
+    {
+        // Follow it: the widget is still selected, now on the other page.
+        selectFrame(child);
+    }
+    return moved;
+}
+
 void Canvas::dropEvent(QDropEvent* event)
 {
     const QString typeKey = event->mimeData()->text();
@@ -812,7 +1269,33 @@ void Canvas::dropEvent(QDropEvent* event)
         return;
     }
 
-    if (addWidget(*type, event->position().toPoint()) != nullptr)
+    const QPoint pos = event->position().toPoint();
+
+    // A drop inside a page_stack lands on the page it is showing -- the one in
+    // scope first, else whichever stack is under the drop. A page_stack itself
+    // cannot go on a page, so it always lands on the window.
+    if (*type != widget_type_t::page_stack)
+    {
+        SelectionFrame* stack = nullptr;
+        if (scope_ && widgetRect(scope_).contains(pos))
+        {
+            stack = scope_;
+        }
+        else if (auto* under = qobject_cast<SelectionFrame*>(topLevelWidgetAt(pos)); under && under->isContainer())
+        {
+            stack = under;
+        }
+        if (stack != nullptr)
+        {
+            if (addWidgetToPage(stack, stack->shownPage(), *type, stack->mapFrom(this, pos)) != nullptr)
+            {
+                event->acceptProposedAction();
+            }
+            return;
+        }
+    }
+
+    if (addWidget(*type, pos) != nullptr)
     {
         event->acceptProposedAction();
     }
@@ -861,14 +1344,33 @@ QWidget* Canvas::topLevelWidgetAt(const QPoint& pos) const
     return nullptr;
 }
 
+SelectionFrame* Canvas::frameAt(const QPoint& pos) const
+{
+    if (scope_ && scope_->isVisible())
+    {
+        const QPoint local = scope_->mapFrom(this, pos);
+        if (scope_->rect().contains(local))
+        {
+            const auto children = scope_->pageFrames(scope_->shownPage());
+            for (auto it = children.rbegin(); it != children.rend(); ++it)
+            {
+                if ((*it)->isVisible() && (*it)->geometry().contains(local))
+                {
+                    return *it;
+                }
+            }
+            return scope_;
+        }
+    }
+    return qobject_cast<SelectionFrame*>(topLevelWidgetAt(pos));
+}
+
 Canvas::DragMode Canvas::hitTestSelectionAt(const QPoint& pos)
 {
     if (!selected_) return DragMode::None;
-    if (auto* frame = qobject_cast<SelectionFrame*>(selected_))
-    {
-        return static_cast<DragMode>(frame->hitTestCanvasPos(pos));
-    }
-    return DragMode::None;
+    // In the frame's own coordinates: a widget on a page is not the canvas's
+    // child, so the canvas point has to be mapped through its stack.
+    return static_cast<DragMode>(selected_->hitTestLocal(selected_->mapFrom(this, pos)));
 }
 
 void Canvas::mousePressEvent(QMouseEvent* event)
@@ -880,14 +1382,31 @@ void Canvas::mousePressEvent(QMouseEvent* event)
     }
 
     const QPoint pos = event->pos();
-    // Determine if clicking on a top-level child widget using stored layout (works with transparent children)
-    QWidget* topLevel = topLevelWidgetAt(pos);
-    if (auto* frame = qobject_cast<SelectionFrame*>(topLevel))
+
+    // A resize handle of the current selection first: the handles overhang the
+    // widget, and on a page the overhang is over the stack, which would
+    // otherwise take the click.
+    if (selected_)
+    {
+        const DragMode handle = hitTestSelectionAt(pos);
+        if (handle != DragMode::None && handle != DragMode::Move)
+        {
+            dragMode_ = handle;
+            dragStartPos_ = pos;
+            dragStartRect_ = selectedRect_;
+            beginEdit();
+            update();
+            return;
+        }
+    }
+
+    if (SelectionFrame* frame = frameAt(pos))
     {
         // selectFrame() rather than a third hand-rolled copy of "deselect the
         // old, select the new, update selectedRect_, emit" -- it already does
         // all of that, and keeping one implementation is what stops the copies
-        // drifting apart.
+        // drifting apart. It also moves the scope: a click outside the stack
+        // being edited leaves it.
         selectFrame(frame);
         dragMode_ = hitTestSelectionAt(pos);
         dragStartPos_ = pos;
@@ -904,26 +1423,33 @@ void Canvas::mousePressEvent(QMouseEvent* event)
         return;
     }
 
-    // Not clicking inside any widget's rect. If we already have a selection, allow grabs on handles even if they extend outside the rect
-    if (selected_)
+    // Nothing under the click: clear the selection and leave any stack.
+    selectFrame(nullptr);
+    update();
+}
+
+void Canvas::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (!editorMode_)
     {
-        DragMode hm = hitTestSelectionAt(pos);
-        if (hm != DragMode::None)
-        {
-            dragMode_ = hm;
-            dragStartPos_ = pos;
-            dragStartRect_ = selectedRect_;
-            beginEdit();
-            update();
-            return;
-        }
+        QWidget::mouseDoubleClickEvent(event);
+        return;
     }
-    // Otherwise clear selection
-    if (auto* prev = qobject_cast<SelectionFrame*>(selected_)) prev->setSelected(false);
-    selected_ = nullptr;
+
+    // Double-clicking a stack goes inside it, to whatever is under the pointer
+    // on the page it is showing.
+    const QPoint pos = event->pos();
+    auto* stack = qobject_cast<SelectionFrame*>(topLevelWidgetAt(pos));
+    if (stack == nullptr || !stack->isContainer())
+    {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    enterScope(stack);
+    selectFrame(frameAt(pos));
     dragMode_ = DragMode::None;
     update();
-    emit selectionChanged(nullptr);
+    event->accept();
 }
 
 void Canvas::mouseMoveEvent(QMouseEvent* event)
@@ -982,6 +1508,38 @@ void Canvas::mouseReleaseEvent(QMouseEvent* event)
 
 void Canvas::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Escape && scope_)
+    {
+        // Out one level: from a page's widget to its stack, from the stack out.
+        if (selected_ && selected_->containerFrame() == scope_)
+        {
+            SelectionFrame* stack = scope_;
+            exitScope();
+            selectFrame(stack);
+        }
+        else
+        {
+            exitScope();
+        }
+        update();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_PageDown || event->key() == Qt::Key_PageUp)
+    {
+        SelectionFrame* stack = scope_ ? scope_.data() : (selected_ && selected_->isContainer() ? selected_.data() : nullptr);
+        if (stack != nullptr && stack->pageCount() > 0)
+        {
+            const std::size_t count = stack->pageCount();
+            const std::size_t next = event->key() == Qt::Key_PageDown ? (stack->shownPage() + 1) % count
+                                                                       : (stack->shownPage() + count - 1) % count;
+            showPage(stack, next);
+            event->accept();
+            return;
+        }
+    }
+
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)
     {
         // Route through removeFrame rather than inlining a second copy of the

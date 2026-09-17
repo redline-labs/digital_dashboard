@@ -62,6 +62,12 @@ class EditorDocument
         std::size_t active_window = 0;
         std::vector<QString> names;
 
+        // The same, one level down: for each of the active window's widgets, the
+        // names of the widgets on each of its pages. Empty for a widget with no
+        // pages. Same reason as `names` -- a page's widget without an id is named
+        // from its position, and an undo must not renumber it.
+        std::vector<std::vector<std::vector<QString>>> page_names;
+
         // Only the document decides whether anything changed. Names follow the
         // widgets, so comparing them too would be comparing the same fact twice.
         bool operator==(const Snapshot& other) const { return doc == other.doc; }

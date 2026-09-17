@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QSize>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -88,9 +89,45 @@ public:
     // the palette go through exactly the same path.
     SelectionFrame* addWidget(widget_type_t type, const QPoint& pos, const QSize& size = QSize());
     void selectFrame(SelectionFrame* frame);
+    // Removes a widget, on the window or on a page. Undoable.
     bool removeFrame(SelectionFrame* frame);
+    // The window's widgets. A page_stack's page widgets are not in this list;
+    // allFrames() includes them.
     std::vector<SelectionFrame*> frames() const;
+    std::vector<SelectionFrame*> allFrames() const;
     bool editorMode() const { return editorMode_; }
+
+    // ------------------------------------------------------------------ pages
+    //
+    // A page_stack's pages are edited in place. Selecting a widget on a page, or
+    // double-clicking a stack, makes that stack the scope: clicks then reach the
+    // widgets on the page it is previewing, and a palette drop inside it lands on
+    // that page. Clicking outside it, or Escape, leaves.
+    SelectionFrame* scope() const { return scope_; }
+    void enterScope(SelectionFrame* stack);
+    void exitScope();
+
+    // Adds a widget with its defaults to a page, at a position relative to the
+    // stack. Undoable. Null for a page_stack, which cannot sit on a page.
+    SelectionFrame* addWidgetToPage(SelectionFrame* stack, std::size_t page, widget_type_t type,
+                                    const QPoint& localPos, const QSize& size = QSize());
+
+    // Which page the editor previews. Not an edit.
+    bool showPage(SelectionFrame* stack, std::size_t page);
+
+    // Page structure. Each is one undoable edit, and each refuses what would save
+    // a file the loader rejects: an empty or repeated name, removing the last
+    // page. Renaming also follows the page through the references to it -- the
+    // stack's default_page and triggers, and every page_button and CarPlay return
+    // button in the document that targets this stack.
+    std::optional<std::size_t> addPage(SelectionFrame* stack, std::string name = {});
+    bool removePage(SelectionFrame* stack, std::size_t page);
+    bool renamePage(SelectionFrame* stack, std::size_t page, const std::string& name);
+    bool setPageInCycle(SelectionFrame* stack, std::size_t page, bool in_cycle);
+    bool movePage(SelectionFrame* stack, std::size_t from, std::size_t to);
+    // Moves a page's widget to another page of the same stack, keeping its place
+    // within the stack.
+    bool moveToPage(SelectionFrame* child, std::size_t page);
 
     // ------------------------------------------------------------- edit history
     //
@@ -178,6 +215,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
@@ -224,6 +262,9 @@ private:
     QPointer<SelectionFrame> selected_;
     QRect selectedRect_;
 
+    // The page_stack being edited inside, if any. Always one of items_.
+    QPointer<SelectionFrame> scope_;
+
     enum class DragMode { None, Move, ResizeTL, ResizeTR, ResizeBL, ResizeBR };
     DragMode dragMode_ = DragMode::None;
     QPoint dragStartPos_;
@@ -246,6 +287,18 @@ private:
     QRect widgetRect(QWidget* w) const;
     void setMouseTransparentRecursive(QWidget* w, bool on);
     QWidget* topLevelWidgetAt(const QPoint& pos) const;
+    // The frame a click at `pos` is for: a widget on the scope's shown page, the
+    // scope itself, or a window widget.
+    SelectionFrame* frameAt(const QPoint& pos) const;
+    bool containsFrame(const SelectionFrame* frame) const;
+    std::optional<std::size_t> topLevelIndex(const SelectionFrame* frame) const;
+    // An id for a new page_stack that no widget in the document has.
+    std::string uniqueStackId() const;
+
+    // One undoable edit made by changing a snapshot of the document and putting
+    // it back, so the page operations share the undo path's diff rather than
+    // each growing their own. `change` returns false to refuse.
+    bool mutateDocument(const std::function<bool(Snapshot&)>& change);
     DragMode hitTestSelectionAt(const QPoint& pos);
     void clearAll();
 };

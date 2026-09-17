@@ -166,8 +166,11 @@ discovery seeing only live traffic, and what `accepted: false` and
   `widget_config_t`, not in the reflected struct, so a rebuild through
   `widget.set_config` must carry them over -- `MainWindow::rebuildWidget` does,
   and without it changing a stack's `default_page` deletes every page. Widgets
-  that can contain widgets are built through `dashboard::buildWidget()`. See
-  `docs/apps/dashboard/pages.md`.
+  that can contain widgets are built through `dashboard::buildWidget()`. In the
+  editor a stack's page widgets are live `SelectionFrame`s inside the stack's
+  frame, and page edits go through `Canvas::mutateDocument()` so they share the
+  undo diff; history snapshots carry page widget names beside the config for the
+  same reason they carry top-level names. See `docs/apps/dashboard/pages.md`.
 - **The screen-handover messages are unconfirmed.** `changeModes` and
   car-to-phone `requestUI` live only in `libs/airplay/screen_modes.cpp`, with the
   evidence for each constant beside it, and `screen_handover.enabled` defaults

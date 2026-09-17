@@ -1,8 +1,15 @@
 #ifndef DASHBOARD_EDITOR_SELECTION_FRAME_H
 #define DASHBOARD_EDITOR_SELECTION_FRAME_H
 
+#include <QPointer>
 #include <QWidget>
 #include <QRect>
+
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "dashboard/app_config.h"
 
@@ -53,8 +60,10 @@ public:
     void setEditorModeCapture(bool on);
 
     enum class Handle { None, Move, ResizeTL, ResizeTR, ResizeBL, ResizeBR };
-    // Hit-test using canvas coordinates (parent space)
-    Handle hitTestCanvasPos(const QPoint& canvasPos) const;
+    // Hit-test a point in this frame's own coordinates. The caller maps: a frame
+    // on a page_stack's page is not a child of the canvas, so "parent space" is
+    // not canvas space.
+    Handle hitTestLocal(const QPoint& localPos) const;
 
     // The configuration this frame was given, verbatim.
     //
@@ -67,11 +76,62 @@ public:
     // draw while still saving exactly what was asked for.
     const widget_config_variant_t& config() const { return config_; }
 
-    // A page_stack's pages, held verbatim and saved back as they came. The editor
-    // does not edit them yet: the preview draws the stack as an outline naming
-    // its pages, and this is what keeps a load/save from dropping them.
-    const std::vector<widget_page_t>& pages() const { return pages_; }
-    void setPages(std::vector<widget_page_t> pages);
+    // ------------------------------------------------------------- page_stack
+    //
+    // A page_stack's frame holds its pages as live frames: one SelectionFrame per
+    // widget on each page, parented to this frame and placed in its coordinates,
+    // which are exactly the stack-relative coordinates the config stores. Only the
+    // page being previewed is shown. The frames are the document, as everywhere
+    // else in the editor -- pages() reads the config back off them.
+    bool isContainer() const { return type_ == widget_type_t::page_stack; }
+
+    // The pages as a config: names, in_cycle, and each page's widgets read off
+    // its frames. Empty for anything but a page_stack.
+    std::vector<widget_page_t> pages() const;
+
+    // The object names of each page's widgets, page by page. They are not in the
+    // config -- a widget with no id is named from its position -- so they ride
+    // with history snapshots beside it.
+    std::vector<std::vector<QString>> pageChildNames() const;
+
+    // Brings the pages in line with `pages`, reusing a live frame wherever
+    // `names` finds one of the same type, so an undo that moved one widget does
+    // not rebuild its neighbours (a CarPlay preview among them). `names` may be
+    // empty or the wrong shape; the frames are then named by the dashboard's rule.
+    void applyPages(const std::vector<widget_page_t>& pages,
+                    const std::vector<std::vector<QString>>& names = {});
+
+    std::size_t pageCount() const { return pageSlots_.size(); }
+    const std::string& pageName(std::size_t page) const { return pageSlots_[page].name; }
+    bool pageInCycle(std::size_t page) const { return pageSlots_[page].in_cycle; }
+    std::vector<SelectionFrame*> pageFrames(std::size_t page) const;
+    std::optional<std::size_t> pageIndex(const std::string& name) const;
+
+    // Which page the editor previews. Not saved; the dashboard starts on
+    // default_page whatever the editor last showed.
+    std::size_t shownPage() const { return shownPage_; }
+    void showPage(std::size_t page);
+
+    // Adds a widget with its own defaults to `page`, at `localPos`. Null for a
+    // page_stack: one cannot sit on another's page. The caller opens the history
+    // entry.
+    SelectionFrame* addPageChild(std::size_t page, widget_type_t type, const QPoint& localPos,
+                                 const QSize& size, bool editorMode);
+
+    // Removes a widget from its page and schedules it for deletion.
+    bool removePageChild(SelectionFrame* child);
+
+    // Where a widget sits: (page, position on the page). nullopt if it is not
+    // one of this stack's.
+    std::optional<std::pair<std::size_t, std::size_t>> locateChild(const SelectionFrame* child) const;
+
+    // The stack this frame is on, if it is on one.
+    SelectionFrame* containerFrame() const;
+
+    // Drawn while the canvas is editing inside this stack: a different outline,
+    // and the name of the page being previewed.
+    void setScopeActive(bool on);
+    bool isScopeActive() const { return scopeActive_; }
 
     // Replaces the stored configuration and rebuilds the preview from it.
     //
@@ -129,7 +189,7 @@ public:
         wc.width = static_cast<uint16_t>(frameRect.width());
         wc.height = static_cast<uint16_t>(frameRect.height());
         wc.config = config_;
-        wc.pages = pages_;
+        wc.pages = pages();
         return wc;
     }
 
@@ -142,8 +202,24 @@ private:
     widget_type_t type_;
     std::string id_;
     widget_config_variant_t config_{std::monostate{}};
-    std::vector<widget_page_t> pages_;
     QWidget* child_ = nullptr;
+
+    struct PageSlot
+    {
+        std::string name;
+        bool in_cycle = true;
+        std::vector<QPointer<SelectionFrame>> frames;
+    };
+    std::vector<PageSlot> pageSlots_;
+    std::size_t shownPage_ = 0;
+    // Monotonic, like Canvas::nextNameIndex_: a derived name is never reused.
+    std::size_t nextChildIndex_ = 0;
+    bool scopeActive_ = false;
+
+    SelectionFrame* buildPageChild(const widget_config_t& cfg, const QString& name, bool editorMode);
+    // Stacking inside the frame: preview widget at the bottom, then each page's
+    // frames in document order, selection chrome on top.
+    void restack();
     bool selected_ = false;
     bool editorMode_ = true;
     QWidget* overlay_ = nullptr; // draws selection chrome above child
@@ -156,6 +232,8 @@ private:
 
     // Tells a page_stack preview which pages to name in its outline.
     void labelPages();
+    // Shows the shown page's frames and hides the rest.
+    void applyPageVisibility();
 };
 
 #endif // DASHBOARD_EDITOR_SELECTION_FRAME_H

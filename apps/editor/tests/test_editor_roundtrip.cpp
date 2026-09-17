@@ -1267,9 +1267,9 @@ void testANewStackFromThePaletteLoads()
     SelectionFrame* frame = canvas.addWidget(widget_type_t::page_stack, QPoint(10, 10), QSize(200, 100));
     check(frame != nullptr, "a page_stack can be added");
 
-    // The editor names new widgets without an id; the stack needs one to load.
-    dashboard_config_t doc = canvas.exportDocument();
-    doc.windows[0].widgets.at(0).id = "fresh";
+    // A stack needs an id to load, and the editor gives a new one a free one.
+    const dashboard_config_t doc = canvas.exportDocument();
+    check(!doc.windows[0].widgets.at(0).id.empty(), "a page_stack from the palette has an id");
     const auto issues = validate_app_config(YAML::Load(toYaml(doc)));
     bool error = false;
     std::string text;
@@ -1278,7 +1278,7 @@ void testANewStackFromThePaletteLoads()
         error = error || issue.severity == config_codec::Issue::Severity::error;
         text += "\n  " + issue.path + ": " + issue.message;
     }
-    check(!error, "a page_stack from the palette saves as a config that loads, once given an id:" + text);
+    check(!error, "a page_stack from the palette saves as a config that loads:" + text);
 }
 
 }  // namespace
