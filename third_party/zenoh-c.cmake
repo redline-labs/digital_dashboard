@@ -164,6 +164,28 @@ if(APPLE)
             "\n[env]\n"
             "MACOSX_DEPLOYMENT_TARGET = { value = \"${zenoh_deployment_target}\", force = true }\n")
         message(STATUS "zenoh: cargo deployment target ${zenoh_deployment_target}")
+
+        # AND THE DEPLOYMENT TARGET IS WHY PROC MACROS MUST NOT BE STRIPPED.
+        # zenoh-c's release profile sets debug = false, from which cargo infers
+        # `-C strip=debuginfo`, and rustc's strip on macOS leaves the dylib's
+        # LINKEDIT string pool mis-aligned. dyld tolerates that in a binary built
+        # for an old OS and rejects it in one built for a current one, so setting
+        # the deployment target above is what turns it into a failure:
+        #
+        #   dlopen(libpaste-<hash>.dylib): mis-aligned LINKEDIT string pool
+        #
+        # A proc macro is a dylib that rustc dlopens, and a proc macro rustc
+        # cannot load is reported as a crate that does not exist -- "error[E0463]:
+        # can't find crate for `paste`", pointing at token-cell, whose only sin is
+        # depending on it. Nothing in the message mentions strip, dyld or the
+        # deployment target, and the file it names is sitting right there.
+        #
+        # build-override is the narrow lever: it covers build scripts, proc macros
+        # and their dependencies -- exactly the artifacts this host has to load --
+        # and leaves libzenohc, the thing we actually ship, stripped as before.
+        file(APPEND ${zenoh_cargo_config}
+            "\n[profile.release.build-override]\n"
+            "strip = \"none\"\n")
     else()
         # Not fatal, but say so: the build still works, it just links a mix of
         # deployment targets and reports every one of them.
