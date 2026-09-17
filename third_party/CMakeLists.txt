@@ -21,6 +21,9 @@ include(libusb.cmake)
 include(hidapi.cmake)
 include(zenoh-c.cmake)
 include(zenoh-cpp.cmake)
+# The router, built from the same patched workspace as the library above.
+# Off unless REDLINE_BUILD_ZENOHD=ON; the image turns it on.
+include(zenohd.cmake)
 include(capnproto.cmake)
 include(exprtk.cmake)
 include(lexy.cmake)

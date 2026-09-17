@@ -39,6 +39,13 @@
 #     DESTDIR=<staging> cmake --install <build> --prefix /opt/redline \
 #         --component nodes
 
+# Included from more than one place: the root CMakeLists (for the tree) and
+# third_party/zenohd.cmake, which runs during add_subdirectory(third_party) --
+# long before the root gets to include(ProjectInstall) at line ~127. Guarded and
+# self-includable for the same reason NativeCodegen.cmake is: a call site should
+# get the contract without having to depend on include order.
+include_guard(GLOBAL)
+
 set(REDLINE_INSTALL_COMPONENTS gui nodes mockdata
     CACHE INTERNAL "Valid redline_install() components")
 
@@ -80,4 +87,40 @@ function(redline_install)
             RUNTIME DESTINATION bin
             BUNDLE DESTINATION bin
             COMPONENT ${RI_COMPONENT})
+endfunction()
+
+# redline_install_program(PROGRAM <path> COMPONENT <component>)
+#
+# The same contract for something the build PRODUCES BUT DOES NOT OWN AS A
+# TARGET. install(TARGETS) cannot take the output of an add_custom_command, and
+# zenohd is exactly that: it is built by cargo out of the zenoh workspace
+# third_party/zenoh-c.cmake already fetches, patches and SHA-verifies, so there
+# is a file to ship but no CMake target to name.
+#
+# Kept as a separate function rather than overloading redline_install(), because
+# the two cannot validate the same way: a target can be checked for
+# EXCLUDE_FROM_ALL before it is built, a path cannot be checked for anything
+# until install time. Reaching for this when redline_install() would do is a
+# mistake -- it gives up that check.
+#
+# DEPENDS is the caller's problem: the custom target that produces the file has
+# to be in `all`, or the install lands on a path that was never written.
+function(redline_install_program)
+    cmake_parse_arguments(RIP "" "PROGRAM;COMPONENT" "" ${ARGN})
+
+    if(NOT RIP_PROGRAM)
+        message(FATAL_ERROR "redline_install_program: PROGRAM is required")
+    endif()
+    if(NOT RIP_COMPONENT)
+        message(FATAL_ERROR "redline_install_program(${RIP_PROGRAM}): COMPONENT is "
+                            "required, one of: ${REDLINE_INSTALL_COMPONENTS}")
+    endif()
+    if(NOT RIP_COMPONENT IN_LIST REDLINE_INSTALL_COMPONENTS)
+        message(FATAL_ERROR "redline_install_program(${RIP_PROGRAM}): COMPONENT "
+                            "'${RIP_COMPONENT}' is not one of: ${REDLINE_INSTALL_COMPONENTS}")
+    endif()
+
+    install(PROGRAMS ${RIP_PROGRAM}
+            DESTINATION bin
+            COMPONENT ${RIP_COMPONENT})
 endfunction()
