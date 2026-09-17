@@ -71,7 +71,13 @@ function(redline_install)
             "build it by default or do not ship it.")
     endif()
 
+    # BUNDLE DESTINATION is here for the macOS developer build, not for any
+    # image we ship: `editor` sets MACOSX_BUNDLE so its menu bar reads
+    # "Dashboard Editor", and install(TARGETS) refuses a bundle target outright
+    # if it is not told where one goes. The boards are Linux, where MACOSX_BUNDLE
+    # is inert and RUNTIME DESTINATION is the one that applies.
     install(TARGETS ${RI_TARGET}
             RUNTIME DESTINATION bin
+            BUNDLE DESTINATION bin
             COMPONENT ${RI_COMPONENT})
 endfunction()
