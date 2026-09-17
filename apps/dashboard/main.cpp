@@ -12,6 +12,7 @@
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
 #include "agent_control/zenoh_methods.h"
+#include "dashboard/page_methods.h"
 #include "dashboard/widget_methods.h"
 
 #include <spdlog/spdlog.h>
@@ -362,6 +363,10 @@ int main(int argc, char** argv)
                 }
                 return false;
             });
+
+        // Every page_stack's current page, and a way to change it with nothing on
+        // the bus.
+        dashboard::agent::registerPageMethods(*agent);
 
         // Publishing a known value and screenshotting the gauge that subscribes
         // to it is the fastest way to check a dashboard change.

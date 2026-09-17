@@ -29,11 +29,15 @@ describe a dashboard layout whoever is asking.
 | `dashboard/widget_table.h` | `DASHBOARD_WIDGET_TABLE`, the one list of widget types. Includes nothing and must stay that way. |
 | `dashboard/widget_types.h` | `widget_type_t`, generated from the table's first column plus `unknown`. |
 | `dashboard/widget_registry.h` | Includes every widget header; `config_traits<>` from config type back to widget class; the `static_assert` that the enum matches the table. |
-| `dashboard/app_config.h` | `widget_config_t`, `app_config_t` (one window), `dashboard_config_t` (the file), `load_dashboard_config()`, `validate_app_config()`, `default_widget_config()`. |
+| `dashboard/app_config.h` | `widget_config_t`, `widget_page_t`, `app_config_t` (one window), `dashboard_config_t` (the file), `load_dashboard_config()`, `validate_app_config()`, `default_widget_config()`, `default_widget_pages()`. |
 | `dashboard/widget_factory.h` | `createWidgetFromConfig()`: clamps through `validate()` and constructs. |
-| `dashboard/widget_identity.h` | `widgetObjectName()` and `applyWidgetIdentity()`: the one naming rule both apps share. |
+| `dashboard/widget_identity.h` | `widgetObjectName()`, `pageObjectName()`, `childWidgetObjectName()` and `applyWidgetIdentity()`: the one naming rule both apps share. |
 | `dashboard/expression_subscription.h` | `ExpressionSubscription<T>` and `makeExpressionSubscription()`: a bus value delivered to the GUI thread, coalesced. |
 | `dashboard/widget_methods.h` | `registerWidgetMethods()` and `ConfigApplier`: `widget.describe_config`, `get_config`, `set_config`. |
+| `dashboard/widget_tree.h` | `buildWidget()`: a configured widget and, for a `page_stack`, its pages and their widgets. Both apps build through it. |
+| `dashboard/page_command.h` | `page_action_t`, `trigger_edge_t`, `page_command_t` and the `dashboard/pages/<id>/...` key helpers. Reflection only. |
+| `dashboard/page_command_publisher.h` | `PageCommandSender`: sends a `page_command_t` as `PageStackCommand`. Shared by `page_button` and the CarPlay return button. |
+| `dashboard/page_methods.h` | `registerPageMethods()`: `pages.list` and `pages.command`. |
 | `dashboard/gauge_painting.h` | Shared needle, tick, label and range helpers for the analog gauges. |
 | `dashboard/window_placement.h` | `display_role_t`, `scale_mode_t`, `WindowPlacement`, kept free of the widget table. |
 
@@ -183,6 +187,10 @@ and validated without a new test.
 | `dashboard_widgets_test_config_validation` | `dashboard_widgets unit` | `validate_app_config()` names the field in its message for each class of bad config the loader used to accept in silence. |
 | `dashboard_widgets_test_config_colors` | `dashboard_widgets unit` | A configured colour turns into the channel values the file asked for, eight-digit form included. |
 | `dashboard_widgets_test_staleness` | `dashboard_widgets unit` | The loss-of-comm state machine at its boundaries: disabled at zero, stale exactly at the timeout and not a tick before, one edge per transition, and the timeout measured from the newest sample. |
+| `page_stack_test_navigator` | `page_stack unit` | What each page command does from each position: wrapping, pages outside the cycle, a cycle of one, `back` toggling, and `go_to` the current page leaving `back` alone. |
+| `page_stack_test_trigger_edge` | `page_stack unit` | A trigger's first sample only primes it, a rise fires once, re-priming happens only when asked for, and an event topic fires on its first message. |
+| `carplay_test_return_button_policy` | `dashboard unit` | The truth table for when the CarPlay return button shows. |
+| `carplay_test_return_button` | `dashboard gui net` | Through a real widget and bus: the button shows with no session, hides on a live one, returns when the session goes silent, sends one command per tap; hiding the widget drops the video subscription and reports it. |
 | `dashboard_widgets_test_subscription_stale` | `dashboard_widgets net gui` | Against a real publisher: no flicker on a stream arriving every 25 ms, stale once it stops, fresh again when it resumes, silent under the editor's suppression, and stale for a binding that could not be built. |
 
 The `carplay` and `carplay_nav` widget directories register tests of their own

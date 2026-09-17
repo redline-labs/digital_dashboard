@@ -1735,7 +1735,7 @@ The phone's own commands are routed rather than logged as unhandled:
 | Command | What we do |
 |---|---|
 | `requestUI` | manufacturer button, or an app naming a url; see The manufacturer button |
-| `modesChanged` | tracks `speechMode` on appStateID 1, so Siri listening/speaking is logged on the transition |
+| `modesChanged` | tracks `speechMode` on appStateID 1, so Siri listening/speaking is logged on the transition; reads the main screen's owner (2026-09-16) and hands it to the screen handover |
 | `duckAudio` / `unduckAudio` | logged with the computed linear level. Not acted on: this is the phone asking the head unit to attenuate its own sources, and there are none; the phone mixes its music and prompts before sending them to us |
 | `suggestUI` | logged with the url count; the dashboard decides what it shows |
 | `disableBluetooth` | logged. Not applicable on the wired path: iAP2 already runs over USB, so there is no Bluetooth link of ours to drop |
@@ -1813,7 +1813,7 @@ command carries an app asking the head unit to open a specific url, so the two
 are told apart by whether `params.url` is present and non-empty; no url means
 the button. `isOemButtonPress()` is the predicate;
 `Receiver::handleEventCommand()` routes it to the `OemButtonHandler`, which
-today only logs:
+until 2026-09-16 only logged:
 
 ```
 [airplay] manufacturer button pressed -- phone is asking for the vehicle's own UI
@@ -1822,10 +1822,53 @@ today only logs:
 
 Pressing it on the phone produces exactly those lines, so `requestUI` with no
 url is confirmed as the wire form of the press, and `isOemButtonPress()`
-recognises the real thing rather than only the synthetic one in its test. What
-remains is that nothing is hooked to the handler. The action belongs in the
-node's handler in `usb_pipeline.cpp`: for this dashboard, telling the widget
-stack to leave the CarPlay page.
+recognises the real thing rather than only the synthetic one in its test.
+
+Since 2026-09-16 the handler publishes `CarPlayUiEvent{kind: oemButton}` on
+`<prefix>/ui_event`, and what happens next is the dashboard's business: a
+`page_stack` trigger on that topic leaves the CarPlay page. The node does not
+know page names. Not yet re-checked with a phone since the change; the decode
+side is unchanged.
+
+## Handing the screen to the car
+
+Leaving the CarPlay page raises a second question: whether to tell the phone.
+Real head units send `changeModes` taking the main screen when they show their
+own UI, and give it back when CarPlay returns; the phone then routes
+navigation prompts to the car's UI and can take the screen back itself for Siri
+or a call. None of that had been sent by this stack, and LIVI never sends it.
+
+What was built on 2026-09-16 is off by default (`screen_handover.enabled`).
+
+The dashboard's CarPlay widget publishes `CarPlayVisibility` on change and at
+1 Hz. Visibility rather than page names keeps the node ignorant of the
+dashboard's layout, and it is a heartbeat because zenoh keeps no last value.
+The video subscriber-presence edge was not used for this, because `scope` or
+`bag record` subscribing to the video would hold it true.
+
+`carplay::ScreenHandover` is a pure state machine over visibility, recording and
+the reported owner. It takes the screen on hide, and gives it back with a
+keyframe request on show. A reclaim by the phone while CarPlay is hidden is
+published as `screenRequested`. A refused take is not published at all, because
+bouncing the dashboard back to CarPlay would undo the driver's own tap. Three
+seconds of visibility silence counts as visible.
+
+`airplay/screen_modes.{h,cpp}` is the only place the message format lives.
+
+The constants and what each rests on:
+
+| Constant | Value | Evidence |
+|---|---|---|
+| main screen `resourceID` | 1 | our `/info` `modes.resources` lists 1 and 2, and LIVI's `modesChanged` logging names 2 as main audio |
+| `transferType` take | 1 | already sent in `/info`, which the phone accepts |
+| `transferType` untake | 2 | none; follows the numbering |
+| `transferPriority`, constraints | 100 | the same values `/info` sends |
+| owner key in `modesChanged` | `params.resources[].entity`, 1 = phone, 2 = car | one comment in LIVI's `cpStack.ts`; no captured body |
+
+The hardware sequence that turns this on is on the
+[carplay node](../nodes/carplay.html#screen-handover) page. Until a
+`modesChanged` body has been captured and checked in, the parser's test
+fixtures are synthetic and say so.
 
 `oem_button.enabled` and `oem_button.label` in the config control it, with no
 command-line overrides, so what a vehicle showed is answerable from the file

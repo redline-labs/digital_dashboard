@@ -43,6 +43,8 @@ endif()
 add_library(dashboard_widgets STATIC
     app_config.cpp
     widget_methods.cpp
+    widget_tree.cpp
+    page_methods.cpp
 )
 
 # The fonts and SVGs the widgets load from ":/". Added through qt_add_resources

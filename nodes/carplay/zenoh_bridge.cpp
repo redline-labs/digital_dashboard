@@ -94,7 +94,8 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     session_pub_(key_prefix + "/session"),
     nav_pub_(key_prefix + "/nav"),
     nowplaying_pub_(key_prefix + "/nowplaying"),
-    call_pub_(key_prefix + "/call")
+    call_pub_(key_prefix + "/call"),
+    ui_event_pub_(key_prefix + "/ui_event")
 {
     SPDLOG_INFO("[node] zenoh bridge publishing under '{}/'", prefix_);
 }
@@ -245,6 +246,64 @@ void ZenohBridge::publishCall(const CallState& call)
     call_pub_.put();
 
     SPDLOG_DEBUG("[node] call: state={} remote='{}'", static_cast<int>(call.phase), call.remote_name);
+}
+
+void ZenohBridge::publishUiEvent(UiEventKind kind, const std::string& detail)
+{
+    CarPlayUiEvent::Kind wire = CarPlayUiEvent::Kind::OEM_BUTTON;
+    const char* name = "";
+    switch (kind)
+    {
+        case UiEventKind::OemButton:
+            wire = CarPlayUiEvent::Kind::OEM_BUTTON;
+            name = "manufacturer button";
+            break;
+        case UiEventKind::ScreenRequested:
+            wire = CarPlayUiEvent::Kind::SCREEN_REQUESTED;
+            name = "phone took the screen back";
+            break;
+        case UiEventKind::ScreenReleased:
+            wire = CarPlayUiEvent::Kind::SCREEN_RELEASED;
+            name = "phone handed the screen back";
+            break;
+        case UiEventKind::AppRequestedUi:
+            wire = CarPlayUiEvent::Kind::APP_REQUESTED_UI;
+            name = "app asked for the head unit's UI";
+            break;
+    }
+
+    std::lock_guard<std::mutex> lock(meta_mutex_);
+    auto& f = ui_event_pub_.fields();
+    f.setKind(wire);
+    f.setDetail(detail);
+    ui_event_pub_.put();
+    SPDLOG_INFO("[node] ui event: {}{}", name, detail.empty() ? "" : " '" + detail + "'");
+}
+
+void ZenohBridge::setVisibilityHandler(std::function<void(bool visible)> handler)
+{
+    {
+        std::lock_guard<std::mutex> lock(visibility_mutex_);
+        visibility_handler_ = std::move(handler);
+    }
+    if (visibility_sub_)
+    {
+        return;
+    }
+    visibility_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayVisibility>>(
+        prefix_ + "/visibility",
+        [this](CarPlayVisibility::Reader reader)
+        {
+            std::function<void(bool)> current;
+            {
+                std::lock_guard<std::mutex> lock(visibility_mutex_);
+                current = visibility_handler_;
+            }
+            if (current)
+            {
+                current(reader.getVisible());
+            }
+        });
 }
 
 void ZenohBridge::setInputHandler(std::function<void(const InputEvent&)> handler)

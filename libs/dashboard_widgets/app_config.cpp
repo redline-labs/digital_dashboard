@@ -1,21 +1,335 @@
 #include "dashboard/app_config.h"
 
+#include "dashboard/page_command.h"
 #include "pub_sub/topic_key.h"
 
 #include <spdlog/spdlog.h>
 
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 
 namespace {
 
 using config_codec::Issue;
 
+// What the walk learns about the whole document on the way through, for the
+// rules that span widgets: a button naming a page_stack in another window, two
+// stacks claiming one topic.
+struct ValidationContext
+{
+    struct Container
+    {
+        std::string path;
+        std::set<std::string> pages;
+    };
+    std::map<std::string, Container> containers;
+
+    // A page command somewhere in a widget's config, checked once every stack is
+    // known. `path` is the command struct's own path.
+    struct CommandRef
+    {
+        std::string path;
+        std::string target;
+        std::string action;
+        std::string page;
+    };
+    std::vector<CommandRef> commands;
+
+    std::vector<std::string> carplay_paths;
+
+    // 0 for a window's widgets, 1 inside a page.
+    int depth = 0;
+};
+
+std::optional<std::string> scalarText(const YAML::Node& node)
+{
+    if (!node || !node.IsScalar())
+    {
+        return std::nullopt;
+    }
+    return node.as<std::string>();
+}
+
+bool scalarTrue(const YAML::Node& node)
+{
+    try
+    {
+        return node && node.IsScalar() && node.as<bool>();
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+// A command struct, read leniently: its fields' types are validateStruct's job,
+// this only collects what the cross-widget check needs.
+void collectCommand(const YAML::Node& command, const std::string& path, ValidationContext& ctx)
+{
+    if (!command || !command.IsMap())
+    {
+        return;
+    }
+    ctx.commands.push_back({path, scalarText(command["target"]).value_or(""),
+                            scalarText(command["action"]).value_or("next"),
+                            scalarText(command["page"]).value_or("")});
+}
+
+void validateWidget(const YAML::Node& node, const std::string& prefix, std::size_t index,
+                    std::vector<Issue>& issues, ValidationContext& ctx);
+
+// Integer placement key, or its default when absent or unreadable (reported
+// elsewhere).
+int placement(const YAML::Node& widget, const char* key, int fallback)
+{
+    try
+    {
+        return widget[key] ? widget[key].as<int>() : fallback;
+    }
+    catch (const std::exception&)
+    {
+        return fallback;
+    }
+}
+
+// A page_stack's own rules: an id that can name topics, pages that exist and
+// are named once, and widgets inside them that are not themselves stacks.
+void validatePageStack(const YAML::Node& node, const std::string& path, std::vector<Issue>& issues,
+                       ValidationContext& ctx)
+{
+    const std::optional<std::string> id = scalarText(node["id"]);
+    if (!id || id->empty())
+    {
+        issues.push_back({Issue::Severity::error, path + ".id",
+                          "a page_stack needs an id: it names the stack's topics, "
+                          "dashboard/pages/<id>/command and /state"});
+    }
+    else if (id->find('/') != std::string::npos)
+    {
+        // Still a valid key, but no longer one segment: dashboard/pages/*/state
+        // would miss this stack, and its topics would look like another's.
+        issues.push_back({Issue::Severity::error, path + ".id",
+                          "'" + *id + "' contains '/'; a page_stack id is one segment of its topic keys"});
+    }
+    else if (const std::string problem = pub_sub::topicKeyProblem(dashboard::pageCommandKey(*id)); !problem.empty())
+    {
+        issues.push_back({Issue::Severity::error, path + ".id",
+                          "'" + *id + "' cannot name the stack's topics: " + problem});
+    }
+    else if (const auto it = ctx.containers.find(*id); it != ctx.containers.end())
+    {
+        issues.push_back({Issue::Severity::error, path + ".id",
+                          "'" + *id + "' is already the id of the page_stack at " + it->second.path +
+                              "; the two would share one command topic"});
+    }
+
+    ValidationContext::Container container{path, {}};
+    const YAML::Node pages = node["pages"];
+    if (!pages)
+    {
+        issues.push_back({Issue::Severity::error, path + ".pages",
+                          "missing; a page_stack needs at least one page"});
+    }
+    else if (!pages.IsSequence() || pages.size() == 0)
+    {
+        issues.push_back({Issue::Severity::error, path + ".pages", "expected a non-empty list of pages"});
+    }
+    else
+    {
+        const int stack_w = placement(node, "width", 100);
+        const int stack_h = placement(node, "height", 100);
+
+        ++ctx.depth;
+        for (std::size_t p = 0; p < pages.size(); ++p)
+        {
+            const std::string page_path = path + ".pages[" + std::to_string(p) + "]";
+            const YAML::Node page = pages[p];
+            if (!page.IsMap())
+            {
+                issues.push_back({Issue::Severity::error, page_path, "expected a mapping"});
+                continue;
+            }
+
+            for (const auto& entry : page)
+            {
+                const std::string key = entry.first.as<std::string>();
+                if (key != "name" && key != "in_cycle" && key != "widgets")
+                {
+                    issues.push_back({Issue::Severity::warning, page_path + "." + key,
+                                      "unknown key, ignored; a page has name, in_cycle and widgets"});
+                }
+            }
+
+            const std::optional<std::string> name = scalarText(page["name"]);
+            if (!name || name->empty())
+            {
+                issues.push_back({Issue::Severity::error, page_path + ".name",
+                                  "missing; commands and triggers find a page by its name"});
+            }
+            else if (!container.pages.insert(*name).second)
+            {
+                issues.push_back({Issue::Severity::error, page_path + ".name",
+                                  "'" + *name + "' is already a page of this page_stack"});
+            }
+
+            if (page["in_cycle"])
+            {
+                try
+                {
+                    (void)page["in_cycle"].as<bool>();
+                }
+                catch (const std::exception&)
+                {
+                    issues.push_back({Issue::Severity::error, page_path + ".in_cycle", "expected true or false"});
+                }
+            }
+
+            const YAML::Node widgets = page["widgets"];
+            if (!widgets)
+            {
+                issues.push_back({Issue::Severity::warning, page_path + ".widgets", "missing; the page will be empty"});
+                continue;
+            }
+            if (!widgets.IsSequence())
+            {
+                issues.push_back({Issue::Severity::error, page_path + ".widgets", "expected a list"});
+                continue;
+            }
+            for (std::size_t w = 0; w < widgets.size(); ++w)
+            {
+                validateWidget(widgets[w], page_path + ".", w, issues, ctx);
+
+                // Placed relative to the stack, and clipped by it: a child that
+                // overhangs is drawn cut off, which is legal but rarely meant.
+                const YAML::Node child = widgets[w];
+                if (child.IsMap())
+                {
+                    const int x = placement(child, "x", 0);
+                    const int y = placement(child, "y", 0);
+                    const int right = x + placement(child, "width", 100);
+                    const int bottom = y + placement(child, "height", 100);
+                    if (x < 0 || y < 0 || right > stack_w || bottom > stack_h)
+                    {
+                        issues.push_back({Issue::Severity::warning,
+                                          page_path + ".widgets[" + std::to_string(w) + "]",
+                                          "extends past its page_stack (" + std::to_string(stack_w) + "x" +
+                                              std::to_string(stack_h) +
+                                              "); positions in a page are relative to the stack, and the "
+                                              "overhang is clipped"});
+                    }
+                }
+            }
+        }
+        --ctx.depth;
+    }
+
+    const YAML::Node config = node["config"];
+    if (config && config.IsMap())
+    {
+        if (const auto default_page = scalarText(config["default_page"]);
+            default_page && !default_page->empty() && !container.pages.empty() && !container.pages.contains(*default_page))
+        {
+            issues.push_back({Issue::Severity::error, path + ".config.default_page",
+                              "no page named '" + *default_page + "' in this page_stack"});
+        }
+
+        const YAML::Node triggers = config["triggers"];
+        if (triggers && triggers.IsSequence())
+        {
+            for (std::size_t t = 0; t < triggers.size(); ++t)
+            {
+                const std::string trigger_path = path + ".config.triggers[" + std::to_string(t) + "]";
+                const YAML::Node trigger = triggers[t];
+                if (!trigger.IsMap())
+                {
+                    continue;  // validateStruct says so
+                }
+                if (scalarText(trigger["zenoh_key"]).value_or("").empty())
+                {
+                    issues.push_back({Issue::Severity::error, trigger_path + ".zenoh_key",
+                                      "missing; a trigger has to watch a topic"});
+                }
+                if (scalarText(trigger["expression"]).value_or("").empty())
+                {
+                    issues.push_back({Issue::Severity::error, trigger_path + ".expression",
+                                      "missing; say what makes it fire, e.g. bit(buttons1To8, 0)"});
+                }
+                if (scalarText(trigger["action"]).value_or("next") == "go_to")
+                {
+                    const std::string page_name = scalarText(trigger["page"]).value_or("");
+                    if (page_name.empty())
+                    {
+                        issues.push_back({Issue::Severity::error, trigger_path + ".page", "go_to needs a page"});
+                    }
+                    else if (!container.pages.empty() && !container.pages.contains(page_name))
+                    {
+                        issues.push_back({Issue::Severity::error, trigger_path + ".page",
+                                          "no page named '" + page_name + "' in this page_stack"});
+                    }
+                }
+            }
+        }
+    }
+
+    if (id && !id->empty() && !ctx.containers.contains(*id))
+    {
+        ctx.containers.emplace(*id, std::move(container));
+    }
+}
+
+// Each page command collected on the walk, against the stacks the walk found.
+void validateCommands(const ValidationContext& ctx, std::vector<Issue>& issues)
+{
+    for (const ValidationContext::CommandRef& command : ctx.commands)
+    {
+        if (command.target.empty())
+        {
+            issues.push_back({Issue::Severity::error, command.path + ".target",
+                              "missing; name the id of the page_stack this changes"});
+            continue;
+        }
+
+        const bool go_to = command.action == "go_to";
+        if (go_to && command.page.empty())
+        {
+            issues.push_back({Issue::Severity::error, command.path + ".page", "go_to needs a page"});
+        }
+
+        const auto it = ctx.containers.find(command.target);
+        if (it == ctx.containers.end())
+        {
+            // A warning, not an error: the stack may be in another process, and
+            // the command goes on the bus either way.
+            issues.push_back({Issue::Severity::warning, command.path + ".target",
+                              "no page_stack with id '" + command.target + "' in this config; the command "
+                              "is sent to " + dashboard::pageCommandKey(command.target) +
+                              " and nothing here will act on it"});
+            continue;
+        }
+        if (go_to && !command.page.empty() && !it->second.pages.contains(command.page))
+        {
+            issues.push_back({Issue::Severity::error, command.path + ".page",
+                              "page_stack '" + command.target + "' has no page named '" + command.page + "'"});
+        }
+    }
+
+    // The carplay node listens to one visibility topic. Two widgets publishing
+    // on it contradict each other every second.
+    for (std::size_t i = 1; i < ctx.carplay_paths.size(); ++i)
+    {
+        issues.push_back({Issue::Severity::warning, ctx.carplay_paths[i],
+                          "a second carplay widget (the first is " + ctx.carplay_paths[0] +
+                              "); both report visibility to the same node, and they will disagree"});
+    }
+}
+
 // Validates one entry of the `widgets:` list. The per-widget `config:` block is
 // a different struct for every `type:`, so the walk has to dispatch, and
 // The widget table is what makes that automatic for a widget added later.
 void validateWidget(const YAML::Node& node, const std::string& prefix, std::size_t index,
-                    std::vector<Issue>& issues)
+                    std::vector<Issue>& issues, ValidationContext& ctx)
 {
     const std::string path = prefix + "widgets[" + std::to_string(index) + "]";
 
@@ -59,11 +373,70 @@ void validateWidget(const YAML::Node& node, const std::string& prefix, std::size
     for (const auto& entry : node)
     {
         const std::string key = entry.first.as<std::string>();
+        if (key == "pages")
+        {
+            // An error rather than "unknown key, ignored": what would be ignored
+            // is a list of widgets, and dropping those silently is the bad outcome.
+            if (*type != widget_type_t::page_stack)
+            {
+                issues.push_back({Issue::Severity::error, path + ".pages",
+                                  "only a page_stack has pages; this is a " + type_name});
+            }
+            continue;
+        }
         if (std::find(std::begin(kPlacementKeys), std::end(kPlacementKeys), key) == std::end(kPlacementKeys))
         {
             issues.push_back({Issue::Severity::warning, path + "." + key,
                               "unknown key, ignored"});
         }
+    }
+
+    switch (*type)
+    {
+        case widget_type_t::page_stack:
+            if (ctx.depth > 0)
+            {
+                issues.push_back({Issue::Severity::error, path + ".type",
+                                  "a page_stack cannot be inside another page_stack's page"});
+                return;
+            }
+            validatePageStack(node, path, issues, ctx);
+            break;
+        case widget_type_t::page_button:
+            if (node["config"] && node["config"].IsMap())
+            {
+                collectCommand(node["config"]["command"], path + ".config.command", ctx);
+            }
+            break;
+        case widget_type_t::carplay:
+            ctx.carplay_paths.push_back(path);
+            if (node["config"] && node["config"].IsMap())
+            {
+                const YAML::Node return_button = node["config"]["return_button"];
+                if (return_button && return_button.IsMap() && scalarTrue(return_button["enabled"]))
+                {
+                    collectCommand(return_button["command"], path + ".config.return_button.command", ctx);
+                }
+            }
+            break;
+        case widget_type_t::static_text:
+        case widget_type_t::road_info:
+        case widget_type_t::value_readout:
+        case widget_type_t::segment_readout:
+        case widget_type_t::center_bar:
+        case widget_type_t::mercedes_190e_speedometer:
+        case widget_type_t::mercedes_190e_tachometer:
+        case widget_type_t::mercedes_190e_cluster_gauge:
+        case widget_type_t::sparkline:
+        case widget_type_t::background_rect:
+        case widget_type_t::mercedes_190e_telltale:
+        case widget_type_t::motec_c125_tachometer:
+        case widget_type_t::motec_cdl3_tachometer:
+        case widget_type_t::now_playing:
+        case widget_type_t::carplay_nav:
+        case widget_type_t::map:
+        case widget_type_t::unknown:
+            break;
     }
 
     if (!node["config"])
@@ -119,7 +492,8 @@ void validateEnumKey(const YAML::Node& window, const char* key, const std::strin
 // One window's keys and widgets. `prefix` is "" for the flat form, where the
 // window's keys sit at the top of the file, and "windows[N]." otherwise, so every
 // path names exactly where in the file the problem is.
-void validateWindow(const YAML::Node& window, const std::string& prefix, std::vector<Issue>& issues)
+void validateWindow(const YAML::Node& window, const std::string& prefix, std::vector<Issue>& issues,
+                    ValidationContext& ctx)
 {
     // The window-level keys, validated against app_config_t itself. `widgets` is
     // handled separately below because its element type depends on `type`.
@@ -187,13 +561,13 @@ void validateWindow(const YAML::Node& window, const std::string& prefix, std::ve
 
     for (std::size_t i = 0; i < window["widgets"].size(); ++i)
     {
-        validateWidget(window["widgets"][i], prefix, i, issues);
+        validateWidget(window["widgets"][i], prefix, i, issues, ctx);
     }
 }
 
 // The `windows:` form: a document name and a list of windows, each validated as
 // the flat form would be, plus the rules only a list can break.
-void validateWindowList(const YAML::Node& root, std::vector<Issue>& issues)
+void validateWindowList(const YAML::Node& root, std::vector<Issue>& issues, ValidationContext& ctx)
 {
     for (const auto& entry : root)
     {
@@ -240,7 +614,7 @@ void validateWindowList(const YAML::Node& root, std::vector<Issue>& issues)
             continue;
         }
 
-        validateWindow(window, prefix, issues);
+        validateWindow(window, prefix, issues, ctx);
 
         // The window name roots every agent selector into it, so two windows with
         // one name make every widget in both ambiguous.
@@ -287,14 +661,16 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
         return issues;
     }
 
+    ValidationContext ctx;
     if (root["windows"])
     {
-        validateWindowList(root, issues);
+        validateWindowList(root, issues, ctx);
     }
     else
     {
-        validateWindow(root, "", issues);
+        validateWindow(root, "", issues, ctx);
     }
+    validateCommands(ctx, issues);
 
     // Refused outright rather than warned about. Every way a key can be wrong
     // is a silent failure downstream -- '@' makes the topic invisible to every

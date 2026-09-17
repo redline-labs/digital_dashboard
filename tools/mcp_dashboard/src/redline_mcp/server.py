@@ -960,6 +960,40 @@ def widget_describe_config(
 
 
 @mcp.tool()
+def pages_list(app: Annotated[AppName | None, APP_FIELD] = None) -> str:
+    """Every page_stack in the app: id, current and previous page, each page's
+    widgets and whether it is visible, and each trigger's state (valid, primed,
+    how often it has fired). A trigger that is not primed has never heard from
+    its topic -- the first thing to rule out when a button "does nothing"."""
+    try:
+        return json.dumps(_call(app, "pages.list"), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def pages_command(
+    target: Annotated[str, Field(description="The page_stack's id.")],
+    action: Annotated[
+        Literal["next", "prev", "go_to", "back"],
+        Field(description="next/prev cycle (skipping in_cycle: false pages); go_to needs page; back toggles."),
+    ],
+    page: Annotated[str | None, Field(default=None, description="Page name, for go_to.")] = None,
+    app: Annotated[AppName | None, APP_FIELD] = None,
+) -> str:
+    """Change a page_stack's page directly, without the bus. Returns the current
+    and previous page and whether anything changed. The bus route is
+    zenoh_publish on dashboard/pages/<id>/command (PageStackCommand)."""
+    params: dict[str, Any] = {"target": target, "action": action}
+    if page is not None:
+        params["page"] = page
+    try:
+        return json.dumps(_call(app, "pages.command", params), indent=2)
+    except (AgentError, LaunchError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
 def widget_get_config(
     target: Annotated[str, TARGET_FIELD],
     app: Annotated[AppName | None, APP_FIELD] = None,

@@ -10,6 +10,9 @@
 #include "carplay_audio.capnp.h"
 #include "carplay_input.capnp.h"
 #include "carplay_session.capnp.h"
+#include "carplay_ui.capnp.h"
+
+#include "dashboard/staleness.h"
 
 #include <QtWidgets/QWidget>
 #include <QtGui/QMouseEvent>
@@ -36,7 +39,13 @@ struct AVFrame;
 struct AVPacket;
 struct SwsContext;
 
+namespace dashboard
+{
+class PageCommandSender;
+}
+
 class QAudioSink;
+class QPushButton;
 class QAudioSource;
 class QIODevice;
 class QTimer;
@@ -57,9 +66,17 @@ class CarPlayWidget : public QWidget
     ~CarPlayWidget();
     const config_t& getConfig() const { return _cfg; }
 
+    // For tests and tooling: whether the widget currently counts itself on
+    // screen, and whether it is decoding video because of that.
+    bool reportsVisible() const { return _visible; }
+    bool videoSubscribed() const { return _video_sub != nullptr; }
+    QPushButton* returnButton() const { return _return_button; }
+
   protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
@@ -98,6 +115,17 @@ class CarPlayWidget : public QWidget
     static TouchThrottle::Point toThrottlePoint(const QPointF& p) { return {p.x(), p.y()}; }
     // Publishes the current widget size to _target_size for the decode thread.
     void publishTargetSize();
+
+    // Whether the widget is on screen, applied: video decode follows it, and the
+    // driver is told. Queued from show/hide events rather than run inside them,
+    // so a page switch that hides one page and shows another settles first.
+    void syncVisibility();
+    void publishVisibility();
+
+    // Session liveness for the return button, GUI thread.
+    void onSessionState(bool connected, bool recording);
+    void updateReturnButton();
+    void placeReturnButton();
 
     CarplayConfig_t _cfg;
 
@@ -154,6 +182,24 @@ class CarPlayWidget : public QWidget
     // GUI-thread only.
     std::unique_ptr<pub_sub::ZenohPublisher<CarPlayInput>> _input_pub;
     bool _touch_active = false;
+    QPointF _last_touch_pos;
+
+    // Visibility, GUI thread. _visibility_known is false until the first sync,
+    // so the first answer is always published and applied.
+    bool _visible = false;
+    bool _visibility_known = false;
+    std::unique_ptr<pub_sub::ZenohPublisher<CarPlayVisibility>> _visibility_pub;
+    QTimer* _visibility_timer = nullptr;  // owned by Qt
+
+    // What the session says, GUI thread. Staleness is what catches a driver that
+    // died while "recording".
+    bool _session_connected = false;
+    bool _session_recording = false;
+    dashboard::StalenessTracker _session_staleness;
+    QTimer* _session_poll_timer = nullptr;  // owned by Qt
+
+    QPushButton* _return_button = nullptr;  // owned by Qt; null unless enabled
+    std::unique_ptr<dashboard::PageCommandSender> _page_sender;
 
     // Touch rate limiting. Every mouse event and the flush timer run on the GUI
     // thread, so none of this needs synchronising.

@@ -1189,6 +1189,98 @@ void testUnknownDropPayloadIsRefused()
     check(canvas.exportAppConfig().widgets.size() == 2, "the canvas is unchanged by a refused drop");
 }
 
+// A page_stack's pages are not edited in the editor yet, but they must survive
+// it: a load -> move -> undo -> config edit -> save that dropped them would
+// delete every widget on every page.
+dashboard_config_t stackDocument()
+{
+    const char* yaml = R"(
+name: stacked
+width: 800
+height: 600
+widgets:
+  - id: main_pages
+    type: page_stack
+    x: 0
+    y: 0
+    width: 400
+    height: 300
+    config:
+      default_page: vehicle
+    pages:
+      - name: carplay
+        widgets:
+          - id: on_carplay
+            type: static_text
+            x: 1
+            y: 2
+            width: 50
+            height: 20
+            config: {text: a}
+      - name: vehicle
+        in_cycle: false
+        widgets: []
+)";
+    return YAML::Load(yaml).as<dashboard_config_t>();
+}
+
+void testPagesSurviveTheEditor()
+{
+    Canvas canvas;
+    const dashboard_config_t doc = stackDocument();
+    canvas.loadDocument(doc);
+    canvas.clearHistory();
+    check(canvas.exportDocument() == doc, "load -> export keeps a page_stack's pages");
+
+    auto frames = canvas.frames();
+    if (frames.size() != 1)
+    {
+        check(false, "expected one frame");
+        return;
+    }
+    SelectionFrame* const stack = frames[0];
+    {
+        const auto tx = canvas.edit();
+        stack->move(stack->pos() + QPoint(10, 10));
+    }
+    check(canvas.exportDocument().windows[0].widgets[0].pages == doc.windows[0].widgets[0].pages,
+          "moving the stack keeps its pages");
+    check(canvas.undo(), "the move is undone");
+    check(canvas.exportDocument() == doc, "undoing a move of the stack keeps its pages");
+
+    PageStackConfig_t changed;
+    changed.default_page = "carplay";
+    {
+        const auto tx = canvas.edit();
+        check(canvas.frames()[0]->applyConfig(changed), "a page_stack takes a new config");
+    }
+    const dashboard_config_t after = canvas.exportDocument();
+    check(after.windows[0].widgets[0].pages == doc.windows[0].widgets[0].pages,
+          "changing the stack's config keeps its pages");
+    check(canvas.undo() && canvas.exportDocument() == doc, "and undoing that restores the document exactly");
+}
+
+void testANewStackFromThePaletteLoads()
+{
+    Canvas canvas;
+    canvas.loadFromAppConfig(app_config_t{});
+    SelectionFrame* frame = canvas.addWidget(widget_type_t::page_stack, QPoint(10, 10), QSize(200, 100));
+    check(frame != nullptr, "a page_stack can be added");
+
+    // The editor names new widgets without an id; the stack needs one to load.
+    dashboard_config_t doc = canvas.exportDocument();
+    doc.windows[0].widgets.at(0).id = "fresh";
+    const auto issues = validate_app_config(YAML::Load(toYaml(doc)));
+    bool error = false;
+    std::string text;
+    for (const auto& issue : issues)
+    {
+        error = error || issue.severity == config_codec::Issue::Severity::error;
+        text += "\n  " + issue.path + ": " + issue.message;
+    }
+    check(!error, "a page_stack from the palette saves as a config that loads, once given an id:" + text);
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1227,6 +1319,8 @@ int main(int argc, char** argv)
     testTheCanvasEditsOneWindowAndKeepsTheRest();
     testAddingAndRemovingWindowsIsUndoable();
     testChoosingATakenDisplaySwaps();
+    testPagesSurviveTheEditor();
+    testANewStackFromThePaletteLoads();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

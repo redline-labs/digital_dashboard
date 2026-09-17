@@ -37,7 +37,7 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock"]
+AppName = Literal["dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock", "carplay_sim"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,10 @@ class AppSpec:
     # stay alive would not do: map_server spends seconds opening a 512 MB
     # archive, and a request sent into that window is answered as noSuchTileset.
     ready_marker: str
+
+    # Always passed, before extra_args. For a node whose only headless mode is a
+    # flag, so that launching it cannot forget the flag.
+    default_args: tuple[str, ...] = ()
 
 
 APPS: dict[str, AppSpec] = {
@@ -107,6 +111,17 @@ APPS: dict[str, AppSpec] = {
         # exits with a usage error rather than hanging, which app_launch
         # reports as a startup failure.
         ready_marker="[mock] driving at ",
+    ),
+    "carplay_sim": AppSpec(
+        binaries=("nodes/carplay/carplay",),
+        controllable=False,
+        # The carplay node with no phone: synthetic video, audio, session and
+        # metadata, and it logs what it would tell a phone when the dashboard
+        # hides or shows CarPlay. Pass config="configs/carplay/carplay.yaml" --
+        # the node requires one even when simulating. Logged once the encoder is
+        # up and the first parameter sets are published.
+        ready_marker="[sim] H.264 parameter sets",
+        default_args=("--simulate",),
     ),
 }
 
@@ -232,7 +247,7 @@ class Supervisor:
             if socket_path and os.path.exists(socket_path):
                 os.unlink(socket_path)
 
-            argv = [str(binary)]
+            argv = [str(binary), *spec.default_args]
             if socket_path:
                 argv.append(f"--mcp={socket_path}")
             if config:

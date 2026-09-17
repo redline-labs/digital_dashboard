@@ -67,6 +67,12 @@ public:
     // draw while still saving exactly what was asked for.
     const widget_config_variant_t& config() const { return config_; }
 
+    // A page_stack's pages, held verbatim and saved back as they came. The editor
+    // does not edit them yet: the preview draws the stack as an outline naming
+    // its pages, and this is what keeps a load/save from dropping them.
+    const std::vector<widget_page_t>& pages() const { return pages_; }
+    void setPages(std::vector<widget_page_t> pages);
+
     // Replaces the stored configuration and rebuilds the preview from it.
     //
     // The variant form of applyConfig(), for the one caller that already holds a
@@ -123,6 +129,7 @@ public:
         wc.width = static_cast<uint16_t>(frameRect.width());
         wc.height = static_cast<uint16_t>(frameRect.height());
         wc.config = config_;
+        wc.pages = pages_;
         return wc;
     }
 
@@ -135,6 +142,7 @@ private:
     widget_type_t type_;
     std::string id_;
     widget_config_variant_t config_{std::monostate{}};
+    std::vector<widget_page_t> pages_;
     QWidget* child_ = nullptr;
     bool selected_ = false;
     bool editorMode_ = true;
@@ -145,6 +153,9 @@ private:
     void rebuildChild();
 
     void setChild(QWidget* newChild);
+
+    // Tells a page_stack preview which pages to name in its outline.
+    void labelPages();
 };
 
 #endif // DASHBOARD_EDITOR_SELECTION_FRAME_H

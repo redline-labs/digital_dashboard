@@ -111,8 +111,8 @@ the image sets `REDLINE_MFI_I2C_DEV=/dev/i2c-13` in the `redline-node@carplay`
 drop-in; the flag is for a bench. Leave both unset on a desktop with the bridge.
 
 `configs/carplay/carplay.yaml` documents every field: the `vehicle:` block,
-`display:` geometry and `allow_hevc`, `device_id`, `night_mode`, and the
-`oem_button:` tile. The phone records some of the identity against the pairing,
+`display:` geometry and `allow_hevc`, `device_id`, `night_mode`, the
+`oem_button:` tile, and `screen_handover:`. The phone records some of the identity against the pairing,
 so change it before pairing a phone you care about. Enumerated keys are closed
 sets and a typo stops the node rather than taking a default; so does a zero in
 the display geometry. The values worth setting rather than leaving:
@@ -214,6 +214,62 @@ up: ...`) and the widget starts capture.
 the phone request location; with `--location` set, expect `[iap2] location
 requested` followed by an NMEA uplink at about 1 Hz.
 
+**11. Manufacturer tile and screen handover.** Tap the manufacturer tile on
+CarPlay's home screen: expect `[node] ui event: manufacturer button` and, with
+a [page_stack](../apps/dashboard/pages.html) trigger on `ui_event`, the
+dashboard leaves CarPlay. The dashboard log says `hidden: video decode paused`
+and `inspect echo nodes/carplay/visibility` reads `visible = false`. Then work
+through [Screen handover](#screen-handover) below.
+
+## Screen handover
+
+When the dashboard hides CarPlay, the node can tell the phone the car has taken
+the screen (`changeModes` take), give it back when CarPlay is shown again
+(untake, a keyframe request, and optionally `requestUI`), and publish
+`screenRequested` if the phone takes the screen back for Siri or a call while
+CarPlay is hidden. The dashboard's CarPlay widget reports whether it is on screen
+on `visibility` once a second; three seconds of silence counts as visible, so a
+dashboard that exits hands the screen back.
+
+```yaml
+screen_handover:
+  enabled: false
+  request_ui_on_show: false
+  visibility_stale_ms: 3000
+```
+
+{: .warning }
+Off by default, and it stays off until a phone has accepted it. The `changeModes`
+and car-to-phone `requestUI` messages have never been sent to a phone by this
+stack, and LIVI never sends them either. A wrong resource constant can end the
+session rather than look wrong. The message builders and what each constant is
+based on are in `libs/airplay/screen_modes.cpp`.
+
+With it off, the dashboard still pauses video decoding while CarPlay is hidden,
+the phone keeps streaming, and the tile still works. The receiver logs who owns
+the screen from every `modesChanged` either way (`[airplay] screen now owned by
+...`).
+
+The first session with it enabled, on a bench with a phone, in order:
+
+1. With `--verbose`, capture one `modesChanged` body and check it carries
+   `params.resources[]` with `resourceID` and `entity`, the screen as resource 1
+   owned by entity 1. Check the capture holds no device identifiers, then commit
+   it as the golden for `airplay_test_screen_modes`, whose fixtures are
+   synthetic until then.
+2. Tap the tile with music playing: `[airplay] changeModes: taking the screen`,
+   then `screen now owned by the vehicle`. Music must carry on without a gap, and
+   the session must survive. If it ends, set `enabled: false` and stop here.
+3. Trigger Siri from the vehicle page: expect `screen now owned by the phone`,
+   `[node] ui event: phone took the screen back`, and the dashboard back on
+   CarPlay showing Siri.
+4. Take a call on the vehicle page and check the same.
+5. Return to CarPlay with the page button: untake, then video within a second
+   and touch working at once. If CarPlay's UI does not come forward, try
+   `request_ui_on_show: true`.
+6. Quit the dashboard while CarPlay is hidden: within about three seconds the
+   node logs `no visibility from the dashboard` and gives the screen back.
+
 ## What it publishes
 
 Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
@@ -223,13 +279,15 @@ Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
 |---|---|---|---|
 | `video` | `CarPlayVideo` | out | Annex-B access units, H.264 or H.265; parameter sets are re-sent before every keyframe |
 | `audio` | `CarPlayAudio` | out | S16LE PCM, 20 ms chunks in simulation |
-| `session` | `CarPlaySessionState` | out | device connected, bring-up phase, screen size, night mode, mic state |
+| `session` | `CarPlaySessionState` | out | device connected, bring-up phase, screen size, night mode, mic state; re-published every second, recording or not |
 | `nowplaying` | `CarPlayNowPlaying` | out | merged partial updates, album art by sequence; re-published every 2 s |
 | `nav` | `CarPlayNav` | out | turn-by-turn metadata, re-published every 2 s |
 | `call` | `CarPlayCall` | out | call state, re-published every 2 s |
+| `ui_event` | `CarPlayUiEvent` | out | one message per occurrence: the manufacturer tile, the phone taking or returning the screen, an app asking for the head unit's UI |
 | `input` | `CarPlayInput` | in | `touch`, `knob`, `mediaKey`, `telephony`, `siri`; `code` and `value` per kind are documented in the schema |
 | `mic` | `CarPlayAudio` | in | captured PCM while the phone has asked for the uplink |
 | `location` | `CarPlayLocation` | in | GPS fixes for the NMEA uplink |
+| `visibility` | `CarPlayVisibility` | in | whether the dashboard's CarPlay widget is on screen, once a second; drives [screen handover](#screen-handover) |
 
 Nothing publishes `knob`, `mediaKey` or `telephony` yet; on hardware they are
 exercised by publishing to the topic directly.
@@ -267,6 +325,8 @@ Most failures are silent, or look like a different layer's fault. In stage order
 | `first video frame decoded and rendered` but the screen is black | the picture is live; suspect widget geometry, not video. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard saves the exact image blitted |
 | Choppy audio, zero underruns, growing overruns | the host audio device drains slower than real time (an emulated device under load). `AIRPLAY_DUMP_AUDIO=/path.pcm` on the node gives raw S16LE for `aplay`; if that stutters too, it is the host |
 | Manufacturer tile shows an empty square | an icon with `prerendered: false`; the default is true, keep it |
+| Tapping the manufacturer tile does nothing on the dashboard | the node publishes `ui_event` and nothing more; the dashboard needs a `page_stack` trigger on it. `inspect echo nodes/carplay/ui_event` shows whether the tap arrived |
+| Session ends right after leaving CarPlay | `screen_handover.enabled: true` with a message the phone rejects; set it false and record what the log showed |
 | Something holds port 7000 after a restart | `lsof -nP -iTCP:7000 -sTCP:LISTEN \| grep carplay`; count processes with `ps -eo pid=,comm= \| awk '$2 ~ /\/carplay$/'`, not `ps aux \| grep` |
 
 The per-stage triage, and how to read a usbmon capture when the node's own log

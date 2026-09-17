@@ -41,6 +41,9 @@ Every widget type and its configuration keys are listed in
 [Widgets](widgets.html); the example layouts in `configs/dashboard/` show them
 in use, and the [editor](../editor.html) shows every field a widget accepts.
 
+Part of a window can show one of several pages of widgets, switched by a
+button, a bus command or a hardware input; see [Pages](pages.html).
+
 {: .note }
 Set an `id:` on any widget you will want to address again, whether from the
 editor, from an agent or from a later edit. Without one the widget is named

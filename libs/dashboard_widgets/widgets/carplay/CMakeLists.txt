@@ -39,6 +39,7 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
         Qt6::Multimedia
         helpers
         helpers_ffmpeg
+        config_codec
         reflection
         schemas
         zenoh_pub_sub
@@ -53,6 +54,21 @@ target_link_libraries(${CARPLAY_WIDGET_LIB}
 dashboard_widget_register(${CARPLAY_WIDGET_LIB})
 
 set_target_properties(${CARPLAY_WIDGET_LIB} PROPERTIES AUTOMOC ON)
+
+# When the return button shows: the whole truth table. Pure logic.
+add_executable(carplay_test_return_button_policy test_return_button_policy.cpp)
+target_include_directories(carplay_test_return_button_policy PRIVATE include)
+add_project_test(TARGET carplay_test_return_button_policy LABELS dashboard unit)
+
+# The same through a real widget and a real bus: the button appears with no
+# session and goes once one is live, a tap sends one page command, and hiding the
+# widget stops video and reports it. No phone or driver needed.
+add_executable(carplay_test_return_button test_return_button.cpp)
+target_link_libraries(carplay_test_return_button PRIVATE
+    ${CARPLAY_WIDGET_LIB}
+    spdlog::spdlog
+)
+add_project_test(TARGET carplay_test_return_button LABELS dashboard gui net)
 
 # Throttling policy on its own, with time injected: exact interval boundaries
 # and deferral state machine. No Qt, no zenoh, no threads, milliseconds to run.

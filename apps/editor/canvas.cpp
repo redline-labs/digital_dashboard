@@ -300,6 +300,7 @@ void Canvas::loadWindow(const app_config_t& app_cfg)
         // frame without inventing an id that would then be written to the YAML.
         frame->setId(wcfg.id);
         frame->setObjectName(dashboard::widgetObjectName(wcfg, this_index));
+        frame->setPages(wcfg.pages);
 
         // Apply typed widget configuration. A mismatch here means the config's
         // `type` and its `config` block disagree, which the YAML decoder should
@@ -459,10 +460,15 @@ void Canvas::applyDocument(const Snapshot& state)
             {
                 frame->applyStoredConfig(wcfg.config);
             }
+            if (!(frame->pages() == wcfg.pages))
+            {
+                frame->setPages(wcfg.pages);
+            }
         }
         else
         {
             frame = new SelectionFrame(wcfg.type, this);
+            frame->setPages(wcfg.pages);
             frame->applyStoredConfig(wcfg.config);
             frame->ensureChild();
             frame->show();

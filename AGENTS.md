@@ -160,6 +160,19 @@ discovery seeing only live traffic, and what `accepted: false` and
   generated things (the config variant, the palette, the YAML decoder) derive
   from that one macro list. Widgets built this way are automatically inspectable
   and settable through `widget_*_config` — no extra work.
+- **Pages hide; they never destroy.** A `page_stack` switches pages with
+  `hide()`/`show()`, which is what keeps CarPlay's audio playing on another page
+  and every hidden gauge's staleness current. Its pages live beside `config:` on
+  `widget_config_t`, not in the reflected struct, so a rebuild through
+  `widget.set_config` must carry them over -- `MainWindow::rebuildWidget` does,
+  and without it changing a stack's `default_page` deletes every page. Widgets
+  that can contain widgets are built through `dashboard::buildWidget()`. See
+  `docs/apps/dashboard/pages.md`.
+- **The screen-handover messages are unconfirmed.** `changeModes` and
+  car-to-phone `requestUI` live only in `libs/airplay/screen_modes.cpp`, with the
+  evidence for each constant beside it, and `screen_handover.enabled` defaults
+  to false. Do not turn it on by default until a phone has accepted them; the
+  checklist is in `docs/nodes/carplay.md`.
 - **Widget identity**: the optional `id:` in a widget's YAML entry becomes its
   `objectName`, falling back to `<type>#<index>`. Set an `id:` on anything worth
   addressing repeatedly; the derived name shifts when widgets are reordered.

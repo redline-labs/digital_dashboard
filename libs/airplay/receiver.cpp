@@ -291,6 +291,36 @@ void Receiver::setOemButtonHandler(OemButtonHandler handler)
     oem_button_handler_ = std::move(handler);
 }
 
+void Receiver::setScreenOwnerHandler(ScreenOwnerHandler handler)
+{
+    screen_owner_handler_ = std::move(handler);
+}
+
+void Receiver::setAppUiRequestHandler(AppUiRequestHandler handler)
+{
+    app_ui_request_handler_ = std::move(handler);
+}
+
+void Receiver::changeScreen(ScreenTransfer transfer)
+{
+    switch (transfer)
+    {
+        case ScreenTransfer::take:
+            SPDLOG_INFO("[airplay] changeModes: taking the screen for the vehicle UI (unconfirmed message)");
+            break;
+        case ScreenTransfer::untake:
+            SPDLOG_INFO("[airplay] changeModes: giving the screen back to CarPlay (unconfirmed message)");
+            break;
+    }
+    state_->events.queueCommand(buildChangeModesCommand(transfer));
+}
+
+void Receiver::requestPhoneUi(const std::optional<std::string>& url)
+{
+    SPDLOG_INFO("[airplay] requestUI to the phone{} (unconfirmed message)", url ? " for '" + *url + "'" : "");
+    state_->events.queueCommand(buildRequestUiCommand(url));
+}
+
 bool Receiver::start()
 {
     if (run_.load())
@@ -1031,8 +1061,12 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
             // Same command, but an app naming something specific for the head
             // unit to open. Nothing consumes these yet. Getting here is exactly
             // the case isOemButtonPress rejects, so params holds a real url.
-            SPDLOG_INFO("[airplay] requestUI for '{}' (not routed anywhere yet)",
-                        params->find("url")->asString());
+            const std::string url = params->find("url")->asString();
+            SPDLOG_INFO("[airplay] requestUI for '{}'", url);
+            if (app_ui_request_handler_)
+            {
+                app_ui_request_handler_(url);
+            }
         }
     }
     else if (type == "modesChanged")
@@ -1062,6 +1096,30 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
                         SPDLOG_INFO("[airplay] Siri speech {}", active ? "active" : "done");
                     }
                 }
+            }
+        }
+        if (const auto owner = parseScreenOwner(*body))
+        {
+            if (owner != screen_owner_)
+            {
+                const auto name = [](ScreenEntity entity) {
+                    switch (entity)
+                    {
+                        case ScreenEntity::none:
+                            return "nobody";
+                        case ScreenEntity::controller:
+                            return "the phone";
+                        case ScreenEntity::accessory:
+                            return "the vehicle";
+                    }
+                    return "unknown";
+                };
+                SPDLOG_INFO("[airplay] screen now owned by {}", name(*owner));
+                screen_owner_ = owner;
+            }
+            if (screen_owner_handler_)
+            {
+                screen_owner_handler_(*owner);
             }
         }
         SPDLOG_DEBUG("[airplay] modesChanged:");

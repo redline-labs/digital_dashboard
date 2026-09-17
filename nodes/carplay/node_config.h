@@ -131,6 +131,18 @@ struct NodeConfig
         .icons = {}
     };
 
+    // Handing the screen to the car while the dashboard hides CarPlay, and back
+    // when it shows it (see screen_handover.h). OFF by default: the messages it
+    // sends are unconfirmed on hardware, and a wrong one can end the session.
+    // With it off the dashboard still pauses video decode on its own.
+    struct ScreenHandoverConfig
+    {
+        bool enabled = false;
+        bool request_ui_on_show = false;
+        uint32_t visibility_stale_ms = 3000;
+    };
+    ScreenHandoverConfig screen_handover;
+
     // --- Bring-up knobs -----------------------------------------------------
     // Not in the config file: these exist to take one layer at a time during a
     // hardware session, and a shipped vehicle wants the defaults.

@@ -24,6 +24,11 @@ Node topics follow `nodes/<node>/<stream>`. CAN frames from `can_bridge` are
 one in its config, deliberately separate from the device behind it; its own
 status and bit-rate service sit under `vehicle/can/`.
 
+The dashboard's own topics are under `dashboard/`. Each
+[page_stack](../apps/dashboard/pages.html) takes commands on
+`dashboard/pages/<id>/command` and publishes what it shows on
+`dashboard/pages/<id>/state`, where `<id>` is the stack's id and so one segment.
+
 ## The schema stamp
 
 Every sample carries its schema as the zenoh encoding

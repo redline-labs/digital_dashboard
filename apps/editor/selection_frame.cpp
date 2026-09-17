@@ -65,10 +65,37 @@ void SelectionFrame::setId(std::string id)
     }
 }
 
+void SelectionFrame::setPages(std::vector<widget_page_t> pages)
+{
+    pages_ = std::move(pages);
+    labelPages();
+}
+
+void SelectionFrame::labelPages()
+{
+    if (auto* stack = qobject_cast<PageStackWidget*>(child_))
+    {
+        std::vector<std::string> names;
+        for (const widget_page_t& page : pages_)
+        {
+            names.push_back(page.name);
+        }
+        stack->setPlaceholderPageNames(std::move(names));
+    }
+}
+
 void SelectionFrame::ensureChild()
 {
+    // A page_stack from the palette arrives with no pages, and a stack with none
+    // does not load. Give it the one page a new stack starts with.
+    if (pages_.empty())
+    {
+        pages_ = default_widget_pages(type_);
+    }
+
     if (child_ != nullptr)
     {
+        labelPages();
         return;
     }
 
@@ -93,6 +120,7 @@ void SelectionFrame::rebuildChild()
     wc.type = type_;
     wc.config = config_;
     setChild(widget_factory::createWidgetFromConfig(wc, nullptr));
+    labelPages();
 }
 
 void SelectionFrame::setChild(QWidget* newChild)

@@ -24,6 +24,7 @@ add_executable(carplay
     zenoh_bridge.cpp
     simulate.cpp
     usb_pipeline.cpp
+    screen_handover.cpp
     iap2_session.cpp
 )
 
@@ -66,6 +67,15 @@ target_compile_definitions(carplay_test_node_config PRIVATE
     CARPLAY_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/carplay"
 )
 add_project_test(TARGET carplay_test_node_config LABELS carplay unit)
+
+# When to hand the screen between the phone and the car. Pure state machine: no
+# phone, no bus.
+add_executable(carplay_test_screen_handover test_screen_handover.cpp screen_handover.cpp)
+target_link_libraries(carplay_test_screen_handover PRIVATE
+    airplay
+    spdlog::spdlog
+)
+add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET carplay COMPONENT nodes)

@@ -563,6 +563,204 @@ void testAReasonableConfigIsLeftAlone()
           "a sensible sparkline config is not modified");
 }
 
+// ---------------------------------------------------------------------- pages
+
+// A stack in one window, a button in the other aimed at it. Every rule below is
+// a mutation of this.
+std::string stackDocument(const std::string& stack_extra = "", const std::string& page_extra = "",
+                          const std::string& button_command = "{target: main_pages, action: go_to, page: vehicle}")
+{
+    return R"(
+windows:
+  - name: cluster
+    widgets:
+      - id: main_pages
+        type: page_stack
+        x: 0
+        y: 0
+        width: 400
+        height: 300
+        config:
+          default_page: carplay
+          triggers:
+            - zenoh_key: nodes/grayhill_keypad/buttons
+              schema_type: GrayhillButtons
+              expression: bit(buttons1To8, 0)
+              action: go_to
+              page: vehicle
+)" + stack_extra + R"(
+        pages:
+          - name: carplay
+            widgets:
+              - type: static_text
+                x: 0
+                y: 0
+                width: 100
+                height: 100
+                config: {text: hi}
+          - name: vehicle
+            in_cycle: false
+            widgets: []
+)" + page_extra + R"(
+  - name: second
+    display: secondary
+    widgets:
+      - type: page_button
+        config:
+          command: )" + button_command + "\n";
+}
+
+void testAValidStackIsSilent()
+{
+    const auto issues = issuesFor(stackDocument());
+    check(issues.empty(), "a valid page_stack with a button in another window is silent, got:" + dump(issues));
+}
+
+void expectError(const std::string& yaml, const std::string& path, const std::string& what)
+{
+    const auto issues = issuesFor(yaml);
+    const Issue* issue = find(issues, path);
+    check(issue != nullptr && issue->severity == Issue::Severity::error,
+          what + " is an error at " + path + ", got:" + dump(issues));
+}
+
+void expectWarning(const std::string& yaml, const std::string& path, const std::string& what)
+{
+    const auto issues = issuesFor(yaml);
+    const Issue* issue = find(issues, path);
+    check(issue != nullptr && issue->severity == Issue::Severity::warning,
+          what + " is a warning at " + path + ", got:" + dump(issues));
+    check(!hasError(issues), what + " does not stop the load, got:" + dump(issues));
+}
+
+void testPagesOnAnythingElseIsAnError()
+{
+    expectError(R"(
+widgets:
+  - type: static_text
+    config: {text: hi}
+    pages:
+      - name: a
+        widgets: []
+)",
+                "widgets[0].pages", "pages on a static_text");
+}
+
+void testAStackNeedsAnIdThatCanNameATopic()
+{
+    std::string doc = stackDocument();
+    const std::string with_id = "      - id: main_pages\n        type: page_stack";
+    expectError(std::string(doc).replace(doc.find(with_id), with_id.size(), "      - type: page_stack"),
+                "windows[0].widgets[0].id", "a page_stack with no id");
+    expectError(std::string(doc).replace(doc.find(with_id), with_id.size(), "      - id: main/pages\n        type: page_stack"),
+                "windows[0].widgets[0].id", "an id that is not one topic segment");
+}
+
+void testTwoStacksCannotShareAnId()
+{
+    const std::string duplicate = R"(
+      - id: main_pages
+        type: page_stack
+        x: 400
+        width: 100
+        height: 100
+        pages:
+          - name: only
+            widgets: []
+)";
+    std::string doc = stackDocument();
+    doc.insert(doc.find("  - name: second"), duplicate);
+    expectError(doc, "windows[0].widgets[1].id", "a second page_stack with the same id");
+}
+
+void testPagesMustExistAndBeNamedOnce()
+{
+    expectError(R"(
+widgets:
+  - id: s
+    type: page_stack
+    config: {}
+)",
+                "widgets[0].pages", "a page_stack with no pages");
+    expectError(R"(
+widgets:
+  - id: s
+    type: page_stack
+    pages: []
+)",
+                "widgets[0].pages", "a page_stack with an empty page list");
+
+    std::string doc = stackDocument();
+    doc.replace(doc.find("- name: vehicle"), std::string("- name: vehicle").size(), "- name: carplay");
+    expectError(doc, "windows[0].widgets[0].pages[1].name", "two pages with one name");
+
+    std::string unnamed = stackDocument();
+    unnamed.replace(unnamed.find("- name: vehicle"), std::string("- name: vehicle").size(), "- widgets: []");
+    expectError(unnamed, "windows[0].widgets[0].pages[1].name", "a page with no name");
+}
+
+void testNamedPagesMustExist()
+{
+    std::string doc = stackDocument();
+    doc.replace(doc.find("default_page: carplay"), std::string("default_page: carplay").size(), "default_page: nope");
+    expectError(doc, "windows[0].widgets[0].config.default_page", "an unknown default page");
+
+    std::string trigger = stackDocument();
+    trigger.replace(trigger.find("page: vehicle"), std::string("page: vehicle").size(), "page: nope");
+    expectError(trigger, "windows[0].widgets[0].config.triggers[0].page", "a trigger going to an unknown page");
+
+    expectError(stackDocument("", "", "{target: main_pages, action: go_to, page: nope}"),
+                "windows[1].widgets[0].config.command.page", "a button going to an unknown page");
+    expectError(stackDocument("", "", "{target: main_pages, action: go_to}"),
+                "windows[1].widgets[0].config.command.page", "go_to with no page");
+    expectError(stackDocument("", "", "{action: next}"), "windows[1].widgets[0].config.command.target",
+                "a command with no target");
+}
+
+void testATargetElsewhereIsOnlyAWarning()
+{
+    expectWarning(stackDocument("", "", "{target: somewhere_else, action: next}"),
+                  "windows[1].widgets[0].config.command.target", "a command aimed at a stack not in this file");
+}
+
+void testAStackCannotHoldAStack()
+{
+    const std::string nested = R"(
+          - name: nested
+            widgets:
+              - id: inner
+                type: page_stack
+                pages:
+                  - name: a
+                    widgets: []
+)";
+    expectError(stackDocument("", nested), "windows[0].widgets[0].pages[2].widgets[0].type",
+                "a page_stack inside a page");
+}
+
+void testChildrenAreValidatedAtTheirPath()
+{
+    std::string doc = stackDocument();
+    doc.replace(doc.find("config: {text: hi}"), std::string("config: {text: hi}").size(), "config: {txet: hi}");
+    const auto issues = issuesFor(doc);
+    check(find(issues, "windows[0].widgets[0].pages[0].widgets[0].config.txet") != nullptr,
+          "a typo in a page's widget is reported at its nested path, got:" + dump(issues));
+
+    std::string overhang = stackDocument();
+    overhang.replace(overhang.find("width: 100\n                height: 100"),
+                     std::string("width: 100\n                height: 100").size(),
+                     "width: 500\n                height: 100");
+    expectWarning(overhang, "windows[0].widgets[0].pages[0].widgets[0]", "a page widget wider than its stack");
+}
+
+void testATriggerNeedsAKeyAndAnExpression()
+{
+    std::string doc = stackDocument();
+    doc.replace(doc.find("expression: bit(buttons1To8, 0)"), std::string("expression: bit(buttons1To8, 0)").size(),
+                "expression: \"\"");
+    expectError(doc, "windows[0].widgets[0].config.triggers[0].expression", "a trigger with no expression");
+}
+
 }  // namespace
 
 int main()
@@ -586,6 +784,17 @@ int main()
     testBadDisplayAndScaleNameTheAlternatives();
     testWindowListShapeErrors();
     testTwoWindowsCannotShareANameOrADisplay();
+
+    testAValidStackIsSilent();
+    testPagesOnAnythingElseIsAnError();
+    testAStackNeedsAnIdThatCanNameATopic();
+    testTwoStacksCannotShareAnId();
+    testPagesMustExistAndBeNamedOnce();
+    testNamedPagesMustExist();
+    testATargetElsewhereIsOnlyAWarning();
+    testAStackCannotHoldAStack();
+    testChildrenAreValidatedAtTheirPath();
+    testATriggerNeedsAKeyAndAnExpression();
 
     testFullScaleIsNeverZero();
     testFullScaleIsCapped();

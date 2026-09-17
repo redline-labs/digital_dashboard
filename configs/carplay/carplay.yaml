@@ -111,3 +111,19 @@ oem_button:
     - path: oem_icon_60.png
     - path: oem_icon_120.png
     - path: oem_icon_180.png
+
+# Handing the screen to the car while the dashboard hides CarPlay, and back when
+# it shows it again. The dashboard pauses video decode on its own either way;
+# this is only what the PHONE is told.
+#
+# Off until checked against a phone: the changeModes and requestUI messages it
+# sends have never been accepted by one, and a wrong resource constant can end
+# the session rather than look wrong. docs/nodes/carplay.md has the checklist.
+screen_handover:
+  enabled: false
+  # Also send requestUI when giving the screen back, if untake alone does not
+  # bring CarPlay forward on the phone.
+  request_ui_on_show: false
+  # The dashboard reports once a second. This long without a report counts as
+  # "CarPlay is on screen", so a dashboard that exits hands the screen back.
+  visibility_stale_ms: 3000

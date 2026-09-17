@@ -1,8 +1,12 @@
 #include <cstdlib>
 #include "carplay/carplay_widget.h"
 
+#include "carplay/return_button_policy.h"
+#include "dashboard/page_command_publisher.h"
+
 #include <spdlog/spdlog.h>
 #include <QPainter>
+#include <QPushButton>
 #include <QTimer>
 #include <QtGui/QResizeEvent>
 #include <QtMultimedia/QAudioDevice>
@@ -49,6 +53,9 @@ constexpr auto kTouchMinInterval = std::chrono::microseconds(1'000'000 / kTouchP
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     QWidget(parent),
     _cfg(std::move(cfg)),
+    _session_staleness(dashboard::staleness::suppressed() ? std::chrono::milliseconds{0}
+                                                          : std::chrono::milliseconds{_cfg.session_stale_after_ms},
+                       std::chrono::steady_clock::now()),
     _touch_throttle(kTouchMinInterval)
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
@@ -81,9 +88,9 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _audio_ring = std::make_unique<AudioRingBuffer>();
     _audio_ring->open(QIODevice::ReadOnly);
 
-    _video_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayVideo>>(
-        _cfg.video_key,
-        [this](CarPlayVideo::Reader reader) { onVideoMessage(reader); });
+    // No video subscription here: it follows visibility (syncVisibility), so a
+    // CarPlay widget on a hidden page decodes nothing. Audio, the microphone and
+    // session state do not -- the phone keeps playing whatever page is showing.
 
     _audio_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayAudio>>(
         _cfg.audio_key,
@@ -94,6 +101,46 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
         [this](CarPlaySessionState::Reader reader) { onSessionMessage(reader); });
 
     _mic_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayAudio>>(_cfg.mic_key);
+
+    // Once a second as well as on change: zenoh keeps no last value, and the
+    // driver treats silence as "visible" so a dashboard that exits hands the
+    // screen back rather than leaving the phone thinking the car still has it.
+    _visibility_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayVisibility>>(_cfg.visibility_key);
+    _visibility_timer = new QTimer(this);
+    connect(_visibility_timer, &QTimer::timeout, this, [this] { publishVisibility(); });
+    _visibility_timer->start(std::chrono::seconds(1));
+
+    _session_poll_timer = new QTimer(this);
+    connect(_session_poll_timer, &QTimer::timeout, this, [this] {
+        if (_session_staleness.poll(std::chrono::steady_clock::now()) ==
+            dashboard::StalenessTracker::Edge::became_stale)
+        {
+            SPDLOG_INFO("[carplay] no session state for {} ms", _cfg.session_stale_after_ms);
+            updateReturnButton();
+        }
+    });
+    _session_poll_timer->start(std::chrono::milliseconds(250));
+
+    if (_cfg.return_button.enabled)
+    {
+        _page_sender = std::make_unique<dashboard::PageCommandSender>();
+        _return_button = new QPushButton(QString::fromStdString(_cfg.return_button.label), this);
+        _return_button->setStyleSheet(
+            "QPushButton { background-color: #2a2a2a; color: white; border: 1px solid #555555;"
+            " border-radius: 10px; font-size: 20px; }"
+            "QPushButton:pressed { background-color: #444444; }");
+        _return_button->setFocusPolicy(Qt::NoFocus);
+        connect(_return_button, &QPushButton::clicked, this, [this] { _page_sender->send(_cfg.return_button.command); });
+        // Addressable as "#<widget>:return". The widget is named after
+        // construction, so follow the name rather than read it now.
+        connect(this, &QObject::objectNameChanged, _return_button,
+                [this](const QString& name) { _return_button->setObjectName(name + ":return"); });
+        placeReturnButton();
+        updateReturnButton();
+    }
+
+    // The first answer, once whoever built this has placed and shown it.
+    QMetaObject::invokeMethod(this, &CarPlayWidget::syncVisibility, Qt::QueuedConnection);
 }
 
 CarPlayWidget::~CarPlayWidget()
@@ -623,9 +670,12 @@ void CarPlayWidget::onSessionMessage(CarPlaySessionState::Reader reader)
     const bool mic_active = reader.getMicActive();
     const int mic_rate = static_cast<int>(reader.getMicSampleRateHz());
     const int mic_channels = reader.getMicChannels();
+    const bool connected = reader.getDeviceConnected();
+    const bool recording = reader.getPhase() == CarPlaySessionState::Phase::RECORDING;
     QMetaObject::invokeMethod(
         this,
-        [this, mic_active, mic_rate, mic_channels] {
+        [this, mic_active, mic_rate, mic_channels, connected, recording] {
+            onSessionState(connected, recording);
             if (mic_active && mic_rate > 0 && mic_channels > 0)
             {
                 startMicrophone(mic_rate, mic_channels);
@@ -683,6 +733,116 @@ void CarPlayWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     publishTargetSize();
+    placeReturnButton();
+}
+
+void CarPlayWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    QMetaObject::invokeMethod(this, &CarPlayWidget::syncVisibility, Qt::QueuedConnection);
+}
+
+void CarPlayWidget::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    QMetaObject::invokeMethod(this, &CarPlayWidget::syncVisibility, Qt::QueuedConnection);
+}
+
+void CarPlayWidget::syncVisibility()
+{
+    // isVisible(), not the event: a minimised window sends a spontaneous hide
+    // while its widgets stay "visible", and a widget built on a hidden page
+    // never gets a hide event at all.
+    const bool visible = isVisible();
+    if (_visibility_known && visible == _visible)
+    {
+        return;
+    }
+    _visibility_known = true;
+    _visible = visible;
+
+    if (!visible)
+    {
+        // The phone must not be left holding a finger that lifted on another page.
+        if (_touch_active)
+        {
+            _touch_active = false;
+            _touch_flush_timer->stop();
+            publishInput(CarPlayInput::Kind::TOUCH_UP, _last_touch_pos);
+        }
+
+        // Undeclaring joins any in-flight callback, so after this line the decode
+        // state is the GUI thread's to tear down. The last frame stays in
+        // _frames, so coming back shows it rather than a black flash.
+        _video_sub.reset();
+        destroyDecoder();
+        _last_seq = 0;
+        _pending_config.clear();
+        SPDLOG_INFO("[carplay] hidden: video decode paused (audio and microphone continue)");
+    }
+    else
+    {
+        // The driver notices a subscriber arriving and asks the phone for a
+        // keyframe, which is what gets the picture back quickly.
+        _video_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayVideo>>(
+            _cfg.video_key,
+            [this](CarPlayVideo::Reader reader) { onVideoMessage(reader); });
+        SPDLOG_INFO("[carplay] visible: video subscribed");
+    }
+
+    publishVisibility();
+}
+
+void CarPlayWidget::publishVisibility()
+{
+    if (!_visibility_known || _visibility_pub == nullptr)
+    {
+        return;
+    }
+    _visibility_pub->fields().setVisible(_visible);
+    _visibility_pub->put();
+}
+
+void CarPlayWidget::onSessionState(bool connected, bool recording)
+{
+    const bool changed = connected != _session_connected || recording != _session_recording;
+    _session_connected = connected;
+    _session_recording = recording;
+    const bool became_fresh = _session_staleness.onSample(std::chrono::steady_clock::now()) ==
+                              dashboard::StalenessTracker::Edge::became_fresh;
+    if (changed || became_fresh)
+    {
+        updateReturnButton();
+    }
+}
+
+void CarPlayWidget::updateReturnButton()
+{
+    if (_return_button == nullptr)
+    {
+        return;
+    }
+    const bool show = carplay::returnButtonVisible(_cfg.return_button.enabled, !_session_staleness.isStale(),
+                                                   _session_connected, _session_recording);
+    _return_button->setVisible(show);
+    if (show)
+    {
+        _return_button->raise();
+    }
+}
+
+void CarPlayWidget::placeReturnButton()
+{
+    if (_return_button == nullptr)
+    {
+        return;
+    }
+    // Bottom centre, clear of the edge a thumb rests on. Never wider or taller
+    // than the widget itself.
+    const int w = std::min<int>(_cfg.return_button.width, width());
+    const int h = std::min<int>(_cfg.return_button.height, height());
+    const int margin = std::min(24, std::max(0, height() - h));
+    _return_button->setGeometry((width() - w) / 2, height() - h - margin, w, h);
 }
 
 void CarPlayWidget::publishTargetSize()
@@ -735,6 +895,7 @@ void CarPlayWidget::publishTouchMove(const QPointF& pos)
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
 {
     _touch_active = true;
+    _last_touch_pos = e->position();
     // Drops any motion pending from the previous gesture, which must never land
     // after this down.
     _touch_flush_timer->stop();
@@ -746,6 +907,7 @@ void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 {
     if (_touch_active)
     {
+        _last_touch_pos = e->position();
         publishTouchMove(e->position());
     }
 }

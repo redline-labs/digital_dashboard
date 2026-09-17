@@ -53,17 +53,157 @@ windows:
     background_color: "#555555"
     display: secondary
     widgets:
-      - x: 0
+      # CarPlay and a vehicle page share the left 800x600. CarPlay's own
+      # manufacturer tile leaves it, a button on the vehicle page comes back, and
+      # Grayhill button 1 cycles. See docs/apps/dashboard/pages.md.
+      - id: main_pages
+        x: 0
         y: 0
         width: 800
         height: 600
-        type: carplay
+        type: page_stack
         config:
-          video_key: nodes/carplay/video
-          audio_key: nodes/carplay/audio
-          mic_key: nodes/carplay/mic
-          input_key: nodes/carplay/input
-          session_key: nodes/carplay/session
+          default_page: carplay
+          triggers:
+            # The manufacturer tile on CarPlay's home screen. kind 0 is oemButton.
+            - zenoh_key: nodes/carplay/ui_event
+              schema_type: CarPlayUiEvent
+              expression: kind == 0
+              edge: on_sample
+              action: go_to
+              page: vehicle
+            # The phone took the screen back while CarPlay was hidden -- Siri, or
+            # a call. kind 1 is screenRequested. Only sent with the node's
+            # screen_handover enabled.
+            - zenoh_key: nodes/carplay/ui_event
+              schema_type: CarPlayUiEvent
+              expression: kind == 1
+              edge: on_sample
+              action: go_to
+              page: carplay
+            # Grayhill button 1. The keypad reports its whole state, so this
+            # fires on the press, and never on the first report after startup.
+            - zenoh_key: nodes/grayhill_keypad/buttons
+              schema_type: GrayhillButtons
+              expression: bit(buttons1To8, 0)
+              edge: rising
+              action: next
+            # A phone being plugged in brings CarPlay forward. The node re-sends
+            # the session every second, so five seconds of silence means the node
+            # restarted and the next "connected" is a first report, not a plug-in.
+            - zenoh_key: nodes/carplay/session
+              schema_type: CarPlaySessionState
+              expression: deviceConnected
+              edge: rising
+              stale_after_ms: 5000
+              action: go_to
+              page: carplay
+            # An incoming call (state 1) could bring CarPlay forward too:
+            # - zenoh_key: nodes/carplay/call
+            #   schema_type: CarPlayCall
+            #   expression: state == 1
+            #   edge: rising
+            #   action: go_to
+            #   page: carplay
+        pages:
+          - name: carplay
+            widgets:
+              - id: carplay_view
+                x: 0
+                y: 0
+                width: 800
+                height: 600
+                type: carplay
+                config:
+                  video_key: nodes/carplay/video
+                  audio_key: nodes/carplay/audio
+                  mic_key: nodes/carplay/mic
+                  input_key: nodes/carplay/input
+                  session_key: nodes/carplay/session
+                  visibility_key: nodes/carplay/visibility
+                  session_stale_after_ms: 3000
+                  # With no phone there is no manufacturer tile, so this is the
+                  # way off the page.
+                  return_button:
+                    enabled: true
+                    label: Vehicle
+                    command:
+                      target: main_pages
+                      action: go_to
+                      page: vehicle
+                    width: 200
+                    height: 56
+          - name: vehicle
+            widgets:
+              - id: vehicle_background
+                x: 0
+                y: 0
+                width: 800
+                height: 600
+                type: background_rect
+                config:
+                  colors:
+                    - "#1A1A1A"
+                    - "#050505"
+                  direction: vertical
+              - id: vehicle_speed
+                x: 40
+                y: 60
+                width: 340
+                height: 140
+                type: value_readout
+                config:
+                  label_text: Speed
+                  zenoh_key: vehicle/speed_mps
+                  schema_type: VehicleSpeed
+                  value_expression: mps_to_mph(speedMps)
+                  stale_after_ms: 2000
+                  units: " mph"
+                  label_color: "#FFA500"
+                  value_color: "#FFFFFF"
+              - id: vehicle_rpm
+                x: 420
+                y: 60
+                width: 340
+                height: 140
+                type: value_readout
+                config:
+                  label_text: Engine
+                  zenoh_key: vehicle/engine/rpm
+                  schema_type: EngineRpm
+                  value_expression: rpm
+                  stale_after_ms: 2000
+                  units: " rpm"
+                  label_color: "#FFA500"
+                  value_color: "#FFFFFF"
+              - id: vehicle_oil
+                x: 40
+                y: 240
+                width: 340
+                height: 140
+                type: value_readout
+                config:
+                  label_text: Oil
+                  zenoh_key: vehicle/engine/rpm
+                  schema_type: EngineRpm
+                  value_expression: oilPressurePsi
+                  stale_after_ms: 2000
+                  decimals: 1
+                  units: " psi"
+                  label_color: "#FFA500"
+                  value_color: "#FFFFFF"
+              - id: back_to_carplay
+                x: 580
+                y: 510
+                width: 200
+                height: 60
+                type: page_button
+                config:
+                  label: CarPlay
+                  command:
+                    target: main_pages
+                    action: go_to
+                    page: carplay
       - id: now_playing
         x: 810
         y: 20

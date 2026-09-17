@@ -300,6 +300,22 @@ schema or expression to choose.
 | `mic_key` | string | `nodes/carplay/mic` | Topic this widget publishes captured microphone audio on, for Siri and calls. |
 | `input_key` | string | `nodes/carplay/input` | Topic this widget publishes touch events to. |
 | `session_key` | string | `nodes/carplay/session` | Topic carrying session state: whether a phone is connected and what it is doing. |
+| `visibility_key` | string | `nodes/carplay/visibility` | Topic this widget reports whether it is on screen on, so the node can hand the screen to the car. |
+| `session_stale_after_ms` | int | `3000` | No session state for this long means no driver, and the return button shows. Clamped to `50`–`600000`. |
+| `return_button.enabled` | bool | `false` | Draw a button to leave the page while no phone session is live. |
+| `return_button.label` | string | `Vehicle` | Text on the button. |
+| `return_button.command` | command | | `target`, `action` and `page`, as for a [page command](pages.html#commands). |
+| `return_button.width`, `.height` | int | `200`, `56` | Button size; it sits bottom centre. |
+
+The widget decodes video only while it is visible. On a hidden
+[page](pages.html) it drops the video subscription, keeps the last frame for
+when it returns, and carries on playing audio and capturing the microphone. It
+publishes `CarPlayVisibility` on every change and once a second.
+
+The return button shows unless session state is arriving, a device is connected
+and the session is recording. A driver that stops leaves "recording" as its last
+message, which is why staleness counts too. The button is addressable as
+`#<widget id>:return`.
 
 ## now_playing
 
@@ -339,6 +355,36 @@ road being turned onto and a trip summary strip. It subscribes to the node's
 | `detail_color` | color | `#AAAAAA` | Secondary text and trip summary colour. |
 | `background_color` | color | `#00000000` | Fill behind the card; transparent by default. |
 | `idle_text` | string | `No route` | Shown when there is no active route. |
+
+## page_stack
+
+A region showing one of several pages of widgets. It is the one widget with a
+`pages:` list beside `config:`, and it needs an `id`. Pages, commands, triggers
+and topics are described on [Pages](pages.html).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `default_page` | string | `""` | Page shown at startup; empty means the first. |
+| `triggers` | list | `[]` | Bus inputs that change the page: `zenoh_key`, `schema_type`, `expression`, `edge`, `stale_after_ms`, `action`, `page`. |
+
+## page_button
+
+A touch target that sends a page command. It sends over the bus, so the button
+and the stack need not share a window.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `label` | string | `Back` | Text on the button. |
+| `command.target` | string | `""` | The `id` of the page_stack to change. |
+| `command.action` | enum | `next` | `next`, `prev`, `go_to` or `back`. |
+| `command.page` | string | `""` | Page name, for `go_to`. |
+| `background_color` | color | `#222222` | Fill while not pressed. |
+| `pressed_color` | color | `#444444` | Fill while pressed. |
+| `text_color` | color | `#FFFFFF` | Label colour. |
+| `font_size` | int | `18` | Label size in points. Clamped to `4`–`200`. |
+| `corner_radius` | int | `8` | Corner rounding in pixels. Clamped to `0`–`500`. |
+
+A press that slides off the button before release sends nothing.
 
 ## map
 

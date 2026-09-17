@@ -241,6 +241,37 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                 return false;
             }
         }
+        if (const YAML::Node handover = root["screen_handover"])
+        {
+            if (!handover.IsMap())
+            {
+                SPDLOG_ERROR("[node] screen_handover must be a mapping");
+                return false;
+            }
+            // Closed: a misspelt `enabled` would otherwise leave the handover off
+            // with nothing said, which on the bench looks like the phone ignoring it.
+            for (const auto& entry : handover)
+            {
+                const std::string key = entry.first.as<std::string>();
+                if (key != "enabled" && key != "request_ui_on_show" && key != "visibility_stale_ms")
+                {
+                    SPDLOG_ERROR("[node] screen_handover.{} is not a setting; expected enabled, "
+                                 "request_ui_on_show or visibility_stale_ms", key);
+                    return false;
+                }
+            }
+            assignIfPresent(handover, "enabled", parsed.screen_handover.enabled);
+            assignIfPresent(handover, "request_ui_on_show", parsed.screen_handover.request_ui_on_show);
+            assignIfPresent(handover, "visibility_stale_ms", parsed.screen_handover.visibility_stale_ms);
+            if (parsed.screen_handover.visibility_stale_ms < 1500)
+            {
+                // The dashboard reports once a second; less than that and a
+                // single late heartbeat hands the screen back.
+                SPDLOG_ERROR("[node] screen_handover.visibility_stale_ms must be at least 1500, not {}",
+                             parsed.screen_handover.visibility_stale_ms);
+                return false;
+            }
+        }
         if (const YAML::Node button = root["oem_button"]; button && button.IsMap())
         {
             if (const YAML::Node enabled = button["enabled"])

@@ -33,6 +33,27 @@ inline QString widgetObjectName(const widget_config_t& cfg, std::size_t index)
         .arg(index);
 }
 
+// A page of a page_stack: "<stack>:<page>". Qualified by the stack so two stacks
+// with a "main" page do not share a name, and with ':' so it can never collide
+// with an id or a window name, neither of which may contain one.
+inline QString pageObjectName(const QString& stack_name, const std::string& page_name)
+{
+    return stack_name + ":" + QString::fromStdString(page_name);
+}
+
+// A widget on a page. An explicit `id:` still wins -- ids are meant to be
+// addressable wherever the widget lives -- otherwise the derived name is
+// qualified by its page, since "<type>#<index>" repeats on every page.
+inline QString childWidgetObjectName(const QString& stack_name, const std::string& page_name,
+                                     const widget_config_t& cfg, std::size_t index)
+{
+    if (!cfg.id.empty())
+    {
+        return QString::fromStdString(cfg.id);
+    }
+    return pageObjectName(stack_name, page_name) + ":" + widgetObjectName(cfg, index);
+}
+
 // Applies the name from the rule above. Kept as a function rather than an
 // inlined setObjectName() call so there is exactly one place that decides.
 inline void applyWidgetIdentity(QWidget* widget, const widget_config_t& cfg, std::size_t index)

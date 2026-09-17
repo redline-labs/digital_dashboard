@@ -2,6 +2,7 @@
 #include "usb_pipeline.h"
 
 #include "iap2_session.h"
+#include "screen_handover.h"
 
 #include "core/core.h"
 
@@ -57,9 +58,11 @@
 #include <cstring>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -300,6 +303,71 @@ struct SessionContext
     // Set true while an AirPlay session is live, so the caller's idle
     // session-state publisher stands down. Optional.
     std::atomic<bool>* recording = nullptr;
+};
+
+// What one AirPlay session shares between the receiver's callbacks, the
+// dashboard's visibility reports and the hold loop: the screen handover, and
+// the session state to re-send while recording.
+//
+// Commands go to the receiver under the lock, which is safe because every
+// receiver command only queues. The pointer is cleared under the same lock at
+// teardown, so a visibility report already in flight cannot reach a receiver
+// that has stopped.
+struct LiveSession
+{
+    explicit LiveSession(ScreenHandover::Config config) : handover(config) {}
+
+    std::mutex mutex;
+    ScreenHandover handover;
+    airplay::Receiver* receiver = nullptr;
+    ZenohBridge* bridge = nullptr;
+    std::function<void()> publish_session;
+    std::atomic<bool> recording{false};
+
+    template <typename Step>
+    void apply(Step step)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const ScreenHandover::Actions actions = step(handover);
+        for (const ScreenHandover::Command command : actions.commands)
+        {
+            if (receiver == nullptr)
+            {
+                break;
+            }
+            switch (command)
+            {
+                case ScreenHandover::Command::take_screen:
+                    receiver->changeScreen(airplay::ScreenTransfer::take);
+                    break;
+                case ScreenHandover::Command::untake_screen:
+                    receiver->changeScreen(airplay::ScreenTransfer::untake);
+                    break;
+                case ScreenHandover::Command::request_ui:
+                    receiver->requestPhoneUi(std::nullopt);
+                    break;
+                case ScreenHandover::Command::request_keyframe:
+                    receiver->requestKeyframe();
+                    break;
+            }
+        }
+        for (const ScreenHandover::Event event : actions.events)
+        {
+            if (bridge == nullptr)
+            {
+                break;
+            }
+            switch (event)
+            {
+                case ScreenHandover::Event::screen_requested:
+                    bridge->publishUiEvent(UiEventKind::ScreenRequested);
+                    break;
+                case ScreenHandover::Event::screen_released:
+                    bridge->publishUiEvent(UiEventKind::ScreenReleased);
+                    break;
+            }
+        }
+    }
 };
 
 // What provides the usbmuxd socket that the lockdown and carkit layers connect
@@ -790,7 +858,8 @@ void AvLink::stop()
 // bridge callbacks installed here capture it, so the caller must detach them
 // before letting it go.
 std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ctx,
-                                                        const AvLink& ncm, ZenohBridge& bridge)
+                                                        const AvLink& ncm, ZenohBridge& bridge,
+                                                        const std::shared_ptr<LiveSession>& live)
 {
     const NodeConfig& options = ctx.options;
     auto mfi_mutex = ctx.mfi_mutex;
@@ -968,7 +1037,12 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
                 bridge.publishSession(state);
             };
 
-            receiver->setStatusHandler([recording_flag, share, publish_session](bool recording) {
+            {
+                std::lock_guard<std::mutex> lock(live->mutex);
+                live->publish_session = publish_session;
+            }
+
+            receiver->setStatusHandler([recording_flag, share, publish_session, live](bool recording) {
                 if (recording_flag != nullptr)
                 {
                     recording_flag->store(recording);
@@ -977,7 +1051,9 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
                     std::lock_guard<std::mutex> lock(share->mutex);
                     share->recording = recording;
                 }
+                live->recording.store(recording);
                 publish_session();
+                live->apply([recording](ScreenHandover& h) { return h.onRecording(recording); });
             });
 
             // Mic uplink: when the phone opens a mic stream, tell the widget to
@@ -1008,15 +1084,30 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
             // already be up, so seed from the current state rather than a guess.
             receiver->setRenderersPresent(bridge.videoSubscribersPresent());
 
-            // The manufacturer button. Nothing is hooked up to it yet: this is
-            // where a "show the vehicle's own UI" action belongs, which for this
-            // dashboard means telling the widget stack to leave the CarPlay page.
-            receiver->setOemButtonHandler([]() {
-                SPDLOG_INFO("[node] manufacturer button pressed -- returning to the vehicle's "
-                            "UI is not wired up yet");
-            });
+            // The manufacturer button, and an app asking for the head unit's UI:
+            // both only say so on the bus. What the dashboard shows in response
+            // is its config's business (a page_stack trigger), not the node's.
+            receiver->setOemButtonHandler([&bridge]() { bridge.publishUiEvent(UiEventKind::OemButton); });
+            receiver->setAppUiRequestHandler(
+                [&bridge](const std::string& url) { bridge.publishUiEvent(UiEventKind::AppRequestedUi, url); });
 
             airplay::Receiver* rx = receiver.get();
+
+            // The screen handover. Wired whether or not it is enabled: disabled,
+            // the state machine asks for nothing, and the owner changes are still
+            // logged by the receiver.
+            receiver->setScreenOwnerHandler([live](airplay::ScreenEntity owner) {
+                live->apply([owner](ScreenHandover& h) { return h.onScreenOwner(owner); });
+            });
+            {
+                std::lock_guard<std::mutex> lock(live->mutex);
+                live->receiver = rx;
+                live->bridge = &bridge;
+            }
+            bridge.setVisibilityHandler([live](bool visible) {
+                const auto now = std::chrono::steady_clock::now();
+                live->apply([visible, now](ScreenHandover& h) { return h.onVisibility(visible, now); });
+            });
 
             // Captured mic PCM from the dashboard -> the phone.
             bridge.setMicHandler([rx](const AudioChunk& chunk) {
@@ -1447,10 +1538,16 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     auto mfi_mutex = ctx.mfi_mutex;
 
     // Stage 7. Started before stage 5 below: see startAirPlayReceiver.
+    ScreenHandover::Config handover_config;
+    handover_config.enabled = options.screen_handover.enabled;
+    handover_config.request_ui_on_show = options.screen_handover.request_ui_on_show;
+    handover_config.visibility_stale_after = std::chrono::milliseconds(options.screen_handover.visibility_stale_ms);
+    const auto live = std::make_shared<LiveSession>(handover_config);
+
     std::unique_ptr<airplay::Receiver> receiver;
     if (ok && options.max_stage >= 7)
     {
-        receiver = startAirPlayReceiver(ctx, ncm, bridge);
+        receiver = startAirPlayReceiver(ctx, ncm, bridge, live);
         if (!receiver)
         {
             ok = false;
@@ -1466,9 +1563,29 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     // Hold the session open so the sockets above can be poked at from another
     // terminal. A failed bring-up falls straight through instead: the caller
     // wants to back off and retry, not sit on a half-open session.
+    //
+    // The loop also ticks the screen handover, which is how a dashboard that
+    // stopped reporting gets the screen handed back, and re-sends the session
+    // state once a second while recording: zenoh keeps no last value, and a
+    // widget that hears nothing for a few seconds decides there is no phone.
+    unsigned hold_ticks = 0;
     while (ok && !session_stop.load())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const auto now = std::chrono::steady_clock::now();
+        live->apply([now](ScreenHandover& h) { return h.tick(now); });
+        if (++hold_ticks % 5 == 0 && live->recording.load())
+        {
+            std::function<void()> republish;
+            {
+                std::lock_guard<std::mutex> lock(live->mutex);
+                republish = live->publish_session;
+            }
+            if (republish)
+            {
+                republish();
+            }
+        }
     }
 
     SPDLOG_INFO("[node] tearing down the USB pipeline");
@@ -1478,6 +1595,12 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     bridge.setInputHandler(nullptr);
     bridge.setLocationHandler(nullptr);
     bridge.setVideoSubscriberHandler(nullptr);
+    bridge.setVisibilityHandler(nullptr);
+    {
+        std::lock_guard<std::mutex> lock(live->mutex);
+        live->receiver = nullptr;
+        live->publish_session = nullptr;
+    }
     if (receiver)
     {
         receiver->stop();

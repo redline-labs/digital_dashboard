@@ -6,10 +6,14 @@
 #include <QMetaObject>
 #include <QPalette>
 
+#include <optional>
+#include <string>
+
 #include "reflection/reflection.h"
 
-#include "dashboard/widget_factory.h"
 #include "dashboard/widget_identity.h"
+#include "dashboard/widget_registry.h"
+#include "dashboard/widget_tree.h"
 
 MainWindow::MainWindow(const app_config_t& app_cfg):
     QWidget{},
@@ -39,13 +43,12 @@ void MainWindow::createWidgetsFromConfig()
     {
         const std::size_t this_index = index++;
 
-        QWidget* widget = widget_factory::createWidgetFromConfig(widget_config, this);
+        const dashboard::BuildResult built =
+            dashboard::buildWidget(widget_config, dashboard::widgetObjectName(widget_config, this_index), this);
+        _child_build_failures += built.child_failures;
+        QWidget* widget = built.widget;
         if (widget)
         {
-            // Name it before anything else can look at it: this is what the
-            // agent control interface addresses widgets by.
-            dashboard::applyWidgetIdentity(widget, widget_config, this_index);
-
             // Set position
             widget->setGeometry(_origin.x() + widget_config.x, _origin.y() + widget_config.y,
                                 widget_config.width, widget_config.height);
@@ -80,7 +83,7 @@ const std::string& MainWindow::getWindowName() const
 
 std::size_t MainWindow::widgetBuildFailures() const
 {
-    return _app_cfg.widgets.size() - _widgets.size();
+    return _app_cfg.widgets.size() - _widgets.size() + _child_build_failures;
 }
 
 void MainWindow::showNotice(const QString& text)
@@ -144,16 +147,35 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
         // invalidate every selector and ref pointing at it.
         const QRect geometry = existing->geometry();
         const QString object_name = existing->objectName();
+        const std::size_t cfg_index = _widgets[i].config_index;
+        const bool have_stored = cfg_index < _app_cfg.widgets.size();
 
-        QWidget* replacement = widget_factory::createWidgetFromConfig(cfg, this);
-        if (replacement == nullptr)
+        // The caller's config carries the type and settings only. A page_stack's
+        // pages and id live beside those, so they come from what was built --
+        // without this, changing a stack's default_page would delete every page.
+        widget_config_t rebuilt = cfg;
+        if (have_stored)
+        {
+            rebuilt.id = _app_cfg.widgets[cfg_index].id;
+            rebuilt.pages = _app_cfg.widgets[cfg_index].pages;
+        }
+
+        // A stack stays on the page it is showing. Rebuilding one does rebuild
+        // everything on its pages, CarPlay included, which reconnects.
+        std::optional<std::string> keep_page;
+        if (auto* stack = qobject_cast<PageStackWidget*>(existing))
+        {
+            keep_page = stack->currentPage();
+        }
+
+        const dashboard::BuildResult built = dashboard::buildWidget(rebuilt, object_name, this, keep_page);
+        if (built.widget == nullptr)
         {
             SPDLOG_ERROR("Rebuilding widget '{}' failed; leaving the original in place.",
                          object_name.toStdString());
             return false;
         }
-
-        replacement->setObjectName(object_name);
+        QWidget* replacement = built.widget;
         replacement->setGeometry(geometry);
         replacement->show();
 
@@ -161,12 +183,9 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
         // actually on screen. Index through the widget's own config_index: the
         // position in _widgets is not the position in _app_cfg.widgets once any
         // widget has failed to build.
-        const std::size_t cfg_index = _widgets[i].config_index;
-        if (cfg_index < _app_cfg.widgets.size())
+        if (have_stored)
         {
-            const std::string id = _app_cfg.widgets[cfg_index].id;
-            _app_cfg.widgets[cfg_index] = cfg;
-            _app_cfg.widgets[cfg_index].id = id;
+            _app_cfg.widgets[cfg_index] = rebuilt;
             // Back in layout coordinates: the live geometry includes the letterbox.
             _app_cfg.widgets[cfg_index].x = static_cast<int16_t>(geometry.x() - _origin.x());
             _app_cfg.widgets[cfg_index].y = static_cast<int16_t>(geometry.y() - _origin.y());
@@ -179,6 +198,54 @@ bool MainWindow::rebuildWidget(QWidget* existing, const widget_config_t& cfg)
         // widget would still be in the tree when it did.
         _widgets[i].widget = std::unique_ptr<QWidget>(replacement);
         return true;
+    }
+
+    // Not a top-level widget; perhaps one on a page.
+    for (const LiveWidget& live : _widgets)
+    {
+        auto* stack = qobject_cast<PageStackWidget*>(live.widget.get());
+        if (stack == nullptr)
+        {
+            continue;
+        }
+        const auto slot = stack->slotOf(existing);
+        if (!slot)
+        {
+            continue;
+        }
+
+        QWidget* page = existing->parentWidget();
+        const QRect geometry = existing->geometry();
+        const QString object_name = existing->objectName();
+
+        widget_config_t rebuilt = cfg;
+        widget_config_t* stored = nullptr;
+        if (live.config_index < _app_cfg.widgets.size())
+        {
+            auto& pages = _app_cfg.widgets[live.config_index].pages;
+            if (slot->page < pages.size() && slot->config_index < pages[slot->page].widgets.size())
+            {
+                stored = &pages[slot->page].widgets[slot->config_index];
+                rebuilt.id = stored->id;
+            }
+        }
+        // Page-local, like the stored config: children are placed in the stack.
+        rebuilt.x = static_cast<int16_t>(geometry.x());
+        rebuilt.y = static_cast<int16_t>(geometry.y());
+        rebuilt.width = static_cast<uint16_t>(geometry.width());
+        rebuilt.height = static_cast<uint16_t>(geometry.height());
+
+        QWidget* replacement = dashboard::buildPageChild(rebuilt, object_name, page);
+        if (replacement == nullptr)
+        {
+            SPDLOG_ERROR("Rebuilding widget '{}' failed; leaving the original in place.", object_name.toStdString());
+            return false;
+        }
+        if (stored != nullptr)
+        {
+            *stored = rebuilt;
+        }
+        return stack->replaceChild(existing, replacement);
     }
 
     return false;

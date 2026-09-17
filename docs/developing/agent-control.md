@@ -303,6 +303,7 @@ Everything in the plan is implemented:
 | Inspect | `ui.snapshot`, `ui.find`, `ui.screenshot` (with `annotate`, `if_changed_from`), `ui.wait_for` |
 | Input | `input.click`, `input.key`, `input.type`, `input.drag`, `input.drop` |
 | Widget config | `widget.describe_config`, `widget.get_config`, `widget.set_config` |
+| Pages | `pages.list`, `pages.command` (dashboard only; see [Pages](../apps/dashboard/pages.html)) |
 | Zenoh | `zenoh.list`, `zenoh.read`, `zenoh.publish`, `zenoh.rate`, `zenoh.describe_schema` |
 | Editor | `editor.palette`, `editor.items`, `editor.add_widget`, `editor.palette_drag`, `editor.select`, `editor.move`, `editor.resize`, `editor.delete`, `editor.set_mode`, `editor.undo`, `editor.redo`, `editor.save`, `editor.load`, `editor.windows`, `editor.select_window`, `editor.add_window`, `editor.remove_window` |
 | Scope | `scope.panels`, `scope.add_panel`, `scope.remove_panel`, `scope.add_signal`, `scope.remove_signal`, `scope.browser`, `scope.browser_drag`, `scope.time_base`, `scope.panel_get_config`, `scope.panel_set_config`, `scope.panel_describe_config`, `scope.save`, `scope.load`, `scope.sample_stats` (see `docs/scope.md`) |

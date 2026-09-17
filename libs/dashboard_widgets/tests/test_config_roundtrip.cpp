@@ -381,6 +381,110 @@ void testTheWrittenFormIsTheSmallestThatSaysEverything()
     check(back == two, "a two-window document survives a round trip:\n" + toYaml(two));
 }
 
+// ---------------------------------------------------------------------- pages
+
+const char* kStackYaml = R"(
+name: stacked
+width: 800
+height: 600
+widgets:
+  - id: main_pages
+    type: page_stack
+    x: 10
+    y: 20
+    width: 400
+    height: 300
+    config:
+      default_page: vehicle
+      triggers:
+        - zenoh_key: nodes/grayhill_keypad/buttons
+          schema_type: GrayhillButtons
+          expression: bit(buttons1To8, 0)
+          action: next
+    pages:
+      - name: carplay
+        widgets:
+          - id: text_a
+            type: static_text
+            x: 0
+            y: 0
+            width: 100
+            height: 50
+            config:
+              text: on carplay
+      - name: diagnostics
+        in_cycle: false
+        widgets: []
+      - name: vehicle
+        widgets:
+          - type: page_button
+            x: 5
+            y: 6
+            width: 70
+            height: 40
+            config:
+              label: Back
+              command:
+                target: main_pages
+                action: go_to
+                page: carplay
+  - type: static_text
+    config:
+      text: outside
+)";
+
+void testPagesSurviveARoundTrip()
+{
+    const auto cfg = YAML::Load(kStackYaml).as<app_config_t>();
+    check(cfg.widgets.size() == 2, "the stack and the widget beside it both load");
+    const widget_config_t& stack = cfg.widgets.at(0);
+    check(stack.type == widget_type_t::page_stack, "the stack loads as a page_stack");
+    check(stack.pages.size() == 3, "all three pages load");
+    check(stack.pages.at(1).name == "diagnostics" && !stack.pages.at(1).in_cycle,
+          "in_cycle: false is read");
+    check(stack.pages.at(0).in_cycle, "a page with no in_cycle is in the cycle");
+    check(stack.pages.at(0).widgets.at(0).id == "text_a", "a page's widget keeps its id");
+    check(stack.pages.at(2).widgets.at(0).x == 5, "a page's widget keeps its local position");
+
+    const auto* button = std::get_if<PageButtonWidget::config_t>(&stack.pages.at(2).widgets.at(0).config);
+    check(button != nullptr && button->command.action == page_action_t::go_to &&
+              button->command.page == "carplay",
+          "a page_button's command loads, go_to included");
+
+    const auto back = reload(cfg);
+    check(back == cfg, "a config with pages survives a round trip:\n" + toYaml(cfg));
+}
+
+void testPagesAreOnlyWrittenWhereTheyMeanSomething()
+{
+    const auto cfg = YAML::Load(kStackYaml).as<app_config_t>();
+    const std::string text = toYaml(cfg);
+    check(text.find("in_cycle: true") == std::string::npos, "in_cycle is omitted while true");
+    check(text.find("in_cycle: false") != std::string::npos, "and written when false");
+
+    // Exactly one `pages:` -- the stack's -- and none on the widget beside it.
+    std::size_t count = 0;
+    for (std::size_t at = text.find("pages:"); at != std::string::npos; at = text.find("pages:", at + 1))
+    {
+        ++count;
+    }
+    check(count == 1, "only the page_stack writes pages:\n" + text);
+
+    // A plain widget's written form is exactly what it was before pages existed.
+    app_config_t plain;
+    widget_config_t wc;
+    wc.type = StaticTextWidget::kWidgetType;
+    wc.config = StaticTextWidget::config_t{};
+    plain.widgets.push_back(wc);
+    check(toYaml(plain).find("pages") == std::string::npos, "a config with no stack never mentions pages");
+}
+
+void testANewStackStartsWithAPage()
+{
+    check(default_widget_pages(widget_type_t::page_stack).size() == 1, "a new page_stack has one page");
+    check(default_widget_pages(widget_type_t::static_text).empty(), "no other widget has pages");
+}
+
 }  // namespace
 
 int main()
@@ -395,6 +499,9 @@ int main()
     testAwkwardStringsSurvive();
     testMissingConfigBlockLoadsDefaults();
     testReflectedTypesNeedNoRegistration();
+    testPagesSurviveARoundTrip();
+    testPagesAreOnlyWrittenWhereTheyMeanSomething();
+    testANewStackStartsWithAPage();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

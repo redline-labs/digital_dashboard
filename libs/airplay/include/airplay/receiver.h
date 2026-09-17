@@ -13,6 +13,7 @@
 #include "airplay/media_stream.h"
 #include "airplay/nalu.h"
 #include "airplay/oem_button.h"
+#include "airplay/screen_modes.h"
 #include "plist/value.h"
 #include "airplay/rtsp.h"
 #include "airplay/timing.h"
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,10 +51,30 @@ class Receiver
     // Runs on the event-channel thread, so do not block in it.
     using OemButtonHandler = std::function<void()>;
 
+    // Called when a `modesChanged` says who owns the main screen now. Runs on the
+    // event-channel thread. The message format is unconfirmed; see
+    // airplay/screen_modes.h.
+    using ScreenOwnerHandler = std::function<void(ScreenEntity owner)>;
+
+    // Called when an app on the phone asks the head unit to open `url` -- the
+    // `requestUI` that is not the manufacturer button. Event-channel thread.
+    using AppUiRequestHandler = std::function<void(const std::string& url)>;
+
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
     void setStatusHandler(StatusHandler handler);
     void setOemButtonHandler(OemButtonHandler handler);
+    void setScreenOwnerHandler(ScreenOwnerHandler handler);
+    void setAppUiRequestHandler(AppUiRequestHandler handler);
+
+    // Hands the main screen to the car (take) or back to the phone (untake).
+    // Queues and returns; dropped when no phone is connected. UNCONFIRMED on
+    // hardware -- see airplay/screen_modes.h.
+    void changeScreen(ScreenTransfer transfer);
+
+    // Asks the phone to show CarPlay, optionally a specific app. The car-side
+    // mirror of the manufacturer button. Queues and returns. UNCONFIRMED.
+    void requestPhoneUi(const std::optional<std::string>& url);
 
     // Which part of a gesture a touch report is. Down and Up both map to the
     // same single "contact down" bit on the wire, so this does not change the
@@ -186,6 +208,11 @@ class Receiver
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
     OemButtonHandler oem_button_handler_;
+    ScreenOwnerHandler screen_owner_handler_;
+    AppUiRequestHandler app_ui_request_handler_;
+    // The last screen owner reported, so a change is logged once. Event-channel
+    // thread only.
+    std::optional<ScreenEntity> screen_owner_;
 
     int server_fd_ = -1;
     std::atomic<bool> run_{false};

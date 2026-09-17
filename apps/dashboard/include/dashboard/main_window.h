@@ -32,7 +32,8 @@ class MainWindow : public QWidget
     // Replaces a live widget with one built from `cfg`, keeping its geometry,
     // objectName and position in the window. Dashboard widgets take their config
     // at construction and have no setter, so changing one means rebuilding it.
-    // Returns false if `existing` is not one of this window's widgets.
+    // Returns false if `existing` is not one of this window's widgets. A widget
+    // on a page_stack's page counts: it is rebuilt in place on that page.
     bool rebuildWidget(QWidget* existing, const widget_config_t& cfg);
 
     // How many of the config's widgets failed to construct. Non-zero means the
@@ -63,6 +64,10 @@ class MainWindow : public QWidget
     };
 
     std::vector<LiveWidget> _widgets;
+
+    // Widgets on page_stack pages that failed to build. Not in the arithmetic
+    // above, because they are not entries of _app_cfg.widgets.
+    std::size_t _child_build_failures = 0;
 
     // Where the design-size layout's (0, 0) sits in the window. Zero in a
     // design-size window; the letterbox offset once full screen.

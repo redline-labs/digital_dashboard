@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <expected>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <utility>
 #include <vector>
@@ -151,6 +152,15 @@ QWidget* configBearingWidget(QWidget* target)
     // The editor wraps every widget in a SelectionFrame, and a selector by id
     // lands on the frame. Look one level down rather than making the caller know
     // which app it is talking to.
+    //
+    // ONLY into a SelectionFrame, matched by class name because this library
+    // cannot see the editor. Looking down into anything unregistered used to be
+    // harmless; since page_stack, a selector landing on a page would quietly
+    // resolve to that page's first widget and configure the wrong thing.
+    if (std::string_view(target->metaObject()->className()) != "SelectionFrame")
+    {
+        return nullptr;
+    }
     for (QObject* child : target->children())
     {
         if (auto* as_widget = qobject_cast<QWidget*>(child))

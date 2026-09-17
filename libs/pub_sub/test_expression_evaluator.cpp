@@ -23,6 +23,7 @@
 
 #include "carplay_session.capnp.h"
 #include "engine_rpm.capnp.h"
+#include "grayhill_keypad.capnp.h"
 #include "motec_pdm.capnp.h"
 #include "vehicle_speed.capnp.h"
 
@@ -158,6 +159,70 @@ void testUnitConversionHelpersAreAvailable()
     const auto value = eval.evaluate<double>(engineRpmPayload(0, 14.5038f));
     expect(value.has_value() && std::abs(*value - 1.0) < 1e-3,
            "the registered unit-conversion functions are callable from an expression");
+}
+
+// bit(x, n). exprtk has no bitwise operators, and a keypad reports 24 buttons in
+// three bytes; a page trigger wants exactly one of them.
+void testBitReadsOneBit()
+{
+    auto eval = evaluatorFor("bit(rpm, 0) + 10 * bit(rpm, 1) + 100 * bit(rpm, 2)");
+    expect(eval.isValid(), "bit() is callable from an expression");
+    const auto five = eval.evaluate<double>(engineRpmPayload(5));
+    expect(five.has_value() && *five == 101.0, "bit() of 5 is 1, 0, 1 for bits 0..2");
+
+    auto high = evaluatorFor("bit(rpm, 7) + 10 * bit(rpm, 8)");
+    const auto v255 = high.evaluate<double>(engineRpmPayload(255));
+    const auto v256 = high.evaluate<double>(engineRpmPayload(256));
+    expect(v255.has_value() && *v255 == 1.0, "bit 7 of 255 is set and bit 8 is not");
+    expect(v256.has_value() && *v256 == 10.0, "bit 8 of 256 is set and bit 7 is not");
+}
+
+void testBitOfAKeypadByte()
+{
+    capnp::MallocMessageBuilder message;
+    auto root = message.initRoot<GrayhillButtons>();
+    root.setButtons1To8(0b0000'0001);
+    root.setButtons9To16(0b0000'1000);
+    root.setButtons17To24(0);
+    const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
+    const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
+    const std::vector<uint8_t> payload(bytes.begin(), bytes.end());
+
+    const auto eval = [&](const std::string& expression) {
+        pub_sub::ExpressionEvaluator e(pub_sub::schema_type_t::GrayhillButtons, expression,
+                                       "test/keypad/buttons");
+        expect(e.isValid(), "'" + expression + "' compiles against GrayhillButtons");
+        return e.evaluate<double>(payload);
+    };
+
+    const auto button1 = eval("bit(buttons1To8, 0)");
+    const auto button2 = eval("bit(buttons1To8, 1)");
+    const auto button12 = eval("bit(buttons9To16, 3)");
+    const auto either = eval("bit(buttons1To8, 1) or bit(buttons9To16, 3)");
+    expect(button1.has_value() && *button1 == 1.0, "button 1 reads pressed");
+    expect(button2.has_value() && *button2 == 0.0, "button 2 reads released");
+    expect(button12.has_value() && *button12 == 1.0, "button 12 is bit 3 of the second byte");
+    expect(either.has_value() && *either == 1.0, "`or` combines two bits");
+}
+
+void testBitOfANonWholeQuestionIsNoValue()
+{
+    // Each of these would otherwise have to answer 0, which reads as "released".
+    auto negative_bit = evaluatorFor("bit(rpm, -1)");
+    auto fractional_bit = evaluatorFor("bit(rpm, 1.5)");
+    auto past_exact = evaluatorFor("bit(rpm, 53)");
+    auto fractional_x = evaluatorFor("bit(rpm + 0.5, 0)");
+    auto negative_x = evaluatorFor("bit(rpm - 10, 0)");
+    const auto payload = engineRpmPayload(3);
+    expect(!negative_bit.evaluate<double>(payload).has_value(), "a negative bit index is no value");
+    expect(!fractional_bit.evaluate<double>(payload).has_value(), "a fractional bit index is no value");
+    expect(!past_exact.evaluate<double>(payload).has_value(), "a bit index past 52 is no value");
+    expect(!fractional_x.evaluate<double>(payload).has_value(), "bit() of a fraction is no value");
+    expect(!negative_x.evaluate<double>(payload).has_value(), "bit() of a negative is no value");
+
+    auto top = evaluatorFor("bit(rpm, 31)");
+    const auto set = top.evaluate<double>(engineRpmPayload(0x8000'0000u));
+    expect(set.has_value() && *set == 1.0, "the top bit of a UInt32 still reads");
 }
 
 // ----------------------------------------------------- construction is checked
@@ -674,6 +739,9 @@ int main()
     testArithmeticIsApplied();
     testSeveralFieldsInOneExpression();
     testUnitConversionHelpersAreAvailable();
+    testBitReadsOneBit();
+    testBitOfAKeypadByte();
+    testBitOfANonWholeQuestionIsNoValue();
 
     testAnUnknownFieldIsRejected();
     testANonNumericFieldIsRejected();

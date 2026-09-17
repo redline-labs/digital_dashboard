@@ -102,3 +102,19 @@ add_project_test(TARGET dashboard_test_quit_on_signal LABELS dashboard unit)
 
 # SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
 redline_install(TARGET dashboard COMPONENT gui)
+
+# A window with a page_stack in it: names, placement, visibility, and what a
+# rebuild keeps. Builds real widgets offscreen; the stack is on the bus.
+add_executable(dashboard_test_pages_window
+    tests/test_pages_window.cpp
+    main_window.cpp
+    include/dashboard/main_window.h
+)
+set_target_properties(dashboard_test_pages_window PROPERTIES AUTOMOC ON)
+target_include_directories(dashboard_test_pages_window PRIVATE include)
+target_link_libraries(dashboard_test_pages_window PRIVATE
+    dashboard_widgets
+    agent_control
+    spdlog::spdlog
+)
+add_project_test(TARGET dashboard_test_pages_window LABELS dashboard gui net)

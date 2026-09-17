@@ -41,6 +41,8 @@
     X(carplay,                     CarPlayWidget) \
     X(now_playing,                 NowPlayingWidget) \
     X(carplay_nav,                 CarPlayNavWidget) \
-    X(map,                         MapWidget)
+    X(map,                         MapWidget) \
+    X(page_stack,                  PageStackWidget) \
+    X(page_button,                 PageButtonWidget)
 
 #endif // DASHBOARD_WIDGET_TABLE_H

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -109,6 +110,26 @@ double numericFrom(const capnp::DynamicValue::Reader& value, capnp::DynamicValue
     // Unreachable: buildFieldCache() rejects anything else up front, so an
     // evaluator carrying one is never valid enough to reach evaluation.
     return 0.0;
+}
+
+// bit(x, n): bit n of x, as 0 or 1. exprtk has no bitwise operators, and a
+// bitmask field -- GrayhillButtons carries 24 buttons in three bytes -- is
+// otherwise unreadable one button at a time.
+//
+// NaN, which the evaluator reports as "no value", for anything that is not a
+// question about a whole non-negative number: a negative or fractional x or n,
+// or n past 52, where a double stops holding every integer exactly. Answering 0
+// there would read as "button released".
+double bitOf(double x, double n)
+{
+    const bool whole_x = std::isfinite(x) && x >= 0.0 && std::floor(x) == x;
+    const bool whole_n = std::isfinite(n) && n >= 0.0 && n <= 52.0 && std::floor(n) == n;
+    if (!whole_x || !whole_n)
+    {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // n is a whole number in [0, 52] after the check above, so the cast is exact.
+    return std::fmod(std::floor(std::ldexp(x, -static_cast<int>(n))), 2.0);
 }
 
 }  // namespace
@@ -432,6 +453,7 @@ ExpressionEvaluator::ExpressionEvaluator(schema_type_t schema_type,
     impl_->symbol_table.add_function("bar_to_psi", &bar_to_psi<double>);
     impl_->symbol_table.add_function("celsius_to_fahrenheit", &celsius_to_fahrenheit<double>);
     impl_->symbol_table.add_function("fahrenheit_to_celsius", &fahrenheit_to_celsius<double>);
+    impl_->symbol_table.add_function("bit", &bitOf);
 
     impl_->extractVariables();
     impl_->validateVariablesAgainstSchema();

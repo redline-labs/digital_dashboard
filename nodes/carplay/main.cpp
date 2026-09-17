@@ -24,6 +24,7 @@
 #include <cxxopts.hpp>
 
 #include <atomic>
+#include <memory>
 #include <sstream>
 #include <chrono>
 #include <csignal>
@@ -142,6 +143,20 @@ int main(int argc, char** argv)
 
     if (args.count("simulate"))
     {
+        // No phone to hand the screen to, so say what would have been sent. This
+        // is what lets the dashboard's page switching be checked end to end with
+        // no hardware: the log shows the widget pausing and resuming.
+        auto last_visible = std::make_shared<std::atomic<int>>(-1);
+        bridge.setVisibilityHandler([last_visible](bool visible) {
+            if (last_visible->exchange(visible ? 1 : 0) != (visible ? 1 : 0))
+            {
+                SPDLOG_INFO("[sim] dashboard {} CarPlay -- a live session would send changeModes {}",
+                            visible ? "shows" : "hid", visible ? "untake" : "take");
+            }
+        });
+        // The bridge logs the edge itself; installing a handler is what arms it.
+        bridge.setVideoSubscriberHandler([](bool) {});
+
         const bool ok = carplay::runSimulation(bridge, g_stop,
                                                args["sim-width"].as<int>(),
                                                args["sim-height"].as<int>(),

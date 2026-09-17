@@ -19,6 +19,7 @@
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
 #include "carplay_location.capnp.h"
+#include "carplay_ui.capnp.h"
 
 #include <cstdint>
 #include <functional>
@@ -140,6 +141,15 @@ struct CallState
     float duration_sec = 0.0f;
 };
 
+// Something the phone did that asks the dashboard to change what it shows.
+enum class UiEventKind
+{
+    OemButton,
+    ScreenRequested,
+    ScreenReleased,
+    AppRequestedUi,
+};
+
 struct InputEvent
 {
     enum class Kind
@@ -210,6 +220,9 @@ class ZenohBridge
     void publishNav(const NavGuidance& nav);
     void publishNowPlaying(const NowPlaying& np);
     void publishCall(const CallState& call);
+    // One occurrence, on <prefix>/ui_event. Safe from any thread; never blocks
+    // for long, so the event-channel thread may call it.
+    void publishUiEvent(UiEventKind kind, const std::string& detail = {});
 
     // Dashboard -> driver. Callbacks fire on zenoh subscriber threads.
     void setInputHandler(std::function<void(const InputEvent&)> handler);
@@ -217,6 +230,9 @@ class ZenohBridge
     // A GPS source publishes fixes on <prefix>/location; the latest is cached
     // and read via latestLocation() from the iAP2 thread.
     void setLocationHandler(std::function<void(const LocationFix&)> handler);
+    // Whether the dashboard's CarPlay widget is on screen, from
+    // <prefix>/visibility. Subscribed once, on first use; pass nullptr to detach.
+    void setVisibilityHandler(std::function<void(bool visible)> handler);
 
   private:
     std::string prefix_;
@@ -242,6 +258,7 @@ class ZenohBridge
     pub_sub::ZenohPublisher<CarPlayNav> nav_pub_;
     pub_sub::ZenohPublisher<CarPlayNowPlaying> nowplaying_pub_;
     pub_sub::ZenohPublisher<CarPlayCall> call_pub_;
+    pub_sub::ZenohPublisher<CarPlayUiEvent> ui_event_pub_;
 
     std::function<void(const InputEvent&)> input_handler_;
     std::function<void(const AudioChunk&)> mic_handler_;
@@ -249,6 +266,12 @@ class ZenohBridge
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayInput>> input_sub_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayAudio>> mic_sub_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayLocation>> location_sub_;
+
+    // Guarded, unlike the handlers above: this one is swapped while its
+    // subscription is live, rather than by replacing the subscription.
+    std::mutex visibility_mutex_;
+    std::function<void(bool)> visibility_handler_;
+    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayVisibility>> visibility_sub_;
 
     uint32_t video_seq_ = 0;
 };

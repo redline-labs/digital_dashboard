@@ -47,6 +47,7 @@ The node that hosts the receiver and publishes its output on zenoh is
 | `airplay/event_queue.h` | `EventQueue`: ordering, coalescing, rate and drop policy for outbound events, with no clock of its own. |
 | `airplay/hid.h` | The four HID devices (touch, knob, media keys, telephony): descriptors, `/info` entries, reports. |
 | `airplay/oem_button.h` | `OemButtonConfig`, `addOemButtonInfo`, `isOemButtonPress`: the manufacturer tile on CarPlay's home screen. |
+| `airplay/screen_modes.h` | `buildChangeModesCommand`, `buildRequestUiCommand`, `parseScreenOwner`: handing the main screen between phone and car. Unconfirmed on hardware; the evidence for each constant is in the source. |
 | `airplay/media_stream.h` | `VideoPacket`, `AudioPacket`, `runScreenStream`, `runAudioStream`. |
 | `airplay/nalu.h` | avcC/hvcC to Annex-B rewriting, codec detection, keyframe detection for H.264 and H.265. |
 | `airplay/aac_decoder.h` | `AacDecoder`: raw AAC-LC access units to interleaved S16 PCM via libavcodec. |
@@ -183,6 +184,7 @@ the same primitives, and nothing opens a socket to real hardware.
 
 | Target | What it proves |
 | --- | --- |
+| `airplay_test_screen_modes` | The `changeModes` and `requestUI` bodies decode to exactly the expected tree, and the owner parser answers "does not say" for every malformed `modesChanged`. The fixtures are synthetic until a captured body replaces them. |
 | `airplay_test_tlv8` | Round trips, an empty value, fragmentation at and past 255 bytes. |
 | `airplay_test_crypto` | Known answers from RFC 7748, RFC 8032, RFC 8439, SP 800-38A, FIPS 180-4 and RFC 5869; SRP-6a has no published vector, so its values came from an independent Python port of LIVI's `srp.ts`. |
 | `airplay_test_channel_crypto` | Frame layout, both directions opening, several frames in one pass, and the counter desynchronisation that has no diagnostic on hardware. |

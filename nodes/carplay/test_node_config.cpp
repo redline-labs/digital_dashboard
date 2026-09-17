@@ -373,6 +373,40 @@ int main()
         expect(config.oem_button.label != "Should not stick", "including keys read before the failure");
     }
 
+    // screen_handover: off by default, read when present, and closed.
+    {
+        const NodeConfig defaults;
+        expect(!defaults.screen_handover.enabled, "the screen handover is off by default -- its messages are unconfirmed");
+
+        const fs::path on = dir / "handover_on.yaml";
+        writeFile(on, "screen_handover:\n  enabled: true\n  request_ui_on_show: true\n  visibility_stale_ms: 5000\n");
+        NodeConfig config;
+        expect(loadNodeConfig(on.string(), config), "a screen_handover block loads");
+        expect(config.screen_handover.enabled && config.screen_handover.request_ui_on_show &&
+                   config.screen_handover.visibility_stale_ms == 5000,
+               "and every key is read");
+
+        const fs::path typo = dir / "handover_typo.yaml";
+        writeFile(typo, "screen_handover:\n  enable: true\n");
+        NodeConfig typo_config;
+        expect(!loadNodeConfig(typo.string(), typo_config), "a misspelt screen_handover key is rejected");
+
+        const fs::path wrong_type = dir / "handover_type.yaml";
+        writeFile(wrong_type, "screen_handover:\n  enabled: sometimes\n");
+        NodeConfig type_config;
+        expect(!loadNodeConfig(wrong_type.string(), type_config), "a non-boolean enabled is rejected");
+
+        const fs::path too_fast = dir / "handover_fast.yaml";
+        writeFile(too_fast, "screen_handover:\n  visibility_stale_ms: 500\n");
+        NodeConfig fast_config;
+        expect(!loadNodeConfig(too_fast.string(), fast_config), "a timeout shorter than the heartbeat is rejected");
+
+        const fs::path not_map = dir / "handover_scalar.yaml";
+        writeFile(not_map, "screen_handover: true\n");
+        NodeConfig scalar_config;
+        expect(!loadNodeConfig(not_map.string(), scalar_config), "screen_handover as a scalar is rejected");
+    }
+
     // A file that is not YAML at all, and one that is not there.
     {
         const fs::path garbage = dir / "garbage.yaml";

@@ -24,6 +24,8 @@
 #include "segment_readout/segment_readout.h"
 #include "center_bar/center_bar.h"
 #include "background_rect/background_rect.h"
+#include "page_stack/page_stack.h"
+#include "page_button/page_button.h"
 
 namespace widget_registry
 {

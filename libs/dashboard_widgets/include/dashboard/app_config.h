@@ -57,17 +57,14 @@ inline widget_config_variant_t default_widget_config(widget_type_t type)
     return config;
 }
 
-struct widget_config_t {
-    widget_config_t() :
-        type{widget_type_t::unknown},
-        x{0},
-        y{0},
-        width{100},
-        height{100},
-        config{std::monostate{}}
-    {}
+struct widget_page_t;
 
-    widget_type_t type;
+struct widget_config_t {
+    // Default member initializers, not a constructor: `pages` holds a type that
+    // is incomplete here, and a user-written constructor would instantiate the
+    // vector's constructor before widget_page_t below completes it. The implicit
+    // one is only generated where it is used, which is after.
+    widget_type_t type{widget_type_t::unknown};
 
     // Optional stable handle for tooling (the agent control interface addresses
     // widgets as "#<id>"). Empty means "unnamed": the widget still gets an
@@ -75,13 +72,38 @@ struct widget_config_t {
     // are added or reordered.
     std::string id;
 
-    int16_t x;
-    int16_t y;
-    uint16_t width;
-    uint16_t height;
+    int16_t x{0};
+    int16_t y{0};
+    uint16_t width{100};
+    uint16_t height{100};
 
-    widget_config_variant_t config;
+    widget_config_variant_t config{std::monostate{}};
+
+    // A page_stack's pages; empty for every other type. Beside `config` rather
+    // than inside the page_stack's reflected struct because pages hold widgets,
+    // not settings: the properties form, config_json and validateStruct all walk
+    // `config`, and none of them should find a list of widgets there.
+    std::vector<widget_page_t> pages;
 };
+
+// One page of a page_stack. Its widgets are placed relative to the stack.
+struct widget_page_t {
+    std::string name;
+    // Whether next/prev stop here. go_to and back reach every page regardless.
+    bool in_cycle{true};
+    std::vector<widget_config_t> widgets;
+};
+
+// The pages a new widget of `type` starts with: one empty page for a page_stack,
+// so one dropped from the editor's palette saves as a config that loads.
+inline std::vector<widget_page_t> default_widget_pages(widget_type_t type)
+{
+    if (type == widget_type_t::page_stack)
+    {
+        return {widget_page_t{"main", true, {}}};
+    }
+    return {};
+}
 
 // One window: its design size, where it goes, and what is in it.
 //
@@ -117,10 +139,18 @@ struct dashboard_config_t
 // The generic half of this -- operator== and the YAML conversions for every
 // reflected struct and enum -- lives in config_codec/config_yaml.h. Only the
 // widget-specific pieces are below.
+inline bool operator==(const widget_page_t& lhs, const widget_page_t& rhs);
+
 inline bool operator==(const widget_config_t& lhs, const widget_config_t& rhs)
 {
     return lhs.type == rhs.type && lhs.id == rhs.id && lhs.x == rhs.x && lhs.y == rhs.y &&
-           lhs.width == rhs.width && lhs.height == rhs.height && lhs.config == rhs.config;
+           lhs.width == rhs.width && lhs.height == rhs.height && lhs.config == rhs.config &&
+           lhs.pages == rhs.pages;
+}
+
+inline bool operator==(const widget_page_t& lhs, const widget_page_t& rhs)
+{
+    return lhs.name == rhs.name && lhs.in_cycle == rhs.in_cycle && lhs.widgets == rhs.widgets;
 }
 
 
@@ -157,6 +187,12 @@ struct convert<widget_config_t> {
                 node["config"] = cfg;
             }
         }, rhs.config);
+
+        // Only where they mean something, so no other widget's entry changes.
+        if (rhs.type == widget_type_t::page_stack && !rhs.pages.empty())
+        {
+            node["pages"] = rhs.pages;
+        }
 
         return node;
     }
@@ -203,6 +239,33 @@ struct convert<widget_config_t> {
             rhs.type = widget_type_t::unknown;
         }
 
+        if (node["pages"]) rhs.pages = node["pages"].as<std::vector<widget_page_t>>();
+
+        return true;
+    }
+};
+
+template<>
+struct convert<widget_page_t> {
+    static Node encode(const widget_page_t& rhs)
+    {
+        Node node = {};
+        node["name"] = rhs.name;
+        // Written only when it says something: most pages are in the cycle.
+        if (!rhs.in_cycle)
+        {
+            node["in_cycle"] = false;
+        }
+        node["widgets"] = rhs.widgets;
+        return node;
+    }
+
+    static bool decode(const Node& node, widget_page_t& rhs)
+    {
+        if (!node.IsMap()) return false;
+        if (node["name"]) rhs.name = node["name"].as<std::string>();
+        if (node["in_cycle"]) rhs.in_cycle = node["in_cycle"].as<bool>();
+        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
         return true;
     }
 };
