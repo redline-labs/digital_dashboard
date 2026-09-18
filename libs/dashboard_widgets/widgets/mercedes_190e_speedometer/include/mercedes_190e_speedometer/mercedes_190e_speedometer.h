@@ -17,6 +17,7 @@
 #include <QColor>
 #include <QFontMetrics>
 #include <QPixmap>
+#include <QTransform>
 
 #include <cstddef>
 #include <cstdint>
@@ -92,7 +93,9 @@ private:
     void drawBoxesAtMPH(QPainter *painter, float mphValue, std::size_t numBoxes);
     void drawNeedle(QPainter *painter);
     void drawOverlayText(QPainter *painter); // For "miles", "km/h mph" stack etc.
-    void drawOdometer(QPainter *painter); // New method for odometer
+    void drawOdometer(QPainter *painter); // Blits the cached drums
+    void paintOdometer(QPainter *painter, const QString& digits);
+    static QRectF odometerCutoutRect();
 
     float valueToAngle(float value, float maxVal); // Changed to float
 
@@ -110,6 +113,13 @@ private:
     QFont kmh_text_font_;
     QFont unit_font_;
     QFont vdo_font_;
+
+    // The drums as last drawn, in widget pixels; see drawOdometer().
+    QPixmap odometer_cache_;
+    QRect odometer_cache_rect_;
+    QString odometer_cache_text_;
+    QTransform odometer_cache_transform_;
+    qreal odometer_cache_dpr_ = 0.0;
 
     // Expression parsers for speed and odometer calculations
     dashboard::ExpressionSubscriptionPtr<float> speed_expression_parser_;

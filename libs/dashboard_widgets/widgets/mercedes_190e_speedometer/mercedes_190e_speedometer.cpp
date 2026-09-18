@@ -123,20 +123,69 @@ void Mercedes190ESpeedometer::paintDynamic(QPainter& painter)
     drawNeedle(&painter); // Draw needle last so it's on top
 }
 
+namespace
+{
+constexpr float kCutoutPadding = 2.0f; // Padding around the digits for the cutout
+}  // namespace
+
+QRectF Mercedes190ESpeedometer::odometerCutoutRect()
+{
+    constexpr float totalDigitsWidth = kNumDigits * kDigitWidth + (kNumDigits - 1) * kDigitSpacing;
+    constexpr float cutoutWidth = totalDigitsWidth + 2 * kCutoutPadding;
+    constexpr float cutoutHeight = kDigitHeight + 2 * kCutoutPadding;
+    constexpr float cutoutX = -cutoutWidth / 2.0f;
+    constexpr float cutoutY = -30.0f - kCutoutPadding; // Position based on original digit Y and padding
+    return QRectF(cutoutX, cutoutY, cutoutWidth, cutoutHeight);
+}
+
 void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
+{
+    // The drums change about once a second and the needle every frame, so
+    // they are drawn once into a pixmap and blitted. Redrawing the cutout and
+    // six wheels of text each frame was a tenth of this process's paint time.
+    // Keyed on what they show and on where they land, in device pixels.
+    const QString text = odometerStale()
+                             ? QString(kNumDigits, QLatin1Char('-'))
+                             : QString::number(odometer_value_).rightJustified(kNumDigits, '0');
+    const QTransform transform = painter->worldTransform();
+    const qreal dpr = devicePixelRatioF();
+
+    if (odometer_cache_.isNull() || text != odometer_cache_text_ || transform != odometer_cache_transform_ ||
+        !qFuzzyCompare(dpr, odometer_cache_dpr_))
+    {
+        // Margin for the 1-unit border strokes, which straddle the cutout's
+        // edge, and a pixel for their antialiasing.
+        odometer_cache_rect_ =
+            transform.mapRect(odometerCutoutRect().adjusted(-1.0, -1.0, 1.0, 1.0)).toAlignedRect().adjusted(-1, -1, 1, 1);
+
+        // Greyscale-antialiased text, like every numeral in the cached
+        // underlay: Qt keeps subpixel text for painting straight onto a widget.
+        odometer_cache_ = QPixmap(odometer_cache_rect_.size() * dpr);
+        odometer_cache_.setDevicePixelRatio(dpr);
+        odometer_cache_.fill(Qt::transparent);
+
+        QPainter cache(&odometer_cache_);
+        cache.setRenderHints(painter->renderHints());
+        cache.translate(-odometer_cache_rect_.topLeft());
+        cache.setWorldTransform(transform, true);
+        paintOdometer(&cache, text);
+
+        odometer_cache_text_ = text;
+        odometer_cache_transform_ = transform;
+        odometer_cache_dpr_ = dpr;
+    }
+
+    painter->save();
+    painter->resetTransform();
+    painter->drawPixmap(odometer_cache_rect_.topLeft(), odometer_cache_);
+    painter->restore();
+}
+
+void Mercedes190ESpeedometer::paintOdometer(QPainter *painter, const QString& odoStr)
 {
     painter->save();
 
-    constexpr float totalDigitsWidth = kNumDigits * kDigitWidth + (kNumDigits - 1) * kDigitSpacing;
-
-    // Define the overall cutout area for the odometer
-    constexpr float cutoutPadding = 2.0f; // Padding around the digits for the cutout
-    constexpr float cutoutWidth = totalDigitsWidth + 2 * cutoutPadding;
-    constexpr float cutoutHeight = kDigitHeight + 2 * cutoutPadding;
-    constexpr float cutoutX = -cutoutWidth / 2.0f;
-    constexpr float cutoutY = -30.0f - cutoutPadding; // Position based on original digit Y and padding
-
-    constexpr QRectF cutoutRect(cutoutX, cutoutY, cutoutWidth, cutoutHeight);
+    const QRectF cutoutRect = odometerCutoutRect();
 
     // 1. Draw the main inset effect for the cutout area
     painter->setPen(Qt::NoPen);
@@ -158,19 +207,15 @@ void Mercedes190ESpeedometer::drawOdometer(QPainter *painter)
     
 
     // 2. Draw the individual digit wheels within this cutout
-    constexpr float digitStartX = cutoutX + cutoutPadding;
-    constexpr float digitStartY = cutoutY + cutoutPadding;
-
-    QString odoStr = odometerStale()
-                         ? QString(kNumDigits, QLatin1Char('-'))
-                         : QString::number(odometer_value_).rightJustified(kNumDigits, '0');
+    const qreal digitStartX = cutoutRect.x() + kCutoutPadding;
+    const qreal digitStartY = cutoutRect.y() + kCutoutPadding;
 
     painter->setFont(odo_font_);
     QFontMetricsF fm(odo_font_);
 
     for (uint8_t i = 0; i < kNumDigits; ++i)
     {
-        float currentDigitX = digitStartX + i * (kDigitWidth + kDigitSpacing);
+        const qreal currentDigitX = digitStartX + i * (kDigitWidth + kDigitSpacing);
         QRectF digitWheelRect(currentDigitX, digitStartY, kDigitWidth, kDigitHeight);
 
         // Background for individual wheel (can be slightly different or same as cutout base)
