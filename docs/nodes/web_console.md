@@ -66,10 +66,15 @@ code is in git history.
 
 ## Reflash
 
-Upload is pre-flighted against `std::filesystem::space` (`507` when short),
-written to `/data/updates/.incoming-<pid>-<ts>.raucb`, `fsync`ed, then
-`rename()`d into place -- same filesystem, so the swap is atomic. A scope guard
-unlinks on any early return and startup sweeps stale `.incoming-*`.
+One upload at a time: a second while one is in flight gets `409`, as does an
+upload while RAUC is installing. The upload is pre-flighted against
+`std::filesystem::space` (`507` when short, with the numbers); the bundle
+already staged counts as free, since the upload replaces it, and is removed
+first only when that is what makes room. The body is written to
+`/data/updates/.incoming-XXXXXX.raucb` (`mkstemps`, so `O_EXCL`), `fsync`ed and
+closed -- either failing fails the upload -- then `rename()`d into place and the
+directory `fsync`ed. Running out of space mid-upload is `507`, not `400`. The
+temporary is unlinked on any failure, and startup sweeps stale `.incoming-*`.
 
 RAUC is reached over D-Bus by name (`de.pengutronix.rauc.Installer`), with no
 generated interface code: the XML ships only in `rauc-dev`, which is not on the

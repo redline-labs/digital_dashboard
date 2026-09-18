@@ -3,10 +3,16 @@
 // timeout is clamped rather than trusted.
 
 #include "service_routes.h"
+#include "update_routes.h"
 
 #include <nlohmann/json.hpp>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 
 namespace
@@ -129,6 +135,117 @@ void testTimeoutIsClamped()
     check(timeoutFor(250.7) == milliseconds(250), "a fractional timeout is truncated");
 }
 
+namespace fs = std::filesystem;
+
+struct ScratchDir
+{
+    ScratchDir()
+    {
+        std::string pattern = (fs::temp_directory_path() / "web_console_test_XXXXXX").string();
+        if (::mkdtemp(pattern.data()) != nullptr) { path = pattern; }
+    }
+    ~ScratchDir()
+    {
+        std::error_code ec;
+        fs::remove_all(path, ec);
+    }
+    fs::path path;
+};
+
+// /dev/full answers every write with ENOSPC, which is a full /data without
+// having to fill one. It used to come back as 400 "upload aborted", which reads
+// as a network problem.
+void testFullDiskIs507()
+{
+    ScratchDir dir;
+    const int fd = ::open("/dev/full", O_WRONLY | O_CLOEXEC);
+    if (fd < 0)
+    {
+        check(false, "/dev/full can be opened");
+        return;
+    }
+    const fs::path temporary = dir.path / ".incoming-test.raucb";
+    const fs::path staged = dir.path / "bundle.raucb";
+    BundleSink sink(fd, temporary, staged, 4096, UploadLease{});
+
+    const std::string chunk(4096, 'x');
+    check(!sink.write(chunk.data(), chunk.size()), "a write to a full disk fails");
+    const Reply reply = sink.finish(false);
+    check(reply.status == 507, "a full disk is 507 (got " + std::to_string(reply.status) + ")");
+    check(reply.body.find("room") != std::string::npos, "and says it ran out of room");
+    check(!fs::exists(staged), "nothing is staged");
+}
+
+void testAbortedAndShortUploadsStageNothing()
+{
+    ScratchDir dir;
+    const fs::path staged = dir.path / "bundle.raucb";
+    const std::string chunk(100, 'x');
+
+    {
+        const fs::path temporary = dir.path / ".incoming-a.raucb";
+        const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        BundleSink sink(fd, temporary, staged, 200, UploadLease{});
+        check(sink.write(chunk.data(), chunk.size()), "a write to a real file succeeds");
+        check(sink.finish(false).status == 400, "a client that went away is 400");
+    }
+    check(!fs::exists(staged), "an aborted upload stages nothing");
+    check(!fs::exists(dir.path / ".incoming-a.raucb"), "and leaves no temporary");
+
+    {
+        const fs::path temporary = dir.path / ".incoming-b.raucb";
+        const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        BundleSink sink(fd, temporary, staged, 200, UploadLease{});
+        check(sink.write(chunk.data(), chunk.size()), "a write to a real file succeeds");
+        check(sink.finish(true).status == 400, "a body shorter than Content-Length is 400");
+    }
+    check(!fs::exists(staged), "a short upload stages nothing");
+
+    {
+        const fs::path temporary = dir.path / ".incoming-c.raucb";
+        const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        BundleSink sink(fd, temporary, staged, 100, UploadLease{});
+        check(sink.write(chunk.data(), chunk.size()), "a write to a real file succeeds");
+        check(sink.finish(true).status == 200, "a complete upload is staged");
+    }
+    std::error_code ec;
+    check(fs::file_size(staged, ec) == 100 && !ec, "with every byte");
+}
+
+void testBootEntries()
+{
+    const auto entry = bootEntryJson("boot-b+3-0.conf");
+    check(entry.has_value(), "boot-b+3-0.conf is an entry");
+    if (entry)
+    {
+        check((*entry)["slot"] == "b", "its slot is read");
+        check((*entry)["tries_left"] == 3, "its tries left are read");
+        check((*entry)["tries_done"] == 0, "its tries done are read");
+    }
+
+    const auto counted = bootEntryJson("boot-a.conf");
+    check(counted && (*counted)["tries_left"].is_null(), "no suffix means not being counted");
+
+    check(!bootEntryJson("boot-c.conf"), "an unknown slot is not an entry");
+    check(!bootEntryJson("boot-a+.conf"), "an empty count is not an entry");
+    check(!bootEntryJson("loader.conf"), "an unrelated file is not an entry");
+
+    // std::stoi threw std::out_of_range on this, out of the status handler.
+    bool threw = false;
+    try
+    {
+        check(!bootEntryJson("boot-b+99999999999999999999-0.conf"),
+              "a count too large for an int is skipped");
+        check(!bootEntryJson("boot-b+1-99999999999999999999.conf"),
+              "and so is a done count too large");
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    check(!threw, "an oversized count does not throw");
+}
+
 }  // namespace
 
 int main()
@@ -136,6 +253,9 @@ int main()
     testValidCall();
     testWrongTypesAreRefusedNotThrown();
     testTimeoutIsClamped();
+    testFullDiskIs507();
+    testAbortedAndShortUploadsStageNothing();
+    testBootEntries();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

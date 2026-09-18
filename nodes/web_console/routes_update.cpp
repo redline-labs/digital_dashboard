@@ -23,9 +23,9 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <regex>
 #include <string>
 #include <system_error>
@@ -38,7 +38,7 @@ namespace
 namespace fs = std::filesystem;
 using nlohmann::json;
 
-// A bundle is ~338 MB and the slot it writes into needs room beside it. Refusing
+// A bundle is ~1 GB and the slot it writes into needs room beside it. Refusing
 // before a byte is written beats filling /data and failing at 99%.
 constexpr std::uint64_t kFreeSpaceMargin = 64ull * 1024ull * 1024ull;
 
@@ -57,24 +57,12 @@ json bootTries()
         return entries;
     }
 
-    // boot-a.conf, boot-b+3.conf, boot-b+2-1.conf
-    static const std::regex pattern(R"(^boot-([ab])(?:\+(\d+))?(?:-(\d+))?\.conf$)");
     for (const auto& entry : fs::directory_iterator(dir, ec))
     {
-        std::smatch match;
-        const std::string name = entry.path().filename().string();
-        if (!std::regex_match(name, match, pattern))
+        if (auto item = bootEntryJson(entry.path().filename().string()))
         {
-            continue;
+            entries.push_back(std::move(*item));
         }
-        json item;
-        item["entry"] = name;
-        item["slot"] = match[1].str();
-        // No suffix at all means the entry is not being counted -- it has been
-        // marked good, or never needed counting.
-        item["tries_left"] = match[2].matched ? json(std::stoi(match[2].str())) : json(nullptr);
-        item["tries_done"] = match[3].matched ? json(std::stoi(match[3].str())) : json(nullptr);
-        entries.push_back(item);
     }
     return entries;
 }
@@ -100,116 +88,179 @@ json slotsJson(rauc_client::Installer& installer)
     return slots;
 }
 
-// Streams an upload straight to disk.
-//
-// Writes to a dot-prefixed temporary and renames only on success, so RAUC can
-// never be handed a half-written bundle: the rename is atomic within the
-// filesystem, and a crashed or abandoned upload leaves a .incoming-* file that
-// the node sweeps at startup rather than something that looks installable.
-class BundleSink : public UploadSink
+// A path's errno as the status an upload should answer with. A full /data is
+// 507 with the reason, not the 400 "upload aborted" it used to be, which sent
+// people looking for a network problem.
+Reply storageFailure(int error, const std::string& what, const fs::path& where)
 {
-public:
-    BundleSink(fs::path temporary, fs::path destination, std::uint64_t expected)
-        : temporary_(std::move(temporary)), destination_(std::move(destination)),
-          expected_(expected), out_(temporary_, std::ios::binary | std::ios::trunc)
+    if (error == ENOSPC || error == EDQUOT)
     {
-        if (!out_)
-        {
-            SPDLOG_ERROR("[update] cannot open {}: {}", temporary_.string(), std::strerror(errno));
-        }
+        return errorReply(507, "ran out of room on " + where.string() + " while " + what);
     }
-
-    ~BundleSink() override
-    {
-        // Whatever happened, do not leave a partial file behind.
-        if (!renamed_)
-        {
-            out_.close();
-            std::error_code ec;
-            fs::remove(temporary_, ec);
-        }
-    }
-
-    bool write(const char* data, std::size_t length) override
-    {
-        if (!out_) { return false; }
-        out_.write(data, static_cast<std::streamsize>(length));
-        if (!out_)
-        {
-            SPDLOG_ERROR("[update] write to {} failed: {}", temporary_.string(), std::strerror(errno));
-            return false;
-        }
-        received_ += length;
-        return true;
-    }
-
-    Reply finish(bool complete) override
-    {
-        if (!complete || !out_)
-        {
-            SPDLOG_WARN("[update] upload aborted after {} bytes", received_);
-            return errorReply(400, "upload aborted");
-        }
-
-        // A SHORT BODY IS NOT A FINISHED ONE, and until this check existed the
-        // difference was invisible here: httplib stops reading at its payload
-        // limit, the reader then sees what looks like a clean end of body, and
-        // this function happily renamed a truncated file into place. The client
-        // got 413 -- httplib replaces the handler's status -- while the board
-        // was left holding a corrupt bundle that /api/update/status reported as
-        // staged and /api/update/install accepted. RAUC caught it, with
-        // "Signature size exceeds bundle size", which is the last line of
-        // defence and not where this should be caught.
-        //
-        // Also covers the ordinary case of a client that disconnects mid-upload.
-        if (expected_ > 0 && received_ != expected_)
-        {
-            SPDLOG_WARN("[update] upload short: {} of {} bytes; not staging",
-                        received_, expected_);
-            return errorReply(400, "upload incomplete: received " + std::to_string(received_) +
-                                       " of " + std::to_string(expected_) + " bytes");
-        }
-
-        out_.flush();
-        out_.close();
-
-        // fsync before the rename: a rename that lands before the data does is
-        // exactly how a power cut produces an installable-looking bundle that
-        // is not one.
-        {
-            const int fd = ::open(temporary_.c_str(), O_RDONLY);
-            if (fd >= 0)
-            {
-                ::fsync(fd);
-                ::close(fd);
-            }
-        }
-
-        std::error_code ec;
-        fs::rename(temporary_, destination_, ec);
-        if (ec)
-        {
-            SPDLOG_ERROR("[update] rename to {} failed: {}", destination_.string(), ec.message());
-            return errorReply(500, "could not stage the bundle: " + ec.message());
-        }
-        renamed_ = true;
-
-        SPDLOG_INFO("[update] staged {} ({} bytes)", destination_.string(), received_);
-        return jsonReply(200, json{{"staged", destination_.string()}, {"bytes", received_}});
-    }
-
-private:
-    fs::path temporary_;
-    fs::path destination_;
-    // What Content-Length promised. Zero means the client did not say (a chunked
-    // upload), in which case there is nothing to check against.
-    std::uint64_t expected_ { 0 };
-    std::ofstream out_;
-    std::uint64_t received_ { 0 };
-    bool renamed_ { false };
-};
+    return errorReply(500, what + " failed: " + std::strerror(error));
+}
 
 }  // namespace
+
+std::optional<json> bootEntryJson(const std::string& filename)
+{
+    // boot-a.conf, boot-b+3.conf, boot-b+2-1.conf
+    static const std::regex pattern(R"(^boot-([ab])(?:\+(\d+))?(?:-(\d+))?\.conf$)");
+    std::smatch match;
+    if (!std::regex_match(filename, match, pattern))
+    {
+        return std::nullopt;
+    }
+
+    // Bounded, because \d+ matches any number of digits and std::stoi threw on
+    // one too many. A count that does not fit is not an entry the bootloader
+    // wrote, so it is skipped rather than guessed at.
+    const auto count = [&match](std::size_t group, json& out) {
+        if (!match[group].matched)
+        {
+            out = nullptr;
+            return true;
+        }
+        const std::string digits = match[group].str();
+        int value = 0;
+        const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+        if (error != std::errc{} || end != digits.data() + digits.size()) { return false; }
+        out = value;
+        return true;
+    };
+
+    json item;
+    item["entry"] = filename;
+    item["slot"] = match[1].str();
+    // No suffix at all means the entry is not being counted -- it has been
+    // marked good, or never needed counting.
+    json left;
+    json done;
+    if (!count(2, left) || !count(3, done))
+    {
+        return std::nullopt;
+    }
+    item["tries_left"] = left;
+    item["tries_done"] = done;
+    return item;
+}
+
+BundleSink::BundleSink(int fd, fs::path temporary, fs::path destination, std::uint64_t expected,
+                       UploadLease lease)
+    : fd_(fd), temporary_(std::move(temporary)), destination_(std::move(destination)),
+      expected_(expected), lease_(std::move(lease))
+{
+}
+
+BundleSink::~BundleSink()
+{
+    if (fd_ >= 0) { ::close(fd_); }
+    // Whatever happened, do not leave a partial file behind.
+    if (!renamed_)
+    {
+        std::error_code ec;
+        fs::remove(temporary_, ec);
+    }
+}
+
+bool BundleSink::write(const char* data, std::size_t length)
+{
+    if (fd_ < 0 || writeError_ != 0) { return false; }
+    while (length > 0)
+    {
+        const ssize_t written = ::write(fd_, data, length);
+        if (written < 0)
+        {
+            if (errno == EINTR) { continue; }
+            writeError_ = errno;
+            SPDLOG_ERROR("[update] write to {} failed: {}", temporary_.string(),
+                         std::strerror(writeError_));
+            return false;
+        }
+        const auto count = static_cast<std::size_t>(written);  // >= 0, checked above
+        data += count;
+        length -= count;
+        received_ += count;
+    }
+    return true;
+}
+
+Reply BundleSink::finish(bool complete)
+{
+    if (writeError_ != 0)
+    {
+        return storageFailure(writeError_, "writing the bundle", destination_.parent_path());
+    }
+    if (!complete || fd_ < 0)
+    {
+        SPDLOG_WARN("[update] upload aborted after {} bytes", received_);
+        return errorReply(400, "upload aborted after " + std::to_string(received_) + " bytes");
+    }
+
+    // A SHORT BODY IS NOT A FINISHED ONE, and until this check existed the
+    // difference was invisible here: httplib stops reading at its payload
+    // limit, the reader then sees what looks like a clean end of body, and
+    // this function happily renamed a truncated file into place. The client
+    // got 413 -- httplib replaces the handler's status -- while the board
+    // was left holding a corrupt bundle that /api/update/status reported as
+    // staged and /api/update/install accepted. RAUC caught it, with
+    // "Signature size exceeds bundle size", which is the last line of
+    // defence and not where this should be caught.
+    //
+    // Also covers the ordinary case of a client that disconnects mid-upload.
+    if (expected_ > 0 && received_ != expected_)
+    {
+        SPDLOG_WARN("[update] upload short: {} of {} bytes; not staging",
+                    received_, expected_);
+        return errorReply(400, "upload incomplete: received " + std::to_string(received_) +
+                                   " of " + std::to_string(expected_) + " bytes");
+    }
+
+    // fsync before the rename: a rename that lands before the data does is
+    // exactly how a power cut produces an installable-looking bundle that is
+    // not one. Both it and close() can report a deferred write error, so
+    // either failing means the bundle is not known to be on disk.
+    const fs::path directory = destination_.parent_path();
+    if (::fsync(fd_) != 0)
+    {
+        const int error = errno;
+        SPDLOG_ERROR("[update] fsync {} failed: {}", temporary_.string(), std::strerror(error));
+        return storageFailure(error, "flushing the bundle", directory);
+    }
+    const int closed = ::close(fd_);
+    fd_ = -1;
+    if (closed != 0)
+    {
+        const int error = errno;
+        SPDLOG_ERROR("[update] close {} failed: {}", temporary_.string(), std::strerror(error));
+        return storageFailure(error, "closing the bundle", directory);
+    }
+
+    std::error_code ec;
+    fs::rename(temporary_, destination_, ec);
+    if (ec)
+    {
+        SPDLOG_ERROR("[update] rename to {} failed: {}", destination_.string(), ec.message());
+        return errorReply(500, "could not stage the bundle: " + ec.message());
+    }
+    renamed_ = true;
+
+    // And the directory, or the rename itself can be lost to a power cut,
+    // leaving the previous bundle -- or none -- where this one was reported.
+    const int dirFd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd < 0 || ::fsync(dirFd) != 0)
+    {
+        const int error = errno;
+        if (dirFd >= 0) { ::close(dirFd); }
+        SPDLOG_ERROR("[update] fsync {} failed: {}", directory.string(), std::strerror(error));
+        return errorReply(500, std::string("the bundle was staged but may not survive a power cut: ") +
+                                   std::strerror(error));
+    }
+    ::close(dirFd);
+
+    SPDLOG_INFO("[update] staged {} ({} bytes)", destination_.string(), received_);
+    return jsonReply(200, json{{"staged", destination_.string()}, {"bytes", received_}});
+}
 
 void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 {
@@ -238,12 +289,16 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 
         // What is staged and waiting, so the page can offer Install without a
         // fresh upload.
+        // file_size fails for a missing file, which is the usual "nothing
+        // staged"; checking exists() first and then ignoring this error
+        // reported (uintmax_t)-1 bytes for a file that vanished in between.
         std::error_code ec;
         const auto staged = state.stagedBundle();
-        if (fs::exists(staged, ec))
+        const std::uintmax_t stagedBytes = fs::file_size(staged, ec);
+        if (!ec)
         {
             out["staged"] = {{"path", staged.string()},
-                             {"bytes", static_cast<std::uint64_t>(fs::file_size(staged, ec))}};
+                             {"bytes", static_cast<std::uint64_t>(stagedBytes)}};
         }
         else
         {
@@ -255,6 +310,14 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
     routes.postUpload(
         "/api/update/bundle",
         [&state](std::uint64_t contentLength, Reply& refusal) -> std::unique_ptr<UploadSink> {
+            UploadLease lease = state.tryBeginUpload();
+            if (!lease)
+            {
+                SPDLOG_WARN("[update] upload refused: another is in progress");
+                refusal = errorReply(409, "another upload is in progress");
+                return nullptr;
+            }
+
             rauc_client::Installer* installer = state.installer();
 
             // Refuse while an install is running: overwriting the bundle RAUC is
@@ -276,24 +339,60 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
             std::error_code ec;
             fs::create_directories(state.uploadDir(), ec);
 
+            // The staged bundle is about to be replaced, so its space counts as
+            // free -- but only once it is gone, since the new one is written
+            // beside it. It is removed up front only when that is what makes
+            // the upload fit.
+            const auto staged = state.stagedBundle();
+            std::error_code sizeError;
+            const std::uintmax_t stagedSize = fs::file_size(staged, sizeError);
+            const std::uint64_t stagedBytes = sizeError ? 0 : static_cast<std::uint64_t>(stagedSize);
+
             const auto space = fs::space(state.uploadDir(), ec);
-            if (!ec && contentLength > 0 && space.available < contentLength + kFreeSpaceMargin)
+            const std::uint64_t needed = contentLength + kFreeSpaceMargin;
+            if (!ec && contentLength > 0 && space.available < needed)
             {
-                const std::uint64_t needed = contentLength + kFreeSpaceMargin;
-                SPDLOG_WARN("[update] upload refused: {} bytes free, {} needed",
-                            space.available, needed);
-                // The numbers, because "no space" without them tells whoever is
-                // at the bench nothing about how much to free.
-                refusal = errorReply(507, "not enough room on " + state.uploadDir().string() +
-                                              ": " + std::to_string(space.available) +
-                                              " bytes free, " + std::to_string(needed) +
-                                              " needed");
-                return nullptr;
+                if (space.available + stagedBytes >= needed)
+                {
+                    SPDLOG_INFO("[update] removing the staged bundle ({} bytes) to make room",
+                                stagedBytes);
+                    fs::remove(staged, ec);
+                }
+                else
+                {
+                    SPDLOG_WARN("[update] upload refused: {} bytes free, {} staged, {} needed",
+                                space.available, stagedBytes, needed);
+                    // The numbers, because "no space" without them tells whoever
+                    // is at the bench nothing about how much to free.
+                    std::string message = "not enough room on " + state.uploadDir().string() +
+                                          ": " + std::to_string(space.available) +
+                                          " bytes free, " + std::to_string(needed) +
+                                          " needed (the bundle plus " +
+                                          std::to_string(kFreeSpaceMargin) + " bytes of headroom)";
+                    if (stagedBytes > 0)
+                    {
+                        message += ", counting the " + std::to_string(stagedBytes) +
+                                   " bytes of the staged bundle this would replace";
+                    }
+                    refusal = errorReply(507, message);
+                    return nullptr;
+                }
             }
 
-            const auto temporary = state.uploadDir() /
-                                   (".incoming-" + std::to_string(::getpid()) + ".raucb");
-            return std::make_unique<BundleSink>(temporary, state.stagedBundle(), contentLength);
+            // mkstemps rather than a fixed name: O_EXCL, and a name no other
+            // upload or leftover can share.
+            std::string temporary = (state.uploadDir() / ".incoming-XXXXXX.raucb").string();
+            const int fd = ::mkstemps(temporary.data(), static_cast<int>(std::strlen(".raucb")));
+            if (fd < 0)
+            {
+                const int error = errno;
+                SPDLOG_ERROR("[update] cannot create a file in {}: {}", state.uploadDir().string(),
+                             std::strerror(error));
+                refusal = storageFailure(error, "creating the upload file", state.uploadDir());
+                return nullptr;
+            }
+            return std::make_unique<BundleSink>(fd, temporary, staged, contentLength,
+                                                std::move(lease));
         });
 
     routes.post("/api/update/install", [&state](const std::string&) {

@@ -131,6 +131,94 @@ void testStopEndsAnOpenProgressStreamPromptly()
               " ms)");
 }
 
+// Every file in `dir` whose name starts with `prefix`.
+int countFiles(const fs::path& dir, const std::string& prefix)
+{
+    int n = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec))
+    {
+        if (entry.path().filename().string().starts_with(prefix)) { ++n; }
+    }
+    return n;
+}
+
+std::string readFile(const fs::path& path)
+{
+    std::string out;
+    if (FILE* f = std::fopen(path.c_str(), "rb"))
+    {
+        char buffer[4096];
+        std::size_t n = 0;
+        while ((n = std::fread(buffer, 1, sizeof buffer, f)) > 0) { out.append(buffer, n); }
+        std::fclose(f);
+    }
+    return out;
+}
+
+// Two uploads used to share one temporary name, .incoming-<pid>.raucb, and
+// write into the same file at once. The second must now be refused while the
+// first is in flight, and the first must land intact.
+void testASecondUploadIsRefusedWhileOneIsInFlight()
+{
+    ScratchDir dir;
+    Harness harness(dir.path);
+    check(harness.bound, "the harness binds a loopback port");
+    if (!harness.bound) { return; }
+
+    const std::string first(64 * 1024, 'A');
+    std::atomic<bool> release { false };
+    int firstStatus = 0;
+
+    std::thread slow([&] {
+        httplib::Client client = harness.client();
+        // Half the body, then hold the connection open until told to finish.
+        auto result = client.Post(
+            "/api/update/bundle", first.size(),
+            [&](std::size_t offset, std::size_t, httplib::DataSink& sink) {
+                if (offset == 0)
+                {
+                    return sink.write(first.data(), first.size() / 2);
+                }
+                while (!release) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
+                return sink.write(first.data() + offset, first.size() - offset);
+            },
+            "application/octet-stream");
+        firstStatus = result ? result->status : -1;
+    });
+
+    // The temporary exists once the first upload holds the lease.
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    while (countFiles(dir.path, ".incoming-") == 0 && Clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(countFiles(dir.path, ".incoming-") == 1, "the first upload is being written");
+
+    {
+        httplib::Client client = harness.client();
+        auto result = client.Post("/api/update/bundle", std::string(1000, 'B'),
+                                  "application/octet-stream");
+        check(result && result->status == 409,
+              "a second upload meanwhile is 409 (got " +
+                  std::to_string(result ? result->status : -1) + ")");
+    }
+
+    release = true;
+    slow.join();
+    check(firstStatus == 200, "the first upload completes (got " + std::to_string(firstStatus) + ")");
+    check(readFile(dir.path / "bundle.raucb") == first, "and is staged intact");
+    check(countFiles(dir.path, ".incoming-") == 0, "no temporary is left behind");
+
+    {
+        httplib::Client client = harness.client();
+        const std::string third(1000, 'C');
+        auto result = client.Post("/api/update/bundle", third, "application/octet-stream");
+        check(result && result->status == 200, "once it is done, the next upload is accepted");
+        check(readFile(dir.path / "bundle.raucb") == third, "and replaces the staged bundle");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -138,6 +226,7 @@ int main()
     spdlog::set_level(spdlog::level::warn);
 
     testStopEndsAnOpenProgressStreamPromptly();
+    testASecondUploadIsRefusedWhileOneIsInFlight();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

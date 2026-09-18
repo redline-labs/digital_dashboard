@@ -11,7 +11,19 @@ namespace web_console
 {
 namespace fs = std::filesystem;
 
+UploadLease::~UploadLease()
+{
+    if (busy_ != nullptr) { busy_->store(false); }
+}
+
 UpdateRoutes::UpdateRoutes(const NodeConfig& config) : config_(config) {}
+
+UploadLease UpdateRoutes::tryBeginUpload()
+{
+    bool expected = false;
+    if (!uploading_.compare_exchange_strong(expected, true)) { return {}; }
+    return UploadLease(uploading_);
+}
 
 UpdateRoutes::~UpdateRoutes()
 {
