@@ -37,3 +37,10 @@ logs/
 __pycache__/
 *.py[cod]
 .venv/
+
+# The web console's wasm module is build output of tools/build-wasm.sh, emitted
+# into web/ because that is where the console serves assets from. Not committed:
+# a stale binary that disagrees with the schemas it was built against is the
+# exact drift the layout fingerprint exists to catch.
+web/redline.js
+web/redline.wasm

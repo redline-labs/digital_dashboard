@@ -15,7 +15,7 @@
 <nav>
   <button class="tab active" data-view="info">Info</button>
   <button class="tab" data-view="update">Update</button>
-  <button class="tab" data-view="health" disabled title="Arrives with the wasm bus client">Health</button>
+  <button class="tab" data-view="health">Health</button>
   <button class="tab" data-view="services" disabled title="Arrives with the wasm bus client">Services</button>
 </nav>
 
@@ -42,6 +42,18 @@
   <section>
     <h2>Slots</h2>
     <div id="slots"></div>
+  </section>
+</main>
+
+<main id="health" hidden>
+  <section>
+    <h2>Bus</h2>
+    <div id="bus-status" class="muted">not connected</div>
+  </section>
+
+  <section>
+    <h2>Nodes</h2>
+    <div id="nodes"></div>
   </section>
 </main>
 

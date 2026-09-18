@@ -139,7 +139,26 @@ endif()
 # -fexceptions, not -fno-exceptions: KJ throws kj::Exception and capnp's
 # SchemaLoader depends on it. This is why wasi-sdk was not an option.
 target_compile_options(redline_wasm PRIVATE -fexceptions -Os)
+# ASYNCIFY, because of one line upstream.
+#
+# _z_ws_emscripten_open() calls connect(), breaks immediately -- its own comment
+# says connect returns -1 even when the socket is actually opening -- and then
+# does a single z_sleep_ms(100) as a stated workaround "as connect returns before
+# the websocket is actually open". On this platform z_sleep_ms is
+# emscripten_sleep, which aborts outright without asyncify support:
+#
+#   Aborted(Please compile your program with async support ...)
+#
+# So the transport is not inherently blocking; it has one sleep papering over an
+# async handshake. ASYNCIFY_ONLY scopes the instrumentation to that call path
+# rather than paying for the whole module -- capnp decoding, SchemaLoader and the
+# layout hashing have no business being rewound.
+#
+# Note what this does NOT do: ASYNCIFY_EXPORTS is deprecated and empty, so embind
+# exports stay synchronous. decodeToJson(), healthFromPayload() and the layout
+# hash functions keep working exactly as they already do, and app.js is unaffected.
 target_link_options(redline_wasm PRIVATE
+    -sASYNCIFY
     -fexceptions
     -lembind
     -sMODULARIZE=1

@@ -15,6 +15,11 @@
 // must fail before the node reports itself ready, or systemd sees a healthy
 // service that is not listening. bind() is called on the main thread and its
 // result checked; serve() then runs the accept loop on its own.
+namespace node_health
+{
+class HealthMonitor;
+}
+
 namespace web_console
 {
 
@@ -26,7 +31,8 @@ public:
     // The update state is passed in rather than owned: its D-Bus connection
     // outlives any request, and progress keeps arriving whether or not a
     // browser is listening.
-    HttpServer(const NodeConfig& config, UpdateRoutes& updates);
+    HttpServer(const NodeConfig& config, UpdateRoutes& updates,
+               ::node_health::HealthMonitor& health);
     ~HttpServer();
 
     HttpServer(const HttpServer&) = delete;
@@ -147,6 +153,12 @@ private:
 
 // Defined in routes_system.cpp.
 void registerSystemRoutes(RouteRegistrar& routes);
+
+// Defined in routes_health.cpp. Forward declared rather than included so this
+// header stays free of node_health -- and therefore of zenoh, which
+// node_health's monitor links.
+namespace detail { }
+void registerHealthRoutes(RouteRegistrar& routes, ::node_health::HealthMonitor& monitor);
 
 // Defined in routes_update.cpp. Takes the stream so the node can publish
 // progress into it from the RAUC callback thread.

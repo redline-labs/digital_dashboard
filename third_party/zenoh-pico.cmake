@@ -44,6 +44,11 @@ FetchContent_Declare(
 # (The zenoh-cpp-vendored copy of pico is 1.9.0 and still uses the old name. Do
 # not read that copy to answer questions about this one -- that mistake cost a
 # build.)
+# Pico's own logging, so a stalled open says where it stalled rather than
+# timing out silently. Matches upstream's emscripten CI, which builds with
+# -DZENOH_LOG=debug.
+set(ZENOH_LOG "debug" CACHE STRING "" FORCE)
+
 set(ZP_PLATFORM "emscripten" CACHE STRING "" FORCE)
 
 # zenohpico::lib aliases the SHARED library when BUILD_SHARED_LIBS is on, which

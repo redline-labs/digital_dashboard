@@ -59,6 +59,19 @@ emcmake cmake -S "${ROOT}/wasm" -B "${WASM_BUILD}" \
 
 cmake --build "${WASM_BUILD}" -j"$(nproc)"
 
+# Put the artifacts where the console serves them from. core::paths::resource()
+# finds web/ next to the executable once installed and in the checkout
+# otherwise, and cmake/ProjectInstall.cmake's redline_install_data ships the
+# directory -- so this is the one place they have to land.
+#
+# They are BUILD OUTPUT and are gitignored: this tree commits nothing generated,
+# and a committed multi-megabyte binary that drifts from the schemas it was
+# built against is exactly the failure the layout fingerprint exists to catch.
+ASSETS="${ROOT}/web"
+mkdir -p "${ASSETS}"
+cp "${WASM_BUILD}/redline.js" "${WASM_BUILD}/redline.wasm" "${ASSETS}/"
+echo "installed into ${ASSETS}: redline.js redline.wasm"
+
 echo
 echo "built:"
 ls -lh "${WASM_BUILD}"/redline.js "${WASM_BUILD}"/redline.wasm 2>/dev/null || true

@@ -259,16 +259,21 @@ void RouteRegistrar::events(const std::string& pattern, EventStream& stream)
 
 struct HttpServer::Impl
 {
-    Impl(const NodeConfig& c, UpdateRoutes& u) : config(c), updates(u) {}
+    Impl(const NodeConfig& c, UpdateRoutes& u, ::node_health::HealthMonitor& h)
+        : config(c), updates(u), health(h)
+    {
+    }
 
     NodeConfig config;
     UpdateRoutes& updates;
+    ::node_health::HealthMonitor& health;
     httplib::Server server;
     int boundPort { 0 };
 };
 
-HttpServer::HttpServer(const NodeConfig& config, UpdateRoutes& updates)
-    : impl_(std::make_unique<Impl>(config, updates))
+HttpServer::HttpServer(const NodeConfig& config, UpdateRoutes& updates,
+                       ::node_health::HealthMonitor& health)
+    : impl_(std::make_unique<Impl>(config, updates, health))
 {
 }
 
@@ -312,6 +317,7 @@ bool HttpServer::bind()
     RouteRegistrar routes(registrarImpl);
     registerSystemRoutes(routes);
     registerUpdateRoutes(routes, impl_->updates);
+    registerHealthRoutes(routes, impl_->health);
 
     // int, because that is httplib's parameter type; the config keeps a
     // uint16_t so the range is validated where it is read.

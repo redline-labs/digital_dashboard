@@ -18,6 +18,7 @@ add_executable(web_console
     node_config.cpp
     http_server.cpp
     routes_system.cpp
+    routes_health.cpp
     routes_update.cpp
     update_routes.cpp
 )

@@ -347,6 +347,81 @@ function wireUpdate() {
   });
 }
 
+// --- Health view ----------------------------------------------------------
+//
+// Served by the node, not read from the bus directly.
+//
+// The wasm module CAN decode these samples -- that path is built and proven
+// (212/212 layout fingerprints, and a NodeHealth sample decoded byte-identically
+// to native). What is not proven is zenoh-pico's emscripten WebSocket transport
+// reaching a zenohd: it sends a correct upgrade and a correct zenoh InitSyn
+// frame, then never receives an InitAck, and upstream's emscripten CI is
+// build-only so that path has no evidence of ever having run.
+//
+// So the node holds the zenoh session and serves /api/health, classified by
+// node_health::HealthMonitor -- the same classifier `inspect health` uses. The
+// browser renders a verdict it was given rather than one it invented, which was
+// the property that actually mattered.
+
+const HEALTH_POLL_MS = 2000;
+let healthTimer = null;
+
+function renderHealth(data) {
+  $("bus-status").textContent = data.bus_available
+    ? `observing the bus \u00b7 revision ${data.revision ?? "?"}`
+    : (data.error ?? "no bus session");
+
+  const host = $("nodes");
+  host.replaceChildren();
+
+  const list = data.nodes ?? [];
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = data.bus_available ? "no nodes have reported yet" : "nothing observable";
+    host.append(empty);
+    return;
+  }
+
+  for (const node of list.sort((a, b) => a.name.localeCompare(b.name))) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const head = document.createElement("div");
+    head.className = "row-head";
+    const label = document.createElement("strong");
+    label.textContent = node.name;
+    // healthy comes from isHealthy() on the node, not from guessing at the
+    // verdict string here.
+    head.append(label, pill(node.verdict, node.healthy));
+
+    const detail = document.createElement("div");
+    detail.className = "muted";
+    const problems = (node.checks ?? [])
+      .filter((c) => c.state !== "ok")
+      .map((c) => `${c.name}: ${c.detail || c.state}`)
+      .join(", ");
+    const bits = [];
+    if (problems) bits.push(problems);
+    if (node.uptime_ms != null) bits.push(`up ${duration(Math.floor(node.uptime_ms / 1000))}`);
+    if (node.restarts) bits.push(`${node.restarts} restarts`);
+    if (node.age_ms != null) bits.push(`last seen ${(node.age_ms / 1000).toFixed(1)}s ago`);
+    detail.textContent = bits.join(" \u00b7 ") || "reporting";
+
+    row.append(head, detail);
+    host.append(row);
+  }
+}
+
+async function refreshHealth() {
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderHealth(await response.json());
+  } catch (error) {
+    $("bus-status").textContent = `cannot read health (${error.message})`;
+  }
+}
+
 // --- views ----------------------------------------------------------------
 
 function showView(name) {
@@ -355,7 +430,16 @@ function showView(name) {
   }
   $("info").hidden = name !== "info";
   $("update").hidden = name !== "update";
+  $("health").hidden = name !== "health";
   if (name === "update") refreshUpdate();
+  if (name === "health") {
+    refreshHealth();
+    // Poll only while the view is showing; a page left on Info should not.
+    if (!healthTimer) healthTimer = setInterval(refreshHealth, HEALTH_POLL_MS);
+  } else if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
 }
 
 for (const tab of document.querySelectorAll(".tab")) {

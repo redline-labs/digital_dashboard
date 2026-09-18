@@ -16,6 +16,7 @@
 #include "update_routes.h"
 
 #include "core/core.h"
+#include "node_health/monitor.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 
@@ -127,7 +128,15 @@ int main(int argc, char** argv)
         SPDLOG_INFO("[node] RAUC on the {} bus", config.raucBus);
     }
 
-    web_console::HttpServer server(config, updates);
+    // Watches nodes/*/health and the node directory, and classifies with the
+    // same code inspect and the Qt app use -- one classifier, three consumers.
+    node_health::HealthMonitor healthMonitor;
+    if (!healthMonitor.isValid())
+    {
+        SPDLOG_WARN("[node] no bus session: /api/health will report nothing observable");
+    }
+
+    web_console::HttpServer server(config, updates, healthMonitor);
 
     // BIND BEFORE READY. A taken port has to fail here, while this is still the
     // main thread and the exit code means something -- not after markReady(),
