@@ -20,6 +20,13 @@
 
 namespace web_console
 {
+namespace
+{
+// 2 GiB. A slot is 2.8 GB, so nothing installable can exceed this, and it is
+// large enough that the free-space check refuses first for anything realistic.
+constexpr std::size_t kMaxUploadBytes = 2ULL * 1024 * 1024 * 1024;
+} // namespace
+
 
 // The httplib half of the handle the route files are given. Keeping it here is
 // what lets routes_system.cpp -- and every route file after it -- compile
@@ -290,6 +297,17 @@ bool HttpServer::bind()
     // path in, which the image's QA rejects.
     const std::string assetDir =
         impl_->config.assetDir.empty() ? core::paths::resource("web") : impl_->config.assetDir;
+
+    // THE WHOLE REASON THIS LIBRARY WAS CHOSEN was streaming a ~338 MB RAUC
+    // bundle to disk instead of buffering it -- and cpp-httplib's default
+    // CPPHTTPLIB_PAYLOAD_MAX_LENGTH is 100 MB, so every real bundle was rejected
+    // with 413 after ~100 MB. Measured against the real image: a 335 MB bundle
+    // stopped at 104,843,888 bytes.
+    //
+    // Generous rather than unlimited: the free-space pre-flight in
+    // routes_update.cpp is the check that matters (it knows how big the
+    // partition is), and this only needs to stop being the binding constraint.
+    impl_->server.set_payload_max_length(kMaxUploadBytes);
 
     std::error_code ec;
     if (std::filesystem::is_directory(assetDir, ec))

@@ -24,17 +24,20 @@ port: 8080
 # the image.
 asset_dir: ""
 
-# One line, mode 0600, on the writable partition -- credentials do not belong in
-# a read-only rootfs. The unit generates it from /dev/urandom on first boot, so
-# it is per board rather than baked into the image; read it with
-#   cat /data/web_console/token
+# NO AUTHENTICATION, DELIBERATELY. This board is deployed on a trusted private
+# network, so the console is left open: anything that can reach port 8080 can
+# drive it, including reflash.
 #
-# FAIL CLOSED: if this names a file that is missing, unreadable or empty, the
-# node REFUSES TO START rather than serving unauthenticated -- this config binds
-# every interface and offers a reflash endpoint, and a console that is believed
-# to be protected and is not is worse than one nobody trusts. To run without
-# authentication, say so deliberately with an empty value here.
-token_file: "${REDLINE_DATA_DIR}/web_console/token"
+# This is the EXPLICIT opt-out, not an oversight. The node distinguishes the two:
+# an empty value here means "serve without a token" and is warned about loudly at
+# startup, while a path that is named but missing, unreadable or empty makes the
+# node REFUSE TO START -- so a board can never be left believing it is protected
+# when it is not.
+#
+# To turn authentication back on: point this at a file on /data and have the unit
+# create it at boot (see git history for redline-web-console-token, which did
+# exactly that), then send `Authorization: Bearer <token>`.
+token_file: ""
 
 # Where uploaded RAUC bundles are staged before installing. /data is the only
 # writable filesystem on the image.

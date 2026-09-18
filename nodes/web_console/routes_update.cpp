@@ -119,9 +119,9 @@ json slotsJson(rauc_client::Installer& installer)
 class BundleSink : public UploadSink
 {
 public:
-    BundleSink(fs::path temporary, fs::path destination)
+    BundleSink(fs::path temporary, fs::path destination, std::uint64_t expected)
         : temporary_(std::move(temporary)), destination_(std::move(destination)),
-          out_(temporary_, std::ios::binary | std::ios::trunc)
+          expected_(expected), out_(temporary_, std::ios::binary | std::ios::trunc)
     {
         if (!out_)
         {
@@ -161,6 +161,25 @@ public:
             return errorReply(400, "upload aborted");
         }
 
+        // A SHORT BODY IS NOT A FINISHED ONE, and until this check existed the
+        // difference was invisible here: httplib stops reading at its payload
+        // limit, the reader then sees what looks like a clean end of body, and
+        // this function happily renamed a truncated file into place. The client
+        // got 413 -- httplib replaces the handler's status -- while the board
+        // was left holding a corrupt bundle that /api/update/status reported as
+        // staged and /api/update/install accepted. RAUC caught it, with
+        // "Signature size exceeds bundle size", which is the last line of
+        // defence and not where this should be caught.
+        //
+        // Also covers the ordinary case of a client that disconnects mid-upload.
+        if (expected_ > 0 && received_ != expected_)
+        {
+            SPDLOG_WARN("[update] upload short: {} of {} bytes; not staging",
+                        received_, expected_);
+            return errorReply(400, "upload incomplete: received " + std::to_string(received_) +
+                                       " of " + std::to_string(expected_) + " bytes");
+        }
+
         out_.flush();
         out_.close();
 
@@ -192,6 +211,9 @@ public:
 private:
     fs::path temporary_;
     fs::path destination_;
+    // What Content-Length promised. Zero means the client did not say (a chunked
+    // upload), in which case there is nothing to check against.
+    std::uint64_t expected_ { 0 };
     std::ofstream out_;
     std::uint64_t received_ { 0 };
     bool renamed_ { false };
@@ -281,7 +303,7 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 
             const auto temporary = state.uploadDir() /
                                    (".incoming-" + std::to_string(::getpid()) + ".raucb");
-            return std::make_unique<BundleSink>(temporary, state.stagedBundle());
+            return std::make_unique<BundleSink>(temporary, state.stagedBundle(), contentLength);
         });
 
     routes.post("/api/update/install", [&state](const std::string&) {
