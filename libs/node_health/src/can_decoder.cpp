@@ -18,7 +18,7 @@ namespace node_health
 {
 
 void runCanDecoder(std::string_view node_name, const std::string& can_key,
-                   std::function<bool(const helpers::CanFrame&)> decode)
+                   std::function<bool(const helpers::CanFrame&)> decodeFn)
 {
     // Declared before the subscriber, so the subscriber is destroyed first and
     // no callback can touch a check that has gone away.
@@ -28,7 +28,7 @@ void runCanDecoder(std::string_view node_name, const std::string& can_key,
 
     pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
         can_key,
-        [&frames_in, &decoded, decode = std::move(decode)](CanFrame::Reader message)
+        [&frames_in, &decoded, decode = std::move(decodeFn)](CanFrame::Reader message)
         {
             frames_in.touch();
             // The real length, not a padded buffer: a frame shorter than the

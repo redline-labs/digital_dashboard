@@ -146,9 +146,9 @@ void EventStream::close()
 // RouteRegistrar
 // ---------------------------------------------------------------------------
 
-void RouteRegistrar::getReply(const std::string& pattern, std::function<Reply()> handler)
+void RouteRegistrar::getReply(const std::string& pattern, std::function<Reply()> handlerFn)
 {
-    impl_.server.Get(pattern, [handler = std::move(handler)](const httplib::Request&,
+    impl_.server.Get(pattern, [handler = std::move(handlerFn)](const httplib::Request&,
                                                              httplib::Response& response) {
         const Reply reply = handler();
         response.status = reply.status;
@@ -157,9 +157,9 @@ void RouteRegistrar::getReply(const std::string& pattern, std::function<Reply()>
 }
 
 void RouteRegistrar::getWithParams(const std::string& pattern,
-                                   std::function<Reply(const PathParams&)> handler)
+                                   std::function<Reply(const PathParams&)> handlerFn)
 {
-    impl_.server.Get(pattern, [handler = std::move(handler)](const httplib::Request& request,
+    impl_.server.Get(pattern, [handler = std::move(handlerFn)](const httplib::Request& request,
                                                              httplib::Response& response) {
         const Reply reply = handler(request.path_params);
         response.status = reply.status;
@@ -168,9 +168,9 @@ void RouteRegistrar::getWithParams(const std::string& pattern,
 }
 
 void RouteRegistrar::post(const std::string& pattern,
-                          std::function<Reply(const std::string&)> handler)
+                          std::function<Reply(const std::string&)> handlerFn)
 {
-    impl_.server.Post(pattern, [handler = std::move(handler)](const httplib::Request& request,
+    impl_.server.Post(pattern, [handler = std::move(handlerFn)](const httplib::Request& request,
                                                               httplib::Response& response) {
         const Reply reply = handler(request.body);
         response.status = reply.status;
@@ -180,7 +180,7 @@ void RouteRegistrar::post(const std::string& pattern,
 
 void RouteRegistrar::postUpload(
     const std::string& pattern,
-    std::function<std::unique_ptr<UploadSink>(std::uint64_t, Reply&)> open)
+    std::function<std::unique_ptr<UploadSink>(std::uint64_t, Reply&)> openFn)
 {
     // The ContentReader overload: httplib hands us chunks as they arrive and
     // never materialises the body. This is the whole reason for the library
@@ -188,7 +188,7 @@ void RouteRegistrar::postUpload(
     // on this path.
     impl_.server.Post(
         pattern,
-        [open = std::move(open)](const httplib::Request& request, httplib::Response& response,
+        [open = std::move(openFn)](const httplib::Request& request, httplib::Response& response,
                                  const httplib::ContentReader& reader) {
             // Only used if the route refuses without saying why, which would
             // be a bug in the route rather than a state worth reporting well.
@@ -242,7 +242,7 @@ void RouteRegistrar::events(const std::string& pattern, EventStream& stream)
 
         response.set_chunked_content_provider(
             "text/event-stream",
-            [streamImpl, subscriber](std::size_t, httplib::DataSink& sink) {
+            [subscriber](std::size_t, httplib::DataSink& sink) {
                 std::string out;
                 {
                     std::unique_lock<std::mutex> lock(subscriber->mutex);
