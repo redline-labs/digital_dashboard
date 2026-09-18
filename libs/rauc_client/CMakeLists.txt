@@ -33,7 +33,7 @@ target_link_libraries(rauc_client
         PkgConfig::RAUC_CLIENT_GLIB
 )
 
-# Exercised against tools/rauc_stub/rauc_stub.py, which owns
+# Exercised against tools/rauc_stub/rauc_stub.c, which owns
 # de.pengutronix.rauc on the SESSION bus. The test skips rather than fails when
 # there is no bus or no stub, because a machine without one is not a broken
 # machine -- see PROJECT_TEST_SKIP_CODE.
@@ -64,8 +64,18 @@ add_project_test(TARGET rauc_client_test_installer NAME rauc_client_test_install
 add_project_test(TARGET rauc_client_test_installer NAME rauc_client_test_installer_busy
                  LABELS rauc_client unit ENVIRONMENT REDLINE_RAUC_STUB_MODE=busy)
 
-set_tests_properties(
-    rauc_client_test_installer_ok
-    rauc_client_test_installer_fail
-    rauc_client_test_installer_busy
-    PROPERTIES RESOURCE_LOCK rauc_well_known_name)
+# GUARDED, unlike add_project_test() above, which handles -DBUILD_TESTING=OFF
+# itself (it leaves the target declared and drops it from `all`). This is a bare
+# CMake call, so with tests off it names three tests that were never registered
+# and configure dies with "Can not find test to add properties to".
+#
+# Which is exactly what it did: the Yocto recipe passes -DBUILD_TESTING=OFF, so
+# every cross build broke here, while the desktop -- where BUILD_TESTING
+# defaults to ON -- stayed green and said nothing.
+if(BUILD_TESTING)
+    set_tests_properties(
+        rauc_client_test_installer_ok
+        rauc_client_test_installer_fail
+        rauc_client_test_installer_busy
+        PROPERTIES RESOURCE_LOCK rauc_well_known_name)
+endif()
