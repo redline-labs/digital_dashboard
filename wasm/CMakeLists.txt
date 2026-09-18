@@ -157,8 +157,15 @@ target_compile_options(redline_wasm PRIVATE -fexceptions -Os)
 # Note what this does NOT do: ASYNCIFY_EXPORTS is deprecated and empty, so embind
 # exports stay synchronous. decodeToJson(), healthFromPayload() and the layout
 # hash functions keep working exactly as they already do, and app.js is unaffected.
+#
+# WEBSOCKET_SUBPROTOCOL=null: emscripten's socket layer otherwise asks for
+# `Sec-WebSocket-Protocol: binary`, zenohd's tungstenite accept answers without
+# one, and RFC 6455 says the client must then fail the connection -- Chrome and
+# node's `ws` both do. zenohd logs the link as accepted, and pico sees silence
+# where the InitAck should be.
 target_link_options(redline_wasm PRIVATE
     -sASYNCIFY
+    -sWEBSOCKET_SUBPROTOCOL=null
     -fexceptions
     -lembind
     -sMODULARIZE=1
