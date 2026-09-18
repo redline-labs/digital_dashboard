@@ -3,6 +3,7 @@
 #include "httplib_include.h"
 
 #include "service_routes.h"
+#include "static_assets.h"
 #include "update_routes.h"
 
 #include "core/core.h"
@@ -330,7 +331,32 @@ RouteRegistrar& RouteServer::routes()
 
 bool RouteServer::mount(const std::string& directory)
 {
-    return impl_->server.set_mount_point("/", directory);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(directory, ec)) { return false; }
+
+    // Everything outside /api. Read per request rather than at startup so an
+    // asset_dir on /data can be edited on a running board; the files are small
+    // and the page loads them once. See static_assets.h for why this is not
+    // httplib's set_mount_point.
+    const std::filesystem::path root(directory);
+    impl_->server.Get(R"(/(?!api(?:/|$)).*)",
+                      [root](const httplib::Request& request, httplib::Response& response) {
+        const auto asset = loadAsset(root, request.path);
+        if (!asset)
+        {
+            response.status = 404;
+            return;
+        }
+        response.set_header("ETag", asset->etag);
+        response.set_header("Cache-Control", "no-cache");
+        if (ifNoneMatchHits(request.get_header_value("If-None-Match"), asset->etag))
+        {
+            response.status = 304;
+            return;
+        }
+        response.set_content(asset->body, asset->contentType);
+    });
+    return true;
 }
 
 bool RouteServer::bind(const std::string& address, int port)

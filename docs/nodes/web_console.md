@@ -138,6 +138,14 @@ carries `RequiresMountsFor=/data` and creates `/data/updates`. Enabled through
 Asset-only iteration needs no image rebuild: `scp` `web/` to `/data` and point
 `asset_dir` at it through `/data/nodes/web_console.args`.
 
+The page's files are served with `Cache-Control: no-cache` and an ETag hashed
+from their content, so a browser checks on every load and gets a 304 only when
+the bytes match. Not by modification time: every file on the image carries the
+build's fixed epoch (2011), so an mtime-based validator never changes between
+releases, and browsers kept running the previous release's `app.js` after an
+update. A browser that cached the page before this fix still holds that old
+copy as fresh; one hard reload clears it.
+
 ## Running it without the hardware
 
 ```sh

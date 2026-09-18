@@ -17,6 +17,7 @@ project(web_console_node)
 add_library(web_console_routes STATIC
     node_config.cpp
     http_server.cpp
+    static_assets.cpp
     routes_system.cpp
     routes_services.cpp
     service_routes.cpp
@@ -69,6 +70,12 @@ add_project_test(TARGET web_console_test_node_config LABELS web_console unit)
 add_executable(web_console_test_requests test_requests.cpp)
 target_link_libraries(web_console_test_requests PRIVATE web_console_routes)
 add_project_test(TARGET web_console_test_requests LABELS web_console unit)
+
+# Which URL serves which file, nothing outside the root, and an ETag that follows
+# the content rather than the image's fixed mtime.
+add_executable(web_console_test_static_assets test_static_assets.cpp)
+target_link_libraries(web_console_test_static_assets PRIVATE web_console_routes)
+add_project_test(TARGET web_console_test_static_assets LABELS web_console unit)
 
 # The routes over a real loopback socket: uploads, the progress stream and
 # shutdown. No bus and no RAUC -- the routes are built without either.
