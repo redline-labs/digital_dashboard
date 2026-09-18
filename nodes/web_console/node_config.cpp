@@ -55,8 +55,8 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
 
     // An unrecognised key is almost always a typo, and a typo that is ignored
     // looks exactly like a setting that does not work.
-    static const std::vector<std::string> kKnown { "bind_address", "port", "asset_dir", "token_file",
-                                                   "upload_dir", "rauc_bus" };
+    static const std::vector<std::string> kKnown { "bind_address", "port", "asset_dir", "upload_dir",
+                                                   "rauc_bus" };
     for (const auto& entry : root)
     {
         const std::string key = entry.first.as<std::string>();
@@ -81,7 +81,6 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
 
     read_string("bind_address", out.bindAddress);
     read_string("asset_dir", out.assetDir);
-    read_string("token_file", out.tokenFile);
     read_string("upload_dir", out.uploadDir);
     read_string("rauc_bus", out.raucBus);
 
@@ -125,7 +124,6 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     // Expanded here rather than at every use, so everything downstream of this
     // function holds a path it can open.
     out.assetDir = core::paths::expand(out.assetDir);
-    out.tokenFile = core::paths::expand(out.tokenFile);
     out.uploadDir = core::paths::expand(out.uploadDir);
 
     return context.ok;

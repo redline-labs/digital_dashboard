@@ -19,21 +19,6 @@
   <button class="tab" data-view="services">Services</button>
 </nav>
 
-<!-- Shown only when the board answers 401, so a console with no authentication
-     never displays it. The page itself is not gated -- a browser that cannot
-     authenticate still loads and can say WHY it is refused, instead of failing
-     blankly. -->
-<div id="auth" hidden>
-  <form id="auth-form">
-    <strong>This board wants a token</strong>
-    <p class="muted">Read it off the board with
-      <code>cat /data/web_console/token</code></p>
-    <input id="auth-input" type="password" autocomplete="off" spellcheck="false"
-           placeholder="access token">
-    <button type="submit">Save</button>
-  </form>
-</div>
-
 <main id="update" hidden>
   <section>
     <h2>Running system</h2>

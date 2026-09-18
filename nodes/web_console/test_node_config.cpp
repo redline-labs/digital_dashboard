@@ -33,7 +33,6 @@ void testDefaults()
     check(config.bindAddress == "127.0.0.1", "the default bind address is loopback");
     check(config.port == 8080, "the default port");
     check(config.assetDir.empty(), "no asset_dir means ask core::paths::resource");
-    check(config.tokenFile.empty(), "no token by default");
 }
 
 void testEveryKeyIsRead()
@@ -43,7 +42,6 @@ void testEveryKeyIsRead()
         "bind_address: 0.0.0.0\n"
         "port: 9090\n"
         "asset_dir: /opt/redline/web\n"
-        "token_file: /data/web_console/token\n"
         "upload_dir: /data/updates\n"
         "rauc_bus: session\n",
         config);
@@ -51,7 +49,6 @@ void testEveryKeyIsRead()
     check(config.bindAddress == "0.0.0.0", "bind_address is read");
     check(config.port == 9090, "port is read");
     check(config.assetDir == "/opt/redline/web", "asset_dir is read");
-    check(config.tokenFile == "/data/web_console/token", "token_file is read");
     check(config.uploadDir == "/data/updates", "upload_dir is read");
     check(config.raucBus == "session", "rauc_bus is read");
 }
@@ -81,6 +78,11 @@ void testUnknownKeyIsAnError()
     // loopback while the operator believes it is exposed.
     check(!parse_node_config("bind_adress: 0.0.0.0\n", config), "a misspelled key fails the parse");
     check(!parse_node_config("prot: 9090\n", config), "so does a misspelled port");
+    // Authentication was removed. A config that still asks for a token must
+    // stop the node rather than serve an open console its operator thinks is
+    // protected.
+    check(!parse_node_config("token_file: /data/web_console/token\n", config),
+          "token_file is no longer accepted");
 }
 
 void testPortRange()

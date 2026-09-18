@@ -26,7 +26,6 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
-#include <filesystem>
 #include <string>
 #include <thread>
 
@@ -81,33 +80,6 @@ int main(int argc, char** argv)
     {
         SPDLOG_INFO("[node] configuration is valid");
         return 0;
-    }
-
-    // This is the only thing standing between the network and a reflash
-    // endpoint, so the two ways of not having a token are treated differently:
-    // an empty setting is someone asking for an open console and gets a warning,
-    // while a token file that was configured and cannot be read is a refusal to
-    // start. See NodeConfig::tokenFile.
-    std::error_code ec;
-    if (config.tokenFile.empty())
-    {
-        SPDLOG_WARN("[node] no token_file configured: every /api/ request is accepted, "
-                    "reflash included. Do not do this on a board reachable by anything "
-                    "you do not trust.");
-    }
-    else if (!std::filesystem::exists(config.tokenFile, ec))
-    {
-        // FAIL CLOSED. Asking for authentication and then serving without it is
-        // the worst of the three outcomes: the operator believes the console is
-        // protected, and it is not. Being unable to enforce a token that was
-        // configured is a reason to refuse to start, not to carry on
-        // unauthenticated -- the board ships bind_address 0.0.0.0 and a reflash
-        // endpoint. Serving without a token is still available, but only by
-        // asking for it in as many words, with token_file: "".
-        SPDLOG_ERROR("[node] token_file '{}' does not exist: refusing to serve unauthenticated. "
-                     "The unit creates it at boot; to opt out deliberately set token_file: \"\".",
-                     config.tokenFile);
-        return 1;
     }
 
     // RAUC first: the server registers routes that hold a reference to it.

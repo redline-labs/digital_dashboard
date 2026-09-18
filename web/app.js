@@ -8,45 +8,10 @@ const POLL_MS = 5000;
 
 const $ = (id) => document.getElementById(id);
 
-// --- authentication --------------------------------------------------------
-//
-// The board REFUSES to serve /api/ without a bearer token -- the node will not
-// even start when token_file is configured and the file is missing -- so the
-// browser has to be able to present one. It is typed once and kept in
-// localStorage: this page is served from the board's own origin, so the token
-// stays on the device it belongs to.
-//
-// A HEADER, NEVER A COOKIE. Nothing is attached automatically, so cross-site
-// request forgery has nothing to forge with.
-
-const TOKEN_KEY = "redline.web_console.token";
-let token = localStorage.getItem(TOKEN_KEY) ?? "";
-
-function authHeaders(extra) {
-  const headers = { ...(extra ?? {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return headers;
-}
-
-// ONE PLACE every API call goes through, so a route added later cannot forget
-// to authenticate, and a 401 always surfaces as the prompt rather than as
-// whatever message each view happens to print.
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: authHeaders(options.headers),
-    cache: options.cache ?? "no-store",
-  });
-  if (response.status === 401) {
-    askForToken();
-    throw new Error("this board wants a token");
-  }
-  return response;
-}
-
-function askForToken() {
-  $("auth").hidden = false;
-  $("auth-input").focus();
+// Every API call goes through here, so none of them is served from cache: the
+// values are live readings, and a stale one reads as a board that is fine.
+function api(path, options = {}) {
+  return fetch(path, { ...options, cache: options.cache ?? "no-store" });
 }
 
 function bytes(n) {
@@ -294,9 +259,6 @@ function uploadBundle(file) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", "/api/update/bundle");
-    // Not api(): XMLHttpRequest is here for upload progress, so the header it
-    // would have added has to be set by hand.
-    if (token) request.setRequestHeader("Authorization", `Bearer ${token}`);
     request.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
         setProgress((event.loaded / event.total) * 100, `uploading ${bytes(event.loaded)} of ${bytes(event.total)}`);
@@ -304,10 +266,7 @@ function uploadBundle(file) {
     });
     request.addEventListener("load", () => {
       if (request.status >= 200 && request.status < 300) resolve();
-      else {
-        if (request.status === 401) askForToken();
-        reject(new Error(errorFrom(request.responseText, request.status)));
-      }
+      else reject(new Error(errorFrom(request.responseText, request.status)));
     });
     request.addEventListener("error", () => reject(new Error("the connection failed")));
     request.send(file);
@@ -377,17 +336,11 @@ function wireUpdate() {
 // Progress is pushed, not polled: an install reports through D-Bus and the node
 // forwards it here. EventSource reconnects on its own, which matters because
 // reflashing ends in a reboot.
-//
-// EVENTSOURCE CANNOT SET HEADERS -- no browser offers an API for it -- so this
-// one route takes the token as a query parameter, which is why it is rebuilt
-// rather than created once: a token typed after the page loaded has to reach
-// the stream too.
 let events = null;
 
 function connectEvents() {
   if (events) events.close();
-  const query = token ? `?access_token=${encodeURIComponent(token)}` : "";
-  events = new EventSource(`/api/update/events${query}`);
+  events = new EventSource("/api/update/events");
   events.addEventListener("progress", (event) => {
     const data = JSON.parse(event.data);
     setProgress(data.percentage, data.message);
@@ -655,17 +608,6 @@ for (const tab of document.querySelectorAll(".tab")) {
 }
 
 $("call-send").addEventListener("click", sendCall);
-
-$("auth-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  token = $("auth-input").value.trim();
-  localStorage.setItem(TOKEN_KEY, token);
-  $("auth").hidden = true;
-  // The stream carries the token in its URL, so it has to be reopened.
-  connectEvents();
-  refresh();
-  refreshUpdate();
-});
 
 wireUpdate();
 refresh();

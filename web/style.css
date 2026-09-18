@@ -98,16 +98,3 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg);
 }
 .clickable { cursor: pointer; }
 .clickable:hover strong { color: var(--accent); }
-
-/* The token prompt. Deliberately loud and above the views: when it is showing,
-   nothing else on the page can work. */
-#auth {
-  margin: 12px; padding: 12px;
-  border: 1px solid #6b5a2b; border-radius: 8px; background: #241f14;
-}
-#auth-form { display: grid; gap: 8px; }
-#auth code { font-size: 12px; }
-#auth input {
-  padding: 10px; border-radius: 6px; border: 1px solid var(--line);
-  background: var(--bg); color: var(--fg); font-size: 16px;
-}

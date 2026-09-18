@@ -25,56 +25,26 @@ It deliberately does **not**:
 - **Edit configuration.** Deferred: validation is `dashboard --check --config
   <file>`, not a reimplemented YAML validator.
 
-## Authentication
+## No authentication
 
-**The API is gated; the page is not.** Every route that reads or changes the
-board lives under `/api/` and requires `Authorization: Bearer <token>`. The
-static page stays reachable so a browser that cannot authenticate still loads
-and can say *why* it was refused, instead of failing blankly -- and the page on
-its own discloses nothing.
-
-A header, never a cookie: nothing is attached automatically, so cross-site
-request forgery has nothing to forge with.
-
-**The node fails closed.** The two ways of not having a token mean opposite
-things:
-
-| `token_file` | Result |
-|---|---|
-| empty value | No authentication, warned about loudly. An explicit request, for a workstation or a board nobody can reach. |
-| a path that is missing, empty or unreadable | **The node refuses to start.** |
-
-The refusal is the point. The shipped config binds `0.0.0.0` and offers a
-reflash endpoint; a console that is believed to be protected and is not is worse
-than one nobody trusts. Earlier this warned and served anyway, which meant a
-board could ship a network-reachable RAUC endpoint with no authentication while
-its own config said otherwise.
-
-**The token is per board and generated on first boot**, not shipped in the
-image -- a token baked into the rootfs is the same token on every board and
-readable by anyone holding a bundle. The unit's `ExecStartPre` writes
-`/data/web_console/token` from `/dev/urandom` under `umask 077` if it is absent,
-so it survives updates (`/data` is shared by both slots):
-
-```sh
-cat /data/web_console/token
-```
-
-One exception, and it is narrow: **`EventSource` cannot set headers** -- no
-browser offers an API for it -- so the progress stream *alone* also accepts
-`?access_token=`. It is confined to that one read-only route; the same value
-returns 401 everywhere else, including `/api/update/install`.
+**Anything that can reach the port can drive the console, reflash included.**
+The board sits on a trusted private network, so there is no token and no login.
+An earlier version had a bearer token; it was removed rather than left as a
+setting nobody used. `token_file` is now an unknown key, so a config that still
+asks for authentication stops the node instead of serving an open console its
+operator believes is protected. If the network stops being trusted, the token
+code is in git history.
 
 ## Endpoints
 
 | Route | | |
 |---|---|---|
-| `GET /` | the page and its assets | not gated |
+| `GET /` | the page and its assets | |
 | `GET /api/system` | os-release, uptime, load, memory, filesystems, interfaces, temperatures | |
 | `GET /api/update/status` | RAUC operation, slots, boot entries, what is staged | |
 | `POST /api/update/bundle` | uploads a bundle, streamed to disk | |
 | `POST /api/update/install` | asks RAUC to install what is staged | |
-| `GET /api/update/events` | install progress (SSE) | also takes `?access_token=` |
+| `GET /api/update/events` | install progress (SSE) | |
 | `POST /api/update/mark-good` | marks the running slot good | |
 | `GET /api/health` | every node's health, classified | |
 | `GET /api/services` | services offered on the bus | |
@@ -138,7 +108,6 @@ before the module loads.
 bind_address: 0.0.0.0             # the code's default is 127.0.0.1
 port: 8080
 asset_dir: ""                     # empty: next to the executable
-token_file: "${REDLINE_DATA_DIR}/web_console/token"
 upload_dir: "${REDLINE_DATA_DIR}/updates"
 rauc_bus: system                  # "session" only for tools/rauc_stub
 ```
@@ -148,9 +117,8 @@ running this on a laptop is not exposed by accident.
 
 ## On the target
 
-An instance of the `redline-node@.service` template, with a drop-in
-(`10-data-and-token.conf`) that carries `RequiresMountsFor=/data`, creates
-`/data/updates`, and generates the token. Enabled through
+An instance of the `redline-node@.service` template, with a drop-in that
+carries `RequiresMountsFor=/data` and creates `/data/updates`. Enabled through
 `REDLINE_ENABLED_NODES` on the machine.
 
 Asset-only iteration needs no image rebuild: `scp` `web/` to `/data` and point
@@ -174,8 +142,8 @@ Asset-only iteration needs no image rebuild: `scp` `web/` to `/data` and point
 
 - **Never built under Yocto, never run on the bench.** Everything above is
   verified on a desktop; the recipe changes are reasoned-about.
-- **No TLS, no firewall, and it runs as root** like everything else on this
-  image. `User=redline-web` with `ProtectSystem=strict` is cheap functionally
+- **No authentication, no TLS, no firewall, and it runs as root** like
+  everything else on this image. `User=redline-web` with `ProtectSystem=strict` is cheap functionally
   (RAUC's D-Bus policy allows `context="default"` with no polkit) and is the
   obvious next step.
 - **A plain node cannot be aimed at a router without recompiling.**

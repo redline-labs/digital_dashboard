@@ -10,10 +10,9 @@
 # ships the console is meant to be reachable from the bench, so it is widened
 # here rather than in the code.
 #
-# This is not, by itself, an access control -- token_file below is. The two are
-# meant to be read together: widening the bind address is only safe because the
-# node refuses to serve /api/ without a token. Still open, and deliberately so
-# while this is a bring-up image: TLS, a non-root service user, and a firewall.
+# THERE IS NO AUTHENTICATION. The board is deployed on a trusted private
+# network, so anything that can reach port 8080 can drive the console,
+# including reflash. Also still open: TLS, a non-root service user, a firewall.
 bind_address: 0.0.0.0
 
 port: 8080
@@ -23,21 +22,6 @@ port: 8080
 # /data/web somewhere writable to iterate on the frontend without rebuilding
 # the image.
 asset_dir: ""
-
-# NO AUTHENTICATION, DELIBERATELY. This board is deployed on a trusted private
-# network, so the console is left open: anything that can reach port 8080 can
-# drive it, including reflash.
-#
-# This is the EXPLICIT opt-out, not an oversight. The node distinguishes the two:
-# an empty value here means "serve without a token" and is warned about loudly at
-# startup, while a path that is named but missing, unreadable or empty makes the
-# node REFUSE TO START -- so a board can never be left believing it is protected
-# when it is not.
-#
-# To turn authentication back on: point this at a file on /data and have the unit
-# create it at boot (see git history for redline-web-console-token, which did
-# exactly that), then send `Authorization: Bearer <token>`.
-token_file: ""
 
 # Where uploaded RAUC bundles are staged before installing. /data is the only
 # writable filesystem on the image.

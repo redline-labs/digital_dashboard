@@ -13,7 +13,6 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -277,7 +276,6 @@ struct HttpServer::Impl
     UpdateRoutes& updates;
     ::node_health::HealthMonitor& health;
     ServiceRoutes& services;
-    std::string token;
     httplib::Server server;
     int boundPort { 0 };
 };
@@ -333,85 +331,6 @@ bool HttpServer::bind()
         SPDLOG_WARN("[http] no asset directory at '{}' (from {}); serving the API only",
                     ec ? assetDir : shown,
                     impl_->config.assetDir.empty() ? "core::paths::resource(\"web\")" : "asset_dir");
-    }
-
-    // AUTHENTICATION, which until now was a config key that did nothing.
-    //
-    // token_file was parsed, validated and warned about, and no request was ever
-    // checked -- so a board configured with a token was exactly as open as one
-    // without, including the reflash endpoint. A setting that implies a
-    // protection it does not provide is worse than no setting.
-    //
-    // Read ONCE here rather than per request: it is credentials on the writable
-    // partition, and re-reading it on every request would put a file open in the
-    // path of an upload.
-    if (!impl_->config.tokenFile.empty())
-    {
-        std::ifstream in(impl_->config.tokenFile);
-        if (!in)
-        {
-            // Same reasoning as the startup check in main(): a token that was
-            // asked for and cannot be read is a refusal, not a warning. This is
-            // the check that matters, because this is the function that decides
-            // whether the gate gets installed.
-            SPDLOG_ERROR("[http] cannot read token_file '{}': refusing to serve unauthenticated",
-                         impl_->config.tokenFile);
-            return false;
-        }
-        std::getline(in, impl_->token);
-        while (!impl_->token.empty() &&
-               (impl_->token.back() == '\n' || impl_->token.back() == '\r' ||
-                impl_->token.back() == ' '))
-        {
-            impl_->token.pop_back();
-        }
-        if (impl_->token.empty())
-        {
-            SPDLOG_ERROR("[http] token_file '{}' is empty: refusing to serve unauthenticated",
-                         impl_->config.tokenFile);
-            return false;
-        }
-    }
-
-    // The API is gated; the static page is not. A browser that cannot
-    // authenticate still loads and can say WHY it is refused, instead of
-    // failing blankly -- and the page itself discloses nothing. Every route
-    // that reads or changes the board lives under /api/.
-    if (!impl_->token.empty())
-    {
-        const std::string expected = "Bearer " + impl_->token;
-        const std::string raw = impl_->token;
-        impl_->server.set_pre_routing_handler(
-            [expected, raw](const httplib::Request& request, httplib::Response& response) {
-                if (!request.path.starts_with("/api/"))
-                {
-                    return httplib::Server::HandlerResponse::Unhandled;
-                }
-                if (request.get_header_value("Authorization") == expected)
-                {
-                    return httplib::Server::HandlerResponse::Unhandled;
-                }
-                // EventSource CANNOT SET HEADERS -- there is no API for it in
-                // any browser -- so the progress stream alone also accepts the
-                // token as a query parameter. Confined to this one route, which
-                // only reads, so the token stays out of Referer headers and
-                // access logs everywhere else. Every route that changes the
-                // board still requires the header.
-                if (request.path == "/api/update/events" &&
-                    request.get_param_value("access_token") == raw)
-                {
-                    return httplib::Server::HandlerResponse::Unhandled;
-                }
-                response.status = 401;
-                response.set_header("WWW-Authenticate", "Bearer");
-                response.set_content(R"({"error":"authentication required"})", "application/json");
-                return httplib::Server::HandlerResponse::Handled;
-            });
-        SPDLOG_INFO("[http] /api/ requires a bearer token");
-    }
-    else
-    {
-        SPDLOG_WARN("[http] NO TOKEN: every /api/ request is accepted, including reflash");
     }
 
     RouteRegistrar::Impl registrarImpl{impl_->server};
