@@ -16,8 +16,23 @@
   <button class="tab active" data-view="info">Info</button>
   <button class="tab" data-view="update">Update</button>
   <button class="tab" data-view="health">Health</button>
-  <button class="tab" data-view="services" disabled title="Arrives with the wasm bus client">Services</button>
+  <button class="tab" data-view="services">Services</button>
 </nav>
+
+<!-- Shown only when the board answers 401, so a console with no authentication
+     never displays it. The page itself is not gated -- a browser that cannot
+     authenticate still loads and can say WHY it is refused, instead of failing
+     blankly. -->
+<div id="auth" hidden>
+  <form id="auth-form">
+    <strong>This board wants a token</strong>
+    <p class="muted">Read it off the board with
+      <code>cat /data/web_console/token</code></p>
+    <input id="auth-input" type="password" autocomplete="off" spellcheck="false"
+           placeholder="access token">
+    <button type="submit">Save</button>
+  </form>
+</div>
 
 <main id="update" hidden>
   <section>
@@ -42,6 +57,23 @@
   <section>
     <h2>Slots</h2>
     <div id="slots"></div>
+  </section>
+</main>
+
+<main id="services" hidden>
+  <section>
+    <h2>Services on the bus</h2>
+    <div id="service-list"></div>
+  </section>
+
+  <section id="call-section" hidden>
+    <h2 id="call-title">Call</h2>
+    <p class="muted" id="call-doc"></p>
+    <div id="call-form"></div>
+    <div class="actions">
+      <button id="call-send">Send</button>
+    </div>
+    <pre id="call-result" class="muted"></pre>
   </section>
 </main>
 

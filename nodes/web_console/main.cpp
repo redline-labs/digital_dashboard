@@ -13,6 +13,7 @@
 
 #include "http_server.h"
 #include "node_config.h"
+#include "service_routes.h"
 #include "update_routes.h"
 
 #include "core/core.h"
@@ -100,13 +101,23 @@ int main(int argc, char** argv)
     std::error_code ec;
     if (config.tokenFile.empty())
     {
-        SPDLOG_WARN("[node] no token_file configured: every request is accepted. Do not do this on a "
-                    "board that is reachable by anything you do not trust.");
+        SPDLOG_WARN("[node] no token_file configured: every /api/ request is accepted, "
+                    "reflash included. Do not do this on a board reachable by anything "
+                    "you do not trust.");
     }
     else if (!std::filesystem::exists(config.tokenFile, ec))
     {
-        SPDLOG_WARN("[node] token_file '{}' does not exist yet: every request is accepted until it does",
-                    config.tokenFile);
+        // FAIL CLOSED. Asking for authentication and then serving without it is
+        // the worst of the three outcomes: the operator believes the console is
+        // protected, and it is not. Being unable to enforce a token that was
+        // configured is a reason to refuse to start, not to carry on
+        // unauthenticated -- the board ships bind_address 0.0.0.0 and a reflash
+        // endpoint. Serving without a token is still available, but only by
+        // asking for it in as many words, with token_file: "".
+        SPDLOG_ERROR("[node] token_file '{}' does not exist: refusing to serve unauthenticated. "
+                     "The unit creates it at boot; to opt out deliberately set token_file: \"\".",
+                     config.tokenFile);
+        return 1;
     }
 
     // RAUC first: the server registers routes that hold a reference to it.
@@ -136,7 +147,11 @@ int main(int argc, char** argv)
         SPDLOG_WARN("[node] no bus session: /api/health will report nothing observable");
     }
 
-    web_console::HttpServer server(config, updates, healthMonitor);
+    // Liveliness subscribers: built once so they have been watching before the
+    // first request, not rebuilt per request knowing nothing.
+    web_console::ServiceRoutes serviceRoutes;
+
+    web_console::HttpServer server(config, updates, healthMonitor, serviceRoutes);
 
     // BIND BEFORE READY. A taken port has to fail here, while this is still the
     // main thread and the exit code means something -- not after markReady(),

@@ -24,6 +24,7 @@ namespace web_console
 {
 
 class UpdateRoutes;
+class ServiceRoutes;
 
 class HttpServer
 {
@@ -32,7 +33,7 @@ public:
     // outlives any request, and progress keeps arriving whether or not a
     // browser is listening.
     HttpServer(const NodeConfig& config, UpdateRoutes& updates,
-               ::node_health::HealthMonitor& health);
+               ::node_health::HealthMonitor& health, ServiceRoutes& services);
     ~HttpServer();
 
     HttpServer(const HttpServer&) = delete;
@@ -153,6 +154,9 @@ private:
 
 // Defined in routes_system.cpp.
 void registerSystemRoutes(RouteRegistrar& routes);
+
+// Defined in routes_services.cpp.
+void registerServiceRoutes(RouteRegistrar& routes, ServiceRoutes& state);
 
 // Defined in routes_health.cpp. Forward declared rather than included so this
 // header stays free of node_health -- and therefore of zenoh, which

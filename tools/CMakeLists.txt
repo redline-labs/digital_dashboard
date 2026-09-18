@@ -14,3 +14,7 @@ add_subdirectory(map_build)
 # A fake de.pengutronix.rauc on the session bus, so the web console's reflash
 # path is developable without a board.
 add_subdirectory(rauc_stub)
+
+# A service that answers, so the console's /api/call path is developable
+# without hardware behind it.
+add_subdirectory(fake_service)

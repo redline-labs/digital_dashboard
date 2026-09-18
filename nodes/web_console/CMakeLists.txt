@@ -19,6 +19,8 @@ add_executable(web_console
     http_server.cpp
     routes_system.cpp
     routes_health.cpp
+    routes_services.cpp
+    service_routes.cpp
     routes_update.cpp
     update_routes.cpp
 )

@@ -8,6 +8,47 @@ const POLL_MS = 5000;
 
 const $ = (id) => document.getElementById(id);
 
+// --- authentication --------------------------------------------------------
+//
+// The board REFUSES to serve /api/ without a bearer token -- the node will not
+// even start when token_file is configured and the file is missing -- so the
+// browser has to be able to present one. It is typed once and kept in
+// localStorage: this page is served from the board's own origin, so the token
+// stays on the device it belongs to.
+//
+// A HEADER, NEVER A COOKIE. Nothing is attached automatically, so cross-site
+// request forgery has nothing to forge with.
+
+const TOKEN_KEY = "redline.web_console.token";
+let token = localStorage.getItem(TOKEN_KEY) ?? "";
+
+function authHeaders(extra) {
+  const headers = { ...(extra ?? {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+// ONE PLACE every API call goes through, so a route added later cannot forget
+// to authenticate, and a 401 always surfaces as the prompt rather than as
+// whatever message each view happens to print.
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: authHeaders(options.headers),
+    cache: options.cache ?? "no-store",
+  });
+  if (response.status === 401) {
+    askForToken();
+    throw new Error("this board wants a token");
+  }
+  return response;
+}
+
+function askForToken() {
+  $("auth").hidden = false;
+  $("auth-input").focus();
+}
+
 function bytes(n) {
   if (n === null || n === undefined) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -136,7 +177,7 @@ function renderTemperatures(data) {
 
 async function refresh() {
   try {
-    const response = await fetch("/api/system", { cache: "no-store" });
+    const response = await api("/api/system");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
 
@@ -230,7 +271,7 @@ function renderUpdate(data) {
 
 async function refreshUpdate() {
   try {
-    const response = await fetch("/api/update/status", { cache: "no-store" });
+    const response = await api("/api/update/status");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderUpdate(await response.json());
   } catch (error) {
@@ -253,6 +294,9 @@ function uploadBundle(file) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", "/api/update/bundle");
+    // Not api(): XMLHttpRequest is here for upload progress, so the header it
+    // would have added has to be set by hand.
+    if (token) request.setRequestHeader("Authorization", `Bearer ${token}`);
     request.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
         setProgress((event.loaded / event.total) * 100, `uploading ${bytes(event.loaded)} of ${bytes(event.total)}`);
@@ -260,7 +304,10 @@ function uploadBundle(file) {
     });
     request.addEventListener("load", () => {
       if (request.status >= 200 && request.status < 300) resolve();
-      else reject(new Error(errorFrom(request.responseText, request.status)));
+      else {
+        if (request.status === 401) askForToken();
+        reject(new Error(errorFrom(request.responseText, request.status)));
+      }
     });
     request.addEventListener("error", () => reject(new Error("the connection failed")));
     request.send(file);
@@ -305,7 +352,7 @@ function wireUpdate() {
     $("install").disabled = true;
     setProgress(0, "asking RAUC to install\u2026");
     try {
-      const response = await fetch("/api/update/install", { method: "POST" });
+      const response = await api("/api/update/install", { method: "POST" });
       if (!response.ok) throw new Error(errorFrom(await response.text(), response.status));
     } catch (error) {
       showUpdateError(`Install refused: ${error.message}`);
@@ -316,7 +363,7 @@ function wireUpdate() {
   $("mark-good").addEventListener("click", async () => {
     $("update-error").hidden = true;
     try {
-      const response = await fetch("/api/update/mark-good", { method: "POST" });
+      const response = await api("/api/update/mark-good", { method: "POST" });
       if (!response.ok) throw new Error(errorFrom(await response.text(), response.status));
       await refreshUpdate();
     } catch (error) {
@@ -324,10 +371,23 @@ function wireUpdate() {
     }
   });
 
-  // Progress is pushed, not polled: an install reports through D-Bus and the
-  // node forwards it here. EventSource reconnects on its own, which matters
-  // because reflashing ends in a reboot.
-  const events = new EventSource("/api/update/events");
+  connectEvents();
+}
+
+// Progress is pushed, not polled: an install reports through D-Bus and the node
+// forwards it here. EventSource reconnects on its own, which matters because
+// reflashing ends in a reboot.
+//
+// EVENTSOURCE CANNOT SET HEADERS -- no browser offers an API for it -- so this
+// one route takes the token as a query parameter, which is why it is rebuilt
+// rather than created once: a token typed after the page loaded has to reach
+// the stream too.
+let events = null;
+
+function connectEvents() {
+  if (events) events.close();
+  const query = token ? `?access_token=${encodeURIComponent(token)}` : "";
+  events = new EventSource(`/api/update/events${query}`);
   events.addEventListener("progress", (event) => {
     const data = JSON.parse(event.data);
     setProgress(data.percentage, data.message);
@@ -414,11 +474,157 @@ function renderHealth(data) {
 
 async function refreshHealth() {
   try {
-    const response = await fetch("/api/health", { cache: "no-store" });
+    const response = await api("/api/health");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderHealth(await response.json());
   } catch (error) {
     $("bus-status").textContent = `cannot read health (${error.message})`;
+  }
+}
+
+// --- Services view --------------------------------------------------------
+//
+// Switchboard in a browser. Nothing here knows any service: the list comes from
+// liveliness, the form is built from the request schema's own description, and
+// the call goes through the node's generic dynamic caller -- the same path
+// `inspect call` and apps/switchboard use. A service added to the tree tomorrow
+// appears here with no change to this file.
+
+let selectedService = null;
+let currentFields = {};
+
+function renderServices(data) {
+  const host = $("service-list");
+  host.replaceChildren();
+
+  if (!data.bus_available) {
+    const msg = document.createElement("div");
+    msg.className = "muted";
+    msg.textContent = data.error ?? "no bus session";
+    host.append(msg);
+    return;
+  }
+
+  const list = data.services ?? [];
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "no services are being offered";
+    host.append(empty);
+    return;
+  }
+
+  for (const service of list.sort((a, b) => a.key.localeCompare(b.key))) {
+    const row = document.createElement("div");
+    row.className = "row clickable";
+    const head = document.createElement("div");
+    head.className = "row-head";
+    const name = document.createElement("strong");
+    name.textContent = service.key;
+    // Entries are never removed, only marked unreachable -- a service that has
+    // gone is more useful shown than hidden.
+    head.append(name, pill(service.reachable ? "reachable" : "gone", service.reachable));
+    const detail = document.createElement("div");
+    detail.className = "muted";
+    detail.textContent = `${service.request_schema} \u2192 ${service.response_schema}` +
+      (service.owner ? ` \u00b7 ${service.owner}` : "");
+    row.append(head, detail);
+    row.addEventListener("click", () => selectService(service));
+    host.append(row);
+  }
+}
+
+// The form is built from describeSchema()'s field list -- category-level types,
+// which is enough for scalars and strings. Anything it cannot render as an input
+// falls back to raw JSON so the call is still possible rather than blocked.
+function buildForm(description) {
+  const host = $("call-form");
+  host.replaceChildren();
+  currentFields = {};
+
+  const fields = description.fields?.fields ?? description.fields ?? {};
+  const names = Object.keys(fields);
+  if (names.length === 0) {
+    const none = document.createElement("div");
+    none.className = "muted";
+    none.textContent = "this request takes no fields";
+    host.append(none);
+    return;
+  }
+
+  for (const name of names) {
+    const spec = fields[name] ?? {};
+    const wrap = document.createElement("label");
+    wrap.className = "field";
+    const label = document.createElement("span");
+    label.textContent = name;
+    const input = document.createElement("input");
+    input.type = /int|float|number/i.test(spec.type ?? "") ? "number" : "text";
+    input.placeholder = spec.type ?? "";
+    input.addEventListener("input", () => {
+      const raw = input.value;
+      if (raw === "") { delete currentFields[name]; return; }
+      currentFields[name] = input.type === "number" ? Number(raw) : raw;
+    });
+    wrap.append(label, input);
+    host.append(wrap);
+  }
+}
+
+async function selectService(service) {
+  selectedService = service;
+  $("call-section").hidden = false;
+  $("call-title").textContent = service.key;
+  $("call-result").textContent = "";
+  $("call-doc").textContent = "";
+
+  try {
+    const response = await api("/api/schema", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema: service.request_schema }),
+    });
+    const description = await response.json();
+    if (!response.ok) throw new Error(description.error ?? `HTTP ${response.status}`);
+    $("call-doc").textContent = description.doc || "";
+    buildForm(description);
+  } catch (error) {
+    $("call-form").replaceChildren();
+    $("call-result").textContent = `cannot describe ${service.request_schema}: ${error.message}`;
+  }
+}
+
+async function sendCall() {
+  if (!selectedService) return;
+  $("call-result").textContent = "calling\u2026";
+  try {
+    const response = await api("/api/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: selectedService.key,
+        request_schema: selectedService.request_schema,
+        response_schema: selectedService.response_schema,
+        fields: currentFields,
+      }),
+    });
+    const result = await response.json();
+    // Every status is shown, not just success: 504 means nobody answered, 400
+    // means the fields did not fit the schema and `errors` says which.
+    $("call-result").textContent =
+      `${response.status} ${result.status ?? ""}\n` + JSON.stringify(result, null, 2);
+  } catch (error) {
+    $("call-result").textContent = `call failed: ${error.message}`;
+  }
+}
+
+async function refreshServices() {
+  try {
+    const response = await api("/api/services");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderServices(await response.json());
+  } catch (error) {
+    $("service-list").textContent = `cannot list services (${error.message})`;
   }
 }
 
@@ -431,6 +637,8 @@ function showView(name) {
   $("info").hidden = name !== "info";
   $("update").hidden = name !== "update";
   $("health").hidden = name !== "health";
+  $("services").hidden = name !== "services";
+  if (name === "services") refreshServices();
   if (name === "update") refreshUpdate();
   if (name === "health") {
     refreshHealth();
@@ -445,6 +653,19 @@ function showView(name) {
 for (const tab of document.querySelectorAll(".tab")) {
   if (!tab.disabled) tab.addEventListener("click", () => showView(tab.dataset.view));
 }
+
+$("call-send").addEventListener("click", sendCall);
+
+$("auth-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  token = $("auth-input").value.trim();
+  localStorage.setItem(TOKEN_KEY, token);
+  $("auth").hidden = true;
+  // The stream carries the token in its URL, so it has to be reopened.
+  connectEvents();
+  refresh();
+  refreshUpdate();
+});
 
 wireUpdate();
 refresh();
