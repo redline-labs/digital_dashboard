@@ -131,41 +131,11 @@ target_include_directories(redline_wasm PRIVATE
 
 target_link_libraries(redline_wasm PRIVATE
     schemas capnp kj spdlog::spdlog nlohmann_json::nlohmann_json)
-if(REDLINE_WASM_WITH_PICO)
-    target_link_libraries(redline_wasm PRIVATE zenohpico::lib)
-    target_compile_definitions(redline_wasm PRIVATE REDLINE_WASM_WITH_PICO=1)
-endif()
 
 # -fexceptions, not -fno-exceptions: KJ throws kj::Exception and capnp's
 # SchemaLoader depends on it. This is why wasi-sdk was not an option.
 target_compile_options(redline_wasm PRIVATE -fexceptions -Os)
-# ASYNCIFY, because of one line upstream.
-#
-# _z_ws_emscripten_open() calls connect(), breaks immediately -- its own comment
-# says connect returns -1 even when the socket is actually opening -- and then
-# does a single z_sleep_ms(100) as a stated workaround "as connect returns before
-# the websocket is actually open". On this platform z_sleep_ms is
-# emscripten_sleep, which aborts outright without asyncify support:
-#
-#   Aborted(Please compile your program with async support ...)
-#
-# So the transport is not inherently blocking; it has one sleep papering over an
-# async handshake. ASYNCIFY_ONLY scopes the instrumentation to that call path
-# rather than paying for the whole module -- capnp decoding, SchemaLoader and the
-# layout hashing have no business being rewound.
-#
-# Note what this does NOT do: ASYNCIFY_EXPORTS is deprecated and empty, so embind
-# exports stay synchronous. decodeToJson(), healthFromPayload() and the layout
-# hash functions keep working exactly as they already do, and app.js is unaffected.
-#
-# WEBSOCKET_SUBPROTOCOL=null: emscripten's socket layer otherwise asks for
-# `Sec-WebSocket-Protocol: binary`, zenohd's tungstenite accept answers without
-# one, and RFC 6455 says the client must then fail the connection -- Chrome and
-# node's `ws` both do. zenohd logs the link as accepted, and pico sees silence
-# where the InitAck should be.
 target_link_options(redline_wasm PRIVATE
-    -sASYNCIFY
-    -sWEBSOCKET_SUBPROTOCOL=null
     -fexceptions
     -lembind
     -sMODULARIZE=1
@@ -175,4 +145,20 @@ target_link_options(redline_wasm PRIVATE
     -sEXPORTED_RUNTIME_METHODS=['HEAPU8']
     -Os
 )
+
+if(REDLINE_WASM_WITH_PICO)
+    target_sources(redline_wasm PRIVATE bus.cpp)
+    target_link_libraries(redline_wasm PRIVATE zenohpico::lib)
+    # ASYNCIFY: pico's emscripten ws link polls with z_sleep_ms(), which is
+    # emscripten_sleep() and aborts without it. The cost is that a bus export
+    # which sleeps returns a Promise -- see the top of bus.cpp.
+    #
+    # WEBSOCKET_SUBPROTOCOL=null: emscripten's socket layer otherwise asks for
+    # `Sec-WebSocket-Protocol: binary`, zenohd's tungstenite accept answers
+    # without one, and RFC 6455 says the client must then fail the connection --
+    # Chrome and node's `ws` both do. zenohd logs the link as accepted, and pico
+    # sees silence where the InitAck should be.
+    target_link_options(redline_wasm PRIVATE -sASYNCIFY -sWEBSOCKET_SUBPROTOCOL=null)
+endif()
+
 set_target_properties(redline_wasm PROPERTIES OUTPUT_NAME "redline")
