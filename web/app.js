@@ -899,17 +899,195 @@ function buildForm(description) {
   host.append(callForm.el);
 }
 
-async function selectService(service) {
-  selectedService = service;
-  $("call-section").hidden = false;
-  $("call-title").textContent = service.key;
-  $("call-result").textContent = "";
-  $("call-doc").textContent = "";
+// --- call results ---------------------------------------------------------
+//
+// A reply is rendered from the RESPONSE schema's description, the same data the
+// form is built from: fields in declaration order with their doc comments,
+// enums by name, floats rounded for reading (the exact value on hover), Data as
+// hex, nested structs and lists indented. The raw JSON stays one click away.
 
-  try {
-    const response = await api(`/api/schema/${encodeURIComponent(service.request_schema)}`);
+let responseDescription = null;  // describeSchema() of the selected response type
+
+function describe(name) {
+  return api(`/api/schema/${encodeURIComponent(name)}`).then(async (response) => {
     const description = await response.json();
     if (!response.ok) throw new Error(description.error ?? `HTTP ${response.status}`);
+    return description;
+  });
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+// Six significant digits reads as the value; the stored float is on hover.
+function formatFloat(v) {
+  if (!Number.isFinite(v) || Number.isInteger(v)) return String(v);
+  return String(Number.parseFloat(v.toPrecision(6)));
+}
+
+function renderScalar(spec, value) {
+  if (value === null || value === undefined) return el("span", "muted", "—");
+  const type = spec?.type;
+  if (typeof value === "boolean") return el("span", `flag ${value ? "on" : "off"}`, value ? "true" : "false");
+  if (type === "float" && typeof value === "number") {
+    const span = el("span", "num", formatFloat(value));
+    if (span.textContent !== String(value)) span.title = String(value);
+    return span;
+  }
+  if (typeof value === "number") return el("span", "num", String(value));
+  if (type === "data") {
+    // Large Data arrives as {_data_bytes, hex_prefix} rather than inline.
+    if (value && typeof value === "object") {
+      const text = `${value._data_bytes} bytes` + (value.hex_prefix ? `: ${value.hex_prefix}…` : "");
+      return el("code", null, text);
+    }
+    return el("code", null, value === "" ? "(empty)" : value);
+  }
+  if (type === "enum") {
+    const span = el("span", "enum", String(value));
+    const index = spec.values?.indexOf(value) ?? -1;
+    if (index >= 0 && spec.value_docs?.[index]) span.title = spec.value_docs[index];
+    return span;
+  }
+  if (typeof value === "string") return el("span", null, value === "" ? "(empty)" : value);
+  return el("code", null, JSON.stringify(value));
+}
+
+function renderList(spec, list) {
+  const element = spec?.element ?? { type: spec?.element_type, values: spec?.values };
+  if (list.length === 0) return el("span", "muted", "(empty list)");
+  const scalar = list.every((v) => v === null || typeof v !== "object");
+  if (scalar && list.length <= 16) {
+    const wrap = el("span", "inline-list");
+    list.forEach((v, i) => {
+      if (i) wrap.append(", ");
+      wrap.append(renderScalar(element, v));
+    });
+    return wrap;
+  }
+  const dl = el("dl", "kv");
+  list.forEach((v, i) => {
+    dl.append(el("dt", "muted", `[${i}]`), wrapDd(renderValue(element, v)));
+  });
+  return dl;
+}
+
+function renderStruct(fields, value, skip = new Set()) {
+  const dl = el("dl", "kv");
+  const known = Object.entries(fields ?? {}).sort((a, b) => (a[1].order ?? 0) - (b[1].order ?? 0));
+  const seen = new Set();
+  for (const [name, spec] of known) {
+    // A union reply carries only its active arm; absent keys are not "empty".
+    seen.add(name);
+    if (!(name in value) || skip.has(name)) continue;
+    const dt = el("dt", null, name);
+    if (spec.doc) dt.title = spec.doc;
+    dl.append(dt, wrapDd(renderValue(spec, value[name])));
+  }
+  // Anything the description did not name (a newer responder) is still shown.
+  for (const [name, v] of Object.entries(value)) {
+    if (seen.has(name) || skip.has(name)) continue;
+    dl.append(el("dt", null, name), wrapDd(renderValue(null, v)));
+  }
+  return dl;
+}
+
+function wrapDd(child) {
+  const dd = el("dd");
+  dd.append(child);
+  return dd;
+}
+
+function renderValue(spec, value) {
+  if (Array.isArray(value)) return renderList(spec, value);
+  if (value && typeof value === "object" && spec?.type !== "data") {
+    return renderStruct(spec?.fields ?? {}, value);
+  }
+  return renderScalar(spec, value);
+}
+
+// Services here report a refusal in the response itself, as an `ok` flag and a
+// `message` (the tree's convention), so that is lifted into the reply's header.
+function replyVerdict(value) {
+  if (!value || typeof value !== "object" || typeof value.ok !== "boolean") return null;
+  const verdict = el("div", "reply-verdict");
+  verdict.append(pill(value.ok ? "ok" : "refused", value.ok));
+  if (value.message) verdict.append(el("span", null, value.message));
+  return verdict;
+}
+
+function renderCallResult(httpStatus, result) {
+  const host = $("call-result");
+  host.replaceChildren();
+
+  const summary = el("div", "call-summary");
+  const replied = result.status === "replied";
+  summary.append(pill(result.status ?? (httpStatus < 400 ? "ok" : "error"), replied));
+  const facts = [`HTTP ${httpStatus}`];
+  if (result.elapsed_ms != null) facts.push(`${result.elapsed_ms} ms`);
+  if ((result.replies?.length ?? 0) > 1) facts.push(`${result.replies.length} replies`);
+  summary.append(el("span", "muted", facts.join(" · ")));
+  host.append(summary);
+
+  const problems = [...(result.errors ?? [])];
+  if (result.error) problems.unshift(result.error);
+  if (problems.length) {
+    const list = el("ul", "call-errors");
+    for (const problem of problems) list.append(el("li", null, problem));
+    host.append(list);
+  }
+  if (httpStatus === 504 || result.status === "no reply") {
+    host.append(el("p", "muted", "Nothing answered on that key within the timeout."));
+  }
+
+  const fields = responseDescription?.fields?.fields;
+  (result.replies ?? []).forEach((reply, i) => {
+    const card = el("div", "reply");
+    const head = el("div", "row-head");
+    head.append(el("strong", null, result.replies.length > 1 ? `reply ${i + 1}` : "reply"),
+                el("span", "muted", reply.schema ?? ""));
+    card.append(head);
+    if (reply.is_error) {
+      card.append(el("div", "call-errors", reply.error_text || "the responder returned an error"));
+    } else {
+      const verdict = replyVerdict(reply.value);
+      if (verdict) card.append(verdict);
+      // What the verdict line already says is not repeated below it.
+      const lifted = verdict ? new Set(["ok", "message"]) : new Set();
+      if (reply.value && typeof reply.value === "object" && !Array.isArray(reply.value)) {
+        card.append(renderStruct(reply.schema === selectedService?.response_schema ? fields : {}, reply.value, lifted));
+      } else {
+        card.append(renderValue(null, reply.value));
+      }
+    }
+    host.append(card);
+  });
+
+  const raw = el("details", "raw");
+  raw.append(el("summary", "muted", "raw JSON"), el("pre", null, JSON.stringify(result, null, 2)));
+  host.append(raw);
+}
+
+async function selectService(service) {
+  selectedService = service;
+  responseDescription = null;
+  $("call-section").hidden = false;
+  $("call-title").textContent = service.key;
+  $("call-result").replaceChildren();
+  $("call-doc").textContent = "";
+
+  // The response's description is only for rendering replies; a failure there
+  // still leaves a callable form, and replies fall back to their own shape.
+  describe(service.response_schema).then((d) => {
+    if (selectedService === service) responseDescription = d;
+  }).catch(() => {});
+
+  try {
+    const description = await describe(service.request_schema);
     $("call-doc").textContent = description.doc || "";
     buildForm(description);
   } catch (error) {
@@ -924,7 +1102,7 @@ async function sendCall() {
   for (const input of $("call-form").querySelectorAll("input, select")) {
     if (!input.checkValidity()) { input.reportValidity(); return; }
   }
-  $("call-result").textContent = "calling\u2026";
+  $("call-result").replaceChildren(el("span", "muted", "calling…"));
   try {
     const response = await api("/api/call", {
       method: "POST",
@@ -936,13 +1114,11 @@ async function sendCall() {
         fields: callForm?.value() ?? {},
       }),
     });
-    const result = await response.json();
-    // Every status is shown, not just success: 504 means nobody answered, 400
-    // means the fields did not fit the schema and `errors` says which.
-    $("call-result").textContent =
-      `${response.status} ${result.status ?? ""}\n` + JSON.stringify(result, null, 2);
+    // Every status is rendered, not just success: 504 means nobody answered,
+    // 400 means the fields did not fit the schema and `errors` says which.
+    renderCallResult(response.status, await response.json());
   } catch (error) {
-    $("call-result").textContent = `call failed: ${error.message}`;
+    $("call-result").replaceChildren(el("div", "call-errors", `call failed: ${error.message}`));
   }
 }
 

@@ -72,6 +72,14 @@ to add and remove. A field left empty is left out of the request, so the
 schema's default applies; the default is shown as the placeholder. 64-bit
 integers go out as exact JSON integers rather than through a JS Number.
 
+Replies are rendered from the response schema's description the same way: a
+summary line (the call's status, HTTP code and time), any errors as a list,
+then each reply's fields in declaration order with their doc comments on hover
+-- enums by name, floats to six significant digits with the stored value on
+hover, Data as hex, nested structs and lists indented. A reply with the tree's
+`ok`/`message` convention gets an ok/refused line at the top. The raw JSON is
+under a disclosure for anything the rendering does not show.
+
 ## Reflash
 
 One upload at a time: a second while one is in flight gets `409`, as does an

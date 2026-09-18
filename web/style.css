@@ -109,3 +109,22 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg);
 .field input[type=checkbox] { justify-self: start; width: 18px; height: 18px; }
 .field input:invalid { border-color: var(--warn); }
 button.small { padding: 4px 10px; font-size: 13px; justify-self: start; }
+#call-result { margin-top: 12px; display: grid; gap: 10px; }
+.call-summary { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.call-errors { color: #ffb4b4; margin: 0; padding-left: 18px; }
+div.call-errors { padding-left: 0; }
+.reply { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
+.reply-verdict { display: flex; gap: 10px; align-items: center; }
+dl.kv { display: grid; grid-template-columns: minmax(8em, 14em) 1fr; gap: 4px 12px; margin: 0; }
+dl.kv dt { color: var(--dim); overflow-wrap: anywhere; }
+dl.kv dt[title] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+dl.kv dd > dl.kv { border-left: 2px solid var(--line); padding-left: 10px; }
+.num { font-variant-numeric: tabular-nums; }
+.enum { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.flag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+.flag.on { color: var(--accent); border-color: var(--accent); }
+.flag.off { color: var(--dim); }
+details.raw summary { cursor: pointer; }
+details.raw pre { margin-top: 6px; }
+dl.kv dd dl.kv { grid-template-columns: minmax(3em, max-content) 1fr; column-gap: 16px; }
