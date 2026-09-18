@@ -5,6 +5,7 @@
 #include "dashboard/config_override.h"
 #include "dashboard/display_binding.h"
 #include "dashboard/main_window.h"
+#include "dashboard/quit_on_signal.h"
 
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
@@ -16,7 +17,6 @@
 
 #include <unistd.h>
 
-#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <iostream>
@@ -161,6 +161,11 @@ int main(int argc, char** argv)
 
     QApplication app(argc, argv);
     SPDLOG_INFO("startup: QApplication at {} ms", since());
+
+    // SIGTERM is what systemd stops the unit with; SIGINT is Ctrl+C at a desk.
+    // Both leave app.exec() so the teardown at the end runs -- including one
+    // that arrives during startup, which waits in the pipe for the loop.
+    dashboard::quitOnSignals(&app, {SIGINT, SIGTERM});
 
     // Create windows from configuration. A lambda because a rejected override is
     // rebuilt from the shipped config below.
@@ -350,25 +355,6 @@ int main(int argc, char** argv)
         // would connect too early and see an empty widget tree.
         std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
     }
-
-    // Only a flag is set from the handler. Neither spdlog nor
-    // QCoreApplication::quit() is async-signal-safe -- calling them here could
-    // deadlock on a lock the interrupted thread already held, which is a hang at
-    // exactly the moment you are trying to stop the process. A timer polls the
-    // flag and does the real work on the GUI thread.
-    static std::atomic<bool> interrupted{false};
-    std::signal(SIGINT, [](int /* signum */) { interrupted.store(true, std::memory_order_relaxed); });
-
-    QTimer interrupt_poll;
-    QObject::connect(&interrupt_poll, &QTimer::timeout, &app, [&]()
-    {
-        if (interrupted.load(std::memory_order_relaxed))
-        {
-            SPDLOG_WARN("SIGINT received, quitting.");
-            QCoreApplication::quit();
-        }
-    });
-    interrupt_poll.start(std::chrono::milliseconds{100});
 
     app.exec();  // Blocking.
 

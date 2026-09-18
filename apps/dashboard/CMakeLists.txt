@@ -21,6 +21,7 @@ qt_add_executable(dashboard
     display_binding.cpp
     config_override.cpp
     command_line_args.cpp
+    quit_on_signal.cpp
 
     # Q_OBJECT header, listed so AUTOMOC finds it under include/. See the note
     # in apps/scope/CMakeLists.txt.
@@ -84,6 +85,19 @@ target_link_libraries(dashboard_test_config_override PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET dashboard_test_config_override LABELS dashboard unit)
+
+# SIGTERM -- what systemd sends -- and SIGINT both end the event loop, and a
+# second signal is not caught. Needs an event loop, not a display.
+add_executable(dashboard_test_quit_on_signal
+    tests/test_quit_on_signal.cpp
+    quit_on_signal.cpp
+)
+target_include_directories(dashboard_test_quit_on_signal PRIVATE include)
+target_link_libraries(dashboard_test_quit_on_signal PRIVATE
+    Qt6::Core
+    spdlog::spdlog
+)
+add_project_test(TARGET dashboard_test_quit_on_signal LABELS dashboard unit)
 
 # SHIPPED, on the cluster image only: this links Qt. See cmake/ProjectInstall.cmake.
 redline_install(TARGET dashboard COMPONENT gui)
