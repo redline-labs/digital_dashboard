@@ -33,16 +33,6 @@ namespace
 
 using nlohmann::json;
 
-Reply jsonReply(int status, const json& body)
-{
-    return Reply{.status = status, .body = body.dump(), .contentType = "application/json"};
-}
-
-Reply errorReply(int status, const std::string& message)
-{
-    return jsonReply(status, json{{"error", message}});
-}
-
 // A caller that has to know a service's key AND both schema names to invoke it
 // is a caller that cannot be a generic form, so the listing carries all three.
 json servicesJson(const ServiceRoutes& state)
@@ -97,18 +87,10 @@ void registerServiceRoutes(RouteRegistrar& routes, ServiceRoutes& state)
         return jsonReply(200, json{{"schemas", names}});
     });
 
-    routes.post("/api/schema", [](const std::string& body) {
-        json request;
-        try
-        {
-            request = json::parse(body);
-        }
-        catch (const json::exception& error)
-        {
-            return errorReply(400, std::string("body is not JSON: ") + error.what());
-        }
-
-        const std::string name = request.value("schema", "");
+    // A GET, because describing a schema reads and changes nothing.
+    routes.getWithParams("/api/schema/:name", [](const PathParams& params) {
+        const auto found = params.find("name");
+        const std::string name = found != params.end() ? found->second : std::string();
         if (name.empty())
         {
             return errorReply(400, "give a schema name");

@@ -7,6 +7,7 @@
 
 #include "core/core.h"
 
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -27,6 +28,16 @@ namespace
 constexpr std::size_t kMaxUploadBytes = 4ULL * 1024 * 1024 * 1024;
 } // namespace
 
+
+Reply jsonReply(int status, const nlohmann::json& body)
+{
+    return Reply{.status = status, .body = body.dump(), .contentType = "application/json"};
+}
+
+Reply errorReply(int status, const std::string& message)
+{
+    return jsonReply(status, nlohmann::json{{"error", message}});
+}
 
 // The httplib half of the handle the route files are given. Keeping it here is
 // what lets routes_system.cpp -- and every route file after it -- compile
@@ -129,18 +140,22 @@ void EventStream::close()
 // RouteRegistrar
 // ---------------------------------------------------------------------------
 
-void RouteRegistrar::get(const std::string& pattern, std::function<std::string()> body)
-{
-    impl_.server.Get(pattern, [body = std::move(body)](const httplib::Request&, httplib::Response& response) {
-        response.set_content(body(), "application/json");
-    });
-}
-
 void RouteRegistrar::getReply(const std::string& pattern, std::function<Reply()> handler)
 {
     impl_.server.Get(pattern, [handler = std::move(handler)](const httplib::Request&,
                                                              httplib::Response& response) {
         const Reply reply = handler();
+        response.status = reply.status;
+        response.set_content(reply.body, reply.contentType);
+    });
+}
+
+void RouteRegistrar::getWithParams(const std::string& pattern,
+                                   std::function<Reply(const PathParams&)> handler)
+{
+    impl_.server.Get(pattern, [handler = std::move(handler)](const httplib::Request& request,
+                                                             httplib::Response& response) {
+        const Reply reply = handler(request.path_params);
         response.status = reply.status;
         response.set_content(reply.body, reply.contentType);
     });

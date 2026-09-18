@@ -532,11 +532,7 @@ async function selectService(service) {
   $("call-doc").textContent = "";
 
   try {
-    const response = await api("/api/schema", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ schema: service.request_schema }),
-    });
+    const response = await api(`/api/schema/${encodeURIComponent(service.request_schema)}`);
     const description = await response.json();
     if (!response.ok) throw new Error(description.error ?? `HTTP ${response.status}`);
     $("call-doc").textContent = description.doc || "";

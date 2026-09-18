@@ -3,10 +3,13 @@
 
 #include "node_config.h"
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 // The console's HTTP surface, kept behind a seam so that main.cpp and the route
 // files do not each include 778 KB of header.
@@ -67,6 +70,14 @@ struct Reply
     std::string contentType { "application/json" };
 };
 
+// `body` as JSON with `status`. Every route answers through these two, so an
+// error always has the one shape the page reads: {"error": "..."}.
+Reply jsonReply(int status, const nlohmann::json& body);
+Reply errorReply(int status, const std::string& message);
+
+// A route's :name segments, by name.
+using PathParams = std::unordered_map<std::string, std::string>;
+
 // A body arriving in pieces, which is the entire reason cpp-httplib was chosen:
 // a RAUC bundle is ~338 MB and must never exist in memory. The route supplies a
 // factory; the server calls write() as chunks land and finish() at the end.
@@ -119,11 +130,12 @@ private:
 class RouteRegistrar
 {
 public:
-    // A GET whose body is produced on demand and served as JSON.
-    void get(const std::string& pattern, std::function<std::string()> body);
-
     // A GET that can choose its status and content type.
     void getReply(const std::string& pattern, std::function<Reply()> handler);
+
+    // The same, for a pattern with :name segments, e.g. /api/schema/:name.
+    void getWithParams(const std::string& pattern,
+                       std::function<Reply(const PathParams&)> handler);
 
     // A POST with a small body, read whole -- commands, not uploads.
     void post(const std::string& pattern, std::function<Reply(const std::string& body)> handler);

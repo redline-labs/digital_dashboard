@@ -97,7 +97,7 @@ void registerHealthRoutes(RouteRegistrar& routes, ::node_health::HealthMonitor& 
         {
             out["error"] = "no zenoh session; nothing can be observed";
             out["nodes"] = json::array();
-            return Reply{.status = 200, .body = out.dump(), .contentType = "application/json"};
+            return jsonReply(200, out);
         }
 
         json nodes = json::array();
@@ -107,7 +107,7 @@ void registerHealthRoutes(RouteRegistrar& routes, ::node_health::HealthMonitor& 
         }
         out["nodes"] = nodes;
         out["revision"] = monitor.revision();
-        return Reply{.status = 200, .body = out.dump(), .contentType = "application/json"};
+        return jsonReply(200, out);
     });
 }
 

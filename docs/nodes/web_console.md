@@ -48,7 +48,8 @@ code is in git history.
 | `POST /api/update/mark-good` | marks the running slot good | |
 | `GET /api/health` | every node's health, classified | |
 | `GET /api/services` | services offered on the bus | |
-| `GET,POST /api/schema` | describes a schema, for building a request | |
+| `GET /api/schema` | every schema name | |
+| `GET /api/schema/<name>` | describes one, for building a request | |
 | `POST /api/call` | calls a service | |
 
 `/api/call` reports what actually happened rather than flattening everything to

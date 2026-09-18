@@ -125,7 +125,7 @@ json buildSystemJson()
 
 void registerSystemRoutes(RouteRegistrar& routes)
 {
-    routes.get("/api/system", [] { return buildSystemJson().dump(); });
+    routes.getReply("/api/system", [] { return jsonReply(200, buildSystemJson()); });
 }
 
 }  // namespace web_console

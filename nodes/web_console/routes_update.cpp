@@ -42,16 +42,6 @@ using nlohmann::json;
 // before a byte is written beats filling /data and failing at 99%.
 constexpr std::uint64_t kFreeSpaceMargin = 64ull * 1024ull * 1024ull;
 
-Reply jsonReply(int status, const json& body)
-{
-    return Reply{.status = status, .body = body.dump(), .contentType = "application/json"};
-}
-
-Reply errorReply(int status, const std::string& message)
-{
-    return jsonReply(status, json{{"error", message}});
-}
-
 // How many boot attempts the bootloader has left for each entry.
 //
 // redline-bootloader encodes this in the filename -- boot-b+3-0.conf means three
