@@ -55,32 +55,6 @@ include(${REDLINE_ROOT}/third_party/spdlog.cmake)
 # app and `inspect` use, instead of a second implementation that can disagree.
 include(${REDLINE_ROOT}/third_party/nlohmann_json.cmake)
 
-# CAPNPROTO'S -pthread, WHICH EMSCRIPTEN ACCEPTS AND SHOULD NOT.
-#
-# capnproto's c++/CMakeLists.txt does add_compile_options(-pthread) for non-Android
-# UNIX, and src/kj/CMakeLists.txt links `pthread`, both under `if(UNIX ...)`.
-# Emscripten DEFINES UNIX, so a wasm build inherits both -- and -pthread under
-# emcc means SharedArrayBuffer, which means the page must be served with COOP and
-# COEP headers. For a decode-only module that is a large cost for nothing.
-#
-# UNVERIFIED as of writing: strip it back off here and check the link line in the
-# spike (emcc -v). If this proves insufficient, the fallback is a PATCH_COMMAND on
-# the capnproto fetch, which is uglier but deterministic.
-foreach(_capnp_target kj capnp)
-    if(TARGET ${_capnp_target})
-        get_target_property(_opts ${_capnp_target} INTERFACE_COMPILE_OPTIONS)
-        if(_opts)
-            list(REMOVE_ITEM _opts "-pthread")
-            set_target_properties(${_capnp_target} PROPERTIES INTERFACE_COMPILE_OPTIONS "${_opts}")
-        endif()
-        get_target_property(_libs ${_capnp_target} INTERFACE_LINK_LIBRARIES)
-        if(_libs)
-            list(REMOVE_ITEM _libs "pthread" "-pthread" "Threads::Threads")
-            set_target_properties(${_capnp_target} PROPERTIES INTERFACE_LINK_LIBRARIES "${_libs}")
-        endif()
-    endif()
-endforeach()
-
 # reflection is header-only and INTERFACE. Declared here rather than reached by
 # add_subdirectory(libs/reflection), which would also declare test_reflection and
 # call redline_install() -- neither of which means anything in a browser.
