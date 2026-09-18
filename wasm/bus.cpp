@@ -57,6 +57,32 @@ Bus& bus()
 // without limit while an install or a busy bus keeps publishing.
 constexpr std::size_t kMaxQueued = 4096;
 
+// Batches read per busPump(). A read with nothing waiting blocks for the link
+// timeout (Z_CONFIG_SOCKET_TIMEOUT, 100 ms), so draining what is already queued
+// in one pump is what keeps throughput from being one batch per 100 ms. Bounded
+// so a flood cannot hold one pump forever.
+constexpr int kMaxReadsPerPump = 64;
+
+// Pico renders an encoding id it has no name for as an EMPTY prefix plus the
+// separator, so zenoh-c's "application/capnp;NodeHealth" arrives here as
+// ";application/capnp;NodeHealth" -- and pub_sub::schemaNameFromEncoding()
+// would then return "application/capnp;NodeHealth" as the schema name.
+std::string encodingString(const z_loaned_encoding_t* encoding)
+{
+    std::string out;
+    z_owned_string_t text;
+    if (z_encoding_to_string(encoding, &text) == _Z_RES_OK)
+    {
+        out.assign(z_string_data(z_loan(text)), z_string_len(z_loan(text)));
+        z_drop(z_move(text));
+    }
+    if (!out.empty() && out.front() == ';')
+    {
+        out.erase(0, 1);
+    }
+    return out;
+}
+
 void pushSample(const z_loaned_sample_t* sample, bool liveliness)
 {
     Bus& b = bus();
@@ -73,12 +99,7 @@ void pushSample(const z_loaned_sample_t* sample, bool liveliness)
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
     record.keyexpr.assign(z_string_data(z_loan(key)), z_string_len(z_loan(key)));
 
-    z_owned_string_t encoding;
-    if (z_encoding_to_string(z_sample_encoding(sample), &encoding) == _Z_RES_OK)
-    {
-        record.encoding.assign(z_string_data(z_loan(encoding)), z_string_len(z_loan(encoding)));
-        z_drop(z_move(encoding));
-    }
+    record.encoding = encodingString(z_sample_encoding(sample));
 
     z_owned_slice_t slice;
     if (z_bytes_to_slice(z_sample_payload(sample), &slice) == _Z_RES_OK)
@@ -95,9 +116,7 @@ void pushSample(const z_loaned_sample_t* sample, bool liveliness)
 void onDataSample(z_loaned_sample_t* sample, void*) { pushSample(sample, false); }
 void onLivelinessSample(z_loaned_sample_t* sample, void*) { pushSample(sample, true); }
 
-// locator is a ws:// endpoint in zenoh's spelling, e.g. "ws/10.0.0.93:7446".
-// A browser cannot be a peer -- no listening socket, no multicast -- so this is
-// always a client.
+// locator is zenoh's spelling of a ws endpoint, e.g. "ws/10.0.0.93:7446".
 bool busConnect(const std::string& locator)
 {
     Bus& b = bus();
@@ -133,12 +152,23 @@ bool subscribe(const std::string& keyexpr, bool liveliness)
     z_closure_sample(&closure, liveliness ? onLivelinessSample : onDataSample, nullptr, nullptr);
 
     z_owned_subscriber_t subscriber;
-    const z_result_t result =
-        liveliness
-            ? z_liveliness_declare_subscriber(z_loan(b.session), &subscriber, z_loan(key),
-                                              z_move(closure), nullptr)
-            : z_declare_subscriber(z_loan(b.session), &subscriber, z_loan(key), z_move(closure),
-                                   nullptr);
+    z_result_t result = _Z_RES_OK;
+    if (liveliness)
+    {
+        // history: zenoh has no retained messages, so without it the tokens
+        // declared before this subscription -- every node already running --
+        // are never reported, and only arrivals after it show up.
+        z_liveliness_subscriber_options_t options;
+        z_liveliness_subscriber_options_default(&options);
+        options.history = true;
+        result = z_liveliness_declare_subscriber(z_loan(b.session), &subscriber, z_loan(key),
+                                                 z_move(closure), &options);
+    }
+    else
+    {
+        result = z_declare_subscriber(z_loan(b.session), &subscriber, z_loan(key), z_move(closure),
+                                      nullptr);
+    }
     if (result != _Z_RES_OK)
     {
         return false;
@@ -147,6 +177,9 @@ bool subscribe(const std::string& keyexpr, bool liveliness)
     return true;
 }
 
+bool busSubscribe(const std::string& keyexpr) { return subscribe(keyexpr, false); }
+bool busSubscribeLiveliness(const std::string& keyexpr) { return subscribe(keyexpr, true); }
+
 // nodes/<name>/health -- what HealthReporter publishes.
 bool busSubscribeHealth() { return subscribe("nodes/*/health", false); }
 
@@ -154,25 +187,32 @@ bool busSubscribeHealth() { return subscribe("nodes/*/health", false); }
 // publishing is distinguishable from one that was never there.
 bool busSubscribeNodes() { return subscribe("@redline/node/**", true); }
 
-// Drives the session. Returns how many samples are waiting afterwards.
-//
-// Both calls matter: zp_read moves bytes, zp_send_keep_alive stops the router
-// dropping us on lease expiry. With no threads, neither happens on its own.
+// Drives the session: reads what the router has sent and keeps the lease
+// alive, neither of which happens on its own without threads. Returns how many
+// samples are waiting, or -1 once the transport has failed (the router went
+// away or dropped us) -- the caller should busClose() and connect again.
 int busPump()
 {
     Bus& b = bus();
-    if (!b.open) { return 0; }
-    zp_read(z_loan(b.session), nullptr);
-    zp_send_keep_alive(z_loan(b.session), nullptr);
+    if (!b.open) { return -1; }
+    for (int i = 0; i < kMaxReadsPerPump; ++i)
+    {
+        const z_result_t result = zp_read(z_loan(b.session), nullptr);
+        if (result == _Z_NO_DATA_PROCESSED) { break; }
+        if (result < 0) { return -1; }
+    }
+    if (zp_send_keep_alive(z_loan(b.session), nullptr) < 0) { return -1; }
     return static_cast<int>(b.queue.size());
 }
 
-// Drains the queue into JS. Payloads cross as Uint8Array so the caller can hand
-// them straight back to decodeToJson().
+// Drains the queue into JS. Payloads cross as Uint8Array COPIES -- a view into
+// the wasm heap would dangle as soon as the record is freed -- so the caller can
+// keep them and hand them straight to decodeToJson()/healthFromPayload().
 emscripten::val busTake()
 {
     Bus& b = bus();
     emscripten::val out = emscripten::val::array();
+    const emscripten::val uint8Array = emscripten::val::global("Uint8Array");
     int index = 0;
     while (!b.queue.empty())
     {
@@ -184,8 +224,9 @@ emscripten::val busTake()
         item.set("encoding", record.encoding);
         item.set("liveliness", record.liveliness);
         item.set("alive", record.alive);
-        item.set("payload", emscripten::val(emscripten::typed_memory_view(
-                                record.payload.size(), record.payload.data())));
+        const emscripten::val view(
+            emscripten::typed_memory_view(record.payload.size(), record.payload.data()));
+        item.set("payload", uint8Array.new_(view));
         out.set(index++, item);
     }
     return out;
@@ -211,6 +252,8 @@ EMSCRIPTEN_BINDINGS(redline_bus)
 {
     emscripten::function("busConnect", &busConnect);
     emscripten::function("busConnected", &busConnected);
+    emscripten::function("busSubscribe", &busSubscribe);
+    emscripten::function("busSubscribeLiveliness", &busSubscribeLiveliness);
     emscripten::function("busSubscribeHealth", &busSubscribeHealth);
     emscripten::function("busSubscribeNodes", &busSubscribeNodes);
     emscripten::function("busPump", &busPump);
