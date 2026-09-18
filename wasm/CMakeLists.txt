@@ -121,7 +121,14 @@ target_link_options(redline_wasm PRIVATE
 )
 
 if(REDLINE_WASM_WITH_PICO)
-    target_sources(redline_wasm PRIVATE bus.cpp)
+    # The health table and its JSON are the node's own, so the page classifies
+    # the bus with the code /api/health uses; node_key.cpp parses identities.
+    target_sources(redline_wasm PRIVATE
+        bus.cpp
+        ${REDLINE_ROOT}/libs/node_health/src/table.cpp
+        ${REDLINE_ROOT}/libs/node_health/src/health_json.cpp
+        ${REDLINE_ROOT}/libs/pub_sub/node_key.cpp
+    )
     target_link_libraries(redline_wasm PRIVATE zenohpico::lib)
     # ASYNCIFY: pico's emscripten ws link polls with z_sleep_ms(), which is
     # emscripten_sleep() and aborts without it. The cost is that a bus export

@@ -15,7 +15,14 @@
 //
 // Samples are queued rather than delivered by callback into JS: a pico callback
 // runs inside zp_read(), and re-entering JS from there would re-enter the wasm
-// heap while pico still holds it. busTake() drains the queue afterwards.
+// heap while pico still holds it. busTake() drains the queue afterwards. Health
+// is the exception: busWatchHealth() feeds node_health::HealthTable inside the
+// callback, and busHealthJson() reads the classified result.
+
+#include "node_health/health_json.h"
+#include "node_health/table.h"
+#include "pub_sub/capnp_encoding.h"
+#include "pub_sub/node_key.h"
 
 #include <zenoh-pico.h>
 
@@ -45,6 +52,11 @@ struct Bus
     bool open { false };
     std::vector<z_owned_subscriber_t> subscribers;
     std::deque<SampleRecord> queue;
+    // Fed straight from the subscriber callbacks rather than through the queue:
+    // it is the same table HealthMonitor keeps natively, so the page renders a
+    // verdict computed by the node's own code.
+    node_health::HealthTable health;
+    bool watching_health { false };
 };
 
 Bus& bus()
@@ -83,6 +95,13 @@ std::string encodingString(const z_loaned_encoding_t* encoding)
     return out;
 }
 
+std::string keyOf(const z_loaned_sample_t* sample)
+{
+    z_view_string_t key;
+    z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
+    return std::string(z_string_data(z_loan(key)), z_string_len(z_loan(key)));
+}
+
 void pushSample(const z_loaned_sample_t* sample, bool liveliness)
 {
     Bus& b = bus();
@@ -95,9 +114,7 @@ void pushSample(const z_loaned_sample_t* sample, bool liveliness)
     record.liveliness = liveliness;
     record.alive = z_sample_kind(sample) == Z_SAMPLE_KIND_PUT;
 
-    z_view_string_t key;
-    z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
-    record.keyexpr.assign(z_string_data(z_loan(key)), z_string_len(z_loan(key)));
+    record.keyexpr = keyOf(sample);
 
     record.encoding = encodingString(z_sample_encoding(sample));
 
@@ -115,6 +132,37 @@ void pushSample(const z_loaned_sample_t* sample, bool liveliness)
 
 void onDataSample(z_loaned_sample_t* sample, void*) { pushSample(sample, false); }
 void onLivelinessSample(z_loaned_sample_t* sample, void*) { pushSample(sample, true); }
+
+void onHealthSample(z_loaned_sample_t* sample, void*)
+{
+    std::vector<std::uint8_t> payload;
+    z_owned_slice_t slice;
+    if (z_bytes_to_slice(z_sample_payload(sample), &slice) != _Z_RES_OK)
+    {
+        return;
+    }
+    const std::uint8_t* data = z_slice_data(z_loan(slice));
+    payload.assign(data, data + z_slice_len(z_loan(slice)));
+    z_drop(z_move(slice));
+
+    const std::string encoding = encodingString(z_sample_encoding(sample));
+    // No origin zid: every reporter in the tree puts its own in the sample,
+    // and pico's source info is not enabled in this build.
+    bus().health.sample(pub_sub::schemaNameFromEncoding(encoding), payload, "",
+                        node_health::Clock::now());
+}
+
+void onNodeIdentity(z_loaned_sample_t* sample, void*)
+{
+    std::string zid;
+    std::string name;
+    if (!pub_sub::parseNodeKey(keyOf(sample), zid, name))
+    {
+        return;
+    }
+    bus().health.identity(zid, name, z_sample_kind(sample) == Z_SAMPLE_KIND_PUT,
+                          node_health::Clock::now());
+}
 
 // locator is zenoh's spelling of a ws endpoint, e.g. "ws/10.0.0.93:7446".
 bool busConnect(const std::string& locator)
@@ -137,7 +185,9 @@ bool busConnect(const std::string& locator)
 
 bool busConnected() { return bus().open; }
 
-bool subscribe(const std::string& keyexpr, bool liveliness)
+using SampleHandler = void (*)(z_loaned_sample_t*, void*);
+
+bool subscribe(const std::string& keyexpr, bool liveliness, SampleHandler handler)
 {
     Bus& b = bus();
     if (!b.open) { return false; }
@@ -149,7 +199,7 @@ bool subscribe(const std::string& keyexpr, bool liveliness)
     }
 
     z_owned_closure_sample_t closure;
-    z_closure_sample(&closure, liveliness ? onLivelinessSample : onDataSample, nullptr, nullptr);
+    z_closure_sample(&closure, handler, nullptr, nullptr);
 
     z_owned_subscriber_t subscriber;
     z_result_t result = _Z_RES_OK;
@@ -177,15 +227,36 @@ bool subscribe(const std::string& keyexpr, bool liveliness)
     return true;
 }
 
-bool busSubscribe(const std::string& keyexpr) { return subscribe(keyexpr, false); }
-bool busSubscribeLiveliness(const std::string& keyexpr) { return subscribe(keyexpr, true); }
+bool busSubscribe(const std::string& keyexpr) { return subscribe(keyexpr, false, onDataSample); }
+bool busSubscribeLiveliness(const std::string& keyexpr)
+{
+    return subscribe(keyexpr, true, onLivelinessSample);
+}
 
-// nodes/<name>/health -- what HealthReporter publishes.
-bool busSubscribeHealth() { return subscribe("nodes/*/health", false); }
+// Starts feeding the health table: nodes/*/health, as HealthReporter publishes
+// it, and the @redline/node identities that tell a node that stopped
+// publishing from one that was never there. Idempotent.
+bool busWatchHealth()
+{
+    Bus& b = bus();
+    if (b.watching_health) { return true; }
+    if (!subscribe("nodes/*/health", false, onHealthSample) ||
+        !subscribe(std::string(pub_sub::kNodeAll), true, onNodeIdentity))
+    {
+        return false;
+    }
+    b.watching_health = true;
+    return true;
+}
 
-// @redline/node/<zid>/<name> -- who is on the bus at all, so a node that stops
-// publishing is distinguishable from one that was never there.
-bool busSubscribeNodes() { return subscribe("@redline/node/**", true); }
+// The /api/health document, classified now, from the same code the node's
+// route uses. Never sleeps, so it is safe between pumps.
+std::string busHealthJson()
+{
+    const node_health::HealthTable& table = bus().health;
+    return node_health::healthReportJson(table.rows(node_health::Clock::now()), table.revision())
+        .dump();
+}
 
 // Drives the session: reads what the router has sent and keeps the lease
 // alive, neither of which happens on its own without threads. Returns how many
@@ -244,6 +315,10 @@ void busClose()
     z_drop(z_move(b.session));
     b.open = false;
     b.queue.clear();
+    // A new session starts from nothing: identities from the old one would
+    // never be told they went away.
+    b.health = node_health::HealthTable();
+    b.watching_health = false;
 }
 
 }  // namespace
@@ -254,8 +329,8 @@ EMSCRIPTEN_BINDINGS(redline_bus)
     emscripten::function("busConnected", &busConnected);
     emscripten::function("busSubscribe", &busSubscribe);
     emscripten::function("busSubscribeLiveliness", &busSubscribeLiveliness);
-    emscripten::function("busSubscribeHealth", &busSubscribeHealth);
-    emscripten::function("busSubscribeNodes", &busSubscribeNodes);
+    emscripten::function("busWatchHealth", &busWatchHealth);
+    emscripten::function("busHealthJson", &busHealthJson);
     emscripten::function("busPump", &busPump);
     emscripten::function("busTake", &busTake);
     emscripten::function("busClose", &busClose);
