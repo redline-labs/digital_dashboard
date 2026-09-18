@@ -43,3 +43,13 @@ target_link_libraries(cli_test_dispatch PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET cli_test_dispatch LABELS cli unit)
+
+# waitForInterrupt(): ticks at its period and returns promptly on SIGINT or
+# SIGTERM, including one delivered to a thread that is not waiting.
+add_executable(cli_test_interrupt
+    test_interrupt.cpp
+)
+target_link_libraries(cli_test_interrupt PRIVATE
+    cli
+)
+add_project_test(TARGET cli_test_interrupt LABELS cli unit)

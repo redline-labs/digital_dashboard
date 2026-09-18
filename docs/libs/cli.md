@@ -25,7 +25,7 @@ plus a file. It builds on [core](core.html) for the log pattern and on
 | --- | --- |
 | `cli/program.h` | `Program`, `Verb`, `Context`, and the exit codes `kOk`, `kFailure`, `kUsage`. |
 | `cli/output.h` | `out()`, `outPartial()` and `flush()`: tool results on stdout, unadorned. |
-| `cli/interrupt.h` | `installInterruptHandler()` and `interrupted()`, for verbs and nodes that run until told to stop: SIGINT and SIGTERM. |
+| `cli/interrupt.h` | `installInterruptHandler()`, `interrupted()` and `waitForInterrupt()`, for verbs and nodes that run until told to stop: SIGINT and SIGTERM. |
 | `cli/session_options.h` | `applySessionOverrides()`: `--connect` and `--mode` into `SessionManager` config. Called by `Program::run()`; verbs do not call it. |
 
 ## Using it
@@ -100,6 +100,13 @@ handler may write; a `std::atomic<bool>` is not guaranteed async-signal-safe.
 A verb that never calls `installInterruptHandler()` sees it stay false forever.
 Both SIGINT and SIGTERM set it, so a node that polls it shuts down cleanly under
 Ctrl-C at a terminal and under `systemctl stop` on the target.
+
+`waitForInterrupt(tick, period)` is a node's main loop: it calls `tick` every
+`period` (a second by default) and returns as soon as a signal arrives. The
+handler also writes a byte to a pipe the wait sleeps on in `poll()`. That makes
+the wake independent of which thread the kernel delivers the signal to, where
+`sigtimedwait()` would have needed SIGINT and SIGTERM blocked in every thread
+before zenoh started its own.
 
 `applySessionOverrides()` runs before any verb, which is the only correct
 moment: `SessionManager` caches one session per process and `insertConfig()`
