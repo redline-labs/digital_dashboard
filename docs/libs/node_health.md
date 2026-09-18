@@ -30,7 +30,9 @@ classification -- need no bus and carry the logic worth testing.
 |---|---|
 | `node_health/state.h` | `State`, `severity()`, `worst()`, `Check`, `CheckReport`, `HealthSnapshot`. |
 | `node_health/reporter.h` | `HealthReporter`, `ReporterOptions`, `ActivityCheck`. |
-| `node_health/monitor.h` | `HealthMonitor`, `HealthRow`. |
+| `node_health/monitor.h` | `HealthMonitor`. |
+| `node_health/table.h` | `HealthTable`, `HealthRow`: the monitor's joining and classification, with no bus and no clock reads. |
+| `node_health/health_json.h` | `healthRowJson()`, `healthReportJson()`: the `/api/health` document. |
 | `node_health/classify.h` | `Verdict`, `Observation`, `ClassifyOptions`, `classify()`, `activityState()`, `Continuity`, `account()`. |
 | `node_health/codec.h` | `encode()`, `decode()`, `decodePayload()` for the `NodeHealth` schema. |
 
@@ -83,7 +85,10 @@ history inside a recording is exactly what you want after a failure.
 ## Reading it
 
 `HealthMonitor` keys rows by session id, so two instances of the same node are
-two rows. Each row's verdict comes from `classify()`:
+two rows. Its bookkeeping lives in `HealthTable`, which takes identities and
+samples with the time supplied; the web console's wasm module feeds the same
+table from its own zenoh-pico session, so a browser reading the bus directly
+reaches the verdicts the node would. Each row's verdict comes from `classify()`:
 
 | Verdict | Means |
 |---|---|

@@ -3,10 +3,10 @@
 //
 // It holds a zenoh session and serves what it reads as JSON: /api/health from
 // node_health::HealthMonitor and /api/services from the liveliness
-// directories. The plan is for the browser to read the bus itself through the
-// wasm module in wasm/, but zenoh-pico's WebSocket transport has not been seen
-// to reach zenohd, so until it has, the node is the bus client. The rest --
-// RAUC over D-Bus, /proc and /sys, the static assets -- was never on the bus.
+// directories. The page's Health view reads the bus itself when it can,
+// through the wasm module in wasm/ and zenohd's ws/ listener; /api/health is
+// its fallback. The rest -- RAUC over D-Bus, /proc and /sys, the static
+// assets -- was never on the bus.
 
 #include "http_server.h"
 #include "node_config.h"

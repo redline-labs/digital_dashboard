@@ -21,7 +21,6 @@ It deliberately does **not**:
   `redline-mark-good.service` does the marking on the next boot, gated on
   `redline-dashboard.service`, so "good" keeps meaning *the cluster painted a
   frame* rather than *the web server started*.
-- **Talk to the bus from the browser.** See [below](#why-the-browser-is-not-a-zenoh-peer).
 - **Edit configuration.** Deferred: validation is `dashboard --check --config
   <file>`, not a reimplemented YAML validator.
 
@@ -91,26 +90,34 @@ node's `rauc` health check, when RAUC does not answer.
 The browser *will* lose its connection when the install ends in a reboot. That
 is expected, and the page retries rather than erroring.
 
-## Why the browser is not a zenoh peer
+## Health straight from the bus
 
-The original design had the browser speak zenoh directly: zenoh-pico plus this
-tree's own capnp and health code compiled to wasm, talking to `zenohd`'s `ws/`
-listener. Half of that is proven and kept -- the module reproduces the C++
-layout fingerprint for 212/212 schemas and decodes a `NodeHealth` sample
-byte-identically to native.
+The Health view reads the bus itself when it can. `redline.js` and
+`redline.wasm` (built by `tools/build-wasm.sh` from `wasm/`) hold a zenoh-pico
+session to `zenohd`'s `ws/` listener on port 7446 of the same host, subscribe
+to `nodes/*/health` and the `@redline/node` identities, and classify with
+`node_health::HealthTable` -- the table `HealthMonitor` wraps on the node --
+rendering the `/api/health` document with the node's own code. Both paths give
+the page the same JSON and the same verdicts. `#bus-status` says which one is
+serving: **direct (zenoh over ws)** or **via console**.
 
-What is not proven is pico's **emscripten WebSocket transport**. On the wire it
-sends a correct upgrade and a correct zenoh `InitSyn`, then no `InitAck` ever
-arrives. Upstream's emscripten CI is build-only, so that path has no evidence of
-ever having run.
+`/api/health` is the fallback, polled every 2 s:
 
-So the node holds the zenoh session and serves `/api/health` and
-`/api/services`, classified and called by the same code `inspect` uses --
-`node_health::HealthMonitor` and `pub_sub::callServiceBlocking`. The browser
-renders a verdict it was given rather than one it invented, which was the
-property that actually mattered. When the transport is proven the wasm path
-returns; the routes stay useful regardless, since they are what a browser sees
-before the module loads.
+- when `redline.js` or `redline.wasm` is not served -- they are build output,
+  gitignored, and the image does not build them yet, so this is the normal case
+  on a board today;
+- when the router is unreachable or drops the session, while the direct path is
+  retried with backoff (2 s doubling to 30 s).
+
+The direct session exists only while Health is showing and the tab is visible;
+leaving closes it, as leaving any view stops its polling.
+
+Two things the module imposes on the page. Every `bus*` call can return a
+Promise (pico sleeps under ASYNCIFY), and two in flight at once corrupt the
+module, so one loop in `app.js` owns it. And the browser speaks zenoh without a
+WebSocket subprotocol: Emscripten asks for `binary` by default, `zenohd`
+answers with none, and browsers then fail the handshake -- the reason this path
+once looked like a transport that never got an `InitAck`.
 
 ## Config
 
@@ -162,5 +169,9 @@ Asset-only iteration needs no image rebuild: `scp` `web/` to `/data` and point
   `PUB_SUB_NO_DISCOVERY` is the only environment hook, and `--connect`/`--mode`
   live in `libs/cli`, which plain nodes do not use. Fine while multicast works
   on `lo`; not fine once `zenohd` binds one interface under an ACL.
-- **Live plotting** (what `scope` does) is not here. The architecture reaches it
-  without rework: a subscriber and a canvas.
+- **The direct Health path needs the wasm module on the board**, and the image
+  does not build it yet; until it does, every board serves Health via the
+  console. It is proven on a desktop against `zenohd` in `tools/bus-sandbox.sh`,
+  not on the bench.
+- **Live plotting** (what `scope` does) is not here. The module already has a
+  generic `busSubscribe()`; what is missing is a canvas.
