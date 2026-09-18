@@ -71,20 +71,27 @@ if(REDLINE_BUILD_ZENOHD)
         set(zenohd_binary ${zenohd_target_dir}/release/zenohd)
     endif()
 
-    add_custom_command(
-        OUTPUT ${zenohd_binary}
+    # ALWAYS RUN, AND LET CARGO DECIDE. An OUTPUT rule with no DEPENDS ran
+    # once and never again, so a zenoh bump or a patch change left the old
+    # router installed beside a new library. Listing the inputs instead would
+    # mean listing a 300-crate workspace; cargo already fingerprints it, so an
+    # up-to-date build is only that check. The workspace members are path sources,
+    # so cargo sees edits to them -- the git-source trap in zenoh-c.cmake does
+    # not apply here.
+    #
+    # ALL, because redline_install_program() installs a path rather than a
+    # target: nothing else would cause it to be built, and the install would
+    # then land on a file that was never written. BYPRODUCTS so Ninja knows
+    # where the file comes from.
+    add_custom_target(zenohd ALL
         COMMAND ${REDLINE_CARGO} build --release
                 -p zenohd
                 --manifest-path ${zenoh_rust_SOURCE_DIR}/Cargo.toml
                 --target-dir ${zenohd_target_dir}
-        COMMENT "Building zenohd from the patched zenoh workspace"
+        BYPRODUCTS ${zenohd_binary}
+        COMMENT "Building zenohd from the patched zenoh workspace (cargo decides what is stale)"
         VERBATIM
     )
-
-    # ALL, because redline_install_program() installs a path rather than a
-    # target: nothing else would cause it to be built, and the install would
-    # then land on a file that was never written.
-    add_custom_target(zenohd ALL DEPENDS ${zenohd_binary})
 
     redline_install_program(PROGRAM ${zenohd_binary} COMPONENT nodes)
 
