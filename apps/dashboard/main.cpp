@@ -234,7 +234,12 @@ int main(int argc, char** argv)
         return windows;
     };
 
-    std::vector<std::unique_ptr<MainWindow>> windows = build_windows(*cfg, !args->check_only);
+    // Headless builds the windows -- the subscriptions, the readiness and the
+    // override bookkeeping all still run -- but never shows them: a window
+    // nobody can see was still painting every frame into the offscreen
+    // platform's backing store.
+    const bool show_windows = !args->check_only && !headless;
+    std::vector<std::unique_ptr<MainWindow>> windows = build_windows(*cfg, show_windows);
 
     // A window missing widgets is a rejection too: for an override, fall back to
     // the shipped config; for the shipped config, a logged warning as before.
@@ -266,7 +271,7 @@ int main(int argc, char** argv)
         *selection = std::move(*fallback);
         cfg = &selection->config;
         SPDLOG_ERROR("{}", dashboard::config::describe(*selection));
-        windows = build_windows(*cfg, true);
+        windows = build_windows(*cfg, show_windows);
     }
 
     if (windows.empty())
