@@ -71,6 +71,9 @@ evaluate counts as `degraded`, never as ok.
 overall state, a sequence number, uptime, the heartbeat period, the pid, and one
 entry per check. A heartbeat goes out every period (one second by default), and
 a state change is published at once, coalesced to at most one sample per 100 ms.
+The reporter's thread sleeps until the next of those, the next systemd watchdog
+feed, or, when the node has activity checks, half the shortest check's window;
+a node with no activity checks wakes only for its heartbeat.
 A reporter being destroyed publishes one last sample saying `stopping`.
 
 {: .note }

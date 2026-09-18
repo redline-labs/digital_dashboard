@@ -12,6 +12,7 @@ add_library(node_health STATIC
     src/codec.cpp
     src/classify.cpp
     src/reporter.cpp
+    src/schedule.cpp
     src/monitor.cpp
 )
 
@@ -43,6 +44,12 @@ add_project_test(TARGET node_health_test_codec LABELS node_health unit)
 add_executable(node_health_test_classify tests/test_classify.cpp)
 target_link_libraries(node_health_test_classify PRIVATE node_health)
 add_project_test(TARGET node_health_test_classify LABELS node_health unit)
+
+# When the reporter thread wakes: heartbeat only when idle, and never late for
+# a change, an activity check or the systemd watchdog.
+add_executable(node_health_test_schedule tests/test_schedule.cpp)
+target_link_libraries(node_health_test_schedule PRIVATE node_health)
+add_project_test(TARGET node_health_test_schedule LABELS node_health unit)
 
 # A reporter and a monitor on a real session: a change arrives before the next
 # heartbeat, and a clean exit reads as exited rather than gone.

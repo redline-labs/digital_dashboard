@@ -3,6 +3,7 @@
 
 #include "node_health/classify.h"
 #include "node_health/codec.h"
+#include "node_health/schedule.h"
 
 #include "core/core.h"
 #include "pub_sub/session_manager.h"
@@ -21,16 +22,6 @@
 
 namespace node_health
 {
-
-namespace
-{
-
-// A burst of state changes becomes one sample, not one each.
-constexpr std::chrono::milliseconds kMinChangeGap{100};
-// How often activity checks are re-evaluated between heartbeats.
-constexpr std::chrono::milliseconds kEvaluateEvery{100};
-
-}  // namespace
 
 ActivityCheck::ActivityCheck(std::string name, std::chrono::milliseconds within, State when_silent,
                              Clock::time_point created)
@@ -211,12 +202,15 @@ struct HealthReporter::Impl
         publishLocked(Clock::now());
         while (!stop_thread)
         {
-            Clock::time_point deadline = last_publish + options.period;
-            if (changed)
-            {
-                deadline = std::min(deadline, last_publish + kMinChangeGap);
-            }
-            deadline = std::min(deadline, Clock::now() + kEvaluateEvery);
+            const Clock::time_point deadline = nextWake(Schedule{
+                .now = Clock::now(),
+                .last_publish = last_publish,
+                .period = options.period,
+                .changed = changed,
+                .evaluate_every = evaluate_every,
+                .watchdog = watchdog,
+                .last_watchdog = last_watchdog,
+            });
             const std::uint64_t seen = generation;
             wake.wait_until(lock, deadline, [&] { return stop_thread || generation != seen; });
             if (stop_thread)
@@ -248,6 +242,8 @@ struct HealthReporter::Impl
     std::condition_variable wake;
     std::vector<Check> checks;
     std::deque<std::unique_ptr<ActivityCheck>> activities;
+    std::vector<std::chrono::milliseconds> activity_withins;
+    std::optional<Clock::duration> evaluate_every;
     bool ready = false;
     bool stopping = false;
     bool stop_thread = false;
@@ -304,6 +300,8 @@ ActivityCheck& HealthReporter::addActivityCheck(std::string_view name, std::chro
     const std::lock_guard<std::mutex> lock(impl_->mutex);
     const Clock::time_point now = Clock::now();
     impl_->activities.push_back(std::make_unique<ActivityCheck>(std::string(name), within, when_silent, now));
+    impl_->activity_withins.push_back(within);
+    impl_->evaluate_every = activityEvaluateInterval(impl_->activity_withins);
     impl_->setLocked(name, State::starting, {}, now);
     return *impl_->activities.back();
 }
