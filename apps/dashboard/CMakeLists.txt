@@ -43,6 +43,7 @@ target_link_libraries(dashboard PRIVATE
     agent_control
 
     zenoh_pub_sub
+    node_health
     helpers
     config_codec
     qt_helpers

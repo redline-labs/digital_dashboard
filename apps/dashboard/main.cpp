@@ -1,4 +1,5 @@
 #include "core/core.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "dashboard/app_config.h"
 #include "dashboard/command_line_args.h"
@@ -159,6 +160,11 @@ int main(int argc, char** argv)
     pub_sub::NodeIdentity node_identity("dashboard");
     SPDLOG_INFO("startup: zenoh session at {} ms", since());
 
+    // Health like every node, with systemd left out: this unit's READY=1 means
+    // "first frame painted" and is sent below, so the reporter must not send
+    // its own earlier. Declared before anything whose callbacks touch it.
+    node_health::HealthReporter health("dashboard", {.systemd = false});
+
     QApplication app(argc, argv);
     SPDLOG_INFO("startup: QApplication at {} ms", since());
 
@@ -296,7 +302,26 @@ int main(int argc, char** argv)
         windows.front()->showNotice(QString::fromStdString(dashboard::config::describe(*selection)));
     }
 
-    QTimer::singleShot(0, [&since, &selection, &args, headless]() {
+    // The checks a person looking at the health view needs: a cluster running
+    // on a config it fell back to, or with no display, is working but not as
+    // intended.
+    health.setCheck("config",
+                    selection->override_rejected ? node_health::State::degraded : node_health::State::ok,
+                    selection->override_rejected ? dashboard::config::describe(*selection) : "");
+    health.setCheck("display", headless ? node_health::State::degraded : node_health::State::ok,
+                    headless ? "no display connected, running headless" : "");
+
+    // The GUI thread is the one that matters, and the reporter's own thread
+    // keeps publishing while it hangs. So the event loop proves itself: one
+    // touch a second, and three seconds without one is a fault.
+    auto& gui_loop = health.addActivityCheck("gui", std::chrono::seconds(3), node_health::State::fault);
+    QTimer gui_heartbeat;
+    QObject::connect(&gui_heartbeat, &QTimer::timeout, [&gui_loop] { gui_loop.touch(); });
+    gui_heartbeat.start(std::chrono::seconds(1));
+    gui_loop.touch();
+
+    QTimer::singleShot(0, [&since, &selection, &args, &health, headless]() {
+        health.markReady();
         if (core::systemd::notifyReady())
         {
             SPDLOG_INFO("startup: READY sent to systemd at {} ms", since());
