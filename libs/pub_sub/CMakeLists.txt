@@ -53,6 +53,8 @@ add_library(zenoh_pub_sub STATIC
     # Topic key charset rules and the mangling that packs a key into a
     # liveliness token's key expression. Pure string logic, no zenoh.
     topic_key.cpp
+    # The node key space alone, free of yaml-cpp so wasm/ can compile it too.
+    node_key.cpp
 
     # Discovery via zenoh liveliness: topics appear the moment a node starts,
     # without waiting for it to publish anything.

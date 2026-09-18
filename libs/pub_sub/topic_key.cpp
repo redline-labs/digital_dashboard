@@ -9,27 +9,6 @@ namespace pub_sub
 namespace
 {
 
-// Splits on '/' WITHOUT collapsing empty segments, because an empty segment is
-// exactly what the validators are looking for. A split that swallowed them
-// would make "a//b" and "a/b" indistinguishable, which is the bug rather than
-// the fix.
-std::vector<std::string_view> segments(std::string_view key)
-{
-    std::vector<std::string_view> out;
-    std::size_t start = 0;
-    while (true)
-    {
-        const std::size_t slash = key.find('/', start);
-        if (slash == std::string_view::npos)
-        {
-            out.push_back(key.substr(start));
-            return out;
-        }
-        out.push_back(key.substr(start, slash - start));
-        start = slash + 1;
-    }
-}
-
 bool isValidSegment(std::string_view segment)
 {
     if (segment.empty())
@@ -94,7 +73,7 @@ std::string topicKeyProblem(std::string_view key)
                "'; only letters, digits, '_', '-' and '/' are allowed";
     }
 
-    for (const std::string_view segment : segments(key))
+    for (const std::string_view segment : keySegments(key))
     {
         if (segment.empty())
         {
@@ -117,7 +96,7 @@ bool isValidSubscribeExpr(std::string_view expr)
         return false;
     }
 
-    for (const std::string_view segment : segments(expr))
+    for (const std::string_view segment : keySegments(expr))
     {
         // Subscribers may wildcard; publishers may not. That asymmetry is the
         // whole reason this is a separate function -- topic discovery
@@ -175,43 +154,6 @@ std::string advertiseKey(std::string_view topic, std::string_view schema, std::s
     return out;
 }
 
-std::string nodeKey(std::string_view zid, std::string_view node_name)
-{
-    std::string out(kNodePrefix);
-    out += '/';
-    out += zid;
-    out += '/';
-    out += node_name;
-    return out;
-}
-
-bool parseNodeKey(std::string_view advertised, std::string& zid, std::string& node_name)
-{
-    const std::vector<std::string_view> parts = segments(advertised);
-
-    // "@redline" / "node" / <zid> / <name>, extras ignored.
-    constexpr std::size_t kMinimumSegments = 4;
-    if (parts.size() < kMinimumSegments)
-    {
-        return false;
-    }
-
-    const std::vector<std::string_view> prefix = segments(kNodePrefix);
-    if (parts[0] != prefix[0] || parts[1] != prefix[1])
-    {
-        return false;
-    }
-
-    if (parts[2].empty() || parts[3].empty())
-    {
-        return false;
-    }
-
-    zid = std::string(parts[2]);
-    node_name = std::string(parts[3]);
-    return true;
-}
-
 std::string serviceKey(std::string_view keyexpr, std::string_view request_schema,
                        std::string_view response_schema, std::string_view zid)
 {
@@ -230,7 +172,7 @@ std::string serviceKey(std::string_view keyexpr, std::string_view request_schema
 bool parseServiceKey(std::string_view advertised, std::string& keyexpr,
                      std::string& request_schema, std::string& response_schema, std::string& zid)
 {
-    const std::vector<std::string_view> parts = segments(advertised);
+    const std::vector<std::string_view> parts = keySegments(advertised);
 
     // "@redline" / "svc" / <zid> / <request> / <response> / <mangled key>,
     // extras ignored.
@@ -240,7 +182,7 @@ bool parseServiceKey(std::string_view advertised, std::string& keyexpr,
         return false;
     }
 
-    const std::vector<std::string_view> prefix = segments(kServicePrefix);
+    const std::vector<std::string_view> prefix = keySegments(kServicePrefix);
     if (parts[0] != prefix[0] || parts[1] != prefix[1])
     {
         return false;
@@ -271,7 +213,7 @@ bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::str
 bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::string& schema,
                        std::string& zid)
 {
-    const std::vector<std::string_view> parts = segments(advertised);
+    const std::vector<std::string_view> parts = keySegments(advertised);
 
     // "@redline" / "adv" / <schema> / <mangled topic> [ / <zid> [ / ... ] ]
     //
@@ -297,7 +239,7 @@ bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::str
         return false;
     }
 
-    const std::vector<std::string_view> prefix = segments(kAdvertisePrefix);
+    const std::vector<std::string_view> prefix = keySegments(kAdvertisePrefix);
     if (parts[0] != prefix[0] || parts[1] != prefix[1])
     {
         return false;
