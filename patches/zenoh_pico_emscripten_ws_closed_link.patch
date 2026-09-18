@@ -1,0 +1,58 @@
+Stop zenoh-pico's emscripten WebSocket link hanging on a closed socket.
+
+_z_ws_emscripten_write() turned send() failing into "0 bytes written", and
+_z_link_send_wbuf() retries a short write until the buffer is gone -- so once
+the WebSocket had closed, every write spun forever, 100 ms at a time. Emscripten's
+send() does not fail for a socket that is still connecting (it queues), only for
+one that has closed, so -1 there is a dead link and is now reported as SIZE_MAX,
+which the caller already treats as a transmit error.
+
+Seen as z_open() never returning after "Sending Z_INIT(Syn)" whenever the
+WebSocket handshake was refused; the same loop would take any session whose
+router went away, on the next keep-alive.
+
+The read side polled a closed socket (recv() returning 0) until the timeout;
+it now returns at once. Both loops also try the call before the first sleep,
+so a read with data waiting, and every write, completes without an
+emscripten_sleep().
+
+diff --git a/src/link/transport/upper/ws_emscripten.c b/src/link/transport/upper/ws_emscripten.c
+index 4fa126a..b20031b 100644
+--- a/src/link/transport/upper/ws_emscripten.c
++++ b/src/link/transport/upper/ws_emscripten.c
+@@ -111,9 +111,11 @@ static void _z_ws_emscripten_close(_z_sys_net_socket_t *sock) { close(sock->_ws.
+ 
+ static size_t _z_ws_emscripten_read(const _z_sys_net_socket_t sock, uint8_t *ptr, size_t len) {
+     // WARNING: workaroud implementing here the timeout
+-    ssize_t rb = 0;
++    // recv() never blocks here: -1 is "nothing yet", 0 is a closed link and
++    // returns at once rather than being polled until the timeout.
+     z_time_t start = z_time_now();
+-    while ((z_time_elapsed_ms(&start) < sock._ws._tout) && (rb <= 0)) {
++    ssize_t rb = recv(sock._ws._fd, ptr, len, 0);
++    while ((rb < 0) && (z_time_elapsed_ms(&start) < sock._ws._tout)) {
+         z_sleep_ms(WS_LINK_SLEEP);
+         rb = recv(sock._ws._fd, ptr, len, 0);
+     }
+@@ -143,15 +145,17 @@ static size_t _z_ws_emscripten_read_exact(const _z_sys_net_socket_t sock, uint8_
+ 
+ static size_t _z_ws_emscripten_write(const _z_sys_net_socket_t sock, const uint8_t *ptr, size_t len) {
+     // WARNING: workaroud implementing here the timeout
+-    ssize_t sb = 0;
+     z_time_t start = z_time_now();
+-    while ((z_time_elapsed_ms(&start) < sock._ws._tout) && (sb <= 0)) {
++    ssize_t sb = send(sock._ws._fd, ptr, len, 0);
++    while ((sb < 0) && (z_time_elapsed_ms(&start) < sock._ws._tout)) {
+         z_sleep_ms(WS_LINK_SLEEP);
+         sb = send(sock._ws._fd, ptr, len, 0);
+     }
+-    // WARNING: workaround as the recv returns -1 not only in case of errors
++    // Emscripten's send() queues while the WebSocket is connecting and fails
++    // only once it has closed. Returning 0 for that made _z_link_send_wbuf()
++    // retry forever, so a refused or dropped link hung instead of failing.
+     if (sb < 0) {
+-        sb = 0;
++        return SIZE_MAX;
+     }
+     return (size_t)sb;
+ }

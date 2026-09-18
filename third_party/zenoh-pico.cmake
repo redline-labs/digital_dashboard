@@ -19,13 +19,18 @@
 get_filename_component(REDLINE_PATCH_DIR "${CMAKE_CURRENT_LIST_DIR}/../patches" ABSOLUTE)
 
 set(ZENOH_PICO_GIT_TAG 1.10.0)
+set(ZENOH_PICO_PATCHES
+    zenoh_pico_emscripten_stddef.patch
+    zenoh_pico_emscripten_ws_closed_link.patch
+)
+list(TRANSFORM ZENOH_PICO_PATCHES PREPEND "${REDLINE_PATCH_DIR}/" OUTPUT_VARIABLE _pico_patch_paths)
 
 FetchContent_Declare(
     zenoh-pico
     GIT_REPOSITORY https://github.com/eclipse-zenoh/zenoh-pico.git
     GIT_TAG ${ZENOH_PICO_GIT_TAG}
     GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply ${REDLINE_PATCH_DIR}/zenoh_pico_emscripten_stddef.patch
+    PATCH_COMMAND git apply ${_pico_patch_paths}
 )
 
 # WebSocket is the only transport a browser has. zenoh-pico enforces the pairing
@@ -87,17 +92,27 @@ set(ZENOHPICO_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(zenoh-pico)
 
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/zenoh-pico)
+# Check the source rather than trusting git apply's exit code, as zenoh-c.cmake
+# does: without the ws patch everything still builds, and a refused or dropped
+# WebSocket hangs the page instead of failing.
+file(READ ${zenoh-pico_SOURCE_DIR}/src/link/transport/upper/ws_emscripten.c _pico_ws_c)
+string(FIND "${_pico_ws_c}" "retry forever" _pico_patch_found)
+if(_pico_patch_found EQUAL -1)
+    message(FATAL_ERROR
+        "zenoh_pico_emscripten_ws_closed_link.patch is not applied to "
+        "${zenoh-pico_SOURCE_DIR}. Delete that directory and reconfigure.")
+endif()
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/zenoh-pico/patches)
 file(COPY ${zenoh-pico_SOURCE_DIR}/LICENSE ${zenoh-pico_SOURCE_DIR}/README.md
      DESTINATION ${CMAKE_BINARY_DIR}/licenses/zenoh-pico)
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/licenses/zenoh-pico/patches)
-file(COPY ${REDLINE_PATCH_DIR}/zenoh_pico_emscripten_stddef.patch
-     DESTINATION ${CMAKE_BINARY_DIR}/licenses/zenoh-pico/patches)
+file(COPY ${_pico_patch_paths} DESTINATION ${CMAKE_BINARY_DIR}/licenses/zenoh-pico/patches)
 
+string(REPLACE ";" " " _pico_patch_list "${ZENOH_PICO_PATCHES}")
 file(WRITE ${CMAKE_BINARY_DIR}/licenses/zenoh-pico/fetch_info.txt
 "Library: zenoh-pico
 Repository: https://github.com/eclipse-zenoh/zenoh-pico.git
 Tag/Version: ${ZENOH_PICO_GIT_TAG}
 Shallow Clone: TRUE
-Patches Applied: zenoh_pico_emscripten_stddef.patch
+Patches Applied: ${_pico_patch_list}
 ")
