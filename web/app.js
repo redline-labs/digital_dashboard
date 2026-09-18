@@ -54,9 +54,9 @@ function renderSystem(data) {
   definition(list, "Load", data.load ? data.load.map((n) => n.toFixed(2)).join("  ") : null);
 
   const memory = data.memory;
-  if (memory && memory.total) {
-    const used = memory.total - (memory.available ?? memory.free ?? 0);
-    definition(list, "Memory", `${bytes(used)} of ${bytes(memory.total)} used`);
+  if (memory && memory.total_bytes) {
+    const used = memory.total_bytes - (memory.available_bytes ?? memory.free_bytes ?? 0);
+    definition(list, "Memory", `${bytes(used)} of ${bytes(memory.total_bytes)} used`);
   } else {
     definition(list, "Memory", null);
   }
