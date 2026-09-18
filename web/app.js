@@ -1,4 +1,5 @@
-// The Info view. Polls /api/system and renders it.
+// The console's four views. Each polls only while it is showing and the tab is
+// visible: every poll wakes an HTTP worker on the board.
 //
 // Every value the API reports may be null -- system_info returns optionals
 // precisely so that "the kernel did not tell us" is distinguishable from zero --
@@ -313,9 +314,15 @@ function wireUpdate() {
     $("install").disabled = true;
     setProgress(0, "asking RAUC to install\u2026");
     try {
+      // Before the request, so the stream is open when the first progress
+      // arrives; cleared by "completed" or by a refusal.
+      installing = true;
+      syncEvents();
       const response = await api("/api/update/install", { method: "POST" });
       if (!response.ok) throw new Error(errorFrom(await response.text(), response.status));
     } catch (error) {
+      installing = false;
+      syncEvents();
       showUpdateError(`Install refused: ${error.message}`);
       $("install").disabled = false;
     }
@@ -331,14 +338,35 @@ function wireUpdate() {
       showUpdateError(`Could not mark good: ${error.message}`);
     }
   });
-
-  connectEvents();
 }
 
 // Progress is pushed, not polled: an install reports through D-Bus and the node
-// forwards it here. EventSource reconnects on its own, which matters because
-// reflashing ends in a reboot.
+// forwards it here. The stream holds a worker on the board for as long as it
+// is open, so it is open only on the Update view or while an install runs.
+//
+// EventSource retries on its own after a dropped connection, but NOT after an
+// HTTP error: the 503 a stopping node answers with leaves it CLOSED for good,
+// and reflashing ends in exactly that restart. So a closed stream that is still
+// wanted is reopened here.
 let events = null;
+let installing = false;
+let reconnectTimer = null;
+const RECONNECT_MS = 3000;
+
+function eventsWanted() {
+  return installing || currentView === "update";
+}
+
+function syncEvents() {
+  if (eventsWanted()) {
+    if (!events) connectEvents();
+  } else {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (events) events.close();
+    events = null;
+  }
+}
 
 function connectEvents() {
   if (events) events.close();
@@ -349,6 +377,7 @@ function connectEvents() {
   });
   events.addEventListener("completed", (event) => {
     const data = JSON.parse(event.data);
+    installing = false;
     if (data.ok) {
       setProgress(100, "installed \u2014 reboot to run it");
     } else {
@@ -356,9 +385,20 @@ function connectEvents() {
       showUpdateError(data.last_error || "the install failed");
     }
     refreshUpdate();
+    syncEvents();
   });
   events.addEventListener("error", (event) => {
+    // A frame the node sent ("fell behind") carries data; a failed connection
+    // does not.
     if (event.data) showUpdateError(JSON.parse(event.data).error ?? "stream error");
+    const source = event.target;
+    if (source === events && source.readyState === EventSource.CLOSED && !reconnectTimer) {
+      events = null;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        syncEvents();
+      }, RECONNECT_MS);
+    }
   });
 }
 
@@ -379,7 +419,6 @@ function connectEvents() {
 // the property that actually mattered.
 
 const HEALTH_POLL_MS = 2000;
-let healthTimer = null;
 
 function renderHealth(data) {
   $("bus-status").textContent = data.bus_available
@@ -581,7 +620,29 @@ async function refreshServices() {
 
 // --- views ----------------------------------------------------------------
 
+let currentView = "info";
+let pollTimer = null;
+
+// What the showing view polls, and how often. Update and Services are read
+// when shown and after an action; progress arrives on the stream.
+function viewPoll() {
+  if (currentView === "info") return [refresh, POLL_MS];
+  if (currentView === "health") return [refreshHealth, HEALTH_POLL_MS];
+  return null;
+}
+
+// One timer, for the showing view, and none while the tab is hidden: a
+// background tab left on Health would otherwise hit the board every 2 s
+// indefinitely.
+function syncPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+  const poll = viewPoll();
+  if (poll && !document.hidden) pollTimer = setInterval(poll[0], poll[1]);
+}
+
 function showView(name) {
+  currentView = name;
   for (const tab of document.querySelectorAll(".tab")) {
     tab.classList.toggle("active", tab.dataset.view === name);
   }
@@ -589,24 +650,29 @@ function showView(name) {
   $("update").hidden = name !== "update";
   $("health").hidden = name !== "health";
   $("services").hidden = name !== "services";
+  if (name === "info") refresh();
   if (name === "services") refreshServices();
   if (name === "update") refreshUpdate();
-  if (name === "health") {
-    refreshHealth();
-    // Poll only while the view is showing; a page left on Info should not.
-    if (!healthTimer) healthTimer = setInterval(refreshHealth, HEALTH_POLL_MS);
-  } else if (healthTimer) {
-    clearInterval(healthTimer);
-    healthTimer = null;
-  }
+  if (name === "health") refreshHealth();
+  syncPolling();
+  syncEvents();
 }
 
 for (const tab of document.querySelectorAll(".tab")) {
   if (!tab.disabled) tab.addEventListener("click", () => showView(tab.dataset.view));
 }
 
+document.addEventListener("visibilitychange", () => {
+  // Coming back, read at once rather than showing a stale page until the
+  // next tick.
+  if (!document.hidden) {
+    const poll = viewPoll();
+    if (poll) poll[0]();
+  }
+  syncPolling();
+});
+
 $("call-send").addEventListener("click", sendCall);
 
 wireUpdate();
-refresh();
-setInterval(refresh, POLL_MS);
+showView("info");
