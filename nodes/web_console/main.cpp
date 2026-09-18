@@ -96,8 +96,11 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    // Said once, loudly, rather than assumed to be deliberate. This is the only
-    // thing standing between the network and a reflash endpoint.
+    // This is the only thing standing between the network and a reflash
+    // endpoint, so the two ways of not having a token are treated differently:
+    // an empty setting is someone asking for an open console and gets a warning,
+    // while a token file that was configured and cannot be read is a refusal to
+    // start. See NodeConfig::tokenFile.
     std::error_code ec;
     if (config.tokenFile.empty())
     {

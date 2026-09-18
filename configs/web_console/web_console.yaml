@@ -10,9 +10,10 @@
 # ships the console is meant to be reachable from the bench, so it is widened
 # here rather than in the code.
 #
-# This is not an access control. Until token_file below is populated, anything
-# that can reach the board can drive this. See docs and the TODO about the
-# image's bring-up features.
+# This is not, by itself, an access control -- token_file below is. The two are
+# meant to be read together: widening the bind address is only safe because the
+# node refuses to serve /api/ without a token. Still open, and deliberately so
+# while this is a bring-up image: TLS, a non-root service user, and a firewall.
 bind_address: 0.0.0.0
 
 port: 8080
@@ -24,8 +25,15 @@ port: 8080
 asset_dir: ""
 
 # One line, mode 0600, on the writable partition -- credentials do not belong in
-# a read-only rootfs. Absent means no authentication and a loud warning at
-# startup.
+# a read-only rootfs. The unit generates it from /dev/urandom on first boot, so
+# it is per board rather than baked into the image; read it with
+#   cat /data/web_console/token
+#
+# FAIL CLOSED: if this names a file that is missing, unreadable or empty, the
+# node REFUSES TO START rather than serving unauthenticated -- this config binds
+# every interface and offers a reflash endpoint, and a console that is believed
+# to be protected and is not is worse than one nobody trusts. To run without
+# authentication, say so deliberately with an empty value here.
 token_file: "${REDLINE_DATA_DIR}/web_console/token"
 
 # Where uploaded RAUC bundles are staged before installing. /data is the only

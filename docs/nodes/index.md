@@ -32,4 +32,5 @@ owns the hardware and publishes raw frames, and the decoders subscribe to those.
 | `msel_master_relay` | The MSEL solid state battery isolator: telemetry out, its settings as services. | `can_bridge` | [msel_master_relay](msel_master_relay.html) |
 | `mti610_bridge` | Xsens MTi-610 IMU on a serial port: MTData2 items onto topics, output configuration as services. | the device, or a capture to replay | [mti610_bridge](mti610_bridge.html) |
 | `racegrade_tc8` | RaceGrade TC8 thermocouple amplifier over CAN. | `can_bridge` | [racegrade_tc8](racegrade_tc8.html) |
+| `web_console` | The board's web UI: reflash, system info, node health and service calls, from a browser. | nothing (RAUC for reflashing) | [web_console](web_console.html) |
 | `xpr_bridge` | A Motorola MOTOTRBO radio: what it says about itself onto topics, the channel as a service. | the radio on the network | [xpr_bridge](xpr_bridge.html) |

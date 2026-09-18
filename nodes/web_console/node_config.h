@@ -29,8 +29,17 @@ struct NodeConfig
     // otherwise, so neither case needs this set.
     std::string assetDir;
 
-    // A bearer token, one line, mode 0600. Absent means no authentication, which
-    // is logged loudly at startup rather than assumed to be intentional.
+    // A bearer token, one line, mode 0600. The two absences mean opposite
+    // things, deliberately:
+    //
+    //   empty value      no authentication. An explicit request, warned about
+    //                    loudly, for a workstation or a bench board nobody can
+    //                    reach.
+    //   a path that is   REFUSAL TO START. Asking for a token and then serving
+    //   missing, empty   without one is the worst outcome available: the
+    //   or unreadable    operator believes the console is protected and it is
+    //                    not. The unit creates this file at first boot, so on a
+    //                    board the path existing is the normal case.
     std::string tokenFile;
 
     // Where uploaded bundles are staged. /data is the only writable filesystem
