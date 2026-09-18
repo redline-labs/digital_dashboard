@@ -13,6 +13,7 @@ add_library(node_health STATIC
     src/classify.cpp
     src/reporter.cpp
     src/schedule.cpp
+    src/can_decoder.cpp
     src/monitor.cpp
 )
 
@@ -23,8 +24,11 @@ target_link_libraries(node_health
         # codec.h names the generated NodeHealth types.
         schemas
         capnp
+        # can_decoder.h takes a helpers::CanFrame.
+        helpers
     PRIVATE
         zenoh_pub_sub
+        cli
         core
         spdlog::spdlog
 )
@@ -56,3 +60,9 @@ add_project_test(TARGET node_health_test_schedule LABELS node_health unit)
 add_executable(node_health_test_end_to_end tests/test_end_to_end.cpp)
 target_link_libraries(node_health_test_end_to_end PRIVATE node_health zenoh_pub_sub spdlog::spdlog)
 add_project_test(TARGET node_health_test_end_to_end LABELS node_health net)
+
+# The shared CAN decoder loop on a real session: frames reach the decoder
+# intact, and SIGTERM ends it.
+add_executable(node_health_test_can_decoder tests/test_can_decoder.cpp)
+target_link_libraries(node_health_test_can_decoder PRIVATE node_health zenoh_pub_sub spdlog::spdlog)
+add_project_test(TARGET node_health_test_can_decoder LABELS node_health net)

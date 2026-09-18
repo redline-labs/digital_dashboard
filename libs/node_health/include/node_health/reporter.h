@@ -6,7 +6,7 @@
 //     auto& can_rx = health.addActivityCheck("can_rx", std::chrono::seconds(1));
 //     ... subscriber callback: can_rx.touch();
 //     health.markReady();
-//     while (!cli::interrupted()) { sleep_for(100ms); health.kick(); }
+//     cli::waitForInterrupt([&] { health.kick(); });
 //
 // Declare it BEFORE anything whose callbacks touch its checks, so those are
 // destroyed first and cannot touch a check that no longer exists.

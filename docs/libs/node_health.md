@@ -49,12 +49,11 @@ pub_sub::ZenohTypedSubscriber<CanFrame> subscriber(key, [&](CanFrame::Reader m) 
 });
 
 health.markReady();
-while (!cli::interrupted())
-{
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    health.kick();
-}
+cli::waitForInterrupt([&] { health.kick(); });
 ```
+
+That is exactly what every CAN decoder node does, so it is one call:
+`node_health::runCanDecoder(name, can_key, decode)` in `node_health/can_decoder.h`.
 
 `setCheck(name, state, detail)` is the general form, for a node that already has
 a status tick: call it from there and the reporter publishes the change. An

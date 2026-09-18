@@ -39,11 +39,7 @@ int main(int argc, char** argv)
     });
 
     health.markReady();
-    while (!cli::interrupted())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        health.kick();
-    }
+    cli::waitForInterrupt([&] { health.kick(); });   // returns on SIGINT or SIGTERM
     return 0;
 }
 ```
@@ -57,8 +53,15 @@ Every node publishes health. Declare the
 its checks, name the things that have to keep happening, and call `markReady()`
 once the node is serving. `inspect health` then reports the node beside every
 other, and a monitor can tell a hung node from a stopped one. Run until
-`cli::interrupted()` rather than forever: SIGTERM is how a unit is stopped, and
-`kick()` in that loop is what feeds the systemd watchdog.
+`cli::waitForInterrupt()` returns rather than forever: SIGTERM is how a unit is
+stopped, and `kick()` in its tick is what feeds the systemd watchdog. It ticks
+once a second and sleeps in between, so an idle node costs one wakeup a second
+rather than ten.
+
+A CAN decoder needs none of the above beyond its parser:
+`node_health::runCanDecoder(name, can_key, decode)` (`node_health/can_decoder.h`)
+declares the reporter, the `can_rx` and `decoded` checks and the subscription,
+and waits for SIGTERM. `nodes/motec_pdm/` uses it.
 
 `pub_sub::NodeIdentity` is declared explicitly, once, in `main()`. It is the
 only way a process that subscribes but never publishes appears on the bus at

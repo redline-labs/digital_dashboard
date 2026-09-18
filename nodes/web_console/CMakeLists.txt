@@ -35,6 +35,7 @@ target_link_libraries(web_console PRIVATE
     system_info
     rauc_client
     node_health
+    cli
     zenoh_pub_sub
     schemas
     capnp

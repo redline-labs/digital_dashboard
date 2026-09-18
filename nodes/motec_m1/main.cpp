@@ -2,12 +2,9 @@
 #include "motec_m1_messages.h"
 
 #include "cli/interrupt.h"
-#include "node_health/reporter.h"
-#include "pub_sub/can_frame.h"
+#include "node_health/can_decoder.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
-#include "pub_sub/zenoh_subscriber.h"
-#include "can_frame.capnp.h"
 #include "motec_m1.capnp.h"
 
 #include <span>
@@ -16,8 +13,6 @@
 #include <cxxopts.hpp>
 
 #include <array>
-#include <thread>
-#include <chrono>
 
 using namespace dbc_motec_m1_rev3;
 
@@ -244,7 +239,7 @@ int main(int argc, char** argv)
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("motec_m1");
 
-    // SIGINT and SIGTERM both set the flag the loop below polls.
+    // Early, so a SIGTERM during startup still ends in a clean exit.
     cli::installInterruptHandler();
 
     pub_sub::ZenohPublisher<MotecM1EngineAir> pubEngineAir(prefix + "/engine_air");
@@ -335,38 +330,11 @@ int main(int argc, char** argv)
         publishTurboBoth(db.M1_GEN_0x6A6, db.M1_GEN_0x6A7, pubTurbo);
     });
 
-    // Declared before the subscriber, so the subscriber is destroyed first and
-    // no callback can touch a check that has gone away.
-    node_health::HealthReporter health("motec_m1");
-    // Frames arriving at all, and frames this node could decode: a quiet bus
-    // and a bus carrying nothing but other devices look identical otherwise.
-    auto& frames_in = health.addActivityCheck("can_rx", std::chrono::seconds(1));
-    auto& decoded = health.addActivityCheck("decoded", std::chrono::seconds(2));
-
-    pub_sub::ZenohTypedSubscriber<CanFrame> can_subscriber(
-        can_key,
-        [&parser, &frames_in, &decoded](CanFrame::Reader message)
-        {
-            frames_in.touch();
-            // The real length, not a padded buffer: a frame shorter than the
-            // message it claims to be must be rejected, not decoded as though
-            // the padding were readings.
-            const helpers::CanFrame frame = pub_sub::fromCapnp(message);
-            if (parser.handle_can_frame(frame.id, frame.data_span()))
-            {
-                decoded.touch();
-            }
-        });
-
-    health.markReady();
-
-    while (!cli::interrupted())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        health.kick();
-    }
-
-    SPDLOG_INFO("Interrupted; shutting down.");
+    // Health, the CAN subscription and the wait for SIGTERM: the same in
+    // every decoder node.
+    node_health::runCanDecoder("motec_m1", can_key, [&parser](const helpers::CanFrame& frame) {
+        return parser.handle_can_frame(frame.id, frame.data_span());
+    });
     return 0;
 }
 

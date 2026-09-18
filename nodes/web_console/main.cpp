@@ -16,6 +16,7 @@
 #include "service_routes.h"
 #include "update_routes.h"
 
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include "node_health/monitor.h"
 #include "node_health/reporter.h"
@@ -24,24 +25,10 @@
 #include <cxxopts.hpp>
 #include <spdlog/spdlog.h>
 
-#include <atomic>
 #include <chrono>
-#include <csignal>
 #include <filesystem>
 #include <string>
 #include <thread>
-
-namespace
-{
-
-std::atomic<bool> gRunning { true };
-
-void onSignal(int)
-{
-    gRunning = false;
-}
-
-}  // namespace
 
 int main(int argc, char** argv)
 {
@@ -172,8 +159,7 @@ int main(int argc, char** argv)
     pub_sub::NodeIdentity nodeIdentity("web_console");
     node_health::HealthReporter health("web_console");
 
-    std::signal(SIGINT, onSignal);
-    std::signal(SIGTERM, onSignal);
+    cli::installInterruptHandler();
 
     // setCheck, not addActivityCheck: an idle console with nobody browsing is
     // healthy, and an activity check would report it degraded.
@@ -184,11 +170,7 @@ int main(int argc, char** argv)
                     updates.available() ? "" : "RAUC is not reachable on D-Bus");
     health.markReady();
 
-    while (gRunning)
-    {
-        health.kick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    cli::waitForInterrupt([&health] { health.kick(); });
 
     SPDLOG_INFO("[node] shutting down");
     server.stop();
