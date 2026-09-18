@@ -40,13 +40,16 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
     // Adjusted font sizes based on new reference image (numbers are quite large)
     m_dialFont = QFont(m_fontFamily, 12, QFont::Normal);
     m_labelFont = QFont(m_fontFamily, 7, QFont::Normal);
+    m_clockFont = QFont(m_fontFamily, 6, QFont::Normal);
 
     // Setup timer for clock updates
     if (_cfg.show_clock == true)
     {
+        // Single-shot, re-armed for the next minute boundary each time: a
+        // 60 s interval from startup showed the minute up to 59 s late.
         m_clockUpdateTimer = new QTimer(this);
+        m_clockUpdateTimer->setSingleShot(true);
         connect(m_clockUpdateTimer, &QTimer::timeout, this, &Mercedes190ETachometer::updateClockTime);
-        m_clockUpdateTimer->start(1000 * 60); // Update every minute
         updateClockTime(); // Initial call to set time
     }
 }
@@ -82,13 +85,21 @@ void Mercedes190ETachometer::paintStaticUnderlay(QPainter& painter)
     drawRedZone(&painter); // Draw red zone first so ticks can overlay if needed
     drawScaleAndNumbers(&painter);
     drawStaticText(&painter);
+
+    // The face is static; only the hands move, and they move once a minute.
+    // Building its font and numerals every frame was a tenth of this
+    // process's paint time.
+    if (_cfg.show_clock == true)
+    {
+        drawClockFace(&painter);
+    }
 }
 
 void Mercedes190ETachometer::paintDynamic(QPainter& painter)
 {
     if (_cfg.show_clock == true)
     {
-        drawClock(&painter);
+        drawClockHands(&painter);
     }
 
     // No needle while the stream is quiet. The clock is not on the bus, so it
@@ -203,43 +214,32 @@ void Mercedes190ETachometer::drawNeedle(QPainter *painter) {
 
 void Mercedes190ETachometer::updateClockTime() {
     m_currentTime = QTime::currentTime();
+    const int ms_into_minute = m_currentTime.second() * 1000 + m_currentTime.msec();
+    m_clockUpdateTimer->start(60'000 - ms_into_minute + 5);  // +5: land just past the boundary
     update(); // Trigger a repaint
 }
 
-void Mercedes190ETachometer::drawClock(QPainter *painter) {
+namespace
+{
+// Shared by the face (in the cached underlay) and the hands (per frame).
+constexpr float kClockCenterX = 0.0f;   // Centered with tachometer
+constexpr float kClockCenterY = 55.0f;  // Positioned below tachometer center
+constexpr float kClockRadius = 35.0f;   // Radius of the clock face
+}  // namespace
+
+void Mercedes190ETachometer::drawClockFace(QPainter *painter) {
     painter->save();
-
-    // Clock properties
-    const float clockCenterX = 0.0f;      // Centered with tachometer
-    const float clockCenterY = 55.0f;     // Positioned below tachometer center
-    const float clockRadius = 35.0f;      // Radius of the clock face (user updated)
-
-    const float hourHandLength = 25.0f; // Adjusted for better proportion with new style
-    const float minuteHandLength = 32.5f; // Adjusted for better proportion with new style
 
     const float tickLength = 3.0f;
     const float majorTickLength = 4.0f; // Longer ticks for 3,6,9,12
     const QColor clockTickColor = Qt::white;
     const QColor clockNumberColor = Qt::white;
-    const float clockNumberRadius = clockRadius - tickLength - 7.0f; // Radius for placing numbers, adjusted
+    const float clockNumberRadius = kClockRadius - tickLength - 7.0f; // Radius for placing numbers, adjusted
 
-    // Needle style properties (copied from tachometer, scaled down)
-    // The shared needle colour: these hands are the same orange as the needle,
-    // and a fourth local copy of it was one edit away from drifting.
-    const QColor handColor = gauge_paint::kNeedleColor;
-    const float hourHandBaseWidth = 2.5f;
-    const float hourHandTipWidth = 1.0f;
-    const float minuteHandBaseWidth = 2.0f;
-    const float minuteHandTipWidth = 0.5f;
-    const float clockPivotRadius = 5.0f;  // Smaller pivot for the clock
-    const QColor pivotColor = gauge_paint::kPivotColor;
+    painter->translate(kClockCenterX, kClockCenterY);
 
-    painter->translate(clockCenterX, clockCenterY);
-
-    // Font for clock numbers
-    QFont clockNumberFont(m_fontFamily, 6, QFont::Normal);
-    QFontMetrics fm(clockNumberFont);
-    painter->setFont(clockNumberFont);
+    QFontMetrics fm(m_clockFont);
+    painter->setFont(m_clockFont);
 
     // Draw clock tick marks and numbers
     for (int i = 0; i < 12; ++i) { // 12 hours
@@ -250,8 +250,8 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
         float currentTickLength = isMajorHour ? majorTickLength : tickLength;
 
         painter->setPen(QPen(clockTickColor, isMajorHour ? 2.0f : 1.0f));
-        QPointF p1((clockRadius - currentTickLength) * std::cos(angleRad), (clockRadius - currentTickLength) * std::sin(angleRad));
-        QPointF p2(clockRadius * std::cos(angleRad), clockRadius * std::sin(angleRad));
+        QPointF p1((kClockRadius - currentTickLength) * std::cos(angleRad), (kClockRadius - currentTickLength) * std::sin(angleRad));
+        QPointF p2(kClockRadius * std::cos(angleRad), kClockRadius * std::sin(angleRad));
         painter->drawLine(p1, p2);
 
         // Draw numbers for 12, 3, 6, 9
@@ -266,7 +266,29 @@ void Mercedes190ETachometer::drawClock(QPainter *painter) {
             painter->drawText(textRect, Qt::AlignCenter, numStr);
         }
     }
-    
+
+    painter->restore();
+}
+
+void Mercedes190ETachometer::drawClockHands(QPainter *painter) {
+    painter->save();
+
+    const float hourHandLength = 25.0f; // Adjusted for better proportion with new style
+    const float minuteHandLength = 32.5f; // Adjusted for better proportion with new style
+
+    // Needle style properties (copied from tachometer, scaled down)
+    // The shared needle colour: these hands are the same orange as the needle,
+    // and a fourth local copy of it was one edit away from drifting.
+    const QColor handColor = gauge_paint::kNeedleColor;
+    const float hourHandBaseWidth = 2.5f;
+    const float hourHandTipWidth = 1.0f;
+    const float minuteHandBaseWidth = 2.0f;
+    const float minuteHandTipWidth = 0.5f;
+    const float clockPivotRadius = 5.0f;  // Smaller pivot for the clock
+    const QColor pivotColor = gauge_paint::kPivotColor;
+
+    painter->translate(kClockCenterX, kClockCenterY);
+
     // Draw hour hand
     painter->save();
     const qreal hourAngle = (m_currentTime.hour() % 12 + m_currentTime.minute() / 60.0) * 30.0 - 90.0; // 30 degrees per hour, -90 to start at 12

@@ -54,7 +54,8 @@ private:
     void drawRedZone(QPainter *painter);
     void drawStaticText(QPainter *painter);
     void drawNeedle(QPainter *painter);
-    void drawClock(QPainter *painter);
+    void drawClockFace(QPainter *painter);
+    void drawClockHands(QPainter *painter);
 
     float m_currentRpmValue; // Stores value on 0-70 scale for drawing
 
@@ -77,6 +78,7 @@ private:
     QString m_fontFamily;
     QFont m_dialFont;
     QFont m_labelFont;
+    QFont m_clockFont;
 
     // Clock specific members
     QTime m_currentTime;
