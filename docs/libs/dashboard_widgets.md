@@ -101,8 +101,10 @@ then constructs. There is no `instantiateWidget()` any more: it let the editor
 preview a config the dashboard would have clamped.
 
 `ExpressionSubscription` is a one-slot mailbox. The zenoh thread takes a short
-mutex and stores the latest value; a GUI-thread `QTimer` drains it every 16 ms.
-A value overwritten before the tick is never shown, which is the right thing
+mutex, stores the latest value, and wakes the one `DeliveryTicker` the process
+has. Its next frame, at most 16 ms later, drains every subscription in a single
+pass, so one publisher burst is one round of repaints; with nothing arriving no
+timer runs. A value overwritten before the tick is never shown, which is the right thing
 to do with a stale reading. The old shape posted one queued event per sample
 with no bound, so a GUI that fell behind swept through a backlog while its
 memory grew. It is not copyable or movable, because the callback captures
@@ -110,8 +112,9 @@ memory grew. It is not copyable or movable, because the callback captures
 null with the error logged if the expression or the subscription failed.
 `sinceLastSample()` is the raw measurement. The policy above it is
 `stale_after_ms`, a field beside every binding's `zenoh_key`: after that long
-with nothing arriving, `ExpressionSubscription::isStale()` turns true on the
-delivery tick and the subscription schedules a repaint, and both reverse when a
+with nothing arriving, `ExpressionSubscription::isStale()` turns true and the
+subscription schedules a repaint -- the ticker keeps one timer set for the
+earliest binding's deadline rather than polling, and both reverse when a
 reading returns. Zero, the default, never goes stale, and the editor turns the
 whole mechanism off for its process so a preview with no bus behind it does not
 draw every widget as dead. A binding that cannot be built at all -- an

@@ -6,8 +6,8 @@
 // steady one looked identical -- which is the wrong failure for a vehicle
 // display. A binding says how long a gap means "no data" (`stale_after_ms` in
 // the widget's config, 0 to never), ExpressionSubscription runs this tracker on
-// its delivery tick, and the widget is told on each edge so it can draw the
-// difference.
+// the shared delivery tick, and the widget is told on each edge so it can draw
+// the difference.
 //
 // No Qt and no clock reads here: the caller passes the time, which is what
 // makes every boundary testable.
@@ -15,6 +15,7 @@
 #define DASHBOARD_STALENESS_H_
 
 #include <chrono>
+#include <optional>
 
 namespace dashboard
 {
@@ -51,6 +52,17 @@ class StalenessTracker
         }
         stale_ = false;
         return Edge::became_fresh;
+    }
+
+    // The earliest time poll() could report became_stale, so a caller can
+    // sleep until then instead of polling. None while disabled or stale.
+    std::optional<clock::time_point> deadline() const
+    {
+        if (!enabled() || stale_)
+        {
+            return std::nullopt;
+        }
+        return last_ + timeout_;
     }
 
     Edge poll(clock::time_point now)

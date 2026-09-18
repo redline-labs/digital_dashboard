@@ -80,6 +80,25 @@ void testResume()
           "not from the one before it");
 }
 
+void testDeadline()
+{
+    // The delivery ticker sleeps until this instead of polling, so a deadline
+    // one tick late is a stale reading shown for one tick too long, and a
+    // missing one is a binding that never goes stale at all.
+    StalenessTracker disabled(0ms, t0);
+    check(!disabled.deadline(), "a disabled tracker has no deadline");
+
+    StalenessTracker tracker(300ms, t0);
+    check(tracker.deadline() == t0 + 300ms, "a new binding's deadline runs from construction");
+    tracker.onSample(t0 + 100ms);
+    check(tracker.deadline() == t0 + 400ms, "and moves with each sample");
+    check(tracker.poll(*tracker.deadline()) == StalenessTracker::Edge::became_stale,
+          "and polling AT it reports the edge");
+    check(!tracker.deadline(), "a stale tracker has none: there is no edge left to wait for");
+    tracker.onSample(t0 + 1s);
+    check(tracker.deadline() == t0 + 1300ms, "until a sample brings it back");
+}
+
 void testHugeTimeoutDoesNotOverflow()
 {
     // The config clamp allows ten minutes; this is the shape of the arithmetic,
@@ -105,6 +124,7 @@ int main()
     testNothingEverArrives();
     testBoundary();
     testResume();
+    testDeadline();
     testHugeTimeoutDoesNotOverflow();
     testSuppression();
 

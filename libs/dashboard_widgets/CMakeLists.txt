@@ -131,6 +131,16 @@ target_link_libraries(dashboard_widgets_test_subscription_stale PRIVATE
 add_project_test(TARGET dashboard_widgets_test_subscription_stale
                  LABELS dashboard_widgets net gui)
 
+# The one timer every subscription delivers through, against fake targets: idle
+# means no timer, a cross-thread burst is one pass, a racing wake never strands
+# a sample, and staleness lands at its deadline without polling. Real timers,
+# hence gui rather than unit.
+add_executable(dashboard_widgets_test_delivery_ticker tests/test_delivery_ticker.cpp)
+target_link_libraries(dashboard_widgets_test_delivery_ticker PRIVATE
+    dashboard_widgets
+)
+add_project_test(TARGET dashboard_widgets_test_delivery_ticker LABELS dashboard_widgets gui)
+
 foreach(config_test roundtrip validation colors)
     add_executable(dashboard_widgets_test_config_${config_test}
         tests/test_config_${config_test}.cpp)
