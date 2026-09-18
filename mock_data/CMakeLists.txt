@@ -11,6 +11,8 @@ target_link_libraries(test_data_publisher PRIVATE
     schemas
     helpers
     zenoh_pub_sub
+    node_health
+    cli
 )
 
 add_executable(mock_racegrade_tc8_frames

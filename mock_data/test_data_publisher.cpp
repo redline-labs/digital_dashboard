@@ -4,8 +4,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
-#include <csignal>
-#include <cstdlib>
+#include <functional>
 #include <spdlog/spdlog.h>
 
 #include "helpers/unit_conversion.h"
@@ -15,6 +14,8 @@
 #include <capnp/serialize.h>
 #include <kj/io.h>
 #include <optional>
+#include "cli/interrupt.h"
+#include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "vehicle_speed.capnp.h"
@@ -76,8 +77,10 @@ public:
         }
     }
     
-    void start()
-    {        
+    // Runs until SIGINT/SIGTERM or stop(). `tick` is called once per publish,
+    // which is what proves to the health reporter that the loop is turning.
+    void start(const std::function<void()>& tick)
+    {
         mRunning = true;
         SPDLOG_INFO("Starting test data publisher at {} Hz", PUBLISH_RATE_HZ);
         SPDLOG_INFO("Publishing to the following keys:");
@@ -93,13 +96,14 @@ public:
         
         auto start_time = std::chrono::steady_clock::now();
         
-        while (mRunning) {
+        while (mRunning && !cli::interrupted()) {
             auto current_time = std::chrono::steady_clock::now();
             const double elapsed =
                 std::chrono::duration<double>(current_time - start_time).count();
             
             // Generate simulated vehicle data
             generateAndPublishData(elapsed);
+            tick();
             
             // Sleep to maintain the desired publish rate
             std::this_thread::sleep_for(sleep_duration);
@@ -291,6 +295,11 @@ int main(int /*argc*/, char* /*argv*/[])
     // pub_sub/node_identity.h.
     pub_sub::NodeIdentity node_identity("test_data_publisher");
 
+    // Declared before the publisher so it outlives everything it watches, and
+    // so its destructor's `stopping` sample tells monitors this was a clean
+    // exit rather than a crash.
+    node_health::HealthReporter health("test_data_publisher");
+
     SPDLOG_INFO("Press Ctrl+C to stop...");
     
     TestDataPublisher publisher(
@@ -307,15 +316,13 @@ int main(int /*argc*/, char* /*argv*/[])
         return -1;
     }
     
-    // Set up signal handling for graceful shutdown
-    std::signal(SIGINT, [](int /*signal*/)
-    {
-        SPDLOG_INFO("Received interrupt signal. Shutting down...");
-        std::exit(0);
-    });
-    
-    // Start publishing (this will run until interrupted)
-    publisher.start();
-    
+    // SIGTERM as well as SIGINT, and by returning rather than std::exit(): the
+    // destructors have to run for the reporter to say `stopping`.
+    cli::installInterruptHandler();
+    health.markReady();
+
+    publisher.start([&health] { health.kick(); });
+
+    SPDLOG_INFO("Interrupted, shutting down.");
     return 0;
 } 
