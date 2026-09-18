@@ -1,15 +1,12 @@
 // The web console: reflash, system info, node health and service calls, served
 // from the board.
 //
-// What this node does NOT do, and why. It does not carry bus traffic for the
-// UI: the browser is a real zenoh client, talking to zenohd over ws:// with a
-// wasm module built from this tree's own schemas, so there is no gateway here
-// to keep in step with the bus. It keeps a zenoh session for exactly one
-// reason -- NodeIdentity and HealthReporter, so the console itself appears in
-// the health view it serves.
-//
-// What is left is the half that was never on the bus: RAUC over D-Bus, /proc
-// and /sys, the static assets, and the schema descriptors the browser loads.
+// It holds a zenoh session and serves what it reads as JSON: /api/health from
+// node_health::HealthMonitor and /api/services from the liveliness
+// directories. The plan is for the browser to read the bus itself through the
+// wasm module in wasm/, but zenoh-pico's WebSocket transport has not been seen
+// to reach zenohd, so until it has, the node is the bus client. The rest --
+// RAUC over D-Bus, /proc and /sys, the static assets -- was never on the bus.
 
 #include "http_server.h"
 #include "node_config.h"

@@ -1,9 +1,7 @@
 # Fetch cpp-httplib
 #
-# The web console's HTTP server: the landing page, the RAUC reflash upload and
-# the schema descriptors the browser's wasm module loads. Everything on the bus
-# reaches the browser as zenoh over ws://; this serves the things that were
-# never on the bus.
+# The web console's HTTP server: the page, its JSON API and the RAUC reflash
+# upload.
 #
 # Chosen over Crow, which was the starting preference, for one measurable
 # reason: a RAUC bundle is ~338 MB and Crow's documented multipart handling

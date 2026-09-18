@@ -21,9 +21,10 @@ namespace web_console
 {
 namespace
 {
-// 2 GiB. A slot is 2.8 GB, so nothing installable can exceed this, and it is
-// large enough that the free-space check refuses first for anything realistic.
-constexpr std::size_t kMaxUploadBytes = 2ULL * 1024 * 1024 * 1024;
+// 4 GiB. A bundle carries a slot image and a slot is 2.8 GB, so a real bundle
+// can pass 2 GiB even though today's are ~1 GB. Above any slot, this only stops
+// a runaway chunked upload that no Content-Length pre-flight could catch.
+constexpr std::size_t kMaxUploadBytes = 4ULL * 1024 * 1024 * 1024;
 } // namespace
 
 
