@@ -32,7 +32,7 @@ classification -- need no bus and carry the logic worth testing.
 | `node_health/reporter.h` | `HealthReporter`, `ReporterOptions`, `ActivityCheck`. |
 | `node_health/monitor.h` | `HealthMonitor`. |
 | `node_health/table.h` | `HealthTable`, `HealthRow`: the monitor's joining and classification, with no bus and no clock reads. |
-| `node_health/health_json.h` | `healthRowJson()`, `healthReportJson()`: the `/api/health` document. |
+| `node_health/health_json.h` | `healthRowJson()`, `healthReportJson()`: the document the web console's Health view renders (built into its wasm module). |
 | `node_health/classify.h` | `Verdict`, `Observation`, `ClassifyOptions`, `classify()`, `activityState()`, `Continuity`, `account()`. |
 | `node_health/codec.h` | `encode()`, `decode()`, `decodePayload()` for the `NodeHealth` schema. |
 

@@ -1,12 +1,11 @@
 // The web console: reflash, system info, node health and service calls, served
 // from the board.
 //
-// It holds a zenoh session and serves what it reads as JSON: /api/health from
-// node_health::HealthMonitor and /api/services from the liveliness
-// directories. The page's Health view reads the bus itself when it can,
-// through the wasm module in wasm/ and zenohd's ws/ listener; /api/health is
-// its fallback. The rest -- RAUC over D-Bus, /proc and /sys, the static
-// assets -- was never on the bus.
+// It holds a zenoh session for /api/services (the liveliness directories and
+// the dynamic caller) and to report its own health. The page's Health view
+// reads the bus itself, through the wasm module in wasm/ and zenohd's ws/
+// listener, so this node watches no health for it. The rest -- RAUC over
+// D-Bus, /proc and /sys, the static assets -- was never on the bus.
 
 #include "http_server.h"
 #include "node_config.h"
@@ -15,7 +14,6 @@
 
 #include "cli/interrupt.h"
 #include "core/core.h"
-#include "node_health/monitor.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 
@@ -98,19 +96,11 @@ int main(int argc, char** argv)
         SPDLOG_INFO("[node] RAUC on the {} bus", config.raucBus);
     }
 
-    // Watches nodes/*/health and the node directory, and classifies with the
-    // same code inspect and the Qt app use -- one classifier, three consumers.
-    node_health::HealthMonitor healthMonitor;
-    if (!healthMonitor.isValid())
-    {
-        SPDLOG_WARN("[node] no bus session: /api/health will report nothing observable");
-    }
-
     // Liveliness subscribers: built once so they have been watching before the
     // first request, not rebuilt per request knowing nothing.
     web_console::ServiceRoutes serviceRoutes;
 
-    web_console::HttpServer server(config, updates, healthMonitor, serviceRoutes);
+    web_console::HttpServer server(config, updates, serviceRoutes);
 
     // BIND BEFORE READY. A taken port has to fail here, while this is still the
     // main thread and the exit code means something -- not after markReady(),

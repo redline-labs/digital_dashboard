@@ -54,8 +54,8 @@ target_link_libraries(node_health_test_classify PRIVATE node_health)
 add_project_test(TARGET node_health_test_classify LABELS node_health unit)
 
 # The monitor's bookkeeping without a bus: identity joins, restarts, dating a
-# silent node, rejecting what is not NodeHealth, and the /api/health document
-# the node and the browser's wasm module both serve from it.
+# silent node, rejecting what is not NodeHealth, and the health document the
+# browser's wasm module serves from it.
 add_executable(node_health_test_table tests/test_table.cpp)
 target_link_libraries(node_health_test_table PRIVATE node_health capnp kj)
 add_project_test(TARGET node_health_test_table LABELS node_health unit)

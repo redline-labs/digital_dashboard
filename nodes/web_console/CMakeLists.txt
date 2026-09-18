@@ -5,9 +5,9 @@ project(web_console_node)
 # The board's web console: system information, node health, service calls and
 # RAUC reflash, served over HTTP.
 #
-# It holds a zenoh session and serves health and services as JSON. The page's
-# Health view reads the bus directly through wasm/ when it can, and falls back
-# to /api/health (see routes_health.cpp).
+# It holds a zenoh session for the Services view and its own health. The
+# page's Health view reads the bus itself, through wasm/ and zenohd's ws
+# listener; the node keeps no health state for it.
 
 # No Qt, deliberately and enforced: the image's recipe asserts that nothing
 # outside the gui component links libQt6Core.
@@ -18,7 +18,6 @@ add_library(web_console_routes STATIC
     node_config.cpp
     http_server.cpp
     routes_system.cpp
-    routes_health.cpp
     routes_services.cpp
     service_routes.cpp
     routes_update.cpp

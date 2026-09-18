@@ -45,7 +45,6 @@ code is in git history.
 | `POST /api/update/install` | asks RAUC to install what is staged | |
 | `GET /api/update/events` | install progress (SSE) | |
 | `POST /api/update/mark-good` | marks the running slot good | |
-| `GET /api/health` | every node's health, classified | |
 | `GET /api/services` | services offered on the bus | |
 | `GET /api/schema` | every schema name | |
 | `GET /api/schema/<name>` | describes one, for building a request | |
@@ -92,24 +91,20 @@ is expected, and the page retries rather than erroring.
 
 ## Health straight from the bus
 
-The Health view reads the bus itself when it can. `redline.js` and
-`redline.wasm` (built by `tools/build-wasm.sh` from `wasm/`) hold a zenoh-pico
-session to `zenohd`'s `ws/` listener on port 7446 of the same host, subscribe
-to `nodes/*/health` and the `@redline/node` identities, and classify with
-`node_health::HealthTable` -- the table `HealthMonitor` wraps on the node --
-rendering the `/api/health` document with the node's own code. Both paths give
-the page the same JSON and the same verdicts. `#bus-status` says which one is
-serving: **direct (zenoh over ws)** or **via console**.
+The Health view reads the bus itself. `redline.js` and `redline.wasm` (built
+by `tools/build-wasm.sh` from `wasm/`, and by the image build on the board)
+hold a zenoh-pico session to `zenohd`'s `ws/` listener on port 7446 of the same
+host, subscribe to `nodes/*/health` and the `@redline/node` identities, and
+classify with `node_health::HealthTable` -- the table `HealthMonitor` wraps in
+`inspect` and the Qt app -- so the verdicts are the node's own code.
 
-`/api/health` is the fallback, polled every 2 s:
+There is no server-side fallback, on purpose: it would mean the console
+watching every node's health all the time for a page nobody may be looking at.
+When `zenohd` is unreachable the view says so and retries with backoff (2 s
+doubling to 30 s); from there `inspect health` over ssh and
+`systemctl status redline-zenohd` are the way in.
 
-- when `redline.js` or `redline.wasm` is not served -- they are build output,
-  gitignored, and the image does not build them yet, so this is the normal case
-  on a board today;
-- when the router is unreachable or drops the session, while the direct path is
-  retried with backoff (2 s doubling to 30 s).
-
-The direct session exists only while Health is showing and the tab is visible;
+The session exists only while Health is showing and the tab is visible;
 leaving closes it, as leaving any view stops its polling.
 
 Two things the module imposes on the page. Every `bus*` call can return a

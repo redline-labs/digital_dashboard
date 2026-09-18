@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The /api/health document. Here rather than in the web console so that the
-// node's route and the browser's wasm module, which classifies the bus itself,
-// hand the page the same shape from the same code.
+// The health document the web console's page renders: HealthTable rows as
+// JSON. Built into the browser's wasm module, and here rather than in wasm/ so
+// it is unit-tested natively with the table it serialises.
 #ifndef NODE_HEALTH_HEALTH_JSON_H_
 #define NODE_HEALTH_HEALTH_JSON_H_
 

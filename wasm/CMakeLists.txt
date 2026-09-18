@@ -121,8 +121,8 @@ target_link_options(redline_wasm PRIVATE
 )
 
 if(REDLINE_WASM_WITH_PICO)
-    # The health table and its JSON are the node's own, so the page classifies
-    # the bus with the code /api/health uses; node_key.cpp parses identities.
+    # The health table and its JSON are node_health's own, so the page
+    # classifies with the code inspect uses; node_key.cpp parses identities.
     target_sources(redline_wasm PRIVATE
         bus.cpp
         ${REDLINE_ROOT}/libs/node_health/src/table.cpp

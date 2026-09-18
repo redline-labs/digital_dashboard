@@ -404,31 +404,25 @@ function connectEvents() {
 
 // --- Health view ----------------------------------------------------------
 //
-// Read from the bus directly when it can be, from the node when it cannot.
+// Read from the bus directly: redline.js/redline.wasm hold a zenoh-pico session
+// to zenohd's ws/ listener, and the module classifies with
+// node_health::HealthTable -- the same table HealthMonitor wraps in `inspect`
+// and the Qt app -- so the verdicts here are the node's own code, not a JS
+// reimplementation. The console holds no health state of its own: with nobody
+// looking, nothing on the board is watching health for this page.
 //
-// Directly: redline.js/redline.wasm hold a zenoh-pico session to zenohd's ws/
-// listener, and the module classifies with node_health::HealthTable -- the
-// table HealthMonitor wraps on the node -- and renders the /api/health
-// document with the node's own code. So both paths hand renderHealth the same
-// JSON with the same verdicts; only who holds the zenoh session differs.
-//
-// Via the node: /api/health, polled. That is the path whenever the module is
-// absent (it is build output, and the image does not build it yet), the router
-// is unreachable, or the session drops -- and the direct path is retried with
-// backoff meanwhile.
+// If zenohd is unreachable the view says so and retries; `inspect health` over
+// ssh and `systemctl status redline-zenohd` are the way in from there.
 
-const HEALTH_POLL_MS = 2000;
 const BUS_WS_PORT = 7446;
-// How often the direct path redraws. `late` is a function of time alone, so
-// the page redraws on a clock rather than only when a sample arrives.
-const DIRECT_RENDER_MS = 1000;
-const DIRECT_RETRY_MIN_MS = 2000;
-const DIRECT_RETRY_MAX_MS = 30000;
+// How often the view redraws. `late` is a function of time alone, so the page
+// redraws on a clock rather than only when a sample arrives.
+const RENDER_MS = 1000;
+const RETRY_MIN_MS = 2000;
+const RETRY_MAX_MS = 30000;
 
-function renderHealth(data, source) {
-  $("bus-status").textContent = data.bus_available
-    ? `${source} · revision ${data.revision ?? "?"}`
-    : (data.error ?? "no bus session");
+function renderHealth(data) {
+  $("bus-status").textContent = `zenoh over ws · revision ${data.revision ?? "?"}`;
 
   const host = $("nodes");
   host.replaceChildren();
@@ -437,7 +431,7 @@ function renderHealth(data, source) {
   if (list.length === 0) {
     const empty = document.createElement("div");
     empty.className = "muted";
-    empty.textContent = data.bus_available ? "no nodes have reported yet" : "nothing observable";
+    empty.textContent = "no nodes have reported yet";
     host.append(empty);
     return;
   }
@@ -471,34 +465,25 @@ function renderHealth(data, source) {
   }
 }
 
-async function refreshHealth() {
-  try {
-    const response = await api("/api/health");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    // A poll that was in flight when the direct path came up must not paint
-    // over it.
-    if (!direct.active) renderHealth(data, "via console");
-  } catch (error) {
-    if (!direct.active) $("bus-status").textContent = `cannot read health (${error.message})`;
-  }
+function healthUnavailable(message) {
+  $("bus-status").textContent = message;
+  $("nodes").replaceChildren();
 }
 
-// The direct path. ONE loop owns the module: every bus* call may suspend
-// (ASYNCIFY) and hand back a Promise, and two in flight at once corrupt the
-// module -- so connecting, subscribing, pumping and closing all happen here,
-// one await at a time, and nothing else calls bus*.
-const direct = {
+// ONE loop owns the module: every bus* call may suspend (ASYNCIFY) and hand
+// back a Promise, and two in flight at once corrupt the module -- so
+// connecting, subscribing, pumping and closing all happen here, one await at a
+// time, and nothing else calls bus*.
+const bus = {
   module: null,     // the loaded module, or null
-  failed: false,    // redline.js or redline.wasm could not be loaded: never retry
+  broken: null,     // why the module cannot be used at all, or null
   running: false,   // the loop is alive
-  active: false,    // connected, and the view is rendering from it
 };
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // redline.js is an Emscripten MODULARIZE script, not an ES module, so it is
-// loaded with a script tag; a 404 is the normal case on an image without it.
+// loaded with a script tag.
 function loadBusModule() {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
@@ -517,60 +502,47 @@ function healthShowing() {
   return currentView === "health" && !document.hidden;
 }
 
-function setDirectActive(active) {
-  if (direct.active === active) return;
-  direct.active = active;
-  // Polling /api/health is the fallback: off while the direct path serves.
-  syncPolling();
-  if (!active && healthShowing()) refreshHealth();
-}
-
-async function runDirect() {
-  if (direct.running || direct.failed) return;
-  direct.running = true;
+async function runHealth() {
+  if (bus.broken) { healthUnavailable(`cannot read the bus: ${bus.broken}`); return; }
+  if (bus.running) return;
+  bus.running = true;
+  const endpoint = `ws/${location.hostname}:${BUS_WS_PORT}`;
+  let connected = false;
   try {
-    if (!direct.module) {
-      try {
-        direct.module = await loadBusModule();
-      } catch (error) {
-        direct.failed = true;
-        console.info(`health: reading via the console (${error.message})`);
-        return;
-      }
+    if (!bus.module) {
+      $("bus-status").textContent = "loading the bus module…";
+      bus.module = await loadBusModule();
     }
-    const bus = direct.module;
-    let retryMs = DIRECT_RETRY_MIN_MS;
-    let connected = false;
+    const m = bus.module;
+    let retryMs = RETRY_MIN_MS;
     let lastRender = 0;
 
     while (healthShowing()) {
       if (!connected) {
-        connected = await bus.busConnect(`ws/${location.hostname}:${BUS_WS_PORT}`)
-          && await bus.busWatchHealth();
+        $("bus-status").textContent = `connecting to zenohd at ${endpoint}…`;
+        connected = await m.busConnect(endpoint) && await m.busWatchHealth();
         if (!connected) {
-          await bus.busClose();
+          await m.busClose();
+          healthUnavailable(`cannot reach zenohd at ${endpoint}; retrying in ${retryMs / 1000}s`);
           await delay(retryMs);
-          retryMs = Math.min(retryMs * 2, DIRECT_RETRY_MAX_MS);
+          retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
           continue;
         }
-        retryMs = DIRECT_RETRY_MIN_MS;
-        setDirectActive(true);
+        retryMs = RETRY_MIN_MS;
         lastRender = 0;
       }
 
-      if (await bus.busPump() < 0) {
-        // The router went away or dropped us: back to the node until a new
-        // session comes up.
-        await bus.busClose();
+      if (await m.busPump() < 0) {
+        // The router went away or dropped us.
+        await m.busClose();
         connected = false;
-        setDirectActive(false);
-        await delay(retryMs);
+        healthUnavailable(`lost zenohd at ${endpoint}; reconnecting`);
         continue;
       }
 
       const now = Date.now();
-      if (now - lastRender >= DIRECT_RENDER_MS && healthShowing()) {
-        renderHealth(JSON.parse(bus.busHealthJson()), "direct (zenoh over ws)");
+      if (now - lastRender >= RENDER_MS && healthShowing()) {
+        renderHealth(JSON.parse(m.busHealthJson()));
         lastRender = now;
       }
       // busPump() already waits out the link's read timeout when idle; this
@@ -580,14 +552,14 @@ async function runDirect() {
 
     // Not showing: without pumping, the router would drop the session on
     // lease expiry anyway, so close it now and reconnect on the way back.
-    if (connected) await bus.busClose();
+    if (connected) await m.busClose();
   } catch (error) {
-    // A module that throws is not retried: whatever broke it will break it again.
-    direct.failed = true;
-    console.warn(`health: direct bus path disabled (${error.message ?? error})`);
+    // A module that fails to load or throws is not retried: whatever broke it
+    // will break it again. Reloading the page starts over.
+    bus.broken = error.message ?? String(error);
+    healthUnavailable(`cannot read the bus: ${bus.broken}`);
   } finally {
-    direct.running = false;
-    setDirectActive(false);
+    bus.running = false;
   }
 }
 
@@ -742,7 +714,6 @@ let pollTimer = null;
 // when shown and after an action; progress arrives on the stream.
 function viewPoll() {
   if (currentView === "info") return [refresh, POLL_MS];
-  if (currentView === "health" && !direct.active) return [refreshHealth, HEALTH_POLL_MS];
   return null;
 }
 
@@ -768,10 +739,9 @@ function showView(name) {
   if (name === "info") refresh();
   if (name === "services") refreshServices();
   if (name === "update") refreshUpdate();
-  if (name === "health" && !direct.active) refreshHealth();
   syncPolling();
   syncEvents();
-  if (name === "health") runDirect();
+  if (name === "health") runHealth();
 }
 
 for (const tab of document.querySelectorAll(".tab")) {
@@ -784,7 +754,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     const poll = viewPoll();
     if (poll) poll[0]();
-    if (currentView === "health") runDirect();
+    if (currentView === "health") runHealth();
   }
   syncPolling();
 });

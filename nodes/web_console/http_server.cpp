@@ -372,21 +372,19 @@ int RouteServer::boundPort() const
 
 struct HttpServer::Impl
 {
-    Impl(const NodeConfig& c, UpdateRoutes& u, ::node_health::HealthMonitor& h, ServiceRoutes& s)
-        : config(c), updates(u), health(h), services(s)
+    Impl(const NodeConfig& c, UpdateRoutes& u, ServiceRoutes& s)
+        : config(c), updates(u), services(s)
     {
     }
 
     NodeConfig config;
     UpdateRoutes& updates;
-    ::node_health::HealthMonitor& health;
     ServiceRoutes& services;
     RouteServer server;
 };
 
-HttpServer::HttpServer(const NodeConfig& config, UpdateRoutes& updates,
-                       ::node_health::HealthMonitor& health, ServiceRoutes& services)
-    : impl_(std::make_unique<Impl>(config, updates, health, services))
+HttpServer::HttpServer(const NodeConfig& config, UpdateRoutes& updates, ServiceRoutes& services)
+    : impl_(std::make_unique<Impl>(config, updates, services))
 {
 }
 
@@ -429,7 +427,6 @@ bool HttpServer::bind()
     RouteRegistrar& routes = impl_->server.routes();
     registerSystemRoutes(routes);
     registerUpdateRoutes(routes, impl_->updates);
-    registerHealthRoutes(routes, impl_->health);
     registerServiceRoutes(routes, impl_->services);
 
     // int, because that is httplib's parameter type; the config keeps a

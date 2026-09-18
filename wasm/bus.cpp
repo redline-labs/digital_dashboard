@@ -249,8 +249,8 @@ bool busWatchHealth()
     return true;
 }
 
-// The /api/health document, classified now, from the same code the node's
-// route uses. Never sleeps, so it is safe between pumps.
+// The health document, classified now by node_health's own table. Never
+// sleeps, so it is safe between pumps.
 std::string busHealthJson()
 {
     const node_health::HealthTable& table = bus().health;
