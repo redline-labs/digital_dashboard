@@ -90,7 +90,7 @@ input[type=file] { color: var(--dim); font: inherit; max-width: 100%; }
 
 pre { white-space: pre-wrap; word-break: break-word; background: var(--bg);
       border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 12px; }
-.field { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px;
+.field { display: grid; grid-template-columns: minmax(8em, 11em) 1fr; gap: 8px 12px;
          align-items: center; margin-bottom: 8px; }
 .field input, .field select {
   background: var(--bg); color: var(--text); border: 1px solid var(--line);
@@ -98,3 +98,14 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg);
 }
 .clickable { cursor: pointer; }
 .clickable:hover strong { color: var(--accent); }
+.field-doc { grid-column: 1 / -1; margin-top: -4px; white-space: pre-line; }
+.field label { display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.type-hint { font-size: 12px; }
+.field.nested { align-items: start; }
+.struct, .list { display: grid; gap: 4px; min-width: 0; }
+.field .struct { border-left: 2px solid var(--line); padding-left: 10px; }
+.list-row { display: flex; gap: 8px; align-items: center; }
+.list-row > .struct, .list-row > input, .list-row > select { flex: 1; }
+.field input[type=checkbox] { justify-self: start; width: 18px; height: 18px; }
+.field input:invalid { border-color: var(--warn); }
+button.small { padding: 4px 10px; font-size: 13px; justify-self: start; }

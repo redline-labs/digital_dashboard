@@ -572,7 +572,6 @@ async function runHealth() {
 // appears here with no change to this file.
 
 let selectedService = null;
-let currentFields = {};
 
 function renderServices(data) {
   const host = $("service-list");
@@ -615,41 +614,289 @@ function renderServices(data) {
   }
 }
 
-// The form is built from describeSchema()'s field list -- category-level types,
-// which is enough for scalars and strings. Anything it cannot render as an input
-// falls back to raw JSON so the call is still possible rather than blocked.
+// The form is built from describeSchema(): exact types and bounds, enum values,
+// nested structs, unions, lists, the schema's defaults and its doc comments.
+// Every editor is { el, value() }: value() is what goes in the request, and
+// undefined means leave the field out so the schema's default applies.
+// Constraint attributes (min/max/step/pattern) do the validating, so the
+// browser's own messages and keyboards apply; the node checks again anyway.
+
+let callForm = null;  // the root editor for the selected service
+
+// 64-bit integers do not fit a JS Number, so they travel as BigInt and are
+// written into the JSON as bare digits.
+const INT64_BOUNDS = {
+  int64: [-(2n ** 63n), 2n ** 63n - 1n],
+  uint64: [0n, 2n ** 64n - 1n],
+};
+
+function requestJson(fields) {
+  return JSON.stringify(fields, (_, v) => (typeof v === "bigint" ? `__bigint__${v}` : v))
+    .replace(/"__bigint__(-?\d+)"/g, "$1");
+}
+
+function typeHint(spec) {
+  const t = spec.capnp_type ?? spec.type ?? "";
+  if (spec.min != null && spec.max != null && !(t in INT64_BOUNDS)) return `${t} ${spec.min}–${spec.max}`;
+  return t;
+}
+
+function textInput(spec, { type = "text", inputMode, pattern, placeholder }) {
+  const input = document.createElement("input");
+  input.type = type;
+  if (inputMode) input.inputMode = inputMode;
+  if (pattern) input.pattern = pattern;
+  const fallback = spec.default != null && spec.default !== "" ? `default ${spec.default}` : "";
+  input.placeholder = placeholder ?? fallback;
+  return input;
+}
+
+function scalarEditor(spec) {
+  const t = spec.capnp_type ?? spec.type;
+  switch (spec.type) {
+    case "bool": {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = spec.default === true;
+      return { el: input, value: () => input.checked };
+    }
+    case "enum": {
+      const select = document.createElement("select");
+      (spec.values ?? []).forEach((name, i) => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        const doc = spec.value_docs?.[i];
+        if (doc) option.title = doc;
+        select.append(option);
+      });
+      if (spec.default != null) select.value = spec.default;
+      return { el: select, value: () => select.value };
+    }
+    case "int":
+    case "uint": {
+      if (t in INT64_BOUNDS) {
+        const [min, max] = INT64_BOUNDS[t];
+        const input = textInput(spec, { inputMode: "numeric", pattern: t === "uint64" ? "[0-9]+" : "-?[0-9]+" });
+        input.addEventListener("input", () => {
+          let message = "";
+          if (/^-?[0-9]+$/.test(input.value)) {
+            const v = BigInt(input.value);
+            if (v < min || v > max) message = `${t} takes ${min} to ${max}`;
+          }
+          input.setCustomValidity(message);
+        });
+        return { el: input, value: () => (input.value === "" ? undefined : BigInt(input.value)) };
+      }
+      const input = textInput(spec, { type: "number", inputMode: spec.type === "uint" ? "numeric" : "decimal" });
+      input.step = "1";
+      if (spec.min != null) input.min = String(spec.min);
+      if (spec.max != null) input.max = String(spec.max);
+      return { el: input, value: () => (input.value === "" ? undefined : Number(input.value)) };
+    }
+    case "float": {
+      const input = textInput(spec, { type: "number", inputMode: "decimal" });
+      input.step = "any";
+      return { el: input, value: () => (input.value === "" ? undefined : Number(input.value)) };
+    }
+    case "data": {
+      const input = textInput(spec, { pattern: "\\s*([0-9A-Fa-f]{2}\\s*)*", placeholder: "hex, e.g. 01 ff 7a" });
+      input.spellcheck = false;
+      return { el: input, value: () => (input.value.trim() === "" ? undefined : input.value.trim()) };
+    }
+    case "void":
+      return { el: document.createElement("span"), value: () => null };
+    case "text":
+      return (() => {
+        const input = textInput(spec, {});
+        return { el: input, value: () => (input.value === "" ? undefined : input.value) };
+      })();
+    default: {
+      // Anything with no editor of its own takes raw JSON, so a call is still
+      // possible rather than blocked.
+      const input = textInput(spec, { placeholder: `${t} as JSON` });
+      input.addEventListener("input", () => {
+        try { if (input.value) JSON.parse(input.value); input.setCustomValidity(""); }
+        catch { input.setCustomValidity("not valid JSON"); }
+      });
+      return { el: input, value: () => (input.value === "" ? undefined : JSON.parse(input.value)) };
+    }
+  }
+}
+
+// A struct's or group's fields, in declaration order. Union arms become one
+// picker: exactly one of them goes in the request.
+function structEditor(fields, isUnion) {
+  const el = document.createElement("div");
+  el.className = "struct";
+  const entries = Object.entries(fields ?? {}).sort((a, b) => (a[1].order ?? 0) - (b[1].order ?? 0));
+  const plain = entries.filter(([, spec]) => !spec.union_arm && !isUnion);
+  const arms = entries.filter(([, spec]) => spec.union_arm || isUnion);
+  const editors = [];
+
+  for (const [name, spec] of plain) {
+    const editor = makeEditor(spec);
+    el.append(fieldRow(name, spec, editor));
+    editors.push([name, editor]);
+  }
+
+  let union = null;
+  if (arms.length > 0) {
+    const select = document.createElement("select");
+    const slot = document.createElement("div");
+    slot.className = "arm";
+    const armEditors = new Map();
+    for (const [name, spec] of arms) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      if (spec.doc) option.title = spec.doc;
+      select.append(option);
+      armEditors.set(name, { spec, editor: makeEditor(spec) });
+    }
+    // The schema's active arm, when it has one, is the one it defaults to.
+    const active = arms.find(([, spec]) => "default" in spec);
+    if (active) select.value = active[0];
+    const show = () => {
+      const { spec, editor } = armEditors.get(select.value);
+      slot.replaceChildren();
+      if (spec.type !== "void") slot.append(fieldRow(select.value, spec, editor));
+      else if (spec.doc) slot.append(docLine(spec.doc));
+    };
+    select.addEventListener("change", show);
+    show();
+    el.append(fieldRow("one of", { capnp_type: "union" }, { el: select }), slot);
+    union = () => {
+      const { editor } = armEditors.get(select.value);
+      const v = editor.value();
+      return [select.value, v === undefined ? null : v];
+    };
+  }
+
+  return {
+    el,
+    value() {
+      const out = {};
+      for (const [name, editor] of editors) {
+        const v = editor.value();
+        if (v !== undefined) out[name] = v;
+      }
+      if (union) {
+        const [name, v] = union();
+        out[name] = v;
+      }
+      return Object.keys(out).length ? out : undefined;
+    },
+  };
+}
+
+// A value for a list slot left empty: a list has no "absent" element.
+function emptyElement(spec) {
+  if (spec.type === "bool") return false;
+  if (spec.type === "enum") return spec.values?.[0];
+  if (spec.type === "int" || spec.type === "uint" || spec.type === "float") return 0;
+  if (spec.type === "text" || spec.type === "data") return "";
+  if (spec.type === "struct") return {};
+  return null;
+}
+
+function listEditor(spec) {
+  const el = document.createElement("div");
+  el.className = "list";
+  const rows = document.createElement("div");
+  const element = spec.element ?? { type: spec.element_type, values: spec.values };
+  const items = [];
+
+  const add = () => {
+    const editor = makeEditor(element);
+    const row = document.createElement("div");
+    row.className = "list-row";
+    const index = document.createElement("span");
+    index.className = "muted";
+    row.append(index, editor.el);
+    const item = { editor, row, index };
+    if (spec.fixed_length == null) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "small";
+      remove.textContent = "remove";
+      remove.addEventListener("click", () => {
+        items.splice(items.indexOf(item), 1);
+        row.remove();
+        renumber();
+      });
+      row.append(remove);
+    }
+    items.push(item);
+    rows.append(row);
+    renumber();
+  };
+  const renumber = () => items.forEach((item, i) => { item.index.textContent = `[${i}]`; });
+
+  el.append(rows);
+  if (spec.fixed_length != null) {
+    for (let i = 0; i < spec.fixed_length; i++) add();
+  } else {
+    const addButton = document.createElement("button");
+    addButton.type = "button";
+    addButton.className = "small";
+    addButton.textContent = "add";
+    addButton.addEventListener("click", add);
+    el.append(addButton);
+  }
+
+  return {
+    el,
+    value() {
+      if (items.length === 0) return undefined;
+      return items.map(({ editor }) => {
+        const v = editor.value();
+        return v === undefined ? emptyElement(element) : v;
+      });
+    },
+  };
+}
+
+function makeEditor(spec) {
+  if (spec.type === "struct" && spec.fields) return structEditor(spec.fields, spec.union === true);
+  if (spec.type === "list") return listEditor(spec);
+  return scalarEditor(spec);
+}
+
+function docLine(text) {
+  const doc = document.createElement("div");
+  doc.className = "field-doc muted";
+  doc.textContent = text;
+  return doc;
+}
+
+function fieldRow(name, spec, editor) {
+  const wrap = document.createElement("div");
+  wrap.className = spec.type === "struct" || spec.type === "list" ? "field nested" : "field";
+  const label = document.createElement("label");
+  const title = document.createElement("span");
+  title.textContent = name;
+  const hint = document.createElement("span");
+  hint.className = "muted type-hint";
+  hint.textContent = typeHint(spec);
+  label.append(title, hint);
+  wrap.append(label, editor.el);
+  if (spec.doc) wrap.append(docLine(spec.doc));
+  return wrap;
+}
+
 function buildForm(description) {
   const host = $("call-form");
   host.replaceChildren();
-  currentFields = {};
-
-  const fields = description.fields?.fields ?? description.fields ?? {};
-  const names = Object.keys(fields);
-  if (names.length === 0) {
-    const none = document.createElement("div");
-    none.className = "muted";
-    none.textContent = "this request takes no fields";
-    host.append(none);
+  const fields = description.fields?.fields ?? {};
+  if (Object.keys(fields).length === 0) {
+    callForm = null;
+    host.append(Object.assign(document.createElement("div"), {
+      className: "muted", textContent: "this request takes no fields" }));
     return;
   }
-
-  for (const name of names) {
-    const spec = fields[name] ?? {};
-    const wrap = document.createElement("label");
-    wrap.className = "field";
-    const label = document.createElement("span");
-    label.textContent = name;
-    const input = document.createElement("input");
-    input.type = /int|float|number/i.test(spec.type ?? "") ? "number" : "text";
-    input.placeholder = spec.type ?? "";
-    input.addEventListener("input", () => {
-      const raw = input.value;
-      if (raw === "") { delete currentFields[name]; return; }
-      currentFields[name] = input.type === "number" ? Number(raw) : raw;
-    });
-    wrap.append(label, input);
-    host.append(wrap);
-  }
+  callForm = structEditor(fields, description.fields?.union === true);
+  host.append(callForm.el);
 }
 
 async function selectService(service) {
@@ -673,16 +920,20 @@ async function selectService(service) {
 
 async function sendCall() {
   if (!selectedService) return;
+  // The browser's own validation first: bounds, steps, hex, 64-bit ranges.
+  for (const input of $("call-form").querySelectorAll("input, select")) {
+    if (!input.checkValidity()) { input.reportValidity(); return; }
+  }
   $("call-result").textContent = "calling\u2026";
   try {
     const response = await api("/api/call", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: requestJson({
         key: selectedService.key,
         request_schema: selectedService.request_schema,
         response_schema: selectedService.response_schema,
-        fields: currentFields,
+        fields: callForm?.value() ?? {},
       }),
     });
     const result = await response.json();

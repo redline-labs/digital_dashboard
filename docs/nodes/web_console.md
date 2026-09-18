@@ -62,6 +62,16 @@ code is in git history.
 
 `timeout_ms` is optional (2000 by default) and clamped to 100..10000.
 
+The Services view builds its form from `/api/schema/<name>`, which is
+`pub_sub::describeSchema()`: exact types and integer bounds, enum values,
+nested structs, unions, lists, the schema's defaults and its doc comments. So
+an enum is a dropdown, a bool a checkbox, an integer a numeric input bounded to
+its type (the phone keyboard follows), a float a decimal input, Data a hex
+field, a struct a nested block, a union a picker for its arm and a list rows
+to add and remove. A field left empty is left out of the request, so the
+schema's default applies; the default is shown as the placeholder. 64-bit
+integers go out as exact JSON integers rather than through a JS Number.
+
 ## Reflash
 
 One upload at a time: a second while one is in flight gets `409`, as does an
