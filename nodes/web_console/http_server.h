@@ -144,12 +144,45 @@ public:
     void events(const std::string& pattern, EventStream& stream);
 
 private:
-    friend class HttpServer;
+    friend class RouteServer;
 
     struct Impl;
     explicit RouteRegistrar(Impl& impl) : impl_(impl) {}
 
     Impl& impl_;
+};
+
+// The httplib server with this node's settings and no routes of its own.
+// HttpServer is one of these plus the node's routes; the tests register only
+// the routes they exercise, without a bus or RAUC behind them.
+class RouteServer
+{
+public:
+    RouteServer();
+    ~RouteServer();
+
+    RouteServer(const RouteServer&) = delete;
+    RouteServer& operator=(const RouteServer&) = delete;
+
+    RouteRegistrar& routes();
+
+    // Serves a directory's files at /. False if it could not be mounted.
+    bool mount(const std::string& directory);
+
+    // Port 0 asks the OS for one; boundPort() says which.
+    bool bind(const std::string& address, int port);
+    void serve();
+
+    // Ends every event stream registered here BEFORE stopping the server. An
+    // SSE worker sits in a 15 s wait for the next frame, and httplib joins its
+    // workers on stop, so without this a SIGTERM waited out the heartbeat.
+    void stop();
+
+    int boundPort() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 // Defined in routes_system.cpp.

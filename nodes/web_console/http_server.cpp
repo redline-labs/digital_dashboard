@@ -34,6 +34,8 @@ constexpr std::size_t kMaxUploadBytes = 4ULL * 1024 * 1024 * 1024;
 struct RouteRegistrar::Impl
 {
     httplib::Server& server;
+    // Every stream behind an events() route, so stop() can end them first.
+    std::vector<EventStream*> streams;
 };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,7 @@ void RouteRegistrar::postUpload(
 
 void RouteRegistrar::events(const std::string& pattern, EventStream& stream)
 {
+    impl_.streams.push_back(&stream);
     EventStream::Impl* streamImpl = stream.impl_.get();
 
     impl_.server.Get(pattern, [streamImpl](const httplib::Request&, httplib::Response& response) {
@@ -266,6 +269,87 @@ void RouteRegistrar::events(const std::string& pattern, EventStream& stream)
     });
 }
 
+// ---------------------------------------------------------------------------
+// RouteServer
+// ---------------------------------------------------------------------------
+
+struct RouteServer::Impl
+{
+    httplib::Server server;
+    RouteRegistrar::Impl registrarImpl{server, {}};
+    RouteRegistrar registrar{registrarImpl};
+    int boundPort { 0 };
+};
+
+RouteServer::RouteServer() : impl_(std::make_unique<Impl>())
+{
+    // THE WHOLE REASON THIS LIBRARY WAS CHOSEN was streaming a RAUC bundle to
+    // disk instead of buffering it -- and cpp-httplib's default
+    // CPPHTTPLIB_PAYLOAD_MAX_LENGTH is 100 MB, so every real bundle was rejected
+    // with 413 after ~100 MB. Measured against the real image: a 335 MB bundle
+    // stopped at 104,843,888 bytes.
+    //
+    // Generous rather than unlimited: the free-space pre-flight in
+    // routes_update.cpp is the check that matters (it knows how big the
+    // partition is), and this only needs to stop being the binding constraint.
+    impl_->server.set_payload_max_length(kMaxUploadBytes);
+
+    // A kept-alive connection is watched by polling every 10 ms until this
+    // runs out, and the page polls every 2-5 s -- so at the default 5 s an open
+    // tab keeps a worker waking at 100 Hz forever. At 1 s it goes quiet between
+    // polls, and a reconnect per poll costs nothing on a LAN.
+    impl_->server.set_keep_alive_timeout(1);
+}
+
+RouteServer::~RouteServer() = default;
+
+RouteRegistrar& RouteServer::routes()
+{
+    return impl_->registrar;
+}
+
+bool RouteServer::mount(const std::string& directory)
+{
+    return impl_->server.set_mount_point("/", directory);
+}
+
+bool RouteServer::bind(const std::string& address, int port)
+{
+    if (port == 0)
+    {
+        const int chosen = impl_->server.bind_to_any_port(address);
+        if (chosen < 0) { return false; }
+        impl_->boundPort = chosen;
+        return true;
+    }
+    if (!impl_->server.bind_to_port(address, port)) { return false; }
+    impl_->boundPort = port;
+    return true;
+}
+
+void RouteServer::serve()
+{
+    impl_->server.listen_after_bind();
+}
+
+void RouteServer::stop()
+{
+    for (EventStream* stream : impl_->registrarImpl.streams)
+    {
+        stream->close();
+    }
+    impl_->server.stop();
+}
+
+int RouteServer::boundPort() const
+{
+    return impl_->boundPort;
+}
+
+// ---------------------------------------------------------------------------
+// HttpServer
+// ---------------------------------------------------------------------------
+
 struct HttpServer::Impl
 {
     Impl(const NodeConfig& c, UpdateRoutes& u, ::node_health::HealthMonitor& h, ServiceRoutes& s)
@@ -277,8 +361,7 @@ struct HttpServer::Impl
     UpdateRoutes& updates;
     ::node_health::HealthMonitor& health;
     ServiceRoutes& services;
-    httplib::Server server;
-    int boundPort { 0 };
+    RouteServer server;
 };
 
 HttpServer::HttpServer(const NodeConfig& config, UpdateRoutes& updates,
@@ -297,27 +380,10 @@ bool HttpServer::bind()
     const std::string assetDir =
         impl_->config.assetDir.empty() ? core::paths::resource("web") : impl_->config.assetDir;
 
-    // THE WHOLE REASON THIS LIBRARY WAS CHOSEN was streaming a ~338 MB RAUC
-    // bundle to disk instead of buffering it -- and cpp-httplib's default
-    // CPPHTTPLIB_PAYLOAD_MAX_LENGTH is 100 MB, so every real bundle was rejected
-    // with 413 after ~100 MB. Measured against the real image: a 335 MB bundle
-    // stopped at 104,843,888 bytes.
-    //
-    // Generous rather than unlimited: the free-space pre-flight in
-    // routes_update.cpp is the check that matters (it knows how big the
-    // partition is), and this only needs to stop being the binding constraint.
-    impl_->server.set_payload_max_length(kMaxUploadBytes);
-
-    // A kept-alive connection is watched by polling every 10 ms until this
-    // runs out, and the page polls every 2-5 s -- so at the default 5 s an open
-    // tab keeps a worker waking at 100 Hz forever. At 1 s it goes quiet between
-    // polls, and a reconnect per poll costs nothing on a LAN.
-    impl_->server.set_keep_alive_timeout(1);
-
     std::error_code ec;
     if (std::filesystem::is_directory(assetDir, ec))
     {
-        if (!impl_->server.set_mount_point("/", assetDir))
+        if (!impl_->server.mount(assetDir))
         {
             SPDLOG_WARN("[http] '{}' could not be mounted; the API will work but no page will be served",
                         assetDir);
@@ -340,8 +406,7 @@ bool HttpServer::bind()
                     impl_->config.assetDir.empty() ? "core::paths::resource(\"web\")" : "asset_dir");
     }
 
-    RouteRegistrar::Impl registrarImpl{impl_->server};
-    RouteRegistrar routes(registrarImpl);
+    RouteRegistrar& routes = impl_->server.routes();
     registerSystemRoutes(routes);
     registerUpdateRoutes(routes, impl_->updates);
     registerHealthRoutes(routes, impl_->health);
@@ -350,19 +415,18 @@ bool HttpServer::bind()
     // int, because that is httplib's parameter type; the config keeps a
     // uint16_t so the range is validated where it is read.
     const int port = static_cast<int>(impl_->config.port);
-    if (!impl_->server.bind_to_port(impl_->config.bindAddress, port))
+    if (!impl_->server.bind(impl_->config.bindAddress, port))
     {
         SPDLOG_ERROR("[http] cannot bind {}:{} -- is something already listening?",
                      impl_->config.bindAddress, port);
         return false;
     }
-    impl_->boundPort = port;
     return true;
 }
 
 void HttpServer::serve()
 {
-    impl_->server.listen_after_bind();
+    impl_->server.serve();
 }
 
 void HttpServer::stop()
@@ -372,7 +436,7 @@ void HttpServer::stop()
 
 int HttpServer::boundPort() const
 {
-    return impl_->boundPort;
+    return impl_->server.boundPort();
 }
 
 } // namespace web_console
