@@ -27,3 +27,12 @@ asset_dir: ""
 # a read-only rootfs. Absent means no authentication and a loud warning at
 # startup.
 token_file: "${REDLINE_DATA_DIR}/web_console/token"
+
+# Where uploaded RAUC bundles are staged before installing. /data is the only
+# writable filesystem on the image.
+upload_dir: "${REDLINE_DATA_DIR}/updates"
+
+# Which bus RAUC is on. Always "system" on a board. "session" exists so the
+# reflash path can be developed against tools/rauc_stub on a workstation, and
+# setting it here would mean the console never finds RAUC at all.
+rauc_bus: system

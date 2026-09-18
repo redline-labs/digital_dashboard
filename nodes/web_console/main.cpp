@@ -13,6 +13,7 @@
 
 #include "http_server.h"
 #include "node_config.h"
+#include "update_routes.h"
 
 #include "core/core.h"
 #include "node_health/reporter.h"
@@ -107,7 +108,26 @@ int main(int argc, char** argv)
                     config.tokenFile);
     }
 
-    web_console::HttpServer server(config);
+    // RAUC first: the server registers routes that hold a reference to it.
+    //
+    // A board whose updater is broken should still serve the rest of the
+    // console -- system information and health are exactly what someone
+    // diagnosing that wants -- so this reports and carries on rather than
+    // exiting. /api/update/status says `rauc_available: false` and the page
+    // shows why.
+    web_console::UpdateRoutes updates(config);
+    std::string raucError;
+    if (!updates.start(raucError))
+    {
+        SPDLOG_WARN("[node] RAUC is not reachable ({}): reflash is unavailable, the rest is not",
+                    raucError);
+    }
+    else
+    {
+        SPDLOG_INFO("[node] RAUC on the {} bus", config.raucBus);
+    }
+
+    web_console::HttpServer server(config, updates);
 
     // BIND BEFORE READY. A taken port has to fail here, while this is still the
     // main thread and the exit code means something -- not after markReady(),
@@ -131,6 +151,10 @@ int main(int argc, char** argv)
     // setCheck, not addActivityCheck: an idle console with nobody browsing is
     // healthy, and an activity check would report it degraded.
     health.setCheck("http", node_health::State::ok, "");
+    // Degraded, not fault: the console is doing its job, it just cannot reflash.
+    health.setCheck("rauc", updates.available() ? node_health::State::ok
+                                                : node_health::State::degraded,
+                    updates.available() ? "" : "RAUC is not reachable on D-Bus");
     health.markReady();
 
     while (gRunning)

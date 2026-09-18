@@ -157,5 +157,211 @@ async function refresh() {
   }
 }
 
+// --- Update view ----------------------------------------------------------
+
+let staged = null;
+
+function pill(text, good) {
+  const span = document.createElement("span");
+  span.className = `pill ${good ? "good" : "bad"}`;
+  span.textContent = text;
+  return span;
+}
+
+function renderUpdate(data) {
+  const status = $("update-status");
+  status.replaceChildren();
+
+  if (!data.rauc_available) {
+    // The rest of the console still works; say what does not and why.
+    status.append(pill("RAUC unreachable", false));
+    const why = document.createElement("div");
+    why.className = "muted";
+    why.textContent = data.error ?? "rauc.service is not on D-Bus";
+    status.append(why);
+  } else {
+    const list = document.createElement("dl");
+    definition(list, "Operation", data.operation);
+    definition(list, "Booted slot", data.boot_slot);
+    definition(list, "Primary", data.primary);
+    definition(list, "Compatible", data.compatible);
+    if (data.last_error) definition(list, "Last error", data.last_error);
+    status.append(list);
+  }
+
+  // Boot counting is the bootloader's, not ours: show what it says.
+  for (const entry of data.boot_entries ?? []) {
+    const row = document.createElement("div");
+    row.className = "row row-head";
+    const name = document.createElement("span");
+    name.textContent = `slot ${entry.slot} \u00b7 ${entry.entry}`;
+    const tries = document.createElement("span");
+    tries.className = "muted";
+    tries.textContent = entry.tries_left === null
+      ? "not being counted"
+      : `${entry.tries_left} tries left`;
+    row.append(name, tries);
+    status.append(row);
+  }
+
+  staged = data.staged;
+  $("staged").textContent = staged
+    ? `staged: ${staged.path} (${bytes(staged.bytes)})`
+    : "nothing staged";
+  $("install").disabled = !staged || !data.rauc_available;
+
+  const host = $("slots");
+  host.replaceChildren();
+  for (const slot of data.slots ?? []) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const head = document.createElement("div");
+    head.className = "row-head";
+    const name = document.createElement("strong");
+    name.textContent = `${slot.name} (${slot.bootname})`;
+    head.append(name, pill(slot.state, slot.state === "booted"));
+    const detail = document.createElement("div");
+    detail.className = "muted";
+    detail.textContent = `${slot.bundle_version || "no version"} \u00b7 boot-status ${slot.boot_status}`;
+    row.append(head, detail);
+    host.append(row);
+  }
+}
+
+async function refreshUpdate() {
+  try {
+    const response = await fetch("/api/update/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderUpdate(await response.json());
+  } catch (error) {
+    $("update-error").hidden = false;
+    $("update-error").textContent = `Cannot read update status (${error.message}).`;
+  }
+}
+
+function setProgress(percentage, message) {
+  const bar = $("progress-bar");
+  bar.hidden = false;
+  bar.firstElementChild.style.width = `${Math.max(0, Math.min(100, percentage))}%`;
+  $("progress-text").textContent = message;
+}
+
+// XMLHttpRequest rather than fetch: fetch still cannot report upload progress,
+// and a 338 MB bundle over a bench link is exactly when someone needs to see
+// that something is happening.
+function uploadBundle(file) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/update/bundle");
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        setProgress((event.loaded / event.total) * 100, `uploading ${bytes(event.loaded)} of ${bytes(event.total)}`);
+      }
+    });
+    request.addEventListener("load", () => {
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(new Error(errorFrom(request.responseText, request.status)));
+    });
+    request.addEventListener("error", () => reject(new Error("the connection failed")));
+    request.send(file);
+  });
+}
+
+function errorFrom(text, status) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.error) return parsed.error;
+  } catch { /* not JSON; fall through to the status */ }
+  return `HTTP ${status}`;
+}
+
+function showUpdateError(message) {
+  const banner = $("update-error");
+  banner.hidden = false;
+  banner.textContent = message;
+}
+
+function wireUpdate() {
+  const picker = $("bundle");
+  picker.addEventListener("change", () => {
+    $("upload").disabled = picker.files.length === 0;
+  });
+
+  $("upload").addEventListener("click", async () => {
+    $("update-error").hidden = true;
+    $("upload").disabled = true;
+    try {
+      await uploadBundle(picker.files[0]);
+      setProgress(100, "uploaded");
+      await refreshUpdate();
+    } catch (error) {
+      showUpdateError(`Upload failed: ${error.message}`);
+      $("upload").disabled = false;
+    }
+  });
+
+  $("install").addEventListener("click", async () => {
+    $("update-error").hidden = true;
+    $("install").disabled = true;
+    setProgress(0, "asking RAUC to install\u2026");
+    try {
+      const response = await fetch("/api/update/install", { method: "POST" });
+      if (!response.ok) throw new Error(errorFrom(await response.text(), response.status));
+    } catch (error) {
+      showUpdateError(`Install refused: ${error.message}`);
+      $("install").disabled = false;
+    }
+  });
+
+  $("mark-good").addEventListener("click", async () => {
+    $("update-error").hidden = true;
+    try {
+      const response = await fetch("/api/update/mark-good", { method: "POST" });
+      if (!response.ok) throw new Error(errorFrom(await response.text(), response.status));
+      await refreshUpdate();
+    } catch (error) {
+      showUpdateError(`Could not mark good: ${error.message}`);
+    }
+  });
+
+  // Progress is pushed, not polled: an install reports through D-Bus and the
+  // node forwards it here. EventSource reconnects on its own, which matters
+  // because reflashing ends in a reboot.
+  const events = new EventSource("/api/update/events");
+  events.addEventListener("progress", (event) => {
+    const data = JSON.parse(event.data);
+    setProgress(data.percentage, data.message);
+  });
+  events.addEventListener("completed", (event) => {
+    const data = JSON.parse(event.data);
+    if (data.ok) {
+      setProgress(100, "installed \u2014 reboot to run it");
+    } else {
+      setProgress(0, "failed");
+      showUpdateError(data.last_error || "the install failed");
+    }
+    refreshUpdate();
+  });
+  events.addEventListener("error", (event) => {
+    if (event.data) showUpdateError(JSON.parse(event.data).error ?? "stream error");
+  });
+}
+
+// --- views ----------------------------------------------------------------
+
+function showView(name) {
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.classList.toggle("active", tab.dataset.view === name);
+  }
+  $("info").hidden = name !== "info";
+  $("update").hidden = name !== "update";
+  if (name === "update") refreshUpdate();
+}
+
+for (const tab of document.querySelectorAll(".tab")) {
+  if (!tab.disabled) tab.addEventListener("click", () => showView(tab.dataset.view));
+}
+
+wireUpdate();
 refresh();
 setInterval(refresh, POLL_MS);

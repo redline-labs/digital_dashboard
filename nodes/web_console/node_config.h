@@ -33,6 +33,16 @@ struct NodeConfig
     // is logged loudly at startup rather than assumed to be intentional.
     std::string tokenFile;
 
+    // Where uploaded bundles are staged. /data is the only writable filesystem
+    // on the image, which is why the unit carries RequiresMountsFor=/data.
+    std::string uploadDir { "${REDLINE_DATA_DIR}/updates" };
+
+    // "system" or "session". The session bus exists so the whole reflash path
+    // -- upload, install, progress, failure -- can be exercised against
+    // tools/rauc_stub on a workstation. A board is always "system", and running
+    // there on "session" would silently find no RAUC at all.
+    std::string raucBus { "system" };
+
     // ${REDLINE_DATA_DIR} and ~ are expanded when the file is read, so the
     // values here are always usable paths.
 };

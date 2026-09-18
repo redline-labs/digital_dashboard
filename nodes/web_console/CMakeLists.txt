@@ -18,6 +18,8 @@ add_executable(web_console
     node_config.cpp
     http_server.cpp
     routes_system.cpp
+    routes_update.cpp
+    update_routes.cpp
 )
 
 target_link_libraries(web_console PRIVATE
@@ -28,6 +30,7 @@ target_link_libraries(web_console PRIVATE
     nlohmann_json::nlohmann_json
     httplib::httplib
     system_info
+    rauc_client
     node_health
     zenoh_pub_sub
     schemas

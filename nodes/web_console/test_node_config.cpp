@@ -43,13 +43,35 @@ void testEveryKeyIsRead()
         "bind_address: 0.0.0.0\n"
         "port: 9090\n"
         "asset_dir: /opt/redline/web\n"
-        "token_file: /data/web_console/token\n",
+        "token_file: /data/web_console/token\n"
+        "upload_dir: /data/updates\n"
+        "rauc_bus: session\n",
         config);
     check(ok, "a full config parses");
     check(config.bindAddress == "0.0.0.0", "bind_address is read");
     check(config.port == 9090, "port is read");
     check(config.assetDir == "/opt/redline/web", "asset_dir is read");
     check(config.tokenFile == "/data/web_console/token", "token_file is read");
+    check(config.uploadDir == "/data/updates", "upload_dir is read");
+    check(config.raucBus == "session", "rauc_bus is read");
+}
+
+void testRaucBusIsCheckedNotAssumed()
+{
+    NodeConfig config;
+    check(config.raucBus == "system", "a board is system by default");
+    check(parse_node_config("rauc_bus: session\n", config), "session is allowed");
+    check(parse_node_config("rauc_bus: system\n", config), "system is allowed");
+    // Misspelled, this would be a console that silently never finds RAUC.
+    check(!parse_node_config("rauc_bus: sytsem\n", config), "anything else is a parse error");
+    check(!parse_node_config("rauc_bus: \"\"\n", config), "and so is empty");
+}
+
+void testUploadDirMustExist()
+{
+    NodeConfig config;
+    check(config.uploadDir == "${REDLINE_DATA_DIR}/updates", "the default is under the data dir");
+    check(!parse_node_config("upload_dir: \"\"\n", config), "an empty upload_dir is rejected");
 }
 
 void testUnknownKeyIsAnError()
@@ -95,6 +117,8 @@ int main()
 {
     testDefaults();
     testEveryKeyIsRead();
+    testRaucBusIsCheckedNotAssumed();
+    testUploadDirMustExist();
     testUnknownKeyIsAnError();
     testPortRange();
     testMalformedInput();

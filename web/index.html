@@ -14,10 +14,36 @@
 
 <nav>
   <button class="tab active" data-view="info">Info</button>
-  <button class="tab" data-view="update" disabled title="Arrives with the reflash route">Update</button>
+  <button class="tab" data-view="update">Update</button>
   <button class="tab" data-view="health" disabled title="Arrives with the wasm bus client">Health</button>
   <button class="tab" data-view="services" disabled title="Arrives with the wasm bus client">Services</button>
 </nav>
+
+<main id="update" hidden>
+  <section>
+    <h2>Running system</h2>
+    <div id="update-status"></div>
+  </section>
+
+  <section>
+    <h2>Install a bundle</h2>
+    <p class="muted" id="staged"></p>
+    <input type="file" id="bundle" accept=".raucb">
+    <div class="actions">
+      <button id="upload" disabled>Upload</button>
+      <button id="install" disabled>Install</button>
+      <button id="mark-good">Mark running slot good</button>
+    </div>
+    <div class="bar" id="progress-bar" hidden><span></span></div>
+    <p class="muted" id="progress-text"></p>
+    <p id="update-error" hidden></p>
+  </section>
+
+  <section>
+    <h2>Slots</h2>
+    <div id="slots"></div>
+  </section>
+</main>
 
 <main id="info">
   <p id="error" hidden></p>
