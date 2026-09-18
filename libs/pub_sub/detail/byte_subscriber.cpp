@@ -41,8 +41,11 @@ class ZenohSampleMeta final : public SampleMeta
         {
             return std::nullopt;
         }
-        const std::vector<std::uint8_t> bytes = attachment->get().as_vector();
-        if (bytes.size() != sizeof(std::uint64_t))
+        // Size first and into a fixed buffer: this runs on every sample of a
+        // typed subscription, and as_vector() allocated for eight bytes.
+        const zenoh::Bytes& attached = attachment->get();
+        std::array<std::uint8_t, sizeof(std::uint64_t)> bytes{};
+        if (attached.size() != bytes.size() || attached.reader().read(bytes.data(), bytes.size()) != bytes.size())
         {
             // Someone else's attachment on one of our topics. Not a fingerprint.
             return std::nullopt;

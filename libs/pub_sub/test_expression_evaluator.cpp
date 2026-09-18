@@ -648,6 +648,22 @@ void testCheckPublishedSchemaToleratesAnything()
     expect(!threw, "the schema check never throws, whatever encoding it is handed");
 }
 
+// The subscriber skips building the check's arguments once this is true, so
+// it must flip on the first check through either overload and stay flipped.
+void testPublishedSchemaCheckedLatches()
+{
+    auto eval = evaluatorFor("rpm");
+    expect(!eval.publishedSchemaChecked(), "a fresh evaluator has not checked a schema");
+    eval.checkPublishedSchema("application/capnp;VehicleSpeed", std::nullopt);
+    expect(eval.publishedSchemaChecked(), "the first check, even a mismatch, latches");
+    eval.checkPublishedSchema("application/capnp;EngineRpm");
+    expect(eval.publishedSchemaChecked(), "and it stays latched");
+
+    auto plain = evaluatorFor("rpm");
+    plain.checkPublishedSchema("");
+    expect(plain.publishedSchemaChecked(), "the one-argument check latches too");
+}
+
 }  // namespace
 
 int main()
@@ -692,6 +708,7 @@ int main()
     testVariableNamesAreReported();
     testSchemaAndExpressionAreReportedBack();
     testCheckPublishedSchemaToleratesAnything();
+    testPublishedSchemaCheckedLatches();
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

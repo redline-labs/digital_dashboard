@@ -529,6 +529,11 @@ void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding,
                  impl_->log_context, configured, *layout, expected);
 }
 
+bool ExpressionEvaluator::publishedSchemaChecked() const
+{
+    return impl_->schema_checked;
+}
+
 void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding)
 {
     if (impl_->schema_checked)

@@ -34,6 +34,10 @@ struct BytePublisher::Impl
     std::string schema_name;
     std::uint64_t layout = kNoLayout;
 
+    // The eight-byte layout stamp, built once. Each put() attaches a clone,
+    // which shares the buffer rather than allocating one per sample.
+    std::optional<zenoh::Bytes> layout_stamp;
+
     // Advertises this topic to discovery for as long as the publisher lives.
     //
     // A liveliness token is not a publication: nothing is ever sent on its key,
@@ -58,6 +62,15 @@ BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_n
     impl_->keyexpr = std::string(keyexpr);
     impl_->schema_name = std::string(schema_name);
     impl_->layout = layout;
+    if (layout != kNoLayout)
+    {
+        std::vector<std::uint8_t> stamp(sizeof(layout));
+        for (std::size_t i = 0; i < stamp.size(); ++i)
+        {
+            stamp[i] = static_cast<std::uint8_t>((layout >> (i * 8)) & 0xffu);
+        }
+        impl_->layout_stamp.emplace(std::move(stamp));
+    }
 
     // Checked here, at the point a key enters the system, rather than assumed.
     // Refusing outright is deliberate: every way a bad key can be wrong is a
@@ -154,18 +167,12 @@ void BytePublisher::put(kj::Array<capnp::word> payload)
     // beside the sample rather than inside the encoding string on purpose --
     // a subscriber from an older build parses the encoding exactly as before
     // and simply never looks at the attachment.
-    if (impl_->layout != kNoLayout)
+    //
+    // A clone, not a pointer at a buffer: zenoh keeps the attachment after
+    // put() returns, and a stack buffer cost the last message of a burst.
+    if (impl_->layout_stamp)
     {
-        // Moved in, not pointed at: zenoh keeps the attachment after put()
-        // returns, so a buffer on this stack would be gone by the time it is
-        // sent. It cost the last message of a burst, intermittently.
-        const std::uint64_t layout = impl_->layout;
-        std::vector<std::uint8_t> stamp(sizeof(layout));
-        for (std::size_t i = 0; i < stamp.size(); ++i)
-        {
-            stamp[i] = static_cast<std::uint8_t>((layout >> (i * 8)) & 0xffu);
-        }
-        opts.attachment.emplace(zenoh::Bytes(std::move(stamp)));
+        opts.attachment.emplace(impl_->layout_stamp->clone());
     }
 
     try

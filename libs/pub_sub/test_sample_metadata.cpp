@@ -22,6 +22,7 @@
 // of ours left to test on such a host.
 
 #include "pub_sub/raw_subscriber.h"
+#include "pub_sub/schema_layout.h"
 #include "pub_sub/session_manager.h"
 #include "pub_sub/timestamp.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -72,6 +73,7 @@ struct Captured
     std::string schema_name;
     std::optional<std::uint64_t> publish_time_nanos;
     std::string origin_zid;
+    std::optional<std::uint64_t> layout;
 };
 
 class Collector
@@ -85,6 +87,7 @@ class Collector
             std::string(info.schema_name),
             info.publish_time_nanos,
             std::string(info.origin_zid),
+            info.layout,
         });
     }
 
@@ -366,6 +369,33 @@ void testSchemaNameFollowsTheKey()
     expect(all_correct, "each sample's schema name matches the topic it arrived on");
 }
 
+// The eight-byte layout attachment survives the trip, byte order included,
+// and is read back without the vector it used to allocate per sample.
+void testLayoutFingerprintArrives()
+{
+    if (g_samples.empty())
+    {
+        return;
+    }
+
+    const std::uint64_t rpm = pub_sub::schema_traits<EngineRpm>::layout;
+    const std::uint64_t speed = pub_sub::schema_traits<VehicleSpeed>::layout;
+    expect(rpm != pub_sub::kNoLayout && rpm != speed, "the two schemas have distinct fingerprints");
+
+    bool all_correct = true;
+    for (const Captured& sample : g_samples)
+    {
+        const std::uint64_t expected = sample.keyexpr == kTestKey ? rpm : speed;
+        if (sample.layout != std::optional<std::uint64_t>(expected))
+        {
+            SPDLOG_ERROR("on key '{}' expected layout {:016x}, got {}", sample.keyexpr, expected,
+                         sample.layout ? fmt::format("{:016x}", *sample.layout) : "none");
+            all_correct = false;
+        }
+    }
+    expect(all_correct, "each sample carries its schema's layout fingerprint");
+}
+
 }  // namespace
 
 int main()
@@ -388,6 +418,7 @@ int main()
     testOriginZidIsPresentAndStable();
     testKeyDistinguishesTopics();
     testSchemaNameFollowsTheKey();
+    testLayoutFingerprintArrives();
 
     if (failures != 0)
     {

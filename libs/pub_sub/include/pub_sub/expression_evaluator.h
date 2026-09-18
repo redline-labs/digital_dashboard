@@ -91,6 +91,11 @@ class ExpressionEvaluator
     // plausible wrong numbers, and this is where that is visible.
     void checkPublishedSchema(std::string_view encoding, std::optional<std::uint64_t> layout);
 
+    // True once either check above has run. A subscriber tests this before
+    // building the encoding string and layout it would otherwise pass on every
+    // sample, only to have them ignored.
+    bool publishedSchemaChecked() const;
+
     // Evaluate the expression against one payload.
     //
     // Returns nullopt when this sample produced no usable number -- deliberately
