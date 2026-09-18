@@ -82,7 +82,11 @@ image.
 
 **A board whose updater is broken still serves the rest of the console** --
 system information and health are exactly what someone diagnosing that wants --
-so a missing RAUC is reported (`rauc_available: false`) rather than fatal.
+so a missing RAUC is reported rather than fatal. `rauc.service` is D-Bus
+activated, so nothing owning the name is normal until the first call:
+`rauc_available` means only that the bus was reached (retried every few seconds
+if it was not), and the status call itself reports, in `error` and in the
+node's `rauc` health check, when RAUC does not answer.
 
 The browser *will* lose its connection when the install ends in a reboot. That
 is expected, and the page retries rather than erroring.

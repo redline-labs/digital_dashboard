@@ -192,6 +192,8 @@ function renderUpdate(data) {
     definition(list, "Primary", data.primary);
     definition(list, "Compatible", data.compatible);
     if (data.last_error) definition(list, "Last error", data.last_error);
+    // Reachable bus, unanswered call: RAUC failed to start, and this says why.
+    if (data.error) definition(list, "Error", data.error);
     status.append(list);
   }
 

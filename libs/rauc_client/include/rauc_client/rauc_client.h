@@ -93,25 +93,30 @@ public:
     Installer(const Installer&) = delete;
     Installer& operator=(const Installer&) = delete;
 
-    // Connects and starts the callback thread. False means RAUC is not on the
-    // bus -- on the board that is rauc.service failing to activate.
+    // Builds the proxy and starts the callback thread. False means the bus
+    // itself could not be reached; an unowned name is NOT a failure, see below.
     bool connect(std::string& error);
 
+    // Whether the proxy exists -- which is what "RAUC can be asked" means.
+    //
+    // On the image rauc.service is Type=dbus and bus-activated, so the name
+    // legitimately has no owner until the first method call starts it. Refusing
+    // to call because nothing owns the name would mean never activating it;
+    // the call itself reports whether RAUC is there.
     bool connected() const;
 
-    // Whether anything currently OWNS de.pengutronix.rauc on the bus.
-    //
-    // Distinct from connected() on purpose. g_dbus_proxy_new_for_bus_sync()
-    // happily builds a proxy for a name nobody owns -- it does not fail until a
-    // call times out -- so "the proxy exists" says nothing about whether RAUC is
-    // there. And this must NOT gate connect(): on the image rauc.service is
-    // Type=dbus and bus-activated, so the name legitimately has no owner until
-    // the first method call starts it. Use this to report availability and to
-    // skip tests, never to refuse to connect.
+    // Whether anything currently OWNS de.pengutronix.rauc on the bus. For
+    // diagnostics and for skipping tests, never for refusing a call.
     bool serviceAvailable() const;
 
+    // The Operation property from the proxy's cache: "idle", "installing", or
+    // empty before RAUC has been activated. No D-Bus round trip.
+    std::string operation() const;
+
+    // status() makes one synchronous call (GetPrimary); slots() makes one
+    // (GetSlotStatus) and says in `error`, when given, why it failed.
     std::optional<Status> status() const;
-    std::vector<SlotStatus> slots() const;
+    std::vector<SlotStatus> slots(std::string* error = nullptr) const;
 
     // Returns false if RAUC is busy or the call is refused; `error` says which.
     // Completion arrives through onCompleted, not from here.

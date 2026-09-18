@@ -130,6 +130,12 @@ int main(int argc, char** argv)
 
     cli::installInterruptHandler();
 
+    // Kept current by /api/update/status, whose D-Bus call is the real test:
+    // RAUC is bus-activated, so at startup all there is to judge is the bus.
+    updates.onRaucHealth([&health](bool ok, const std::string& detail) {
+        health.setCheck("rauc", ok ? node_health::State::ok : node_health::State::degraded, detail);
+    });
+
     // setCheck, not addActivityCheck: an idle console with nobody browsing is
     // healthy, and an activity check would report it degraded.
     health.setCheck("http", node_health::State::ok, "");

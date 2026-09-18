@@ -6,6 +6,7 @@
 #include "httplib_include.h"
 #include "update_routes.h"
 
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
@@ -219,6 +220,66 @@ void testASecondUploadIsRefusedWhileOneIsInFlight()
     }
 }
 
+// rauc.service is bus-activated, so on a fresh board nothing owns its name.
+// The console used to call that "unavailable" and refuse every install, which
+// meant nothing ever activated it. Run on the session bus with no stub.
+void testRaucIsAvailableBeforeAnythingOwnsItsName()
+{
+    if (std::getenv("DBUS_SESSION_BUS_ADDRESS") == nullptr)
+    {
+        SPDLOG_WARN("no session bus; skipping the RAUC availability checks");
+        return;
+    }
+
+    ScratchDir dir;
+    NodeConfig config = Harness::configFor(dir.path);
+    config.raucBus = "session";
+    UpdateRoutes updates(config);
+    std::string error;
+    check(updates.start(error), "the session bus is reached (" + error + ")");
+    rauc_client::Installer* installer = updates.installer();
+    if (installer == nullptr || installer->serviceAvailable())
+    {
+        SPDLOG_WARN("something owns de.pengutronix.rauc; skipping the unowned checks");
+        return;
+    }
+    check(updates.available(), "an unowned name is still available to call");
+
+    std::atomic<int> reports { 0 };
+    std::atomic<bool> lastOk { true };
+    updates.onRaucHealth([&](bool ok, const std::string&) {
+        lastOk = ok;
+        ++reports;
+    });
+
+    RouteServer server;
+    registerUpdateRoutes(server.routes(), updates);
+    if (!server.bind("127.0.0.1", 0))
+    {
+        check(false, "the RAUC harness binds");
+        return;
+    }
+    std::thread serving([&server] { server.serve(); });
+    {
+        httplib::Client client("127.0.0.1", server.boundPort());
+        auto first = client.Get("/api/update/status");
+        auto second = client.Get("/api/update/status");
+        check(first && first->status == 200, "status answers");
+        if (first)
+        {
+            const auto body = nlohmann::json::parse(first->body, nullptr, false);
+            check(body.value("rauc_available", false), "status says RAUC can be called");
+            check(body.value("error", std::string()).find("did not answer") != std::string::npos,
+                  "and that the call failed (got " + first->body + ")");
+        }
+    }
+    server.stop();
+    serving.join();
+    check(reports == 1, "the health check hears the failure once, not per poll (" +
+                            std::to_string(reports.load()) + ")");
+    check(!lastOk, "and it is degraded");
+}
+
 }  // namespace
 
 int main()
@@ -227,6 +288,7 @@ int main()
 
     testStopEndsAnOpenProgressStreamPromptly();
     testASecondUploadIsRefusedWhileOneIsInFlight();
+    testRaucIsAvailableBeforeAnythingOwnsItsName();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

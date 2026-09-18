@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -53,12 +54,13 @@ struct Installer::Impl
     GDBusProxy* proxy { nullptr };
     std::thread thread;
 
-    mutable std::mutex mutex;
-    bool ready { false };
+    // Set once on the callback thread before connect() returns, read from any.
+    std::atomic<bool> ready { false };
 
     // Property reads go through the proxy's cache, which GDBus keeps current
-    // from PropertiesChanged. Reading from another thread is safe; calling
-    // methods from one is not, which is why installBundle hops to the loop.
+    // from PropertiesChanged and locks internally. Method calls are
+    // g_dbus_proxy_call_sync from the caller's thread, which GDBus allows; the
+    // loop is only needed to DELIVER signals and property changes.
     std::string cachedString(const char* name) const
     {
         if (proxy == nullptr) { return {}; }
@@ -114,9 +116,22 @@ Installer::Installer(Bus bus, Callbacks callbacks)
 
 Installer::~Installer()
 {
-    if (impl_->loop != nullptr)
+    // Quit FROM the loop, not at it. connect() returns before the thread
+    // reaches g_main_loop_run(), and a quit that lands first is forgotten --
+    // run() then never returns and the join below hangs. An idle source on the
+    // loop's own context only fires once the loop is running.
+    if (impl_->loop != nullptr && impl_->ready)
     {
-        g_main_loop_quit(impl_->loop);
+        GSource* quit = g_idle_source_new();
+        g_source_set_callback(
+            quit,
+            [](gpointer loop) -> gboolean {
+                g_main_loop_quit(static_cast<GMainLoop*>(loop));
+                return G_SOURCE_REMOVE;
+            },
+            impl_->loop, nullptr);
+        g_source_attach(quit, impl_->context);
+        g_source_unref(quit);
     }
     if (impl_->thread.joinable())
     {
@@ -181,7 +196,6 @@ bool Installer::connect(std::string& error)
 
 bool Installer::connected() const
 {
-    std::lock_guard<std::mutex> guard(impl_->mutex);
     return impl_->ready;
 }
 
@@ -192,6 +206,12 @@ bool Installer::serviceAvailable() const
     if (owner == nullptr) { return false; }
     g_free(owner);
     return true;
+}
+
+std::string Installer::operation() const
+{
+    if (!connected()) { return {}; }
+    return impl_->cachedString("Operation");
 }
 
 std::optional<Status> Installer::status() const
@@ -223,21 +243,24 @@ std::optional<Status> Installer::status() const
     return status;
 }
 
-std::vector<SlotStatus> Installer::slots() const
+std::vector<SlotStatus> Installer::slots(std::string* error) const
 {
     std::vector<SlotStatus> slots;
-    if (!connected()) { return slots; }
+    if (!connected())
+    {
+        if (error != nullptr) { *error = "not connected to RAUC"; }
+        return slots;
+    }
 
     GError* gerror = nullptr;
     VariantPtr reply(g_dbus_proxy_call_sync(impl_->proxy, "GetSlotStatus", nullptr,
                                             G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, &gerror));
     if (!reply)
     {
-        if (gerror != nullptr)
-        {
-            SPDLOG_WARN("[rauc] GetSlotStatus: {}", gerror->message);
-            g_error_free(gerror);
-        }
+        const std::string message = gerror != nullptr ? gerror->message : "GetSlotStatus failed";
+        SPDLOG_WARN("[rauc] GetSlotStatus: {}", message);
+        if (gerror != nullptr) { g_error_free(gerror); }
+        if (error != nullptr) { *error = message; }
         return slots;
     }
 

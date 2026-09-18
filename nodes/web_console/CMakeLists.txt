@@ -76,6 +76,11 @@ add_project_test(TARGET web_console_test_requests LABELS web_console unit)
 add_executable(web_console_test_http test_http.cpp)
 target_link_libraries(web_console_test_http PRIVATE web_console_routes)
 add_project_test(TARGET web_console_test_http LABELS web_console net)
+# It checks RAUC availability on the session bus with nothing owning the name,
+# so it must not overlap the rauc_client tests' stub.
+if(BUILD_TESTING)
+    set_tests_properties(web_console_test_http PROPERTIES RESOURCE_LOCK rauc_well_known_name)
+endif()
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET web_console COMPONENT nodes)

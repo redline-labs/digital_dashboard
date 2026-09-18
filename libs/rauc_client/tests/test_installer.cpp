@@ -96,6 +96,58 @@ private:
     ::pid_t pid_ { -1 };
 };
 
+// Before the stub owns the name: what the console sees on a board whose
+// bus-activated rauc.service has not been started yet.
+void testBeforeAnythingOwnsTheName()
+{
+    Installer installer(Installer::Bus::Session, {});
+    std::string error;
+    check(installer.connect(error), "a proxy is built for a name nobody owns (" + error + ")");
+    if (installer.serviceAvailable())
+    {
+        SPDLOG_WARN("something already owns de.pengutronix.rauc; skipping the unowned checks");
+        return;
+    }
+    // The console used to gate every call on an owner, which on the image
+    // meant RAUC was never activated.
+    check(installer.connected(), "connected() does not depend on an owner");
+    check(installer.operation().empty(), "Operation is empty until RAUC answers");
+    std::string slotsError;
+    check(installer.slots(&slotsError).empty(), "no slots without RAUC");
+    check(!slotsError.empty(), "and the call says why");
+}
+
+// g_main_loop_quit() before g_main_loop_run() is forgotten, so destroying an
+// Installer straight after connect() could hang in the join. A watchdog turns
+// that hang into a failure rather than a ctest timeout.
+void testDestroyingRightAfterConnectDoesNotHang()
+{
+    std::atomic<bool> finished { false };
+    std::thread watchdog([&finished] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (!finished && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!finished)
+        {
+            std::fprintf(stderr, "FAIL: ~Installer hung after connect()\n");
+            std::_Exit(1);
+        }
+    });
+
+    int connected = 0;
+    for (int i = 0; i < 200; ++i)
+    {
+        Installer installer(Installer::Bus::Session, {});
+        std::string error;
+        if (installer.connect(error)) { ++connected; }
+    }
+    finished = true;
+    watchdog.join();
+    check(connected == 200, "every connect succeeded (" + std::to_string(connected) + " of 200)");
+}
+
 }  // namespace
 
 int main()
@@ -110,6 +162,9 @@ int main()
         SPDLOG_WARN("SKIP: no stub at {} -- build the rauc_stub target", RAUC_STUB);
         return PROJECT_TEST_SKIP_CODE;
     }
+
+    testBeforeAnythingOwnsTheName();
+    testDestroyingRightAfterConnectDoesNotHang();
 
     const char* modeEnv = std::getenv("REDLINE_RAUC_STUB_MODE");
     const std::string mode = modeEnv != nullptr ? modeEnv : "ok";
@@ -169,7 +224,12 @@ int main()
               "Operation reflects the stub's mode (got '" + status->operation + "')");
     }
 
-    const std::vector<SlotStatus> slots = installer.slots();
+    check(installer.operation() == (mode == "busy" ? "installing" : "idle"),
+          "operation() reads the cached property");
+
+    std::string slotsError;
+    const std::vector<SlotStatus> slots = installer.slots(&slotsError);
+    check(slotsError.empty(), "GetSlotStatus reports no error (got '" + slotsError + "')");
     check(slots.size() == 2, "both slots are reported");
     if (slots.size() == 2)
     {

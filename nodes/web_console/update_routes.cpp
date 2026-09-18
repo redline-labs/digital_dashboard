@@ -57,6 +57,15 @@ bool UpdateRoutes::start(std::string& error)
         }
     }
 
+    const std::lock_guard<std::mutex> lock(mutex_);
+    started_ = true;
+    return connectLocked(error);
+}
+
+bool UpdateRoutes::connectLocked(std::string& error)
+{
+    lastAttempt_ = std::chrono::steady_clock::now();
+
     rauc_client::Installer::Callbacks callbacks;
 
     // Progress and completion arrive on GDBus's thread. Publishing only appends
@@ -88,21 +97,63 @@ bool UpdateRoutes::start(std::string& error)
         SPDLOG_WARN("[update] using the SESSION bus for RAUC -- development only");
     }
 
-    installer_ = std::make_unique<rauc_client::Installer>(bus, callbacks);
-    if (!installer_->connect(error))
+    auto installer = std::make_unique<rauc_client::Installer>(bus, callbacks);
+    if (!installer->connect(error))
     {
-        installer_.reset();
+        connectError_ = error;
         return false;
     }
+    installer_ = std::move(installer);
+    connectError_.clear();
     return true;
 }
 
-bool UpdateRoutes::available() const
+rauc_client::Installer* UpdateRoutes::installer()
 {
-    // serviceAvailable(), not connected(): a proxy exists for a name nobody
-    // owns, and on the image rauc.service is bus-activated, so this is the only
-    // honest answer to "can we reflash right now".
-    return installer_ != nullptr && installer_->serviceAvailable();
+    const std::lock_guard<std::mutex> lock(mutex_);
+    // Rate limited: a bus that is down stays down for a while, and every
+    // status poll would otherwise pay for a failed connect.
+    constexpr auto kRetryEvery = std::chrono::seconds(5);
+    if (installer_ == nullptr && started_ &&
+        std::chrono::steady_clock::now() - lastAttempt_ >= kRetryEvery)
+    {
+        std::string error;
+        if (connectLocked(error))
+        {
+            SPDLOG_INFO("[update] reached RAUC on the {} bus", config_.raucBus);
+        }
+    }
+    return installer_.get();
+}
+
+bool UpdateRoutes::available()
+{
+    return installer() != nullptr;
+}
+
+std::string UpdateRoutes::connectError()
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return connectError_.empty() ? std::string("not connected") : connectError_;
+}
+
+void UpdateRoutes::onRaucHealth(std::function<void(bool, const std::string&)> callback)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    raucHealth_ = std::move(callback);
+    lastReport_.reset();
+}
+
+void UpdateRoutes::reportRauc(bool ok, const std::string& detail)
+{
+    std::function<void(bool, const std::string&)> callback;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (lastReport_ && lastReport_->first == ok && lastReport_->second == detail) { return; }
+        lastReport_ = std::pair{ok, detail};
+        callback = raucHealth_;
+    }
+    if (callback) { callback(ok, detail); }
 }
 
 }  // namespace web_console

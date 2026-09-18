@@ -67,10 +67,10 @@ json bootTries()
     return entries;
 }
 
-json slotsJson(rauc_client::Installer& installer)
+json slotsJson(rauc_client::Installer& installer, std::string& error)
 {
     json slots = json::array();
-    for (const auto& slot : installer.slots())
+    for (const auto& slot : installer.slots(&error))
     {
         json item{
             {"name", slot.name},
@@ -266,14 +266,31 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 {
     routes.getReply("/api/update/status", [&state] {
         json out;
-        out["rauc_available"] = state.available();
         out["boot_entries"] = bootTries();
 
         rauc_client::Installer* installer = state.installer();
-        if (installer == nullptr || !state.available())
+        out["rauc_available"] = installer != nullptr;
+        if (installer == nullptr)
         {
-            out["error"] = "RAUC is not reachable on D-Bus";
+            const std::string why = "no D-Bus connection for RAUC: " + state.connectError();
+            state.reportRauc(false, why);
+            out["error"] = why;
             return jsonReply(200, out);
+        }
+
+        // GetSlotStatus is the call that activates RAUC if it is not running,
+        // and the one whose failure says it cannot be reached -- so it, not
+        // the name's owner, decides the "rauc" health check.
+        std::string slotsError;
+        out["slots"] = slotsJson(*installer, slotsError);
+        if (!slotsError.empty())
+        {
+            state.reportRauc(false, "RAUC did not answer: " + slotsError);
+            out["error"] = "RAUC did not answer: " + slotsError;
+        }
+        else
+        {
+            state.reportRauc(true, "");
         }
 
         if (const auto status = installer->status())
@@ -285,10 +302,7 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
             out["boot_slot"] = status->bootSlot;
             out["primary"] = status->primary;
         }
-        out["slots"] = slotsJson(*installer);
 
-        // What is staged and waiting, so the page can offer Install without a
-        // fresh upload.
         // file_size fails for a missing file, which is the usual "nothing
         // staged"; checking exists() first and then ignoring this error
         // reported (uintmax_t)-1 bytes for a file that vanished in between.
@@ -318,19 +332,19 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
                 return nullptr;
             }
 
-            rauc_client::Installer* installer = state.installer();
-
             // Refuse while an install is running: overwriting the bundle RAUC is
             // reading is a way to corrupt a slot, not a race worth allowing.
             // 409, not 507 -- this is a conflict, not a storage problem, and the
-            // operator needs to be able to tell those apart.
-            if (installer != nullptr && state.available())
+            // operator needs to be able to tell those apart. The cached
+            // property only: an upload should not wait on a D-Bus round trip,
+            // and a RAUC that has never been activated is not installing.
+            if (rauc_client::Installer* installer = state.installer())
             {
-                if (const auto status = installer->status();
-                    status && !status->operation.empty() && status->operation != "idle")
+                if (const std::string operation = installer->operation();
+                    !operation.empty() && operation != "idle")
                 {
-                    SPDLOG_WARN("[update] upload refused: RAUC is {}", status->operation);
-                    refusal = errorReply(409, "RAUC is " + status->operation +
+                    SPDLOG_WARN("[update] upload refused: RAUC is {}", operation);
+                    refusal = errorReply(409, "RAUC is " + operation +
                                                   "; wait for it to finish before uploading");
                     return nullptr;
                 }
@@ -397,9 +411,9 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 
     routes.post("/api/update/install", [&state](const std::string&) {
         rauc_client::Installer* installer = state.installer();
-        if (installer == nullptr || !state.available())
+        if (installer == nullptr)
         {
-            return errorReply(503, "RAUC is not reachable on D-Bus");
+            return errorReply(503, "no D-Bus connection for RAUC: " + state.connectError());
         }
 
         std::error_code ec;
@@ -424,9 +438,9 @@ void registerUpdateRoutes(RouteRegistrar& routes, UpdateRoutes& state)
 
     routes.post("/api/update/mark-good", [&state](const std::string&) {
         rauc_client::Installer* installer = state.installer();
-        if (installer == nullptr || !state.available())
+        if (installer == nullptr)
         {
-            return errorReply(503, "RAUC is not reachable on D-Bus");
+            return errorReply(503, "no D-Bus connection for RAUC: " + state.connectError());
         }
 
         std::string slotName;
