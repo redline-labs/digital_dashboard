@@ -11,6 +11,8 @@ add_library(node_health STATIC
     src/state.cpp
     src/codec.cpp
     src/classify.cpp
+    src/table.cpp
+    src/health_json.cpp
     src/reporter.cpp
     src/schedule.cpp
     src/can_decoder.cpp
@@ -26,6 +28,8 @@ target_link_libraries(node_health
         capnp
         # can_decoder.h takes a helpers::CanFrame.
         helpers
+        # health_json.h hands back an nlohmann::json.
+        nlohmann_json::nlohmann_json
     PRIVATE
         zenoh_pub_sub
         cli
@@ -48,6 +52,13 @@ add_project_test(TARGET node_health_test_codec LABELS node_health unit)
 add_executable(node_health_test_classify tests/test_classify.cpp)
 target_link_libraries(node_health_test_classify PRIVATE node_health)
 add_project_test(TARGET node_health_test_classify LABELS node_health unit)
+
+# The monitor's bookkeeping without a bus: identity joins, restarts, dating a
+# silent node, rejecting what is not NodeHealth, and the /api/health document
+# the node and the browser's wasm module both serve from it.
+add_executable(node_health_test_table tests/test_table.cpp)
+target_link_libraries(node_health_test_table PRIVATE node_health capnp kj)
+add_project_test(TARGET node_health_test_table LABELS node_health unit)
 
 # When the reporter thread wakes: heartbeat only when idle, and never late for
 # a change, an activity check or the systemd watchdog.

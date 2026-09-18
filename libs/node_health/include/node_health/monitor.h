@@ -7,29 +7,15 @@
 
 #include "node_health/classify.h"
 #include "node_health/state.h"
+#include "node_health/table.h"
 
 #include <chrono>
 #include <cstdint>
 #include <memory>
-#include <optional>
-#include <string>
 #include <vector>
 
 namespace node_health
 {
-
-struct HealthRow
-{
-    std::string zid;
-    // From the node's identity, or from its health sample if the directory has
-    // not caught up yet.
-    std::string name;
-    Verdict verdict = Verdict::starting;
-    std::optional<HealthSnapshot> last;
-    // How long ago the last sample arrived.
-    std::optional<std::chrono::milliseconds> age;
-    Continuity continuity;
-};
 
 // Subscribes to `nodes/*/health` and watches the node directory. Rows are keyed
 // by session id, so two instances of the same node are two rows.
