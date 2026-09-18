@@ -31,7 +31,12 @@ constexpr std::size_t kMaxUploadBytes = 4ULL * 1024 * 1024 * 1024;
 
 Reply jsonReply(int status, const nlohmann::json& body)
 {
-    return Reply{.status = status, .body = body.dump(), .contentType = "application/json"};
+    // replace, not the default strict: a reply can carry text from another
+    // process (a service's error_text), and invalid UTF-8 in it would otherwise
+    // throw out of the handler as a bare 500.
+    return Reply{.status = status,
+                 .body = body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace),
+                 .contentType = "application/json"};
 }
 
 Reply errorReply(int status, const std::string& message)

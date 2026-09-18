@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 
@@ -58,6 +59,55 @@ json servicesJson(const ServiceRoutes& state)
 }
 
 }  // namespace
+
+bool parseCallRequest(const json& body, pub_sub::ServiceCallRequest& call, std::string& error)
+{
+    if (!body.is_object())
+    {
+        error = "the body must be a JSON object";
+        return false;
+    }
+
+    // All three are needed to call a service no code here knows.
+    for (auto [name, out] : {std::pair{"key", &call.key},
+                             std::pair{"request_schema", &call.request_schema},
+                             std::pair{"response_schema", &call.response_schema}})
+    {
+        const auto it = body.find(name);
+        if (it == body.end() || !it->is_string() || it->get_ref<const std::string&>().empty())
+        {
+            error = std::string(name) + ": expected a non-empty string";
+            return false;
+        }
+        *out = it->get<std::string>();
+    }
+
+    if (const auto it = body.find("fields"); it != body.end())
+    {
+        if (!it->is_object())
+        {
+            error = "fields: expected an object";
+            return false;
+        }
+        call.fields = *it;
+    }
+
+    if (const auto it = body.find("timeout_ms"); it != body.end())
+    {
+        if (!it->is_number())
+        {
+            error = "timeout_ms: expected a number";
+            return false;
+        }
+        // Clamped as a double, so a huge or negative value cannot overflow on
+        // the way to an integer.
+        const double clamped =
+            std::clamp(it->get<double>(), static_cast<double>(kMinCallTimeout.count()),
+                       static_cast<double>(kMaxCallTimeout.count()));
+        call.timeout = std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(clamped));
+    }
+    return true;
+}
 
 void registerServiceRoutes(RouteRegistrar& routes, ServiceRoutes& state)
 {
@@ -126,19 +176,14 @@ void registerServiceRoutes(RouteRegistrar& routes, ServiceRoutes& state)
         }
 
         pub_sub::ServiceCallRequest call;
-        call.key = request.value("key", "");
-        call.request_schema = request.value("request_schema", "");
-        call.response_schema = request.value("response_schema", "");
-        call.fields = request.value("fields", json::object());
-        call.timeout = std::chrono::milliseconds(request.value("timeout_ms", 2000));
+        std::string problem;
+        if (!parseCallRequest(request, call, problem))
+        {
+            return errorReply(400, problem);
+        }
         // Matches what switchboard passes: a Data field shows as hex rather than
         // an unbounded byte array.
         call.decode_options.data_hex_limit = 4096;
-
-        if (call.key.empty() || call.request_schema.empty() || call.response_schema.empty())
-        {
-            return errorReply(400, "key, request_schema and response_schema are all required");
-        }
 
         // Blocking, deliberately: this runs on an httplib worker thread, and an
         // HTTP request is exactly the shape of a blocking call. The async form
@@ -177,9 +222,9 @@ void registerServiceRoutes(RouteRegistrar& routes, ServiceRoutes& state)
                 // errors say which, and they are already in `errors`.
                 return jsonReply(400, out);
             case pub_sub::ServiceCallResult::Status::Failed:
-            default:
                 return jsonReply(502, out);
         }
+        return jsonReply(502, out);
     });
 }
 

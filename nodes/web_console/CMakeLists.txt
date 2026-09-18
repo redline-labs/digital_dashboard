@@ -66,6 +66,11 @@ target_link_libraries(web_console_test_node_config PRIVATE
 
 add_project_test(TARGET web_console_test_node_config LABELS web_console unit)
 
+# What the routes make of a client's input, without a socket.
+add_executable(web_console_test_requests test_requests.cpp)
+target_link_libraries(web_console_test_requests PRIVATE web_console_routes)
+add_project_test(TARGET web_console_test_requests LABELS web_console unit)
+
 # The routes over a real loopback socket: uploads, the progress stream and
 # shutdown. No bus and no RAUC -- the routes are built without either.
 add_executable(web_console_test_http test_http.cpp)

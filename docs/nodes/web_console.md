@@ -58,9 +58,11 @@ code is in git history.
 | | |
 |---|---|
 | `200` | a responder replied |
-| `400` | the fields did not fit the request schema; `errors` names them |
+| `400` | the body was malformed, or the fields did not fit the request schema; `error` or `errors` says which |
 | `502` | the call failed |
 | `504` | nobody answered |
+
+`timeout_ms` is optional (2000 by default) and clamped to 100..10000.
 
 ## Reflash
 
