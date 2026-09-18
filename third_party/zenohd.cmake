@@ -47,7 +47,29 @@ if(REDLINE_BUILD_ZENOHD)
     # them apart also keeps zenohd's features from ever reaching the library
     # build, which deliberately sets ZENOHC_BUILD_WITH_UNSTABLE_API OFF.
     set(zenohd_target_dir ${CMAKE_BINARY_DIR}/zenohd-target)
-    set(zenohd_binary ${zenohd_target_dir}/release/zenohd)
+
+    # WHERE CARGO ACTUALLY PUTS IT depends on whether it was told a target
+    # triple. Given one, cargo writes <target-dir>/<triple>/release/; given
+    # none, <target-dir>/release/. The Yocto recipe exports
+    # CARGO_BUILD_TARGET=${RUST_TARGET_SYS} -- deliberately through the
+    # environment rather than a bare --target, because that is what zenoh-c
+    # already reads -- so the cross build takes the first form and a desktop
+    # build the second.
+    #
+    # Hardcoding the desktop layout is exactly the bug this replaces: the image
+    # built zenohd fine and then failed do_install with
+    #
+    #   file INSTALL cannot find ".../zenohd-target/release/zenohd"
+    #
+    # while the binary sat in .../zenohd-target/x86_64-redline-linux-gnu/release/.
+    # It could only ever fail in the cross build, which is the one place nobody
+    # runs by hand.
+    if(NOT "$ENV{CARGO_BUILD_TARGET}" STREQUAL "")
+        set(zenohd_binary ${zenohd_target_dir}/$ENV{CARGO_BUILD_TARGET}/release/zenohd)
+        message(STATUS "zenohd: cross build, expecting $ENV{CARGO_BUILD_TARGET}/release/zenohd")
+    else()
+        set(zenohd_binary ${zenohd_target_dir}/release/zenohd)
+    endif()
 
     add_custom_command(
         OUTPUT ${zenohd_binary}
