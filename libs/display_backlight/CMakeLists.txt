@@ -18,6 +18,7 @@ project(display_backlight)
 add_library(display_backlight STATIC
     src/display_record.cpp
     src/sysfs.cpp
+    src/deadband.cpp
 )
 
 target_include_directories(display_backlight PUBLIC include)
@@ -40,3 +41,13 @@ add_executable(display_backlight_test_sysfs
 target_link_libraries(display_backlight_test_sysfs PRIVATE display_backlight)
 
 add_project_test(TARGET display_backlight_test_sysfs LABELS display_backlight unit)
+
+# When the node publishes ahead of its heartbeat: the lux and temperature bands
+# at their boundaries, and the changes that always count.
+add_executable(display_backlight_test_deadband
+    tests/test_deadband.cpp
+)
+
+target_link_libraries(display_backlight_test_deadband PRIVATE display_backlight)
+
+add_project_test(TARGET display_backlight_test_deadband LABELS display_backlight unit)

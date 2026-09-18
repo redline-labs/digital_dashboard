@@ -3,7 +3,8 @@
 // What it reads comes from the record redline-display-setup writes at boot
 // (/run/redline/displays/<role>): which backlight class device, which IIO light
 // sensors and which hwmon temperature sensors belong to the module. It publishes
-// all of them every poll period, and serves one command -- set the brightness.
+// all of them when something moves and every 2 s regardless, and serves one
+// command -- set the brightness.
 //
 // What it deliberately does NOT do:
 //
@@ -19,8 +20,11 @@
 
 #include "node_config.h"
 
+#include "display_backlight/deadband.h"
 #include "display_backlight/display_record.h"
 #include "display_backlight/sysfs.h"
+
+#include "cli/interrupt.h"
 
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
@@ -34,13 +38,13 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <csignal>
+#include <condition_variable>
 #include <filesystem>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,12 +55,92 @@ namespace
 namespace fs = std::filesystem;
 using namespace display_backlight;
 
-std::atomic<bool> gRunning { true };
+using Clock = std::chrono::steady_clock;
 
-void onSignal(int)
+// Lux changes with the light, and a read costs a whole conversion; the
+// temperatures move slowly. Neither is worth reading at poll_ms.
+constexpr auto kLuxEvery = std::chrono::seconds(1);
+constexpr auto kTemperatureEvery = std::chrono::seconds(5);
+// Published at least this often, whether or not anything moved.
+constexpr auto kHeartbeat = std::chrono::seconds(2);
+
+// The light sensors, read on their own thread. An opt3001 read blocks for a
+// whole conversion (~1 s each at 0.8 s integration, measured on the board), so
+// reading them inline held up the status loop and, through its lock,
+// set_brightness. The loop publishes whatever was read last.
+class LightSampler
 {
-    gRunning = false;
-}
+  public:
+    explicit LightSampler(const std::vector<std::string>& sensors)
+    {
+        for (const std::string& sensor : sensors)
+        {
+            LightReading reading;
+            reading.path = sensor;
+            reading.name = readAttribute(fs::path(sensor) / "name").value_or("");
+            latest_.push_back(std::move(reading));
+        }
+        if (!latest_.empty())
+        {
+            thread_ = std::thread([this] { run(); });
+        }
+    }
+
+    ~LightSampler()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        wake_.notify_one();
+        if (thread_.joinable())
+        {
+            thread_.join();
+        }
+    }
+
+    LightSampler(const LightSampler&) = delete;
+    LightSampler& operator=(const LightSampler&) = delete;
+
+    std::vector<LightReading> latest() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return latest_;
+    }
+
+  private:
+    void run()
+    {
+        std::vector<std::string> paths;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            for (const LightReading& reading : latest_)
+            {
+                paths.push_back(reading.path);
+            }
+        }
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (!stop_)
+        {
+            const auto pass = Clock::now();
+            for (std::size_t i = 0; i < paths.size() && !stop_; ++i)
+            {
+                lock.unlock();
+                LightReading reading = readLightSensor(paths[i]);
+                lock.lock();
+                latest_[i] = std::move(reading);
+            }
+            wake_.wait_until(lock, pass + kLuxEvery, [this] { return stop_; });
+        }
+    }
+
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    std::vector<LightReading> latest_;
+    bool stop_ = false;
+    std::thread thread_;
+};
 
 uint64_t unixMillis()
 {
@@ -95,15 +179,16 @@ void fillBacklight(DisplayBacklightStatus::Builder& status, const BacklightStatu
     status.setBoost(backlight.boost.value_or(0u));
 }
 
-void fillSensors(DisplayBacklightStatus::Builder& status, const DisplayRecord& record)
+void fillSensors(DisplayBacklightStatus::Builder& status, const std::vector<LightReading>& lights,
+                 const std::vector<TemperatureReading>& readings)
 {
-    auto lights = status.initLightSensors(static_cast<unsigned>(record.ambientLightSensors.size()));
+    auto lightList = status.initLightSensors(static_cast<unsigned>(lights.size()));
     double sum = 0.0;
     std::size_t read = 0;
-    for (std::size_t i = 0; i < record.ambientLightSensors.size(); ++i)
+    for (std::size_t i = 0; i < lights.size(); ++i)
     {
-        const LightReading reading = readLightSensor(record.ambientLightSensors[i]);
-        auto entry = lights[static_cast<unsigned>(i)];
+        const LightReading& reading = lights[i];
+        auto entry = lightList[static_cast<unsigned>(i)];
         entry.setPath(reading.path.c_str());
         entry.setName(reading.name.c_str());
         entry.setOk(reading.lux.has_value());
@@ -117,13 +202,6 @@ void fillSensors(DisplayBacklightStatus::Builder& status, const DisplayRecord& r
     status.setLuxAverage(read > 0 ? static_cast<float>(sum / static_cast<double>(read))
                                   : std::numeric_limits<float>::quiet_NaN());
 
-    std::vector<TemperatureReading> readings;
-    for (const std::string& hwmon : record.temperatureSensors)
-    {
-        auto channels = readTemperatures(hwmon);
-        readings.insert(readings.end(), std::make_move_iterator(channels.begin()),
-                        std::make_move_iterator(channels.end()));
-    }
     auto temperatures = status.initTemperatures(static_cast<unsigned>(readings.size()));
     for (std::size_t i = 0; i < readings.size(); ++i)
     {
@@ -138,6 +216,22 @@ void fillSensors(DisplayBacklightStatus::Builder& status, const DisplayRecord& r
             entry.setCelsius(static_cast<float>(*readings[i].celsius));
         }
     }
+}
+
+StatusValues valuesOf(const std::optional<BacklightStatus>& backlight, const std::vector<LightReading>& lights,
+                      const std::vector<TemperatureReading>& temperatures)
+{
+    StatusValues values;
+    values.backlight = backlight;
+    for (const LightReading& reading : lights)
+    {
+        values.lux.push_back(reading.lux);
+    }
+    for (const TemperatureReading& reading : temperatures)
+    {
+        values.celsius.push_back(reading.celsius);
+    }
+    return values;
 }
 
 } // namespace
@@ -252,15 +346,15 @@ int main(int argc, char** argv)
     const std::string prefix = config.resolvedTopicPrefix();
     pub_sub::ZenohPublisher<DisplayBacklightStatus> statusPublisher(prefix + "/status");
 
-    // The service runs on a zenoh thread and the status loop on this one. Both
-    // read the device, and the publisher is not thread safe; nothing here is
-    // slow enough to be worth finer locking than one mutex.
-    std::mutex mutex;
+    // The service runs on a zenoh thread and the status loop on this one, and
+    // both touch the backlight device. Only quick sysfs attributes are read
+    // under it: the light sensors, which block, are on their own thread.
+    std::mutex backlightMutex;
 
     pub_sub::ZenohService<DisplayBrightnessRequest, DisplayBrightnessResponse> setBrightness(
         prefix + "/set_brightness",
         [&](const DisplayBrightnessRequest::Reader& request, DisplayBrightnessResponse::Builder& response) {
-            const std::lock_guard<std::mutex> lock(mutex);
+            const std::lock_guard<std::mutex> lock(backlightMutex);
             response.setOk(false);
 
             if (!writable)
@@ -324,46 +418,96 @@ int main(int argc, char** argv)
             SPDLOG_INFO("[backlight] brightness {} / {} ({:.1f}%)", applied, max, rawToPercent(applied, max));
         });
 
-    std::signal(SIGINT, onSignal);
-    std::signal(SIGTERM, onSignal);
+    // Before the sensor setup, so a SIGTERM during it still exits cleanly.
+    cli::installInterruptHandler();
 
     SPDLOG_INFO("[node] {} display '{}' on {}: {} light sensor(s), {} temperature sensor(s); publishing under '{}'",
                 config.role, record.name, record.connector, record.ambientLightSensors.size(),
                 record.temperatureSensors.size(), prefix);
 
-    auto nextStatus = std::chrono::steady_clock::now();
+    if (config.lightIntegrationTime > 0.0)
+    {
+        for (const std::string& sensor : record.ambientLightSensors)
+        {
+            const auto set = writeLightIntegrationTime(sensor, config.lightIntegrationTime);
+            if (!set)
+            {
+                SPDLOG_WARN("[node] {}; reading it at the driver's integration time", set.error());
+            }
+            else if (*set)
+            {
+                SPDLOG_INFO("[node] {}: integration time {} s", sensor, config.lightIntegrationTime);
+            }
+        }
+    }
+
+    // Listed once: the record is per boot, and so are the hwmon channels.
+    std::vector<TemperatureReading> temperatures;
+    for (const std::string& hwmon : record.temperatureSensors)
+    {
+        auto channels = findTemperatureChannels(hwmon);
+        temperatures.insert(temperatures.end(), std::make_move_iterator(channels.begin()),
+                            std::make_move_iterator(channels.end()));
+    }
+
+    LightSampler lights(record.ambientLightSensors);
+
+    // A display whose brightness cannot be set still reports its sensors, so
+    // this is degraded rather than a fault. `writable` never changes.
+    health.setCheck("backlight", writable ? node_health::State::ok : node_health::State::degraded,
+                    writable ? "" : "the backlight device is not writable");
     health.markReady();
 
-    while (gRunning)
-    {
-        health.kick();
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= nextStatus)
-        {
-            nextStatus = now + std::chrono::milliseconds(config.pollMs);
+    const auto poll = std::chrono::milliseconds(config.pollMs);
+    std::optional<BacklightStatus> backlight;
+    StatusValues published;
+    std::optional<Clock::time_point> lastPublish;
+    Clock::time_point nextBacklight = Clock::now();
+    Clock::time_point nextTemperature = nextBacklight;
 
-            const std::lock_guard<std::mutex> lock(mutex);
+    // At least once a second, so the health kick keeps coming at a long poll_ms.
+    const auto tick = std::min<std::chrono::milliseconds>(poll, std::chrono::seconds(1));
+    cli::waitForInterrupt(
+        [&] {
+            health.kick();
+            const auto now = Clock::now();
+            if (writable && now >= nextBacklight)
+            {
+                nextBacklight = now + poll;
+                const std::lock_guard<std::mutex> lock(backlightMutex);
+                backlight = readBacklight(device);
+            }
+            if (now >= nextTemperature)
+            {
+                nextTemperature = now + kTemperatureEvery;
+                readTemperatureValues(temperatures);
+            }
+            const std::vector<LightReading> lux = lights.latest();
+
+            StatusValues current = valuesOf(backlight, lux, temperatures);
+            if (lastPublish && now - *lastPublish < kHeartbeat && !movedPastDeadband(published, current))
+            {
+                return;
+            }
+
             auto& status = statusPublisher.fields();
             status.setTimestamp(unixMillis());
             status.setRole(record.role.c_str());
             status.setConnector(record.connector.c_str());
             status.setBacklightType(record.backlightType.c_str());
             status.setWritable(writable);
-            // A display whose brightness cannot be set still reports its
-            // sensors, so this is degraded rather than a fault.
-            health.setCheck("backlight", writable ? node_health::State::ok
-                                                  : node_health::State::degraded,
-                            writable ? "" : "the backlight device is not writable");
-            if (writable)
+            if (backlight)
             {
-                fillBacklight(status, readBacklight(device));
+                fillBacklight(status, *backlight);
             }
-            fillSensors(status, record);
+            fillSensors(status, lux, temperatures);
             statusPublisher.put();
-        }
+            SPDLOG_DEBUG("[node] status published");
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+            published = std::move(current);
+            lastPublish = now;
+        },
+        tick);
 
     SPDLOG_INFO("[node] shutting down");
     return 0;

@@ -56,7 +56,8 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
 
     // An unrecognised key is almost always a typo, and a typo that is ignored
     // looks exactly like a setting that does not work.
-    static const std::vector<std::string> kKnown { "role", "record_dir", "topic_prefix", "poll_ms", "min_percent" };
+    static const std::vector<std::string> kKnown { "role", "record_dir", "topic_prefix", "poll_ms", "min_percent",
+                                                   "light_integration_time" };
     for (const auto& entry : root)
     {
         const std::string key = entry.first.as<std::string>();
@@ -120,6 +121,26 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         catch (const YAML::Exception&)
         {
             context.fail(fmt::format("min_percent: '{}' is not a number", node.Scalar()));
+        }
+    }
+
+    if (const YAML::Node node = root["light_integration_time"])
+    {
+        try
+        {
+            const double value = node.as<double>();
+            if (!std::isfinite(value) || value < 0.0 || value > 10.0)
+            {
+                context.fail(fmt::format("light_integration_time: {} is outside 0..10 s", node.Scalar()));
+            }
+            else
+            {
+                out.lightIntegrationTime = value;
+            }
+        }
+        catch (const YAML::Exception&)
+        {
+            context.fail(fmt::format("light_integration_time: '{}' is not a number", node.Scalar()));
         }
     }
 

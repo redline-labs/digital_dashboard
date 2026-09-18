@@ -65,6 +65,7 @@ struct FakeTree
 
         put(light0 / "name", "opt3001");
         put(light0 / "in_illuminance_input", "3.420000");
+        put(light0 / "in_illuminance_integration_time", "0.800000");
         put(light1 / "name", "opt3001");
         put(light1 / "in_illuminance_input", "2.120000");
 
@@ -143,6 +144,50 @@ void testLightSensors()
     check(!missing.lux.has_value(), "a sensor that is not there has no reading");
 }
 
+void testIntegrationTime()
+{
+    const FakeTree tree;
+    const auto written = writeLightIntegrationTime(tree.light0, 0.1);
+    check(written.has_value() && *written, "the integration time is written where the attribute exists");
+    check(readAttribute(tree.light0 / "in_illuminance_integration_time") == std::optional<std::string>("0.100000"),
+          "in the IIO fixed-point format");
+
+    const auto absent = writeLightIntegrationTime(tree.light1, 0.1);
+    check(absent.has_value() && !*absent, "a sensor without the attribute is skipped, not an error");
+    check(!fs::exists(tree.light1 / "in_illuminance_integration_time"), "and the attribute is not created");
+
+    const auto bad = writeLightIntegrationTime(tree.light0, 0.0);
+    check(!bad.has_value(), "zero is refused");
+    const auto nan = writeLightIntegrationTime(tree.light0, std::nan(""));
+    check(!nan.has_value(), "NaN is refused");
+    check(readAttribute(tree.light0 / "in_illuminance_integration_time") == std::optional<std::string>("0.100000"),
+          "a refused value leaves the attribute alone");
+}
+
+// The node resolves channels once and re-reads only the values.
+void testResolvedTemperatureChannels()
+{
+    const FakeTree tree;
+    auto channels = findTemperatureChannels(tree.coretemp);
+    check(channels.size() == 3 && !channels[0].celsius.has_value(), "channels are found without values");
+    check(channels.size() == 3 && channels[0].label == "Package id 0", "with their labels");
+
+    readTemperatureValues(channels);
+    check(channels.size() == 3 && channels[1].celsius && near(*channels[1].celsius, 41.0), "values are read");
+
+    put(tree.coretemp / "temp2_input", "43500");
+    fs::remove(tree.coretemp / "temp1_input");
+    readTemperatureValues(channels);
+    check(channels.size() == 3 && channels[1].celsius && near(*channels[1].celsius, 43.5), "a new value is seen");
+    check(channels.size() == 3 && !channels[0].celsius.has_value(),
+          "a value that cannot be read clears rather than keeping the last");
+
+    auto gone = findTemperatureChannels(tree.root / "class/hwmon/hwmon7");
+    readTemperatureValues(gone);
+    check(gone.size() == 1 && gone[0].channel.empty() && !gone[0].celsius.has_value(),
+          "a missing sensor stays one entry with no value");
+}
+
 void testTemperatures()
 {
     const FakeTree tree;
@@ -201,6 +246,8 @@ int main()
     testTheBrightnessWrite();
     testLightSensors();
     testTemperatures();
+    testIntegrationTime();
+    testResolvedTemperatureChannels();
     testParsers();
     testPercentMapping();
 

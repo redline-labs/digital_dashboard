@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -210,7 +211,39 @@ LightReading readLightSensor(const fs::path& iio)
     return reading;
 }
 
-std::vector<TemperatureReading> readTemperatures(const fs::path& hwmon)
+std::expected<bool, std::string> writeLightIntegrationTime(const fs::path& iio, double seconds)
+{
+    const fs::path path = iio / "in_illuminance_integration_time";
+    std::error_code ec;
+    if (!fs::exists(path, ec))
+    {
+        return false;
+    }
+    if (!std::isfinite(seconds) || seconds <= 0.0)
+    {
+        return std::unexpected("integration time " + std::to_string(seconds) + " s is not a positive number");
+    }
+
+    std::ofstream out(path);
+    if (!out)
+    {
+        return std::unexpected("cannot open " + path.string() + ": " + std::strerror(errno));
+    }
+    // IIO fixed point; the driver refuses a value not in
+    // integration_time_available, which only shows at the flush.
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.6f", seconds);
+    out << text << '\n';
+    out.flush();
+    if (!out)
+    {
+        return std::unexpected(std::string("writing ") + text + " to " + path.string() + " failed: " +
+                               std::strerror(errno));
+    }
+    return true;
+}
+
+std::vector<TemperatureReading> findTemperatureChannels(const fs::path& hwmon)
 {
     const std::string name = readAttribute(hwmon / "name").value_or("");
 
@@ -244,15 +277,6 @@ std::vector<TemperatureReading> readTemperatures(const fs::path& hwmon)
         reading.channel = channel;
         reading.name = name;
         reading.label = readAttribute(hwmon / (channel + "_label")).value_or("");
-        if (const auto text = readAttribute(hwmon / (channel + "_input")))
-        {
-            // Millidegrees, as a signed integer: a panel in a cold car reads
-            // below zero, which parseNumber would refuse.
-            if (const auto millidegrees = parseDecimal(*text))
-            {
-                reading.celsius = *millidegrees / 1000.0;
-            }
-        }
         readings.push_back(std::move(reading));
     }
 
@@ -263,6 +287,34 @@ std::vector<TemperatureReading> readTemperatures(const fs::path& hwmon)
         missing.name = name;
         readings.push_back(std::move(missing));
     }
+    return readings;
+}
+
+void readTemperatureValues(std::vector<TemperatureReading>& channels)
+{
+    for (TemperatureReading& reading : channels)
+    {
+        reading.celsius.reset();
+        if (reading.channel.empty())
+        {
+            continue;
+        }
+        if (const auto text = readAttribute(fs::path(reading.path) / (reading.channel + "_input")))
+        {
+            // Millidegrees, as a signed integer: a panel in a cold car reads
+            // below zero, which parseNumber would refuse.
+            if (const auto millidegrees = parseDecimal(*text))
+            {
+                reading.celsius = *millidegrees / 1000.0;
+            }
+        }
+    }
+}
+
+std::vector<TemperatureReading> readTemperatures(const fs::path& hwmon)
+{
+    std::vector<TemperatureReading> readings = findTemperatureChannels(hwmon);
+    readTemperatureValues(readings);
     return readings;
 }
 

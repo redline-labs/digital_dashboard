@@ -45,6 +45,7 @@ void testDefaults()
     check(config.recordDir == "/run/redline/displays", "the rootfs's record directory by default");
     check(config.resolvedTopicPrefix() == "nodes/backlight/primary", "the prefix follows the role");
     check(config.pollMs == 500 && config.minPercent == 1.0, "poll and floor defaults");
+    check(config.lightIntegrationTime == 0.1, "the opt3001's short integration time by default");
 }
 
 void testOverrides()
@@ -55,6 +56,13 @@ void testOverrides()
     check(config.role == "secondary" && config.recordDir == "/tmp/fake", "strings are read");
     check(config.resolvedTopicPrefix() == "nodes/backlight/secondary", "the default prefix follows the role");
     check(config.pollMs == 250 && config.minPercent == 5.0, "numbers are read");
+
+    NodeConfig integration;
+    check(parses("light_integration_time: 0.8\n", integration) && integration.lightIntegrationTime == 0.8,
+          "an integration time is read");
+    NodeConfig leave;
+    check(parses("light_integration_time: 0\n", leave) && leave.lightIntegrationTime == 0.0,
+          "zero, meaning leave the driver's, is accepted");
 
     NodeConfig prefixed;
     check(parses("topic_prefix: cluster/backlight\n", prefixed) &&
@@ -71,6 +79,9 @@ void testRefusals()
     check(refuses("min_percent: 150\n"), "a floor above 100%");
     check(refuses("min_percent: -1\n"), "a negative floor");
     check(refuses("record_dir: \"\"\n"), "an empty record directory");
+    check(refuses("light_integration_time: -0.1\n"), "a negative integration time");
+    check(refuses("light_integration_time: .nan\n"), "a NaN integration time");
+    check(refuses("light_integration_time: slow\n"), "an integration time that is not a number");
     check(refuses("topic_prefix: \"nodes/back light\"\n"), "a prefix that is not a usable zenoh key");
     check(refuses("[1, 2]\n"), "a top level that is not a mapping");
 }

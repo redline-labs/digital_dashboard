@@ -5,7 +5,7 @@ project(backlight_node)
 # A display module's backlight and sensors on the bus: status out, brightness in.
 #
 # Everything that touches a file is libs/display_backlight. What is here is the
-# config, the lock, and the translation onto schemas.
+# config, the light-sensor thread, and the translation onto schemas.
 add_executable(backlight
     main.cpp
     node_config.cpp
@@ -22,6 +22,7 @@ target_link_libraries(backlight PRIVATE
     display_backlight
     yaml-cpp::yaml-cpp
     node_health
+    cli
 )
 
 add_executable(backlight_test_node_config

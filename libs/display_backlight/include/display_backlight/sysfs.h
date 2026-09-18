@@ -41,6 +41,8 @@ struct FsmState
 {
     uint8_t code = 0;
     std::string name;
+
+    bool operator==(const FsmState&) const = default;
 };
 std::optional<FsmState> parseFsmState(std::string_view text);
 
@@ -59,6 +61,8 @@ struct BacklightStatus
     std::optional<uint32_t> ledCurrent;
     std::optional<uint32_t> pwmOutput;
     std::optional<uint32_t> boost;
+
+    bool operator==(const BacklightStatus&) const = default;
 };
 
 // `device` is the backlight class directory, e.g. /sys/class/backlight/lp8863.
@@ -81,7 +85,16 @@ struct LightReading
 };
 
 // `iio` is the IIO device directory, e.g. /sys/bus/iio/devices/iio:device0.
+//
+// Can block for a whole conversion: the opt3001 driver starts a single-shot
+// conversion on this read and sleeps through it -- about 1 s at its 0.8 s
+// integration time, measured on the board. Do not hold a lock across it.
 LightReading readLightSensor(const std::filesystem::path& iio);
+
+// Writes in_illuminance_integration_time, in seconds; the opt3001 offers 0.1
+// and 0.8 (integration_time_available). Returns false, not an error, when the
+// device has no such attribute -- another driver may not.
+std::expected<bool, std::string> writeLightIntegrationTime(const std::filesystem::path& iio, double seconds);
 
 struct TemperatureReading
 {
@@ -96,6 +109,14 @@ struct TemperatureReading
 // that is not there, still yields one reading with no value, so a configured
 // sensor that has gone missing shows up as missing rather than vanishing.
 std::vector<TemperatureReading> readTemperatures(const std::filesystem::path& hwmon);
+
+// readTemperatures() in two halves, so a node lists the directory and reads
+// the names and labels once rather than on every pass. The returned readings
+// have no value yet; a missing sensor is the one entry with no channel.
+std::vector<TemperatureReading> findTemperatureChannels(const std::filesystem::path& hwmon);
+
+// Re-reads the value of each reading findTemperatureChannels() returned.
+void readTemperatureValues(std::vector<TemperatureReading>& channels);
 
 }  // namespace display_backlight
 

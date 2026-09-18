@@ -25,8 +25,14 @@ struct NodeConfig
     // nodes/backlight/<role>.
     std::string topicPrefix;
 
-    // How often the status topic is read and published.
+    // How often the backlight is read. The status is published when something
+    // moved past its deadband, and otherwise every 2 s.
     uint32_t pollMs { 500 };
+
+    // Written to each light sensor's in_illuminance_integration_time at start,
+    // in seconds; 0 leaves the driver's own. The opt3001 blocks a read for a
+    // whole conversion, and at its 0.8 s default two sensors took ~2 s a pass.
+    double lightIntegrationTime { 0.1 };
 
     // The lowest brightness a set may apply, as a percentage of max_brightness.
     // A backlight at zero is indistinguishable from a dead panel, which is not

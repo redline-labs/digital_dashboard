@@ -14,7 +14,7 @@ module onto the bus:
 - **brightness in:** a single service that sets it.
 
 All of the file reading lives in `libs/display_backlight`. The node adds the
-config, a lock and the schema translation.
+config, a thread for the light sensors and the schema translation.
 
 It deliberately does **not**:
 
@@ -75,7 +75,7 @@ The schema is `schemas/display_backlight.capnp`, and the prefix defaults to
 
 | Key | Schema | |
 |---|---|---|
-| `<prefix>/status` | `DisplayBacklightStatus` | every `poll_ms` |
+| `<prefix>/status` | `DisplayBacklightStatus` | on change, and every 2 s |
 | `<prefix>/set_brightness` | `DisplayBrightnessRequest` → `DisplayBrightnessResponse` | service |
 
 ```sh
@@ -83,6 +83,20 @@ inspect echo nodes/backlight/primary/status -n 1
 inspect call nodes/backlight/primary/set_brightness -d '{"unit":"percent","value":20}'
 inspect call nodes/backlight/primary/set_brightness -d '{"unit":"raw","value":13107}'
 ```
+
+The status is published when something moves past its deadband: any change
+to the backlight attributes, a light sensor by 5 % (never less than 0.05 lux),
+a temperature by 0.5 °C, or a sensor appearing or going missing. Otherwise it
+is published every 2 s. The backlight is read every `poll_ms`, the light
+sensors every second and the temperatures every 5 s.
+
+The light sensors are read on their own thread, and the status carries the
+latest value. An opt3001 read blocks for the whole conversion: at the driver's
+default 0.8 s integration time each read took about a second on the board, and
+with two sensors inline that held `set_brightness` up for about 2 s. So at
+start the node writes `light_integration_time` to each sensor's
+`in_illuminance_integration_time`. If a sensor has no such attribute it is left
+alone, and if the write fails the node logs it and carries on.
 
 A request is clamped to between `min_percent` of `max_brightness` and
 `max_brightness`. The response gives the raw value actually applied and, when the
@@ -109,8 +123,9 @@ at once on any change:
 role: primary                     # names the record file
 record_dir: /run/redline/displays # point at a fake tree to run off the target
 # topic_prefix: nodes/backlight/primary
-poll_ms: 500
+poll_ms: 500                      # how often the backlight is read
 min_percent: 1
+light_integration_time: 0.1       # seconds; 0 leaves the driver's
 ```
 
 ## On the target

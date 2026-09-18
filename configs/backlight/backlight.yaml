@@ -17,8 +17,15 @@ record_dir: /run/redline/displays
 # Omit for nodes/backlight/<role>.
 # topic_prefix: nodes/backlight/primary
 
-# How often status is read and published.
+# How often the backlight is read. Status is published when something moves
+# (any backlight change, lux by 5 %, a temperature by 0.5 C) and every 2 s
+# regardless. Lux is read every second and temperatures every 5 s.
 poll_ms: 500
+
+# Seconds, written to each light sensor's in_illuminance_integration_time at
+# start; 0 leaves the driver's own. An opt3001 blocks a read for the whole
+# conversion, so its 0.8 s default makes each read take about a second.
+light_integration_time: 0.1
 
 # The lowest brightness set_brightness will apply, percent of max_brightness.
 min_percent: 1
