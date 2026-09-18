@@ -24,10 +24,13 @@
 
 include_guard(GLOBAL)
 
-set(REDLINE_NATIVE_CODEGEN_DIR "" CACHE PATH
-    "Directory holding host builds of this project's code generators (capnp, \
-capnpc-c++, capnpc_schema_registry, dbc_code_gen, canopen_code_gen). Required \
-when cross-compiling; leave empty to build and run them from the tree.")
+# A ;-list is accepted too: a desktop build keeps capnp and
+# capnpc_schema_registry in different directories (tools/build-wasm.sh).
+set(REDLINE_NATIVE_CODEGEN_DIR "" CACHE STRING
+    "Directory (or ;-list of directories) holding host builds of this project's \
+code generators (capnp, capnpc-c++, capnpc_schema_registry, dbc_code_gen, \
+canopen_code_gen). Required when cross-compiling; leave empty to build and run \
+them from the tree.")
 
 # redline_codegen_tool(<command_var> <depends_var> <target> <executable>)
 #
@@ -58,7 +61,7 @@ function(redline_codegen_tool command_var depends_var target executable)
     string(MAKE_C_IDENTIFIER "REDLINE_NATIVE_${executable}" cache_var)
     find_program(${cache_var}
         NAMES ${executable}
-        PATHS "${REDLINE_NATIVE_CODEGEN_DIR}"
+        PATHS ${REDLINE_NATIVE_CODEGEN_DIR}
         NO_DEFAULT_PATH
         DOC "Host build of ${executable}, used to generate sources for the target")
 
