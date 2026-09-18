@@ -308,6 +308,12 @@ bool HttpServer::bind()
     // partition is), and this only needs to stop being the binding constraint.
     impl_->server.set_payload_max_length(kMaxUploadBytes);
 
+    // A kept-alive connection is watched by polling every 10 ms until this
+    // runs out, and the page polls every 2-5 s -- so at the default 5 s an open
+    // tab keeps a worker waking at 100 Hz forever. At 1 s it goes quiet between
+    // polls, and a reconnect per poll costs nothing on a LAN.
+    impl_->server.set_keep_alive_timeout(1);
+
     std::error_code ec;
     if (std::filesystem::is_directory(assetDir, ec))
     {

@@ -16,6 +16,13 @@
 // everything we write.
 //
 // Anything that needs the HTTP types includes this, never <httplib.h>.
+//
+// It is also where the build-time settings go, so every translation unit sees
+// the same ones. Three pooled workers rather than httplib's max(8, cores - 1):
+// the console has one or two browsers, and the pool still grows on demand.
+#ifndef CPPHTTPLIB_THREAD_POOL_COUNT
+#define CPPHTTPLIB_THREAD_POOL_COUNT 3
+#endif
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
