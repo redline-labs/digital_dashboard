@@ -17,6 +17,7 @@
 //   * drop the one-arm check for unions              -> the union cases fail
 
 #include "pub_sub/capnp_json.h"
+#include "pub_sub/schema_registry.h"
 
 #include <capnp/dynamic.h>
 #include <capnp/message.h>
@@ -185,6 +186,67 @@ void testDataOptions(capnp::StructSchema schema)
            "Data over the limit decodes as its length and a prefix");
 }
 
+
+// describeSchema is what a form is built from, so what it must carry is what a
+// form needs: exact bounds, the enum's names, what is nested, the defaults,
+// declaration order and the doc comments.
+void testDescribe(const capnp::ParsedSchema& file)
+{
+    const json fields = pub_sub::describeSchema(file.getNested("Fixture").asStruct())["fields"];
+
+    expect(fields["i8"]["capnp_type"] == "int8", "i8 is int8");
+    expect(fields["i8"]["type"] == "int", "the category is unchanged for existing consumers");
+    expect(fields["i8"]["min"] == -128 && fields["i8"]["max"] == 127, "int8 bounds");
+    expect(fields["u8"]["min"] == 0 && fields["u8"]["max"] == 255, "uint8 bounds");
+    expect(fields["u64"]["max"].get<std::uint64_t>() == UINT64_MAX, "uint64 max is exact, not through a double");
+    expect(fields["i64"]["min"].get<std::int64_t>() == INT64_MIN, "int64 min is exact");
+    expect(fields["f32"]["capnp_type"] == "float32" && !fields["f32"].contains("min"), "floats have no integer bounds");
+    expect(fields["colour"]["values"] == json::array({"red", "green", "blue"}), "enum values in declaration order");
+    expect(fields["colour"]["default"] == "red", "an enum defaults to its first enumerant");
+    expect(fields["flag"]["default"] == false, "bool default");
+
+    expect(fields["inner"]["fields"]["count"]["capnp_type"] == "uint16", "a struct field describes its fields");
+    expect(fields["inners"]["element"]["fields"]["label"]["type"] == "text", "a list of structs describes the element");
+    expect(fields["inners"]["element_type"] == "struct", "element_type is kept for existing consumers");
+    expect(fields["colours"]["element"]["values"] == json::array({"red", "green", "blue"}), "a list of enums names them");
+    expect(fields["matrix"]["element"]["element"]["capnp_type"] == "uint64", "a nested list describes both levels");
+
+    expect(fields["choice"]["union"] == true, "a union group says so");
+    expect(fields["choice"]["fields"]["speed"]["union_arm"] == true, "its arms are marked");
+    expect(fields["choice"]["fields"]["none"].contains("default"), "the active arm has a default");
+    expect(!fields["choice"]["fields"]["speed"].contains("default"), "an inactive arm has none");
+    expect(fields["pair"]["capnp_type"] == "group" && !fields["pair"].contains("union"), "a plain group");
+    expect(fields["pair"]["fields"]["a"]["capnp_type"] == "int32", "a group describes its fields in place");
+
+    expect(fields["flag"]["order"] == 0 && fields["pair"]["order"] > fields["choice"]["order"],
+           "order is the declaration order, not the alphabetical order of the JSON object");
+
+    const json defaults = pub_sub::describeSchema(file.getNested("Defaults").asStruct())["fields"];
+    expect(defaults["level"]["default"] == 42, "a declared integer default");
+    expect(defaults["mode"]["default"] == "blue", "a declared enum default");
+    expect(defaults["label"]["default"] == "hello", "a declared text default");
+    std::string hex = defaults["raw"]["default"].is_string() ? defaults["raw"]["default"].get<std::string>() : "";
+    std::erase(hex, ' ');
+    expect(hex == "01ff", "a Data default is hex, the spelling a call takes back (got " +
+                              defaults["raw"]["default"].dump() + ")");
+
+    // It must terminate; how deep it goes is not the point.
+    const json tree = pub_sub::describeSchema(file.getNested("Tree").asStruct());
+    expect(tree["fields"]["children"]["element"]["type"] == "struct", "a self-referencing schema is described");
+
+    // The fixture is parsed at test time, so its comments are not in the
+    // registry; a registered schema's are.
+    const auto brightness = pub_sub::get_schema("DisplayBrightnessRequest");
+    expect(brightness.has_value(), "DisplayBrightnessRequest is registered");
+    if (brightness)
+    {
+        const json b = pub_sub::describeSchema(*brightness)["fields"];
+        expect(b["unit"].contains("doc") && b["unit"]["doc"].get<std::string>().find("Required") != std::string::npos,
+               "a field's doc comment comes from the registry");
+        expect(b["value"]["capnp_type"] == "float64", "value is float64");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -203,6 +265,7 @@ int main()
     testUnions(schema);
     testRejections(schema);
     testDataOptions(schema);
+    testDescribe(file);
 
     if (failures != 0)
     {

@@ -47,3 +47,16 @@ struct Fixture {
     b @21 :Text;
   }
 }
+
+# Declared defaults, for describeSchema's "default" -- Fixture's are all zero.
+struct Defaults {
+  level @0 :UInt8 = 42;
+  mode @1 :Colour = blue;
+  raw @2 :Data = 0x"01ff";
+  label @3 :Text = "hello";
+}
+
+# Refers to itself: describeSchema must stop.
+struct Tree {
+  children @0 :List(Tree);
+}

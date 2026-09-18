@@ -87,6 +87,22 @@ inline constexpr std::uint64_t kFixedLengthAnnotationId = 0x896cba7e8df9da6eull;
 // hardware. See schemas/annotations.capnp.
 std::optional<std::uint32_t> fixedListLength(const capnp::StructSchema::Field& field);
 
+// {"fields": {name: entry}, "union": true?}. Each entry has:
+//   type        the category every picker reasons about: bool int uint float
+//               text data list struct enum void other
+//   capnp_type  the exact type: int8..uint64, float32/64, group, ...
+//   min, max    integer bounds, exact (uint64 max is not rounded)
+//   values      enumerant names in declaration order (enums, lists of enums)
+//   value_docs  their doc comments, when any has one
+//   fields      a struct's or group's own entries, recursively; "union": true
+//               when they are a union's arms
+//   element     a list element's entry; element_type and fixed_length as well
+//   union_arm   true for a field that is one arm of its struct's union
+//   default     the schema's default (Data as hex); absent for an inactive arm
+//   doc         the field's doc comment, from the registry
+//   order       declaration order -- the JSON object itself is alphabetical
+// Everything but type, element_type, fixed_length and values was added for the
+// web console's form; readers that ignore unknown keys see no change.
 json describeSchema(capnp::Schema schema);
 
 }  // namespace pub_sub

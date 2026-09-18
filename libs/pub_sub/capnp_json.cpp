@@ -1,9 +1,11 @@
 #include "pub_sub/capnp_json.h"
 
 #include "pub_sub/capnp_payload.h"
+#include "pub_sub/schema_registry.h"
 
 #include "helpers/hex.h"
 
+#include <capnp/message.h>
 #include <capnp/serialize.h>
 
 #include <cmath>
@@ -564,50 +566,161 @@ std::optional<std::uint32_t> fixedListLength(const capnp::StructSchema::Field& f
     return std::nullopt;
 }
 
-json describeSchema(capnp::Schema schema)
+namespace
 {
-    json fields = json::object();
-    for (auto field : schema.asStruct().getFields())
+
+// The exact capnp type, for a consumer that needs more than the category:
+// "uint8" and "uint64" are both "uint", and only one of them fits in a
+// browser's Number.
+std::string exactTypeName(const capnp::Type& type)
+{
+    switch (type.which())
     {
-        json entry = json::object();
-        const auto type = field.getType();
+        case capnp::schema::Type::VOID:        return "void";
+        case capnp::schema::Type::BOOL:        return "bool";
+        case capnp::schema::Type::INT8:        return "int8";
+        case capnp::schema::Type::INT16:       return "int16";
+        case capnp::schema::Type::INT32:       return "int32";
+        case capnp::schema::Type::INT64:       return "int64";
+        case capnp::schema::Type::UINT8:       return "uint8";
+        case capnp::schema::Type::UINT16:      return "uint16";
+        case capnp::schema::Type::UINT32:      return "uint32";
+        case capnp::schema::Type::UINT64:      return "uint64";
+        case capnp::schema::Type::FLOAT32:     return "float32";
+        case capnp::schema::Type::FLOAT64:     return "float64";
+        case capnp::schema::Type::TEXT:        return "text";
+        case capnp::schema::Type::DATA:        return "data";
+        case capnp::schema::Type::LIST:        return "list";
+        case capnp::schema::Type::ENUM:        return "enum";
+        case capnp::schema::Type::STRUCT:      return "struct";
+        case capnp::schema::Type::INTERFACE:   return "interface";
+        case capnp::schema::Type::ANY_POINTER: return "anypointer";
+    }
+    return "other";
+}
 
-        entry["type"] = typeCategory(type);
+// A schema can refer to itself through a list or a struct field; a form never
+// needs to be this deep, and without a limit that recursion would not end.
+constexpr int kMaxDescribeDepth = 8;
 
-        if (type.isList())
-        {
-            // WHAT THE ELEMENTS ARE, because "list" on its own does not say
-            // whether a consumer can do anything with it. A List(Float32) is 32
-            // plottable channels; a List(Text) is not plottable at all, and a
-            // picker that cannot tell them apart either offers both or neither.
-            // `values[7]` is an ordinary expression, so this is the only thing
-            // standing between the PDM's per-output data and a plot.
-            const auto element = type.asList().getElementType();
-            entry["element_type"] = typeCategory(element);
+// Defaults are read from an untouched message. Data as hex, all of it: that is
+// the spelling jsonToCapnp takes back, and a request's defaults are small.
+json defaultsOf(capnp::StructSchema schema)
+{
+    capnp::MallocMessageBuilder message;
+    return capnpToJson(message.initRoot<capnp::DynamicStruct>(schema).asReader(),
+                       CapnpJsonOptions{.data_hex_limit = std::numeric_limits<std::size_t>::max()});
+}
 
-            // How many elements, when the schema says. A picker can then offer
-            // each one as its own bindable channel instead of guessing a count
-            // or peeking at live traffic -- see schemas/annotations.capnp.
-            if (const auto length = fixedListLength(field))
-            {
-                entry["fixed_length"] = *length;
-            }
+json describeFields(capnp::StructSchema schema, const json& defaults, int depth);
 
-            if (element.isEnum())
-            {
-                entry["values"] = enumerantNames(element.asEnum());
-            }
-        }
-        else if (type.isEnum())
-        {
-            entry["values"] = enumerantNames(type.asEnum());
-        }
+// What one value of `type` is: category, exact type, integer bounds, enum
+// values with their docs, and -- for structs and lists -- what is inside.
+void describeType(json& entry, const capnp::Type& type, int depth)
+{
+    entry["type"] = typeCategory(type);
+    entry["capnp_type"] = exactTypeName(type);
 
-        fields[field.getProto().getName().cStr()] = std::move(entry);
+    if (const auto range = integerRange(type.which()))
+    {
+        entry["min"] = range->is_signed ? json(range->min) : json(0);
+        entry["max"] = range->max;
     }
 
+    if (type.isEnum())
+    {
+        const auto schema = type.asEnum();
+        entry["values"] = enumerantNames(schema);
+        json docs = json::array();
+        bool any = false;
+        for (auto enumerant : schema.getEnumerants())
+        {
+            const auto doc = member_doc(schema.getProto().getId(), enumerant.getIndex());
+            any = any || !doc.empty();
+            docs.push_back(std::string(doc));
+        }
+        if (any) { entry["value_docs"] = std::move(docs); }
+    }
+    else if (type.isStruct() && depth < kMaxDescribeDepth)
+    {
+        // A struct type stands alone, so its defaults are its own: read back
+        // from an untouched message rather than inherited from the parent.
+        const auto schema = type.asStruct();
+        entry["fields"] = describeFields(schema, defaultsOf(schema), depth + 1);
+        if (schema.getProto().getStruct().getDiscriminantCount() > 0) { entry["union"] = true; }
+    }
+    else if (type.isList() && depth < kMaxDescribeDepth)
+    {
+        const auto element = type.asList().getElementType();
+        json described = json::object();
+        describeType(described, element, depth + 1);
+        entry["element"] = std::move(described);
+    }
+}
+
+// Every field: its type, its doc comment, its default, where the schema text
+// declares it, and whether it is an arm of the struct's union. Groups describe
+// their own fields in place, with the parent's defaults for them.
+json describeFields(capnp::StructSchema schema, const json& defaults, int depth)
+{
+    json fields = json::object();
+    const auto id = schema.getProto().getId();
+    for (auto field : schema.getFields())
+    {
+        const std::string name = field.getProto().getName().cStr();
+        json entry = json::object();
+        const auto type = field.getType();
+        const json* own_default =
+            defaults.is_object() && defaults.contains(name) ? &defaults.at(name) : nullptr;
+
+        if (field.getProto().isGroup())
+        {
+            const auto group = type.asStruct();
+            entry["type"] = "struct";
+            entry["capnp_type"] = "group";
+            entry["fields"] = describeFields(group, own_default ? *own_default : json(), depth + 1);
+            if (group.getProto().getStruct().getDiscriminantCount() > 0) { entry["union"] = true; }
+        }
+        else
+        {
+            describeType(entry, type, depth);
+        }
+
+        // Existing consumers read these two at the top level of a list entry.
+        if (type.isList())
+        {
+            const auto element = type.asList().getElementType();
+            entry["element_type"] = typeCategory(element);
+            if (const auto length = fixedListLength(field)) { entry["fixed_length"] = *length; }
+            if (element.isEnum()) { entry["values"] = enumerantNames(element.asEnum()); }
+        }
+
+        if (const auto doc = member_doc(id, field.getIndex()); !doc.empty())
+        {
+            entry["doc"] = std::string(doc);
+        }
+        // Only the active arm of a union has a value in an untouched message,
+        // so the other arms have no default to report.
+        if (own_default != nullptr) { entry["default"] = *own_default; }
+        entry["order"] = field.getProto().getCodeOrder();
+        if (field.getProto().getDiscriminantValue() != capnp::schema::Field::NO_DISCRIMINANT)
+        {
+            entry["union_arm"] = true;
+        }
+
+        fields[name] = std::move(entry);
+    }
+    return fields;
+}
+
+}  // namespace
+
+json describeSchema(capnp::Schema schema)
+{
+    const auto structure = schema.asStruct();
     json out = json::object();
-    out["fields"] = std::move(fields);
+    out["fields"] = describeFields(structure, defaultsOf(structure), 0);
+    if (structure.getProto().getStruct().getDiscriminantCount() > 0) { out["union"] = true; }
     return out;
 }
 
