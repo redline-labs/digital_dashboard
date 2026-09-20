@@ -54,7 +54,13 @@ struct Iap2SessionOptions
     struct Endpoint
     {
         std::string link_local_address;  // accessory fe80::, from NcmBridge
-        std::string device_identifier;   // accessory MAC, colon separated
+        // The accessory's OWN Bluetooth MAC, from config device_id -- not the NCM interface MAC,
+        // which the phone assigns us and which is therefore not an identity of ours at all.
+        std::string device_identifier;
+        // The accessory's AirPlay 2 long-term public key ("pi"), base64, from the pairing store.
+        // Over Bonjour this is an advertised TXT record; wired CarPlay has no Bonjour, so
+        // CarPlayStartSession is the only place the phone can learn it.
+        std::string public_key;
         uint32_t port = 7000;
     };
     std::function<std::optional<Endpoint>()> endpoint_provider;

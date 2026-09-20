@@ -308,6 +308,7 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     session.ip_addresses = {endpoint->link_local_address};
                     session.port = endpoint->port;
                     session.device_identifier = endpoint->device_identifier;
+                    session.public_key = endpoint->public_key;
 
                     SPDLOG_INFO("[iap2] sending CarPlayStartSession -> [{}]:{} id={}",
                                 endpoint->link_local_address, endpoint->port,

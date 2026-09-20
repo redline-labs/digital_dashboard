@@ -10,6 +10,7 @@
 #include "apple_usb/muxd.h"
 #include "apple_usb/ncm_discovery.h"
 
+#include "airplay/pairing_store.h"
 #include "airplay/receiver.h"
 #include "iap2/mcp2221a_mfi_signer.h"
 #include "apple_usb/usb_device.h"
@@ -74,6 +75,29 @@ namespace carplay
 {
 namespace
 {
+
+// Base64 for the accessory's 32-byte AirPlay public key in CarPlayStartSession. Nothing in the tree
+// exports one (libs/plist has an internal encoder that wraps at 68 columns, which is a plist rule and
+// wrong here), and for one fixed-size key a local encoder is smaller than the dependency.
+std::string base64Encode(const std::vector<uint8_t>& data)
+{
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < data.size(); i += 3)
+    {
+        const uint32_t octets = (static_cast<uint32_t>(data[i]) << 16) |
+                                (i + 1 < data.size() ? static_cast<uint32_t>(data[i + 1]) << 8 : 0) |
+                                (i + 2 < data.size() ? static_cast<uint32_t>(data[i + 2]) : 0);
+        out.push_back(kAlphabet[(octets >> 18) & 0x3F]);
+        out.push_back(kAlphabet[(octets >> 12) & 0x3F]);
+        out.push_back(i + 1 < data.size() ? kAlphabet[(octets >> 6) & 0x3F] : '=');
+        out.push_back(i + 2 < data.size() ? kAlphabet[octets & 0x3F] : '=');
+    }
+    return out;
+}
+
 
 constexpr auto kRediscoverPoll = std::chrono::milliseconds(200);
 constexpr auto kRediscoverTimeout = std::chrono::seconds(15);
@@ -1190,16 +1214,42 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, c
 
         if (ncm.running())
         {
+            // WHAT THE PHONE NEEDS IN CarPlayStartSession, and where each piece comes from.
+            //
+            // Over Bonjour an AirPlay client learns the accessory's identity from the advertised TXT
+            // records -- `pi`, the long-term public key -- and dials it. Wired CarPlay has no Bonjour,
+            // so CarPlayStartSession is the only place the phone can be told, and it carries both the
+            // address to dial and the identity to expect there.
+            //
+            // Both fields below used to be wrong, and the failure was silent: the phone ACKed the
+            // message and did nothing, with no error and iAP2 carrying on normally, which is what a
+            // receiver does with a request it cannot act on rather than one it rejects.
+            //
+            //   public_key        was never set at all, so every session request this node has ever
+            //                     sent carried an empty identity.
+            //   device_identifier was the NCM interface MAC -- a value the PHONE assigns us, so not
+            //                     an identity of ours in any sense. It is documented as the
+            //                     accessory's Bluetooth MAC and now comes from config device_id.
             const AvLink* link = &ncm;
+
+            // Same identity the AirPlay receiver will present on the connection the phone is about to
+            // make; loading it here just reads the file the receiver also loads.
+            airplay::PairingStore identity_store(ctx.state_dir);
+            const std::string accessory_public_key = base64Encode(identity_store.loadOrCreateIdentity().public_key);
+            const std::string accessory_bt_mac = options.device_id;
+            SPDLOG_INFO("[iap2] accessory identity for CarPlayStartSession: pi={} bt={}",
+                        accessory_public_key, accessory_bt_mac);
+
             iap2_options.endpoint_provider =
-                [link]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                [link, accessory_public_key, accessory_bt_mac]() -> std::optional<Iap2SessionOptions::Endpoint> {
                 if (!link->running() || link->linkLocalAddress().empty())
                 {
                     return std::nullopt;
                 }
                 Iap2SessionOptions::Endpoint endpoint;
                 endpoint.link_local_address = link->linkLocalAddress();
-                endpoint.device_identifier = link->hostMac();
+                endpoint.device_identifier = accessory_bt_mac;
+                endpoint.public_key = accessory_public_key;
                 return endpoint;
             };
         }
