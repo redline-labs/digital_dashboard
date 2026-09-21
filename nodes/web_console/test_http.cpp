@@ -3,7 +3,7 @@
 // when the node is told to stop.
 
 #include "http_server.h"
-#include "httplib_include.h"
+#include "httplib_wrapped/httplib_include.h"
 #include "update_routes.h"
 
 #include <nlohmann/json.hpp>

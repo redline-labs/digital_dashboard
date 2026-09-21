@@ -32,7 +32,7 @@ target_link_libraries(web_console_routes PUBLIC
     spdlog::spdlog
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json
-    httplib::httplib
+    httplib_wrapped
     system_info
     rauc_client
     node_health

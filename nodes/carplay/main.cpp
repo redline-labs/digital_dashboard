@@ -74,6 +74,13 @@ int main(int argc, char** argv)
          "I2C adapter of the MFi coprocessor, e.g. /dev/i2c-13 (default: $REDLINE_MFI_I2C_DEV, "
          "else auto-detect)",
          cxxopts::value<std::string>()->default_value(""))
+        ("mfi-remote",
+         "Use a coprocessor served by mfi_proxy on another machine instead of local I2C, "
+         "e.g. http://10.0.0.91:8099 (bench tool; see libs/iap2/mfi_proxy_main.cpp)",
+         cxxopts::value<std::string>()->default_value(""))
+        ("mfi-remote-token",
+         "Bearer token for --mfi-remote, matching the proxy's --token",
+         cxxopts::value<std::string>()->default_value(""))
         ("location",
          "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
          "(otherwise a GPS source publishes on <prefix>/location)",
@@ -189,6 +196,8 @@ int main(int argc, char** argv)
     config.state_dir = args["state-dir"].as<std::string>();
     config.allow_missing_mfi = args.count("iap2-allow-missing-mfi") > 0;
     config.mfi_i2c_device = args["mfi-i2c-device"].as<std::string>();
+    config.mfi_remote_url = args["mfi-remote"].as<std::string>();
+    config.mfi_remote_token = args["mfi-remote-token"].as<std::string>();
 
     // A static GPS fix for bench-testing the location uplink: "lat,lon[,alt,speed,course]".
     if (const std::string spec = args["location"].as<std::string>(); !spec.empty())

@@ -7,6 +7,7 @@ project(iap2)
 add_library(iap2 STATIC
     link_layer.cpp
     mcp2221a_mfi_signer.cpp
+    http_mfi_signer.cpp
     csm.cpp
     messages.cpp
     location_nmea.cpp
@@ -21,6 +22,23 @@ target_link_libraries(iap2
         apple_mfi_ic
     PRIVATE
         spdlog::spdlog
+        # The remote signer only. http_mfi_signer.h keeps httplib's types out of
+        # its interface precisely so this can stay PRIVATE -- nothing that links
+        # iap2 inherits an HTTP dependency for it.
+        httplib_wrapped
+)
+
+# The other end of that signer: the coprocessor served over HTTP, for running
+# the CarPlay stack on a machine that does not have the chip. A BENCH TOOL --
+# the file's header comment says what it gives away and why it is not in the
+# image. Deliberately no redline_install.
+add_executable(mfi_proxy mfi_proxy_main.cpp)
+target_link_libraries(mfi_proxy PRIVATE
+    iap2
+    core
+    httplib_wrapped
+    cxxopts::cxxopts
+    spdlog::spdlog
 )
 
 # Link framing and control session message tests, runnable without hardware.

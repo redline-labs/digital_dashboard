@@ -167,6 +167,16 @@ struct NodeConfig
     // the YAML: the deployment sets the variable per machine.
     std::string mfi_i2c_device;
 
+    // Reach the MFi coprocessor over HTTP on another machine instead of over
+    // local I2C, as scheme://host:port. See libs/iap2/mfi_proxy_main.cpp for
+    // the server and for why it is a bench tool: this exists so the CarPlay
+    // stack can be run on a laptop that has the debugging tooling but not the
+    // chip. When set it replaces mfi_i2c_device entirely. Not in the YAML for
+    // the same reason the I2C device is not -- it is a property of where you
+    // are running, not of the vehicle.
+    std::string mfi_remote_url;
+    std::string mfi_remote_token;
+
     // A fixed GPS fix for bench-testing the location uplink. When set it takes
     // precedence over any fix published on <prefix>/location.
     std::optional<LocationFix> static_location;

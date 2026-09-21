@@ -1,4 +1,7 @@
 add_subdirectory(helpers)
+# cpp-httplib behind its warning suppression. Header-only and dependency-free,
+# so its position is arbitrary; first because both HTTP users sit far below.
+add_subdirectory(httplib_wrapped)
 add_subdirectory(apple_mfi_ic) 
 add_subdirectory(pub_sub)
 add_subdirectory(mcp2221a)

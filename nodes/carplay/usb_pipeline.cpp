@@ -13,6 +13,7 @@
 #include "airplay/pairing_store.h"
 #include "airplay/receiver.h"
 #include "iap2/mcp2221a_mfi_signer.h"
+#include "iap2/http_mfi_signer.h"
 #include "apple_usb/usb_device.h"
 #include "apple_usb/usbmuxd_server.h"
 
@@ -1696,12 +1697,34 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     SPDLOG_INFO("[node] state dir {}", state_dir);
 
     // The coprocessor is on I2C, not USB, so it is initialised once and outlives
-    // every phone that comes and goes below.
-    auto mfi_signer = std::make_unique<iap2::Mcp2221aMfiSigner>();
-    if (!mfi_signer->init(options.mfi_i2c_device))
+    // every phone that comes and goes below. --mfi-remote swaps the transport
+    // for HTTP and changes nothing else: the chip is behind the same three
+    // calls either way, which is the whole reason MfiSigner is an interface.
+    std::unique_ptr<iap2::MfiSigner> mfi_signer;
+    if (!options.mfi_remote_url.empty())
     {
-        SPDLOG_WARN("[mfi] coprocessor unavailable");
-        mfi_signer.reset();
+        auto remote = std::make_unique<iap2::HttpMfiSigner>(options.mfi_remote_url,
+                                                            options.mfi_remote_token);
+        if (remote->init())
+        {
+            mfi_signer = std::move(remote);
+        }
+        else
+        {
+            SPDLOG_WARN("[mfi] remote coprocessor at {} unavailable", options.mfi_remote_url);
+        }
+    }
+    else
+    {
+        auto local = std::make_unique<iap2::Mcp2221aMfiSigner>();
+        if (local->init(options.mfi_i2c_device))
+        {
+            mfi_signer = std::move(local);
+        }
+        else
+        {
+            SPDLOG_WARN("[mfi] coprocessor unavailable");
+        }
     }
 
     SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>(),

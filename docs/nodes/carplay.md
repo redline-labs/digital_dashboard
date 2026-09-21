@@ -147,6 +147,89 @@ inspect hz -k nodes/carplay/audio       ->  50 msgs/s   (20 ms PCM chunks)
 inspect hz -k nodes/carplay/nowplaying  ->   1 msgs/s
 ```
 
+## Running the stack away from the MFi chip
+
+The MFi authentication coprocessor is soldered to one board. Everything else in
+the stack is portable, so a problem that wants a laptop's tooling -- a debugger,
+a second phone, a `usbmon` capture -- is otherwise pinned to whichever machine
+owns the chip. `mfi_proxy` serves the chip over HTTP so the node can run
+somewhere else.
+
+On the board with the chip. The node and the proxy cannot both have it: the
+chip has no arbitration, and two processes interleaving transactions on
+`/dev/i2c-13` will corrupt both. Stop the node first.
+
+```bash
+systemctl stop redline-node@carplay
+mfi_proxy --bind 0.0.0.0 --mfi-i2c-device /dev/i2c-13 --token "$(cat /data/mfi-token)"
+```
+
+On the machine running the stack:
+
+```bash
+./build/nodes/carplay/carplay -c configs/carplay/carplay.yaml \
+    --mfi-remote http://10.0.0.91:8099 --mfi-remote-token "$TOKEN"
+```
+
+`--mfi-remote` replaces `--mfi-i2c-device` entirely; the chip sits behind the
+same three calls either way, which is what `iap2::MfiSigner` being an interface
+buys. Success looks like one line before any phone is involved:
+
+```
+[mfi] remote coprocessor at http://10.0.0.91:8099 (protocol major 2)
+```
+
+That line is the reachability check -- the proxy is up, the chip answered, and
+both ends agree on the routes. If it does not appear, the error above it is the
+proxy's own response body, forwarded verbatim.
+
+**This is a bench tool, and it is not in the image.** Signing is the step that
+proves to a phone that a licensed Apple accessory is on the far end of the
+cable, and serving it lets anyone who can reach the port borrow that proof.
+Copy the binary across to use it. `/data` is the board's persistent partition,
+so it survives an image update; `/lib64` does not exist there, because Yocto
+puts the loader in `/lib` and a host-built binary asks for the other path:
+
+```bash
+scp build/libs/iap2/mfi_proxy root@10.0.0.91:/data/
+ssh root@10.0.0.91 /lib/ld-linux-x86-64.so.2 /data/mfi_proxy --help
+```
+
+It binds to `127.0.0.1` by default, and an SSH tunnel (`ssh -L
+8099:localhost:8099 root@10.0.0.91`) needs nothing more than that. Pass
+`--bind`/`--token` only if you want it on the network, and stop it when you are
+done.
+
+Two gotchas, both of which cost time once already:
+
+- cpp-httplib sets `SO_REUSEPORT`, so a **second** proxy on the same port
+  starts silently and the kernel splits connections between the two. From the
+  client that looks like a proxy intermittently ignoring its own `--token`.
+  Check for a stale instance before believing anything stranger.
+- The chip is slow -- a signature took 540 ms end to end over the LAN, nearly
+  all of it the chip. The client's read timeout is 15 s for that reason.
+
+To check the proxy without the node at all, `protocol` is a plain integer and
+the other two are raw bytes:
+
+```bash
+curl -s http://10.0.0.91:8099/mfi/v1/protocol                    # -> 2
+curl -s -o cert.der http://10.0.0.91:8099/mfi/v1/certificate
+openssl pkcs7 -inform DER -in cert.der -print_certs -noout       # -> Apple iPod Accessories
+head -c 20 /dev/urandom > chal.bin                               # 20 bytes for protocol 2
+curl -s --data-binary @chal.bin -o sig.bin http://10.0.0.91:8099/mfi/v1/sign
+```
+
+A signature can be checked against the certificate it came with. Protocol 2
+signs the 20 bytes you send *as* the SHA-1 digest, so recovering the RSA block
+should hand back a PKCS#1 v1.5 DigestInfo ending in exactly those bytes:
+
+```bash
+openssl pkcs7 -inform DER -in cert.der -print_certs | openssl x509 -pubkey -noout > pub.pem
+openssl pkeyutl -verifyrecover -pubin -inkey pub.pem -in sig.bin \
+    -pkeyopt rsa_padding_mode:none | xxd | tail -2
+```
+
 ## Bring-up checklist
 
 Work the stages in order; each depends on the previous, and `--max-stage N`
