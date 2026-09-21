@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace airplay
@@ -150,6 +151,10 @@ class Receiver
     // renderer that joins late (the dashboard does, over zenoh) cannot sync
     // without this. Called periodically while a session is live.
     void requestKeyframe();
+
+    // Before start() only. For a listener whose address does not exist when
+    // the receiver is built: a link-local appears only once its link is up.
+    void setBindAddress(std::string address) { config_.bind_address = std::move(address); }
 
     bool start();
     void stop();

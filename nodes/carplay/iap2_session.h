@@ -13,6 +13,7 @@
 #include "node_config.h"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -45,12 +46,13 @@ struct Iap2SessionOptions
     unsigned negotiate_timeout_ms = 10000;
 
     // Invoked once the phone reports wired CarPlay available. Returns the
-    // accessory endpoint the phone should dial, or nullopt when the transport
-    // is not up -- in which case CarPlayStartSession is not sent.
+    // accessory endpoint the phone should dial, or nullopt while there is no
+    // address to give -- in which case it is asked again, see
+    // start_session_patience below.
     //
-    // This is a callback rather than a plain field because the NCM link is
-    // brought up *after* the iAP2 session exists: the address does not exist
-    // yet when the session starts.
+    // This is a callback rather than a plain field because the address may not
+    // exist yet when the session starts: the kernel only generates the NCM
+    // link-local once the phone raises carrier on that link.
     struct Endpoint
     {
         std::string link_local_address;  // accessory fe80::, from NcmBridge
@@ -64,6 +66,11 @@ struct Iap2SessionOptions
         uint32_t port = 7000;
     };
     std::function<std::optional<Endpoint>()> endpoint_provider;
+
+    // How long CarPlayStartSession is held while endpoint_provider has nothing
+    // to give. It is polled again every loop until then; past this the session
+    // ends, so the caller's retry gets a fresh attempt. See StartSessionGate.
+    std::chrono::milliseconds start_session_patience{30000};
 
     // Called when the phone reports now-playing metadata (track, artist, album,
     // playback status). Fires on the iAP2 poll thread.

@@ -989,13 +989,41 @@ Triage: no `enx*`/`en*` interface for the phone means the NCM function was never
 bound, so confirm configuration 6 and that nothing captured the device away from
 the system driver. `no NCM function in configuration 6` means descriptor
 discovery found nothing; run `apple_usb_usbprobe` and compare against the
-descriptor table above. An interface that exists but `has no IPv6 link-local
-address` means the network profile is not installed or not applied. `bind(...)
+descriptor table above. An interface that `has carrier but no IPv6 link-local`
+(or whose `carrier cannot be read`, which is an interface that is down) means
+the network profile is not installed or not applied. `has NO CARRIER` is the
+phone's doing, not ours; see Carrier, below. `bind(...)
 failed: Cannot assign requested address` means a tentative address got through.
 Ping works but no inbound TCP: check that `CarPlayStartSession` was sent with
 the correct accessory `fe80::` address and port 7000. Nothing at all on the link
 before a session is expected, not a fault: the phone only powers up its NCM
 data path once a CarPlay session is actually running.
+
+### Carrier
+
+The link-local depends on the phone. `cdc_ncm` reports no carrier until the
+phone sends a connection notification on the NCM interrupt endpoint, and the
+kernel does not generate a link-local on a link without carrier. Until
+2026-09-20 the NCM stage required the address within five seconds, before iAP2
+had started, so a phone that raised carrier late, or only once it had identified
+the accessory, never got the iAP2 session that would have made it do so. LIVI
+does not have that ordering: it reads the address when the phone sends
+`CarPlayAvailability`.
+
+Now the stage needs only the interface. With no address it logs which of the
+three causes it is (no carrier, carrier but no address, interface down) and
+carries on. iAP2 starts, and when the phone reports CarPlay available
+`StartSessionGate` holds `CarPlayStartSession`, asking for the address again on
+every poll for up to 30 seconds; the session ends after that so the supervisor
+retries. The AirPlay listener binds that one address and cannot use the wildcard
+(macOS holds `*:7000`), so with no address it is built but not started, and is
+started from the same callback, ahead of the send. A phone that raises carrier
+unprompted, as the one verified on 2026-08-02 does, takes the old path unchanged.
+
+Not verified on hardware: no phone here has been seen withholding carrier, so
+the deferred path is unit-tested (`carplay_test_start_session_gate`) and
+otherwise unexercised. What makes a phone raise carrier is still unknown;
+neither this stack nor LIVI sends anything NCM-specific to provoke it.
 
 When a transfer fails and the cause is not visible from the driver's own logs,
 look at the bus with usbmon:

@@ -77,5 +77,9 @@ target_link_libraries(carplay_test_screen_handover PRIVATE
 )
 add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 
+# When CarPlayStartSession goes out, given an NCM address that may turn up late.
+add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
+add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
+
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET carplay COMPONENT nodes)

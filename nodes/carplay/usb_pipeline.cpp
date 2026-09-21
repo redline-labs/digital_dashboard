@@ -565,6 +565,11 @@ class AvLink
     bool start(const apple_usb::DeviceInfo& device);
     void stop();
 
+    // Looks for the link-local again. start() succeeds without one when the
+    // phone has not raised carrier yet, so whoever needs the address asks again
+    // at the moment it is needed. True once there is one.
+    bool refresh();
+
     bool running() const { return running_; }
     const std::string& interfaceName() const { return ifname_; }
 
@@ -791,6 +796,32 @@ std::string linkLocalOf(const std::string& ifname)
 
 #endif
 
+enum class Carrier
+{
+    kUnknown,
+    kDown,
+    kUp,
+};
+
+// Whether the phone has raised carrier on `ifname`. Linux only: the read fails
+// with EINVAL while the interface is administratively down, which is its own
+// answer (kUnknown), and macOS has no equivalent file.
+Carrier carrierOf(const std::string& ifname)
+{
+#if defined(__APPLE__)
+    (void)ifname;
+    return Carrier::kUnknown;
+#else
+    std::ifstream in("/sys/class/net/" + ifname + "/carrier");
+    int value = -1;
+    if (!(in >> value))
+    {
+        return Carrier::kUnknown;
+    }
+    return value == 1 ? Carrier::kUp : Carrier::kDown;
+#endif
+}
+
 bool AvLink::start(const apple_usb::DeviceInfo& device)
 {
     const auto config = apple_usb::readActiveConfig(device);
@@ -830,15 +861,25 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
 
     // The driver attaches a moment after the configuration switch, so give it
     // a little time rather than racing it on the first attachment.
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    //
+    // The address is a different matter. The kernel generates a link-local only
+    // once the PHONE raises carrier, and this used to wait for one before iAP2
+    // was even started -- so a phone that raises carrier late, or only after it
+    // has identified us, never got the session that would have made it do so.
+    // No carrier means no address is coming on its own, so after a grace
+    // period (a phone that raises it unprompted does so within a second or so)
+    // stop waiting and let refresh() pick it up when CarPlayStartSession needs it.
+    const auto started = std::chrono::steady_clock::now();
+    const auto carrier_grace = started + std::chrono::seconds(2);
+    const auto deadline = started + std::chrono::seconds(5);
     do
     {
-        ifname_ = interfaceWithMac(host_mac_);
-        if (!ifname_.empty())
+        if (refresh())
         {
-            link_local_ = linkLocalOf(ifname_);
+            break;
         }
-        if (!link_local_.empty())
+        if (!ifname_.empty() && carrierOf(ifname_) == Carrier::kDown &&
+            std::chrono::steady_clock::now() >= carrier_grace)
         {
             break;
         }
@@ -855,13 +896,47 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
     }
     if (link_local_.empty())
     {
-        SPDLOG_ERROR("[ncm] {} exists but has no IPv6 link-local address, so there is nothing "
-                     "to advertise to the phone.", ifname_);
-        return false;
+        // Two causes that used to share one message, and only one is ours.
+        switch (carrierOf(ifname_))
+        {
+            case Carrier::kDown:
+                SPDLOG_WARN("[ncm] {} has NO CARRIER, so it has no IPv6 link-local yet: the phone "
+                            "has not brought its end of the link up. Carrying on -- "
+                            "CarPlayStartSession waits for the address.", ifname_);
+                break;
+            case Carrier::kUp:
+                SPDLOG_WARN("[ncm] {} has carrier but no IPv6 link-local. Is the network profile "
+                            "from nodes/carplay/udev/ installed? Carrying on -- "
+                            "CarPlayStartSession waits for the address.", ifname_);
+                break;
+            case Carrier::kUnknown:
+                SPDLOG_WARN("[ncm] {} has no IPv6 link-local and its carrier cannot be read, which "
+                            "on Linux means the interface is administratively down: the network "
+                            "profile from nodes/carplay/udev/ is not applied. Carrying on -- "
+                            "CarPlayStartSession waits for the address.", ifname_);
+                break;
+        }
     }
 
     running_ = true;
     return true;
+}
+
+bool AvLink::refresh()
+{
+    if (host_mac_.empty())
+    {
+        return false;
+    }
+    if (ifname_.empty())
+    {
+        ifname_ = interfaceWithMac(host_mac_);
+    }
+    if (!ifname_.empty() && link_local_.empty())
+    {
+        link_local_ = linkLocalOf(ifname_);
+    }
+    return !link_local_.empty();
 }
 
 void AvLink::stop()
@@ -1024,7 +1099,17 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
             bridge.publishAudio(chunk);
         });
 
-        if (!receiver->start())
+        // With no address yet there is nothing to bind: the wildcard is not an
+        // option (see bind_address above), so the listener is started by
+        // startReceiverOn() once the link has one -- still ahead of
+        // CarPlayStartSession, which is the ordering that matters.
+        const bool deferred = receiver_config.bind_address.empty();
+        if (deferred)
+        {
+            SPDLOG_WARN("[airplay] no address to listen on yet; the receiver starts when the NCM "
+                        "link gets one");
+        }
+        if (!deferred && !receiver->start())
         {
             SPDLOG_ERROR("[airplay] receiver did not start");
             receiver.reset();
@@ -1191,6 +1276,23 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
     return receiver;
 }
 
+// The late half of a deferred start: binds the listener to the address the link
+// has just acquired. A no-op once it is running.
+bool startReceiverOn(airplay::Receiver& receiver, const AvLink& ncm)
+{
+    if (receiver.running())
+    {
+        return true;
+    }
+    receiver.setBindAddress(ncm.scopedLinkLocal());
+    if (!receiver.start())
+    {
+        SPDLOG_ERROR("[airplay] receiver did not start on {}", ncm.scopedLinkLocal());
+        return false;
+    }
+    return true;
+}
+
 // --- Stage 5: iAP2 link layer, identification, MFi auth --------------------
 //
 // Runs last even though it is stage 5: the phone dials the AirPlay port within
@@ -1200,8 +1302,9 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
 // Also owns the metadata path -- now-playing, navigation, calls, and the GPS
 // uplink -- because all of it rides the iAP2 carkit channel rather than
 // AirPlay. Returns false if the session did not complete.
-bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, const AvLink& ncm,
-                  ZenohBridge& bridge, std::atomic<bool>& session_stop)
+bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, AvLink& ncm,
+                  airplay::Receiver* receiver, ZenohBridge& bridge,
+                  std::atomic<bool>& session_stop)
 {
     const NodeConfig& options = ctx.options;
     bool ok = true;
@@ -1231,7 +1334,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, c
             //   device_identifier was the NCM interface MAC -- a value the PHONE assigns us, so not
             //                     an identity of ours in any sense. It is documented as the
             //                     accessory's Bluetooth MAC and now comes from config device_id.
-            const AvLink* link = &ncm;
+            AvLink* link = &ncm;
 
             // Same identity the AirPlay receiver will present on the connection the phone is about to
             // make; loading it here just reads the file the receiver also loads.
@@ -1241,9 +1344,17 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, c
             SPDLOG_INFO("[iap2] accessory identity for CarPlayStartSession: pi={} bt={}",
                         accessory_public_key, accessory_bt_mac);
 
+            // Asked on the iAP2 thread, repeatedly while the answer is no: the
+            // address may not exist until the phone raises carrier. The listener
+            // has to be up before the address is handed over, because the phone
+            // dials it within milliseconds.
             iap2_options.endpoint_provider =
-                [link, accessory_public_key, accessory_bt_mac]() -> std::optional<Iap2SessionOptions::Endpoint> {
-                if (!link->running() || link->linkLocalAddress().empty())
+                [link, receiver, accessory_public_key, accessory_bt_mac]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                if (!link->running() || !link->refresh())
+                {
+                    return std::nullopt;
+                }
+                if (receiver != nullptr && !startReceiverOn(*receiver, *link))
                 {
                     return std::nullopt;
                 }
@@ -1561,8 +1672,9 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     // --- Stage 6: the NCM link ------------------------------------------------
     //
     // Brought up *before* the iAP2 session, not after: the phone asks for the
-    // accessory endpoint moments after authentication, and the address only
-    // exists once this link is up.
+    // accessory endpoint moments after authentication. The address itself may
+    // still be missing when this returns -- it needs the phone to raise carrier
+    // -- and is then picked up when the phone asks; see AvLink::start.
     AvLink ncm;
     if (ok && options.max_stage >= 6)
     {
@@ -1570,7 +1682,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         {
             ok = false;
         }
-        else
+        else if (!ncm.linkLocalAddress().empty())
         {
             SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm.interfaceName(),
                         ncm.linkLocalAddress());
@@ -1608,7 +1720,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     // Stage 5. Last, though it is numbered first of the two: see runIap2Stage.
     if (ok && carkit && options.max_stage >= 5)
     {
-        ok = runIap2Stage(ctx, *carkit, ncm, bridge, session_stop);
+        ok = runIap2Stage(ctx, *carkit, ncm, receiver.get(), bridge, session_stop);
     }
 
     // Hold the session open so the sockets above can be poked at from another

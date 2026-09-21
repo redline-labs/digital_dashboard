@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "iap2_session.h"
 
+#include "start_session_gate.h"
+
 #include "iap2/link_layer.h"
 #include "iap2/mcp2221a_mfi_signer.h"
 #include "iap2/messages.h"
@@ -186,6 +188,45 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     iap2::LocationRequest location_request;
     auto last_location_send = std::chrono::steady_clock::now();
 
+    // CarPlayStartSession needs the NCM link-local, which may not exist yet when
+    // the phone asks: see StartSessionGate. Called from the handler below and
+    // then from the poll loop until it sends or gives up.
+    StartSessionGate start_gate(options.start_session_patience);
+    bool start_abandoned = false;
+    const auto service_start_session = [&] {
+        if (!start_gate.pending())
+        {
+            return;
+        }
+        const auto endpoint = options.endpoint_provider();
+        switch (start_gate.poll(std::chrono::steady_clock::now(), endpoint.has_value()))
+        {
+            case StartSessionGate::Action::kNone:
+                break;
+            case StartSessionGate::Action::kSend:
+            {
+                iap2::CarPlayStartSession session;
+                session.ip_addresses = {endpoint->link_local_address};
+                session.port = endpoint->port;
+                session.device_identifier = endpoint->device_identifier;
+                session.public_key = endpoint->public_key;
+
+                SPDLOG_INFO("[iap2] sending CarPlayStartSession -> [{}]:{} id={}",
+                            endpoint->link_local_address, endpoint->port,
+                            endpoint->device_identifier);
+                link.sendControlMessage(iap2::encodeCarPlayStartSession(session));
+                session_started = true;
+                break;
+            }
+            case StartSessionGate::Action::kGiveUp:
+                SPDLOG_ERROR("[iap2] the NCM link never got an address, so there is nothing to "
+                             "hand the phone -- CarPlayStartSession not sent; ending the session "
+                             "so the bring-up is retried");
+                start_abandoned = true;
+                break;
+        }
+    };
+
     link.setControlMessageHandler([&](const std::vector<uint8_t>& frame) {
         const auto message = iap2::csm::parseMessage(frame);
         if (!message)
@@ -296,25 +337,14 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                                     "CarPlayStartSession will not be sent (stage 6 not run)");
                         break;
                     }
-                    const auto endpoint = options.endpoint_provider();
-                    if (!endpoint)
+                    start_gate.request(std::chrono::steady_clock::now());
+                    service_start_session();
+                    if (start_gate.pending())
                     {
-                        SPDLOG_ERROR("[iap2] the NCM link is not up, so there is no address to "
-                                     "hand the phone -- CarPlayStartSession not sent");
-                        break;
+                        SPDLOG_WARN("[iap2] the NCM link has no address yet, so CarPlayStartSession "
+                                    "is held until it does (up to {} s)",
+                                    options.start_session_patience.count() / 1000);
                     }
-
-                    iap2::CarPlayStartSession session;
-                    session.ip_addresses = {endpoint->link_local_address};
-                    session.port = endpoint->port;
-                    session.device_identifier = endpoint->device_identifier;
-                    session.public_key = endpoint->public_key;
-
-                    SPDLOG_INFO("[iap2] sending CarPlayStartSession -> [{}]:{} id={}",
-                                endpoint->link_local_address, endpoint->port,
-                                endpoint->device_identifier);
-                    link.sendControlMessage(iap2::encodeCarPlayStartSession(session));
-                    session_started = true;
                 }
                 else
                 {
@@ -591,8 +621,9 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     SPDLOG_INFO("[iap2] sending IdentificationInformation");
     link.sendControlMessage(iap2::encodeIdentificationInformation(identification));
 
-    while (!stop.load() && !failed)
+    while (!stop.load() && !failed && !start_abandoned)
     {
+        service_start_session();
         if (!link.poll(200))
         {
             SPDLOG_ERROR("[iap2] link died (state {})", stateName(link.state()));
@@ -634,7 +665,8 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 identified, authenticated, session_started);
     link.close();
 
-    return identified && (authenticated || (options.allow_missing_mfi && !failed));
+    return !start_abandoned && identified &&
+           (authenticated || (options.allow_missing_mfi && !failed));
 }
 
 }  // namespace carplay
