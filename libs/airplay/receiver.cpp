@@ -276,6 +276,25 @@ void Receiver::setStatusHandler(StatusHandler handler)
     status_handler_ = std::move(handler);
 }
 
+void Receiver::setHandshakeFailedHandler(HandshakeFailedHandler handler)
+{
+    handshake_failed_handler_ = std::move(handler);
+}
+
+rtsp::Message Receiver::noteHandshake(rtsp::Message response, const char* stage)
+{
+    if (state_->pairing.failed() && !handshake_failure_reported_)
+    {
+        handshake_failure_reported_ = true;
+        SPDLOG_ERROR("[airplay] {} failed; the phone will not retry on this session", stage);
+        if (handshake_failed_handler_)
+        {
+            handshake_failed_handler_(stage);
+        }
+    }
+    return response;
+}
+
 void Receiver::setMicStatusHandler(MicStatusHandler handler)
 {
     state_->mic.setStatusHandler(std::move(handler));
@@ -691,15 +710,15 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
 
     if (request.uri == "/pair-setup")
     {
-        return state_->pairing.handlePairSetup(request);
+        return noteHandshake(state_->pairing.handlePairSetup(request), "pair-setup");
     }
     if (request.uri == "/pair-verify")
     {
-        return state_->pairing.handlePairVerify(request);
+        return noteHandshake(state_->pairing.handlePairVerify(request), "pair-verify");
     }
     if (request.uri == "/auth-setup")
     {
-        return state_->pairing.handleAuthSetup(request);
+        return noteHandshake(state_->pairing.handleAuthSetup(request), "auth-setup");
     }
     if (request.method == "GET" && request.uri == "/info")
     {

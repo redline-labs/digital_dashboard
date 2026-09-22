@@ -61,9 +61,15 @@ class Receiver
     // `requestUI` that is not the manufacturer button. Event-channel thread.
     using AppUiRequestHandler = std::function<void(const std::string& url)>;
 
+    // Called once, on the RTSP session thread, when /pair-setup, /pair-verify
+    // or /auth-setup is answered with an error. The phone will not try again
+    // on this session (see PairingSession::failed), so the owner ends it.
+    using HandshakeFailedHandler = std::function<void(const char* stage)>;
+
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
     void setStatusHandler(StatusHandler handler);
+    void setHandshakeFailedHandler(HandshakeFailedHandler handler);
     void setOemButtonHandler(OemButtonHandler handler);
     void setScreenOwnerHandler(ScreenOwnerHandler handler);
     void setAppUiRequestHandler(AppUiRequestHandler handler);
@@ -167,6 +173,9 @@ class Receiver
     // Dispatch for one parsed request. Returns the response to send.
     rtsp::Message handle(const rtsp::Message& request);
 
+    // Passes a handshake response through, reporting the first failure.
+    rtsp::Message noteHandshake(rtsp::Message response, const char* stage);
+
     rtsp::Message handleInfo(const rtsp::Message& request);
     rtsp::Message handleSetup(const rtsp::Message& request);
     // SETUP's two unrelated phases: the session itself (timing, event channel,
@@ -212,6 +221,9 @@ class Receiver
     VideoHandler video_handler_;
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
+    HandshakeFailedHandler handshake_failed_handler_;
+    // So a failure is reported once, not on every step the phone gives up on.
+    bool handshake_failure_reported_ = false;
     OemButtonHandler oem_button_handler_;
     ScreenOwnerHandler screen_owner_handler_;
     AppUiRequestHandler app_ui_request_handler_;

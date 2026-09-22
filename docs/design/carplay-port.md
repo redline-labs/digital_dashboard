@@ -1177,9 +1177,23 @@ M5/M6 exchange long-term Ed25519 identities under
 `Pair-Setup-Encrypt-Salt`/`-Info` with nonces `PS-Msg05`/`06`.
 
 `A` is occasionally 383 bytes, not 384. Roughly one run in 256 the phone strips
-a leading zero from its SRP public key. `srp::Server::verify()` re-pads from the
-BIGNUM so this is handled, but a 456-byte M3 body instead of 457 is the tell if
-a proof is ever rejected for no apparent reason.
+a leading zero from its SRP public key, and until 2026-09-21 that run failed
+at M3 with "the setup password is wrong". An earlier version of this paragraph
+said re-padding `A` from the BIGNUM handled it; it handled `u`, which SRP-6a
+does define over padded values, and broke the proofs, which the phone computes
+over `A` and `B` as MINIMAL big-endian numbers. corecrypto's `ccsrp.h` names
+that exception -- skip leading zeroes of A and B in M and HAMK only, "a hack
+to be compatible with AppleSRP" -- and pair_ap, the AirPlay 2 server with the
+interop record, does the same. LIVI's `srp.ts` pads everywhere and carries the
+bug. `srp.cpp` now hashes the minimal encodings into M1 and M2 and nothing
+else changed; `airplay_test_crypto` pins it with a vector whose `A` has a zero
+top byte, from a Python model that first reproduced the existing vector.
+
+The other half of that failure: after the rejection the phone closed the
+connection and did nothing else, and the iAP2 session sat there idle until the
+node was killed. A handshake error now ends the session
+(`Receiver::setHandshakeFailedHandler`, `PairingSession::failed()`) and counts
+as a failed bring-up, so the supervisor retries with its usual back-off.
 
 After pair-verify M4 the control channel is encrypted and stays that way: 2-byte
 little-endian length, ciphertext, 16-byte Poly1305 tag, the length doubling as

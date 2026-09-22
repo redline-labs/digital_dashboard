@@ -192,13 +192,23 @@ bool equalConstantTime(const Bytes& a, const Bytes& b)
     return a.size() == b.size() && !a.empty() && CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
-// M1 = H(H(N) XOR H(g) | H(I) | salt | PAD(A) | PAD(B) | K)
-Bytes computeM1(std::string_view username, const Bytes& salt, const Bytes& padded_a, const Bytes& padded_b,
+// M1 = H(H(N) XOR H(g) | H(I) | salt | A | B | K)
+//
+// A and B go in as their MINIMAL big-endian encodings, not padded to the
+// modulus like everywhere else. That is what the phone does: corecrypto's
+// ccsrp.h calls it "a hack to be compatible with AppleSRP" and applies it to
+// M and HAMK only (u stays H(PAD(A) | PAD(B))), and pair_ap, the AirPlay 2
+// pair-setup server with the interop record, hashes them the same way. With
+// padding, a public key whose top byte is zero -- one session in 256 -- gets
+// a proof the phone did not compute, and pair-setup M3 is rejected with the
+// "wrong password" error. Seen on 2026-09-21: the phone's A was 383 bytes.
+// LIVI's srp.ts pads here and carries that bug.
+Bytes computeM1(std::string_view username, const Bytes& salt, const Bytes& minimal_a, const Bytes& minimal_b,
                 const Bytes& session_key)
 {
     const Bytes identity(username.begin(), username.end());
     const Bytes h_identity = crypto::sha512({identity});
-    return crypto::sha512({group().h_xor, h_identity, salt, padded_a, padded_b, session_key});
+    return crypto::sha512({group().h_xor, h_identity, salt, minimal_a, minimal_b, session_key});
 }
 
 }  // namespace
@@ -361,7 +371,12 @@ VerifyResult Server::verify(const Bytes& client_a, const Bytes& client_m1) const
 
     // K = H(S) over the *minimal* encoding of S, as srp.ts does.
     const Bytes session_key = crypto::sha512({toBytes(S.get())});
-    const Bytes expected_m1 = computeM1(impl_->username, impl_->salt, padded_a, impl_->public_b, session_key);
+    // The proofs take A and B minimal too; see computeM1. A is re-encoded
+    // rather than taken as received so a client that pads on the wire, as ours
+    // does, still verifies.
+    const Bytes minimal_a = toBytes(A.get());
+    const Bytes minimal_b = toBytes(impl_->B.get());
+    const Bytes expected_m1 = computeM1(impl_->username, impl_->salt, minimal_a, minimal_b, session_key);
     if (session_key.size() != kHashBytes || expected_m1.size() != kHashBytes)
     {
         SPDLOG_ERROR("[airplay] srp: proof hashing failed");
@@ -375,8 +390,8 @@ VerifyResult Server::verify(const Bytes& client_a, const Bytes& client_m1) const
         return result;
     }
 
-    // M2 = H(PAD(A) | M1 | K)
-    result.server_proof = crypto::sha512({padded_a, client_m1, session_key});
+    // M2 = H(A | M1 | K), A minimal as in M1
+    result.server_proof = crypto::sha512({minimal_a, client_m1, session_key});
     if (result.server_proof.size() != kHashBytes)
     {
         SPDLOG_ERROR("[airplay] srp: M2 hashing failed");
@@ -505,7 +520,8 @@ Client::Proof Client::computeProof(const Bytes& salt, const Bytes& server_b)
     }
 
     const Bytes session_key = crypto::sha512({toBytes(S.get())});
-    const Bytes m1 = computeM1(impl_->username, salt, impl_->public_a, padded_b, session_key);
+    const Bytes m1 =
+        computeM1(impl_->username, salt, toBytes(impl_->A.get()), toBytes(B.get()), session_key);
     if (session_key.size() != kHashBytes || m1.size() != kHashBytes)
     {
         SPDLOG_ERROR("[airplay] srp: client proof hashing failed");
@@ -529,7 +545,9 @@ bool Client::checkServerProof(const Bytes& server_m2) const
         return false;
     }
 
-    const Bytes expected = crypto::sha512({impl_->public_a, impl_->client_proof, impl_->session_key});
+    // M2 = H(A | M1 | K), A minimal as in M1
+    const Bytes expected =
+        crypto::sha512({toBytes(impl_->A.get()), impl_->client_proof, impl_->session_key});
     return equalConstantTime(expected, server_m2);
 }
 

@@ -84,6 +84,22 @@ struct PairingSession::State
     bool verified = false;
 
     bool paired = false;
+
+    // Set by every error return below. The phone does not retry a failed
+    // handshake within a session -- it closes the connection and waits -- so
+    // whoever owns the session has to end it for the retry to happen.
+    bool failed = false;
+
+    Bytes failure(uint8_t state, uint8_t error)
+    {
+        failed = true;
+        return tlvError(state, error);
+    }
+    rtsp::Message failure(rtsp::Message response)
+    {
+        failed = true;
+        return response;
+    }
 };
 
 PairingSession::PairingSession(Config config) :
@@ -100,6 +116,11 @@ PairingSession::~PairingSession() = default;
 bool PairingSession::paired() const
 {
     return state_->paired;
+}
+
+bool PairingSession::failed() const
+{
+    return state_->failed;
 }
 
 bool PairingSession::verified() const
@@ -157,7 +178,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] could not initialise SRP");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(2, kErrorAuthentication));
+                                          state_->failure(2, kErrorAuthentication));
             }
 
             const Bytes& salt = state_->srp_server->salt();
@@ -179,7 +200,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-setup M3 with no M1 in progress");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
             const Bytes* client_a = tlv8::find(items, kTlvPublicKey);
             const Bytes* client_m1 = tlv8::find(items, kTlvProof);
@@ -187,7 +208,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-setup M3 missing PublicKey or Proof");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
 
             const auto result = state_->srp_server->verify(*client_a, *client_m1);
@@ -197,7 +218,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
                              "wrong (currently '{}'). Override with AIRPLAY_SETUP_PASSWORD.",
                              setupPassword());
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
 
             state_->srp_session_key = result.session_key;
@@ -216,14 +237,14 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-setup M5 with no session key");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(6, kErrorAuthentication));
+                                          state_->failure(6, kErrorAuthentication));
             }
             const Bytes* encrypted = tlv8::find(items, kTlvEncryptedData);
             if (encrypted == nullptr)
             {
                 SPDLOG_ERROR("[airplay] pair-setup M5 missing EncryptedData");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(6, kErrorAuthentication));
+                                          state_->failure(6, kErrorAuthentication));
             }
 
             const Bytes session_key = crypto::hkdfSha512(
@@ -235,7 +256,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-setup M5 decryption failed");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(6, kErrorAuthentication));
+                                          state_->failure(6, kErrorAuthentication));
             }
 
             const auto inner = tlv8::decode(*plain);
@@ -285,7 +306,7 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
         default:
             SPDLOG_WARN("[airplay] unexpected pair-setup state {}", state);
             return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                      tlvError(static_cast<uint8_t>(state + 1),
+                                      state_->failure(static_cast<uint8_t>(state + 1),
                                                kErrorAuthentication));
     }
 }
@@ -309,7 +330,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-verify M1 missing or malformed PublicKey");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(2, kErrorAuthentication));
+                                          state_->failure(2, kErrorAuthentication));
             }
 
             state_->verify_ephemeral = crypto::x25519Generate();
@@ -320,7 +341,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-verify X25519 exchange failed");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(2, kErrorAuthentication));
+                                          state_->failure(2, kErrorAuthentication));
             }
 
             const Bytes session_key =
@@ -358,14 +379,14 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-verify M3 with no M1 in progress");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
             const Bytes* encrypted = tlv8::find(items, kTlvEncryptedData);
             if (encrypted == nullptr)
             {
                 SPDLOG_ERROR("[airplay] pair-verify M3 missing EncryptedData");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
 
             const auto plain = crypto::chachaOpen(state_->verify_session_key,
@@ -374,7 +395,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-verify M3 decryption failed");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
 
             const auto inner = tlv8::decode(*plain);
@@ -384,7 +405,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
             {
                 SPDLOG_ERROR("[airplay] pair-verify M3 inner TLV incomplete");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
 
             // Mirror image of what we signed in M2.
@@ -422,7 +443,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
                              "the {} key; refusing",
                              phone_id, stored ? "stored" : "session");
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                          tlvError(4, kErrorAuthentication));
+                                          state_->failure(4, kErrorAuthentication));
             }
             else
             {
@@ -445,7 +466,7 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
         default:
             SPDLOG_WARN("[airplay] unexpected pair-verify state {}", state);
             return rtsp::makeResponse(200, "OK", kTlvContentType,
-                                      tlvError(static_cast<uint8_t>(state + 1),
+                                      state_->failure(static_cast<uint8_t>(state + 1),
                                                kErrorAuthentication));
     }
 }
@@ -456,12 +477,12 @@ rtsp::Message PairingSession::handleAuthSetup(const rtsp::Message& request)
     if (request.body.size() != 33)
     {
         SPDLOG_ERROR("[airplay] auth-setup body is {} bytes, expected 33", request.body.size());
-        return rtsp::makeResponse(400, "Bad Request", "", {});
+        return state_->failure(rtsp::makeResponse(400, "Bad Request", "", {}));
     }
     if (!config_.mfi_certificate || !config_.mfi_sign)
     {
         SPDLOG_ERROR("[airplay] auth-setup needs the MFi coprocessor and none is wired up");
-        return rtsp::makeResponse(501, "Not Implemented", "", {});
+        return state_->failure(rtsp::makeResponse(501, "Not Implemented", "", {}));
     }
 
     const uint8_t mode = request.body[0];
@@ -475,14 +496,14 @@ rtsp::Message PairingSession::handleAuthSetup(const rtsp::Message& request)
     if (state_->auth_shared.empty())
     {
         SPDLOG_ERROR("[airplay] auth-setup X25519 exchange failed");
-        return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        return state_->failure(rtsp::makeResponse(500, "Internal Server Error", "", {}));
     }
 
     const Bytes certificate = config_.mfi_certificate();
     if (certificate.empty())
     {
         SPDLOG_ERROR("[airplay] auth-setup: coprocessor returned no certificate");
-        return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        return state_->failure(rtsp::makeResponse(500, "Internal Server Error", "", {}));
     }
 
     // The coprocessor signs a digest of our public key followed by theirs. The
@@ -501,7 +522,7 @@ rtsp::Message PairingSession::handleAuthSetup(const rtsp::Message& request)
     if (signature.empty())
     {
         SPDLOG_ERROR("[airplay] auth-setup: coprocessor did not sign the challenge");
-        return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        return state_->failure(rtsp::makeResponse(500, "Internal Server Error", "", {}));
     }
 
     // The signature travels encrypted under AES-128-CTR -- this is what
@@ -516,7 +537,7 @@ rtsp::Message PairingSession::handleAuthSetup(const rtsp::Message& request)
     if (key_material.size() < 16 || iv_material.size() < 16)
     {
         SPDLOG_ERROR("[airplay] auth-setup: AES key derivation failed");
-        return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        return state_->failure(rtsp::makeResponse(500, "Internal Server Error", "", {}));
     }
     const Bytes aes_key(key_material.begin(), key_material.begin() + 16);
     const Bytes aes_iv(iv_material.begin(), iv_material.begin() + 16);
@@ -525,7 +546,7 @@ rtsp::Message PairingSession::handleAuthSetup(const rtsp::Message& request)
     if (sealed_signature.empty())
     {
         SPDLOG_ERROR("[airplay] auth-setup: AES-CTR of the signature failed");
-        return rtsp::makeResponse(500, "Internal Server Error", "", {});
+        return state_->failure(rtsp::makeResponse(500, "Internal Server Error", "", {}));
     }
 
     // Layout: our public key, then the certificate and the encrypted signature,

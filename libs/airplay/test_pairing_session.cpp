@@ -215,6 +215,7 @@ int main()
         const auto phone = runPairSetup(session);
         expect(phone.has_value(), "pair-setup runs to completion");
         expect(session.paired(), "and the session reports itself paired");
+        expect(!session.failed(), "and nothing went wrong along the way");
         expect(!session.verified(), "but not yet verified -- that is pair-verify's job");
 
         if (phone)
@@ -331,6 +332,7 @@ int main()
                                          {kTlvProof, proof.client_proof}})));
         expectTlvError(m4, 4, "a wrong password");
         expect(!session.paired(), "and leaves the session unpaired");
+        expect(session.failed(), "and marks the session failed, so the owner ends it");
     }
 
     // Messages out of order, which is how a half-finished attempt shows up.

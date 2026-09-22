@@ -1712,6 +1712,12 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     const auto live = std::make_shared<LiveSession>(handover_config);
 
     std::unique_ptr<airplay::Receiver> receiver;
+    // A rejected pair-setup, pair-verify or auth-setup. The phone drops the
+    // connection and does nothing more on this session, and iAP2 alone keeps
+    // it up indefinitely, so the failure has to end the session for the
+    // supervisor's retry to happen -- and count as a failed bring-up so the
+    // retry backs off rather than hammering a phone that will keep refusing.
+    std::atomic<bool> handshake_failed{false};
     if (ok && options.max_stage >= 7)
     {
         receiver = startAirPlayReceiver(ctx, ncm, bridge, live);
@@ -1719,12 +1725,24 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         {
             ok = false;
         }
+        else
+        {
+            receiver->setHandshakeFailedHandler([&handshake_failed, &session_stop](const char*) {
+                handshake_failed.store(true);
+                session_stop.store(true);
+            });
+        }
     }
 
     // Stage 5. Last, though it is numbered first of the two: see runIap2Stage.
     if (ok && carkit && options.max_stage >= 5)
     {
         ok = runIap2Stage(ctx, *carkit, ncm, receiver.get(), bridge, session_stop);
+        if (handshake_failed.load())
+        {
+            SPDLOG_ERROR("[node] the AirPlay handshake failed; ending the session so it is retried");
+            ok = false;
+        }
     }
 
     // Hold the session open so the sockets above can be poked at from another

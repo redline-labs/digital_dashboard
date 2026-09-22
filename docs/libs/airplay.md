@@ -93,7 +93,10 @@ mode with the well-known password `3939` (overridable with
 with the long-term Ed25519 keys, `/auth-setup` MFiSAP. With the MFi callbacks
 empty, auth-setup answers `501` and the session stops. A protocol error goes
 back as a TLV error inside a `200`, because an RTSP error aborts the
-connection instead of letting the phone retry. Every failure here is silent on
+connection instead of letting the phone retry. A failed step is also
+sticky: the phone closes the connection and waits, so `PairingSession::failed()`
+turns true and the receiver reports it once through `setHandshakeFailedHandler`,
+for the owner to end the session. Every failure here is silent on
 the wire.
 
 On the wired path the phone re-runs pair-setup every session regardless of
@@ -186,7 +189,7 @@ the same primitives, and nothing opens a socket to real hardware.
 | --- | --- |
 | `airplay_test_screen_modes` | The `changeModes` and `requestUI` bodies decode to exactly the expected tree, and the owner parser answers "does not say" for every malformed `modesChanged`. The fixtures are synthetic until a captured body replaces them. |
 | `airplay_test_tlv8` | Round trips, an empty value, fragmentation at and past 255 bytes. |
-| `airplay_test_crypto` | Known answers from RFC 7748, RFC 8032, RFC 8439, SP 800-38A, FIPS 180-4 and RFC 5869; SRP-6a has no published vector, so its values came from an independent Python port of LIVI's `srp.ts`. |
+| `airplay_test_crypto` | Known answers from RFC 7748, RFC 8032, RFC 8439, SP 800-38A, FIPS 180-4 and RFC 5869; SRP-6a has no published vector, so its values came from an independent Python model of the exchange, plus a second vector whose public key `A` has a zero top byte: the proofs hash `A` and `B` minimal, as the phone does, where LIVI's `srp.ts` pads them. |
 | `airplay_test_channel_crypto` | Frame layout, both directions opening, several frames in one pass, and the counter desynchronisation that has no diagnostic on hardware. |
 | `airplay_test_pairing_session` | All three handshakes end to end against a real SRP client, X25519 and Ed25519. Cannot prove Apple's phone agrees; pins our reading so it stops moving. |
 | `airplay_test_pairing_store` | The identity survives a restart, the file is `0600`, an empty directory disables the store. |

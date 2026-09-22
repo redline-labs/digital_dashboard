@@ -470,6 +470,44 @@ void testSrp()
     expect(toHex(result.server_proof) == expected_m2, "SRP KAT server proof M2");
     expect(client.checkServerProof(result.server_proof), "SRP client accepts the server proof");
 
+    // A public key A whose top byte is zero. The phone hashes A and B into M1
+    // and M2 as minimal big-endian numbers (see computeM1 in srp.cpp), so this
+    // is the one case where padding them changes the proof; a client and server
+    // that both pad still agree with each other, which is why the round trips
+    // above cannot catch it. Expected values are from the same Python model as
+    // the vector above, with A and B minimal in the proofs, and the model was
+    // checked against that vector first. The private exponent was searched for
+    // (407 tries) to make A land below 2^3064.
+    {
+        const Bytes short_a_private = fromHex("a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdc056");
+        const std::string expected_short_m1 =
+            "3ab303a5df639c2722e63640bfc34cb1948e0cb2e99cc39123fa77efbbff131e"
+            "b1e443a072df599f443d55cfa546bc0924d4c1998b849ac9d40224848e488dbc";
+        const std::string expected_short_m2 =
+            "734bc6b30a5269ae4f57a7775ec769670898d27860aef8fd9c5c3368e7e48c96"
+            "969bf050d1e539ea26ced8ed2f360cde825e95327aef60ec92c5d039b2bed63b";
+
+        const Server short_server(airplay::srp::kPairSetupUsername, "3939", salt, private_b);
+        Client short_client(airplay::srp::kPairSetupUsername, "3939", short_a_private);
+        expect(short_client.valid() && short_client.publicA().size() == airplay::srp::kModulusBytes &&
+                   short_client.publicA()[0] == 0,
+               "SRP leading-zero vector really has a zero top byte");
+
+        const auto short_proof = short_client.computeProof(short_server.salt(), short_server.publicB());
+        expect(short_proof.ok && toHex(short_proof.client_proof) == expected_short_m1,
+               "SRP KAT M1 with a leading-zero A");
+
+        // As the phone sends it: 383 bytes, the leading zero stripped.
+        const Bytes wire_a(short_client.publicA().begin() + 1, short_client.publicA().end());
+        const auto short_result = short_server.verify(wire_a, short_proof.client_proof);
+        expect(short_result.ok, "SRP server accepts a 383-byte A off the wire");
+        expect(toHex(short_result.server_proof) == expected_short_m2, "SRP KAT M2 with a leading-zero A");
+        expect(short_server.verify(short_client.publicA(), short_proof.client_proof).ok,
+               "SRP server accepts the same A padded");
+        expect(short_client.checkServerProof(short_result.server_proof),
+               "SRP client accepts M2 with a leading-zero A");
+    }
+
     // Full random exchange, ten times, to shake out padding-dependent paths.
     bool all_ok = true;
     for (int i = 0; i < 10; ++i)

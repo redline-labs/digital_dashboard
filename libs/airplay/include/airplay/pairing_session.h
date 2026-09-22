@@ -79,6 +79,13 @@ class PairingSession
     // True once pair-setup M6 has been sent.
     bool paired() const;
 
+    // True once any step of the three handshakes was answered with an error.
+    // Sticky: the phone does not retry within a session, it drops the
+    // connection and waits for CarPlayStartSession again, so the session that
+    // owns this has to end for the retry to happen. Seen 2026-09-21: a rejected
+    // M3 left the iAP2 session up and idle until the node was killed.
+    bool failed() const;
+
     // True when pair-verify authenticated the phone against a key that was on
     // file *before* this session started, rather than one it handed over
     // moments earlier. This is the only form of the check that means anything.
