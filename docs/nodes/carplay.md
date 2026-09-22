@@ -150,6 +150,46 @@ the display geometry. The values worth setting rather than leaving:
 | `display.physical_width_mm` | CarPlay sizes text and touch targets from it |
 | `device_id` | give each unit its own if you run more than one |
 
+### Vendor cdc_ncm quirks we do not carry
+
+Off-the-shelf wireless-CarPlay dongles run a host-side `cdc_ncm` with three
+iPhone workarounds that mainline 6.18 does **not** have and that we have
+deliberately left out. None of them fires on the phones and iOS versions we
+have tested, so they are not bugs today. They are recorded here because they
+are the first places to look if a *different* iPhone or a future iOS breaks NCM
+bring-up in a way that does **not** look like the `0x2b` carrier problem above.
+
+1. **A longer settle delay after the data-interface switch.** Mainline waits
+   `usleep_range(10000, 20000)` (10–20 ms) before configuring the data
+   interface — the comment there blames a Sierra Wireless modem. Some iPhones
+   appear to want more: a couple hundred milliseconds, and the link raised on a
+   deferred timer rather than inline. This is a timing margin, not a correctness
+   fix. Symptom if we ever need it: NCM intermittently fails to come up on a
+   cold plug and a re-plug clears it.
+
+2. **Tolerating a malformed `iMACAddress`.** In `cdc_ncm_bind_common`, mainline
+   calls `usbnet_get_ethernet_addr(iMACAddress)` and, on *any* failure, does
+   `goto error2` — the entire NCM interface fails to bind, before our `0x2b`
+   handler ever runs. `usbnet_get_ethernet_addr` insists on a clean 12-character
+   hex MAC in the phone's string descriptor. The workaround is to skip the read
+   when the descriptor index is obviously bogus and synthesize an address
+   instead. Note that `ncm_discovery.cpp` decodes `iMACAddress` in userspace for
+   its own bring-up, but that is separate from the kernel bind that would
+   hard-fail here.
+
+3. **Rejecting a group/multicast MAC.** `usbnet_get_ethernet_addr` does no
+   `is_valid_ether_addr` / `is_multicast_ether_addr` check; it sets whatever it
+   reads. If a phone ever hands over a group address, it would be accepted
+   silently and break the link later, away from the obvious cause; the guard is
+   to reject it up front and fall back to a synthesized address.
+
+{: .note }
+Why a dongle would need (2) and (3) and we have not: a dongle's host-side
+`cdc_ncm` is the path a *wired* iPhone takes through its USB-A port, across many
+iPhone firmware revisions. Our head unit only ever hosts the phones we test,
+which hand over a well-formed unicast MAC. If we widen the set of supported
+phones, revisit (2) and (3) before (1).
+
 ## Running without hardware
 
 The node can publish a synthetic session on the real topics: an encoded H.264
