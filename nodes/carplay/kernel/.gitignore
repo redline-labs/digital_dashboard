@@ -1,0 +1,11 @@
+# fetched and built out of tree; see docs/nodes/carplay.md "The kernel patch"
+cdc_ncm.c
+cdc_ncm.c.orig
+*.ko
+*.o
+*.mod
+*.mod.c
+.*.cmd
+.module-common.o
+Module.symvers
+modules.order

@@ -80,6 +80,31 @@ The `chmod 600` is not optional: NetworkManager silently ignores a keyfile that
 is group- or world-readable. Without the profile it treats the phone as an
 ethernet port, fails to get IPv4, and takes the IPv6 link-local down with it.
 
+### The kernel patch
+
+A phone on iOS 27 or later needs `nodes/carplay/kernel/cdc_ncm-apple-ios27-link.patch`
+in the kernel's `cdc_ncm` driver, or the NCM interface stays `NO-CARRIER` for
+good and no session ever starts. The phone stopped sending the CDC
+`NetworkConnection` notification the driver waits for; it sends an undefined
+one instead, and the patch treats that as the link coming up, which is what
+macOS does. Under iOS 26 the stock driver is enough. On a Yocto build the patch
+goes into the kernel recipe; on a development machine build it out of tree
+against the running kernel (the `cdc_ncm.c` must match the kernel's major
+version, so fetch it from the matching stable tag):
+
+```bash
+cd nodes/carplay/kernel
+curl -o cdc_ncm.c "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/drivers/net/usb/cdc_ncm.c?h=v$(uname -r | cut -d. -f1,2)"
+patch -p4 < cdc_ncm-apple-ios27-link.patch
+make
+sudo rmmod cdc_mbim cdc_ncm            # cdc_mbim holds a reference
+sudo insmod ./cdc_ncm.ko              # this boot only, or:
+sudo install -D -m 644 cdc_ncm.ko /lib/modules/$(uname -r)/updates/cdc_ncm.ko && sudo depmod -a
+```
+
+Expect `NCM: Apple link notification, state 0xffffffff` in `dmesg` and the
+`enx*` interface `LOWER_UP` within a second of the configuration switch.
+
 Then plug in an unlocked, trusted iPhone and start the node and the dashboard.
 
 ```bash
@@ -403,7 +428,7 @@ Most failures are silent, or look like a different layer's fault. In stage order
 | `[iap2]` warning about a zero-length boolean, and no session | this phone did not do it, but a zero-length `CarPlayAvailability` decodes as absent and the session is never requested; the one-line fix is in `csm::getBool()` |
 | No `enx*` interface | the NCM function was never bound; confirm configuration 6 and that nothing captured the device |
 | `has carrier but no IPv6 link-local`, or `its carrier cannot be read`; link flapping | the network profile is missing or unapplied; `nmcli device status` showing `connecting (getting IP configuration)` is the tell |
-| `has NO CARRIER`, then `CarPlayStartSession is held` | the phone has not brought its end of the NCM link up. Not fatal: iAP2 carries on and the session starts when the address appears. If it ends in `never got an address` after 30 s, the phone never raised carrier at all; the attempt is retried |
+| `has NO CARRIER`, then `CarPlayStartSession is held`, ending in `never got an address` after 30 s | the phone never raised the link. On iOS 27 this is the stock `cdc_ncm`: the phone no longer sends `NetworkConnection`, and the driver needs the patch under "The kernel patch" above. `dmesg` without `NCM: Apple link notification` after the configuration switch confirms the patch is not loaded |
 | Black video, no widget log | no `CarPlayVideo` arriving; check `inspect hz`, the keys in the dashboard config, zenoh |
 | `dropped N frame(s) waiting for a keyframe/config` persisting | the node is not requesting keyframes; expect `[node] video topic has subscriber(s)` then `a renderer connected; requesting a keyframe now` |
 | `first video frame decoded and rendered` but the screen is black | the picture is live; suspect widget geometry, not video. `CARPLAY_DUMP_RENDER=/path.png` on the dashboard saves the exact image blitted |

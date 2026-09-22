@@ -1020,10 +1020,36 @@ retries. The AirPlay listener binds that one address and cannot use the wildcard
 started from the same callback, ahead of the send. A phone that raises carrier
 unprompted, as the one verified on 2026-08-02 does, takes the old path unchanged.
 
-Not verified on hardware: no phone here has been seen withholding carrier, so
-the deferred path is unit-tested (`carplay_test_start_session_gate`) and
-otherwise unexercised. What makes a phone raise carrier is still unknown;
-neither this stack nor LIVI sends anything NCM-specific to provoke it.
+What makes a phone raise carrier turned out to be nothing on the host side. A
+phone on iOS 27 (verified 2026-09-21, `05ac:12a8` bcdDevice 17.01, on the
+Linux VM) never sends `NetworkConnection` at all: not at the configuration
+switch, not after identification, and not after a `CarPlayStartSession`
+carrying a pre-added link-local. What it sends instead is a notification no CDC
+specification defines, and nothing public documents it (the CDC 1.2 and NCM 1.0
+tables end at `0x2a`; the kernel's Apple NCM work only covers the RemoteXPC
+interfaces, which have no interrupt endpoint at all). Its meaning was
+established by claiming the two interfaces from userspace and toggling the
+data interface's alternate setting while reading the control interface's
+interrupt endpoint: every change produces one notification, code `0x2b`,
+`wIndex` 4 (the DATA interface, not the control one), `wLength` 10, payload
+`00 01` then a 32-bit field then four zero bytes. The field is `ffffffff`
+after alt 1 is selected and `00000000` after alt 0, so it is the link state,
+most likely a speed with all-ones meaning unbounded. It is Apple's replacement
+for the `ConnectionSpeedChange` plus `NetworkConnection` pair, and it arrives
+as 16 + 2 bytes because the interrupt endpoint's packet size is 16. Stock
+`cdc_ncm` logs it as unexpected at debug level and leaves carrier down, and
+`usbnet` submits no receive URBs without carrier, so the phone's NTBs are
+unobservable and every later stage is moot. macOS evidently understands it,
+which is why the same node works there.
+
+The fix is `nodes/carplay/kernel/cdc_ncm-apple-ios27-link.patch`: for an Apple
+device, that notification sets the link state. With it the phone dials port 7000
+within 75 ms of `CarPlayStartSession` and the session runs at the full frame
+rate, so the deferred path above is now exercised in reverse: the held send is
+never needed once the driver is right, and the userspace NCM bridge deleted in
+`ce55fd41` was not needed either. The gate stays, because a phone that raises
+carrier late is still a possibility and it costs nothing. iOS 26 phones send
+`NetworkConnection` within a second of the switch and never see the new path.
 
 When a transfer fails and the cause is not visible from the driver's own logs,
 look at the bus with usbmon:

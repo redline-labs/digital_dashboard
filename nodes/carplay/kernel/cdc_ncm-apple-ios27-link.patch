@@ -1,0 +1,33 @@
+--- a/drivers/net/usb/cdc_ncm.c
++++ b/drivers/net/usb/cdc_ncm.c
+@@ -1897,6 +1897,30 @@
+ 		break;
+ 
+ 	default:
++		/* An iPhone on iOS 27 never sends NetworkConnection. Whenever
++		 * the data interface's alternate setting changes it sends this
++		 * notification instead, which no CDC spec defines: code 0x2b,
++		 * wIndex the DATA interface, wLength 10. The payload is
++		 * {__le16 0x0100, __le32 state, __le32 0}: state is 0xffffffff
++		 * after alt 1 is selected and 0 after alt 0, so it is the link
++		 * state (probably a speed, with all-ones for "unbounded"). It
++		 * arrives as 16 + 2 bytes on a 16-byte endpoint; the tail is
++		 * dropped above by the length check. Without this the link
++		 * stays down for good. iPhone 05ac:12a8, bcdDevice 17.01.
++		 */
++		if (event->bNotificationType == 0x2b &&
++		    le16_to_cpu(dev->udev->descriptor.idVendor) == 0x05ac &&
++		    urb->actual_length >= sizeof(*event) + 6) {
++			const u8 *payload = (const u8 *)&event[1];
++			bool up = get_unaligned_le32(payload + 2) != 0;
++
++			dev_info(&dev->udev->dev,
++				 "NCM: Apple link notification, state 0x%08x\n",
++				 get_unaligned_le32(payload + 2));
++			if (netif_carrier_ok(dev->net) != up)
++				usbnet_link_change(dev, up, 0);
++			break;
++		}
+ 		dev_dbg(&dev->udev->dev,
+ 			"NCM: unexpected notification 0x%02x!\n",
+ 			event->bNotificationType);

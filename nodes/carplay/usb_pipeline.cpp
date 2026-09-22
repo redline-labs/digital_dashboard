@@ -900,8 +900,12 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
         switch (carrierOf(ifname_))
         {
             case Carrier::kDown:
+                // An iOS 27 phone never raises carrier with the stock cdc_ncm; the
+                // patch under nodes/carplay/kernel/ is what makes it. See the
+                // "Carrier" section of docs/design/carplay-port.md.
                 SPDLOG_WARN("[ncm] {} has NO CARRIER, so it has no IPv6 link-local yet: the phone "
-                            "has not brought its end of the link up. Carrying on -- "
+                            "has not brought its end of the link up. On iOS 27 it never will "
+                            "without the cdc_ncm patch in nodes/carplay/kernel/. Carrying on -- "
                             "CarPlayStartSession waits for the address.", ifname_);
                 break;
             case Carrier::kUp:
