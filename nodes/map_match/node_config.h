@@ -59,6 +59,9 @@ struct MatchConfig
     double transitionBetaM { 15.0 };
     double headingValidAboveMps { 1.5 };
 
+    // Mirrors MatcherConfig::penaltyBetaM; see matcher.h for what it weighs.
+    double penaltyBetaM { 15.0 };
+
     // How far ahead to build the path.
     std::uint32_t lookaheadM { 2000 };
 };

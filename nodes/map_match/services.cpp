@@ -24,6 +24,7 @@ MatcherConfig matcherConfigOf(const MatchConfig& config)
     out.defaultSigmaM = config.defaultSigmaM;
     out.transitionBetaM = config.transitionBetaM;
     out.headingValidAboveMps = config.headingValidAboveMps;
+    out.penaltyBetaM = config.penaltyBetaM;
     return out;
 }
 
