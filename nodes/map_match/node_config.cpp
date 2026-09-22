@@ -138,6 +138,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
             readNumber(node, "transition_beta_m", out.match.transitionBetaM, context, "match");
             readNumber(node, "heading_valid_above_mps", out.match.headingValidAboveMps, context,
                        "match");
+            readNumber(node, "penalty_beta_m", out.match.penaltyBetaM, context, "match");
             readNumber(node, "lookahead_m", out.match.lookaheadM, context, "match");
         }
     }

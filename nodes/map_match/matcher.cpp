@@ -107,7 +107,11 @@ MatchResult Matcher::update(const Fix& fix)
             !heading.has_value() ||
             road_graph::bearingDeltaDeg(*heading, match.bearingDeg) <= 90.0;
 
-        candidate.logProbability = logEmission(match.distanceM, sigma);
+        // Distance is the emission; the graph's penalty (heading, one-way,
+        // class) is the prior it ranked by, and dropping it here is what let
+        // two parallel carriageways tie and the sort pick either.
+        candidate.logProbability =
+            logEmission(match.distanceM, sigma) - match.penaltyM / mConfig.penaltyBetaM;
 
         if (!mBeam.empty())
         {
@@ -183,7 +187,9 @@ MatchResult Matcher::update(const Fix& fix)
         candidate.logProbability -= top;
     }
 
-    std::sort(next.begin(), next.end(), [](const Candidate& a, const Candidate& b) {
+    // Stable, so an exact tie keeps the order nearest() ranked them in rather
+    // than whatever the sort happened to leave first.
+    std::stable_sort(next.begin(), next.end(), [](const Candidate& a, const Candidate& b) {
         return a.logProbability > b.logProbability;
     });
     if (next.size() > mConfig.beamWidth)

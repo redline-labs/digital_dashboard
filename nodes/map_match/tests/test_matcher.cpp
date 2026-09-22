@@ -262,6 +262,24 @@ void test_heading_decides_between_parallel_roads()
     }
 
     {
+        // A metre nearer the southbound carriageway, still heading north. The
+        // position term now favours the wrong road; only the one-way penalty
+        // the graph ranked by can overrule it -- and it must, because a fix
+        // between two carriageways lands nearer the wrong one half the time.
+        map_match::Matcher matcher(*graph, {});
+        map_match::Fix nearer = fix;
+        nearer.lon = kLon + kStep + 110;  // ~1 m east, at this latitude
+        nearer.headingDeg = 0.0;
+        const auto result = matcher.update(nearer);
+        check(result.matched, "travelling north from nearer the southbound side matches");
+        if (result.matched)
+        {
+            check(graph->nameOf(graph->segments()[result.segment]) == "Northbound",
+                  "and the one-way penalty still picks the northbound carriageway");
+        }
+    }
+
+    {
         map_match::Matcher matcher(*graph, {});
         fix.headingDeg = 180.0;  // south
         const auto result = matcher.update(fix);

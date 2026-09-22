@@ -94,6 +94,14 @@ struct MatcherConfig
     // Below this, heading is noise: a stationary vehicle's course over ground
     // wanders through all 360 degrees and would re-match it every fix.
     double headingValidAboveMps { 1.5 };
+
+    // How much the graph's own ranking penalty (Match::penaltyM: road class,
+    // heading disagreement, wrong way down a one-way) costs, in the same
+    // shape as the transition term: penalty / beta is the exponent. Kept out
+    // of the Gaussian emission because that is the POSITION error, and an RTK
+    // fix would otherwise make a 3 m class preference worth more than the
+    // fix itself.
+    double penaltyBetaM { 15.0 };
 };
 
 class Matcher

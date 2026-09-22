@@ -31,6 +31,19 @@ constexpr Coord fromDegrees(double value)
     return static_cast<Coord>(value < 0 ? value * 1e7 - 0.5 : value * 1e7 + 0.5);
 }
 
+// `to - from` in degrees, computed in integer units FIRST. Written as
+// toDegrees(to) - toDegrees(from), GCC on AArch64 contracts the two multiplies
+// and the subtraction into a fused multiply-add, and the difference of two
+// EQUAL coordinates comes out as the rounding error of one product instead of
+// zero: bearingDeg() of a point against itself was 33 degrees, and due north
+// was 359.999999998. x86 does not contract by default, so it only showed on
+// the ARM builds. 64-bit so an antimeridian crossing cannot overflow.
+constexpr double deltaDegrees(Coord from, Coord to)
+{
+    return static_cast<double>(static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from)) *
+           kCoordScale;
+}
+
 // Metres between two points, on an equirectangular approximation about their
 // own latitude.
 //
@@ -42,8 +55,8 @@ inline double distanceM(Coord lat1, Coord lon1, Coord lat2, Coord lon2)
 {
     const double rad = std::numbers::pi / 180.0;
     const double meanLat = (toDegrees(lat1) + toDegrees(lat2)) * 0.5 * rad;
-    const double dLat = (toDegrees(lat2) - toDegrees(lat1)) * rad;
-    const double dLon = (toDegrees(lon2) - toDegrees(lon1)) * rad * std::cos(meanLat);
+    const double dLat = deltaDegrees(lat1, lat2) * rad;
+    const double dLon = deltaDegrees(lon1, lon2) * rad * std::cos(meanLat);
     return std::sqrt(dLat * dLat + dLon * dLon) * kEarthRadiusM;
 }
 
@@ -52,8 +65,8 @@ inline double bearingDeg(Coord lat1, Coord lon1, Coord lat2, Coord lon2)
 {
     const double rad = std::numbers::pi / 180.0;
     const double meanLat = (toDegrees(lat1) + toDegrees(lat2)) * 0.5 * rad;
-    const double north = (toDegrees(lat2) - toDegrees(lat1));
-    const double east = (toDegrees(lon2) - toDegrees(lon1)) * std::cos(meanLat);
+    const double north = deltaDegrees(lat1, lat2);
+    const double east = deltaDegrees(lon1, lon2) * std::cos(meanLat);
     double degrees = std::atan2(east, north) * 180.0 / std::numbers::pi;
     if (degrees < 0.0)
     {

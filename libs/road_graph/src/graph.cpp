@@ -515,6 +515,7 @@ std::vector<Match> Graph::nearest(Coord lat, Coord lon, double radiusM, std::siz
             }
         }
 
+        match.penaltyM = score - best;
         scored.push_back({ match, score });
     });
 

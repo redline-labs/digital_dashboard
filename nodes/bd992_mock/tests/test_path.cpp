@@ -39,6 +39,12 @@ void checkNear(double actual, double expected, double tolerance, const std::stri
     }
 }
 
+// Headings are circular: 359.99 is a degree from 0, not 360 away.
+void checkHeadingNear(double actual, double expected, double tolerance, const std::string& what)
+{
+    checkNear(road_graph::bearingDeltaDeg(actual, expected), 0.0, tolerance, what);
+}
+
 using bd992_mock::Path;
 
 // Irvine, the coordinate docs/nodes/map_server.md uses for everything in the SoCal archive.
@@ -332,8 +338,8 @@ void test_sampling_walks_along_the_path()
 
     // Due north, and still due north at the very end where there is no road
     // left to look along.
-    checkNear(middle.headingDeg, 0.0, 1.0, "heading along a northward straight is 0 degrees");
-    checkNear(end.headingDeg, 0.0, 1.0,
+    checkHeadingNear(middle.headingDeg, 0.0, 1.0, "heading along a northward straight is 0 degrees");
+    checkHeadingNear(end.headingDeg, 0.0, 1.0,
               "the last point keeps pointing along the road rather than defaulting to north");
 
     // Past the end of an open path, position clamps rather than running on.

@@ -400,6 +400,31 @@ void test_a_box_query_finds_what_is_in_it()
     std::filesystem::remove(path);
 }
 
+// Exact, not approximate: these are the cases where a bearing is used as a
+// symbol ("due north", "the same point") and a rounding residue changes the
+// answer. Written as toDegrees(b) - toDegrees(a), the compiler on AArch64
+// fused the products and the subtraction, and the same point against itself
+// came out as 33 degrees; x86 gave 0, so nothing noticed until the ARM build.
+void test_bearings_of_aligned_points_are_exact()
+{
+    // volatile: with literal inputs the compiler folds the whole bearing at
+    // compile time, exactly, and the test passes against the very code it is
+    // meant to catch. The bug is in the runtime arithmetic.
+    const volatile road_graph::Coord latIn = 336865966;
+    const volatile road_graph::Coord lonIn = -1178557874;
+    const road_graph::Coord lat = latIn;
+    const road_graph::Coord lon = lonIn;
+    check(road_graph::bearingDeg(lat, lon, lat + 450, lon) == 0.0, "due north is exactly 0");
+    check(road_graph::bearingDeg(lat + 450, lon, lat, lon) == 180.0, "due south is exactly 180");
+    check(road_graph::bearingDeg(lat, lon, lat, lon + 540) == 90.0, "due east is exactly 90");
+    check(road_graph::bearingDeg(lat, lon, lat, lon) == 0.0, "a point against itself is 0, not noise");
+    check(road_graph::distanceM(lat, lon, lat, lon) == 0.0, "and zero metres from itself");
+    // An antimeridian crossing must not overflow the integer difference.
+    const road_graph::Coord east = 1799999000;
+    const road_graph::Coord west = -1799999000;
+    check(road_graph::deltaDegrees(west, east) > 359.0, "the antimeridian difference is 360, not wrapped");
+}
+
 void test_a_large_graph_is_searchable()
 {
     // Enough segments that the packed tree is several levels deep, so a bug in
@@ -468,6 +493,7 @@ int main()
     test_an_unroutable_segment_is_never_a_match();
     test_a_bigger_road_wins_a_close_call();
     test_a_box_query_finds_what_is_in_it();
+    test_bearings_of_aligned_points_are_exact();
     test_a_large_graph_is_searchable();
 
     if (failures != 0)

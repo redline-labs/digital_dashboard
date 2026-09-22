@@ -73,6 +73,10 @@ match:
   # heading wanders through all 360 degrees, and using it would re-match the car
   # onto a different road every fix while it sits at a light.
   heading_valid_above_mps: 1.5
+  # How much the graph's ranking penalty -- road class, heading disagreement,
+  # wrong way down a one-way -- costs against the position error: penalty
+  # divided by this is the exponent, as for transition_beta_m.
+  penalty_beta_m: 15.0
 
   lookahead_m: 2000
 

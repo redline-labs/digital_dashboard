@@ -46,6 +46,13 @@ struct Match
     std::uint32_t offsetCm { 0 };
     // The segment's bearing at the match point, degrees from true north.
     double bearingDeg { 0.0 };
+    // What nearest() added to distanceM to rank this candidate, in metres:
+    // the road-class preference, heading disagreement, and the wrong way down
+    // a one-way road. Carried out so a consumer that re-scores candidates
+    // (the matcher's emission does) keeps that evidence rather than silently
+    // re-ranking on distance alone -- which put a northbound vehicle on the
+    // southbound carriageway whenever the two tied.
+    double penaltyM { 0.0 };
     // Where the match landed.
     Coord lat { 0 };
     Coord lon { 0 };

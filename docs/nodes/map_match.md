@@ -92,6 +92,7 @@ real `bd992_bridge`; two publishers on one key interleave and nothing is logged.
 | `match.default_sigma_m` | `8.0` | Used when the receiver reports nothing |
 | `match.transition_beta_m` | `15.0` | How much a detour costs: a `2*beta` detour is `e^-2` as likely |
 | `match.heading_valid_above_mps` | `1.5` | Below this speed the course over ground is ignored |
+| `match.penalty_beta_m` | `15.0` | How much the graph's ranking penalty (road class, heading disagreement, wrong way down a one-way) costs: `penalty / beta` is the exponent, like the transition term |
 | `match.lookahead_m` | `2000` | How far ahead the path is built |
 | `services.horizon_key` | `nodes/map_match/horizon` | Where the horizon goes, every `horizon_interval_ms` (100) |
 | `services.status_key` | `nodes/map_match/status` | Node status, every `status_interval_ms` (5000) |
