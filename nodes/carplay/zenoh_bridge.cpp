@@ -95,44 +95,68 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     nav_pub_(key_prefix + "/nav"),
     nowplaying_pub_(key_prefix + "/nowplaying"),
     call_pub_(key_prefix + "/call"),
-    ui_event_pub_(key_prefix + "/ui_event")
+    ui_event_pub_(key_prefix + "/ui_event"),
+    input_sub_(key_prefix + "/input",
+               [this](CarPlayInput::Reader reader)
+               {
+                   InputEvent ev;
+                   ev.kind = fromCapnp(reader.getKind());
+                   ev.x = reader.getX();
+                   ev.y = reader.getY();
+                   ev.code = reader.getCode();
+                   ev.value = reader.getValue();
+                   input_handler_(ev);
+               }),
+    mic_sub_(key_prefix + "/mic",
+             [this](CarPlayAudio::Reader reader)
+             {
+                 auto pcm = reader.getPcm();
+                 AudioChunk chunk;
+                 chunk.sample_rate_hz = reader.getSampleRateHz();
+                 chunk.channels = reader.getChannels();
+                 chunk.stream = fromCapnp(reader.getStreamType());
+                 chunk.pts_usec = reader.getPtsUsec();
+                 chunk.pcm = pcm.begin();
+                 chunk.len = pcm.size();
+                 mic_handler_(chunk);
+             }),
+    location_sub_(key_prefix + "/location",
+                  [this](CarPlayLocation::Reader reader)
+                  {
+                      LocationFix fix;
+                      fix.latitude_deg = reader.getLatitudeDeg();
+                      fix.longitude_deg = reader.getLongitudeDeg();
+                      fix.altitude_m = reader.getAltitudeM();
+                      fix.speed_knots = reader.getSpeedKnots();
+                      fix.course_deg = reader.getCourseDeg();
+                      fix.satellites = reader.getSatellites();
+                      fix.hdop = reader.getHdop();
+                      fix.utc_epoch_ms = reader.getUtcEpochMs();
+                      fix.valid = reader.getValid();
+                      location_handler_(fix);
+                  }),
+    visibility_sub_(key_prefix + "/visibility",
+                    [this](CarPlayVisibility::Reader reader) { visibility_handler_(reader.getVisible()); })
 {
+    // May fire right here, on this thread, if a renderer is already
+    // subscribed -- which is why no lock may be held around it.
+    video_pub_.onSubscriberPresenceChanged([this](bool present) {
+        video_subscribers_present_.store(present);
+        SPDLOG_INFO("[node] video topic {} subscriber(s)", present ? "has" : "has no");
+        video_subscriber_handler_(present);
+    });
+
     SPDLOG_INFO("[node] zenoh bridge publishing under '{}/'", prefix_);
 }
 
 void ZenohBridge::setVideoSubscriberHandler(VideoSubscriberHandler handler)
 {
-    std::lock_guard<std::mutex> lock(video_subscriber_mutex_);
-    video_subscriber_handler_ = std::move(handler);
-
-    if (video_subscriber_listener_declared_)
-    {
-        return;
-    }
-    // Declared once and never taken down -- zenoh has no undeclare for a
-    // background matching listener, and `this` outlives every session anyway.
-    video_subscriber_listener_declared_ = true;
-    video_pub_.onSubscriberPresenceChanged([this](bool present) {
-        VideoSubscriberHandler current;
-        {
-            std::lock_guard<std::mutex> inner(video_subscriber_mutex_);
-            video_subscribers_present_ = present;
-            current = video_subscriber_handler_;
-        }
-        SPDLOG_INFO("[node] video topic {} subscriber(s)", present ? "has" : "has no");
-        // Called outside the lock: the handler runs on a zenoh thread and has
-        // no business being serialised against setVideoSubscriberHandler.
-        if (current)
-        {
-            current(present);
-        }
-    });
+    video_subscriber_handler_.set(std::move(handler));
 }
 
 bool ZenohBridge::videoSubscribersPresent() const
 {
-    std::lock_guard<std::mutex> lock(video_subscriber_mutex_);
-    return video_subscribers_present_;
+    return video_subscribers_present_.load();
 }
 
 void ZenohBridge::publishVideo(const VideoFrame& frame)
@@ -282,97 +306,22 @@ void ZenohBridge::publishUiEvent(UiEventKind kind, const std::string& detail)
 
 void ZenohBridge::setVisibilityHandler(std::function<void(bool visible)> handler)
 {
-    {
-        std::lock_guard<std::mutex> lock(visibility_mutex_);
-        visibility_handler_ = std::move(handler);
-    }
-    if (visibility_sub_)
-    {
-        return;
-    }
-    visibility_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayVisibility>>(
-        prefix_ + "/visibility",
-        [this](CarPlayVisibility::Reader reader)
-        {
-            std::function<void(bool)> current;
-            {
-                std::lock_guard<std::mutex> lock(visibility_mutex_);
-                current = visibility_handler_;
-            }
-            if (current)
-            {
-                current(reader.getVisible());
-            }
-        });
+    visibility_handler_.set(std::move(handler));
 }
 
 void ZenohBridge::setInputHandler(std::function<void(const InputEvent&)> handler)
 {
-    input_handler_ = std::move(handler);
-    input_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayInput>>(
-        prefix_ + "/input",
-        [this](CarPlayInput::Reader reader)
-        {
-            if (!input_handler_)
-            {
-                return;
-            }
-            InputEvent ev;
-            ev.kind = fromCapnp(reader.getKind());
-            ev.x = reader.getX();
-            ev.y = reader.getY();
-            ev.code = reader.getCode();
-            ev.value = reader.getValue();
-            input_handler_(ev);
-        });
+    input_handler_.set(std::move(handler));
 }
 
 void ZenohBridge::setMicHandler(std::function<void(const AudioChunk&)> handler)
 {
-    mic_handler_ = std::move(handler);
-    mic_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayAudio>>(
-        prefix_ + "/mic",
-        [this](CarPlayAudio::Reader reader)
-        {
-            if (!mic_handler_)
-            {
-                return;
-            }
-            auto pcm = reader.getPcm();
-            AudioChunk chunk;
-            chunk.sample_rate_hz = reader.getSampleRateHz();
-            chunk.channels = reader.getChannels();
-            chunk.stream = fromCapnp(reader.getStreamType());
-            chunk.pts_usec = reader.getPtsUsec();
-            chunk.pcm = pcm.begin();
-            chunk.len = pcm.size();
-            mic_handler_(chunk);
-        });
+    mic_handler_.set(std::move(handler));
 }
 
 void ZenohBridge::setLocationHandler(std::function<void(const LocationFix&)> handler)
 {
-    location_handler_ = std::move(handler);
-    location_sub_ = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayLocation>>(
-        prefix_ + "/location",
-        [this](CarPlayLocation::Reader reader)
-        {
-            if (!location_handler_)
-            {
-                return;
-            }
-            LocationFix fix;
-            fix.latitude_deg = reader.getLatitudeDeg();
-            fix.longitude_deg = reader.getLongitudeDeg();
-            fix.altitude_m = reader.getAltitudeM();
-            fix.speed_knots = reader.getSpeedKnots();
-            fix.course_deg = reader.getCourseDeg();
-            fix.satellites = reader.getSatellites();
-            fix.hdop = reader.getHdop();
-            fix.utc_epoch_ms = reader.getUtcEpochMs();
-            fix.valid = reader.getValid();
-            location_handler_(fix);
-        });
+    location_handler_.set(std::move(handler));
 }
 
 }  // namespace carplay

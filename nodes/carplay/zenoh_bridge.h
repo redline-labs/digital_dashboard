@@ -6,6 +6,7 @@
 #ifndef CARPLAY_ZENOH_BRIDGE_H_
 #define CARPLAY_ZENOH_BRIDGE_H_
 
+#include "handler_slot.h"
 #include "location_fix.h"
 
 #include "pub_sub/zenoh_publisher.h"
@@ -21,6 +22,7 @@
 #include "carplay_location.capnp.h"
 #include "carplay_ui.capnp.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -206,9 +208,6 @@ class ZenohBridge
     // periodic keyframe path still covers that case.
     //
     // Runs on a zenoh thread, so the handler must not block.
-    // Detachable like the inbound handlers below, and for the same reason: the
-    // bridge outlives any one session, so a handler capturing session-scoped
-    // state has to be able to let go. Pass nullptr at teardown.
     using VideoSubscriberHandler = std::function<void(bool present)>;
     void setVideoSubscriberHandler(VideoSubscriberHandler handler);
 
@@ -225,29 +224,37 @@ class ZenohBridge
     void publishUiEvent(UiEventKind kind, const std::string& detail = {});
 
     // Dashboard -> driver. Callbacks fire on zenoh subscriber threads.
+    //
+    // Every set*Handler() here, and setVideoSubscriberHandler() above, can be
+    // passed nullptr: the bridge outlives any one session, so a handler that
+    // captures session state has to let go at teardown. Once the setter
+    // returns the old handler is not running and will not be called again
+    // (see HandlerSlot), so what it captured can be destroyed. A handler must
+    // not call its own setter.
     void setInputHandler(std::function<void(const InputEvent&)> handler);
     void setMicHandler(std::function<void(const AudioChunk&)> handler);
     // A GPS source publishes fixes on <prefix>/location; the latest is cached
     // and read via latestLocation() from the iAP2 thread.
     void setLocationHandler(std::function<void(const LocationFix&)> handler);
     // Whether the dashboard's CarPlay widget is on screen, from
-    // <prefix>/visibility. Subscribed once, on first use; pass nullptr to detach.
+    // <prefix>/visibility.
     void setVisibilityHandler(std::function<void(bool visible)> handler);
 
   private:
     std::string prefix_;
 
+    // Every handler a zenoh thread calls. Declared before the publishers and
+    // subscribers that call into them, so those are destroyed first and no
+    // callback can outlive its slot.
+    HandlerSlot<bool> video_subscriber_handler_;
+    HandlerSlot<const InputEvent&> input_handler_;
+    HandlerSlot<const AudioChunk&> mic_handler_;
+    HandlerSlot<const LocationFix&> location_handler_;
+    HandlerSlot<bool> visibility_handler_;
+    std::atomic<bool> video_subscribers_present_{false};
+
     std::mutex video_mutex_;
     pub_sub::ZenohPublisher<CarPlayVideo> video_pub_;
-
-    // Guards the handler and the last reported state. The zenoh matching
-    // listener cannot be undeclared once made, so it is declared once and
-    // dispatches through whatever handler is installed at the time -- which is
-    // what makes detaching possible at all.
-    mutable std::mutex video_subscriber_mutex_;
-    VideoSubscriberHandler video_subscriber_handler_;
-    bool video_subscribers_present_ = false;
-    bool video_subscriber_listener_declared_ = false;
 
     std::mutex audio_mutex_;
     pub_sub::ZenohPublisher<CarPlayAudio> audio_pub_;
@@ -260,18 +267,14 @@ class ZenohBridge
     pub_sub::ZenohPublisher<CarPlayCall> call_pub_;
     pub_sub::ZenohPublisher<CarPlayUiEvent> ui_event_pub_;
 
-    std::function<void(const InputEvent&)> input_handler_;
-    std::function<void(const AudioChunk&)> mic_handler_;
-    std::function<void(const LocationFix&)> location_handler_;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayInput>> input_sub_;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayAudio>> mic_sub_;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayLocation>> location_sub_;
-
-    // Guarded, unlike the handlers above: this one is swapped while its
-    // subscription is live, rather than by replacing the subscription.
-    std::mutex visibility_mutex_;
-    std::function<void(bool)> visibility_handler_;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayVisibility>> visibility_sub_;
+    // Declared once, in the constructor, and dispatched through the slots
+    // above. Declaring from a setter instead is what deadlocked: a matching
+    // listener fires synchronously at declare time when a subscriber already
+    // exists, and the setter held the lock that callback takes.
+    pub_sub::ZenohTypedSubscriber<CarPlayInput> input_sub_;
+    pub_sub::ZenohTypedSubscriber<CarPlayAudio> mic_sub_;
+    pub_sub::ZenohTypedSubscriber<CarPlayLocation> location_sub_;
+    pub_sub::ZenohTypedSubscriber<CarPlayVisibility> visibility_sub_;
 
     uint32_t video_seq_ = 0;
 };

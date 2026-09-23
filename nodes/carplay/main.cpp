@@ -161,8 +161,6 @@ int main(int argc, char** argv)
                             visible ? "shows" : "hid", visible ? "untake" : "take");
             }
         });
-        // The bridge logs the edge itself; installing a handler is what arms it.
-        bridge.setVideoSubscriberHandler([](bool) {});
 
         const bool ok = carplay::runSimulation(bridge, g_stop,
                                                args["sim-width"].as<int>(),

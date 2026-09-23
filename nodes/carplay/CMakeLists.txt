@@ -19,9 +19,19 @@ target_link_libraries(carplay_node_config
 # The whole node builds on every platform, and nothing here is conditional: the
 # bring-up pipeline is compiled and linked on a developer's macOS box too, which
 # is the only way a refactor there gets caught before it reaches hardware.
+# The zenoh side of the node, alone, so a test can drive it on a real session.
+add_library(carplay_zenoh_bridge STATIC zenoh_bridge.cpp)
+target_include_directories(carplay_zenoh_bridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(carplay_zenoh_bridge
+    PUBLIC
+        schemas
+        zenoh_pub_sub
+    PRIVATE
+        spdlog::spdlog
+)
+
 add_executable(carplay
     main.cpp
-    zenoh_bridge.cpp
     simulate.cpp
     usb_pipeline.cpp
     screen_handover.cpp
@@ -41,6 +51,7 @@ target_link_libraries(carplay PRIVATE
     core
     node_health
     carplay_node_config
+    carplay_zenoh_bridge
     helpers_ffmpeg
     spdlog::spdlog
     cxxopts::cxxopts
@@ -80,6 +91,15 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 # When CarPlayStartSession goes out, given an NCM address that may turn up late.
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
+
+# Detaching a bridge handler is a barrier: no call runs after set(nullptr).
+add_executable(carplay_test_handler_slot test_handler_slot.cpp)
+add_project_test(TARGET carplay_test_handler_slot LABELS carplay unit)
+
+# The bridge on a real session, with a renderer subscribed before it starts.
+add_executable(carplay_test_zenoh_bridge test_zenoh_bridge.cpp)
+target_link_libraries(carplay_test_zenoh_bridge PRIVATE carplay_zenoh_bridge spdlog::spdlog)
+add_project_test(TARGET carplay_test_zenoh_bridge LABELS carplay net)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET carplay COMPONENT nodes)
