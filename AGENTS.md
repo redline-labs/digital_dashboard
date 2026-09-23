@@ -221,6 +221,28 @@ discovery seeing only live traffic, and what `accepted: false` and
   RE-SENDING those entries. Backwards, it switches off somebody else's data
   silently. The opposite of how the BD992's APPFILE works, and the reason
   `libs/mti610/output_config.h` is free functions over two lists.
+- **A marginalised keyframe leaves a prior frozen where it was linearised.**
+  `factor_graph::LinearPrior` keeps the first-estimate Jacobians; relinearising
+  it lets the smoother invent information about directions it never observed,
+  and the covariance goes confidently wrong. Variables stamped `kStatic` (the
+  lever arm, the boresight) are never marginalised -- they would otherwise be
+  frozen at whatever the first window thought. The sparse LDLT is `compute()`d
+  every iteration, not `factorize()`d on a cached pattern: the pattern changes
+  when a keyframe goes, and a stale one read out of bounds.
+- **Course is not heading.** The car slides, so velocity direction says nothing
+  about where the body points. The estimator initialises yaw from the
+  dual-antenna baseline only and waits without one; never add a
+  course-over-ground fallback. Sideslip is `atan2(v_y, v_x)` in SAE J670 FRD
+  at the configured reference point, positive right.
+- **The IMU and GNSS arrival clocks differ by a latency floor, not by zero.**
+  `imu.time_offset_s` is that difference, a calibration; wrong, it shows as a
+  position error proportional to speed with every test on a stationary car
+  passing. `estimator_sim` prints the value its recording needs. PPS/SyncIn
+  replaces it later behind the same `TimeMapper`.
+- **One csym factor per translation unit.** Tracing a residual is constant
+  evaluation and the costliest thing in the build; one per TU keeps it
+  parallel and each under the constexpr limits on its own.
+  `libs/vehicle_estimator/src/factors/` is the shape.
 - **The MOTOTRBO handshake is shaped by five defects a capture could not
   show.** `libs/xpr`'s session sends a 12-byte CONN_REQUEST, reads its assigned
   address from CONN_REPLY+2, advances a rolling flags counter on every data
@@ -398,7 +420,11 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     mbtiles (the map archive) + mvt (vector tiles) -- docs/nodes/map_server.md,
                     protowire (protobuf reader) + osm (PBF) + map_rules
                     (tag -> classification, ONE table) + road_graph (routable
-                    graph, contraction hierarchy) -- docs/tools/map_build.md
+                    graph, contraction hierarchy) -- docs/tools/map_build.md,
+                    csym (constexpr symbolic Jacobians) + geodesy + wmm
+                    (WMM-HR, parsed at compile time) + factor_graph (fixed-lag
+                    and batch smoothers) + imu_preint + vehicle_estimator (the
+                    estimation problem, no bus) -- docs/design/state-estimation.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay
@@ -409,6 +435,9 @@ configs/dashboard/  runtime YAML layouts
 configs/scope/      runtime YAML workspaces
 tools/              WORKSTATION ONLY, never shipped: map_build (OSM PBF in,
                     tiles + road graph + routing overlay out -- docs/tools/map_build.md)
+                    estimator_sim + estimator_offline (simulated drives, and
+                    fixed-lag vs whole-drive estimates over a bag), csym_oracle
+                    (SymForce reference vectors, not a build dependency)
                     and mcp_dashboard (the MCP server, Python, uv)
 docs/               the public site, one section per audience -- see
                     docs/developing/writing-docs.md before adding a page

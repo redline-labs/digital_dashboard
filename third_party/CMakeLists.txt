@@ -42,6 +42,10 @@ include(sqlite3.cmake)
 # why this is not hand-rolled.
 include(earcut.cmake)
 
+# Linear algebra for the state estimator's factor graph. Header-only; see
+# eigen.cmake for why it is a SYSTEM include when earcut is not.
+include(eigen.cmake)
+
 # The web console's HTTP server. Header-only; see the file for why it is not
 # a SYSTEM include and where the warning suppression actually lives.
 include(cpp-httplib.cmake)

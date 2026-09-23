@@ -1,0 +1,132 @@
+# The state estimator against the truth it was simulated from.
+#
+#   ./build/tools/estimator_sim/estimator_sim --out /tmp/skidpad --scenario skidpad --outage 25:30
+#   ./build/tools/estimator_offline/estimator_offline --in /tmp/skidpad --out /tmp/skidpad_est --time-offset 0.028
+#   ./build/apps/scope/scope --config configs/scope/estimator.yaml --bag /tmp/skidpad_est
+#
+# (estimator_sim prints the --time-offset its recording needs.)
+#
+# Three traces per panel: sim/truth, estimator/fls (the fixed-lag estimate at
+# IMU rate -- what the car would have seen) and estimator/batch (the whole
+# drive solved at once, one point per GNSS keyframe). Across a GNSS outage
+# batch draws a straight line: it has no keyframes there, the FLS does not stop.
+# On a real drive there is no sim/truth and those traces stay empty.
+#
+# `dock_state` is empty on purpose, so this file is not tied to a Qt version.
+
+name: Estimator
+history_seconds: 300
+window_seconds: 30
+render_rate_hz: 30
+max_capture_bytes: 1073741824
+max_capture_seconds: 1800
+panels:
+  - id: slip
+    type: time_series
+    config:
+      title: Sideslip (deg)
+      follow_time_base: true
+      window_seconds: 30
+      autoscale_y: true
+      y_min: 0
+      y_max: 100
+      show_grid: true
+      show_legend: true
+      traces:
+        - zenoh_key: sim/truth
+          schema_type: VehicleState
+          value_expression: sideslipDeg
+          label: truth
+          color: "#4FC3F7"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/fls
+          schema_type: VehicleState
+          value_expression: sideslipDeg
+          label: fixed-lag
+          color: "#FFB74D"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/batch
+          schema_type: VehicleState
+          value_expression: sideslipDeg
+          label: batch
+          color: "#81C784"
+          units: ""
+          right_axis: false
+          display: automatic
+  - id: speed
+    type: time_series
+    config:
+      title: Speed (m/s)
+      follow_time_base: true
+      window_seconds: 30
+      autoscale_y: true
+      y_min: 0
+      y_max: 100
+      show_grid: true
+      show_legend: true
+      traces:
+        - zenoh_key: sim/truth
+          schema_type: VehicleState
+          value_expression: speedMps
+          label: truth
+          color: "#4FC3F7"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/fls
+          schema_type: VehicleState
+          value_expression: speedMps
+          label: fixed-lag
+          color: "#FFB74D"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/batch
+          schema_type: VehicleState
+          value_expression: speedMps
+          label: batch
+          color: "#81C784"
+          units: ""
+          right_axis: false
+          display: automatic
+  - id: yaw
+    type: time_series
+    config:
+      title: Yaw (deg)
+      follow_time_base: true
+      window_seconds: 30
+      autoscale_y: true
+      y_min: 0
+      y_max: 100
+      show_grid: true
+      show_legend: true
+      traces:
+        - zenoh_key: sim/truth
+          schema_type: VehicleState
+          value_expression: yawDeg
+          label: truth
+          color: "#4FC3F7"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/fls
+          schema_type: VehicleState
+          value_expression: yawDeg
+          label: fixed-lag
+          color: "#FFB74D"
+          units: ""
+          right_axis: false
+          display: automatic
+        - zenoh_key: estimator/batch
+          schema_type: VehicleState
+          value_expression: yawDeg
+          label: batch
+          color: "#81C784"
+          units: ""
+          right_axis: false
+          display: automatic
+dock_state: ""

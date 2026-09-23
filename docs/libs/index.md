@@ -79,3 +79,14 @@ Every library is listed; the ones without a page yet say so.
 | `map_render` | `map_render` | Vector tiles to pixels through QRhi against an offscreen texture; labels, tile cache. | [map_render](map_render.html) |
 | `map_surface` | `map_surface` | The same map pass drawn straight into a `QRhiWidget`. | [map_surface](map_surface.html) |
 | `map_controls` | `map_controls` | The floating buttons both map surfaces overlay on their maps. | [map_controls](map_controls.html) |
+
+## State estimation
+
+| Library | Target | What it is | Page |
+|---|---|---|---|
+| `csym` | `csym` | Compile-time symbolic differentiation: a residual lambda traced, differentiated and lowered to straight-line code with its Jacobian, `JᵀJ` and `Jᵀr`. Header-only. | [csym](csym.html) |
+| `geodesy` | `geodesy` | The WGS 84 ellipsoid: geodetic↔ECEF (Vermeille), the NED frame, radii, normal gravity and earth rate, templated so csym can differentiate through it. | [geodesy](geodesy.html) |
+| `wmm` | `wmm`, `wmm_hr2025` | The World Magnetic Model: a compile-time `.COF` parser and field synthesis, with WMM-HR 2025 embedded and parsed during the build. | [wmm](wmm.html) |
+| `factor_graph` | `factor_graph` | Nonlinear least squares on csym residuals: a fixed-lag smoother with frozen marginal priors, and a batch smoother that is RTS for linear models. | [factor_graph](factor_graph.html) |
+| `imu_preint` | `imu_preint` | IMU preintegration from strapdown dq/dv in ECEF with earth rate; the IMU and bias-walk factors, the MTi sample sequencer, a truth simulator. | [imu_preint](imu_preint.html) |
+| `vehicle_estimator` | `vehicle_estimator` | MTi and dual-antenna GNSS fused into position, attitude, velocity, acceleration and sideslip, with no bus types; the whole-drive smoother; `vehicle_estimator_sim`. | [vehicle_estimator](vehicle_estimator.html) |

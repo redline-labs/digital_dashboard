@@ -18,3 +18,9 @@ add_subdirectory(rauc_stub)
 # A service that answers, so the console's /api/call path is developable
 # without hardware behind it.
 add_subdirectory(fake_service)
+
+# The state estimator's workstation side: a simulated drive recorded as a bag,
+# and the fixed-lag and whole-drive estimates over any bag. After nodes/,
+# whose state_estimator pipeline both reuse.
+add_subdirectory(estimator_sim)
+add_subdirectory(estimator_offline)

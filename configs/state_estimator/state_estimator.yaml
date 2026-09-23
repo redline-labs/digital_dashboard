@@ -1,0 +1,61 @@
+# Vehicle state estimator: the MTi-610 and the BD992 fused into position,
+# attitude, velocity, acceleration and sideslip.
+#
+# `state_estimator --check --config <this file>` validates it.
+#
+# EVERY NUMBER UNDER `vehicle:` BECOMES A SIDESLIP ERROR IF IT IS WRONG, and a
+# wrong sideslip angle looks exactly like a right one. Measure them. The lever
+# arm and the antenna boresight are refined while driving (see the status
+# topic), so a centimetre or a degree off is fine; the IMU's mounting rotation
+# and the reference point are not estimated at all and must be right.
+
+inputs:
+  imu_prefix: nodes/mti610/mtdata2   # needs delta_q and delta_v enabled
+  gnss_prefix: nodes/bd992/gsof      # needs 1, 2, 8, 12, 27, 38
+
+outputs:
+  state_key: nodes/state_estimator/state
+  status_key: nodes/state_estimator/status
+  state_decimation: 1                # 1: every IMU sample (100 Hz)
+
+vehicle:
+  # The IMU's orientation in the body frame (x forward, y right, z down), as
+  # roll, pitch, yaw in degrees. An MTi mounted label-up with x forward is
+  # its z axis up, i.e. a half turn about x.
+  imu_to_body_rpy_deg: [180.0, 0.0, 0.0]
+  # Where to report: the CG, or the rear axle. IMU frame, metres.
+  reference_point_m: [0.0, 0.0, 0.0]
+  # IMU origin to the primary antenna's phase centre, IMU frame, metres.
+  lever_arm_m: [0.0, 0.0, 1.2]
+  lever_arm_sigma_m: 0.02
+  # IMU origin to the secondary antenna. Only its direction from the primary
+  # matters: the nominal baseline the boresight is estimated around.
+  antenna2_lever_arm_m: [-1.2, 0.0, 1.2]
+  boresight_sigma_deg: 1.0
+
+imu:
+  # Which body frame the MTi expresses delta_v in. `end` follows the SDI
+  # equations in Xsens' reference manual; NOT YET CONFIRMED ON A DEVICE.
+  dv_frame: end
+  gyro_noise_density_dps: 0.007      # MTi-610 datasheet
+  accel_noise_density_mps2: 0.00059  # 60 ug/sqrt(Hz)
+  gyro_bias_walk: 2.0e-5             # rad/s/sqrt(s)
+  accel_bias_walk: 2.0e-4            # m/s^2/sqrt(s)
+  # GNSS latency floor minus IMU latency floor. Arrival-time alignment cannot
+  # see it; until the two are wired to a common PPS, calibrate it here.
+  time_offset_s: 0.0
+
+gnss:
+  burst_ms: 15
+  velocity_sigma_horizontal: 0.03
+  velocity_sigma_vertical: 0.06
+  default_sigma_horizontal: 2.0      # used when no fresh GSOF 12
+  default_sigma_vertical: 4.0
+
+smoother:
+  lag_s: 3.0
+  max_iterations: 8
+  time_budget_ms: 40
+
+output:
+  sideslip_min_speed: 2.0

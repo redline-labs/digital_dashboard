@@ -57,6 +57,24 @@ add_subdirectory(xbus)
 # an Xsens MTi-610. After `xbus`, which it links; nothing in `xbus` may depend
 # on this. The tree's only termios code lives here.
 add_subdirectory(mti610)
+# State estimation. csym first: compile-time symbolic differentiation, the
+# thing every factor's Jacobian comes from. Depends on nothing; the rest of the
+# estimation stack follows it.
+add_subdirectory(csym)
+# The WGS 84 ellipsoid and its normal gravity. Written over csym's scalar so a
+# factor can differentiate through it, hence after csym.
+add_subdirectory(geodesy)
+# The World Magnetic Model, parsed at compile time. On geodesy's ellipsoid.
+add_subdirectory(wmm)
+# The factor graph and the fixed-lag and batch smoothers. After csym, whose
+# residuals it optimises; independent of what the variables mean.
+add_subdirectory(factor_graph)
+# IMU preintegration and its factors. After factor_graph, whose factors it
+# builds, and geodesy, whose gravity it uses.
+add_subdirectory(imu_preint)
+# The vehicle state estimator and its driving simulator. After everything
+# above it in the estimation stack.
+add_subdirectory(vehicle_estimator)
 # A display module's record from the rootfs, and the sysfs backlight, IIO light
 # and hwmon temperature devices it names. File I/O only; nodes/backlight puts it
 # on the bus.

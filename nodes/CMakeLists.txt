@@ -34,6 +34,10 @@ add_subdirectory(map_server)
 # directly rather than asking map_server -- a matcher makes dozens of lookups
 # per fix, and a read-only mmap is shareable between processes.
 add_subdirectory(map_match)
+
+# The vehicle state estimator: the MTi and the BD992 fused into position,
+# attitude, velocity, acceleration and sideslip.
+add_subdirectory(state_estimator)
 # The board's web console: system info, node health, service calls and RAUC
 # reflash over HTTP. Not a bus gateway -- the browser is a real zenoh client,
 # so what this serves is the half that was never on the bus.
