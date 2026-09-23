@@ -31,11 +31,11 @@ vehicle:
   right_hand_drive: false
 
   # gas | diesel | electric | cng
-  engine_type: diesel
+  engine_type: gas
 
   # The language CarPlay speaks, and the ones it may offer. IETF tags.
   language: "en"
-  supported_languages: ["en", "de"]
+  supported_languages: ["en"]
 
   # What the vehicle reports about itself while a session runs. CarPlay shows
   # range in the Maps trip planner and outside temperature in the status area.
@@ -55,14 +55,14 @@ vehicle:
 
 # The panel CarPlay draws on.
 display:
-  width_px: 800
-  height_px: 600
+  width_px: 1280
+  height_px: 530
   fps: 30
 
   # Physical width in millimetres; the height follows from the pixel aspect
   # ratio. CarPlay sizes text and touch targets from this, so a wrong value
   # gives a UI that is legible on a desk and not at arm's length in a car.
-  physical_width_mm: 200
+  physical_width_mm: 159
 
   # Which input CarPlay lays its own UI out for: "touch" or "knob". A
   # knob-primary UI gets focus rings and list navigation instead of a
