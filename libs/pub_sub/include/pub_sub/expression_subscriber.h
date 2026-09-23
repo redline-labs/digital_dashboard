@@ -58,7 +58,8 @@ class ZenohExpressionSubscriber
     schema_type_t getSchemaType() const;
     const std::string& getExpression() const;
 
-    // Deliver evaluated results as T. Call at most once.
+    // Deliver evaluated results as T. Call at most once; a second call is
+    // logged and ignored.
     //
     // The callback runs on a zenoh RX thread, not the caller's. Widgets do not
     // use this directly -- dashboard::ExpressionSubscription wraps it to coalesce

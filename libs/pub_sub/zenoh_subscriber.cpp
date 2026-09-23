@@ -103,6 +103,14 @@ const std::string& ZenohExpressionSubscriber::getExpression() const
 void ZenohExpressionSubscriber::setRawCallback(
     std::function<void(const std::vector<std::uint8_t>&)> handler)
 {
+    // Refused rather than trusted: the subscription is already delivering, so a
+    // second assignment would race the RX thread reading `handler`.
+    if (impl_->handler_ready.load(std::memory_order_acquire))
+    {
+        SPDLOG_CRITICAL("Ignoring a second callback for key '{}'; setRawCallback is once only.",
+                        impl_->zenoh_key);
+        return;
+    }
     impl_->handler = std::move(handler);
     // Release: everything written to `handler` above is visible to any zenoh
     // thread that sees this store. See Impl::handler_ready.

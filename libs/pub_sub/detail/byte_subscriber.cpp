@@ -86,9 +86,9 @@ class ZenohSampleMeta final : public SampleMeta
         // goes through Rust's formatter and allocates, and a `**` capture
         // called it for every message on the bus -- tens of thousands of
         // times a second to re-format the handful of session ids a bus
-        // actually has. thread_local so the cache needs no lock on the one
-        // path that must never take one; zenoh delivers a subscriber's
-        // callbacks from more than one RX thread.
+        // actually has. thread_local so the cache needs no lock of its own;
+        // zenoh delivers a subscriber's callbacks from more than one RX thread,
+        // serialised by Impl::dispatch but not all on the same one.
         //
         // The Id is HELD BY VALUE, and that is load-bearing: get_id() returns
         // one by value and Id::bytes() hands back a reference into it. Binding
@@ -138,6 +138,16 @@ struct ByteSubscriber::Impl
     // other way round the handler is freed while a callback can still be calling
     // it, which was a use-after-free on every teardown.
     Handler handler;
+
+    // zenoh may enter one subscriber's callback from several threads at once
+    // (zenoh-c: "Closures are not guaranteed not to be called concurrently") --
+    // one RX thread per link, plus any local publisher's own thread. Nothing
+    // above this layer is written for that, so it is serialised here, once.
+    // Recursive because a local put() delivers synchronously on the publishing
+    // thread: a handler that publishes to its own key re-enters on the same
+    // thread, which is not concurrency and must not deadlock.
+    std::recursive_mutex dispatch;
+
     std::unique_ptr<zenoh::Subscriber<void>> subscriber;
 };
 
@@ -186,6 +196,7 @@ ByteSubscriber::ByteSubscriber(const std::string& keyexpr, Handler on_sample) :
                         {
                             return;
                         }
+                        const std::lock_guard<std::recursive_mutex> lock(impl->dispatch);
                         const ZenohSampleMeta meta(sample);
                         impl->handler(sample.get_payload().as_vector(), meta);
                     }

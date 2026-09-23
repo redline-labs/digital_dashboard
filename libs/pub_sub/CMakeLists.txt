@@ -224,6 +224,12 @@ target_link_libraries(pub_sub_test_publisher_reuse PRIVATE
 )
 add_project_test(TARGET pub_sub_test_publisher_reuse LABELS pub_sub net)
 
+# When a subscriber's handler runs: never on two threads at once, re-entrant on
+# one, and a second expression callback refused. Needs a session: `net`.
+add_executable(pub_sub_test_subscriber_dispatch test_subscriber_dispatch.cpp)
+target_link_libraries(pub_sub_test_subscriber_dispatch PRIVATE zenoh_pub_sub spdlog::spdlog)
+add_project_test(TARGET pub_sub_test_subscriber_dispatch LABELS pub_sub net)
+
 # Topic key validation and mangling. Pure logic, so `unit`. The round trip over
 # every key in configs/ is the part that would catch a real regression: it
 # asserts the assumption the advertisement scheme rests on against the actual

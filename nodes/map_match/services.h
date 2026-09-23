@@ -16,7 +16,9 @@
 // at 1 Hz.
 //
 // THREADING: the three record callbacks run on zenoh RX threads and may run
-// CONCURRENTLY. mAssembler is behind mAssemblerMutex, which is held across the
+// CONCURRENTLY with each other, but pub_sub never runs one of them concurrently
+// with itself -- which is what lets the position callback drive mMatcher with
+// no lock. mAssembler is behind mAssemblerMutex, which is held across the
 // held-value updates and across assembling a fix, but never across the match
 // itself. The status timer runs on the main loop and reads mMutex. Nothing here
 // blocks: the receiver keeps sending while a callback runs.

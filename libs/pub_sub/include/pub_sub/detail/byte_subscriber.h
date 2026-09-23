@@ -83,6 +83,10 @@ class ByteSubscriber
     // Runs on a zenoh RX thread. Must not throw: the frame above it is Rust, and
     // an exception crossing that boundary aborts the process. ByteSubscriber
     // catches anything that escapes anyway, because "must not" is not "cannot".
+    //
+    // Never entered by two threads at once, though not always from the same
+    // one: zenoh does not promise that, so this class does. It CAN be re-entered
+    // on the same thread, when the handler itself publishes to a key it matches.
     using Handler = std::function<void(const std::vector<std::uint8_t>& payload,
                                        const SampleMeta& meta)>;
 
