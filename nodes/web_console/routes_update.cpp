@@ -88,10 +88,11 @@ json slotsJson(rauc_client::Installer& installer, std::string& error)
     return slots;
 }
 
-// A path's errno as the status an upload should answer with. A full /data is
-// 507 with the reason, not the 400 "upload aborted" it used to be, which sent
-// people looking for a network problem.
-Reply storageFailure(int error, const std::string& what, const fs::path& where)
+}  // namespace
+
+// A full /data is 507 with the reason, not the 400 "upload aborted" it used to
+// be, which sent people looking for a network problem.
+Reply storageFailure(int error, const std::string& what, const std::filesystem::path& where)
 {
     if (error == ENOSPC || error == EDQUOT)
     {
@@ -99,8 +100,6 @@ Reply storageFailure(int error, const std::string& what, const fs::path& where)
     }
     return errorReply(500, what + " failed: " + std::strerror(error));
 }
-
-}  // namespace
 
 std::optional<json> bootEntryJson(const std::string& filename)
 {

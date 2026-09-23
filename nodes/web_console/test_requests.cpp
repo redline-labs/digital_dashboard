@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -152,9 +153,41 @@ struct ScratchDir
     fs::path path;
 };
 
+// A full /data used to come back as 400 "upload aborted", which reads as a
+// network problem.
+void testStorageFailureStatus()
+{
+    const Reply full = storageFailure(ENOSPC, "writing the bundle", "/data");
+    check(full.status == 507, "ENOSPC is 507 (got " + std::to_string(full.status) + ")");
+    check(full.body.find("room") != std::string::npos, "and says it ran out of room");
+    check(storageFailure(EDQUOT, "writing the bundle", "/data").status == 507,
+          "EDQUOT is 507 too");
+    check(storageFailure(EIO, "writing the bundle", "/data").status == 500,
+          "any other error is 500");
+}
+
+// The write error has to survive to finish(). A read-only fd fails every
+// write on any host; testFullDiskIs507 is the same path with the real errno.
+void testWriteErrorReachesTheReply()
+{
+    ScratchDir dir;
+    const fs::path temporary = dir.path / ".incoming-ro.raucb";
+    const fs::path staged = dir.path / "bundle.raucb";
+    ::close(::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+    const int fd = ::open(temporary.c_str(), O_RDONLY | O_CLOEXEC);
+    BundleSink sink(fd, temporary, staged, 4096, UploadLease{});
+
+    const std::string chunk(4096, 'x');
+    check(!sink.write(chunk.data(), chunk.size()), "a write to a read-only fd fails");
+    const Reply reply = sink.finish(true);
+    check(reply.status == 500, "a failed write is 500, not 400 (got " + std::to_string(reply.status) + ")");
+    check(!fs::exists(staged), "nothing is staged after a failed write");
+}
+
+#if defined(__linux__)
 // /dev/full answers every write with ENOSPC, which is a full /data without
-// having to fill one. It used to come back as 400 "upload aborted", which reads
-// as a network problem.
+// having to fill one. Linux-only: macOS has no such device, and the target
+// and the Yocto builder are both Linux.
 void testFullDiskIs507()
 {
     ScratchDir dir;
@@ -175,6 +208,7 @@ void testFullDiskIs507()
     check(reply.body.find("room") != std::string::npos, "and says it ran out of room");
     check(!fs::exists(staged), "nothing is staged");
 }
+#endif
 
 void testAbortedAndShortUploadsStageNothing()
 {
@@ -253,7 +287,11 @@ int main()
     testValidCall();
     testWrongTypesAreRefusedNotThrown();
     testTimeoutIsClamped();
+    testStorageFailureStatus();
+    testWriteErrorReachesTheReply();
+#if defined(__linux__)
     testFullDiskIs507();
+#endif
     testAbortedAndShortUploadsStageNothing();
     testBootEntries();
 

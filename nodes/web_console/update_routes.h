@@ -114,6 +114,10 @@ private:
     std::atomic<bool> uploading_ { false };
 };
 
+// A failed write, flush or close as the reply an upload gets: 507 when the
+// disk is full, 500 otherwise.
+Reply storageFailure(int error, const std::string& what, const std::filesystem::path& where);
+
 // Streams an upload straight to disk, through an fd the caller opened.
 //
 // Written to a dot-prefixed temporary and renamed only on success, so RAUC can
