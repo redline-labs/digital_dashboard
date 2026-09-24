@@ -66,6 +66,7 @@ add_subdirectory(csym)
 add_subdirectory(geodesy)
 # The World Magnetic Model, parsed at compile time. On geodesy's ellipsoid.
 add_subdirectory(wmm)
+add_subdirectory(deflec)
 # The factor graph and the fixed-lag and batch smoothers. After csym, whose
 # residuals it optimises; independent of what the variables mean.
 add_subdirectory(factor_graph)

@@ -64,6 +64,17 @@ struct NodeConfig
     double sideslipMinSpeed{2.0};
     double keyframeIntervalS{0.1};  // keyframes on the IMU's clock when GNSS is not making them
 
+    // Gravity leaned by NGS's DEFLEC2022 deflection of the vertical, loaded at
+    // start from the verbatim model files. An empty modelDir finds them where
+    // they install (core::paths::resource("models/deflec2022"), beside bin/)
+    // or in the checkout; a set one expands ${REDLINE_DATA_DIR} and ~.
+    struct Gravity
+    {
+        bool deflection{true};
+        std::string modelDir;
+    };
+    Gravity gravity;
+
     // The MTi's magnetometer, in its own arbitrary units (about 1 at the field
     // it was calibrated in). Hard and soft iron are priors, learned against the
     // dual-antenna heading and kept between sessions.

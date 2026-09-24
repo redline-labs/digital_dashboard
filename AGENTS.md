@@ -262,6 +262,24 @@ discovery seeing only live traffic, and what `accepted: false` and
   harness asserts it on every run. Keyframes run on the IMU's clock whenever
   GNSS is not making them; an outage without them has nowhere to put a
   factor.
+- **Gravity leans by the deflection of the vertical, and its sign was
+  measured.** NGS's DEFLEC2022 grids live verbatim in Git LFS under
+  `models/` (installed beside `bin/`, found by
+  `core::paths::resource("models/...")`, mmap'd by `libs/deflec`). Gravity
+  gains -g xi north and -g eta east -- confirmed against the geoid's slope,
+  not read from a description -- and the interpolation is Catmull-Rom, the
+  only bicubic that reproduces NGS's test values. An unfetched checkout has
+  LFS pointer files there: configure refuses to install them
+  (`REDLINE_REQUIRE_MODELS=ON` fails instead), the loader names them, and the
+  node degrades to normal gravity. Test coordinates are NGS's to eight
+  decimals: on Mount Whitney's slope four decimals is 0.01" wrong. See
+  docs/libs/deflec.md.
+- **A long outage's covariance comes from a QR, not the LDLT.** Past a few
+  metres of position sigma the normal equations' pivots fall below what an
+  LDLT resolves; `jointCovariances` then factors the Jacobian instead (dense
+  Householder, ~7 ms, only when needed). Do not "fix" a missing covariance by
+  loosening the pivot tolerance: at 1e-13 that factorisation's answer is
+  roundoff.
 - **The barometer's offset is weather; never store it.** The magnetometer's
   hard and soft iron and the barometer's airflow are installation and are
   kept with the mounting. The offset is learned from GNSS every session.
@@ -453,7 +471,8 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     (tag -> classification, ONE table) + road_graph (routable
                     graph, contraction hierarchy) -- docs/tools/map_build.md,
                     csym (constexpr symbolic Jacobians) + geodesy + wmm
-                    (WMM-HR, parsed at compile time) + factor_graph (fixed-lag
+                    (WMM-HR, parsed at compile time) + deflec (NGS gravity
+                    grids, verbatim, mmap'd at run time) + factor_graph (fixed-lag
                     and batch smoothers) + imu_preint + vehicle_estimator (the
                     estimation problem, no bus) + calibration_store (what
                     it learned, kept in SQLite) -- docs/design/state-estimation.md

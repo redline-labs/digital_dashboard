@@ -179,8 +179,19 @@ with a walk factor from the last segment it has, so nothing is counted twice.
 **No claim without a covariance.** If the window's covariance cannot be
 computed, the sigmas read zero. `attitude_valid` and `valid` then stay false
 rather than pass their bounds on a zero. Every scenario test asserts this.
-Past a few metres of position sigma, such as a long outage, the same limit of
-precision is reached.
+In a long outage the covariance comes from a square-root factorisation
+instead (see [factor_graph](factor_graph.html)), and a ten-minute outage keeps
+a covariance on every keyframe.
+
+**Gravity comes from the caller.** `EstimatorConfig::gravity` is a
+`geodesy::GravityModel`; null means normal gravity. The node hands in
+[deflec](deflec.html)'s `DeflectedGravity`, which leans gravity by NGS's
+DEFLEC2022 over North America. `EstimatorStatus::gravity_deflection` says
+whether the newest keyframe's gravity was more than normal gravity. In the Colorado foothills the plumb line leans
+29.4" east, and ignoring it leaves the estimated attitude leaning by that
+much; modelled, the attitude error is the same as in a world with no
+deflection at all. Through an outage the same arcseconds are real but small
+next to what a straight road does to an unaided MTi's heading.
 
 **Keeping it between sessions is a policy here and I/O elsewhere.**
 `calibration.h` decides, per group, what the node's
@@ -232,6 +243,8 @@ against exact truth.
 | `vehicle_estimator_test_barometer` | slow | Offset to a metre and airflow to 0.1 from hills; a 60 s outage and an autonomous fix held by it; the weather followed. |
 | `vehicle_estimator_test_magnetometer` | slow | Hard and soft iron learned, small and large; five minutes parked without a heading held by it; an outage; a disturbance refused. |
 | `vehicle_estimator_test_cold_start` | slow | No GNSS at power-on: attitude valid with real sigmas, magnetic heading to 3° from a learned calibration, none from an unlearned one; one re-anchor to true heading, at 49° N and 60° S. |
+| `vehicle_estimator_test_long_outage` | slow | Five minutes without GNSS: a covariance on every keyframe, attitude valid throughout, position sigma past 12 m and still covering the error, and a clean recovery. |
+| `vehicle_estimator_test_gravity` | slow | Laps in the Colorado foothills with deflected truth gravity: modelled, the attitude's mean tilt error matches a world with no deflection; ignored, it leans by the deflection. |
 | `vehicle_estimator_test_consistency` | slow | NEES over twenty noisy figure-of-eight drives stays within bounds, so the reported sigmas mean what they say. |
 
 On the skidpad, figure of eight and spin, the fixed-lag smoother holds

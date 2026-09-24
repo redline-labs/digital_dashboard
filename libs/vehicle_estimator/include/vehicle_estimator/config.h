@@ -12,8 +12,11 @@
 
 #include <Eigen/Core>
 
+#include "geodesy/gravity.h"
+
 #include <array>
 #include <cstddef>
+#include <memory>
 
 namespace vehicle_estimator
 {
@@ -120,6 +123,15 @@ struct EstimatorConfig
     double baro_airflow_sigma = 0.5;
     double baro_airflow_walk = 0.01 / 60.0;
     double baro_sigma = 0.5;  // m, per keyframe
+
+    // ---- gravity ---------------------------------------------------------------
+    // Where gravity comes from; null is WGS84 normal gravity. The node hands in
+    // deflec::DeflectedGravity -- NGS's DEFLEC2022, loaded at run time -- which
+    // leans gravity by the deflection of the vertical where the model covers:
+    // over the contiguous US 6.6" RMS, up to ~45". Left out, that is ~3e-4
+    // m/s^2 of horizontal acceleration the accelerometer bias absorbs only
+    // while it stays put.
+    std::shared_ptr<const geodesy::GravityModel> gravity;
 
     // ---- GNSS ----------------------------------------------------------------
     // Sigma multiplier per FixQuality (none, autonomous, differential, float,

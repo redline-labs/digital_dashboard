@@ -7,7 +7,20 @@
 namespace state_estimator
 {
 
-Pipeline::Pipeline(const NodeConfig& config) : gnss_(config.assembler), estimator_(estimatorConfig(config)) {}
+namespace
+{
+vehicle_estimator::EstimatorConfig withGravity(vehicle_estimator::EstimatorConfig e,
+                                               std::shared_ptr<const geodesy::GravityModel> gravity)
+{
+    e.gravity = std::move(gravity);
+    return e;
+}
+}  // namespace
+
+Pipeline::Pipeline(const NodeConfig& config, std::shared_ptr<const geodesy::GravityModel> gravity)
+    : gnss_(config.assembler), estimator_(withGravity(estimatorConfig(config), std::move(gravity)))
+{
+}
 
 Fed Pipeline::onMessage(std::string_view schema, std::span<const std::uint8_t> payload, double arrival)
 {

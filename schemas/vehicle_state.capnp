@@ -209,4 +209,9 @@ struct VehicleEstimatorStatus {
   baroAirflowFromDatabase @78 :Bool;
   magnetometerMoved @79 :Bool;
   baroAirflowMoved @80 :Bool;
+
+  # The newest keyframe's gravity was tilted by DEFLEC2022's deflection of the
+  # vertical: enabled, the model loaded, and the position inside it (North
+  # America).
+  gravityDeflection @81 :Bool;
 }

@@ -447,6 +447,7 @@ Eigen::Vector3d Estimator::forceAt(double t) const
 
 Eigen::Vector3d Estimator::gravityAt(const Eigen::Vector3d& p_e) const
 {
+    if (config_.gravity) return toE(config_.gravity->gravityEcef(toC(p_e)));
     return toE(geodesy::normalGravityEcef(toC(p_e)));
 }
 
@@ -1279,6 +1280,7 @@ void Estimator::refreshNewest(double t, FixQuality fix, std::uint64_t index, con
     status_.lever_arm_sigma = cal.leverArmCov().diagonal().cwiseMax(0.0).cwiseSqrt();
     status_.boresight = cal.boresight;
     status_.boresight_sigma = cal.boresightCov().diagonal().cwiseMax(0.0).cwiseSqrt();
+    status_.gravity_deflection = config_.gravity && config_.gravity->refinesNormalAt(toC(n.nav.p_e));
     status_.mag_hard_iron = cal.mag_hard_iron;
     status_.mag_hard_iron_sigma = cal.magnetometerCov().diagonal().head<3>().cwiseMax(0.0).cwiseSqrt();
     status_.mag_soft_iron = cal.mag_soft_iron;

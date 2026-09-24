@@ -68,6 +68,15 @@ vehicle_estimator_test(robustness unit)
 vehicle_estimator_test(clock unit)
 vehicle_estimator_test(keyframes unit)
 
+# Five minutes without GNSS: a covariance on every keyframe, sigmas that grow
+# and cover the error, and a clean recovery.
+vehicle_estimator_test(long_outage slow TIMEOUT 900)
+
+# The deflection of the vertical in the Colorado foothills: the attitude tilt an
+# unmodelled one leaves, and none when it is modelled.
+vehicle_estimator_test(gravity slow TIMEOUT 900)
+target_link_libraries(vehicle_estimator_test_gravity PRIVATE deflec core)
+
 # What a keyframe costs the solver: iterations per keyframe on a real drive.
 vehicle_estimator_test(solver unit)
 

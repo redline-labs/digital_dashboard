@@ -16,6 +16,7 @@ add_library(state_estimator_core STATIC
     decode.cpp
     gnss_assembler.cpp
     imu_assembler.cpp
+    gravity_model.cpp
     node_config.cpp
     pipeline.cpp
     state_fields.cpp
@@ -26,6 +27,7 @@ target_include_directories(state_estimator_core PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(state_estimator_core
     PUBLIC
         vehicle_estimator
+        deflec
         calibration_store
         core
         zenoh_pub_sub
@@ -69,6 +71,11 @@ state_estimator_test(imu_assembler)
 state_estimator_test(config)
 # Reads the shipped configs/state_estimator/state_estimator.yaml.
 target_compile_definitions(state_estimator_test_config PRIVATE REDLINE_SOURCE_DIR="${PROJECT_SOURCE_DIR}/../..")
+
+# The gravity model the node runs on: loaded when asked and present, normal
+# gravity (healthy) when off, normal gravity (flagged, with the reason) when
+# asked for and missing.
+state_estimator_test(gravity_model)
 
 # A simulated drive as capnp messages -- the bytes the bridges would put on
 # the bus -- through decode, pairing and the estimator.

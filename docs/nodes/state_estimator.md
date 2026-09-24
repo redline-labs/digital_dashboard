@@ -98,6 +98,8 @@ a new bag.
 | `barometer.sigma_m` | `0.5` | Per keyframe. |
 | `barometer.offset_m`, `.offset_sigma_m`, `.offset_walk_m_per_sqrt_h` | `0`, `300`, `5` | Ellipsoidal height minus ISA pressure altitude: the weather and the geoid. Learned each session, never kept. |
 | `barometer.airflow`, `.airflow_sigma`, `.airflow_walk_per_sqrt_h` | `0`, `0.5`, `0.01` | The fraction of dynamic pressure the sensor sees. Learned and kept. |
+| `gravity.deflection` | `true` | Lean gravity by NGS's DEFLEC2022 (North America), loaded at start. `gravityDeflection` on the status topic says whether the newest keyframe got it. |
+| `gravity.model_dir` | `""` | Where the model's two `.bin` files are. Empty: `<prefix>/models/deflec2022` beside `bin/`, or the checkout's `models/deflec2022`. `${REDLINE_DATA_DIR}` and `~` expand. |
 | `start.anchored` | `true` | Start without GNSS, attitude only. `false` waits for the antennas, as before. |
 | `start.anchor_wait_s` | `1.0` | How long without any GNSS before starting anyway. |
 | `output.sideslip_min_speed` | `2.0` | m/s. Below it sideslip is undefined and flagged invalid. |
@@ -184,6 +186,7 @@ and `reanchors` describe a start without GNSS.
 | `gnss` | nothing under the GNSS prefix for 1000 ms |
 | `estimate` | degraded while anchored with no GNSS position (it says whether the heading is magnetic), while waiting for a dual-antenna heading, or while the uncertainty is above the valid bounds |
 | `solve` | degraded when the last smoother update took 80 ms or more; at 10 Hz keyframes the smoother falls behind the car |
+| `gravity` | degraded when `gravity.deflection` is on and the model cannot be loaded (missing, or an LFS pointer from a checkout without `git lfs pull`); the node runs on normal gravity and the check names the file and the reason |
 | `calibration` | degraded when the store cannot be opened (the node then runs on the config), when it was found damaged and begun afresh (for the whole session: the old history is in the moved file), or when a learned group is more than `moved_sigma` from what the last session left |
 
 ## Calibration kept between sessions

@@ -123,6 +123,9 @@ barometer:
 start:
   anchored: false
   anchor_wait_s: 2.5
+gravity:
+  deflection: false
+  model_dir: "${REDLINE_DATA_DIR}/models/deflec2022"
 smoother:
   keyframe_interval_s: 0.2
 )",
@@ -137,6 +140,10 @@ smoother:
     check(e.mag_trust_after == 45.0 && e.use_magnetometer, "trust threshold carried, magnetometer on by default");
     check(!e.use_barometer && e.baro_offset == 40.0, "barometer off, its offset prior carried");
     check(!e.anchored_start && e.anchor_wait == 2.5, "start carried");
+    check(!c.gravity.deflection && c.gravity.modelDir == "${REDLINE_DATA_DIR}/models/deflec2022",
+          "gravity section carried");
+    check(NodeConfig{}.gravity.deflection && NodeConfig{}.gravity.modelDir.empty(), "deflection on, found by default");
+    check(!parses("gravity:\n  deflection: sometimes\n"), "gravity.deflection must be a boolean");
     check(e.keyframe_interval == 0.2, "keyframe interval carried");
 
     check(!parses("magnetometer:\n  soft_iron: [0, 0, 0]\n"), "soft iron needs six values");

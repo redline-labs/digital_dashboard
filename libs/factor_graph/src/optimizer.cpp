@@ -1,5 +1,6 @@
 #include "factor_graph/optimizer.h"
 
+#include <Eigen/QR>
 #include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
 
@@ -137,8 +138,13 @@ namespace
 {
 
 // A pivot of the Jacobi-scaled Hessian below this is a direction nothing
-// constrains.
+// constrains -- or one this factorisation cannot resolve: the backward error of
+// an LDLT of n unit-diagonal columns is ~n eps, about 1e-13 for a window.
 constexpr double kPivotTolerance = 1e-12;
+// The same test on the square-root factor, whose entries are the square roots
+// of those pivots: 1e-10 here is 1e-20 of information there, and roundoff in a
+// QR of unit-norm columns is ~n eps, 1e-13, far below it.
+constexpr double kQrRankTolerance = 1e-10;
 
 // s_i = 1 / sqrt(H_ii), floored: the change of variables that puts every
 // diagonal at one, so a pivot is judged against its own variable's scale.
@@ -158,6 +164,11 @@ Eigen::SparseMatrix<double> scaled(const Eigen::SparseMatrix<double>& H, const E
     for (Eigen::Index j = 0; j < out.outerSize(); ++j)
         for (Eigen::SparseMatrix<double>::InnerIterator it(out, j); it; ++it) it.valueRef() *= s[it.row()] * s[j];
     return out;
+}
+
+bool pivotsResolved(const Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower>& ldlt)
+{
+    return ldlt.info() == Eigen::Success && ldlt.vectorD().minCoeff() > kPivotTolerance;
 }
 
 // The joint covariance of `keys` from a factorisation of S H S, or empty if
@@ -195,6 +206,91 @@ std::optional<Eigen::MatrixXd> blockCovariance(const Eigen::SimplicialLDLT<Eigen
     const Eigen::MatrixXd cov = y.transpose() * d.cwiseInverse().asDiagonal() * y;
     if (!cov.allFinite()) return std::nullopt;
     return Eigen::MatrixXd(0.5 * (cov + cov.transpose()));
+}
+
+// The covariances again, from a QR of the whitened, column-scaled Jacobian
+// instead of an LDLT of the Hessian it squares. The Hessian's condition is the
+// Jacobian's squared: in a long GNSS outage each keyframe's position is held
+// to its neighbours by the IMU chain at ~1e11 and to the world by what the
+// marginal prior still knows, a ratio past 1e-13 once the position sigma
+// passes a few metres -- below what the LDLT resolves, so the covariance
+// vanished just when the output most needed it. The square root keeps half
+// the exponent. Slower, so only for what the LDLT cannot answer.
+//
+// Dense: a window's R is more than half full whatever the column order (the
+// marginal prior and the calibration couple nearly everything), and Eigen's
+// blocked dense Householder does it in half the time of its SparseQR -- ~7 ms
+// against 13 for a 660 x 540 window. Unpivoted: a column in the span of earlier
+// ones still leaves a zero on R's diagonal, and the margin is wide -- the
+// weakest real direction of a five-minute outage is ~5e-7 against
+// kQrRankTolerance's 1e-10. Column pivoting cost 18 ms for nothing here.
+std::vector<std::optional<Eigen::MatrixXd>> qrCovariances(const FactorList& factors, const Values& values,
+                                                          const Layout& layout,
+                                                          const std::vector<std::vector<Key>>& groups)
+{
+    std::vector<std::optional<Eigen::MatrixXd>> out(groups.size());
+    Eigen::Index rows = 0;
+    std::vector<Linearization> lins;
+    lins.reserve(factors.size());
+    for (const auto& f : factors)
+    {
+        lins.push_back(f->linearize(values));
+        rows += lins.back().residual.size();
+    }
+    if (rows < layout.size) return out;  // fewer equations than unknowns: singular
+    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(rows, layout.size);
+    Eigen::Index row = 0;
+    for (std::size_t i = 0; i < factors.size(); ++i)
+    {
+        const auto keys = factors[i]->keys();
+        for (std::size_t a = 0; a < keys.size(); ++a)
+        {
+            const auto [o, n] = layout.at.at(keys[a]);
+            J.block(row, o, lins[i].residual.size(), n) += lins[i].jacobians[a];
+        }
+        row += lins[i].residual.size();
+    }
+
+    // Unit-norm columns: the scaling the LDLT path applies to the Hessian.
+    const Eigen::VectorXd norms = J.colwise().norm();
+    if (!(norms.minCoeff() > 0.0)) return out;  // a variable nothing touches
+    const Eigen::VectorXd scale = norms.cwiseInverse();
+    J = J * scale.asDiagonal();
+
+    const Eigen::HouseholderQR<Eigen::MatrixXd> qr(J);
+    if (!(qr.matrixQR().diagonal().cwiseAbs().minCoeff() > kQrRankTolerance)) return out;
+    const auto R = qr.matrixQR().topRows(layout.size).triangularView<Eigen::Upper>();
+
+    // J S = Q R, so (S H S)^-1 = R^-1 R^-T and the block of H^-1 is Z^T Z
+    // with Z = R^-T S E: one triangular solve.
+    for (std::size_t g = 0; g < groups.size(); ++g)
+    {
+        Eigen::Index n = 0;
+        bool known = true;
+        for (Key k : groups[g])
+        {
+            const auto it = layout.at.find(k);
+            if (it == layout.at.end())
+            {
+                known = false;
+                break;
+            }
+            n += it->second.second;
+        }
+        if (!known || n == 0) continue;
+        Eigen::MatrixXd z = Eigen::MatrixXd::Zero(layout.size, n);
+        Eigen::Index col = 0;
+        for (Key k : groups[g])
+        {
+            const auto [o, dim] = layout.at.at(k);
+            for (Eigen::Index i = 0; i < dim; ++i) z(o + i, col + i) = scale[o + i];
+            col += dim;
+        }
+        R.transpose().solveInPlace(z);
+        const Eigen::MatrixXd cov = z.transpose() * z;
+        if (cov.allFinite()) out[g] = 0.5 * (cov + cov.transpose());
+    }
+    return out;
 }
 
 }  // namespace
@@ -358,7 +454,7 @@ OptimizeReport optimize(const FactorList& factors, Values& values, const LmParam
     SolverCache::Impl& solver = (cache ? *cache : local).impl();
     OptimizeReport report = solve(factors, values, params, solver);
     if (covariance_keys.empty()) return report;
-    if (solver.last_usable)
+    if (solver.last_usable && pivotsResolved(solver.ldlt))
     {
         report.covariance = blockCovariance(solver.ldlt, solver.last_scale, solver.last_layout, covariance_keys);
         ++solver.covariances_from_solve;
@@ -386,6 +482,7 @@ std::vector<std::optional<Eigen::MatrixXd>> jointCovariances(const FactorList& f
     Eigen::SparseMatrix<double> Hs = scaled(ne.H, scale);
     Hs.makeCompressed();
     solver.factorize(Hs);
+    if (!pivotsResolved(solver.ldlt)) return qrCovariances(factors, values, layout, groups);
     for (std::size_t g = 0; g < groups.size(); ++g) out[g] = blockCovariance(solver.ldlt, scale, layout.at, groups[g]);
     return out;
 }

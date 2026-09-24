@@ -17,6 +17,8 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include "geodesy/gravity.h"
+
 #include <memory>
 #include <optional>
 #include <random>
@@ -169,6 +171,9 @@ struct SensorModel
     // Magnetometer, in every IMU packet: m = A (R_i_e B_e) / F + h + noise,
     // in the MTi's arbitrary units. Its own random stream, so turning it on
     // changes no other sensor's noise.
+    // Truth gravity; null is WGS84 normal gravity everywhere. A
+    // deflec::DeflectedGravity makes it lean as real gravity does.
+    std::shared_ptr<const geodesy::GravityModel> gravity;
     bool magnetometer = true;
     Eigen::Matrix3d mag_soft_iron = (Eigen::Matrix3d() << 1.03, 0.01, -0.02,  //
                                      0.01, 0.98, 0.015,                        //

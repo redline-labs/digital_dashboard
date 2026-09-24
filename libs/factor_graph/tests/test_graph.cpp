@@ -310,6 +310,50 @@ void testUnobservable()
     near(lonely.at<V1>(symbol('z', 0))[0], 5.0, 0.0, "an unconstrained variable does not move");
 }
 
+// A chain of stiff links (sigma 1e-6) anchored only by a weak prior (sigma
+// 100): a long GNSS outage in miniature. The common mode's information
+// against a link's is 1e-16 -- past anything an LDLT of the normal equations
+// resolves, so the covariance went missing. The square-root path answers it,
+// and the answer is exact in closed form: x_k's variance is 100^2 + k 1e-12.
+void testStiffChainWeakAnchor()
+{
+    constexpr std::uint64_t n = 30;
+    const double anchor = 100.0, link = 1e-6;
+    FactorList f;
+    Values v;
+    for (std::uint64_t k = 0; k < n; ++k)
+    {
+        v.insert(symbol('x', k), v1(0.0));
+        if (k == 0)
+            f.push_back(std::make_shared<ScalarPriorFactor>("anchor", std::array<Key, 1>{symbol('x', 0)}, v1(0.0), anchor));
+        else
+            f.push_back(std::make_shared<DifferenceFactor>("link", std::array<Key, 2>{symbol('x', k - 1), symbol('x', k)},
+                                                           v1(0.0), link));
+    }
+    const std::array<Key, 2> ends{symbol('x', 0), symbol('x', n - 1)};
+    const auto cov = factor_graph::jointCovariance(f, v, ends);
+    check(cov.has_value(), "a stiff chain on a weak anchor still has a covariance");
+    if (cov)
+    {
+        const double var_end = anchor * anchor + static_cast<double>(n - 1) * link * link;
+        near((*cov)(0, 0), anchor * anchor, 1e-6 * anchor * anchor, "the anchor's variance");
+        near((*cov)(1, 1), var_end, 1e-6 * var_end, "the far end's");
+        // Nearly perfectly correlated: the chain moves as one.
+        near((*cov)(0, 1) / std::sqrt((*cov)(0, 0) * (*cov)(1, 1)), 1.0, 1e-9, "and moving together");
+    }
+
+    // An anchor so weak (1e8) that its information, against the links', is
+    // within roundoff of none: the QR would return a finite, meaningless
+    // number, and the honest answer is still "unknown".
+    FactorList vague = f;
+    vague[0] = std::make_shared<ScalarPriorFactor>("anchor", std::array<Key, 1>{symbol('x', 0)}, v1(0.0), 1e8);
+    check(!factor_graph::jointCovariance(vague, v, ends).has_value(), "an anchor within roundoff of none is no anchor");
+
+    // Drop the anchor and nothing holds the chain to the world: still unknown.
+    FactorList loose(f.begin() + 1, f.end());
+    check(!factor_graph::jointCovariance(loose, v, ends).has_value(), "without the anchor, no covariance");
+}
+
 // Marginalisation's careful paths. A full-rank block goes through Cholesky;
 // only a singular one reaches the pseudo-inverse and the eigendecomposition,
 // so nothing else in the suite exercises them. Linear, so the answers are
@@ -615,6 +659,7 @@ int main()
     testUnobservable();
     testWidelyScaledInformation();
     testRankDeficientMarginalisation();
+    testStiffChainWeakAnchor();
     testStaticVariable();
     testRefusals();
     if (failures)

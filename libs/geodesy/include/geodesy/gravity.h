@@ -59,6 +59,13 @@ class GravityModel {
   public:
     virtual ~GravityModel() = default;
     virtual csym::Vector3<double> gravityEcef(const csym::Vector3<double>& p_e) const = 0;
+    // Whether this model says more than normal gravity at p_e: a gridded
+    // refinement is only as wide as its grid, and a caller may want to report
+    // which it got.
+    virtual bool refinesNormalAt(const csym::Vector3<double>& p_e) const {
+        (void)p_e;
+        return false;
+    }
 };
 
 class NormalGravity final : public GravityModel {

@@ -397,7 +397,8 @@ std::vector<Message> Scenario::messages() const
     std::mt19937 rng(sensors_.seed);
     std::normal_distribution<double> gauss(0.0, 1.0);
     const auto jitter = [&](double mean) { return std::exponential_distribution<double>(1.0 / mean)(rng); };
-    const geodesy::NormalGravity gravity;
+    const geodesy::NormalGravity normal_gravity;
+    const geodesy::GravityModel& gravity = sensors_.gravity ? *sensors_.gravity : normal_gravity;
     const auto& S = sensors_;
 
     // The magnetometer and barometer draw from their own stream, so adding

@@ -127,6 +127,20 @@ a drive, and it was found under ASan. `SolverCache` compares the whole
 pattern before reusing anything, and `factor_graph_test_graph` keeps the
 changing-pattern case.
 
+**A long outage gets a square-root covariance.** The LDLT of the normal
+equations cannot resolve a Jacobi-scaled pivot below about 1e-12, and a long
+GNSS outage produces exactly that. Each keyframe's position is held to its
+neighbours by the IMU chain at about 1e11 of information, and to the world by
+whatever the marginal prior still knows. When the pivot test fails, the
+covariance is computed again from a Householder QR of the whitened,
+column-scaled Jacobian. That keeps half the exponent: `R`'s diagonal is the
+square root of the pivots, and it is judged against `1e-10`, which is `1e-20`
+of information. The QR is dense because a window's `R` is more than half full
+whatever the column ordering, and Eigen's blocked dense Householder is twice
+as fast as its `SparseQR` here: about 7 ms for a 660 × 540 window. It runs only
+when the LDLT cannot answer. On a normal keyframe the covariance still comes
+from the solve's own factorisation.
+
 **Unobservable means empty, not large.** `jointCovariance()` returns
 `std::nullopt` when the Hessian is singular. The inverse of a near-singular
 matrix is a plausible wrong answer. `jointCovariances()` answers many groups
@@ -151,6 +165,9 @@ smoother is its nonlinear generalisation.
 - Rosenbrock under LM
 - the changing-sparsity case above
 - a gauge-free problem that converges without NaN and reports no covariance
+- a stiff chain on a weak anchor (a long outage in miniature), whose
+  covariance only the square-root path resolves, exact in closed form; and an
+  anchor within roundoff of none, which must still be unknown
 - marginalisation through the rank-deficient paths (a singular block, a
   rank-one prior with a non-zero gradient), which Cholesky otherwise bypasses
 - a static bias that lag 0 must estimate exactly as the batch does

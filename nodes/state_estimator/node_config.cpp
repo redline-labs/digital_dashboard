@@ -254,6 +254,11 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         readNumber(n, "airflow_sigma", b.airflowSigma, context, "barometer.");
         readNumber(n, "airflow_walk_per_sqrt_h", b.airflowWalkPerSqrtH, context, "barometer.");
     }
+    if (const YAML::Node n = section(root, "gravity", context))
+    {
+        readBool(n, "deflection", out.gravity.deflection, context, "gravity.");
+        readString(n, "model_dir", out.gravity.modelDir, context, "gravity.");
+    }
     if (const YAML::Node n = section(root, "start", context))
     {
         readBool(n, "anchored", out.start.anchored, context, "start.");

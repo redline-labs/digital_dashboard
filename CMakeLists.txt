@@ -265,6 +265,7 @@ add_subdirectory(eds)
 add_subdirectory(apps)
 add_subdirectory(mock_data)
 add_subdirectory(nodes)
+add_subdirectory(models)
 # Workstation-only tools. Placed HERE, beside nodes, rather than earlier: the
 # -Werror block above applies from add_subdirectory(schemas) onwards, and a
 # tools/ added above it would silently opt out of every warning this tree treats

@@ -97,6 +97,15 @@ barometer:
   airflow_sigma: 0.5
   airflow_walk_per_sqrt_h: 0.01
 
+# Gravity: normal gravity leaned by NGS's DEFLEC2022 deflection of the
+# vertical, loaded at start from the model files exactly as NGS publishes them
+# (North America, 1 arcminute; models/ in the checkout, in Git LFS). Outside
+# North America, or if the files cannot be loaded, normal gravity: health says
+# which, and the status topic's gravityDeflection says per keyframe.
+gravity:
+  deflection: true
+  model_dir: ""                      # empty: <prefix>/models/deflec2022, or the checkout's
+
 # With no GNSS at all: attitude from gravity, heading from the magnetometer if
 # it was learned, position and velocity not valid. No position is ever kept
 # between power cycles, so this is all a start without GNSS has.

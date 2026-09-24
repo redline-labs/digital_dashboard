@@ -181,6 +181,7 @@ void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::Estima
     out.setBaroAirflowFromDatabase(c.from_database[4]);
     out.setMagnetometerMoved(c.moved[3]);
     out.setBaroAirflowMoved(c.moved[4]);
+    out.setGravityDeflection(s.gravity_deflection);
 }
 
 }  // namespace state_estimator

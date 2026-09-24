@@ -67,9 +67,9 @@ velocity at the reference point, positive to the right, and flagged invalid
 below 2 m/s, where it has no meaning.
 
 Gravity is WGS84 normal gravity, with its small north component at latitude
-and height, behind a `GravityModel` interface so a geoid model (EGM2008) and
-deflections of the vertical (DEFLEC2022) can replace it without touching the
-factors.
+and height, tilted over North America by NGS's DEFLEC2022 deflection of
+the vertical (see [Gravity](#gravity)), behind a `GravityModel` interface so the
+factors never know which.
 
 ## Why our own smoother
 
@@ -419,10 +419,13 @@ an IMU chain holding each keyframe to about 1e11 of information: the scaled
 pivot, about 1e-13, is at the backward error of the factorisation itself. The
 covariance was refused, and zero sigmas passed the attitude bound. The anchor
 is now held to 1 cm (it is the frame's origin), and nothing is claimed valid
-without a covariance. The same precision limit returns once a long outage
-takes position sigma past a few metres. There `valid` is already false, but
-the attitude sigma is lost with it. A square-root (QR) covariance would push
-the limit out by the square root of the condition number.
+without a covariance. The same precision limit returned once a long outage
+took position sigma past a few metres: in a five-minute outage, 814 of 2,987
+keyframes had no covariance and a good attitude stopped being claimed valid.
+Since 2026-09-24 the covariance falls back to a QR of the Jacobian there,
+which keeps half the exponent; a ten-minute outage now keeps a covariance on
+every keyframe. The fallback costs about 7 ms, and only while the LDLT cannot
+answer.
 
 **Kept and not kept.** The magnetometer's hard and soft iron and the
 barometer's airflow are properties of the installation and are stored like
@@ -430,12 +433,56 @@ the mounting. A stored magnetometer is trusted at a cold start only if its row
 records as much learning against the antennas as this session would need. The
 barometer's offset is weather and is never stored.
 
+## Gravity
+
+Added 2026-09-24. The plumb line leans off the ellipsoid normal by the
+deflection of the vertical: over the contiguous US 6.6" RMS, 20" at the 99th
+percentile, 48" at worst. As an acceleration that is 3e-4 m/s² RMS, the level
+of an MTi-610's bias instability. The accelerometer bias absorbs it only
+while it stays put.
+
+**Verbatim, loaded at run time.** NGS publishes DEFLEC2022 as a 1-arcminute
+grid over North America, 233 MB per component. Both files are kept exactly as
+NGS distributes them, in Git LFS under `models/`. They are installed beside
+the binaries and memory-mapped at start, so only the pages under the car are
+ever read.
+
+A compile-time 3' extract of the contiguous US was built first (2.5 MB,
+checked by `static_assert` at build time, as `wmm` is) and replaced by this
+before it shipped. The verbatim files keep the model's full resolution. The
+3' cut cost 0.67" RMS and 3" at the 99th percentile, and 10' would have cost
+9". They also keep NGS's exact bytes, which can be checked against its
+published hashes, and the model can be updated without a rebuild. The price:
+467 MB in LFS (quota), and an install step the image must honour. The build
+refuses to install LFS pointer files, and the node degrades, not stops, when
+the model is missing.
+
+**Three things were checked, not assumed.**
+
+- The interpolation: NGS specifies a 4 × 4 bicubic, and of the kernels that
+  name covers, only Catmull-Rom reproduces NGS's published test values to
+  their last digit. Bilinear misses by up to 3", other bicubics by 1.5".
+- The signs: across the Guam grid, xi and eta match minus the geoid's north
+  and east slopes with correlation 1.000. That is Vening Meinesz, so gravity
+  gains -g xi north and -g eta east.
+- The test coordinates themselves: typed to four decimals, they missed
+  Mount Whitney by 0.01", because on that slope 0.00005 deg is 0.01".
+
+**What it does in the estimator.** Ignoring a 29.4" lean in the Colorado
+foothills leaves the estimated attitude leaning by it. Modelled, the mean
+tilt error is identical to a world with no deflection. A three-minute outage
+on a straight road there did not show the gravity at all: an unaided MTi's
+heading error on a straight dominates, and shuffles by metres with any change
+to the arithmetic. That scenario is not in the tests, because a comparison
+that passes by luck is worse than none.
+
 ## Deferred
 
 The reference point stays a definition until steering and wheel speeds give a
 vehicle model to estimate it against. A time-offset state (estimating
 `imu.time_offset_s` instead of calibrating it) and the PPS clock are next for
-timing. EGM2008 and DEFLEC2022 gravity slot in behind `GravityModel`. Wheel
+timing. EGM2008's gravity anomaly (magnitude, not direction) would slot in
+behind `GravityModel` beside DEFLEC2022. Wheel
 speeds (per-wheel slip ratio from the reference-point velocity plus ω × the
 wheel's position) and steering angle are a factor each; the smoother never
 learns sensor types.

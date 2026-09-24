@@ -28,7 +28,8 @@ namespace state_estimator
 class Pipeline
 {
   public:
-    explicit Pipeline(const NodeConfig& config);
+    // `gravity` is the loaded model (loadGravity()); null is normal gravity.
+    explicit Pipeline(const NodeConfig& config, std::shared_ptr<const geodesy::GravityModel> gravity = nullptr);
 
     // One message, as it arrived. `arrival` in seconds on any clock that is
     // the same for every message.

@@ -37,6 +37,7 @@
 
 #include "node_config.h"
 #include "calibration_keeper.h"
+#include "gravity_model.h"
 #include "pipeline.h"
 #include "state_fields.h"
 
@@ -172,7 +173,12 @@ int replay(const state_estimator::NodeConfig& config, const std::string& path,
         for (const auto& p : reader.problems()) SPDLOG_ERROR("{}: {}", path, p);
         return 1;
     }
-    state_estimator::Pipeline pipeline(config);
+    const auto gravity = state_estimator::loadGravity(config);
+    if (gravity.healthy)
+        SPDLOG_INFO("gravity: {}", gravity.summary);
+    else
+        SPDLOG_WARN("gravity: {}", gravity.summary);
+    state_estimator::Pipeline pipeline(config, gravity.model);
     Outputs outputs(config);
     // A replay reads and writes the calibration store only when told which:
     // an old recording must not quietly add rows to the car's live history.
@@ -277,8 +283,17 @@ int main(int argc, char** argv)
             });
     };
 
+    // Once, before the worker: a missing model is a degraded node, not a
+    // stopped one -- normal gravity is what it ran on before.
+    const auto gravity = state_estimator::loadGravity(config);
+    if (gravity.healthy)
+        SPDLOG_INFO("gravity: {}", gravity.summary);
+    else
+        SPDLOG_WARN("gravity: {}", gravity.summary);
+    health.setCheck("gravity", gravity.healthy ? node_health::State::ok : node_health::State::degraded, gravity.summary);
+
     std::thread worker([&] {
-        state_estimator::Pipeline pipeline(config);
+        state_estimator::Pipeline pipeline(config, gravity.model);
         Outputs outputs(config);
         state_estimator::CalibrationKeeper keeper(config, sessionId());
         if (config.calibration.enabled)

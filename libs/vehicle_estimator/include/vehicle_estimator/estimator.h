@@ -68,6 +68,10 @@ struct EstimatorStatus
 
     factor_graph::OptimizeReport last_optimize;
     double last_solve_ms = 0.0;
+    // The newest keyframe's gravity was more than normal gravity: a model was
+    // given (EstimatorConfig::gravity) and it covers the position -- for
+    // DEFLEC2022, the deflection of the vertical was applied.
+    bool gravity_deflection = false;
     // Keyframes whose covariance came from the solve's own factorisation
     // (since the last reset); the rest paid for another. See EstimatorConfig::lm.
     std::uint64_t covariance_from_solve = 0;
