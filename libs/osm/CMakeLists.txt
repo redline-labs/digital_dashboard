@@ -103,4 +103,8 @@ target_link_libraries(osm_test_real_extract
         spdlog::spdlog
 )
 
-add_project_test(TARGET osm_test_real_extract LABELS osm slow TIMEOUT 600)
+set(_real_data_env)
+if(REDLINE_MAP_DATA_DIR)
+    set(_real_data_env ENVIRONMENT "OSM_TEST_EXTRACT=${REDLINE_MAP_DATA_DIR}/socal-260813.osm.pbf")
+endif()
+add_project_test(TARGET osm_test_real_extract LABELS osm slow TIMEOUT 600 ${_real_data_env})

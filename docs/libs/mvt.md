@@ -81,8 +81,9 @@ widget's decision.
 `mvt_test_encode` encodes, decodes and requires the two to agree, which is the
 strongest test either direction has: an encoder bug a decoder mirrors would
 pass a one-sided test and produce tiles no other renderer could read.
-`mvt_test_real_tiles` decodes real output from the archive named in
-`configs/map_server.yaml`, and skips loudly when that 383 MB file is absent so
-a fresh checkout still passes. On a machine that has it, this is the only test
+`mvt_test_real_tiles` decodes real output from `MVT_TEST_ARCHIVE`, which CMake
+sets to `socal-260813.mbtiles` under `-DREDLINE_MAP_DATA_DIR=<dir>`. It skips
+loudly without one so a fresh checkout still passes, and is labelled `slow`,
+not `unit`, because it reads a file the tree does not contain. On a machine that has it, this is the only test
 that proves the decoder against bytes nobody here wrote; the Irvine tile at
 `z14/2828/6562` is 81958 bytes, gzip, 14 layers.

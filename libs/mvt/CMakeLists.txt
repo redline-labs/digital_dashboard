@@ -59,8 +59,8 @@ target_link_libraries(mvt_test_decode
 
 add_project_test(TARGET mvt_test_decode LABELS mvt unit)
 
-# Decoding REAL tiles, from the archive in configs/map_server.yaml if it is
-# present. Skips itself when it is not, so a checkout without the 383 MB file
+# Decoding REAL tiles, from REDLINE_MAP_DATA_DIR (or MVT_TEST_ARCHIVE) if it is
+# set. Skips itself when it is not, so a checkout without the 383 MB file
 # still passes -- but on a machine that has it, this is the only test that
 # proves the decoder against bytes nobody here wrote.
 add_executable(mvt_test_real_tiles
@@ -74,7 +74,11 @@ target_link_libraries(mvt_test_real_tiles
         spdlog::spdlog
 )
 
-add_project_test(TARGET mvt_test_real_tiles LABELS mvt unit)
+set(_real_data_env)
+if(REDLINE_MAP_DATA_DIR)
+    set(_real_data_env ENVIRONMENT "MVT_TEST_ARCHIVE=${REDLINE_MAP_DATA_DIR}/socal-260813.mbtiles")
+endif()
+add_project_test(TARGET mvt_test_real_tiles LABELS mvt slow ${_real_data_env})
 
 # Encode, then decode, and require the two to agree.
 #

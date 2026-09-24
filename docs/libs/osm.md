@@ -111,8 +111,9 @@ This is a workstation requirement, not a design flaw.
 | `osm_test_node_store` | `osm unit` | Referenced nodes round-trip, an unresolved reference is absent rather than Null Island, id 0 and superblock boundaries, a sparse id space costs only its bitset, and the ordering check refuses a node after the ways or descending ids within a type. |
 | `osm_test_real_extract` | `osm slow` (timeout 600 s) | Two full passes over a real extract written by someone else's encoder, cross-checked against the road the existing map stack draws near Irvine. |
 
-The real-extract test reads `OSM_TEST_EXTRACT`, defaulting to
-`/Users/ryan/Documents/map_data/socal-260813.osm.pbf`. When the file is absent
+The real-extract test reads `OSM_TEST_EXTRACT`, which CMake sets to
+`socal-260813.osm.pbf` under `-DREDLINE_MAP_DATA_DIR=<dir>`; there is no
+default path. When the file is absent
 it logs `SKIPPED` and passes, since the file is not in the repository and a
 fresh checkout must still pass; a file that is present and will not map is a
 failure. It is excluded by `ctest -LE slow`.

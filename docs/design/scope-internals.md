@@ -1176,6 +1176,7 @@ ctest --test-dir build -R scope --output-on-failure
 | `scope_test_settings` | unit | the per-user settings codec: a missing file is defaults, a malformed one is not overwritten, byte stability, and the name checks |
 | `scope_test_map_track` | unit | pairing by timestamp, the unpaired counters, colour held rather than interpolated, pixel thinning and the hit test |
 | `scope_test_map_tiles` | unit | `TileReader` against archives it writes itself |
+| `scope_test_map_tiles_real` | slow | the same reader against the real socal archive, opt-in through `REDLINE_MAP_DATA_DIR` |
 | `scope_test_workspace` | unit | the codec, weighted towards hand-edited files that are wrong in the usual ways |
 | `scope_test_recorded_source` | unit | scrubbing, over a stub provider with synthetic messages |
 | `scope_test_capture_buffer` | unit | eviction by bytes, by time, and the accounting invariant under real threads |
@@ -1196,8 +1197,13 @@ screenshot.
 
 `scope_test_map_tiles` covers the XYZ/TMS flip (a double flip renders
 beautifully, mirrored about the equator), absent versus failed, an unopenable
-archive, and the zoom range at open. It also reads the real socal archive
-when present, and skips loudly when not.
+archive, and the zoom range at open, and reads no file it did not write.
+`scope_test_map_tiles_real` opens the real socal archive when
+`-DREDLINE_MAP_DATA_DIR=<dir>` names its directory, and skips loudly when not.
+Until 2026-09-23 that case lived in the unit test with a default path under
+`~/Documents`. On a host without macOS privacy consent for that folder,
+`open()` blocks instead of failing, so the unit run timed out instead of
+skipping.
 
 `scope_test_recorded_source` makes "seek to 5 s and you get exactly the
 samples in `[5 - history, 5]`" an exact assertion. The load-bearing case is

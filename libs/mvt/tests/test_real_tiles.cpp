@@ -38,15 +38,12 @@ void check(bool condition, const std::string& what)
     }
 }
 
-// Where the bench archive lives. Overridable so this is runnable against
-// another file without an edit.
+// Where the bench archive lives: MVT_TEST_ARCHIVE, which CMake sets from
+// REDLINE_MAP_DATA_DIR. Empty skips. No default path -- see that variable.
 std::filesystem::path archivePath()
 {
-    if (const char* fromEnv = std::getenv("MVT_TEST_ARCHIVE"); fromEnv != nullptr)
-    {
-        return fromEnv;
-    }
-    return "/Users/ryan/Documents/map_data/socal-260813.mbtiles";
+    const char* fromEnv = std::getenv("MVT_TEST_ARCHIVE");
+    return fromEnv != nullptr ? fromEnv : "";
 }
 
 // Slippy tile containing Irvine, CA (33.6865966, -117.8557874) at z14. Worked
@@ -282,8 +279,8 @@ int main()
     {
         // Skipping, loudly. The alternative -- failing -- would make a fresh
         // checkout red for a file that is deliberately not in the repository.
-        SPDLOG_WARN("SKIPPED: no archive at {}", path.string());
-        SPDLOG_WARN("Set MVT_TEST_ARCHIVE to point at an .mbtiles to run this.");
+        SPDLOG_WARN("SKIPPED: no archive at '{}'", path.string());
+        SPDLOG_WARN("Configure with -DREDLINE_MAP_DATA_DIR=<dir>, or set MVT_TEST_ARCHIVE, to run this.");
         return PROJECT_TEST_SKIP_CODE;
     }
 

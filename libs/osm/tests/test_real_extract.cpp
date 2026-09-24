@@ -48,15 +48,12 @@ void check(bool condition, const std::string& what)
     }
 }
 
-// Where the bench extract lives. Overridable so this is runnable against
-// another file without an edit.
+// Where the bench extract lives: OSM_TEST_EXTRACT, which CMake sets from
+// REDLINE_MAP_DATA_DIR. Empty skips. No default path -- see that variable.
 std::filesystem::path extractPath()
 {
-    if (const char* fromEnv = std::getenv("OSM_TEST_EXTRACT"); fromEnv != nullptr)
-    {
-        return fromEnv;
-    }
-    return "/Users/ryan/Documents/map_data/socal-260813.osm.pbf";
+    const char* fromEnv = std::getenv("OSM_TEST_EXTRACT");
+    return fromEnv != nullptr ? fromEnv : "";
 }
 
 // The anchor, in 1e-7 degrees. docs/nodes/map_server.md's Irvine, z14/2828/6562.
@@ -138,8 +135,8 @@ int main()
     {
         // Skipping, loudly. Failing would make a fresh checkout red for a file
         // that is deliberately not in the repository.
-        SPDLOG_WARN("SKIPPED: no extract at {}", path.string());
-        SPDLOG_WARN("Set OSM_TEST_EXTRACT to point at an .osm.pbf to run this.");
+        SPDLOG_WARN("SKIPPED: no extract at '{}'", path.string());
+        SPDLOG_WARN("Configure with -DREDLINE_MAP_DATA_DIR=<dir>, or set OSM_TEST_EXTRACT, to run this.");
         return PROJECT_TEST_SKIP_CODE;
     }
 

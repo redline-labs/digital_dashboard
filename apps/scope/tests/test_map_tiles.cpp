@@ -15,8 +15,9 @@
 //     wire; here it is a metadata read, and if it were wrong the caller would
 //     clamp to the wrong level and ask for tiles the archive cannot have.
 //
-// No Qt widgets, no bus, no GPU: the tessellator and the label extractor are
-// pure, so this is a unit test.
+// No Qt widgets, no bus, no GPU, and no file this test did not write: the
+// tessellator and the label extractor are pure, so this is a unit test. The same
+// reader against a real archive is scope_test_map_tiles_real, which is opt-in.
 
 #include "map_panel/tile_reader.h"
 
@@ -319,53 +320,6 @@ void testDestructionWhileWorkIsQueuedIsClean()
     expect(true, "destroying a reader with work in flight does not hang or crash");
 }
 
-// Against the archive that is actually on the bench, when it is there.
-//
-// The synthetic cases above prove the mechanism; this proves it survives a real
-// tile -- hundreds of layers' worth of geometry through the same tessellator
-// the dashboard uses, out of a 400 MB file, with the real zoom range. It SKIPS,
-// loudly, when the archive is absent: the file is far too large to commit and a
-// fresh checkout must still pass. Same arrangement as mvt_test_real_tiles.
-std::filesystem::path realArchivePath()
-{
-    if (const char* fromEnv = std::getenv("SCOPE_TEST_ARCHIVE"); fromEnv != nullptr)
-    {
-        return fromEnv;
-    }
-    return "/Users/ryan/Documents/map_data/socal.mbtiles";
-}
-
-void testTheRealArchiveIfItIsThere()
-{
-    const std::filesystem::path path = realArchivePath();
-    if (!std::filesystem::exists(path))
-    {
-        std::fprintf(stderr, "SKIPPED: no archive at %s\n", path.string().c_str());
-        std::fprintf(stderr, "Set SCOPE_TEST_ARCHIVE to point at an .mbtiles to run this.\n");
-        return;
-    }
-
-    // Irvine at z14, worked out by hand from the Web Mercator formula -- the
-    // same anchor libs/mvt uses, so the projection cannot make this agree with
-    // itself. A wrong flip or a wrong projection names empty ocean.
-    const map_render::TileId irvine{14, 2828, 6562};
-
-    scope::TileReader reader(path.string(), MapStyle_t{}, {});
-    expect(reader.ok(), "the real archive opens");
-    expect(reader.zoomRange().max >= 14, "and reaches at least z14");
-
-    expect(requestAndDrain(reader, {irvine}, 1) == 1, "the Irvine tile arrives");
-    expect(reader.drawable(irvine), "and tessellates to something worth drawing");
-
-    std::vector<map_render::CachedTile> out;
-    reader.ready({irvine}, out);
-    expect(out.size() == 1 && out[0].geometry != nullptr &&
-               !out[0].geometry->vertices.empty(),
-           "a city's worth of geometry came out of it");
-    expect(out[0].labels != nullptr && !out[0].labels->empty(),
-           "and its labels were extracted");
-}
-
 }  // namespace
 
 int main()
@@ -381,8 +335,6 @@ int main()
     testRepeatedRequestsDoNotRequeueAnInFlightTile();
     testARequestLargerThanTheBatchUnitIsFullyServed();
     testDestructionWhileWorkIsQueuedIsClean();
-
-    testTheRealArchiveIfItIsThere();
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

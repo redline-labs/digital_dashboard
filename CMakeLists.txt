@@ -65,6 +65,14 @@ endif()
 unset(_build_testing_help)
 option(BUILD_TESTING "Build this project's test suite" ON)
 
+# Where the large map files live that three tests read when they are there
+# (mvt_test_real_tiles, osm_test_real_extract, scope_test_map_tiles_real). Unset,
+# those cases skip. There is deliberately no default under $HOME: on macOS
+# ~/Documents and ~/Desktop are privacy-protected, and a process without consent
+# BLOCKS in open() rather than failing, which turned a skip into a timeout.
+set(REDLINE_MAP_DATA_DIR "" CACHE PATH
+    "Directory holding socal.mbtiles, socal-260813.mbtiles and socal-260813.osm.pbf for the real-data tests")
+
 add_subdirectory(third_party)
 
 # Homebrew's Qt exports its entire install prefix as a system include directory.

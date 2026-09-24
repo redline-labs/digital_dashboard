@@ -274,6 +274,24 @@ target_link_libraries(scope_test_map_tiles PRIVATE
 
 add_project_test(TARGET scope_test_map_tiles LABELS scope map unit)
 
+# The same reader against the real archive, opt-in through REDLINE_MAP_DATA_DIR
+# and skipped without it. Not `unit`: a unit test reads nothing it did not
+# write. Labelled `slow` with the other real-data tests, so `-LE slow` stays
+# hermetic.
+add_executable(scope_test_map_tiles_real
+    tests/test_map_tiles_real.cpp
+)
+
+target_link_libraries(scope_test_map_tiles_real PRIVATE
+    scope_core
+)
+
+set(_real_data_env)
+if(REDLINE_MAP_DATA_DIR)
+    set(_real_data_env ENVIRONMENT "SCOPE_TEST_ARCHIVE=${REDLINE_MAP_DATA_DIR}/socal.mbtiles")
+endif()
+add_project_test(TARGET scope_test_map_tiles_real LABELS scope map slow ${_real_data_env})
+
 # Per-user settings. Every case in here is one where the wrong behaviour looks
 # like something else -- a first run reported as a broken install, a hand-edit
 # with a typo silently replaced by an empty file, a duplicate name drawing a map
