@@ -68,6 +68,9 @@ struct EstimatorStatus
 
     factor_graph::OptimizeReport last_optimize;
     double last_solve_ms = 0.0;
+    // Keyframes whose covariance came from the solve's own factorisation
+    // (since the last reset); the rest paid for another. See EstimatorConfig::lm.
+    std::uint64_t covariance_from_solve = 0;
     std::size_t window_variables = 0, window_factors = 0;
 
     Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero(), lever_arm_sigma = Eigen::Vector3d::Zero();
@@ -236,7 +239,11 @@ class Estimator
     factor_graph::FactorList measurementFactors(const GnssEpoch& e, const imu_preint::KeyframeKeys& keys,
                                                 const imu_preint::NavState& predicted, double dt_since_last,
                                                 const CalibrationSet& calibration);
-    void refreshNewest(double t, FixQuality fix, std::uint64_t index, const imu_preint::KeyframeKeys& keys);
+    // The newest keyframe's attitude, position, velocity and the calibration:
+    // what refreshNewest() needs the joint covariance of.
+    std::array<factor_graph::Key, 8> newestCovarianceKeys(const imu_preint::KeyframeKeys& k) const;
+    void refreshNewest(double t, FixQuality fix, std::uint64_t index, const imu_preint::KeyframeKeys& keys,
+                       const std::optional<Eigen::MatrixXd>& cov);
     Eigen::Vector3d rateAt(double t) const;       // raw gyro rate, IMU frame
     Eigen::Vector3d forceAt(double t) const;      // raw specific force, IMU frame
     Eigen::Vector3d gravityAt(const Eigen::Vector3d& p_e) const;

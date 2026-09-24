@@ -2,6 +2,7 @@
 
 #include <limits>
 
+#include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 
 #include <stdexcept>
@@ -35,6 +36,23 @@ std::shared_ptr<LinearPrior> LinearPrior::fromHessian(const std::vector<Key>& ke
     const Eigen::VectorXd sym_diag = H.diagonal().cwiseMax(std::numeric_limits<double>::min());
     const Eigen::VectorXd S = sym_diag.cwiseSqrt().cwiseInverse();
     const Eigen::MatrixXd Hs = S.asDiagonal() * (0.5 * (H + H.transpose())) * S.asDiagonal();
+
+    // Usually every direction carries information, and then any square root
+    // will do -- the prior's cost |R d + e|^2 is the same for every R with
+    // R^T R = H -- so Cholesky's, at a fraction of an eigendecomposition's
+    // cost. Taken only when its condition estimate is clear of the rank
+    // tolerance by a wide margin; anything nearer goes the careful way.
+    {
+        const Eigen::LLT<Eigen::MatrixXd> llt(Hs);
+        if (llt.info() == Eigen::Success && llt.rcond() > 1e4 * rank_tolerance)
+        {
+            // S H S = L L^T, so R = L^T S^-1 and e = L^-1 S g.
+            Eigen::MatrixXd r = Eigen::MatrixXd(llt.matrixU()) * S.cwiseInverse().asDiagonal();
+            Eigen::VectorXd e = llt.matrixL().solve(S.cwiseProduct(g));
+            return std::shared_ptr<LinearPrior>(new LinearPrior(keys, std::move(lin), std::move(r), std::move(e)));
+        }
+    }
+
     const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(Hs);
     if (eig.info() != Eigen::Success) throw std::runtime_error("LinearPrior: eigendecomposition failed");
     const Eigen::VectorXd& l = eig.eigenvalues();

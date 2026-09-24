@@ -5,6 +5,7 @@
 // marginalised, and every way an update can be malformed.
 
 #include "factor_graph/csym_factor.h"
+#include "factor_graph/linear_prior.h"
 #include "factor_graph/smoother.h"
 
 #include "csym/factors.h"
@@ -221,38 +222,65 @@ constexpr auto kBilinear = [](auto a, auto b, auto c, auto sigma) { return (a * 
 using BilinearFactor =
     factor_graph::CsymFactor<kBilinear, factor_graph::Vars<V1, V1>, factor_graph::Params<V1, double>>;
 
+// A chain whose coupling Jacobians are exactly zero at the start point
+// (d(a b)/da = b = 0) and not one step later. Once, that changed the sparsity
+// pattern between iterations, and an analysis reused from the first wrote
+// past the end of the factor. Solved through one SolverCache: the pattern must
+// stay put across iterations (so the analysis is reused), and a problem of
+// the same size with a different pattern must get a new one -- and the right
+// answer.
 void testChangingPattern()
 {
     constexpr std::uint64_t n = 40;
+    const auto chain = [&](std::uint64_t stride, FactorList& f, Values& v) {
+        for (std::uint64_t k = 0; k < n; ++k)
+        {
+            const Key key = symbol('x', k);
+            v.insert(key, v1(0.0));
+            // Priors pull each variable to 1.5 + a little; the bilinear terms
+            // want products of 2.
+            f.push_back(std::make_shared<ScalarPriorFactor>("prior", std::array<Key, 1>{key},
+                                                            v1(1.5 + 0.01 * static_cast<double>(k)), 1.0));
+            if (k >= stride)
+                f.push_back(std::make_shared<BilinearFactor>(
+                    "bilinear", std::array<Key, 2>{symbol('x', k - stride), key}, v1(2.0), 0.1));
+        }
+    };
+    // At the minimum the gradient J^T r is zero.
+    const auto gradient = [&](const FactorList& f, const Values& v) {
+        Eigen::VectorXd g = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(n));
+        for (const auto& factor : f)
+        {
+            const auto lin = factor->linearize(v);
+            const auto keys = factor->keys();
+            for (std::size_t a = 0; a < keys.size(); ++a)
+                g[static_cast<Eigen::Index>(factor_graph::symbolIndex(keys[a]))] +=
+                    (lin.jacobians[a].transpose() * lin.residual)(0);
+        }
+        return g.cwiseAbs().maxCoeff();
+    };
+
+    factor_graph::SolverCache cache;
     FactorList f;
     Values v;
-    for (std::uint64_t k = 0; k < n; ++k)
-    {
-        const Key key = symbol('x', k);
-        v.insert(key, v1(0.0));
-        // Priors pull each variable to 1.5 + a little; the bilinear terms want
-        // products of 2.
-        f.push_back(std::make_shared<ScalarPriorFactor>("prior", std::array<Key, 1>{key},
-                                                        v1(1.5 + 0.01 * static_cast<double>(k)), 1.0));
-        if (k > 0)
-            f.push_back(std::make_shared<BilinearFactor>("bilinear", std::array<Key, 2>{symbol('x', k - 1), key},
-                                                         v1(2.0), 0.1));
-    }
-    const auto report = factor_graph::optimize(f, v, {});
+    chain(1, f, v);
+    const auto report = factor_graph::optimize(f, v, {}, &cache);
     check(report.converged, "changing pattern: converged, " + report.stop_reason);
+    check(gradient(f, v) < 1e-6, fmt::format("changing pattern: gradient {:.3g} at the answer", gradient(f, v)));
+    check(cache.analyses() == 1 && cache.reuses() + 1 >= static_cast<std::uint64_t>(report.iterations),
+          fmt::format("one analysis for every iteration ({} analyses, {} reuses, {} iterations)", cache.analyses(),
+                      cache.reuses(), report.iterations));
 
-    // At the minimum the gradient J^T r is zero.
-    Eigen::VectorXd g = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(n));
-    for (const auto& factor : f)
-    {
-        const auto lin = factor->linearize(v);
-        const auto keys = factor->keys();
-        for (std::size_t a = 0; a < keys.size(); ++a)
-            g[static_cast<Eigen::Index>(factor_graph::symbolIndex(keys[a]))] +=
-                (lin.jacobians[a].transpose() * lin.residual)(0);
-    }
-    check(g.cwiseAbs().maxCoeff() < 1e-6, fmt::format("changing pattern: gradient {:.3g} at the answer",
-                                                      g.cwiseAbs().maxCoeff()));
+    // Same size AND the same number of non-zeros, in different places: only
+    // a comparison of the indices themselves tells the patterns apart.
+    FactorList f2;
+    Values v2;
+    chain(2, f2, v2);
+    f2.push_back(std::make_shared<BilinearFactor>("bilinear", std::array<Key, 2>{symbol('x', 0), symbol('x', n - 1)},
+                                                  v1(2.0), 0.1));
+    const auto report2 = factor_graph::optimize(f2, v2, {}, &cache);
+    check(report2.converged && gradient(f2, v2) < 1e-6, "a new pattern of the same size is solved right");
+    check(cache.analyses() == 2, "and gets an analysis of its own");
 }
 
 // ---- what cannot be observed -------------------------------------------------
@@ -280,6 +308,70 @@ void testUnobservable()
     FactorList none;
     factor_graph::optimize(none, lonely, {});
     near(lonely.at<V1>(symbol('z', 0))[0], 5.0, 0.0, "an unconstrained variable does not move");
+}
+
+// Marginalisation's careful paths. A full-rank block goes through Cholesky;
+// only a singular one reaches the pseudo-inverse and the eigendecomposition,
+// so nothing else in the suite exercises them. Linear, so the answers are
+// exact: a0 ~ N(1, 1), x1 - a0 ~ N(0, 1) gives x1 ~ N(1, 2).
+void testRankDeficientMarginalisation()
+{
+    const auto run = [](bool singular_blanket) {
+        factor_graph::FixedLagSmoother fls(factor_graph::FixedLagParams{.lag = 0.5, .lm = {}, .rank_tolerance = 1e-12});
+        const Key a0 = symbol('a', 0), c0 = symbol('c', 0), x1 = symbol('x', 1), w1 = symbol('w', 1);
+        Values v0;
+        v0.insert(a0, v1(0.0));
+        v0.insert(c0, v1(0.0));
+        FactorList f0;
+        f0.push_back(std::make_shared<ScalarPriorFactor>("a0", std::array<Key, 1>{a0}, v1(1.0), 1.0));
+        check(fls.update(f0, v0, {{a0, 0.0}, {c0, 0.0}}).ok, "first update");
+
+        Values v1s;
+        v1s.insert(x1, v1(0.0));
+        v1s.insert(w1, v1(0.0));
+        FactorList f1;
+        f1.push_back(std::make_shared<DifferenceFactor>("x1 - a0", std::array<Key, 2>{a0, x1}, v1(0.0), 1.0));
+        // Without it c0 is touched by nothing: marginalising it inverts a
+        // singular block (the pseudo-inverse). With it, c0 carries exactly
+        // w1's information away, and the prior left on w1 is rank-deficient
+        // (the eigendecomposition).
+        if (singular_blanket)
+            f1.push_back(std::make_shared<DifferenceFactor>("w1 - c0", std::array<Key, 2>{c0, w1}, v1(0.0), 1.0));
+        f1.push_back(std::make_shared<ScalarPriorFactor>("w1", std::array<Key, 1>{w1}, v1(5.0), 2.0));
+        check(fls.update(f1, v1s, {{x1, 1.0}, {w1, 1.0}}).ok, "second update");
+        check(!fls.estimate().contains(a0) && !fls.estimate().contains(c0), "the first step was marginalised");
+
+        const std::string label = singular_blanket ? "rank-deficient prior" : "singular marginal block";
+        near(fls.estimate().at<V1>(x1)[0], 1.0, 1e-9, label + ": x1's mean");
+        near(fls.estimate().at<V1>(w1)[0], 5.0, 1e-9, label + ": w1's mean, untouched");
+        const auto cx = fls.covariance(x1), cw = fls.covariance(w1);
+        check(cx && cw, label + ": both still have a covariance");
+        if (cx) near((*cx)(0, 0), 2.0, 1e-9, label + ": x1's variance");
+        if (cw) near((*cw)(0, 0), 4.0, 1e-9, label + ": w1's variance, nothing added by c0");
+    };
+    run(false);
+    run(true);
+
+    // And the prior itself, off the optimum where its gradient is not zero:
+    // H of rank one, g in its range. R^T R = H and R^T e = g, with nothing
+    // claimed about the null direction.
+    Values at;
+    at.insert(symbol('p', 0), v1(0.0));
+    at.insert(symbol('q', 0), v1(0.0));
+    const std::vector<Key> keys{symbol('p', 0), symbol('q', 0)};
+    const Eigen::Matrix2d H = (Eigen::Matrix2d() << 4.0, 2.0, 2.0, 1.0).finished();
+    const Eigen::Vector2d g(6.0, 3.0);
+    const auto prior = factor_graph::LinearPrior::fromHessian(keys, at, H, g, 1e-12);
+    check(prior != nullptr, "a rank-one Hessian still makes a prior");
+    if (prior)
+    {
+        const auto lin = prior->linearize(at);
+        Eigen::MatrixXd R(lin.residual.size(), 2);
+        R << lin.jacobians[0], lin.jacobians[1];
+        check(lin.residual.size() == 1, "one row: the null direction claims nothing");
+        check((R.transpose() * R - H).norm() < 1e-12, "R^T R is the Hessian");
+        check((R.transpose() * lin.residual - g).norm() < 1e-12, "R^T e is the gradient");
+    }
 }
 
 // ---- static variables ------------------------------------------------------
@@ -522,6 +614,7 @@ int main()
     testChangingPattern();
     testUnobservable();
     testWidelyScaledInformation();
+    testRankDeficientMarginalisation();
     testStaticVariable();
     testRefusals();
     if (failures)

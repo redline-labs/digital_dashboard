@@ -623,7 +623,8 @@ bool Estimator::startGraph(const Start& st, const CalibrationSet& cal)
         stamps[key] = st.t;
 
     const auto t0 = std::chrono::steady_clock::now();
-    const auto report = fls_.update(f, values, stamps);
+    const auto cov_keys = newestCovarianceKeys(k);
+    const auto report = fls_.update(f, values, stamps, cov_keys);
     status_.last_solve_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (!report.ok)
     {
@@ -632,6 +633,7 @@ bool Estimator::startGraph(const Start& st, const CalibrationSet& cal)
         return false;
     }
     status_.last_optimize = report.optimize;
+    status_.covariance_from_solve = fls_.solverCache().covariancesFromSolve();
     ++status_.calibration_segments;
     if (sink_)
         sink_(KeyframeRecord{st.t, k, f, values, stamps, st.omega_i, forceAt(st.t), st.fix, true, seg.index, seg.start,
@@ -639,7 +641,7 @@ bool Estimator::startGraph(const Start& st, const CalibrationSet& cal)
     status_.initialized = !anchored_;
     status_.anchored = anchored_;
     ++status_.keyframes;
-    refreshNewest(st.t, st.fix, index, k);
+    refreshNewest(st.t, st.fix, index, k, report.covariance);
     return true;
 }
 
@@ -991,14 +993,15 @@ bool Estimator::addKeyframe(double t, const GnssEpoch* e)
     }
 
     const auto t0 = std::chrono::steady_clock::now();
-    auto report = fls_.update(f, values, stamps);
+    const auto cov_keys = newestCovarianceKeys(k);
+    auto report = fls_.update(f, values, stamps, cov_keys);
     if (!report.ok)
     {
         // A measurement the checks let through but the factor refused: keep
         // the IMU chain unbroken without it.
         ++status_.updates_refused;
         f.resize(n_imu);
-        report = fls_.update(f, values, stamps);
+        report = fls_.update(f, values, stamps, cov_keys);
         if (!report.ok)
         {
             reset();
@@ -1007,12 +1010,13 @@ bool Estimator::addKeyframe(double t, const GnssEpoch* e)
     }
     status_.last_solve_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     status_.last_optimize = report.optimize;
+    status_.covariance_from_solve = fls_.solverCache().covariancesFromSolve();
     const FixQuality fix = e ? e->fix : last.fix;
     if (sink_)
         sink_(KeyframeRecord{t, k, f, values, stamps, rateAt(t), forceAt(t), fix, false, segment_->index,
                              segment_->start, e != nullptr});
     ++status_.keyframes;
-    refreshNewest(t, fix, index, k);
+    refreshNewest(t, fix, index, k, report.covariance);
     return true;
 }
 
@@ -1226,7 +1230,14 @@ void Estimator::mountingFactors(double t, const imu_preint::KeyframeKeys& k, con
     }
 }
 
-void Estimator::refreshNewest(double t, FixQuality fix, std::uint64_t index, const imu_preint::KeyframeKeys& k)
+std::array<Key, 8> Estimator::newestCovarianceKeys(const imu_preint::KeyframeKeys& k) const
+{
+    const CalibrationKeys& ck = segment_->keys;
+    return {k.R, k.p, k.v, ck.mounting, ck.lever_arm, ck.boresight, ck.magnetometer, ck.barometer};
+}
+
+void Estimator::refreshNewest(double t, FixQuality fix, std::uint64_t index, const imu_preint::KeyframeKeys& k,
+                              const std::optional<Eigen::MatrixXd>& cov)
 {
     const auto& est = fls_.estimate();
     Newest n;
@@ -1254,8 +1265,7 @@ void Estimator::refreshNewest(double t, FixQuality fix, std::uint64_t index, con
     const auto baro = est.at<csym::Vector2<double>>(ck.barometer);
     cal.baro_offset = baro[0];
     cal.baro_airflow = baro[1];
-    const std::array<Key, 8> keys{k.R, k.p, k.v, ck.mounting, ck.lever_arm, ck.boresight, ck.magnetometer, ck.barometer};
-    if (const auto cov = fls_.jointCovariance(keys))
+    if (cov)
     {
         n.cov_Rpv = cov->topLeftCorner(9, 9);
         cal.cov = cov->block<kCalibrationDim, kCalibrationDim>(9, 9);

@@ -227,6 +227,7 @@ against exact truth.
 | `vehicle_estimator_test_calibration_policy` | unit | The prior hash against golden values computed independently, what does and does not change it, every write-policy branch, load inflation, floor and cap, and malformed estimates refused. |
 | `vehicle_estimator_test_mounting` | slow | A 2° mounting yaw learned on straights to 0.02°, roll and pitch learned at stops, a drift teaching the mounting nothing, and a knocked IMU followed with the walk and not without it. |
 | `vehicle_estimator_test_offline` | unit | The batch is never worse than the fixed-lag smoother and is clearly better at the start and across an outage; its calibration history carries what was learned late back to the start of the drive. |
+| `vehicle_estimator_test_solver` | unit | What a keyframe costs: two iterations, no rejected steps, the covariance from the solve's own factorisation, and the same accuracy. None of these shows in the estimate, only in the time. |
 | `vehicle_estimator_test_keyframes` | unit | Inertial keyframes through an outage and none beside GNSS; a late epoch still used; the buffer bounded; sigmas growing; parked held at zero velocity. |
 | `vehicle_estimator_test_barometer` | slow | Offset to a metre and airflow to 0.1 from hills; a 60 s outage and an autonomous fix held by it; the weather followed. |
 | `vehicle_estimator_test_magnetometer` | slow | Hard and soft iron learned, small and large; five minutes parked without a heading held by it; an outage; a disturbance refused. |

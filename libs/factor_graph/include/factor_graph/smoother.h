@@ -19,6 +19,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace factor_graph
@@ -32,6 +33,9 @@ struct UpdateReport
     std::string error;  // why the update was refused; the state is unchanged
     OptimizeReport optimize;
     std::size_t marginalized = 0;
+    // The joint covariance of the keys update() was asked for, when it could
+    // be computed.
+    std::optional<Eigen::MatrixXd> covariance;
 };
 
 struct FixedLagParams
@@ -50,7 +54,14 @@ class FixedLagSmoother
     // marginalised) and factors, solves, and marginalises what fell out of
     // the window. Refuses the whole update -- leaving the state as it was --
     // if any factor or value is malformed.
-    UpdateReport update(const FactorList& factors, const Values& new_values, const std::map<Key, double>& stamps);
+    //
+    // `covariance_keys`, if any, get their joint covariance in the report,
+    // computed between the solve and the marginalisation: marginalising by
+    // Schur complement leaves the others' marginal unchanged, and before it
+    // the window still has the solve's sparsity pattern, so SolverCache
+    // reuses the solve's symbolic analysis instead of making a new one.
+    UpdateReport update(const FactorList& factors, const Values& new_values, const std::map<Key, double>& stamps,
+                        std::span<const Key> covariance_keys = {});
 
     const Values& estimate() const { return values_; }
     const FactorList& factors() const { return factors_; }
@@ -59,6 +70,7 @@ class FixedLagSmoother
 
     std::optional<Eigen::MatrixXd> covariance(Key key) const;
     std::optional<Eigen::MatrixXd> jointCovariance(std::span<const Key> keys) const;
+    const SolverCache& solverCache() const { return cache_; }
 
   private:
     std::size_t marginalizeBefore(double cutoff);
@@ -67,6 +79,7 @@ class FixedLagSmoother
     Values values_;
     FactorList factors_;
     std::map<Key, double> stamps_;
+    mutable SolverCache cache_;
 };
 
 class BatchSmoother

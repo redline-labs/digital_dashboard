@@ -27,9 +27,9 @@ can read in one file.
 | `factor_graph/key.h` | `Key`, `symbol(kind, index)`, `keyName()`: a character and an index packed like `gtsam::Symbol`, so a log reads `x42`. |
 | `factor_graph/values.h` | `Variable`, `VariableModel<T>` and `Values`. Any csym Lie group is a variable. `kEpsilon` is the one identity epsilon the whole graph shares. |
 | `factor_graph/factor.h` | `Factor`, `Linearization`, and `factorProblem()`: the check every factor passes before it reaches the optimiser. |
-| `factor_graph/csym_factor.h` | `CsymFactor<F, Vars<...>, Params<...>>`: a factor whose residual is a generic lambda. |
+| `factor_graph/csym_factor.h` | `CsymFactor<F, Vars<...>, Params<...>>`: a factor whose residual is a generic lambda; `Whitened{}` applies a constant sqrt-information matrix outside the traced residual. |
 | `factor_graph/linear_prior.h` | `LinearPrior::fromHessian()`: what marginalisation leaves behind, frozen at its linearisation point. |
-| `factor_graph/optimizer.h` | `LmParams`, `optimize()`, `totalCost()`, `jointCovariance()`, `jointCovariances()`. |
+| `factor_graph/optimizer.h` | `LmParams`, `optimize()`, `SolverCache`, `totalCost()`, `jointCovariance()`, `jointCovariances()`. |
 | `factor_graph/smoother.h` | `FixedLagSmoother`, `BatchSmoother`, `UpdateReport`, `updateProblem()`, `kStatic`. |
 
 ## Using it
@@ -66,7 +66,8 @@ estimator gives each factor type its own translation unit.
 **Marginal priors are frozen.** When a keyframe leaves the window, the
 factors touching it are linearised, the Schur complement folds them onto
 their Markov blanket, and `LinearPrior::fromHessian()` eigen-decomposes the
-result into `0.5 |R d + e|^2`. Here `d` is the local coordinates from a
+result into `0.5 |R d + e|^2` (by Cholesky when the block is well conditioned,
+by eigendecomposition when it is not). Here `d` is the local coordinates from a
 linearisation point that never moves again. Re-linearising at a later
 estimate would invent information the discarded factors never carried. The
 smoother would then become confidently wrong in the directions it cannot
@@ -87,18 +88,44 @@ window to NaN.
 **Convergence is a step size, not a cost change.** LM stops when an accepted
 step is below `step_tolerance` in the whitened metric `sqrt(dᵀHd)`. A
 relative-cost test stops early: the cost is dominated by the residual that
-cannot be removed, and a parameter error `e` moves it only by `e²`. For the
-same reason, a step whose predicted and actual decrease are both within the
-cost's own rounding (64 ulp of the cost) is accepted rather than rejected.
-Without that rule, LM near the answer rejected steps until lambda saturated.
+cannot be removed, and a parameter error `e` moves it only by `e²`. A step already inside the tolerance is taken and the solve ends
+without evaluating the cost at all. In ECEF the cost cannot resolve it: a
+position of 6e6 m is known to about 1e-9 m, which an IMU factor's whitening
+turns into about 1e-4 per residual. Such a step used to "fail" to lower the
+cost and be rejected, damped and retried to the iteration cap.
 
-**The LDLT is refactorised from scratch on every iteration.** The sparsity
-pattern of the normal equations can change between iterations: a coupling
-Jacobian that is exactly zero at the start point is non-zero one step later.
-Reusing an `analyzePattern()` from the first iteration wrote past the end of
-Eigen's arrays. The result was heap corruption that surfaced as a crash
-minutes into a drive, and it was found under ASan.
-`factor_graph_test_graph` has the case, and the mutant crashes.
+**Solves happen in Jacobi-scaled variables, and damping should start tiny.**
+Marquardt damping `λ·diag(H)` becomes `λ·I` after the scaling. In a window
+where each keyframe's diagonal is about 1e11 from an IMU chain, while the
+window moving as a whole carries far less information, any ordinary `λ`
+damps exactly the directions the measurements are moving. The estimator
+starts at 1e-14, which is effectively Gauss-Newton, and a rejected step still
+grows it.
+
+**One symbolic analysis per pattern.** `SolverCache` keeps the LDLT's
+ordering and elimination tree with the exact pattern it was computed for,
+and reuses them only for a matrix whose pattern matches index for index.
+Assembly keeps exact zeros, so the pattern holds across a keyframe's
+iterations. Pass a `SolverCache` to `optimize()` and `jointCovariance()`;
+`FixedLagSmoother` owns one.
+
+**The covariance can come with the solve.** `optimize(..., covariance_keys)`
+returns their joint covariance. When the solve ended on a step inside its
+tolerance with damping below 1e-14, it comes from the factorisation that step
+was solved with: the Hessian at the solution, to within that step. Otherwise
+it is computed afresh. Either way only a forward solve is needed: for
+`S H S = Pᵀ L D Lᵀ P`, the block is `Yᵀ D⁻¹ Y` with `Y = L⁻¹ P S E`.
+`FixedLagSmoother::update(..., covariance_keys)` does this before
+marginalising, which a Schur complement leaves unchanged.
+
+**A symbolic analysis is never reused on trust.** The sparsity pattern of
+the normal equations once changed between iterations: a coupling Jacobian
+that is exactly zero at the start point is non-zero one step later. Reusing
+an `analyzePattern()` from the first iteration wrote past the end of Eigen's
+arrays. The result was heap corruption that surfaced as a crash minutes into
+a drive, and it was found under ASan. `SolverCache` compares the whole
+pattern before reusing anything, and `factor_graph_test_graph` keeps the
+changing-pattern case.
 
 **Unobservable means empty, not large.** `jointCovariance()` returns
 `std::nullopt` when the Hessian is singular. The inverse of a near-singular
@@ -113,7 +140,8 @@ in 1-D and 6-D, the fixed-lag smoother at lag 0 must reproduce a textbook
 Kalman filter's mean and `P(k|k)` at every step. At lag L it must match the
 RTS smoother over the data so far. `BatchSmoother` must match RTS at every
 state and covariance. All three hold to 1e-9, with deliberately bad initial
-guesses. This is the proof that the batch path is RTS, and that the offline
+guesses. The covariance `update()` takes from the solve's factorisation must
+match the filter too, and must actually have been taken from it. This is the proof that the batch path is RTS, and that the offline
 smoother is its nonlinear generalisation.
 
 `factor_graph_test_graph` (unit) covers the nonlinear side:
@@ -123,5 +151,7 @@ smoother is its nonlinear generalisation.
 - Rosenbrock under LM
 - the changing-sparsity case above
 - a gauge-free problem that converges without NaN and reports no covariance
+- marginalisation through the rank-deficient paths (a singular block, a
+  rank-one prior with a non-zero gradient), which Cholesky otherwise bypasses
 - a static bias that lag 0 must estimate exactly as the batch does
 - every malformed update being refused, with the state left untouched

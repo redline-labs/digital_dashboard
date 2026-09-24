@@ -68,6 +68,9 @@ vehicle_estimator_test(robustness unit)
 vehicle_estimator_test(clock unit)
 vehicle_estimator_test(keyframes unit)
 
+# What a keyframe costs the solver: iterations per keyframe on a real drive.
+vehicle_estimator_test(solver unit)
+
 # A start with no GNSS: anchored, attitude only, magnetic heading from a
 # learned calibration, and one re-anchor at the first fix.
 vehicle_estimator_test(cold_start slow TIMEOUT 900)

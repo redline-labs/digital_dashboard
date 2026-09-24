@@ -22,6 +22,7 @@
 #include <Eigen/Dense>
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <cmath>
 #include <random>
 #include <string>
@@ -257,6 +258,46 @@ void testFilter(const Model<N, M>& m, std::size_t steps, const std::string& labe
     }
 }
 
+// The covariance update() hands back, taken from the solve's own
+// factorisation when the solve ended undamped on a negligible step. On a
+// linear model that factorisation IS the Hessian, so it must match the
+// filter to rounding -- and it must actually have been used, or the check
+// would pass on the fallback alone.
+template <std::size_t N, std::size_t M>
+void testCovarianceFromSolve(const Model<N, M>& m, std::size_t steps, const std::string& label)
+{
+    const KalmanRun kf = kalmanRts(m, steps);
+    factor_graph::LmParams lm;
+    lm.initial_lambda = 1e-14;
+    lm.step_tolerance = 1e-6;  // above rounding, so every solve ends on the step inside it
+    factor_graph::FixedLagSmoother fls(factor_graph::FixedLagParams{.lag = 2.0, .lm = lm, .rank_tolerance = 1e-12});
+    for (std::size_t k = 0; k < steps; ++k)
+    {
+        factor_graph::Values v;
+        v.insert(symbol('x', k), badGuess<N>());
+        const std::array<Key, 1> want{symbol('x', k)};
+        const auto report = fls.update(m.factorsAt(k), v, {{symbol('x', k), static_cast<double>(k)}}, want);
+        check(report.ok && report.covariance.has_value(), fmt::format("{} step {}: a covariance", label, k));
+        if (report.covariance) near(*report.covariance, kf.p_filt[k], 1e-9, fmt::format("{} P(k|k) from the solve at {}", label, k));
+    }
+    check(fls.solverCache().covariancesFromSolve() == steps,
+          fmt::format("{}: every covariance came from the solve ({} of {})", label,
+                      fls.solverCache().covariancesFromSolve(), steps));
+
+    // Damped as a default LmParams leaves it, the solve's factorisation is
+    // not the Hessian's: the long way is taken, and gives the same answer.
+    factor_graph::FixedLagSmoother damped(factor_graph::FixedLagParams{.lag = 2.0, .lm = {}, .rank_tolerance = 1e-12});
+    for (std::size_t k = 0; k < steps; ++k)
+    {
+        factor_graph::Values v;
+        v.insert(symbol('x', k), badGuess<N>());
+        const std::array<Key, 1> want{symbol('x', k)};
+        const auto report = damped.update(m.factorsAt(k), v, {{symbol('x', k), static_cast<double>(k)}}, want);
+        if (report.covariance) near(*report.covariance, kf.p_filt[k], 1e-9, fmt::format("{} damped P(k|k) at {}", label, k));
+    }
+    check(damped.solverCache().covariancesFromSolve() == 0, label + ": a damped solve's factorisation is not reused");
+}
+
 template <std::size_t N, std::size_t M>
 void testFixedLag(const Model<N, M>& m, std::size_t steps, double lag, const std::string& label)
 {
@@ -335,6 +376,8 @@ int main()
 
     testFilter(walk, kSteps, "walk");
     testFilter(cv, kSteps, "cv");
+    testCovarianceFromSolve(walk, kSteps, "walk");
+    testCovarianceFromSolve(cv, kSteps, "cv");
     testFixedLag(walk, kSteps, 4.0, "walk lag 4");
     testFixedLag(cv, kSteps, 6.0, "cv lag 6");
     testBatch(walk, kSteps, "walk");

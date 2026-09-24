@@ -226,7 +226,12 @@ discovery seeing only live traffic, and what `accepted: false` and
   it lets the smoother invent information about directions it never observed,
   and the covariance goes confidently wrong. The sparse LDLT is `compute()`d
   every iteration, not `factorize()`d on a cached pattern: the pattern changes
-  when a keyframe goes, and a stale one read out of bounds.
+  when a keyframe goes, and a stale one read out of bounds -- so `SolverCache`
+  reuses an analysis only for an identical pattern, compared in full. Keep
+  the estimator's LM damping near zero: `λ·diag(H)` against an IMU chain's
+  1e11 diagonal damps exactly the directions GNSS moves, and every keyframe
+  ran to the iteration cap with the estimate looking fine.
+  `vehicle_estimator_test_solver` is what notices.
 - **The installation is a prior that walks, and what it learned is kept by
   hash.** Mounting, lever arm, boresight, magnetometer and barometer get new
   variables every segment,

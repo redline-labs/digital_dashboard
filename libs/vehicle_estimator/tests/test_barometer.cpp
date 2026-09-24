@@ -91,11 +91,12 @@ void testOutage()
 {
     const double with = outageVertical(true);
     const double without = outageVertical(false);
-    // Measured 2026-09-23: 0.24 m against 0.78 m. The IMU alone does better
+    // Measured 2026-09-24: 0.26 m against 0.57 m. The IMU alone does better
     // than its reputation because the accelerometer bias was learned before
-    // the outage; the barometer's margin grows with the outage.
+    // the outage; the barometer's margin grows with the outage. (The IMU's
+    // 0.78 m of 2026-09-23 was a solver stopping short of its minimum.)
     check(with < 0.5, "through a minute's outage the barometer holds height to half a metre");
-    check(with * 2.5 < without, "well over twice as well as the IMU alone");
+    check(with * 2.0 < without, "over twice as well as the IMU alone");
 }
 
 double autonomousVertical(bool barometer)

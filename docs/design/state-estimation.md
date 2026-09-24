@@ -260,6 +260,31 @@ velocity (3 dimensions each) and 0.8 for yaw (1). All are below their
 dimension, so the reported sigmas are mildly conservative: a consumer trusting
 them is not misled, and a little information is left on the table.
 
+### Solver cost
+
+Measured 2026-09-24 as CPU time per keyframe over a two-lap track, with the
+magnetometer and barometer on. Before, every keyframe ran LM to its
+eight-iteration cap: **8.9 ms**. After, two iterations: **1.7 ms**. Accuracy
+and NEES are unchanged to the last printed digit. In order of what it bought:
+
+- Damping started effectively at zero. Marquardt's `λ·diag(H)` throttled the
+  window's weak common mode against the IMU chain's 1e11 diagonal, so
+  convergence was linear.
+- The solve ends on the step inside its tolerance without asking the cost,
+  which cannot resolve it in ECEF. The tolerance is 0.1σ: the step is taken,
+  so what is left is the next one, about 15× smaller.
+- The covariance comes from the solve's last factorisation, before
+  marginalisation, by forward solve alone.
+- The symbolic analysis is reused while the pattern is identical, and the
+  marginal prior uses Cholesky when it is well conditioned.
+
+One thing was tried and removed. Assembling straight into a recorded pattern
+saved nothing measurable once the rest was done, and it was the most
+intricate of the changes. `vehicle_estimator_test_solver` asserts the
+iteration count, the absence of rejected steps and that the covariance
+reuse happens, because none of these shows in the estimate, only in the
+time.
+
 ## Learned calibration
 
 Added 2026-09-23. The installation -- mounting, lever arm, boresight -- is a

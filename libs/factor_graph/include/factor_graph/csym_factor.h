@@ -14,12 +14,20 @@
 // Each distinct instantiation compiles a residual program; a heavy one costs
 // seconds of compile time, which is why the estimator builds each of its
 // factor types in a translation unit of its own.
+//
+// A large constant sqrt-information matrix can instead be applied after the
+// program runs -- construct with `Whitened{}` and pass it first. That is
+// exact for a constant matrix, and it keeps a dense N x N product out of the
+// traced residual, where it would be differentiated symbolically: the IMU
+// factor's 9 x 9 took most of its 54 s build. Only for a residual whose
+// robust loss (if any) is not applied to the whitened value inside F.
 
 #include "factor_graph/factor.h"
 
 #include "csym/function.h"
 
 #include <array>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -33,6 +41,10 @@ struct Vars
 };
 template <class... P>
 struct Params
+{
+};
+
+struct Whitened
 {
 };
 
@@ -54,6 +66,15 @@ class CsymFactor<F, Vars<V...>, Params<P...>> final : public Factor
     CsymFactor(std::string name, const std::array<Key, kNumVars>& keys, const P&... params)
         : Factor(std::vector<Key>(keys.begin(), keys.end())), name_(std::move(name)), params_(params...)
     {
+    }
+
+    CsymFactor(Whitened, std::string name, const std::array<Key, kNumVars>& keys, Eigen::MatrixXd sqrt_info,
+               const P&... params)
+        : Factor(std::vector<Key>(keys.begin(), keys.end())), name_(std::move(name)), params_(params...),
+          whiten_(std::move(sqrt_info))
+    {
+        if (whiten_.rows() != static_cast<Eigen::Index>(kDim) || whiten_.cols() != static_cast<Eigen::Index>(kDim))
+            throw std::invalid_argument(name_ + ": sqrt-information must be square in the residual's dimension");
     }
 
     std::size_t dim() const override { return kDim; }
@@ -86,6 +107,11 @@ class CsymFactor<F, Vars<V...>, Params<P...>> final : public Factor
         out.residual = toEigen(value);
         out.jacobians.reserve(kNumVars);
         (out.jacobians.push_back(toEigen(std::get<I>(blocks))), ...);
+        if (whiten_.size() != 0)
+        {
+            out.residual = whiten_ * out.residual;
+            for (auto& j : out.jacobians) j = whiten_ * j;
+        }
         return out;
     }
 
@@ -93,7 +119,9 @@ class CsymFactor<F, Vars<V...>, Params<P...>> final : public Factor
     Eigen::VectorXd residualImpl(const Values& values, std::index_sequence<I...>, std::index_sequence<J...>) const
     {
         const auto k = keys();
-        return toEigen(Fn::eval(values.at<VarType<I>>(k[I])..., std::get<J>(params_)...));
+        Eigen::VectorXd r = toEigen(Fn::eval(values.at<VarType<I>>(k[I])..., std::get<J>(params_)...));
+        if (whiten_.size() != 0) r = whiten_ * r;
+        return r;
     }
 
     template <std::size_t R, std::size_t C>
@@ -105,6 +133,7 @@ class CsymFactor<F, Vars<V...>, Params<P...>> final : public Factor
 
     std::string name_;
     std::tuple<P...> params_;
+    Eigen::MatrixXd whiten_;  // empty: F whitens its own residual
 };
 
 }  // namespace factor_graph

@@ -22,11 +22,10 @@ namespace
 using V3 = csym::Vector3<double>;
 using M33 = csym::Matrix33<double>;
 using Rot3 = csym::Rot3<double>;
-using M99 = csym::Matrix<double, 9, 9>;
 
 constexpr auto kImuResidual = [](auto Ri, auto pi, auto vi, auto bg, auto ba, auto Rj, auto pj, auto vj, auto dR,
                                  auto dv, auto dp, auto dR_dbg, auto dv_dbg, auto dv_dba, auto dp_dbg, auto dp_dba,
-                                 auto bg0, auto ba0, auto dt, auto g, auto omega, auto sqrt_info, auto eps) {
+                                 auto bg0, auto ba0, auto dt, auto g, auto omega, auto eps) {
     using T = decltype(dt);
     const auto pred = predict(Ri, pi, vi, bg, ba, dR, dv, dp, dR_dbg, dv_dbg, dv_dba, dp_dbg, dp_dba, bg0, ba0, dt, g,
                               omega, eps);
@@ -41,12 +40,12 @@ constexpr auto kImuResidual = [](auto Ri, auto pi, auto vi, auto bg, auto ba, au
         r[3 + k] = rv[k];
         r[6 + k] = rp[k];
     }
-    return sqrt_info * r;
+    return r;  // whitened by the factor, numerically: see makeImuFactor
 };
 
 using ImuFactor = factor_graph::CsymFactor<
     kImuResidual, factor_graph::Vars<Rot3, V3, V3, V3, V3, Rot3, V3, V3>,
-    factor_graph::Params<Rot3, V3, V3, M33, M33, M33, M33, M33, V3, V3, double, V3, V3, M99, double>>;
+    factor_graph::Params<Rot3, V3, V3, M33, M33, M33, M33, M33, V3, V3, double, V3, V3, double>>;
 
 constexpr auto kBiasWalk = [](auto bi, auto bj, auto inv_sigma) { return (bj - bi) * inv_sigma; };
 using BiasWalkFactor = factor_graph::CsymFactor<kBiasWalk, factor_graph::Vars<V3, V3>, factor_graph::Params<double>>;
@@ -79,17 +78,16 @@ std::shared_ptr<const factor_graph::Factor> makeImuFactor(const KeyframeKeys& i,
     // Whitening S with S^T S = cov^-1: S = L^-1 for cov = L L^T.
     const Eigen::LLT<Matrix9d> llt(pim.cov);
     if (llt.info() != Eigen::Success) throw std::invalid_argument("IMU factor: covariance is not positive definite");
-    const Matrix9d s = llt.matrixL().solve(Matrix9d::Identity());
-    M99 sqrt_info;
-    for (std::size_t r = 0; r < 9; ++r)
-        for (std::size_t c = 0; c < 9; ++c)
-            sqrt_info(r, c) = s(static_cast<Eigen::Index>(r), static_cast<Eigen::Index>(c));
+    const Matrix9d sqrt_info = llt.matrixL().solve(Matrix9d::Identity());
 
+    // Whitened after the residual program rather than inside it: a 9 x 9
+    // product in the traced residual was most of this file's compile time.
     return std::make_shared<ImuFactor>(
-        "imu", std::array<factor_graph::Key, 8>{i.R, i.p, i.v, i.bg, i.ba, j.R, j.p, j.v},
+        factor_graph::Whitened{}, "imu", std::array<factor_graph::Key, 8>{i.R, i.p, i.v, i.bg, i.ba, j.R, j.p, j.v},
+        sqrt_info,
         toCsym(Eigen::Quaterniond(pim.dR)), toCsym(pim.dv), toCsym(pim.dp), toCsym(pim.dR_dbg), toCsym(pim.dv_dbg),
         toCsym(pim.dv_dba), toCsym(pim.dp_dbg), toCsym(pim.dp_dba), toCsym(pim.bg_lin), toCsym(pim.ba_lin), pim.dt,
-        toCsym(gravity_e), toCsym(omega_ie), sqrt_info, factor_graph::kEpsilon);
+        toCsym(gravity_e), toCsym(omega_ie), factor_graph::kEpsilon);
 }
 
 std::shared_ptr<const factor_graph::Factor> makeBiasWalkFactor(factor_graph::Key bi, factor_graph::Key bj,

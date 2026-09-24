@@ -1,11 +1,13 @@
 #include "factor_graph/smoother.h"
 
+#include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 
 #include <spdlog/fmt/fmt.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
 
 namespace factor_graph
@@ -28,6 +30,16 @@ std::string merge(Values& into, const Values& new_values)
 
 Eigen::MatrixXd pseudoInverse(const Eigen::MatrixXd& a, double tolerance)
 {
+    // Usually invertible: Cholesky, on the Jacobi-scaled matrix so the
+    // condition estimate is about the problem and not its units, when that
+    // estimate is clear of the tolerance by a wide margin.
+    {
+        const Eigen::VectorXd s = a.diagonal().cwiseMax(std::numeric_limits<double>::min()).cwiseSqrt().cwiseInverse();
+        const Eigen::MatrixXd as = s.asDiagonal() * (0.5 * (a + a.transpose())) * s.asDiagonal();
+        const Eigen::LLT<Eigen::MatrixXd> llt(as);
+        if (llt.info() == Eigen::Success && llt.rcond() > 1e4 * tolerance)
+            return s.asDiagonal() * llt.solve(Eigen::MatrixXd::Identity(a.rows(), a.cols())) * s.asDiagonal();
+    }
     const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(0.5 * (a + a.transpose()));
     const Eigen::VectorXd& l = eig.eigenvalues();
     const double largest = l.size() ? l.cwiseAbs().maxCoeff() : 0.0;
@@ -70,7 +82,7 @@ std::optional<double> FixedLagSmoother::stamp(Key key) const
 }
 
 UpdateReport FixedLagSmoother::update(const FactorList& factors, const Values& new_values,
-                                      const std::map<Key, double>& stamps)
+                                      const std::map<Key, double>& stamps, std::span<const Key> covariance_keys)
 {
     UpdateReport report;
     for (Key k : new_values.keys())
@@ -120,7 +132,8 @@ UpdateReport FixedLagSmoother::update(const FactorList& factors, const Values& n
     for (const auto& [k, t] : stamps) stamps_[k] = t;
     factors_.insert(factors_.end(), factors.begin(), factors.end());
 
-    report.optimize = optimize(factors_, values_, params_.lm);
+    report.optimize = optimize(factors_, values_, params_.lm, &cache_, covariance_keys);
+    report.covariance = std::move(report.optimize.covariance);
     if (const auto newest = newestStamp()) report.marginalized = marginalizeBefore(*newest - params_.lag);
     report.ok = true;
     return report;
@@ -208,7 +221,7 @@ std::optional<Eigen::MatrixXd> FixedLagSmoother::jointCovariance(std::span<const
 {
     for (Key k : keys)
         if (!values_.contains(k)) return std::nullopt;
-    return factor_graph::jointCovariance(factors_, values_, keys);
+    return factor_graph::jointCovariance(factors_, values_, keys, &cache_);
 }
 
 // ---- BatchSmoother -------------------------------------------------------

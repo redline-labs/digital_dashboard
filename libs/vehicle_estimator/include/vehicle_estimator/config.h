@@ -148,7 +148,18 @@ struct EstimatorConfig
     factor_graph::LmParams lm = [] {
         factor_graph::LmParams p;
         p.max_iterations = 8;
-        p.step_tolerance = 1e-4;
+        // The solve ends by TAKING a step this small (a tenth of a sigma),
+        // so what is left is the step after it -- Gauss-Newton shrinks them
+        // ~15x an iteration here, leaving well under a hundredth of a sigma.
+        // Two solves a keyframe instead of three, with NEES unchanged.
+        p.step_tolerance = 1e-1;
+        // Gauss-Newton first. Marquardt damping is lambda * diag(H), and a
+        // keyframe's diagonal is ~1e11 from the IMU chain while the window's
+        // weak directions (all of it moving together) carry orders of
+        // magnitude less: the usual 1e-6 damped exactly what the GNSS was
+        // moving, and every keyframe ran to the iteration cap. A rejected
+        // step still grows it.
+        p.initial_lambda = 1e-14;
         return p;
     }();
 
