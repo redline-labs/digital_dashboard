@@ -78,26 +78,19 @@ class Preintegrator
     DvFrame frame() const { return frame_; }
 
   private:
-    void translate(const Eigen::Matrix3d& R, const Eigen::Vector3d& u, double dt, double var_u,
-                   const Eigen::Matrix3d& R_start, const Eigen::Matrix3d& R_start_dbg);
-    void rotate(const Eigen::Vector3d& theta, double dt, double var_theta);
-
     NoiseParams noise_;
     DvFrame frame_;
     Preintegrated p_;
+    Eigen::Quaterniond R_ = Eigen::Quaterniond::Identity();  // p_.dR, as it is integrated
     // The previous sample's specific force, in the body frame at its end --
     // which is also the frame the next sample starts in, across a reset().
-    // It gives the position integral its slope within a sample; see
-    // translate().
+    // It gives the position integral its slope within a sample.
     Eigen::Vector3d f_prev_ = Eigen::Vector3d::Zero();
-    Eigen::Matrix3d df_prev_dbg_ = Eigen::Matrix3d::Zero();
-    Eigen::Matrix3d df_prev_dba_ = Eigen::Matrix3d::Zero();
     bool have_prev_ = false;
+    // d[rotation, velocity, position, previous force]/d[bg, ba], tangent rows.
+    Eigen::Matrix<double, 12, 6> J_ = Eigen::Matrix<double, 12, 6>::Zero();
+    // Covariance of the same four errors; result().cov is its first nine rows.
+    Eigen::Matrix<double, 12, 12> cov_ = Eigen::Matrix<double, 12, 12>::Zero();
 };
-
-// SO(3) right Jacobian, Jr(theta): Exp(theta + d) = Exp(theta) Exp(Jr(theta) d).
-Eigen::Matrix3d rightJacobian(const Eigen::Vector3d& theta);
-
-Eigen::Matrix3d skew(const Eigen::Vector3d& v);
 
 }  // namespace imu_preint

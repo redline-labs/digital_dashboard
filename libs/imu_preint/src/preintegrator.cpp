@@ -1,8 +1,17 @@
 #include "imu_preint/preintegrator.h"
 
+#include "factor_graph/values.h"
+
+#include "csym/function.h"
+#include "csym/geo/rot3.h"
+
 #include <cmath>
+#include <tuple>
 
 namespace imu_preint
+{
+
+namespace
 {
 
 Eigen::Matrix3d skew(const Eigen::Vector3d& v)
@@ -12,17 +21,69 @@ Eigen::Matrix3d skew(const Eigen::Vector3d& v)
     return m;
 }
 
-Eigen::Matrix3d rightJacobian(const Eigen::Vector3d& theta)
-{
-    const double a = theta.norm();
-    const Eigen::Matrix3d k = skew(theta);
-    if (a < 1e-5)
+using V3 = csym::Vector3<double>;
+using Rot3 = csym::Rot3<double>;
+
+// One sample of preintegration: the interval's state before it -- rotation,
+// velocity, position, and the previous sample's specific force for the slope
+// term -- to the state after. Everything the preintegrator needs besides the
+// value is a Jacobian of this one function, which csym derives: the
+// covariance's transition and noise maps, and how the whole state moves with
+// the biases. They were once written out by hand, and the slope term's bias
+// Jacobian (through the PREVIOUS sample's force) was the one left out.
+//
+//   theta = w_dt - bg dt + n_theta       u = dv - ba dt + n_u
+//   R' = R Exp(theta)
+//   du = R' u (dv in the end frame)  or  R u (in the start frame)
+//   f' = u / dt  or  Exp(theta)^T u / dt   (this sample's force, end frame)
+//   v' = v + du
+//   p' = p + v dt + du dt / 2 - slope dt / 12,  slope = du - R f dt
+//
+// Half of du at mid-sample is exact for a force constant in this interval's
+// frame; a force that turns (a skidpad's centripetal direction sweeping
+// round) leaves a third-order error, 5e-6 m per 0.1 s at 1.3 g. A force
+// changing linearly from the previous sample removes it: the double integral
+// picks up -dt/12 of the change. `slope_on` is 0 for the very first sample,
+// which has no previous force.
+template <bool EndFrame>
+constexpr auto kStep = [](auto R, auto v, auto p, auto f, auto bg, auto ba, auto n_theta, auto n_u, auto w_dt,
+                          auto dv, auto dt, auto slope_on, auto eps) {
+    using T = decltype(dt);
+    const auto theta = w_dt - bg * dt + n_theta;
+    const auto u = dv - ba * dt + n_u;
+    const auto dr = csym::Rot3<T>::from_tangent(theta, eps);
+    const csym::Rot3<T> R1 = R * dr;
+    csym::Vector3<T> du, f1;
+    if constexpr (EndFrame)
     {
-        // Series to second order; the closed form divides by a^3.
-        return Eigen::Matrix3d::Identity() - 0.5 * k + (1.0 / 6.0) * k * k;
+        du = R1 * u;
+        f1 = u / dt;
     }
-    return Eigen::Matrix3d::Identity() - (1.0 - std::cos(a)) / (a * a) * k + (a - std::sin(a)) / (a * a * a) * k * k;
+    else
+    {
+        du = R * u;
+        f1 = (dr.inverse() * u) / dt;
+    }
+    const csym::Vector3<T> slope = (du - R * (f * dt)) * slope_on;
+    const csym::Vector3<T> v1 = v + du;
+    const csym::Vector3<T> p1 = p + v * dt + du * (dt * T(0.5)) - slope * (dt / T(12));
+    return std::make_tuple(R1, v1, p1, f1);
+};
+
+template <bool EndFrame>
+using StepFn = csym::Function<kStep<EndFrame>, Rot3, V3, V3, V3, V3, V3, V3, V3, V3, V3, double, double, double>;
+
+V3 toC(const Eigen::Vector3d& v)
+{
+    return V3{v.x(), v.y(), v.z()};
 }
+
+Eigen::Vector3d toE(const V3& v)
+{
+    return Eigen::Vector3d(v[0], v[1], v[2]);
+}
+
+}  // namespace
 
 Eigen::Vector3d rotationVector(const Eigen::Quaterniond& q_in)
 {
@@ -87,6 +148,16 @@ void Preintegrator::reset(const Eigen::Vector3d& bg_lin, const Eigen::Vector3d& 
     p_ = Preintegrated{};
     p_.bg_lin = bg_lin;
     p_.ba_lin = ba_lin;
+    // The interval starts again; the previous sample's force, and how it
+    // moves with the biases, carry over -- it is in the frame the next sample
+    // starts in.
+    R_ = Eigen::Quaterniond::Identity();
+    J_.topRows<9>().setZero();
+    // Only the force's own uncertainty carries over; its correlation with the
+    // last interval's states belongs to that interval.
+    const Eigen::Matrix3d f_var = cov_.bottomRightCorner<3, 3>();
+    cov_.setZero();
+    cov_.bottomRightCorner<3, 3>() = f_var;
 }
 
 std::string Preintegrator::integrate(const Increment& inc, double extra_rot_var, double extra_vel_var, bool bridged)
@@ -94,111 +165,71 @@ std::string Preintegrator::integrate(const Increment& inc, double extra_rot_var,
     if (const char* e = incrementProblem(inc)) return e;
     if (!(extra_rot_var >= 0.0) || !(extra_vel_var >= 0.0)) return "negative extra variance";
 
-    const Eigen::Quaterniond dq = inc.dq.normalized();
-    const Eigen::Vector3d theta = rotationVector(dq) - p_.bg_lin * inc.dt;
-    const Eigen::Vector3d u = inc.dv - p_.ba_lin * inc.dt;
     const double var_theta = noise_.gyro_noise_density * noise_.gyro_noise_density * inc.dt + extra_rot_var;
     const double var_u = noise_.accel_noise_density * noise_.accel_noise_density * inc.dt + extra_vel_var;
 
-    // The two conventions differ only in whether dv is rotated by the
-    // orientation before or after this sample's rotation.
-    const Eigen::Matrix3d R_start = p_.dR;
-    const Eigen::Matrix3d R_start_dbg = p_.dR_dbg;
-    // This sample's specific force in its end frame, and how it moves with
-    // the biases, for the next sample's slope term.
-    Eigen::Vector3d f_end = Eigen::Vector3d::Zero();
-    Eigen::Matrix3d df_dbg = Eigen::Matrix3d::Zero(), df_dba = Eigen::Matrix3d::Zero();
+    // Value and Jacobian with respect to the state (R, v, p, f), the biases
+    // and the two noises, at zero noise: 12 tangent rows by 24 columns.
+    const Eigen::Quaterniond q = R_;
+    const auto args = std::make_tuple(Rot3(q.x(), q.y(), q.z(), q.w()), toC(p_.dv), toC(p_.dp), toC(f_prev_),
+                                      toC(p_.bg_lin), toC(p_.ba_lin), V3{0.0, 0.0, 0.0}, V3{0.0, 0.0, 0.0},
+                                      toC(rotationVector(inc.dq.normalized())), toC(inc.dv), inc.dt,
+                                      have_prev_ ? 1.0 : 0.0, factor_graph::kEpsilon);
+    const auto step = [&]<bool End>() {
+        return std::apply([](const auto&... a) { return StepFn<End>::template jacobian<0, 1, 2, 3, 4, 5, 6, 7>(a...); },
+                          args);
+    };
+    Eigen::Matrix<double, 12, 24> jac;
+    Eigen::Quaterniond R1;
+    Eigen::Vector3d v1, p1, f1;
+    const auto take = [&](const auto& r) {
+        jac = Eigen::Map<const Eigen::Matrix<double, 12, 24>>(r.jacobian.data.data());
+        const auto& [Rn, vn, pn, fn] = r.value;
+        R1 = Eigen::Quaterniond(Rn.w, Rn.x, Rn.y, Rn.z);
+        v1 = toE(vn);
+        p1 = toE(pn);
+        f1 = toE(fn);
+    };
     switch (frame_)
     {
         case DvFrame::start:
-        {
-            translate(p_.dR, u, inc.dt, var_u, R_start, R_start_dbg);
-            rotate(theta, inc.dt, var_theta);
-            const Eigen::Matrix3d dr_t = fromRotationVector(theta).toRotationMatrix().transpose();
-            f_end = dr_t * u / inc.dt;
-            df_dbg = -skew(dr_t * u) * rightJacobian(theta);
-            df_dba = -dr_t;
+            take(step.template operator()<false>());
             break;
-        }
         case DvFrame::end:
-            rotate(theta, inc.dt, var_theta);
-            translate(p_.dR, u, inc.dt, var_u, R_start, R_start_dbg);
-            f_end = u / inc.dt;
-            df_dba = -Eigen::Matrix3d::Identity();
+            take(step.template operator()<true>());
             break;
     }
-    f_prev_ = f_end;
-    df_prev_dbg_ = df_dbg;
-    df_prev_dba_ = df_dba;
+
+    // Covariance over the same state the Jacobians use, the previous force
+    // included: a sample's accelerometer noise reaches position through its
+    // own step (5/12 dt) and again through the next sample's slope term
+    // (1/12 dt), and dropping the second under-counts position noise.
+    const Eigen::Matrix<double, 12, 12> A = jac.leftCols<12>();
+    const Eigen::Matrix<double, 12, 6> B = jac.block<12, 6>(0, 18);
+    Eigen::Matrix<double, 6, 1> var;
+    var << var_theta, var_theta, var_theta, var_u, var_u, var_u;
+    cov_ = A * cov_ * A.transpose() + B * var.asDiagonal() * B.transpose();
+    p_.cov = cov_.topLeftCorner<9, 9>();
+
+    // How the whole state -- the previous force included -- moves with the
+    // biases, chained through the step.
+    J_ = jac.leftCols<12>() * J_ + jac.block<12, 6>(0, 12);
+    p_.dR_dbg = J_.block<3, 3>(0, 0);
+    p_.dv_dbg = J_.block<3, 3>(3, 0);
+    p_.dv_dba = J_.block<3, 3>(3, 3);
+    p_.dp_dbg = J_.block<3, 3>(6, 0);
+    p_.dp_dba = J_.block<3, 3>(6, 3);
+
+    R_ = R1.normalized();
+    p_.dR = R_.toRotationMatrix();
+    p_.dv = v1;
+    p_.dp = p1;
+    f_prev_ = f1;
     have_prev_ = true;
     p_.dt += inc.dt;
     ++p_.samples;
     if (bridged) ++p_.bridged;
     return {};
-}
-
-void Preintegrator::translate(const Eigen::Matrix3d& R, const Eigen::Vector3d& u, double dt, double var_u,
-                              const Eigen::Matrix3d& R_start, const Eigen::Matrix3d& R_start_dbg)
-{
-    // Error state [dphi, dv, dp] with R = R_hat Exp(dphi):
-    //   dv' = dv - R [u]x dphi + R n
-    //   dp' = dp + dv dt - 1/2 R [u]x dphi dt + 1/2 R n dt
-    const Eigen::Matrix3d Ru = R * skew(u);
-    Matrix9d A = Matrix9d::Identity();
-    A.block<3, 3>(3, 0) = -Ru;
-    A.block<3, 3>(6, 0) = -0.5 * Ru * dt;
-    A.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity() * dt;
-    Eigen::Matrix<double, 9, 3> B = Eigen::Matrix<double, 9, 3>::Zero();
-    B.block<3, 3>(3, 0) = R;
-    B.block<3, 3>(6, 0) = 0.5 * R * dt;
-    p_.cov = A * p_.cov * A.transpose() + var_u * B * B.transpose();
-
-    // Bias Jacobians; position first, since it uses the old velocity terms.
-    // u depends on ba through -ba dt, and so does the previous sample's
-    // force in the slope term below.
-    p_.dp_dbg += p_.dv_dbg * dt - 0.5 * Ru * p_.dR_dbg * dt;
-    p_.dp_dba += p_.dv_dba * dt - 0.5 * R * dt * dt;
-    if (have_prev_)
-    {
-        // slope = R u - R_start f_prev dt
-        const Eigen::Matrix3d d_slope_dbg =
-            -Ru * p_.dR_dbg + R_start * skew(f_prev_ * dt) * R_start_dbg - R_start * df_prev_dbg_ * dt;
-        const Eigen::Matrix3d d_slope_dba = -R * dt - R_start * df_prev_dba_ * dt;
-        p_.dp_dbg -= d_slope_dbg * (dt / 12.0);
-        p_.dp_dba -= d_slope_dba * (dt / 12.0);
-    }
-    p_.dv_dbg -= Ru * p_.dR_dbg;
-    p_.dv_dba -= R * dt;
-
-    // Position needs the shape of the velocity increment within the sample,
-    // which dv alone does not give. Half of it at mid-sample is exact for a
-    // specific force constant in this interval's frame; a force that turns
-    // (a car on a skidpad, whose centripetal direction sweeps round) leaves a
-    // third-order error, 5e-6 m per 0.1 s at 1.3 g -- half the sensor's own
-    // sigma. A force changing linearly between the previous sample and this
-    // one removes it: the double integral picks up -dt/12 of the change. The
-    // bias Jacobians above carry the term; the covariance does not, since it
-    // is an order of dt below every noise term there.
-    const Eigen::Vector3d du = R * u;
-    Eigen::Vector3d slope = Eigen::Vector3d::Zero();
-    if (have_prev_) slope = du - R_start * f_prev_ * dt;
-    p_.dp += p_.dv * dt + 0.5 * du * dt - slope * (dt / 12.0);
-    p_.dv += du;
-}
-
-void Preintegrator::rotate(const Eigen::Vector3d& theta, double dt, double var_theta)
-{
-    const Eigen::Matrix3d dr = fromRotationVector(theta).toRotationMatrix();
-    const Eigen::Matrix3d jr = rightJacobian(theta);
-    Matrix9d A = Matrix9d::Identity();
-    A.block<3, 3>(0, 0) = dr.transpose();
-    Eigen::Matrix<double, 9, 3> B = Eigen::Matrix<double, 9, 3>::Zero();
-    B.block<3, 3>(0, 0) = jr;
-    p_.cov = A * p_.cov * A.transpose() + var_theta * B * B.transpose();
-
-    // theta depends on bg through -bg dt.
-    p_.dR_dbg = dr.transpose() * p_.dR_dbg - jr * dt;
-    p_.dR = p_.dR * dr;
 }
 
 }  // namespace imu_preint

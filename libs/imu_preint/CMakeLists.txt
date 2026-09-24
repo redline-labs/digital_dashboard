@@ -31,7 +31,7 @@ function(imu_preint_test name)
     add_project_test(TARGET imu_preint_test_${name} LABELS imu_preint ${ARGN})
 endfunction()
 
-# Bias Jacobians against re-integration, the SO(3) right Jacobian, splitting
+# Bias Jacobians against re-integration, splitting
 # an increment at a keyframe, and every increment that must be refused.
 imu_preint_test(preintegrator unit)
 

@@ -232,6 +232,15 @@ are now carried across resets with their covariance.
 arrives after its successor, and it was dropped as late. Hence the 0.15 s
 reorder window, and a faster clock slew to follow the latency minimum.
 
+**The last hand-derived Jacobians.** Until 2026-09-24 the preintegrator's
+covariance transition and bias Jacobians were written out by hand, and the
+slope term's bias Jacobian through the previous sample's force was once
+missing. They now come from one csym function per sample. Moving them found
+one more thing: a sample's noise also reaches position through the next
+sample's slope term, so the covariance is carried with the previous force in
+its state. A Monte Carlo over three samples, where that path is 7% of the
+position variance, now checks it.
+
 Every regression test here was mutation-checked by reverting the fix and
 watching it fail: the Schur complement, the north gravity term, the Coriolis
 sign, the frame-rotation term, the sideslip sign, the stale LDLT and the

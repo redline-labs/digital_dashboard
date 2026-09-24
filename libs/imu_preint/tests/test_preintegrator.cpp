@@ -96,26 +96,6 @@ void testBiasJacobians(DvFrame frame, const char* label)
           fmt::format("{}: first-order bias correction {:.3g} vs none {:.3g}", label, first_order, zeroth_order));
 }
 
-void testRightJacobian()
-{
-    for (const Eigen::Vector3d theta : {Eigen::Vector3d(0.3, -0.2, 0.5), Eigen::Vector3d(1e-7, 2e-7, -1e-7),
-                                        Eigen::Vector3d(2.5, 0.1, -0.4)})
-    {
-        const Eigen::Matrix3d jr = imu_preint::rightJacobian(theta);
-        const double h = 1e-7;
-        for (int c = 0; c < 3; ++c)
-        {
-            Eigen::Vector3d d = Eigen::Vector3d::Zero();
-            d[c] = h;
-            const Eigen::Matrix3d a = imu_preint::fromRotationVector(theta).toRotationMatrix();
-            const Eigen::Matrix3d b = imu_preint::fromRotationVector(theta + d).toRotationMatrix();
-            const Eigen::Vector3d fd = logMap(a.transpose() * b) / h;
-            check((fd - jr.col(c)).norm() < 1e-6,
-                  fmt::format("Jr col {} at |theta| {:.3g}: error {:.3g}", c, theta.norm(), (fd - jr.col(c)).norm()));
-        }
-    }
-}
-
 // Splitting one increment and integrating both halves must land where the
 // whole increment does; that is what happens at every keyframe that falls
 // inside an IMU sample.
@@ -206,7 +186,6 @@ int main()
 {
     testBiasJacobians(DvFrame::start, "start frame");
     testBiasJacobians(DvFrame::end, "end frame");
-    testRightJacobian();
     testSplit(DvFrame::start, "start frame");
     testSplit(DvFrame::end, "end frame");
     testRefusals();

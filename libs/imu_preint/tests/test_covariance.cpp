@@ -77,6 +77,45 @@ int main()
                 ++failures;
             }
         }
+    // Three samples, where position's noise is mostly each sample's own
+    // rather than velocity's accumulated: a sample's accelerometer noise
+    // reaches position through its own step AND through the next sample's
+    // slope term, which reuses its force. The long run above cannot see the
+    // second path; leaving it out here is ~7% of position variance.
+    for (const auto frame : {imu_preint::DvFrame::end, imu_preint::DvFrame::start})
+    {
+        const auto few = imu_preint::simulateIncrements(drift, 1.0, 100.0, 3, frame, g);
+        imu_preint::Preintegrator short_nominal(noise, frame);
+        for (const auto& inc : few) short_nominal.integrate(inc);
+        const auto& sn = short_nominal.result();
+        constexpr int kShortRuns = 200000;
+        Eigen::Vector3d var_p = Eigen::Vector3d::Zero();
+        for (int run = 0; run < kShortRuns; ++run)
+        {
+            imu_preint::Preintegrator p(noise, frame);
+            for (auto inc : few)
+            {
+                const double sg = noise.gyro_noise_density * std::sqrt(inc.dt);
+                const double sa = noise.accel_noise_density * std::sqrt(inc.dt);
+                const Eigen::Vector3d ng(gauss(rng), gauss(rng), gauss(rng)), na(gauss(rng), gauss(rng), gauss(rng));
+                inc.dq = inc.dq * imu_preint::fromRotationVector(sg * ng);
+                inc.dv += sa * na;
+                p.integrate(inc);
+            }
+            var_p += (p.result().dp - sn.dp).cwiseAbs2() / kShortRuns;
+        }
+        for (int i = 0; i < 3; ++i)
+        {
+            const double ratio = var_p[i] / sn.cov(6 + i, 6 + i);
+            if (ratio < 0.98 || ratio > 1.02)
+            {
+                SPDLOG_ERROR("FAIL: {} frame, three samples: position variance {} Monte Carlo / predicted = {:.4f}",
+                             frame == imu_preint::DvFrame::end ? "end" : "start", i, ratio);
+                ++failures;
+            }
+        }
+    }
+
     if (failures)
     {
         SPDLOG_ERROR("{} failure(s)", failures);

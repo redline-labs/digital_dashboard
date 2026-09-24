@@ -28,7 +28,7 @@ keyframe, and when one is made, belongs to
 | Header | |
 | --- | --- |
 | `imu_preint/increment.h` | `Increment`, `DvFrame`, `split()` (cut an increment at a keyframe), `incrementProblem()`, rotation-vector helpers. |
-| `imu_preint/preintegrator.h` | `NoiseParams` (MTi-610 datasheet defaults), `Preintegrated`, `Preintegrator`, `rightJacobian()`, `skew()`. |
+| `imu_preint/preintegrator.h` | `NoiseParams` (MTi-610 datasheet defaults), `Preintegrated`, `Preintegrator`. |
 | `imu_preint/imu_model.h` | `predict<T>()`: where an interval puts the second keyframe, in ECEF. Generic over the scalar, so the factor and the runtime propagation share it. |
 | `imu_preint/imu_factor.h` | `KeyframeKeys`, `makeImuFactor()`, `makeBiasWalkFactor()`, `NavState`, `predict()`. |
 | `imu_preint/sequencer.h` | `SampleSequencer`: packet counter and SampleTimeFine unwrapped, with gaps classified. |
@@ -66,10 +66,20 @@ one second. The rotation `Exp(−ω dt) R_i ΔR` is exact for constant ω.
 **Position gets a sub-sample slope correction.** The specific force within
 one sample is taken to change linearly from the previous sample's. The
 position integral subtracts `dt/12·(a_k − a_(k−1))`, with the previous force
-carried across `reset()` in the frame the next sample starts in. Its bias
-Jacobians include the slope term and the previous sample's force Jacobians.
-Leaving them out made the bias-corrected `Δp` disagree with re-integration
-on a skidpad.
+carried across `reset()` in the frame the next sample starts in. Leaving
+the previous force's bias Jacobians out once made the bias-corrected `Δp`
+disagree with re-integration on a skidpad.
+
+**One sample is one csym function, and every Jacobian is its.** The update
+from `(ΔR, Δv, Δp, previous force)` to the same after one sample is written
+once. Its Jacobians with respect to that state, the biases and the two
+noises give the covariance transition, the noise map and the bias
+Jacobians; the bias Jacobians are chained through the state each sample.
+Nothing is derived by hand. The covariance is carried over the same
+twelve-dimensional state, previous force included: a sample's accelerometer
+noise reaches position through its own step (5/12·dt) and through the next
+sample's slope term (1/12·dt), and a nine-dimensional covariance drops the
+second.
 
 **`DvFrame` is a setting because it is unverified.** Xsens' manual writes
 the SDI velocity update in the body frame at the end of the interval, and
@@ -101,10 +111,10 @@ cannot be reproduced in the truth and cancel out.
 
 | Target | Label | What it proves |
 | --- | --- | --- |
-| `imu_preint_test_preintegrator` | unit | Bias Jacobians, slope term included, against re-integration; the SO(3) right Jacobian; `split()`; every refused increment. |
+| `imu_preint_test_preintegrator` | unit | Bias Jacobians, slope term included, against re-integration; `split()`; every refused increment. |
 | `imu_preint_test_imu` | unit | The ECEF model against inertial-frame truth over a drift, a tumble and a parked car; what the earth rate and the dv frame are each worth; factor Jacobians against finite differences; a solve that recovers both biases. |
 | `imu_preint_test_sequencer` | unit | Counter and tick wraps, gaps, duplicates, out-of-order samples, and a gap too long to bridge. |
-| `imu_preint_test_covariance` | slow | The propagated covariance against 4000 noisy re-integrations. |
+| `imu_preint_test_covariance` | slow | The propagated covariance against 4000 noisy re-integrations, and position variance over three samples (where the slope term's second noise path is ~7%) to 2%. |
 
 Removing the frame-rotation term or flipping the Coriolis sign fails
 `imu_preint_test_imu`. Both mutations were checked.

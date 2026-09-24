@@ -35,6 +35,8 @@ struct Cost
     std::size_t rejected = 0;
     std::uint64_t covariance_from_solve = 0;
     double process_s = 0.0;
+    double latest_s = 0.0;  // latest(): the IMU-rate output, carried from the keyframe
+    std::size_t latest_calls = 0;
     harness::Errors errors;
     double median_iterations() const
     {
@@ -59,6 +61,13 @@ Cost drive(const sim::Scenario& sc, vehicle_estimator::Estimator& est)
         const double t0 = threadSeconds();
         est.process();
         c.process_s += threadSeconds() - t0;
+        if (m.imu)
+        {
+            const double t1 = threadSeconds();
+            const auto out = est.latest();
+            c.latest_s += threadSeconds() - t1;
+            if (out) ++c.latest_calls;
+        }
         const auto& st = est.status();
         if (st.keyframes == seen || !st.initialized) continue;
         seen = st.keyframes;
@@ -76,9 +85,11 @@ void report(const char* label, const Cost& c)
     std::string hist, stops;
     for (const auto& [n, count] : c.iterations) hist += fmt::format(" {}:{}", n, count);
     for (const auto& [s, count] : c.stops) stops += fmt::format(" '{}':{}", s, count);
-    SPDLOG_INFO("{}: {} keyframes, {:.2f} ms CPU per keyframe in process(); iterations{}; stops{}; {} rejected steps", label,
-                c.keyframes, 1e3 * c.process_s / static_cast<double>(std::max<std::size_t>(c.keyframes, 1)), hist,
-                stops, c.rejected);
+    SPDLOG_INFO("{}: {} keyframes, {:.2f} ms CPU per keyframe in process(), {:.1f} us per latest(); iterations{}; "
+                "stops{}; {} rejected steps",
+                label, c.keyframes, 1e3 * c.process_s / static_cast<double>(std::max<std::size_t>(c.keyframes, 1)),
+                1e6 * c.latest_s / static_cast<double>(std::max<std::size_t>(c.latest_calls, 1)), hist, stops,
+                c.rejected);
 }
 
 }  // namespace
