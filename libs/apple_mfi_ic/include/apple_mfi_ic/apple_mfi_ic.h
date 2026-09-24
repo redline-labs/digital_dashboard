@@ -2,7 +2,6 @@
 
 #include "i2c_bus/i2c_bus.h"
 
-#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -67,24 +66,10 @@ public:
         std::string to_string() const;
     };
     
-    // Where the driver's waits and deadlines come from. Its retry policy is
-    // all timing -- the part's idle-to-sleep threshold, its busy window after
-    // a register select, the read-after-write deadline -- so a test runs it on
-    // virtual time, where a wait is exact and a loaded machine cannot turn a
-    // 2 ms pause into 20 and put the modelled part back to sleep.
-    class Clock
-    {
-      public:
-        virtual ~Clock() = default;
-        virtual std::chrono::steady_clock::time_point now() = 0;
-        virtual void sleep_for(std::chrono::microseconds duration) = 0;
-    };
-
     AppleMFIIC();
     // Uses the given bus instead of creating one in init(): tests, and any
     // backend the i2c_bus factory does not know about. init() still opens it.
-    // `clock` defaults to the real one.
-    explicit AppleMFIIC(std::unique_ptr<i2c::Bus> bus, std::shared_ptr<Clock> clock = nullptr);
+    explicit AppleMFIIC(std::unique_ptr<i2c::Bus> bus);
     ~AppleMFIIC();
     
     // Opens the I2C bus and wakes the coprocessor. `bus_hint` names the adapter
@@ -129,6 +114,5 @@ private:
     bool write_with_retry(const std::vector<uint8_t>& data);
 
     std::unique_ptr<i2c::Bus> bus_;
-    std::shared_ptr<Clock> clock_;
     bool connected_;
 }; 

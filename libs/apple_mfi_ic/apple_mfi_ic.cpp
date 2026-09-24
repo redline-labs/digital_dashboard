@@ -17,24 +17,14 @@
 #include <openssl/err.h>
 #include <openssl/asn1.h>
 
-namespace
-{
-class SteadyClock final : public AppleMFIIC::Clock
-{
-  public:
-    std::chrono::steady_clock::time_point now() override { return std::chrono::steady_clock::now(); }
-    void sleep_for(std::chrono::microseconds duration) override { std::this_thread::sleep_for(duration); }
-};
-}  // namespace
-
-AppleMFIIC::AppleMFIIC()
-    : AppleMFIIC(nullptr)
+AppleMFIIC::AppleMFIIC() 
+    : bus_{}
+    , connected_(false) 
 {
 }
 
-AppleMFIIC::AppleMFIIC(std::unique_ptr<i2c::Bus> bus, std::shared_ptr<Clock> clock)
+AppleMFIIC::AppleMFIIC(std::unique_ptr<i2c::Bus> bus)
     : bus_(std::move(bus))
-    , clock_(clock ? std::move(clock) : std::make_shared<SteadyClock>())
     , connected_(false)
 {
 }
@@ -62,20 +52,78 @@ namespace
 //     re-issuing the write on each failure just reopens the window -- which is
 //     why the old "retry the pair, 20 ms apart" never read a byte here.
 //
-// So: a NACKed write is retried after a short pause, and the read after a
-// successful write is retried on its own, briefly, before the pair is redone.
+// And the host is not real-time. A thread that sleeps waits to be scheduled
+// again, and on a loaded machine a 2 ms pause can come back 40 ms later -- past
+// the part's idle threshold, so the retry meant to follow a wake NACK finds it
+// asleep again, and so does the next. A policy of "NACK, pause, retry" fails
+// exactly when the host is busy. (It did: the test's fake stopped answering on
+// a loaded build machine.)
 //
-// The read retry is bounded by TIME, not by a count, because the cost of one
-// failed read depends on the transport: ~0.2 ms on a native controller, but
-// tens of milliseconds over the MCP2221A bridge (the engine has to be
-// unlatched and re-polled). A fixed count that suits one is either useless or
-// a multi-second stall on the other. 25 ms is under the part's idle-to-sleep
-// threshold, so a read that has not succeeded by then is not going to: the
-// pointer must be re-selected, which the outer loop does.
-constexpr int kTransactionAttempts = 8;
-constexpr auto kTransactionRetryDelay = std::chrono::milliseconds(2);
-constexpr auto kReadAfterWriteWindow = std::chrono::milliseconds(25);
-constexpr auto kReadAfterWriteDelay = std::chrono::microseconds(500);
+// So nothing that has to happen inside one of the part's windows waits for a
+// sleep, and nothing counts on a window still being open. A NACK is answered by
+// the next transaction AT ONCE: whatever caused it -- the part asleep, or busy
+// after a select -- that next transaction is the one that works (awake ~0.5 ms
+// after a wake NACK, busy ~1 ms after a select).
+//
+// A read's data is trusted only if the read FINISHED within kSelectWindow of
+// the select STARTING. The part's idle clock runs from the end of the select to
+// the start of the read, and those two driver-side times bound it from above
+// whatever the scheduler did in between; kSelectWindow is under the ~30 ms idle
+// threshold, so such a read cannot have met a sleeping part. A later one might
+// have: a sleeping part can ACK its first START after a ~12 ms stretch, and
+// what sleep does to the register pointer was never measured -- so a late read
+// is discarded and the register selected again, at once. Only a long run of NACKs -- a part that is not answering --
+// earns a pause, to spare the bus, and that pause may overrun by any amount:
+// the next transaction wakes the part and the one after it proceeds.
+//
+// Giving up takes BOTH kOperationBudget of wall time and kMinAttempts: time
+// alone is no evidence, because the host can stop the process for longer than
+// the whole budget (a build machine did, for seconds), and an operation that
+// then gives up after one attempt has not asked the part anything. Attempts
+// alone would be a multi-second stall over the bridge. The count before a
+// pause is generous because a NACK costs ~0.2 ms on a native controller but
+// ~15 ms over the MCP2221A bridge.
+constexpr auto kSelectWindow = std::chrono::milliseconds(20);
+constexpr int kNacksBeforePause = 16;
+constexpr auto kUnresponsivePause = std::chrono::milliseconds(2);
+constexpr auto kOperationBudget = std::chrono::seconds(1);
+constexpr int kMinAttempts = 2 * kNacksBeforePause;
+
+enum class Step
+{
+    done,      // the operation succeeded
+    progress,  // the part answered, but there is more to do (a register selected)
+    nack,      // the part did not answer
+};
+
+// Runs `step` until it is done, or until kOperationBudget is spent AND it has
+// had kMinAttempts, retrying at once after anything but a long run of NACKs.
+template <typename StepFn>
+bool until_done(StepFn&& step)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto give_up = Clock::now() + kOperationBudget;
+    int nacks_in_a_row = 0;
+    for (int attempts = 0; attempts < kMinAttempts || Clock::now() < give_up; ++attempts)
+    {
+        switch (step())
+        {
+            case Step::done:
+                return true;
+            case Step::progress:
+                nacks_in_a_row = 0;
+                break;
+            case Step::nack:
+                if (++nacks_in_a_row >= kNacksBeforePause)
+                {
+                    nacks_in_a_row = 0;
+                    std::this_thread::sleep_for(kUnresponsivePause);
+                }
+                break;
+        }
+    }
+    return false;
+}
 
 // The coprocessor's length registers are two bytes, most significant first.
 uint16_t big_endian_u16(const std::vector<uint8_t>& bytes)
@@ -106,15 +154,7 @@ std::string asn1_time_string(const ASN1_TIME* time)
 
 bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
 {
-    for (int attempt = 0; attempt < kTransactionAttempts; ++attempt)
-    {
-        if (bus_->write(I2C_ADDRESS, data))
-        {
-            return true;
-        }
-        clock_->sleep_for(kTransactionRetryDelay);
-    }
-    return false;
+    return until_done([&] { return bus_->write(I2C_ADDRESS, data) ? Step::done : Step::nack; });
 }
 
 bool AppleMFIIC::wake()
@@ -122,20 +162,7 @@ bool AppleMFIIC::wake()
     // The coprocessor ignores the first transaction after it has been idle;
     // that NACK *is* the wake-up, and the next access succeeds. Retry rather
     // than treating one failure as absence.
-    constexpr int kAttempts = 8;
-    for (int attempt = 0; attempt < kAttempts; ++attempt)
-    {
-        if (!bus_->read(I2C_ADDRESS, 1).empty())
-        {
-            if (attempt > 0)
-            {
-                SPDLOG_DEBUG("Apple MFI IC answered on wake attempt {}", attempt + 1);
-            }
-            return true;
-        }
-        clock_->sleep_for(kTransactionRetryDelay);
-    }
-    return false;
+    return until_done([&] { return bus_->read(I2C_ADDRESS, 1).empty() ? Step::nack : Step::done; });
 }
 
 bool AppleMFIIC::init(const std::string& bus_hint)
@@ -196,43 +223,44 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
     // Select the register, then read it back as a *separate* transaction: this
     // part rejects a combined write/read with a repeated START.
     //
-    // A NACKed write means asleep or busy and leaves the pointer unset, so the
-    // pair is redone. A successful write is followed by the ~1 ms busy window
+    // A NACKed write means asleep or busy and leaves the pointer unset, so it
+    // is sent again. A successful write is followed by the ~1 ms busy window
     // described at the top of the file, so the READ is retried on its own; the
     // pointer is already set and re-writing it would only restart the window.
-    // If the reads keep failing past that (the part went back to sleep), redo
-    // the pair.
+    // A read that could have met the part asleep since the select is not
+    // trusted, answered or not: see kSelectWindow.
     const std::vector<uint8_t> reg_addr = {static_cast<uint8_t>(reg)};
-    for (int attempt = 0; attempt < kTransactionAttempts; ++attempt)
+    std::vector<uint8_t> data;
+    using SteadyClock = std::chrono::steady_clock;
+    std::optional<SteadyClock::time_point> selected_at;  // when the successful select STARTED
+    const bool ok = until_done([&] {
+        if (!selected_at)
+        {
+            const auto started = SteadyClock::now();
+            if (!bus_->write(I2C_ADDRESS, reg_addr))
+            {
+                return Step::nack;
+            }
+            selected_at = started;
+            return Step::progress;
+        }
+        data = bus_->read(I2C_ADDRESS, length);
+        const bool in_window = SteadyClock::now() - *selected_at <= kSelectWindow;
+        if (!in_window)
+        {
+            // Too late to be sure the part stayed awake since the select,
+            // answered or not: select again.
+            selected_at.reset();
+            return data.empty() ? Step::nack : Step::progress;
+        }
+        return data.empty() ? Step::nack : Step::done;
+    });
+    if (ok)
     {
-        if (!bus_->write(I2C_ADDRESS, reg_addr))
-        {
-            clock_->sleep_for(kTransactionRetryDelay);
-            continue;
-        }
-        const auto deadline = clock_->now() + kReadAfterWriteWindow;
-        for (int read_attempt = 0;; ++read_attempt)
-        {
-            auto data = bus_->read(I2C_ADDRESS, length);
-            if (!data.empty())
-            {
-                if (attempt > 0 || read_attempt > 1)
-                {
-                    SPDLOG_DEBUG("register 0x{:02x} read on pair {} / read {}",
-                                 static_cast<uint8_t>(reg), attempt + 1, read_attempt + 1);
-                }
-                return data;
-            }
-            if (clock_->now() >= deadline)
-            {
-                break;
-            }
-            clock_->sleep_for(kReadAfterWriteDelay);
-        }
+        return data;
     }
-
-    SPDLOG_ERROR("Failed to read register 0x{:02x} after {} attempts",
-                 static_cast<uint8_t>(reg), kTransactionAttempts);
+    SPDLOG_ERROR("Failed to read register 0x{:02x}: no answer in {} ms and {} attempts", static_cast<uint8_t>(reg),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(kOperationBudget).count(), kMinAttempts);
     return std::nullopt;
 }
 
@@ -521,7 +549,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     SPDLOG_DEBUG("Wrote challenge data: {} bytes", challenge_data.size());
     
     // TODO: It seems like the MFi IC is busy after this.  We should wait for it to be ready.
-    clock_->sleep_for(std::chrono::milliseconds(10u));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10u));
 
     // Step 3: Start Authentication (0x10) - Write 0x01 to start the process
     std::vector<uint8_t> auth_start_write = {
@@ -538,7 +566,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
 
     // It seems like its on the order of 400ms to complete the authentication.
     // Lets wait the majority of the time here.
-    clock_->sleep_for(std::chrono::milliseconds(400u));
+    std::this_thread::sleep_for(std::chrono::milliseconds(400u));
     
     // Step 4: Poll Authentication Control and Status (0x10) until ready
     bool authentication_complete = false;
@@ -546,7 +574,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
         // It seems like its on the order of 400ms to complete the authentication.
-        clock_->sleep_for(std::chrono::milliseconds(100u));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100u));
         
         auto status_data = read_register(Register::AuthenticationControlAndStatus, 1);
         if (!status_data) {

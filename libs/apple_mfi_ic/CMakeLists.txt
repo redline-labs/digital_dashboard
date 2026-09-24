@@ -32,7 +32,10 @@ target_link_libraries(apple_mfi_demo PRIVATE
 )
 
 # The retry policy against a fake coprocessor with the measured timing, on a
-# native-controller and a bridge-shaped transport.
+# native-controller and a bridge-shaped transport, each on a loaded host whose
+# sleeps come back late, and a host frozen for longer than a whole operation's
+# budget. Real time throughout; the default timeout catches a hang, since the test
+# itself asserts no durations.
 add_executable(apple_mfi_ic_test tests/test_apple_mfi_ic.cpp)
 target_link_libraries(apple_mfi_ic_test PRIVATE
     apple_mfi_ic

@@ -12,11 +12,17 @@
 // bounds the time each takes: a retry policy tuned for one transport must not
 // stall on the other.
 //
-// All of it on virtual time, shared by the driver and the fake: a wait
-// advances the clock by exactly what was asked, and a transaction by exactly
-// its modelled cost. On the real clock a loaded machine oversleeps, and the
-// bridge case -- 15 ms of a 30 ms idle window spent per NACK -- put the fake
-// part back to sleep and failed a policy that was fine.
+// And each shape again on a LOADED HOST: the fake treats any gap between two
+// transactions longer than a back-to-back pair as the driver having slept,
+// and stalls 40 ms before answering -- the sleep came back late, past the
+// part's idle threshold, so the part is asleep again. That is what a busy
+// build machine did to this test, and what a busy car can do to the driver.
+// Real sleeps only ever run long, so machine load can make the scenario
+// worse, never kinder: the driver must not depend on a sleep ending on time.
+// Two harsher shapes: a host frozen for longer than an operation's whole
+// budget, and one that also preempts mid-sequence while the part wakes by a
+// stretched ACK with its register pointer lost -- where trusting a read that
+// may have met a sleeping part returns garbage.
 #include "apple_mfi_ic/apple_mfi_ic.h"
 #include "i2c_bus/i2c_bus.h"
 
@@ -28,22 +34,13 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <vector>
 
 namespace
 {
 
-using TimePoint = std::chrono::steady_clock::time_point;
-
-class VirtualClock final : public AppleMFIIC::Clock
-{
-  public:
-    TimePoint now() override { return now_; }
-    void sleep_for(std::chrono::microseconds duration) override { now_ += duration; }
-
-  private:
-    TimePoint now_{};  // the epoch: only differences mean anything
-};
+using Clock = std::chrono::steady_clock;
 
 #define CHECK(cond)                                                                       \
     do                                                                                    \
@@ -60,6 +57,22 @@ struct Transport
     const char* name;
     std::chrono::microseconds latency;   // cost of every transaction
     std::chrono::microseconds nack_cost; // extra cost of a NACKed one
+    // Loaded host: every time the driver sleeps, it gets the CPU back this
+    // late -- past the part's idle threshold, so the part is asleep again.
+    std::chrono::milliseconds late_wakeup{0};
+    // Frozen host: the FIRST late wake-up is this long instead -- longer than
+    // an operation's whole time budget.
+    std::chrono::milliseconds frozen_once{0};
+    // The other way the part was seen to wake: ACK the first START after a
+    // ~12 ms clock stretch instead of NACKing it. What sleep does to the
+    // register pointer was never measured; this assumes the worst -- lost --
+    // so a driver that trusts a read that may have met a sleeping part reads
+    // garbage.
+    bool wakes_by_stretching = false;
+    // Involuntary preemption: the host also takes the CPU away mid-sequence,
+    // stalling before every Nth transaction wherever it falls -- between a
+    // register select and its read, say -- not only when the driver sleeps.
+    int preempt_every = 0;
 };
 
 constexpr Transport kNative{"native controller", std::chrono::microseconds(200),
@@ -72,13 +85,22 @@ constexpr Transport kNative{"native controller", std::chrono::microseconds(200),
 // and wake() fails, which is the right answer, not a driver bug.
 constexpr Transport kBridge{"MCP2221A bridge", std::chrono::microseconds(3000),
                             std::chrono::microseconds(12000)};
+constexpr auto kLateWakeup = std::chrono::milliseconds(40);
+constexpr Transport kNativeLoaded{"native, loaded", kNative.latency, kNative.nack_cost, kLateWakeup};
+constexpr Transport kBridgeLoaded{"bridge, loaded", kBridge.latency, kBridge.nack_cost, kLateWakeup};
+constexpr Transport kNativeFrozen{"native, frozen", kNative.latency, kNative.nack_cost, kLateWakeup,
+                                  std::chrono::milliseconds(1500)};
+constexpr Transport kNativeStretch{"native, stretch", kNative.latency, kNative.nack_cost, kLateWakeup,
+                                   std::chrono::milliseconds(0), true, 11};
+
+// Longer than any back-to-back pair of transactions takes to issue, shorter
+// than the driver's shortest sleep: a gap past it means the driver yielded.
+constexpr auto kYieldGap = std::chrono::microseconds(300);
 
 class FakeCoprocessor : public i2c::Bus
 {
   public:
-    FakeCoprocessor(Transport transport, std::shared_ptr<VirtualClock> clock)
-        : transport_(transport), clock_(std::move(clock)), last_activity_(clock_->now() - std::chrono::seconds(1)),
-          busy_until_(clock_->now())
+    explicit FakeCoprocessor(Transport transport) : transport_(transport)
     {
         // Each register is its own object with its own length, as on the part:
         // 0x11 is a 2-byte length and 0x12 the 128-byte response it describes.
@@ -123,11 +145,11 @@ class FakeCoprocessor : public i2c::Bus
             if (data.size() > 1 && data[0] == 0x10 && data[1] == 0x01)
             {
                 // Start authentication: status 0x01 for a while, then 0x10.
-                auth_done_at_ = clock_->now() + std::chrono::milliseconds(50);
+                auth_done_at_ = Clock::now() + std::chrono::milliseconds(50);
                 regs_[0x10] = {0x01};
             }
         }
-        busy_until_ = clock_->now() + std::chrono::microseconds(1000);
+        busy_until_ = Clock::now() + std::chrono::microseconds(1000);
         return true;
     }
 
@@ -138,7 +160,7 @@ class FakeCoprocessor : public i2c::Bus
         {
             return {};
         }
-        if (auth_done_at_ && clock_->now() >= *auth_done_at_)
+        if (auth_done_at_ && Clock::now() >= *auth_done_at_)
         {
             regs_[0x10] = {0x10};
         }
@@ -163,17 +185,39 @@ class FakeCoprocessor : public i2c::Bus
     int writes = 0;
     int reads = 0;
     int nacks = 0;
+    int stalls = 0;     // late wake-ups the loaded host imposed
+    int stretches = 0;  // wakes answered with a stretched ACK
+    int transactions_ = 0;
 
   private:
     // The START of any transaction. False = NACK.
     bool start(uint8_t address)
     {
-        clock_->sleep_for(transport_.latency);
-        const auto now = clock_->now();
+        ++transactions_;
+        const bool preempted = transport_.preempt_every > 0 && transactions_ % transport_.preempt_every == 0;
+        if (transport_.late_wakeup.count() > 0 && (preempted || Clock::now() - last_end_ > kYieldGap))
+        {
+            const bool freeze = stalls == 0 && transport_.frozen_once.count() > 0;
+            ++stalls;
+            std::this_thread::sleep_for(freeze ? transport_.frozen_once : transport_.late_wakeup);
+        }
+        std::this_thread::sleep_for(transport_.latency);
+        const auto now = Clock::now();
         bool ack = address == AppleMFIIC::I2C_ADDRESS;
         if (ack && now - last_activity_ > std::chrono::milliseconds(30))
         {
-            ack = false;  // asleep: this START wakes it and is NACKed
+            if (transport_.wakes_by_stretching)
+            {
+                // Asleep: this START is held ~12 ms, then ACKed, with the
+                // register pointer gone.
+                ++stretches;
+                pointer_valid_ = false;
+                std::this_thread::sleep_for(std::chrono::milliseconds(12));
+            }
+            else
+            {
+                ack = false;  // asleep: this START wakes it and is NACKed
+            }
         }
         if (ack && now < busy_until_)
         {
@@ -183,29 +227,29 @@ class FakeCoprocessor : public i2c::Bus
         if (!ack)
         {
             ++nacks;
-            clock_->sleep_for(transport_.nack_cost);
+            std::this_thread::sleep_for(transport_.nack_cost);
         }
+        last_end_ = Clock::now();
         return ack;
     }
 
     Transport transport_;
-    std::shared_ptr<VirtualClock> clock_;
     std::map<uint8_t, std::vector<uint8_t>> regs_;
     uint8_t pointer_ = 0;
     bool pointer_valid_ = false;
-    TimePoint last_activity_;
-    TimePoint busy_until_;
-    std::optional<TimePoint> auth_done_at_;
+    Clock::time_point last_activity_ = Clock::now() - std::chrono::seconds(1);
+    Clock::time_point busy_until_ = Clock::now();
+    Clock::time_point last_end_ = Clock::now();  // when the last transaction returned to the driver
+    std::optional<Clock::time_point> auth_done_at_;
 };
 
 void exercise(Transport transport)
 {
-    const auto clock = std::make_shared<VirtualClock>();
-    auto fake = std::make_unique<FakeCoprocessor>(transport, clock);
+    auto fake = std::make_unique<FakeCoprocessor>(transport);
     FakeCoprocessor* raw = fake.get();
-    AppleMFIIC ic(std::move(fake), clock);
+    AppleMFIIC ic(std::move(fake));
 
-    const auto t0 = clock->now();
+    const auto t0 = Clock::now();
     CHECK(ic.init());
 
     // Cold: the part is asleep, so the first START is the wake NACK.
@@ -217,7 +261,7 @@ void exercise(Transport transport)
     CHECK(info->authentication_protocol_minor_version == 0);
 
     // Let it fall asleep again between two queries and re-read.
-    clock->sleep_for(std::chrono::milliseconds(60));
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
     info = ic.query_device_info();
     CHECK(info.has_value());
     CHECK(info->device_version == 0x05);
@@ -234,15 +278,19 @@ void exercise(Transport transport)
         CHECK((*signature)[i] == static_cast<uint8_t>(i));
     }
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(clock->now() - t0);
-    std::printf("%-18s  %4lld ms   writes %3d  reads %3d  nacks %3d\n", transport.name,
-                static_cast<long long>(elapsed.count()), raw->writes, raw->reads, raw->nacks);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0);
+    std::printf("%-18s  %4lld ms   writes %3d  reads %3d  nacks %3d  late wake-ups %3d\n", transport.name,
+                static_cast<long long>(elapsed.count()), raw->writes, raw->reads, raw->nacks, raw->stalls);
 
-    // sign_challenge itself sleeps 400 ms + 100 ms per status poll, so ~0.6 s
-    // is the floor. Anything past 3 s means the retry policy is stalling on
-    // this transport, which is exactly the failure the deadline exists to stop.
-    CHECK(elapsed < std::chrono::seconds(3));
     CHECK(raw->nacks > 0);  // the model actually exercised the retry paths
+    CHECK(!transport.wakes_by_stretching || raw->stretches > 0);
+    CHECK(transport.late_wakeup.count() == 0 || raw->stalls > 0);  // and the loaded host actually stalled it
+    // A policy that spins on a part that will not answer, or redoes work it
+    // already had, shows as transactions -- which, unlike time, a loaded
+    // machine does not inflate. An efficient exchange takes 30-95.
+    // Time is not asserted at all: on a loaded machine it measures the
+    // machine. A hang is ctest's timeout to catch.
+    CHECK(raw->writes + raw->reads < 200);
 }
 
 }  // namespace
@@ -252,6 +300,10 @@ int main()
     spdlog::set_level(spdlog::level::warn);
     exercise(kNative);
     exercise(kBridge);
+    exercise(kNativeLoaded);
+    exercise(kBridgeLoaded);
+    exercise(kNativeFrozen);
+    exercise(kNativeStretch);
     std::puts("ok");
     return 0;
 }
