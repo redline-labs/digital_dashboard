@@ -24,7 +24,7 @@ in the [design note](../design/state-estimation.html#learned-calibration).
 
 | Header | |
 | --- | --- |
-| `calibration_store/store.h` | `Store` (`open`, `append`, `latest`, `history`), `Row`, `Error`, `Result<T>`, `structuralProblem()`. |
+| `calibration_store/store.h` | `Store` (`open`, `append` one row or a batch, `latest`, `history`, `recovered`), `Row`, `Recovery`, `Error`, `Result<T>`, `structuralProblem()`. |
 
 ## Using it
 
@@ -76,16 +76,43 @@ the path is refused with `NotADatabase`, byte for byte unchanged; a database
 whose `meta.schema_version` is newer is refused with `NewerSchema` and not
 upgraded or touched.
 
-**WAL, synchronous NORMAL.** A crash mid-write loses that write, not the file;
-a power cut may lose the last write, which the next session's writes replace.
-The store makes `-wal` and `-shm` files beside the database.
+**Power loss: WAL with `synchronous=FULL`.** A commit is appended to the
+`-wal` log and copied into the database only at a checkpoint, so a power cut
+mid-write, or mid-checkpoint, leaves the last complete commit and never a torn
+one: SQLite replays the complete transactions from the log at the next open.
+`FULL` fsyncs the log at every commit, so a row `append` reported written
+survives the power cut too. (`NORMAL` would skip that fsync and could lose the
+last few commits; writes here are minutes apart, so the fsync costs nothing
+that matters.) `append` of several rows is one transaction: the groups written
+at one moment are kept together or not at all.
+
+All of that rests on the storage honouring a flush. Keep `/data` on ext4 with
+barriers (the default; never `nobarrier` or `data=writeback`); a device that
+acknowledges a flush and keeps the data in a volatile cache can corrupt any
+database, and only hardware fixes that.
+
+**A damaged database is moved aside, not refused.** At open, a database of
+ours that fails `PRAGMA quick_check` is renamed to
+`<path>.corrupt-<unix time>`, with its `-wal` and `-shm`, and a fresh one is
+started; `recovered()` says where, and the node reports it in status and
+health. Nothing is written to the damaged file first -- checkpoint-on-close is
+off until the checks pass, so its log is kept unapplied beside it. A file
+that is not SQLite at all is still refused untouched, since it may be somebody
+else's.
+
+**Copying it off the car.** Recent rows may still be in the `-wal`, so copy
+all three files together, or use `sqlite3 calibration.sqlite ".backup out.sqlite"`.
 
 ## Tests
 
 | Target | Label | What it proves |
 | --- | --- | --- |
-| `calibration_store_test_store` | unit | Round trips exactly; the newest row for a group, hash and version is found even when its timestamp is older; other hashes, versions and groups are kept apart; nothing is replaced; all of it survives a reopen; a row the caller refuses is passed over for the one before. |
-| `calibration_store_test_malformed` | unit | Nine kinds of bad row written behind the store's back (torn JSON, an object, a null, empty, not square, asymmetric, not positive definite, an overflow, the wrong shape for the caller) are all skipped for the good one; a text file and a newer schema are refused and left byte-identical; an uncreatable directory is a named error; bad rows are never written. |
+| `calibration_store_test_store` | unit | Round trips exactly; the newest row for a group, hash and version is found even when its timestamp is older; other hashes, versions and groups are kept apart; nothing is replaced; all of it survives a reopen; a row the caller refuses is passed over for the one before; `synchronous` is FULL; a batch with one bad row writes none. |
+| `calibration_store_test_malformed` | unit | Nine kinds of bad row written behind the store's back (torn JSON, an object, a null, empty, not square, asymmetric, not positive definite, an overflow, the wrong shape for the caller) are all skipped for the good one; a text file and a newer schema are refused and left byte-identical; an uncreatable directory is a named error; bad rows are never written; a database with a damaged table page and a committed transaction still in its WAL is moved aside byte-identical with its log unapplied, and a fresh store opens; a batch that fails in SQLite on its second row leaves no trace of its first. |
 
 Mutation-checked on 2026-09-23: dropping the structural check on read,
-ordering by timestamp, and dropping the schema-version check each fail a test.
+ordering by timestamp, dropping the schema-version check, `synchronous=NORMAL`,
+checkpointing on close while checking, skipping `quick_check`, and a batch
+outside a transaction each fail a test. No test simulates the power cut
+itself (that needs a VFS that drops unsynced writes); what is tested is the
+configuration and the recovery.

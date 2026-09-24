@@ -14,6 +14,7 @@
 //   4. A file that is not a database: refused, and the drive runs on the
 //      config as it would with no store at all.
 //   5. The IMU knocked between sessions: the mounting is flagged as moved.
+//   6. The store damaged between sessions: moved aside, kept, begun afresh.
 
 #include "calibration_keeper.h"
 #include "pipeline.h"
@@ -22,6 +23,7 @@
 #include "vehicle_estimator/calibration.h"
 
 #include <spdlog/spdlog.h>
+#include <sqlite3.h>
 
 #include <cmath>
 #include <filesystem>
@@ -258,6 +260,35 @@ int main()
     check(fifth.report.from_database[0], "session 5 starts from the stored mounting");
     check(fifth.report.moved[0], "and notices the IMU has moved since");
     check(!fifth.report.moved[1], "while the lever arm has not");
+
+    // ---- 6. the store damaged between sessions ----------------------------------------
+    // Its calibration table's root page scribbled over, as a power cut on
+    // storage that lied about a flush could leave it: the node moves it aside,
+    // starts a fresh history, and says so, rather than running on the config
+    // until someone comes to look.
+    {
+        sqlite3* raw = nullptr;
+        sqlite3_open(db.string().c_str(), &raw);
+        sqlite3_exec(raw, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, nullptr);
+        sqlite3_int64 root = 0, page = 0;
+        sqlite3_stmt* st = nullptr;
+        sqlite3_prepare_v2(raw, "SELECT rootpage FROM sqlite_master WHERE name='calibration'", -1, &st, nullptr);
+        if (sqlite3_step(st) == SQLITE_ROW) root = sqlite3_column_int64(st, 0);
+        sqlite3_finalize(st);
+        sqlite3_prepare_v2(raw, "PRAGMA page_size", -1, &st, nullptr);
+        if (sqlite3_step(st) == SQLITE_ROW) page = sqlite3_column_int64(st, 0);
+        sqlite3_finalize(st);
+        sqlite3_close(raw);
+        std::fstream f(db, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(static_cast<std::streamoff>((root - 1) * page));
+        const std::string junk(static_cast<std::size_t>(page), 'Z');
+        f.write(junk.data(), static_cast<std::streamsize>(junk.size()));
+    }
+    const Session sixth = drive(config, sc4, db, "session 6");
+    check(sixth.report.store_open, "a damaged store is recovered, not refused");
+    check(!sixth.report.store_recovered.empty() && std::filesystem::exists(sixth.report.store_recovered),
+          "and the report names where the damaged one was kept");
+    check(!sixth.report.from_database[0], "the fresh store has nothing to seed from");
 
     if (failures)
     {

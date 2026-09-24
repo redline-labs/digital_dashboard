@@ -145,4 +145,7 @@ struct VehicleEstimatorStatus {
   leverArmMoved @46 :Bool;
   boresightMoved @47 :Bool;
   calibrationRowsWritten @48 :UInt32;
+  # The store was found damaged at start, moved aside, and begun again: the
+  # learned history before this session is in the moved file.
+  calibrationStoreRecovered @49 :Bool;
 }

@@ -102,6 +102,35 @@ void testCallerCheck()
     check(skipped.size() == 1 && skipped[0].find("does not like") != std::string::npos, "and says why");
 }
 
+void testDurabilityAndBatches()
+{
+    test::TempDir dir("batch");
+    const auto file = dir.path / "c.sqlite";
+    {
+        auto store = cs::Store::open(file);
+        if (!store) return check(false, "opens");
+        // FULL: every commit fsynced before append() returns. NORMAL, under
+        // WAL, would let a power cut take rows already reported written.
+        check(store->synchronousMode() == 2, "synchronous is FULL: " + std::to_string(store->synchronousMode()));
+        check(!store->recovered(), "a fresh store recovered nothing");
+
+        const std::vector<cs::Row> batch{test::row("mounting", "h", 0.1), test::row("lever_arm", "h", 0.2),
+                                         test::row("boresight", "h", 0.3)};
+        const auto ids = store->append(std::span<const cs::Row>(batch));
+        check(ids && ids->size() == 3 && (*ids)[0] < (*ids)[1] && (*ids)[1] < (*ids)[2], "a batch gets ascending ids");
+
+        // One bad row and none of the batch is written.
+        std::vector<cs::Row> bad{test::row("mounting", "h", 0.4), test::row("lever_arm", "h", 0.5)};
+        bad[1].cov.pop_back();
+        check(!store->append(std::span<const cs::Row>(bad)).has_value(), "a batch with a bad row is refused");
+        const auto m = store->latest("mounting", "h", 1);
+        check(m && *m && (**m).mean[0] == 0.1, "and its good row was not written either");
+    }
+    auto again = cs::Store::open(file);
+    check(again && again->synchronousMode() == 2, "FULL again after a reopen");
+    check(again && !again->recovered(), "and a clean reopen recovers nothing");
+}
+
 }  // namespace
 
 int main()
@@ -110,6 +139,7 @@ int main()
     testLatestMatchesAllThree();
     testReopen();
     testCallerCheck();
+    testDurabilityAndBatches();
     if (test::failures)
     {
         SPDLOG_ERROR("{} failure(s)", test::failures);

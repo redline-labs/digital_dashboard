@@ -318,6 +318,15 @@ a database was refused untouched; and an IMU knocked 1.5° between sessions
 was flagged at 6.6σ. The same held live over the bus with `bag play`, and a
 `--replay` without `--calibration-db` left the file alone.
 
+**Power loss.** WAL with `synchronous=FULL`: a torn write is impossible, and a
+reported write is durable, provided the storage honours a flush. Rows written
+at one moment go in one transaction. A database that fails `quick_check` at
+open is moved aside and begun again rather than refused, because refusing it
+would leave the car on its config until someone came to look; the checks run
+with checkpoint-on-close off, since closing would otherwise write the log into
+the damaged file before it was set aside. That last trap was found by the
+recovery test, not by reasoning about it.
+
 ## Deferred
 
 The reference point stays a definition until steering and wheel speeds give a

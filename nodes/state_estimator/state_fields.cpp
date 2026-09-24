@@ -128,6 +128,7 @@ void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::Estima
     out.setLeverArmMoved(c.moved[1]);
     out.setBoresightMoved(c.moved[2]);
     out.setCalibrationRowsWritten(c.rows_written);
+    out.setCalibrationStoreRecovered(!c.store_recovered.empty());
 }
 
 }  // namespace state_estimator

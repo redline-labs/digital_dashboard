@@ -145,6 +145,13 @@ void calibrationHealth(node_health::HealthReporter& health, const state_estimato
         health.setCheck("calibration", node_health::State::degraded, "not kept: " + c.store_error);
         return;
     }
+    // Degraded for the whole session: someone should look at the moved file.
+    if (!c.store_recovered.empty())
+    {
+        health.setCheck("calibration", node_health::State::degraded,
+                        "store was damaged; moved to " + c.store_recovered + ", started afresh");
+        return;
+    }
     for (std::size_t i = 0; i < kNames.size(); ++i)
         if (c.moved[i])
         {

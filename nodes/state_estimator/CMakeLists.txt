@@ -81,5 +81,5 @@ redline_install(TARGET state_estimator COMPONENT nodes)
 # simulated drives through Pipeline and CalibrationKeeper. Minutes of driving,
 # so `slow`.
 add_executable(state_estimator_test_calibration_persistence tests/test_calibration_persistence.cpp)
-target_link_libraries(state_estimator_test_calibration_persistence PRIVATE state_estimator_core state_estimator_sim_bus)
+target_link_libraries(state_estimator_test_calibration_persistence PRIVATE state_estimator_core state_estimator_sim_bus sqlite3::sqlite3)
 add_project_test(TARGET state_estimator_test_calibration_persistence LABELS state_estimator slow TIMEOUT 900)

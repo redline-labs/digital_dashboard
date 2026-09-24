@@ -154,7 +154,7 @@ rows it has written.
 | `gnss` | nothing under the GNSS prefix for 1000 ms |
 | `estimate` | degraded while waiting for a dual-antenna heading, or while the uncertainty is above the valid bounds |
 | `solve` | degraded when the last smoother update took 80 ms or more; at 10 Hz keyframes the smoother falls behind the car |
-| `calibration` | degraded when the store cannot be opened (the node then runs on the config), or when a learned group is more than `moved_sigma` from what the last session left |
+| `calibration` | degraded when the store cannot be opened (the node then runs on the config), when it was found damaged and begun afresh (for the whole session: the old history is in the moved file), or when a learned group is more than `moved_sigma` from what the last session left |
 
 ## Calibration kept between sessions
 
@@ -240,6 +240,13 @@ IMU re-seated, a lever arm re-measured without updating the config. The
 estimator keeps learning the new value either way. If the change was
 deliberate, put the new measurement in the config: its hash will no longer
 match the old rows, and the next session starts from the config.
+
+**`health` says the store was damaged.** At start the database failed its
+integrity check -- typically a power cut on storage that did not honour a
+flush -- and was moved to `calibration.sqlite.corrupt-<time>` beside it, with
+its log, and a fresh one begun. The node runs normally and relearns; the old
+history is in the moved file, readable with `sqlite3` if it is only partly
+damaged. `calibrationStoreRecovered` on the status topic is the same flag.
 
 **No rows are being written.** `calibrationStoreOk` false means the database
 could not be opened; the log names the path and the reason, and the node runs

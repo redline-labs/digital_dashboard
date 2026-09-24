@@ -15,7 +15,13 @@
 // covariance is not symmetric positive definite is skipped, and the next older
 // matching row is used: a half-written or hand-edited row must cost one row,
 // not the whole calibration. A file that is not a database, or one written by
-// a newer schema, is refused and left exactly as it was.
+// a newer schema, is refused and left exactly as it was. A database of ours
+// that fails its integrity check is moved aside, kept, and started afresh.
+//
+// Power loss: WAL with synchronous=FULL. A commit is fsynced before append()
+// returns, and a power cut mid-write leaves the last complete commit. That
+// holds only if the storage honours the flush -- see
+// docs/libs/calibration_store.md.
 //
 // No zenoh, no Qt, no spdlog: it reports through Result<T>, and the node
 // decides what is worth a log line. Same SQLite rule as libs/track_store.
@@ -28,6 +34,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,6 +51,7 @@ struct Error
         NewerSchema,      // written by a later version of this library
         Query,
         InvalidArgument,  // a row that must not be written (not finite, wrong shape)
+        Corrupt,          // ours, damaged, and could not be moved aside
     };
     Kind kind;
     std::string message;
@@ -75,10 +83,19 @@ std::optional<std::string> structuralProblem(const Row& row);
 
 inline constexpr int kSchemaVersion = 1;
 
+// A damaged database found at open, and where it was moved.
+struct Recovery
+{
+    std::filesystem::path moved_to;
+    std::string reason;
+};
+
 class Store
 {
   public:
-    // Creates the directory and the file if they are not there.
+    // Creates the directory and the file if they are not there. A database
+    // that fails PRAGMA quick_check is moved to `<path>.corrupt-<unix time>`
+    // (with its -wal and -shm) and a fresh one is opened; recovered() says so.
     static Result<Store> open(const std::filesystem::path& path);
 
     Store(Store&&) noexcept;
@@ -89,6 +106,14 @@ class Store
 
     // Returns the new row's id.
     Result<std::int64_t> append(const Row& row);
+    // Several rows in ONE transaction: all written or none, even across a
+    // power cut. Every row is checked before any is written.
+    Result<std::vector<std::int64_t>> append(std::span<const Row> rows);
+
+    // Set when open() found this path damaged and started afresh.
+    const std::optional<Recovery>& recovered() const;
+    // PRAGMA synchronous on this connection: 2 is FULL. For tests and health.
+    int synchronousMode() const;
 
     // The newest row for this group, prior hash and model version that passes
     // the structural checks and `accept` (the caller's own, for what only it
@@ -106,6 +131,7 @@ class Store
 
   private:
     Store();
+    static Result<Store> openOnce(const std::filesystem::path& path, bool may_recover);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

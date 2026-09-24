@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <sys/stat.h>
+#include <vector>
 
 using test::check;
 namespace cs = calibration_store;
@@ -93,6 +94,97 @@ void testNotADatabase()
     check(!std::filesystem::exists(file.string() + "-wal"), "with nothing written beside it");
 }
 
+void testDamagedDatabaseIsMovedAside()
+{
+    // Ours, damaged: what a power cut does on storage that acknowledged a
+    // flush it had not made. Refusing it would leave the car on its config
+    // until someone came; instead it is moved aside, kept, and begun again.
+    test::TempDir dir("damaged");
+    const auto file = dir.path / "c.sqlite";
+    {
+        auto store = cs::Store::open(file);
+        if (!store) return check(false, "opens");
+        for (int i = 0; i < 200; ++i) store->append(test::row("lever_arm", "h", 0.3 + 1e-4 * i));
+    }
+    // Everything into the main file; then more rows committed to the WAL and
+    // left there, as a power cut would leave them; then the calibration
+    // table's root page scribbled over. Page one -- the header and schema --
+    // survives, so it still reads as ours. (Scribbling over free space inside
+    // a page is not damage: quick_check rightly says ok.)
+    sqlite3* db = nullptr;
+    sqlite3_open(file.string().c_str(), &db);
+    sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, nullptr);
+    long root = 0, page_size = 0;
+    {
+        sqlite3_stmt* s = nullptr;
+        sqlite3_prepare_v2(db, "SELECT rootpage FROM sqlite_master WHERE name='calibration'", -1, &s, nullptr);
+        if (sqlite3_step(s) == SQLITE_ROW) root = sqlite3_column_int64(s, 0);
+        sqlite3_finalize(s);
+        sqlite3_prepare_v2(db, "PRAGMA page_size", -1, &s, nullptr);
+        if (sqlite3_step(s) == SQLITE_ROW) page_size = sqlite3_column_int64(s, 0);
+        sqlite3_finalize(s);
+    }
+    sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, nullptr);
+    sqlite3_exec(db, "INSERT INTO meta VALUES('left_in_the_wal', 'yes');", nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    check(root > 1 && page_size > 0, "found the table's root page");
+    check(std::filesystem::exists(file.string() + "-wal") && std::filesystem::file_size(file.string() + "-wal") > 0,
+          "a committed transaction is waiting in the WAL");
+    const std::string wal_before = readAll(file.string() + "-wal");
+    {
+        std::fstream f(file, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp((root - 1) * page_size);
+        const std::string junk(static_cast<std::size_t>(page_size), '\x5a');
+        f.write(junk.data(), static_cast<std::streamsize>(junk.size()));
+    }
+    const std::string damaged = readAll(file);
+
+    auto store = cs::Store::open(file);
+    check(store.has_value(), "a damaged store still opens");
+    if (!store) return;
+    check(store->recovered().has_value(), "saying it recovered");
+    if (!store->recovered()) return;
+    const auto& rec = *store->recovered();
+    SPDLOG_INFO("recovered: moved to {} because {}", rec.moved_to.string(), rec.reason);
+    check(std::filesystem::exists(rec.moved_to) && readAll(rec.moved_to) == damaged,
+          "the damaged file is kept, byte for byte, where it says");
+    check(std::filesystem::exists(rec.moved_to.string() + "-wal") && readAll(rec.moved_to.string() + "-wal") == wal_before,
+          "its log moved with it, unapplied: nothing was checkpointed into the damaged file");
+    const auto h = store->history("lever_arm");
+    check(h && h->empty(), "the new store starts empty");
+    check(store->append(test::row("lever_arm", "h", 0.3)).has_value(), "and takes writes");
+
+    auto again = cs::Store::open(file);
+    check(again && !again->recovered(), "the store it started is not itself treated as damaged");
+}
+
+void testBatchFailingMidwayWritesNothing()
+{
+    // A batch that passes every check and then fails in SQLite on its second
+    // row -- here a trigger, on the car a full disk or an I/O error. The
+    // first row must not survive alone: one transaction or none.
+    test::TempDir dir("midway");
+    const auto file = dir.path / "c.sqlite";
+    {
+        auto store = cs::Store::open(file);
+        if (!store) return check(false, "opens");
+    }
+    sqlite3* db = nullptr;
+    sqlite3_open(file.string().c_str(), &db);
+    sqlite3_exec(db,
+                 "CREATE TRIGGER boom BEFORE INSERT ON calibration WHEN NEW.grp = 'boresight' "
+                 "BEGIN SELECT RAISE(ABORT, 'no room'); END;",
+                 nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    auto store = cs::Store::open(file);
+    if (!store) return check(false, "reopens");
+    const std::vector<cs::Row> batch{test::row("mounting", "h", 0.1), test::row("boresight", "h", 0.2)};
+    const auto ids = store->append(std::span<const cs::Row>(batch));
+    check(!ids.has_value(), "the batch fails");
+    const auto h = store->history("mounting");
+    check(h && h->empty(), "and the row before the failure was rolled back with it");
+}
+
 void testNewerSchema()
 {
     test::TempDir dir("newer");
@@ -150,6 +242,8 @@ int main()
 {
     testBadRowsAreSkipped();
     testNotADatabase();
+    testDamagedDatabaseIsMovedAside();
+    testBatchFailingMidwayWritesNothing();
     testNewerSchema();
     testUnwritable();
     testRefusedWrites();

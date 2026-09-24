@@ -7,6 +7,8 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <span>
+#include <utility>
 
 namespace state_estimator
 {
@@ -101,6 +103,12 @@ bool CalibrationKeeper::open(const std::filesystem::path& path)
     store_ = std::move(*store);
     report_.store_open = true;
     report_.store_error.clear();
+    if (const auto& rec = store_->recovered())
+    {
+        report_.store_recovered = rec->moved_to.string();
+        SPDLOG_ERROR("[calibration] {} was damaged ({}); moved to {} and started afresh", path.string(), rec->reason,
+                     rec->moved_to.string());
+    }
     return true;
 }
 
@@ -167,6 +175,8 @@ void CalibrationKeeper::tick(const ve::Estimator& estimator, bool shutdown)
         seen_resets_ = status.resets;
     }
 
+    std::vector<calibration_store::Row> rows;
+    std::vector<std::pair<std::size_t, ve::GroupEstimate>> written;
     for (ve::CalibrationGroup g : ve::kCalibrationGroups)
     {
         const std::size_t i = indexOf(g);
@@ -210,16 +220,25 @@ void CalibrationKeeper::tick(const ve::Estimator& estimator, bool shutdown)
         row.reason = std::string(ve::reasonName(*reason));
         row.evidence_s = evidence;
         row.drive_s = now - *first_;
-        if (const auto id = store_->append(row))
-        {
-            last_[i] = ve::LastWritten{estimate, now};
-            ++report_.rows_written;
-            SPDLOG_INFO("[calibration] {}: wrote row {} ({}): {}", row.group, *id, row.reason, row.summary);
-        }
-        else
-        {
-            SPDLOG_WARN("[calibration] {}: write failed: {}", row.group, id.error().message);
-        }
+        rows.push_back(std::move(row));
+        written.push_back({i, estimate});
+    }
+    if (rows.empty()) return;
+
+    // One transaction: the groups learned at this moment are kept together or
+    // not at all, even across a power cut.
+    const auto ids = store_->append(std::span<const calibration_store::Row>(rows));
+    if (!ids)
+    {
+        SPDLOG_WARN("[calibration] writing {} rows failed: {}", rows.size(), ids.error().message);
+        return;
+    }
+    for (std::size_t k = 0; k < rows.size(); ++k)
+    {
+        last_[written[k].first] = ve::LastWritten{written[k].second, now};
+        ++report_.rows_written;
+        SPDLOG_INFO("[calibration] {}: wrote row {} ({}): {}", rows[k].group, (*ids)[k], rows[k].reason,
+                    rows[k].summary);
     }
 }
 

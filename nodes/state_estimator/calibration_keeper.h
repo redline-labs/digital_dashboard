@@ -42,6 +42,9 @@ struct CalibrationReport
 {
     bool store_open = false;
     std::string store_error;  // why it is not, when it is not
+    // Where a damaged store was moved when this session found it; the history
+    // before it is there, not in the store.
+    std::string store_recovered;
     // Indexed as vehicle_estimator::kCalibrationGroups.
     std::array<bool, 3> from_database{};
     std::array<bool, 3> moved{};        // latched once past moved_sigma

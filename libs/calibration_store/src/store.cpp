@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 
@@ -158,6 +159,7 @@ struct Store::Impl
 {
     sqlite3* db = nullptr;
     std::filesystem::path path;
+    std::optional<Recovery> recovered;
     ~Impl()
     {
         if (db != nullptr) sqlite3_close(db);
@@ -174,7 +176,60 @@ const std::filesystem::path& Store::path() const
     return impl_->path;
 }
 
+namespace
+{
+
+// What PRAGMA quick_check (or the attempt to run it) says is wrong, or nothing.
+std::optional<std::string> corruption(sqlite3* db)
+{
+    Statement s(db, "PRAGMA quick_check");
+    if (!s.ok()) return std::string(sqlite3_errmsg(db));
+    std::string first;
+    int rc = SQLITE_OK;
+    int rows = 0;
+    while ((rc = sqlite3_step(s.get())) == SQLITE_ROW)
+    {
+        if (rows++ == 0) first = text(s.get(), 0);
+    }
+    if (rc != SQLITE_DONE) return std::string(sqlite3_errmsg(db));
+    if (rows == 1 && first == "ok") return std::nullopt;
+    return first.empty() ? std::string("quick_check failed") : first;
+}
+
+// Moves the database and its WAL and shared-memory files aside, under one
+// name that says when and why. Returns where the database went.
+Result<std::filesystem::path> quarantine(const std::filesystem::path& path)
+{
+    const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    std::filesystem::path aside;
+    for (int n = 0;; ++n)
+    {
+        aside = path.string() + ".corrupt-" + std::to_string(stamp) + (n ? "-" + std::to_string(n) : "");
+        if (!std::filesystem::exists(aside)) break;
+    }
+    std::error_code ec;
+    std::filesystem::rename(path, aside, ec);
+    if (ec) return fail(Error::Kind::Corrupt, "cannot move " + path.string() + " aside: " + ec.message());
+    // A WAL left beside a fresh database would be read as belonging to it.
+    for (const char* suffix : {"-wal", "-shm"})
+    {
+        const std::filesystem::path side = path.string() + suffix;
+        if (std::filesystem::exists(side)) std::filesystem::rename(side, aside.string() + suffix, ec);
+        if (ec) return fail(Error::Kind::Corrupt, "cannot move " + side.string() + " aside: " + ec.message());
+    }
+    return aside;
+}
+
+}  // namespace
+
 Result<Store> Store::open(const std::filesystem::path& path)
+{
+    return openOnce(path, true);
+}
+
+Result<Store> Store::openOnce(const std::filesystem::path& path, bool may_recover)
 {
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
@@ -186,29 +241,66 @@ Result<Store> Store::open(const std::filesystem::path& path)
                                    nullptr);
     if (rc != SQLITE_OK) return fail(Error::Kind::NotWritable, path.string(), rc);
     sqlite3* db = store.impl_->db;
+    // Closing the last connection checkpoints the WAL into the database and
+    // deletes it. Until the checks below pass, that would be a write into a
+    // file that may be damaged -- before it is moved aside -- and would lose
+    // the log that goes with it. Off while checking, back on after.
+    sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, nullptr);
 
-    // Nothing is written until the file is known to be ours and not newer.
-    // SQLite itself refuses to write to a file whose header is not SQLite's
-    // (the first statement fails with SQLITE_NOTADB), so a file that is not a
-    // database is refused before and without any write.
+    // Nothing is written until the file is known to be ours, intact, and not
+    // newer. SQLite itself refuses to write to a file whose header is not
+    // SQLite's (the first statement fails with SQLITE_NOTADB), so a file that
+    // is not a database is refused before and without any write. It may be
+    // somebody else's file, so it is never moved or replaced.
+    std::optional<std::string> damage;
     {
         Statement version(db, "SELECT value FROM meta WHERE name='schema_version'");
         if (!version.ok() && version.rc() == SQLITE_NOTADB)
             return fail(Error::Kind::NotADatabase, path.string() + ": " + sqlite3_errmsg(db), version.rc());
-        if (version.ok() && sqlite3_step(version.get()) == SQLITE_ROW)
+        if (!version.ok() && version.rc() == SQLITE_CORRUPT) damage = sqlite3_errmsg(db);
+        if (version.ok())
         {
-            const int v = std::atoi(text(version.get(), 0).c_str());
-            if (v > kSchemaVersion)
-                return fail(Error::Kind::NewerSchema,
-                            path.string() + " has schema " + std::to_string(v) + "; this reads up to " +
-                                std::to_string(kSchemaVersion));
+            const int step = sqlite3_step(version.get());
+            if (step == SQLITE_ROW)
+            {
+                const int v = std::atoi(text(version.get(), 0).c_str());
+                if (v > kSchemaVersion)
+                    return fail(Error::Kind::NewerSchema,
+                                path.string() + " has schema " + std::to_string(v) + "; this reads up to " +
+                                    std::to_string(kSchemaVersion));
+            }
+            else if (step == SQLITE_CORRUPT)
+            {
+                damage = sqlite3_errmsg(db);
+            }
         }
     }
+    // Ours, and damaged: a power cut on storage that did not honour a flush,
+    // or a torn copy. Refusing it would leave the car on its config until
+    // someone came to look; instead it is moved aside, kept for that someone,
+    // and the history starts again.
+    if (!damage) damage = corruption(db);
+    if (damage)
+    {
+        if (!may_recover) return fail(Error::Kind::Corrupt, path.string() + ": " + *damage);
+        sqlite3_close(db);
+        store.impl_->db = nullptr;
+        const auto aside = quarantine(path);
+        if (!aside) return std::unexpected(aside.error());
+        auto fresh = openOnce(path, false);
+        if (fresh) fresh->impl_->recovered = Recovery{*aside, *damage};
+        return fresh;
+    }
 
-    // WAL: a crash mid-write loses that write, not the file. NORMAL is safe
-    // under WAL against a crash; a power cut may lose the last write, which the
-    // next session's writes put back.
-    if (auto r = exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"); !r) return std::unexpected(r.error());
+    sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 0, nullptr);
+
+    // WAL: a commit is appended to the log and copied into the database only
+    // at a checkpoint, so a power cut mid-write -- or mid-checkpoint -- leaves
+    // the last complete commit, never a torn one. FULL fsyncs the log at every
+    // commit, so a row that was reported written survives the power cut too.
+    // NORMAL would skip that fsync and could lose the last commits; writes
+    // here are minutes apart, and the fsync costs nothing that matters.
+    if (auto r = exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"); !r) return std::unexpected(r.error());
     if (auto r = exec(db, R"(
         BEGIN;
         CREATE TABLE IF NOT EXISTS meta(name TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -239,28 +331,66 @@ Result<Store> Store::open(const std::filesystem::path& path)
     return store;
 }
 
+const std::optional<Recovery>& Store::recovered() const
+{
+    return impl_->recovered;
+}
+
+int Store::synchronousMode() const
+{
+    Statement s(impl_->db, "PRAGMA synchronous");
+    return s.ok() && sqlite3_step(s.get()) == SQLITE_ROW ? sqlite3_column_int(s.get(), 0) : -1;
+}
+
 Result<std::int64_t> Store::append(const Row& row)
 {
-    if (auto p = structuralProblem(row)) return fail(Error::Kind::InvalidArgument, *p);
-    if (row.group.empty() || row.prior_hash.empty())
-        return fail(Error::Kind::InvalidArgument, "a row needs a group and a prior hash");
-    Statement s(impl_->db, "INSERT INTO calibration(written_at_ns, session, grp, prior_hash, model_version, mean, cov, "
-                           "summary, reason, evidence_s, drive_s) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
-    if (!s.ok()) return fail(Error::Kind::Query, sqlite3_errmsg(impl_->db), s.rc());
-    sqlite3_bind_int64(s.get(), 1, row.written_at_ns);
-    bindText(s.get(), 2, row.session);
-    bindText(s.get(), 3, row.group);
-    bindText(s.get(), 4, row.prior_hash);
-    sqlite3_bind_int(s.get(), 5, row.model_version);
-    bindText(s.get(), 6, toJson(row.mean));
-    bindText(s.get(), 7, toJson(row.cov));
-    bindText(s.get(), 8, row.summary);
-    bindText(s.get(), 9, row.reason);
-    sqlite3_bind_double(s.get(), 10, row.evidence_s);
-    sqlite3_bind_double(s.get(), 11, row.drive_s);
-    const int rc = sqlite3_step(s.get());
-    if (rc != SQLITE_DONE) return fail(Error::Kind::Query, sqlite3_errmsg(impl_->db), rc);
-    return sqlite3_last_insert_rowid(impl_->db);
+    auto ids = append(std::span<const Row>(&row, 1));
+    if (!ids) return std::unexpected(ids.error());
+    return ids->front();
+}
+
+Result<std::vector<std::int64_t>> Store::append(std::span<const Row> rows)
+{
+    // Every row checked before any is written: a batch goes in whole or not
+    // at all, so the groups learned at one moment are never split by a
+    // refusal -- or, in one transaction, by a power cut.
+    for (const Row& row : rows)
+    {
+        if (auto p = structuralProblem(row)) return fail(Error::Kind::InvalidArgument, *p);
+        if (row.group.empty() || row.prior_hash.empty())
+            return fail(Error::Kind::InvalidArgument, "a row needs a group and a prior hash");
+    }
+    if (auto r = exec(impl_->db, "BEGIN IMMEDIATE"); !r) return std::unexpected(r.error());
+    std::vector<std::int64_t> ids;
+    const auto rollback = [&](Error e) -> Result<std::vector<std::int64_t>> {
+        exec(impl_->db, "ROLLBACK");
+        return std::unexpected(std::move(e));
+    };
+    {
+        Statement s(impl_->db, "INSERT INTO calibration(written_at_ns, session, grp, prior_hash, model_version, mean, "
+                               "cov, summary, reason, evidence_s, drive_s) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+        if (!s.ok()) return rollback(Error{Error::Kind::Query, sqlite3_errmsg(impl_->db), s.rc()});
+        for (const Row& row : rows)
+        {
+            sqlite3_reset(s.get());
+            sqlite3_bind_int64(s.get(), 1, row.written_at_ns);
+            bindText(s.get(), 2, row.session);
+            bindText(s.get(), 3, row.group);
+            bindText(s.get(), 4, row.prior_hash);
+            sqlite3_bind_int(s.get(), 5, row.model_version);
+            bindText(s.get(), 6, toJson(row.mean));
+            bindText(s.get(), 7, toJson(row.cov));
+            bindText(s.get(), 8, row.summary);
+            bindText(s.get(), 9, row.reason);
+            sqlite3_bind_double(s.get(), 10, row.evidence_s);
+            sqlite3_bind_double(s.get(), 11, row.drive_s);
+            const int rc = sqlite3_step(s.get());
+            if (rc != SQLITE_DONE) return rollback(Error{Error::Kind::Query, sqlite3_errmsg(impl_->db), rc});
+            ids.push_back(sqlite3_last_insert_rowid(impl_->db));
+        }
+    }
+    if (auto r = exec(impl_->db, "COMMIT"); !r) return rollback(r.error());
+    return ids;
 }
 
 Result<std::optional<Row>> Store::latest(std::string_view group, std::string_view prior_hash, int model_version,
