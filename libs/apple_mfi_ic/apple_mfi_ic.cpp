@@ -17,14 +17,24 @@
 #include <openssl/err.h>
 #include <openssl/asn1.h>
 
-AppleMFIIC::AppleMFIIC() 
-    : bus_{}
-    , connected_(false) 
+namespace
+{
+class SteadyClock final : public AppleMFIIC::Clock
+{
+  public:
+    std::chrono::steady_clock::time_point now() override { return std::chrono::steady_clock::now(); }
+    void sleep_for(std::chrono::microseconds duration) override { std::this_thread::sleep_for(duration); }
+};
+}  // namespace
+
+AppleMFIIC::AppleMFIIC()
+    : AppleMFIIC(nullptr)
 {
 }
 
-AppleMFIIC::AppleMFIIC(std::unique_ptr<i2c::Bus> bus)
+AppleMFIIC::AppleMFIIC(std::unique_ptr<i2c::Bus> bus, std::shared_ptr<Clock> clock)
     : bus_(std::move(bus))
+    , clock_(clock ? std::move(clock) : std::make_shared<SteadyClock>())
     , connected_(false)
 {
 }
@@ -102,7 +112,7 @@ bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
         {
             return true;
         }
-        std::this_thread::sleep_for(kTransactionRetryDelay);
+        clock_->sleep_for(kTransactionRetryDelay);
     }
     return false;
 }
@@ -123,7 +133,7 @@ bool AppleMFIIC::wake()
             }
             return true;
         }
-        std::this_thread::sleep_for(kTransactionRetryDelay);
+        clock_->sleep_for(kTransactionRetryDelay);
     }
     return false;
 }
@@ -197,10 +207,10 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
     {
         if (!bus_->write(I2C_ADDRESS, reg_addr))
         {
-            std::this_thread::sleep_for(kTransactionRetryDelay);
+            clock_->sleep_for(kTransactionRetryDelay);
             continue;
         }
-        const auto deadline = std::chrono::steady_clock::now() + kReadAfterWriteWindow;
+        const auto deadline = clock_->now() + kReadAfterWriteWindow;
         for (int read_attempt = 0;; ++read_attempt)
         {
             auto data = bus_->read(I2C_ADDRESS, length);
@@ -213,11 +223,11 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
                 }
                 return data;
             }
-            if (std::chrono::steady_clock::now() >= deadline)
+            if (clock_->now() >= deadline)
             {
                 break;
             }
-            std::this_thread::sleep_for(kReadAfterWriteDelay);
+            clock_->sleep_for(kReadAfterWriteDelay);
         }
     }
 
@@ -511,7 +521,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     SPDLOG_DEBUG("Wrote challenge data: {} bytes", challenge_data.size());
     
     // TODO: It seems like the MFi IC is busy after this.  We should wait for it to be ready.
-    std::this_thread::sleep_for(std::chrono::milliseconds(10u));
+    clock_->sleep_for(std::chrono::milliseconds(10u));
 
     // Step 3: Start Authentication (0x10) - Write 0x01 to start the process
     std::vector<uint8_t> auth_start_write = {
@@ -528,7 +538,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
 
     // It seems like its on the order of 400ms to complete the authentication.
     // Lets wait the majority of the time here.
-    std::this_thread::sleep_for(std::chrono::milliseconds(400u));
+    clock_->sleep_for(std::chrono::milliseconds(400u));
     
     // Step 4: Poll Authentication Control and Status (0x10) until ready
     bool authentication_complete = false;
@@ -536,7 +546,7 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
         // It seems like its on the order of 400ms to complete the authentication.
-        std::this_thread::sleep_for(std::chrono::milliseconds(100u));
+        clock_->sleep_for(std::chrono::milliseconds(100u));
         
         auto status_data = read_register(Register::AuthenticationControlAndStatus, 1);
         if (!status_data) {

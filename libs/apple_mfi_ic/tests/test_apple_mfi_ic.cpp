@@ -11,6 +11,12 @@
 // retry logic is transport-agnostic, so the same test runs both shapes and
 // bounds the time each takes: a retry policy tuned for one transport must not
 // stall on the other.
+//
+// All of it on virtual time, shared by the driver and the fake: a wait
+// advances the clock by exactly what was asked, and a transaction by exactly
+// its modelled cost. On the real clock a loaded machine oversleeps, and the
+// bridge case -- 15 ms of a 30 ms idle window spent per NACK -- put the fake
+// part back to sleep and failed a policy that was fine.
 #include "apple_mfi_ic/apple_mfi_ic.h"
 #include "i2c_bus/i2c_bus.h"
 
@@ -22,13 +28,22 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <thread>
 #include <vector>
 
 namespace
 {
 
-using Clock = std::chrono::steady_clock;
+using TimePoint = std::chrono::steady_clock::time_point;
+
+class VirtualClock final : public AppleMFIIC::Clock
+{
+  public:
+    TimePoint now() override { return now_; }
+    void sleep_for(std::chrono::microseconds duration) override { now_ += duration; }
+
+  private:
+    TimePoint now_{};  // the epoch: only differences mean anything
+};
 
 #define CHECK(cond)                                                                       \
     do                                                                                    \
@@ -61,7 +76,9 @@ constexpr Transport kBridge{"MCP2221A bridge", std::chrono::microseconds(3000),
 class FakeCoprocessor : public i2c::Bus
 {
   public:
-    explicit FakeCoprocessor(Transport transport) : transport_(transport)
+    FakeCoprocessor(Transport transport, std::shared_ptr<VirtualClock> clock)
+        : transport_(transport), clock_(std::move(clock)), last_activity_(clock_->now() - std::chrono::seconds(1)),
+          busy_until_(clock_->now())
     {
         // Each register is its own object with its own length, as on the part:
         // 0x11 is a 2-byte length and 0x12 the 128-byte response it describes.
@@ -106,11 +123,11 @@ class FakeCoprocessor : public i2c::Bus
             if (data.size() > 1 && data[0] == 0x10 && data[1] == 0x01)
             {
                 // Start authentication: status 0x01 for a while, then 0x10.
-                auth_done_at_ = Clock::now() + std::chrono::milliseconds(50);
+                auth_done_at_ = clock_->now() + std::chrono::milliseconds(50);
                 regs_[0x10] = {0x01};
             }
         }
-        busy_until_ = Clock::now() + std::chrono::microseconds(1000);
+        busy_until_ = clock_->now() + std::chrono::microseconds(1000);
         return true;
     }
 
@@ -121,7 +138,7 @@ class FakeCoprocessor : public i2c::Bus
         {
             return {};
         }
-        if (auth_done_at_ && Clock::now() >= *auth_done_at_)
+        if (auth_done_at_ && clock_->now() >= *auth_done_at_)
         {
             regs_[0x10] = {0x10};
         }
@@ -151,8 +168,8 @@ class FakeCoprocessor : public i2c::Bus
     // The START of any transaction. False = NACK.
     bool start(uint8_t address)
     {
-        std::this_thread::sleep_for(transport_.latency);
-        const auto now = Clock::now();
+        clock_->sleep_for(transport_.latency);
+        const auto now = clock_->now();
         bool ack = address == AppleMFIIC::I2C_ADDRESS;
         if (ack && now - last_activity_ > std::chrono::milliseconds(30))
         {
@@ -166,27 +183,29 @@ class FakeCoprocessor : public i2c::Bus
         if (!ack)
         {
             ++nacks;
-            std::this_thread::sleep_for(transport_.nack_cost);
+            clock_->sleep_for(transport_.nack_cost);
         }
         return ack;
     }
 
     Transport transport_;
+    std::shared_ptr<VirtualClock> clock_;
     std::map<uint8_t, std::vector<uint8_t>> regs_;
     uint8_t pointer_ = 0;
     bool pointer_valid_ = false;
-    Clock::time_point last_activity_ = Clock::now() - std::chrono::seconds(1);
-    Clock::time_point busy_until_ = Clock::now();
-    std::optional<Clock::time_point> auth_done_at_;
+    TimePoint last_activity_;
+    TimePoint busy_until_;
+    std::optional<TimePoint> auth_done_at_;
 };
 
 void exercise(Transport transport)
 {
-    auto fake = std::make_unique<FakeCoprocessor>(transport);
+    const auto clock = std::make_shared<VirtualClock>();
+    auto fake = std::make_unique<FakeCoprocessor>(transport, clock);
     FakeCoprocessor* raw = fake.get();
-    AppleMFIIC ic(std::move(fake));
+    AppleMFIIC ic(std::move(fake), clock);
 
-    const auto t0 = Clock::now();
+    const auto t0 = clock->now();
     CHECK(ic.init());
 
     // Cold: the part is asleep, so the first START is the wake NACK.
@@ -198,7 +217,7 @@ void exercise(Transport transport)
     CHECK(info->authentication_protocol_minor_version == 0);
 
     // Let it fall asleep again between two queries and re-read.
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    clock->sleep_for(std::chrono::milliseconds(60));
     info = ic.query_device_info();
     CHECK(info.has_value());
     CHECK(info->device_version == 0x05);
@@ -215,7 +234,7 @@ void exercise(Transport transport)
         CHECK((*signature)[i] == static_cast<uint8_t>(i));
     }
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(clock->now() - t0);
     std::printf("%-18s  %4lld ms   writes %3d  reads %3d  nacks %3d\n", transport.name,
                 static_cast<long long>(elapsed.count()), raw->writes, raw->reads, raw->nacks);
 

@@ -20,8 +20,8 @@ interface, and it does not own the bus: transactions go through
 own controller on a deployed board, or an MCP2221A bound by the in-kernel
 `hid_mcp2221` driver on a bench) or the MCP2221A driven over USB HID on macOS.
 The split is what makes the retry policy testable: the test substitutes a fake
-bus with the coprocessor's measured timing and runs the same driver over two
-transport shapes. OpenSSL is needed for the certificate parsing; when it is
+bus with the coprocessor's measured timing, and a virtual clock for the real
+one, and runs the same driver over two transport shapes. OpenSSL is needed for the certificate parsing; when it is
 absent the library, and everything above it, is skipped with a warning. The
 node that uses it is [carplay](../nodes/carplay.html); the port's design notes
 are in [carplay-port](../design/carplay-port.html).
@@ -123,8 +123,7 @@ the iAP2 session and the AirPlay receiver's MFiSAP callbacks behind a mutex.
 ctest --test-dir build -R apple_mfi_ic_test
 ```
 
-`apple_mfi_ic_test` is registered with a plain `add_test` rather than
-`add_project_test`, so it carries no labels; run it by name. It needs no
+`apple_mfi_ic_test` is labelled `apple_mfi_ic` and `unit`. It needs no
 hardware and runs on macOS.
 
 It drives `AppleMFIIC` against a fake coprocessor that reproduces the measured
@@ -134,5 +133,15 @@ auto-increment), first with a native-controller transport shape and then with
 a bridge shape where every transaction costs `3 ms` and a NACK `12 ms` more.
 On each it queries device info cold, lets the part fall asleep and queries
 again, and runs a full challenge through to a 128-byte response, then bounds
-the wall time at `3 s` and checks that NACKs were actually exercised. A retry
+the time at `3 s` and checks that NACKs were actually exercised. A retry
 policy tuned for one transport that stalls on the other fails here.
+
+All of this runs on virtual time. `AppleMFIIC` takes an optional `Clock`,
+defaulting to the real one, and the test gives the driver and the fake the
+same virtual clock. A wait advances it by exactly what was asked, and a
+transaction by its modelled cost. On the real clock a loaded machine
+oversleeps. The bridge shape spends 15 ms of the part's 30 ms idle window on
+every NACK, so a few milliseconds of scheduler delay put the fake part back
+to sleep, and the test failed 16 runs in 112 under load with nothing wrong
+in the driver. It now takes a fraction of a second of wall time and gives
+the same answer every run.
