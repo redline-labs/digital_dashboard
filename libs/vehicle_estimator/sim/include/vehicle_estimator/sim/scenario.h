@@ -89,6 +89,7 @@ struct Phase
     double slip = 0.0;       // rad, peak of the bump
     double slip_bias = 0.0;  // rad, held
     double pitch = 0.0, roll = 0.0;  // rad, body attitude at the end
+    double climb = 0.0;  // m of height gained over the phase; the body pitches to the grade
 };
 std::unique_ptr<VehicleMotion> scripted(std::vector<Phase> phases, double heading = 0.3);
 
@@ -156,11 +157,43 @@ struct SensorModel
     double accel_noise_density = 60e-6 * 9.80665;
     Eigen::Vector3d gyro_bias = Eigen::Vector3d(0.002, -0.0015, 0.001);  // rad/s
     Eigen::Vector3d accel_bias = Eigen::Vector3d(0.04, -0.03, 0.05);     // m/s^2
+    // The gyro bias wandering, rad/s/sqrt(s): what an MTi's in-run stability
+    // is. Zero keeps the bias constant (and the auxiliary stream untouched).
+    double gyro_bias_walk = 0.0;
     imu_preint::DvFrame dv_frame = imu_preint::DvFrame::end;
     std::uint16_t first_counter = 65500;          // wraps early on purpose
     std::uint32_t first_tick = 0xFFFF0000u;       // and so does the tick counter
     std::vector<std::size_t> dropped_imu;         // sample indices never delivered
     double imu_latency = 0.002, imu_jitter = 0.002;  // s: floor and mean excess
+
+    // Magnetometer, in every IMU packet: m = A (R_i_e B_e) / F + h + noise,
+    // in the MTi's arbitrary units. Its own random stream, so turning it on
+    // changes no other sensor's noise.
+    bool magnetometer = true;
+    Eigen::Matrix3d mag_soft_iron = (Eigen::Matrix3d() << 1.03, 0.01, -0.02,  //
+                                     0.01, 0.98, 0.015,                        //
+                                     -0.02, 0.015, 1.04)
+                                        .finished();
+    Eigen::Vector3d mag_hard_iron = Eigen::Vector3d(0.05, -0.08, 0.12);  // a.u.
+    double mag_normalisation_nt = 48000.0;  // the field the factory called 1.0
+    double mag_noise = 0.003;               // a.u., per sample
+    // [t0, t1): a field that is not the earth's (a bridge, a car alongside),
+    // added in NED, a.u.
+    struct MagDisturbance
+    {
+        double t0 = 0.0, t1 = 0.0;
+        Eigen::Vector3d ned_au = Eigen::Vector3d::Zero();
+    };
+    std::vector<MagDisturbance> mag_disturbances;
+
+    // Barometer, in every `baro_every`-th packet, whole pascals:
+    // p = ISA(h - offset(t)) + airflow * rho v^2 / 2 + noise.
+    bool barometer = true;
+    std::size_t baro_every = 2;
+    double baro_offset = 35.0;       // m: ellipsoidal height minus pressure altitude (weather + geoid)
+    double baro_offset_rate = 0.0;   // m/s: the weather moving
+    double baro_airflow = 0.3;       // fraction of dynamic pressure the sensor sees
+    double baro_noise_pa = 2.0;
 
     // GNSS.
     double gnss_rate = 10.0;
@@ -189,6 +222,9 @@ struct SensorModel
     };
     std::vector<AttitudeBias> attitude_biases;
     double attitude_from = 0.0;  // no heading before this time
+    // [t0, t1): no dual-antenna heading, position and velocity still there --
+    // a baseline that lost carrier phase on one antenna.
+    std::vector<std::pair<double, double>> attitude_outages;
     // False lets a GNSS epoch arrive after the one that followed it.
     bool gnss_in_order = true;
 

@@ -202,15 +202,23 @@ std::vector<std::optional<Eigen::MatrixXd>> jointCovariances(const FactorList& f
     const Layout layout = layoutOf(values);
     if (layout.size == 0) return out;
     const NormalEquations ne = assemble(factors, values, layout);
-    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> ldlt(ne.H);
+
+    // Scaled by its own diagonal first (Jacobi), so that every pivot is
+    // judged against its variable's own scale. Unscaled, a zero pivot had to
+    // be recognised against the stiffest thing in the window: a gyro-bias walk
+    // over 0.1 s carries 1e10 of information and a barometric offset known to
+    // 300 m carries 1e-5, and both are perfectly well determined. The
+    // covariance is the same; only the test for "nothing constrains this"
+    // stops depending on what else happens to be in the graph.
+    const Eigen::VectorXd scale = ne.H.diagonal().cwiseMax(std::numeric_limits<double>::min()).cwiseSqrt().cwiseInverse();
+    const Eigen::SparseMatrix<double> Hs = scale.asDiagonal() * ne.H * scale.asDiagonal();
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> ldlt(Hs);
     if (ldlt.info() != Eigen::Success) return out;
 
-    // A zero pivot is a direction nothing constrains. The scale is relative:
-    // an ECEF position and an accelerometer bias differ in information by
-    // ten orders of magnitude, and both are perfectly well determined.
+    // A zero pivot -- now on a scale of one -- is a direction nothing
+    // constrains.
     const Eigen::VectorXd d = ldlt.vectorD();
-    const double largest = d.cwiseAbs().maxCoeff();
-    if (!(d.minCoeff() > largest * 1e-15)) return out;
+    if (!(d.minCoeff() > 1e-12)) return out;
 
     for (std::size_t g = 0; g < groups.size(); ++g)
     {
@@ -235,7 +243,8 @@ std::vector<std::optional<Eigen::MatrixXd>> jointCovariances(const FactorList& f
             for (Eigen::Index i = 0; i < dim; ++i) rhs(o + i, col + i) = 1.0;
             col += dim;
         }
-        const Eigen::MatrixXd x = ldlt.solve(rhs);
+        // H^-1 = S (S H S)^-1 S, S the scaling.
+        const Eigen::MatrixXd x = scale.asDiagonal() * ldlt.solve(scale.asDiagonal() * rhs);
         if (!x.allFinite()) continue;
         Eigen::MatrixXd cov(n, n);
         Eigen::Index row = 0;

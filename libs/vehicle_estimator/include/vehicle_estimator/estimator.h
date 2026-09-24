@@ -20,6 +20,7 @@
 #include "vehicle_estimator/clock.h"
 #include "vehicle_estimator/config.h"
 #include "vehicle_estimator/factors.h"
+#include "vehicle_estimator/magnetic_reference.h"
 #include "vehicle_estimator/measurements.h"
 
 #include "factor_graph/smoother.h"
@@ -37,7 +38,9 @@ namespace vehicle_estimator
 
 struct EstimatorStatus
 {
-    bool initialized = false;
+    bool initialized = false;  // on a real position
+    bool anchored = false;     // started without one: attitude only, until the first fix
+    std::uint64_t reanchors = 0;
     std::uint64_t keyframes = 0;
     std::uint64_t resets = 0;
 
@@ -52,6 +55,16 @@ struct EstimatorStatus
     std::uint64_t gnss_rejected = 0;   // malformed parts removed
     std::uint64_t gated_position = 0, gated_velocity = 0, gated_attitude = 0;
     std::uint64_t updates_refused = 0;
+    std::uint64_t inertial_keyframes = 0;     // made on the IMU's clock, no GNSS epoch
+    std::uint64_t zero_velocity_updates = 0;  // keyframes judged parked
+    std::size_t imu_buffered = 0;             // increments waiting for a keyframe
+    std::uint64_t baro_factors = 0;           // keyframes with a barometric height
+    double baro_moving_s = 0.0;               // of them, seconds at speed: what the airflow learns from
+    double baro_height = 0.0;                 // m, the barometer's own height, newest
+    std::uint64_t mag_used = 0;               // magnetometer factors
+    std::uint64_t mag_rejected = 0;           // readings the disturbance gate refused
+    double mag_learning_s = 0.0;              // seconds of it with a dual-antenna heading alongside: what it learns from
+    bool mag_trusted = false;                 // learned enough to give a heading on its own
 
     factor_graph::OptimizeReport last_optimize;
     double last_solve_ms = 0.0;
@@ -62,6 +75,10 @@ struct EstimatorStatus
     // R_b_i as roll, pitch, yaw (the config's convention) and its sigma about
     // the body axes.
     Eigen::Vector3d mounting_rpy = Eigen::Vector3d::Zero(), mounting_sigma = Eigen::Vector3d::Zero();
+    Eigen::Vector3d mag_hard_iron = Eigen::Vector3d::Zero(), mag_hard_iron_sigma = Eigen::Vector3d::Zero();
+    Vector6d mag_soft_iron = Vector6d::Zero();  // xx yy zz xy xz yz
+    double baro_offset = 0.0, baro_offset_sigma = 0.0;
+    double baro_airflow = 0.0, baro_airflow_sigma = 0.0;
     std::uint64_t calibration_segments = 0;
     // What the mounting has been learned from: seconds of straight, true
     // running, and stops.
@@ -93,6 +110,8 @@ struct KeyframeRecord
     // The calibration segment this keyframe's factors use, and when it began.
     std::uint64_t segment = 0;
     double segment_start = 0.0;
+    // False for a keyframe made on the IMU's clock, with no GNSS epoch.
+    bool gnss = true;
 };
 
 class Estimator
@@ -129,7 +148,14 @@ class Estimator
     // The installation prior for the next start, in place of the config's:
     // what an earlier session learned. A reset within this session still
     // carries over what THIS session learned, which takes precedence.
-    void seedCalibration(const CalibrationSet& prior) { seeded_ = prior; }
+    // `magnetometer_known`: the prior's magnetometer calibration was learned,
+    // not configured -- good enough to take a heading from at a start with
+    // no GNSS, which a configured (unknown) hard iron is not.
+    void seedCalibration(const CalibrationSet& prior, bool magnetometer_known = false)
+    {
+        seeded_ = prior;
+        mag_trusted_ = mag_trusted_ || magnetometer_known;
+    }
     // The installation as the newest segment has it, with its covariance.
     const std::optional<CalibrationSet>& calibration() const { return calibration_; }
 
@@ -166,9 +192,41 @@ class Estimator
         FixQuality fix = FixQuality::none;
     };
 
-    void reset();
+    void reset(bool count = true);
     bool initialize(const GnssEpoch& e);
-    bool addKeyframe(const GnssEpoch& e);
+
+    // The first keyframe of a graph, however its state was arrived at.
+    struct Start
+    {
+        double t = 0.0;
+        Eigen::Quaterniond R_e_i = Eigen::Quaterniond::Identity();
+        Eigen::Matrix3d cov_R = Eigen::Matrix3d::Identity();  // IMU-frame tangent
+        Eigen::Vector3d p_e = Eigen::Vector3d::Zero();
+        double sigma_p = 10.0;
+        Eigen::Vector3d v_e = Eigen::Vector3d::Zero();
+        double sigma_v = 1.0;
+        Eigen::Vector3d bg = Eigen::Vector3d::Zero(), ba = Eigen::Vector3d::Zero();
+        Eigen::Matrix3d cov_bg = Eigen::Matrix3d::Identity(), cov_ba = Eigen::Matrix3d::Identity();
+        const GnssEpoch* epoch = nullptr;  // its measurements go in with it, when there is one
+        Eigen::Vector3d omega_i = Eigen::Vector3d::Zero();
+        FixQuality fix = FixQuality::none;
+    };
+    bool startGraph(const Start& s, const CalibrationSet& cal);
+    // No position: start at the anchor, attitude only.
+    bool anchoredStart(double t);
+    std::uint64_t time_base_switches_ = 0;
+    // The first fix after an anchored start: the state rotated into the true
+    // frame and the graph restarted from it.
+    bool reanchor(const GnssEpoch& e);
+    // Mean specific force and rate over [t0, t1] of buffered IMU; the span
+    // actually covered.
+    double meanForce(double t0, double t1, Eigen::Vector3d& f, Eigen::Vector3d& rate) const;
+    void decorate(VehicleState& s) const;
+    // A keyframe at t: from GNSS epoch `e`, or with none (an outage).
+    bool addKeyframe(double t, const GnssEpoch* e);
+    void zeroVelocity(double t, const imu_preint::KeyframeKeys& k, const imu_preint::NavState& predicted,
+                      factor_graph::FactorList& f);
+    bool imuStill(double t, double hold) const;
     // Moves every increment ending by t into `pim` (splitting the one that
     // straddles t); returns false when nothing lay in (t_prev, t].
     bool preintegrateTo(double t, imu_preint::Preintegrator& pim);
@@ -178,7 +236,7 @@ class Estimator
     factor_graph::FactorList measurementFactors(const GnssEpoch& e, const imu_preint::KeyframeKeys& keys,
                                                 const imu_preint::NavState& predicted, double dt_since_last,
                                                 const CalibrationSet& calibration);
-    void refreshNewest(const GnssEpoch& e, std::uint64_t index, const imu_preint::KeyframeKeys& keys);
+    void refreshNewest(double t, FixQuality fix, std::uint64_t index, const imu_preint::KeyframeKeys& keys);
     Eigen::Vector3d rateAt(double t) const;       // raw gyro rate, IMU frame
     Eigen::Vector3d forceAt(double t) const;      // raw specific force, IMU frame
     Eigen::Vector3d gravityAt(const Eigen::Vector3d& p_e) const;
@@ -191,6 +249,42 @@ class Estimator
     std::optional<double> last_device_time_;
 
     std::deque<Buffered> imu_;
+    // The last few seconds of IMU, kept after preintegration consumes them,
+    // for judging stillness.
+    struct Recent
+    {
+        double t1, dt;
+        Eigen::Vector3d dv;
+        double rate;  // |omega|, rad/s
+    };
+    std::deque<Recent> recent_;
+    // The magnetometer and barometer readings that came with the IMU, on GPS
+    // time, until the keyframe that uses them.
+    struct Reading
+    {
+        double t;
+        Eigen::Vector3d value;  // a.u. for the field; pressure in x
+    };
+    std::deque<Reading> mags_, pressures_;
+    void baroFactor(double t_prev, double t, const imu_preint::KeyframeKeys& k, const imu_preint::NavState& predicted,
+                    factor_graph::FactorList& f);
+    void magFactor(double t_prev, double t, const imu_preint::KeyframeKeys& k, const imu_preint::NavState& predicted,
+                   factor_graph::FactorList& f);
+    MagneticReference magnetic_;
+    std::optional<double> last_dual_antenna_;  // when a heading from the antennas last went in
+    std::optional<double> last_mag_used_;
+    std::optional<double> first_imu_;
+    bool anchored_ = false;
+    bool heading_known_ = false;  // anchored with a magnetometer heading
+    bool mag_trusted_ = false;    // the magnetometer calibration was learned, here or before
+    std::optional<Start> handover_;
+    // Before any GNSS there is no GPS time: the IMU goes on host time, and an
+    // anchored start runs on it. When GPS time arrives the anchored state is
+    // kept -- attitude in the anchor frame, biases -- and resumed on it.
+    bool provisional_time_ = false;
+    std::optional<Start> resume_;
+    void switchTimeBase();
+    bool resumeAnchored();
     std::deque<GnssEpoch> gnss_;
     std::optional<Newest> newest_;
     std::uint64_t next_index_ = 0;

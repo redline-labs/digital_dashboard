@@ -8,6 +8,7 @@
 #include "gsof_status.capnp.h"
 #include "pub_sub/capnp_payload.h"
 #include "xbus_common.capnp.h"
+#include "xbus_environment.capnp.h"
 #include "xbus_inertial.capnp.h"
 
 #include <capnp/serialize.h>
@@ -102,6 +103,7 @@ Fed feed(std::string_view schema, std::span<const std::uint8_t> payload, double 
     static constexpr std::string_view kConsumed[] = {
         "GsofPositionTime", "GsofCurrentTimeUtc", "GsofLatLongHeight", "GsofVelocity", "GsofPositionSigma",
         "GsofAttitudeInfo", "GsofPositionType",   "XbusDeltaQ",        "XbusDeltaV",
+        "XbusMagneticField", "XbusBaroPressure",
     };
     if (std::find(std::begin(kConsumed), std::end(kConsumed), schema) == std::end(kConsumed)) return Fed::ignored;
 
@@ -174,6 +176,29 @@ Fed feed(std::string_view schema, std::span<const std::uint8_t> payload, double 
             if (!r.getHeader().getHasPacketCounter() || !r.getHeader().getHasSampleTimeFine()) return Fed::malformed;
             imu.addDeltaV(header(r.getHeader()), Eigen::Vector3d(r.getDeltaVXMps(), r.getDeltaVYMps(), r.getDeltaVZMps()),
                           arrival);
+        }
+        else if (schema == "XbusMagneticField")
+        {
+            const auto r = reader.getRoot<::XbusMagneticField>();
+            const auto h = r.getHeader();
+            if (!h.getHasPacketCounter() || !h.getHasSampleTimeFine()) return Fed::malformed;
+            // A clipped axis reads a plausible wrong field: the saturated
+            // value, not the field. Not used at all.
+            if (h.getHasStatus() && (h.getClipMagnetometerX() || h.getClipMagnetometerY() || h.getClipMagnetometerZ()))
+                return Fed::ignored;
+            const Eigen::Vector3d au(r.getMagneticFieldXAu(), r.getMagneticFieldYAu(), r.getMagneticFieldZAu());
+            if (!au.allFinite()) return Fed::malformed;
+            imu.addMagneticField(header(h), au);
+        }
+        else if (schema == "XbusBaroPressure")
+        {
+            const auto r = reader.getRoot<::XbusBaroPressure>();
+            const auto h = r.getHeader();
+            if (!h.getHasPacketCounter() || !h.getHasSampleTimeFine()) return Fed::malformed;
+            // Zero is not a pressure anywhere a car drives; it is a sensor
+            // that has not produced one.
+            if (r.getPressurePa() == 0) return Fed::malformed;
+            imu.addPressure(header(h), static_cast<double>(r.getPressurePa()));
         }
         return Fed::used;
     }

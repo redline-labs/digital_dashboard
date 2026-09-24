@@ -16,14 +16,19 @@ add_library(vehicle_estimator STATIC
     src/calibration.cpp
     src/clock.cpp
     src/estimator.cpp
+    src/magnetic_reference.cpp
+    src/factors/baro_height.cpp
     src/factors/calibration_prior.cpp
     src/factors/calibration_walk.cpp
     src/factors/dual_antenna.cpp
     src/factors/gnss_position.cpp
     src/factors/gnss_velocity.cpp
+    src/factors/magnetometer.cpp
+    src/factors/magnetometer_heading.cpp
     src/factors/priors.cpp
     src/factors/stationary_level.cpp
     src/factors/straight_driving.cpp
+    src/factors/zero_velocity.cpp
     src/offline.cpp
 )
 
@@ -35,6 +40,8 @@ target_link_libraries(vehicle_estimator
         factor_graph
         geodesy
         Eigen3::Eigen
+    PRIVATE
+        wmm_hr2025
 )
 
 # Driving scenarios with exact truth and the sensor streams they produce.
@@ -59,6 +66,11 @@ vehicle_estimator_test(scenarios unit)
 vehicle_estimator_test(calibration unit)
 vehicle_estimator_test(robustness unit)
 vehicle_estimator_test(clock unit)
+vehicle_estimator_test(keyframes unit)
+
+# A start with no GNSS: anchored, attitude only, magnetic heading from a
+# learned calibration, and one re-anchor at the first fix.
+vehicle_estimator_test(cold_start slow TIMEOUT 900)
 vehicle_estimator_test(factors unit)
 vehicle_estimator_test(calibration_policy unit)
 vehicle_estimator_test(consistency slow)
@@ -71,3 +83,11 @@ vehicle_estimator_test(offline unit)
 # nothing, and the walk following a knocked IMU. Minutes of simulated
 # driving, so `slow`.
 vehicle_estimator_test(mounting slow TIMEOUT 600)
+
+# What the barometer learns while GNSS is good, and what it is worth when GNSS
+# is not: a minute's outage on a hill, a fix gone autonomous, the weather.
+vehicle_estimator_test(barometer slow TIMEOUT 900)
+
+# The magnetometer's calibration learned against the antennas' heading, what
+# it is worth for minutes without one, and a disturbance refused.
+vehicle_estimator_test(magnetometer slow TIMEOUT 1800)

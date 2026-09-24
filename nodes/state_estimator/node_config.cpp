@@ -88,6 +88,44 @@ void readVector(const YAML::Node& parent, const char* key, Eigen::Vector3d& out,
     if (!out.allFinite()) context.fail(where + key + " must be finite");
 }
 
+void readBool(const YAML::Node& parent, const char* key, bool& out, Context& context, const std::string& where)
+{
+    const YAML::Node node = parent[key];
+    if (!node) return;
+    try
+    {
+        out = node.as<bool>();
+    }
+    catch (const YAML::Exception&)
+    {
+        context.fail(where + key + " must be true or false");
+    }
+}
+
+template <int N>
+void readList(const YAML::Node& parent, const char* key, Eigen::Matrix<double, N, 1>& out, Context& context,
+              const std::string& where)
+{
+    const YAML::Node node = parent[key];
+    if (!node) return;
+    const std::string what = where + key + " must be a list of " + std::to_string(N) + " numbers";
+    if (!node.IsSequence() || node.size() != static_cast<std::size_t>(N))
+    {
+        context.fail(what);
+        return;
+    }
+    try
+    {
+        for (Eigen::Index i = 0; i < N; ++i) out[i] = node[static_cast<std::size_t>(i)].as<double>();
+    }
+    catch (const YAML::Exception&)
+    {
+        context.fail(what);
+        return;
+    }
+    if (!out.allFinite()) context.fail(where + key + " must be finite");
+}
+
 const YAML::Node section(const YAML::Node& root, const char* name, Context& context)
 {
     const YAML::Node node = root[name];
@@ -188,6 +226,39 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     }
     if (const YAML::Node n = section(root, "output", context))
         readNumber(n, "sideslip_min_speed", out.sideslipMinSpeed, context, "output.");
+    if (const YAML::Node n = section(root, "smoother", context))
+        readNumber(n, "keyframe_interval_s", out.keyframeIntervalS, context, "smoother.");
+    if (const YAML::Node n = section(root, "magnetometer", context))
+    {
+        auto& m = out.magnetometer;
+        readBool(n, "enabled", m.enabled, context, "magnetometer.");
+        readNumber(n, "sigma", m.sigma, context, "magnetometer.");
+        readVector(n, "hard_iron", m.hardIron, context, "magnetometer.");
+        readNumber(n, "hard_iron_sigma", m.hardIronSigma, context, "magnetometer.");
+        readList(n, "soft_iron", m.softIron, context, "magnetometer.");
+        readNumber(n, "soft_iron_sigma", m.softIronSigma, context, "magnetometer.");
+        readNumber(n, "hard_iron_walk_per_sqrt_h", m.hardIronWalkPerSqrtH, context, "magnetometer.");
+        readNumber(n, "soft_iron_walk_per_sqrt_h", m.softIronWalkPerSqrtH, context, "magnetometer.");
+        readNumber(n, "gate_sigmas", m.gateSigmas, context, "magnetometer.");
+        readNumber(n, "trust_after_s", m.trustAfterS, context, "magnetometer.");
+    }
+    if (const YAML::Node n = section(root, "barometer", context))
+    {
+        auto& b = out.barometer;
+        readBool(n, "enabled", b.enabled, context, "barometer.");
+        readNumber(n, "sigma_m", b.sigmaM, context, "barometer.");
+        readNumber(n, "offset_m", b.offsetM, context, "barometer.");
+        readNumber(n, "offset_sigma_m", b.offsetSigmaM, context, "barometer.");
+        readNumber(n, "offset_walk_m_per_sqrt_h", b.offsetWalkMPerSqrtH, context, "barometer.");
+        readNumber(n, "airflow", b.airflow, context, "barometer.");
+        readNumber(n, "airflow_sigma", b.airflowSigma, context, "barometer.");
+        readNumber(n, "airflow_walk_per_sqrt_h", b.airflowWalkPerSqrtH, context, "barometer.");
+    }
+    if (const YAML::Node n = section(root, "start", context))
+    {
+        readBool(n, "anchored", out.start.anchored, context, "start.");
+        readNumber(n, "anchor_wait_s", out.start.anchorWaitS, context, "start.");
+    }
     if (const YAML::Node n = section(root, "calibration", context))
     {
         auto& c = out.calibration;
@@ -240,6 +311,26 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     positive(out.timeBudgetMs, "smoother.time_budget_ms", context);
     for (Eigen::Index i = 0; i < 3; ++i)
         positive(out.imuToBodySigmaDeg[i], "vehicle.imu_to_body_sigma_deg", context);
+
+    positive(out.keyframeIntervalS, "smoother.keyframe_interval_s", context);
+    const auto& m = out.magnetometer;
+    positive(m.sigma, "magnetometer.sigma", context);
+    positive(m.hardIronSigma, "magnetometer.hard_iron_sigma", context);
+    positive(m.softIronSigma, "magnetometer.soft_iron_sigma", context);
+    positive(m.hardIronWalkPerSqrtH, "magnetometer.hard_iron_walk_per_sqrt_h", context);
+    positive(m.softIronWalkPerSqrtH, "magnetometer.soft_iron_walk_per_sqrt_h", context);
+    positive(m.gateSigmas, "magnetometer.gate_sigmas", context);
+    if (!(m.trustAfterS >= 0.0)) context.fail("magnetometer.trust_after_s must not be negative");
+    // (I + S) must stay invertible: a soft-iron diagonal of -1 is no sensor.
+    for (Eigen::Index i = 0; i < 3; ++i)
+        if (!(m.softIron[i] > -0.5)) context.fail("magnetometer.soft_iron diagonal must be above -0.5");
+    const auto& b = out.barometer;
+    positive(b.sigmaM, "barometer.sigma_m", context);
+    positive(b.offsetSigmaM, "barometer.offset_sigma_m", context);
+    positive(b.offsetWalkMPerSqrtH, "barometer.offset_walk_m_per_sqrt_h", context);
+    positive(b.airflowSigma, "barometer.airflow_sigma", context);
+    positive(b.airflowWalkPerSqrtH, "barometer.airflow_walk_per_sqrt_h", context);
+    if (!(out.start.anchorWaitS >= 0.0)) context.fail("start.anchor_wait_s must not be negative");
 
     const auto& c = out.calibration;
     if (c.enabled && c.database.empty()) context.fail("calibration.database is empty; set enabled: false instead");
@@ -305,6 +396,27 @@ vehicle_estimator::EstimatorConfig estimatorConfig(const NodeConfig& c)
     e.lm.max_iterations = c.maxIterations;
     e.lm.time_budget = std::chrono::duration<double>(c.timeBudgetMs * 1e-3);
     e.sideslip_min_speed = c.sideslipMinSpeed;
+    e.keyframe_interval = c.keyframeIntervalS;
+    e.use_magnetometer = c.magnetometer.enabled;
+    e.mag_sigma = c.magnetometer.sigma;
+    e.mag_hard_iron = c.magnetometer.hardIron;
+    e.mag_hard_iron_sigma = c.magnetometer.hardIronSigma;
+    e.mag_soft_iron = c.magnetometer.softIron;
+    e.mag_soft_iron_sigma = c.magnetometer.softIronSigma;
+    e.mag_hard_iron_walk = c.magnetometer.hardIronWalkPerSqrtH / 60.0;
+    e.mag_soft_iron_walk = c.magnetometer.softIronWalkPerSqrtH / 60.0;
+    e.mag_gate_sigmas = c.magnetometer.gateSigmas;
+    e.mag_trust_after = c.magnetometer.trustAfterS;
+    e.use_barometer = c.barometer.enabled;
+    e.baro_sigma = c.barometer.sigmaM;
+    e.baro_offset = c.barometer.offsetM;
+    e.baro_offset_sigma = c.barometer.offsetSigmaM;
+    e.baro_offset_walk = c.barometer.offsetWalkMPerSqrtH / 60.0;
+    e.baro_airflow = c.barometer.airflow;
+    e.baro_airflow_sigma = c.barometer.airflowSigma;
+    e.baro_airflow_walk = c.barometer.airflowWalkPerSqrtH / 60.0;
+    e.anchored_start = c.start.anchored;
+    e.anchor_wait = c.start.anchorWaitS;
     return e;
 }
 

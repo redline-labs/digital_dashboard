@@ -33,6 +33,23 @@ constexpr double kToDeg = 180.0 / std::numbers::pi;
     return ::VehicleFixQuality::NONE;
 }
 
+::VehicleHeadingSource toWire(vehicle_estimator::HeadingSource h)
+{
+    using H = vehicle_estimator::HeadingSource;
+    switch (h)
+    {
+        case H::none:
+            return ::VehicleHeadingSource::NONE;
+        case H::dual_antenna:
+            return ::VehicleHeadingSource::DUAL_ANTENNA;
+        case H::magnetometer:
+            return ::VehicleHeadingSource::MAGNETOMETER;
+        case H::inertial:
+            return ::VehicleHeadingSource::INERTIAL;
+    }
+    return ::VehicleHeadingSource::NONE;
+}
+
 std::uint32_t clampU32(std::size_t v)
 {
     return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<std::uint32_t>(v);
@@ -74,6 +91,10 @@ void fill(::VehicleState::Builder out, const vehicle_estimator::VehicleState& s)
     out.setSigmaYawDeg(s.sigma_attitude.z() * kToDeg);
     out.setSigmaSideslipDeg(s.sigma_sideslip * kToDeg);
     out.setFix(toWire(s.fix));
+    out.setGpsTimeValid(s.gps_time_valid);
+    out.setAttitudeValid(s.attitude_valid);
+    out.setHeadingMagnetic(s.heading_magnetic);
+    out.setHeadingSource(toWire(s.heading_source));
 }
 
 void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::EstimatorStatus& s,
@@ -129,6 +150,37 @@ void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::Estima
     out.setBoresightMoved(c.moved[2]);
     out.setCalibrationRowsWritten(c.rows_written);
     out.setCalibrationStoreRecovered(!c.store_recovered.empty());
+    out.setAnchored(s.anchored);
+    out.setReanchors(s.reanchors);
+    out.setInertialKeyframes(s.inertial_keyframes);
+    out.setZeroVelocityUpdates(s.zero_velocity_updates);
+    out.setMagUsed(s.mag_used);
+    out.setMagRejected(s.mag_rejected);
+    out.setMagLearningS(s.mag_learning_s);
+    out.setMagTrusted(s.mag_trusted);
+    out.setMagHardIronX(s.mag_hard_iron.x());
+    out.setMagHardIronY(s.mag_hard_iron.y());
+    out.setMagHardIronZ(s.mag_hard_iron.z());
+    out.setMagHardIronSigmaX(s.mag_hard_iron_sigma.x());
+    out.setMagHardIronSigmaY(s.mag_hard_iron_sigma.y());
+    out.setMagHardIronSigmaZ(s.mag_hard_iron_sigma.z());
+    out.setMagSoftIronXx(s.mag_soft_iron[0]);
+    out.setMagSoftIronYy(s.mag_soft_iron[1]);
+    out.setMagSoftIronZz(s.mag_soft_iron[2]);
+    out.setMagSoftIronXy(s.mag_soft_iron[3]);
+    out.setMagSoftIronXz(s.mag_soft_iron[4]);
+    out.setMagSoftIronYz(s.mag_soft_iron[5]);
+    out.setBaroFactors(s.baro_factors);
+    out.setBaroMovingS(s.baro_moving_s);
+    out.setBaroHeightM(s.baro_height);
+    out.setBaroOffsetM(s.baro_offset);
+    out.setBaroOffsetSigmaM(s.baro_offset_sigma);
+    out.setBaroAirflow(s.baro_airflow);
+    out.setBaroAirflowSigma(s.baro_airflow_sigma);
+    out.setMagnetometerFromDatabase(c.from_database[3]);
+    out.setBaroAirflowFromDatabase(c.from_database[4]);
+    out.setMagnetometerMoved(c.moved[3]);
+    out.setBaroAirflowMoved(c.moved[4]);
 }
 
 }  // namespace state_estimator

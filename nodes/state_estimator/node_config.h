@@ -62,6 +62,49 @@ struct NodeConfig
     double timeBudgetMs{40.0};
 
     double sideslipMinSpeed{2.0};
+    double keyframeIntervalS{0.1};  // keyframes on the IMU's clock when GNSS is not making them
+
+    // The MTi's magnetometer, in its own arbitrary units (about 1 at the field
+    // it was calibrated in). Hard and soft iron are priors, learned against the
+    // dual-antenna heading and kept between sessions.
+    struct Magnetometer
+    {
+        bool enabled{true};
+        double sigma{0.03};  // per axis: about 3 deg of heading
+        Eigen::Vector3d hardIron{Eigen::Vector3d::Zero()};
+        double hardIronSigma{0.3};
+        Eigen::Matrix<double, 6, 1> softIron{Eigen::Matrix<double, 6, 1>::Zero()};  // xx yy zz xy xz yz
+        double softIronSigma{0.1};
+        double hardIronWalkPerSqrtH{0.01};
+        double softIronWalkPerSqrtH{0.005};
+        double gateSigmas{5.0};
+        double trustAfterS{30.0};
+    };
+    Magnetometer magnetometer;
+
+    // The MTi's barometer. The offset -- weather and geoid -- is learned each
+    // session from this prior and never kept; the airflow is kept.
+    struct Barometer
+    {
+        bool enabled{true};
+        double sigmaM{0.5};
+        double offsetM{0.0};
+        double offsetSigmaM{300.0};
+        double offsetWalkMPerSqrtH{5.0};
+        double airflow{0.0};
+        double airflowSigma{0.5};
+        double airflowWalkPerSqrtH{0.01};
+    };
+    Barometer barometer;
+
+    // With no GNSS at all: attitude only, from gravity and (if one was
+    // learned) the magnetometer, until the first fix.
+    struct Start
+    {
+        bool anchored{true};
+        double anchorWaitS{1.0};
+    };
+    Start start;
 
     // What was learned about the installation, kept between sessions.
     struct Calibration

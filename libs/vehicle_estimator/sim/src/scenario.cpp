@@ -3,6 +3,8 @@
 #include "geodesy/geodetic.h"
 #include "geodesy/gravity.h"
 #include "imu_preint/preintegrator.h"
+#include "vehicle_estimator/atmosphere.h"
+#include "vehicle_estimator/magnetic_reference.h"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +30,11 @@ double smoothDot(double x)  // d/dx
 {
     if (x <= 0.0 || x >= 1.0) return 0.0;
     return 30.0 * x * x * (1.0 - x) * (1.0 - x);
+}
+double smoothDDot(double x)  // d2/dx2
+{
+    if (x <= 0.0 || x >= 1.0) return 0.0;
+    return 60.0 * x * (1.0 - x) * (1.0 - 2.0 * x);
 }
 double smoothIntegral(double x)  // integral from 0 to x
 {
@@ -162,10 +169,11 @@ class Scripted final : public VehicleMotion
   public:
     Scripted(std::vector<Phase> phases, double heading) : phases_(std::move(phases))
     {
-        double t = 0.0, v = 0.0, psi = heading, pitch = 0.0, roll = 0.0, bias = 0.0;
+        double t = 0.0, v = 0.0, psi = heading, pitch = 0.0, roll = 0.0, bias = 0.0, h = 0.0;
         for (const auto& p : phases_)
         {
-            starts_.push_back({t, v, psi, pitch, roll, bias});
+            starts_.push_back({t, v, psi, pitch, roll, bias, h});
+            h += p.climb;
             t += p.duration;
             v = p.speed;
             psi += p.turn;
@@ -193,9 +201,15 @@ class Scripted final : public VehicleMotion
         s.v = st.V * Eigen::Vector3d(std::cos(st.psi), std::sin(st.psi), 0.0);
         s.a = st.Vdot * Eigen::Vector3d(std::cos(st.psi), std::sin(st.psi), 0.0) +
               st.V * st.psidot * Eigen::Vector3d(-std::sin(st.psi), std::cos(st.psi), 0.0);
-        // Body roll into the corner, as the others do, on top of any grade.
+        // Height, NED down: closed form, since it is only the smoothstep.
+        s.p.z() = -st.H;
+        s.v.z() = -st.Hdot;
+        s.a.z() = -st.Hddot;
+        // Body roll into the corner, as the others do, on top of any grade;
+        // on a climb the nose follows the road.
         const double lateral_g = st.V * st.psidot / 9.81;
-        s.R_n_b = yawPitchRoll(st.psi + st.slip, st.pitch, st.roll + 0.03 * lateral_g);
+        const double grade = st.V > 0.5 ? std::atan2(st.Hdot, st.V) : 0.0;
+        s.R_n_b = yawPitchRoll(st.psi + st.slip, st.pitch + grade, st.roll + 0.03 * lateral_g);
         return s;
     }
 
@@ -204,11 +218,12 @@ class Scripted final : public VehicleMotion
 
     struct Start
     {
-        double t, v, psi, pitch, roll, bias;
+        double t, v, psi, pitch, roll, bias, h;
     };
     struct State
     {
         double V = 0.0, Vdot = 0.0, psi = 0.0, psidot = 0.0, slip = 0.0, pitch = 0.0, roll = 0.0;
+        double H = 0.0, Hdot = 0.0, Hddot = 0.0;
     };
 
     State state(double t) const
@@ -229,6 +244,9 @@ class Scripted final : public VehicleMotion
         s.slip = a.bias + (p.slip_bias - a.bias) * sm + p.slip * bump;
         s.pitch = a.pitch + (p.pitch - a.pitch) * sm;
         s.roll = a.roll + (p.roll - a.roll) * sm;
+        s.H = a.h + p.climb * sm;
+        s.Hdot = p.climb * sd;
+        s.Hddot = p.climb * smoothDDot(x) / (p.duration * p.duration);
         return s;
     }
 
@@ -382,6 +400,13 @@ std::vector<Message> Scenario::messages() const
     const geodesy::NormalGravity gravity;
     const auto& S = sensors_;
 
+    // The magnetometer and barometer draw from their own stream, so adding
+    // them changed no existing scenario's noise.
+    std::mt19937 aux(sensors_.seed * 7919u + 17u);
+    std::normal_distribution<double> aux_gauss(0.0, 1.0);
+    MagneticReference magnetic;
+    Eigen::Vector3d gyro_bias = sensors_.gyro_bias;
+
     std::vector<Message> out;
     const auto n_imu = static_cast<std::size_t>(std::floor(duration() * S.imu_rate));
     const auto incs = imu_preint::simulateIncrements(*imu_traj_, 0.0, S.imu_rate, n_imu, S.dv_frame, gravity);
@@ -393,7 +418,10 @@ std::vector<Message> Scenario::messages() const
         imu_preint::Increment inc = incs[k];
         const double sg = S.gyro_noise_density * std::sqrt(inc.dt);
         const double sa = S.accel_noise_density * std::sqrt(inc.dt);
-        const Eigen::Vector3d theta = imu_preint::rotationVector(inc.dq) + S.gyro_bias * inc.dt +
+        if (S.gyro_bias_walk > 0.0)
+            gyro_bias += S.gyro_bias_walk * std::sqrt(inc.dt) *
+                         Eigen::Vector3d(aux_gauss(aux), aux_gauss(aux), aux_gauss(aux));
+        const Eigen::Vector3d theta = imu_preint::rotationVector(inc.dq) + gyro_bias * inc.dt +
                                       sg * Eigen::Vector3d(gauss(rng), gauss(rng), gauss(rng));
         inc.dq = imu_preint::fromRotationVector(theta);
         inc.dv += S.accel_bias * inc.dt + sa * Eigen::Vector3d(gauss(rng), gauss(rng), gauss(rng));
@@ -411,6 +439,30 @@ std::vector<Message> Scenario::messages() const
         // however its latency was drawn.
         m.host_time = std::max(S.host_epoch + t_end + lat_s, last_imu_host + 1e-6);
         last_imu_host = m.host_time;
+        if (S.magnetometer || S.barometer)
+        {
+            const auto truth_i = imu_traj_->at(t_end);
+            const auto llh = geodesy::ecefToLlh(toC(truth_i.p_e));
+            const Eigen::Matrix3d R_e_n = rotEcefFromNed(llh.lat, llh.lon);
+            if (S.magnetometer)
+            {
+                const auto& field = magnetic.at(llh.lat, llh.lon, llh.h, S.gps_epoch + t_end);
+                Eigen::Vector3d ned_au = field.ned_nt / S.mag_normalisation_nt;
+                for (const auto& d : S.mag_disturbances)
+                    if (t_end >= d.t0 && t_end < d.t1) ned_au += d.ned_au;
+                const Eigen::Vector3d in_imu = truth_i.R_e_b.transpose() * (R_e_n * ned_au);
+                m.mag_au = S.mag_soft_iron * in_imu + S.mag_hard_iron +
+                           S.mag_noise * Eigen::Vector3d(aux_gauss(aux), aux_gauss(aux), aux_gauss(aux));
+            }
+            if (S.barometer && (k + 1) % S.baro_every == 0)
+            {
+                const double pressure_altitude = llh.h - (S.baro_offset + S.baro_offset_rate * t_end);
+                const double dynamic = 0.5 * isa::density(pressure_altitude) * truth_i.v_e.squaredNorm();
+                const double pa =
+                    isa::pressure(pressure_altitude) + S.baro_airflow * dynamic + S.baro_noise_pa * aux_gauss(aux);
+                m.pressure_pa = std::round(pa);  // whole pascals, as the device sends them
+            }
+        }
         out.push_back(Message{m.host_time, m, std::nullopt});
     }
 
@@ -485,7 +537,9 @@ std::vector<Message> Scenario::messages() const
             }
         if (S.attitude_covariance)
             att.cov = Eigen::Vector2d(S.yaw_sigma * S.yaw_sigma, S.pitch_sigma * S.pitch_sigma).asDiagonal();
-        if (t >= S.attitude_from) e.attitude = att;
+        const bool heading_out = std::any_of(S.attitude_outages.begin(), S.attitude_outages.end(),
+                                             [&](const auto& o) { return t >= o.first && t < o.second; });
+        if (t >= S.attitude_from && !heading_out) e.attitude = att;
         out.push_back(Message{e.host_time, std::nullopt, e});
     }
 

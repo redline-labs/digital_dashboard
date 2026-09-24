@@ -57,6 +57,27 @@ FactorPtr dualAntenna(Key R, Key bs, const Eigen::Matrix3d& R_n_e, const Baselin
 FactorPtr straightDriving(Key R, Key v, Key mounting, const Eigen::Vector3d& omega_i, const Eigen::Vector3d& r_ref,
                           double sigma_slip, double sigma_heave, double robust_delta);
 
+// The barometer's height, from the mean static pressure over the keyframe
+// interval: H_ISA(p - airflow rho |v|^2 / 2) + offset = h. barometer is the
+// segment's [offset, airflow]; height is linearised about p0 (h0, and `up`
+// the local vertical in ECEF).
+FactorPtr baroHeight(Key p, Key v, Key barometer, double pressure_pa, const Eigen::Vector3d& p0_e,
+                     const Eigen::Vector3d& up_e, double h0, double rho, double sigma, double robust_delta);
+
+// The magnetometer, the whole vector: A R_i_e B_e + h = m, A = (I + S)/F.
+// `calibration` is the segment's magnetometer variable [h, S].
+FactorPtr magnetometer(Key R, Key calibration, const Eigen::Vector3d& measured_au, const Eigen::Vector3d& field_e_nt,
+                       double intensity_nt, double sigma_au, double robust_delta);
+
+// The magnetometer as a heading only, for when there is no position to take
+// a reference field at: the calibrated field's horizontal direction in the
+// local level frame R_n_e, `declination` east of x.
+FactorPtr magneticHeading(Key R, const Eigen::Vector3d& corrected_i, const Eigen::Matrix3d& R_n_e, double declination,
+                          double sigma, double robust_delta);
+
+// The IMU is still over the ground: v = 0, robustly.
+FactorPtr zeroVelocity(Key v, double sigma, double robust_delta);
+
 // A parked body is level: [roll, pitch] of R_n_e R_e_i R_b_i^T.
 FactorPtr stationaryLevel(Key R, Key mounting, const Eigen::Matrix3d& R_n_e, double sigma, double robust_delta);
 
@@ -65,8 +86,8 @@ FactorPtr stationaryLevel(Key R, Key mounting, const Eigen::Matrix3d& R_n_e, dou
 FactorPtr calibrationPrior(const CalibrationKeys& keys, const CalibrationSet& prior);
 
 // Segment to segment: a random walk of each part at its own density.
-FactorPtr calibrationWalk(const CalibrationKeys& from, const CalibrationKeys& to, double dt, double mounting_walk,
-                          double lever_arm_walk, double boresight_walk);
+FactorPtr calibrationWalk(const CalibrationKeys& from, const CalibrationKeys& to, double dt,
+                          const Eigen::Matrix<double, kCalibrationDim, 1>& densities);
 
 FactorPtr priorRot(Key R, const Eigen::Quaterniond& mean, const Eigen::Matrix3d& cov);
 FactorPtr priorV3(Key x, const Eigen::Vector3d& mean, const Eigen::Matrix3d& cov, const char* name);

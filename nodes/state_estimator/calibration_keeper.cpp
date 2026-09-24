@@ -28,8 +28,32 @@ std::size_t indexOf(ve::CalibrationGroup g)
             return 1;
         case ve::CalibrationGroup::boresight:
             return 2;
+        case ve::CalibrationGroup::magnetometer:
+            return 3;
+        case ve::CalibrationGroup::baro_airflow:
+            return 4;
     }
     return 0;
+}
+
+// What each group was learned from, in the units its row records: the
+// mounting on straights and stops, the magnetometer against a dual-antenna
+// heading, the airflow at speed; the rest from any valid driving.
+double evidenceFor(ve::CalibrationGroup g, const ve::EstimatorStatus& status, double driving)
+{
+    switch (g)
+    {
+        case ve::CalibrationGroup::mounting:
+            return status.mount_straight_s + static_cast<double>(status.mount_level_stops);
+        case ve::CalibrationGroup::magnetometer:
+            return status.mag_learning_s;
+        case ve::CalibrationGroup::baro_airflow:
+            return status.baro_moving_s;
+        case ve::CalibrationGroup::lever_arm:
+        case ve::CalibrationGroup::boresight:
+            return driving;
+    }
+    return driving;
 }
 
 std::vector<double> toVector(const Eigen::VectorXd& v)
@@ -117,6 +141,7 @@ void CalibrationKeeper::seed(ve::Estimator& estimator)
     if (!store_) return;
     ve::CalibrationSet prior = ve::configuredCalibration(config_);
     bool any = false;
+    double mag_evidence = 0.0;
     for (ve::CalibrationGroup g : ve::kCalibrationGroups)
     {
         const std::string hash = ve::hashHex(ve::priorHash(g, config_));
@@ -149,11 +174,14 @@ void CalibrationKeeper::seed(ve::Estimator& estimator)
         last_[i] = ve::LastWritten{*stored, std::nullopt};
         ve::apply(prior, ve::loadPrior(*stored, config_, inflation_));
         report_.from_database[i] = true;
+        if (g == ve::CalibrationGroup::magnetometer) mag_evidence = (**row).evidence_s;
         any = true;
         SPDLOG_INFO("[calibration] {}: from row {} ({}), {}", ve::groupName(g), (**row).id, (**row).reason,
                     (**row).summary);
     }
-    if (any) estimator.seedCalibration(prior);
+    // A stored magnetometer gives a heading on its own only if it was learned
+    // for as long as this session's own would have to be.
+    if (any) estimator.seedCalibration(prior, mag_evidence >= config_.mag_trust_after);
 }
 
 void CalibrationKeeper::tick(const ve::Estimator& estimator, bool shutdown)
@@ -198,9 +226,7 @@ void CalibrationKeeper::tick(const ve::Estimator& estimator, bool shutdown)
         context.valid = state->valid;
         context.settled = now - *started_;
         context.shutdown = shutdown;
-        const double evidence = g == ve::CalibrationGroup::mounting
-                                    ? status.mount_straight_s + static_cast<double>(status.mount_level_stops)
-                                    : now - *first_;
+        const double evidence = evidenceFor(g, status, now - *first_);
         context.evidence = evidence;
         const auto reason = ve::decideWrite(policy_, estimate, last_[i], context);
         if (!reason) continue;
@@ -217,6 +243,10 @@ void CalibrationKeeper::tick(const ve::Estimator& estimator, bool shutdown)
         if (g == ve::CalibrationGroup::mounting)
             row.summary += fmt::format("; from {:.0f} s of straights and {} stops", status.mount_straight_s,
                                        status.mount_level_stops);
+        else if (g == ve::CalibrationGroup::magnetometer)
+            row.summary += fmt::format("; from {:.0f} s against a dual-antenna heading", evidence);
+        else if (g == ve::CalibrationGroup::baro_airflow)
+            row.summary += fmt::format("; from {:.0f} s moving", evidence);
         row.reason = std::string(ve::reasonName(*reason));
         row.evidence_s = evidence;
         row.drive_s = now - *first_;

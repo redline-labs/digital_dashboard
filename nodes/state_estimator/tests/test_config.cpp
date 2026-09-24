@@ -107,6 +107,48 @@ calibration:
     check(parses("calibration:\n  enabled: false\n  database: ''\n"), "but fine when disabled");
 }
 
+void testMagnetometerAndBarometer()
+{
+    NodeConfig c;
+    check(state_estimator::parse_node_config(R"(
+magnetometer:
+  hard_iron: [0.1, -0.2, 0.3]
+  soft_iron: [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
+  hard_iron_walk_per_sqrt_h: 0.6
+  trust_after_s: 45
+barometer:
+  enabled: false
+  offset_m: 40
+  offset_walk_m_per_sqrt_h: 6
+start:
+  anchored: false
+  anchor_wait_s: 2.5
+smoother:
+  keyframe_interval_s: 0.2
+)",
+                                             c),
+          "magnetometer, barometer and start sections parse");
+    const auto e = state_estimator::estimatorConfig(c);
+    check((e.mag_hard_iron - Eigen::Vector3d(0.1, -0.2, 0.3)).norm() < 1e-15, "hard iron carried");
+    check(std::fabs(e.mag_soft_iron[5] - 0.06) < 1e-15 && std::fabs(e.mag_soft_iron[0] - 0.01) < 1e-15,
+          "soft iron carried in order");
+    check(std::fabs(e.mag_hard_iron_walk - 0.01) < 1e-15, "0.6 per sqrt(h) is 0.01 per sqrt(s)");
+    check(std::fabs(e.baro_offset_walk - 0.1) < 1e-15, "6 m per sqrt(h) is 0.1 m per sqrt(s)");
+    check(e.mag_trust_after == 45.0 && e.use_magnetometer, "trust threshold carried, magnetometer on by default");
+    check(!e.use_barometer && e.baro_offset == 40.0, "barometer off, its offset prior carried");
+    check(!e.anchored_start && e.anchor_wait == 2.5, "start carried");
+    check(e.keyframe_interval == 0.2, "keyframe interval carried");
+
+    check(!parses("magnetometer:\n  soft_iron: [0, 0, 0]\n"), "soft iron needs six values");
+    check(!parses("magnetometer:\n  soft_iron: [-1, 0, 0, 0, 0, 0]\n"), "a singular soft iron is refused");
+    check(!parses("magnetometer:\n  sigma: 0\n"), "a perfect magnetometer is refused");
+    check(!parses("magnetometer:\n  enabled: maybe\n"), "enabled must be a boolean");
+    check(!parses("barometer:\n  offset_sigma_m: -1\n"), "a negative offset sigma is refused");
+    check(!parses("barometer:\n  airflow: .inf\n"), "a non-finite airflow is refused");
+    check(!parses("start:\n  anchor_wait_s: -1\n"), "a negative anchor wait is refused");
+    check(!parses("smoother:\n  keyframe_interval_s: 0\n"), "a zero keyframe interval is refused");
+}
+
 void testRefusals()
 {
     check(!parses("not: [a mapping"), "malformed YAML");
@@ -138,6 +180,7 @@ int main()
     testUnits();
     testRefusals();
     testCalibration();
+    testMagnetometerAndBarometer();
     if (failures)
     {
         SPDLOG_ERROR("{} failure(s)", failures);

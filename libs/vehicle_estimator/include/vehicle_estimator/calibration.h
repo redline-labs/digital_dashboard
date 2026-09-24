@@ -8,7 +8,9 @@
 // constant, and a batch over a drive sees how it moved.
 //
 // Tangent order everywhere: mounting (3, a right perturbation of R_b_i, in the
-// IMU frame), lever arm (3, m, IMU frame), boresight (2, rad).
+// IMU frame), lever arm (3, m, IMU frame), boresight (2, rad), magnetometer
+// (9: hard iron xyz, soft iron xx yy zz xy xz yz), barometer (2: offset m,
+// airflow).
 
 #include "vehicle_estimator/config.h"
 
@@ -26,20 +28,40 @@
 namespace vehicle_estimator
 {
 
-inline constexpr Eigen::Index kCalibrationDim = 8;
+inline constexpr Eigen::Index kCalibrationDim = 19;
 using CalibrationCov = Eigen::Matrix<double, kCalibrationDim, kCalibrationDim>;
+using Vector6d = Eigen::Matrix<double, 6, 1>;
+using Vector9d = Eigen::Matrix<double, 9, 1>;
 
 struct CalibrationSet
 {
     Eigen::Quaterniond mounting = Eigen::Quaterniond::Identity();  // R_b_i
     Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero();
     Eigen::Vector2d boresight = Eigen::Vector2d::Zero();
+    Eigen::Vector3d mag_hard_iron = Eigen::Vector3d::Zero();  // a.u.
+    Vector6d mag_soft_iron = Vector6d::Zero();                // xx yy zz xy xz yz
+    double baro_offset = 0.0;                                 // m
+    double baro_airflow = 0.0;
     CalibrationCov cov = CalibrationCov::Identity();
 
     Eigen::Matrix3d mountingCov() const { return cov.block<3, 3>(0, 0); }
     Eigen::Matrix3d leverArmCov() const { return cov.block<3, 3>(3, 3); }
     Eigen::Matrix2d boresightCov() const { return cov.block<2, 2>(6, 6); }
+    Eigen::Matrix<double, 9, 9> magnetometerCov() const { return cov.block<9, 9>(8, 8); }
+    Eigen::Matrix2d barometerCov() const { return cov.block<2, 2>(17, 17); }
+
+    Vector9d magnetometer() const
+    {
+        Vector9d k;
+        k << mag_hard_iron, mag_soft_iron;
+        return k;
+    }
+    // I + S, the soft iron as a matrix.
+    Eigen::Matrix3d softIronMatrix() const;
 };
+
+// Walk densities in tangent order, per sqrt(s).
+Eigen::Matrix<double, kCalibrationDim, 1> calibrationWalkDensities(const EstimatorConfig& config);
 
 // The configured installation as a prior: means from the config, sigmas
 // uncorrelated. The mounting sigma is given about the BODY axes (roll, pitch,
@@ -50,7 +72,7 @@ CalibrationSet configuredCalibration(const EstimatorConfig& config);
 // One segment's variables.
 struct CalibrationKeys
 {
-    factor_graph::Key mounting, lever_arm, boresight;
+    factor_graph::Key mounting, lever_arm, boresight, magnetometer, barometer;
 };
 CalibrationKeys calibrationKeys(std::uint64_t segment);
 bool isCalibrationKey(factor_graph::Key key);
@@ -60,14 +82,19 @@ bool isCalibrationKey(factor_graph::Key key);
 // What is kept between sessions, one group at a time: re-measuring the lever
 // arm must not throw away a well-learned mounting.
 
+// The barometer's offset is not a group: it is the weather and the geoid,
+// learned afresh every session and never kept.
 enum class CalibrationGroup
 {
     mounting,
     lever_arm,
     boresight,
+    magnetometer,
+    baro_airflow,
 };
-inline constexpr std::array<CalibrationGroup, 3> kCalibrationGroups{
-    CalibrationGroup::mounting, CalibrationGroup::lever_arm, CalibrationGroup::boresight};
+inline constexpr std::array<CalibrationGroup, 5> kCalibrationGroups{
+    CalibrationGroup::mounting, CalibrationGroup::lever_arm, CalibrationGroup::boresight,
+    CalibrationGroup::magnetometer, CalibrationGroup::baro_airflow};
 
 std::string_view groupName(CalibrationGroup g);
 std::optional<CalibrationGroup> groupFromName(std::string_view name);
@@ -76,7 +103,8 @@ std::optional<CalibrationGroup> groupFromName(std::string_view name);
 int modelVersion(CalibrationGroup g);
 Eigen::Index tangentOffset(CalibrationGroup g);
 Eigen::Index tangentDim(CalibrationGroup g);
-// Stored mean: the mounting as a quaternion (w, x, y, z), the others as is.
+// Stored mean: the mounting as a quaternion (w, x, y, z), the magnetometer as
+// hard iron then soft iron (9), the others as is.
 Eigen::Index meanDim(CalibrationGroup g);
 
 struct GroupEstimate
@@ -138,7 +166,10 @@ struct WriteContext
     double now = 0.0;
     bool valid = false;         // the navigation solution is
     double settled = 0.0;       // s since the estimator last (re)started
-    double evidence = 0.0;      // for the mounting: s of straights plus stops; others ignore it
+    // What the group was learned from: the mounting's straights and stops, the
+    // magnetometer's s against a dual-antenna heading, the airflow's s moving.
+    // Groups that need it write nothing at zero; the others ignore it.
+    double evidence = 0.0;
     bool shutdown = false;      // the last chance: skips the interval, not the trigger
 };
 

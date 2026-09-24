@@ -53,8 +53,8 @@ void OfflineSmoother::add(const KeyframeRecord& r)
     {
         const Segment& last = segments_.back();
         factors.push_back(factors::calibrationWalk(calibrationKeys(last.index), calibrationKeys(r.segment),
-                                                   std::max(r.segment_start - last.start, 1e-3), config_.mounting_walk,
-                                                   config_.lever_arm_walk, config_.boresight_walk));
+                                                   std::max(r.segment_start - last.start, 1e-3),
+                                                   calibrationWalkDensities(config_)));
     }
     if (batch_.add(factors, values).ok)
     {
@@ -85,7 +85,7 @@ OfflineSmoother::Result OfflineSmoother::solve(bool covariances)
         for (const auto& s : segments_)
         {
             const auto k = calibrationKeys(s.index);
-            groups.push_back({k.mounting, k.lever_arm, k.boresight});
+            groups.push_back({k.mounting, k.lever_arm, k.boresight, k.magnetometer, k.barometer});
         }
         covs = factor_graph::jointCovariances(batch_.factors(), est, groups);
     }
@@ -120,6 +120,12 @@ OfflineSmoother::Result OfflineSmoother::solve(bool covariances)
         c.set.lever_arm = toE(est.at<csym::Vector3<double>>(k.lever_arm));
         const auto bs = est.at<csym::Vector2<double>>(k.boresight);
         c.set.boresight = Eigen::Vector2d(bs[0], bs[1]);
+        const auto mag = est.at<csym::Vector<double, 9>>(k.magnetometer);
+        for (Eigen::Index i = 0; i < 3; ++i) c.set.mag_hard_iron[i] = mag[static_cast<std::size_t>(i)];
+        for (Eigen::Index i = 0; i < 6; ++i) c.set.mag_soft_iron[i] = mag[static_cast<std::size_t>(i + 3)];
+        const auto baro = est.at<csym::Vector2<double>>(k.barometer);
+        c.set.baro_offset = baro[0];
+        c.set.baro_airflow = baro[1];
         if (const auto& cov = covs[records_.size() + j]) c.set.cov = *cov;
         out.calibration.push_back(c);
     }

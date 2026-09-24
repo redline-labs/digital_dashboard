@@ -15,6 +15,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <string>
 #include <type_traits>
@@ -283,6 +284,47 @@ void testUnobservable()
 
 // ---- static variables ------------------------------------------------------
 
+void testWidelyScaledInformation()
+{
+    // A chain y known only weakly in absolute terms (a 300 m prior and a
+    // loose walk, like a barometric offset) beside a chain z that is stiff
+    // (1e-5 sigmas, like a gyro-bias walk over 0.1 s): fifteen orders of
+    // magnitude of information in one window. Marginalised every step, y's prior must survive into the
+    // marginal prior and its covariance must still be answerable. Judged
+    // against the stiffest thing in the window, y's information was below any
+    // relative tolerance and was dropped: y became unobservable.
+    const double weak = 300.0, loose = 0.08, stiff = 1e-5;
+    factor_graph::FixedLagSmoother fls(factor_graph::FixedLagParams{.lag = 0.0, .lm = {}, .rank_tolerance = 1e-12});
+    std::optional<Eigen::MatrixXd> cov;
+    for (std::size_t k = 0; k < 20; ++k)
+    {
+        const Key y = symbol('y', k), z = symbol('z', k);
+        Values v;
+        v.insert(y, v1(0.0));
+        v.insert(z, v1(0.0));
+        FactorList f;
+        f.push_back(std::make_shared<ScalarPriorFactor>("z", std::array<Key, 1>{z}, v1(0.0), stiff));
+        if (k == 0)
+        {
+            f.push_back(std::make_shared<ScalarPriorFactor>("y0 prior", std::array<Key, 1>{y}, v1(0.0), weak));
+        }
+        else
+        {
+            f.push_back(std::make_shared<DifferenceFactor>("y walk", std::array<Key, 2>{symbol('y', k - 1), y}, v1(0.0),
+                                                           loose));
+            f.push_back(std::make_shared<DifferenceFactor>("z walk", std::array<Key, 2>{symbol('z', k - 1), z}, v1(0.0),
+                                                           stiff));
+        }
+        const auto report = fls.update(f, v, {{y, static_cast<double>(k)}, {z, static_cast<double>(k)}});
+        check(report.ok, "update " + std::to_string(k));
+        cov = fls.covariance(y);
+    }
+    check(cov.has_value(), "the weakly known chain is still observable after twenty marginalisations");
+    if (cov)
+        near(std::sqrt((*cov)(0, 0)), std::sqrt(weak * weak + 19.0 * loose * loose), 1e-3 * weak,
+             "and its sigma is still the 300 m it was given, plus its walk");
+}
+
 void testStaticVariable()
 {
     // A random walk x_k seen through a constant sensor bias b: z_k = x_k + b.
@@ -479,6 +521,7 @@ int main()
     testRosenbrock();
     testChangingPattern();
     testUnobservable();
+    testWidelyScaledInformation();
     testStaticVariable();
     testRefusals();
     if (failures)

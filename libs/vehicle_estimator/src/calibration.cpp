@@ -25,18 +25,46 @@ CalibrationSet configuredCalibration(const EstimatorConfig& config)
     c.cov.block<3, 3>(0, 0) = R.transpose() * Eigen::Matrix3d(config.mounting_sigma.cwiseAbs2().asDiagonal()) * R;
     c.cov.block<3, 3>(3, 3) = std::pow(config.lever_arm_sigma, 2) * Eigen::Matrix3d::Identity();
     c.cov.block<2, 2>(6, 6) = std::pow(config.boresight_sigma, 2) * Eigen::Matrix2d::Identity();
+    c.mag_hard_iron = config.mag_hard_iron;
+    c.mag_soft_iron = config.mag_soft_iron;
+    c.cov.block<3, 3>(8, 8) = std::pow(config.mag_hard_iron_sigma, 2) * Eigen::Matrix3d::Identity();
+    c.cov.block<6, 6>(11, 11) = std::pow(config.mag_soft_iron_sigma, 2) * Eigen::Matrix<double, 6, 6>::Identity();
+    c.baro_offset = config.baro_offset;
+    c.baro_airflow = config.baro_airflow;
+    c.cov(17, 17) = std::pow(config.baro_offset_sigma, 2);
+    c.cov(18, 18) = std::pow(config.baro_airflow_sigma, 2);
     return c;
+}
+
+Eigen::Matrix3d CalibrationSet::softIronMatrix() const
+{
+    const Vector6d& s = mag_soft_iron;
+    Eigen::Matrix3d m;
+    m << 1.0 + s[0], s[3], s[4],  //
+        s[3], 1.0 + s[1], s[5],    //
+        s[4], s[5], 1.0 + s[2];
+    return m;
+}
+
+Eigen::Matrix<double, kCalibrationDim, 1> calibrationWalkDensities(const EstimatorConfig& c)
+{
+    Eigen::Matrix<double, kCalibrationDim, 1> q;
+    q << Eigen::Vector3d::Constant(c.mounting_walk), Eigen::Vector3d::Constant(c.lever_arm_walk),
+        Eigen::Vector2d::Constant(c.boresight_walk), Eigen::Vector3d::Constant(c.mag_hard_iron_walk),
+        Vector6d::Constant(c.mag_soft_iron_walk), c.baro_offset_walk, c.baro_airflow_walk;
+    return q;
 }
 
 CalibrationKeys calibrationKeys(std::uint64_t segment)
 {
-    return {factor_graph::symbol('m', segment), factor_graph::symbol('l', segment), factor_graph::symbol('s', segment)};
+    return {factor_graph::symbol('m', segment), factor_graph::symbol('l', segment), factor_graph::symbol('s', segment),
+            factor_graph::symbol('k', segment), factor_graph::symbol('o', segment)};
 }
 
 bool isCalibrationKey(factor_graph::Key key)
 {
     const char kind = factor_graph::symbolKind(key);
-    return kind == 'm' || kind == 'l' || kind == 's';
+    return kind == 'm' || kind == 'l' || kind == 's' || kind == 'k' || kind == 'o';
 }
 
 // ---- groups ----------------------------------------------------------------
@@ -63,6 +91,10 @@ std::string_view groupName(CalibrationGroup g)
             return "lever_arm";
         case CalibrationGroup::boresight:
             return "boresight";
+        case CalibrationGroup::magnetometer:
+            return "magnetometer";
+        case CalibrationGroup::baro_airflow:
+            return "baro_airflow";
     }
     return "unknown";
 }
@@ -84,6 +116,10 @@ int modelVersion(CalibrationGroup g)
             return 1;
         case CalibrationGroup::boresight:
             return 1;
+        case CalibrationGroup::magnetometer:
+            return 1;
+        case CalibrationGroup::baro_airflow:
+            return 1;
     }
     return 0;
 }
@@ -98,6 +134,10 @@ Eigen::Index tangentOffset(CalibrationGroup g)
             return 3;
         case CalibrationGroup::boresight:
             return 6;
+        case CalibrationGroup::magnetometer:
+            return 8;
+        case CalibrationGroup::baro_airflow:
+            return 18;  // 17 is the offset, which is not kept
     }
     return 0;
 }
@@ -111,6 +151,10 @@ Eigen::Index tangentDim(CalibrationGroup g)
             return 3;
         case CalibrationGroup::boresight:
             return 2;
+        case CalibrationGroup::magnetometer:
+            return 9;
+        case CalibrationGroup::baro_airflow:
+            return 1;
     }
     return 0;
 }
@@ -125,6 +169,10 @@ Eigen::Index meanDim(CalibrationGroup g)
             return 3;
         case CalibrationGroup::boresight:
             return 2;
+        case CalibrationGroup::magnetometer:
+            return 9;
+        case CalibrationGroup::baro_airflow:
+            return 1;
     }
     return 0;
 }
@@ -149,6 +197,12 @@ GroupEstimate extract(const CalibrationSet& set, CalibrationGroup g)
         case CalibrationGroup::boresight:
             e.mean = set.boresight;
             break;
+        case CalibrationGroup::magnetometer:
+            e.mean = set.magnetometer();
+            break;
+        case CalibrationGroup::baro_airflow:
+            e.mean = Eigen::VectorXd::Constant(1, set.baro_airflow);
+            break;
     }
     return e;
 }
@@ -166,6 +220,13 @@ void apply(CalibrationSet& set, const GroupEstimate& e)
             break;
         case CalibrationGroup::boresight:
             set.boresight = e.mean;
+            break;
+        case CalibrationGroup::magnetometer:
+            set.mag_hard_iron = e.mean.head<3>();
+            set.mag_soft_iron = e.mean.tail<6>();
+            break;
+        case CalibrationGroup::baro_airflow:
+            set.baro_airflow = e.mean[0];
             break;
     }
     set.cov.block(o, 0, n, kCalibrationDim).setZero();
@@ -202,6 +263,8 @@ Eigen::VectorXd tangentDifference(const GroupEstimate& a, const GroupEstimate& b
         }
         case CalibrationGroup::lever_arm:
         case CalibrationGroup::boresight:
+        case CalibrationGroup::magnetometer:
+        case CalibrationGroup::baro_airflow:
             return b.mean - a.mean;
     }
     return {};
@@ -226,6 +289,13 @@ std::string summary(const GroupEstimate& e)
         case CalibrationGroup::boresight:
             return std::format("{:.3f} {:.3f} deg, sigma {:.3f} {:.3f} deg", e.mean[0] / kDeg, e.mean[1] / kDeg,
                                sigma[0] / kDeg, sigma[1] / kDeg);
+        case CalibrationGroup::magnetometer:
+            return std::format("hard iron {:.4f} {:.4f} {:.4f} (sigma {:.4f} {:.4f} {:.4f}), soft iron diag {:.4f} "
+                               "{:.4f} {:.4f} off {:.4f} {:.4f} {:.4f}",
+                               e.mean[0], e.mean[1], e.mean[2], sigma[0], sigma[1], sigma[2], e.mean[3], e.mean[4],
+                               e.mean[5], e.mean[6], e.mean[7], e.mean[8]);
+        case CalibrationGroup::baro_airflow:
+            return std::format("{:.3f} of dynamic pressure, sigma {:.3f}", e.mean[0], sigma[0]);
     }
     return {};
 }
@@ -298,6 +368,13 @@ std::uint64_t priorHash(CalibrationGroup g, const EstimatorConfig& config)
             h.numbers(config.lever_arm);
             h.numbers(config.antenna2_lever_arm);
             break;
+        case CalibrationGroup::magnetometer:
+            h.numbers(config.mag_hard_iron);
+            h.numbers(config.mag_soft_iron);
+            break;
+        case CalibrationGroup::baro_airflow:
+            h.number(config.baro_airflow);
+            break;
     }
     return h.value();
 }
@@ -341,8 +418,13 @@ std::optional<WriteReason> decideWrite(const WritePolicy& policy, const GroupEst
                                        const std::optional<LastWritten>& last, const WriteContext& c)
 {
     if (!c.valid || c.settled < policy.settle || problem(current)) return std::nullopt;
-    // A mounting nothing has taught is its prior restated: not worth a row.
-    if (current.group == CalibrationGroup::mounting && !(c.evidence > 0.0)) return std::nullopt;
+    // A group nothing has taught is its prior restated: not worth a row. The
+    // mounting learns only on straights and stops, the magnetometer only with
+    // a heading to learn against, the airflow only at speed.
+    const bool needs_evidence = current.group == CalibrationGroup::mounting ||
+                                current.group == CalibrationGroup::magnetometer ||
+                                current.group == CalibrationGroup::baro_airflow;
+    if (needs_evidence && !(c.evidence > 0.0)) return std::nullopt;
     if (!last) return WriteReason::first_converged;
     if (!c.shutdown && last->at && c.now - *last->at < policy.min_interval) return std::nullopt;
 
@@ -372,6 +454,12 @@ GroupEstimate loadPrior(const GroupEstimate& stored, const EstimatorConfig& conf
             break;
         case CalibrationGroup::lever_arm:
             floor = 0.002;
+            break;
+        case CalibrationGroup::magnetometer:
+            floor = 0.002;  // a.u., and dimensionless for the soft iron
+            break;
+        case CalibrationGroup::baro_airflow:
+            floor = 0.01;
             break;
     }
     const Eigen::Index n = tangentDim(stored.group);

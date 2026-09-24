@@ -11,11 +11,14 @@ The vehicle state estimator fuses an MTi-610's strapdown increments with a
 dual-antenna BD992's fixes in a fixed-lag smoother on ECEF states. At IMU rate
 it produces position, attitude, velocity, acceleration, angular rate and
 sideslip. Each GNSS epoch becomes a keyframe (attitude, position, velocity
-and both IMU biases). The installation is learned alongside: how the IMU is
-mounted in the body, the IMU-to-antenna lever arm and the antenna baseline's
-boresight, each from its configured prior along a slow random walk. Between
+and both IMU biases), and when GNSS is absent the IMU's clock makes one every
+0.1 s instead. The MTi's magnetometer and barometer add a weak heading and a
+height to any keyframe. The installation is learned alongside: how the IMU is
+mounted in the body, the IMU-to-antenna lever arm, the antenna baseline's
+boresight, the magnetometer's hard and soft iron and the barometer's offset
+and airflow, each from its configured prior along a slow random walk. Between
 keyframes the newest one is carried forward through the IMU samples, so the
-output rate is the IMU's while the smoothing is the GNSS's.
+output rate is the IMU's.
 
 The library is pure computation, with no zenoh and no capnp. The
 [state_estimator](../nodes/state_estimator.html) node and
@@ -29,10 +32,12 @@ machinery is [factor_graph](factor_graph.html) and the IMU model is
 
 | Header | |
 | --- | --- |
-| `vehicle_estimator/measurements.h` | `ImuSample`, `FixQuality`, `GnssPosition`, `GnssVelocity`, `DualAntenna`, `GnssEpoch` in; `VehicleState` out. |
+| `vehicle_estimator/measurements.h` | `ImuSample` (with an optional magnetometer vector and pressure), `FixQuality`, `GnssPosition`, `GnssVelocity`, `DualAntenna`, `GnssEpoch` in; `VehicleState` and `HeadingSource` out. |
 | `vehicle_estimator/config.h` | `EstimatorConfig`: noise, geometry, gating, lag, start-up thresholds. Defaults describe an MTi-610 mounted x-forward, z-up and a BD992 on RTX. |
 | `vehicle_estimator/clock.h` | `ClockOffset` and `TimeMapper`: both sensors on GPS time from host arrival times. |
-| `vehicle_estimator/factors.h` | `gnssPosition`, `gnssVelocity`, `dualAntenna`, `straightDriving`, `stationaryLevel`, `calibrationPrior`, `calibrationWalk`, the priors, `Baseline`, `sqrtInformation`. |
+| `vehicle_estimator/factors.h` | `gnssPosition`, `gnssVelocity`, `dualAntenna`, `straightDriving`, `stationaryLevel`, `zeroVelocity`, `baroHeight`, `magnetometer`, `magneticHeading`, `calibrationPrior`, `calibrationWalk`, the priors, `Baseline`, `sqrtInformation`. |
+| `vehicle_estimator/magnetic_reference.h` | `magneticField()`: WMM-HR 2025 at a position and GPS time, as NED, intensity, inclination and declination; `MagneticReference` caches it for 1 km or 1 h. |
+| `vehicle_estimator/atmosphere.h` | The ISA troposphere: `isa::altitude`, `isa::pressure`, `isa::density`. |
 | `vehicle_estimator/calibration.h` | `CalibrationSet` and the segment keys; the per-group policy for keeping it between sessions: `priorHash`, `decideWrite`, `loadPrior`, `distanceFrom`, `extract`/`apply`, `summary`. No I/O. |
 | `vehicle_estimator/estimator.h` | `Estimator`, `EstimatorStatus`, `KeyframeRecord`. |
 | `vehicle_estimator/offline.h` | `OfflineSmoother`: every keyframe of a drive solved together. |
@@ -92,12 +97,62 @@ crown, toe) is correlated. `EstimatorStatus::mount_straight_s` and
 `mount_level_stops` count what it was learned from. A car that crabs on a
 straight will teach the mounting its crab.
 
-**Heading comes from the antennas, never from the track.** A drifting car's
-course over ground is not its heading. The initialiser waits for a
-dual-antenna yaw and builds the attitude by TRIAD from the baseline and the
-specific force. It levels on the accelerometer after subtracting the
-acceleration implied by successive GNSS velocities, so a start on the move is
-level too. With no heading, no state is published.
+**Heading comes from the antennas or a learned magnetometer, never from the
+track.** A drifting car's course over ground is not its heading. With GNSS,
+the initialiser waits for a dual-antenna yaw and builds the attitude by TRIAD
+from the baseline and the specific force. It levels on the accelerometer after
+subtracting the acceleration implied by successive GNSS velocities, so a start
+on the move is level too.
+
+**Keyframes on the IMU's clock.** When no GNSS epoch is due, a keyframe is made
+every `keyframe_interval` (0.1 s) on a GPS-time grid, once the IMU is
+`max_gnss_wait` past it, so a late epoch is never pre-empted. An outage
+therefore has keyframes: the IMU buffer stays bounded, the sigmas grow, and
+the magnetometer, barometer and zero-velocity factors have somewhere to go. A
+keyframe is judged parked when the IMU has been still for 1 s AND the
+estimated speed is under 0.1 m/s: an IMU alone cannot tell parked from
+cruising straight, and a zero-velocity factor during a slow roll-out once
+taught the lever arm 3.6 cm of error.
+
+**The magnetometer is a weak heading, learned against a strong one.** The
+model is `m = (I + S)/F · R_e_iᵀ · B_e + h`, with `B_e` from WMM-HR at the
+current position, a 3-vector hard iron `h` and a symmetric soft iron `S` in
+the MTi's arbitrary units. While the antennas give a heading, turns teach the
+horizontal hard and soft iron (`EstimatorStatus::mag_learning_s` counts that
+time). The vertical terms stay near their priors, because a car barely rolls.
+Each reading is gated at `mag_gate_sigmas` on its full predicted covariance,
+the calibration's included, so a large unlearned hard iron is still accepted
+while a bridge or a car alongside is refused (`mag_rejected`). It pays where
+nothing else gives heading: parked through an outage (0.21° against 3.9°
+without it over five minutes) and at a cold start. Driving, GNSS velocity
+through the corners already carries the heading and it adds nothing.
+
+**The barometer is a height, with an offset learned every session.** The
+factor is `H_ISA(p − c·½ρ|v|²) + b = h`. The offset `b` absorbs the weather,
+the geoid and the ISA's mismatch; it starts each session from its config
+prior (0 ± 300 m) and is never stored, because yesterday's weather is not
+today's. The airflow `c` is the fraction of dynamic pressure the sensor sees
+where it is mounted, and is kept. Through a 60 s outage on hills it held
+height to 0.24 m, against 0.78 m on the IMU alone.
+
+**A start with no GNSS runs the same graph, anchored.** With no receiver heard
+at all after `anchor_wait` (1 s), there is no GPS time and no position. The IMU
+goes onto the host clock, and the graph starts at a placeholder (45° N, 0° E)
+with roll and pitch from gravity. Heading comes from the magnetometer, relative
+to MAGNETIC north, and only if its calibration was learned: `mag_trust_after`
+seconds of it this session, or a stored row that had as much. Otherwise there
+is no heading. The output is attitude only: `valid` false, `attitude_valid`
+true, `heading_magnetic` and `heading_source` saying where yaw came from, and
+`gps_time_valid` false while stamps are on the host clock.
+
+When the receiver first appears, the anchored attitude and biases carry over
+onto GPS time. At the first position they are rotated into the true frame
+once, declination included (`EstimatorStatus::reanchors`), and everything
+after is an ordinary start. A start with no heading instead waits for the
+antennas. The anchor's position prior is tight (1 cm), because the anchor is
+the frame's origin. A loose one also broke the covariance: against the IMU
+chain's stiffness a 10 m prior is below what a double-precision factorisation
+can resolve, and the window had no covariance at all.
 
 **Time alignment is naive, and it has one calibration.** The minimum of
 `host − device` over a window is the clock offset plus that stream's latency
@@ -121,6 +176,12 @@ one from an earlier session instead; a carried set wins over a seeded one.
 `KeyframeRecord::start` marks that prior, and the offline batch replaces it
 with a walk factor from the last segment it has, so nothing is counted twice.
 
+**No claim without a covariance.** If the window's covariance cannot be
+computed, the sigmas read zero. `attitude_valid` and `valid` then stay false
+rather than pass their bounds on a zero. Every scenario test asserts this.
+Past a few metres of position sigma, such as a long outage, the same limit of
+precision is reached.
+
 **Keeping it between sessions is a policy here and I/O elsewhere.**
 `calibration.h` decides, per group, what the node's
 [calibration_store](calibration_store.html) keeps. `priorHash` is FNV-1a over
@@ -129,16 +190,21 @@ left out, so changing your confidence keeps what was learned. `decideWrite`
 writes when the estimate has moved more than 1σ of the last row, or a sigma has
 halved, at most every 15 minutes, and not in the first two minutes after a
 (re)start. `loadPrior` widens a stored covariance by 4, floors it, and caps it
-at the config's sigma.
+at the config's sigma. The groups are the mounting, lever arm, boresight,
+magnetometer and barometer airflow. The mounting, magnetometer and airflow
+write nothing until something has taught them: straights and stops, a
+dual-antenna heading, and speed respectively.
 
 **Late GNSS gets a window.** An epoch becomes a keyframe only once the IMU is
 `gnss_reorder_window` past it, so an epoch that arrives after its successor
 still gets its turn. An epoch the IMU never covers is dropped after
 `max_gnss_wait`.
 
-**Unverified on hardware, as of 2026-09-23:**
+**Unverified on hardware, as of 2026-09-24:**
 
 - the MTi's `dv` frame (`DvFrame::end` is the default)
+- the magnetometer's axes against the IMU's, and its clipping flag
+- the sign and size of the barometer's airflow term where it is mounted
 - the MTi axis convention behind `R_b_i`
 - that GSOF 27 variances are in rad²
 - the sign of GSOF 27 pitch
@@ -161,6 +227,10 @@ against exact truth.
 | `vehicle_estimator_test_calibration_policy` | unit | The prior hash against golden values computed independently, what does and does not change it, every write-policy branch, load inflation, floor and cap, and malformed estimates refused. |
 | `vehicle_estimator_test_mounting` | slow | A 2° mounting yaw learned on straights to 0.02°, roll and pitch learned at stops, a drift teaching the mounting nothing, and a knocked IMU followed with the walk and not without it. |
 | `vehicle_estimator_test_offline` | unit | The batch is never worse than the fixed-lag smoother and is clearly better at the start and across an outage; its calibration history carries what was learned late back to the start of the drive. |
+| `vehicle_estimator_test_keyframes` | unit | Inertial keyframes through an outage and none beside GNSS; a late epoch still used; the buffer bounded; sigmas growing; parked held at zero velocity. |
+| `vehicle_estimator_test_barometer` | slow | Offset to a metre and airflow to 0.1 from hills; a 60 s outage and an autonomous fix held by it; the weather followed. |
+| `vehicle_estimator_test_magnetometer` | slow | Hard and soft iron learned, small and large; five minutes parked without a heading held by it; an outage; a disturbance refused. |
+| `vehicle_estimator_test_cold_start` | slow | No GNSS at power-on: attitude valid with real sigmas, magnetic heading to 3° from a learned calibration, none from an unlearned one; one re-anchor to true heading, at 49° N and 60° S. |
 | `vehicle_estimator_test_consistency` | slow | NEES over twenty noisy figure-of-eight drives stays within bounds, so the reported sigmas mean what they say. |
 
 On the skidpad, figure of eight and spin, the fixed-lag smoother holds

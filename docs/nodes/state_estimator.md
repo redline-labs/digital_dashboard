@@ -7,8 +7,8 @@ parent: Nodes
 
 ## Overview
 
-Fuses the MTi-610's strapdown increments with the BD992's dual-antenna fixes
-into one vehicle state: position, attitude, velocity, body acceleration, body
+Fuses the MTi-610's strapdown increments, magnetometer and barometer with the
+BD992's dual-antenna fixes into one vehicle state: position, attitude, velocity, body acceleration, body
 rate and sideslip, at the IMU's 100 Hz. It publishes nothing it has not
 estimated. There is no hardware of its own; it subscribes to what
 [mti610_bridge](mti610_bridge.html) and [bd992_bridge](bd992_bridge.html) put
@@ -22,8 +22,13 @@ which has no zenoh or capnp in it. Why it is shaped this way, and what it
 cannot observe, is in the [design note](../design/state-estimation.html).
 
 It is built for a car that slides. Nothing assumes the car goes where it
-points: heading comes from the two antennas, never from the direction of
-travel.
+points: heading comes from the two antennas or a learned magnetometer, never
+from the direction of travel.
+
+With no GNSS at all it still starts, attitude only. Roll and pitch come from
+gravity. Heading comes from the magnetometer if an earlier drive learned it, and
+it is MAGNETIC until the first fix. `valid` stays false until a position
+arrives.
 
 ## Running it
 
@@ -55,7 +60,7 @@ a new bag.
 
 | Key | Default | |
 | --- | --- | --- |
-| `inputs.imu_prefix` | `nodes/mti610/mtdata2` | Subscribed as `<prefix>/**`. Needs `delta_q` and `delta_v` enabled on the MTi. |
+| `inputs.imu_prefix` | `nodes/mti610/mtdata2` | Subscribed as `<prefix>/**`. Needs `delta_q` and `delta_v` enabled on the MTi; uses `magnetic_field` and `baro_pressure` too if they are. |
 | `inputs.gnss_prefix` | `nodes/bd992/gsof` | Subscribed as `<prefix>/**`. Needs GSOF 1, 2, 8, 12, 27 and 38. |
 | `outputs.state_key` | `nodes/state_estimator/state` | |
 | `outputs.status_key` | `nodes/state_estimator/status` | |
@@ -81,6 +86,20 @@ a new bag.
 | `smoother.lag_s` | `3.0` | Keyframes older than this are marginalised. |
 | `smoother.max_iterations` | `8` | Per keyframe. |
 | `smoother.time_budget_ms` | `40` | |
+| `smoother.keyframe_interval_s` | `0.1` | Keyframes on the IMU's clock when GNSS is not making them. |
+| `magnetometer.enabled` | `true` | |
+| `magnetometer.sigma` | `0.03` | Per axis, in the MTi's units (about 1 at its calibration field): about 3° of heading. |
+| `magnetometer.hard_iron`, `.hard_iron_sigma` | `[0, 0, 0]`, `0.3` | The hard-iron prior. Learned and kept. |
+| `magnetometer.soft_iron`, `.soft_iron_sigma` | six zeros, `0.1` | Symmetric soft iron, xx yy zz xy xz yz, in `A = (I + S)/F`. Learned and kept. |
+| `magnetometer.*_walk_per_sqrt_h` | `0.01`, `0.005` | How fast hard and soft iron may wander. |
+| `magnetometer.gate_sigmas` | `5` | A reading this far from its prediction is a disturbance and is not used. |
+| `magnetometer.trust_after_s` | `30` | Seconds learned against the antennas before it gives a heading on its own. |
+| `barometer.enabled` | `true` | |
+| `barometer.sigma_m` | `0.5` | Per keyframe. |
+| `barometer.offset_m`, `.offset_sigma_m`, `.offset_walk_m_per_sqrt_h` | `0`, `300`, `5` | Ellipsoidal height minus ISA pressure altitude: the weather and the geoid. Learned each session, never kept. |
+| `barometer.airflow`, `.airflow_sigma`, `.airflow_walk_per_sqrt_h` | `0`, `0.5`, `0.01` | The fraction of dynamic pressure the sensor sees. Learned and kept. |
+| `start.anchored` | `true` | Start without GNSS, attitude only. `false` waits for the antennas, as before. |
+| `start.anchor_wait_s` | `1.0` | How long without any GNSS before starting anyway. |
 | `output.sideslip_min_speed` | `2.0` | m/s. Below it sideslip is undefined and flagged invalid. |
 | `calibration.enabled` | `true` | Keep what is learned between sessions. |
 | `calibration.database` | `${REDLINE_DATA_DIR}/state_estimator/calibration.sqlite` | Created, with its directory, if absent. |
@@ -110,6 +129,8 @@ carries:
 |---|---|---|
 | `nodes/mti610/mtdata2/delta_q` | `XbusDeltaQ` | rotation increment; paired with `delta_v` by packet counter |
 | `nodes/mti610/mtdata2/delta_v` | `XbusDeltaV` | velocity increment |
+| `nodes/mti610/mtdata2/magnetic_field` | `XbusMagneticField` | magnetometer; a clipped sample is dropped |
+| `nodes/mti610/mtdata2/baro_pressure` | `XbusBaroPressure` | barometer, whole Pa |
 | `nodes/bd992/gsof/position_time` | `GsofPositionTime` | GSOF 1: the GPS time of the epoch |
 | `nodes/bd992/gsof/current_time_utc` | `GsofCurrentTimeUtc` | GSOF 16: the week, when no GSOF 1 has been seen |
 | `nodes/bd992/gsof/lat_long_height` | `GsofLatLongHeight` | GSOF 2: position |
@@ -134,6 +155,12 @@ velocity, acceleration and rate, `speedMps`, `sideslipDeg` with
 `atan2(v_right, v_forward)` at the reference point, positive to the right.
 Check `valid` before using anything: it is false until the estimator has
 initialised and while its uncertainty is above the configured bounds.
+`attitudeValid` can be true without it: before the first GNSS position roll and
+pitch are good while position and velocity are placeholders. `headingSource`
+says where yaw came from (`dualAntenna`, `magnetometer`, `inertial` since
+either, or `none`), and `headingMagnetic` means it is relative to magnetic
+north. `gpsTimeValid` is false before any GNSS has been heard; the time is
+then the host clock.
 
 `VehicleEstimatorStatus` carries counters (IMU samples bridged and discarded,
 GNSS epochs late, timed out or rejected, measurements gated), the last solve's
@@ -142,7 +169,10 @@ estimates, the IMU clock offset, the learned mounting as roll/pitch/yaw with
 its sigma and what it was learned from (`mountingStraightS`,
 `mountingLevelStops`), and the calibration store's state: whether it is open,
 which groups this session started from, which have moved since, and how many
-rows it has written.
+rows it has written. It also carries the magnetometer's hard and soft iron
+with `magUsed`, `magRejected`, `magLearningS` and `magTrusted`, and the
+barometer's offset and airflow with their sigmas and its own height. `anchored`
+and `reanchors` describe a start without GNSS.
 
 ## Health
 
@@ -152,13 +182,14 @@ rows it has written.
 |---|---|
 | `imu` | nothing under the IMU prefix for 200 ms |
 | `gnss` | nothing under the GNSS prefix for 1000 ms |
-| `estimate` | degraded while waiting for a dual-antenna heading, or while the uncertainty is above the valid bounds |
+| `estimate` | degraded while anchored with no GNSS position (it says whether the heading is magnetic), while waiting for a dual-antenna heading, or while the uncertainty is above the valid bounds |
 | `solve` | degraded when the last smoother update took 80 ms or more; at 10 Hz keyframes the smoother falls behind the car |
 | `calibration` | degraded when the store cannot be opened (the node then runs on the config), when it was found damaged and begun afresh (for the whole session: the old history is in the moved file), or when a learned group is more than `moved_sigma` from what the last session left |
 
 ## Calibration kept between sessions
 
-The mounting, lever arm and boresight the estimator learns are written to
+The mounting, lever arm, boresight, magnetometer and barometer airflow the
+estimator learns are written to
 `calibration.database` as rows, one per group per write, never updated and
 never deleted. At start the newest row for each group is loaded as that
 group's prior, provided it was learned against the same configured values: each
@@ -175,7 +206,10 @@ A row is written when a group's estimate has moved more than a sigma since the
 last row or a sigma has halved, at most every 15 minutes, never in the first
 two minutes after a start, and once more at shutdown. The mounting is not
 written until something has taught it: seconds of straight, true running, or
-stops. The mounting's yaw is learned only on straights, above 8 m/s with the
+stops. The magnetometer is not written until it has been learned against a
+dual-antenna heading, nor the airflow until the car has moved. The barometer's
+offset is never written: it is the day's weather. No position is ever stored.
+The mounting's yaw is learned only on straights, above 8 m/s with the
 yaw rate under 1.5°/s and lateral acceleration under 0.5 m/s² for two
 seconds; a drift never qualifies. The library side is in
 [vehicle_estimator](../libs/vehicle_estimator.html) and
@@ -183,8 +217,9 @@ seconds; a drift never qualifies. The library side is in
 
 ## Troubleshooting
 
-**It never initialises.** The estimator waits for a dual-antenna heading
-(GSOF 27 with `yawValid`) and will not start without one. It deliberately does
+**It never initialises.** With GNSS, the estimator waits for a dual-antenna
+heading (GSOF 27 with `yawValid`) and will not start without one. Without
+GNSS it starts anchored, attitude only. It deliberately does
 not fall back to the direction of travel: while drifting, course is not
 heading, and a filter started on course starts with its heading off by the
 slip angle. Check the receiver is sending GSOF 27 and that its antennas are
@@ -222,6 +257,18 @@ from the datasheet and reference manual and are not yet confirmed on a device
 shares the reading. Before trusting a real drive, check gravity lands on the
 body's +z (down) while parked, and that a left turn makes yaw decrease in step
 with GSOF 27.
+
+**No heading at a start without GNSS.** The magnetometer gives one only once
+it has learned its calibration: `magnetometer.trust_after_s` seconds against
+the antennas, this session or in the stored row. A new install, or a
+magnetometer prior that was changed in the config, has none. Drive with GNSS
+for a minute of turns and the next cold start will have one. `magTrusted` on
+the status topic says which.
+
+**Magnetic readings are refused.** `magRejected` climbing means readings are
+far from the prediction: steel nearby, a car alongside, or a magnetometer
+that has moved or been re-magnetised since its calibration was stored. In the
+last case `health` also reports the magnetometer as moved.
 
 **GSOF 27's variances.** They are taken as rad², since the record's angles are
 radians on the wire, and the pitch sign is taken as nose-up positive. Neither

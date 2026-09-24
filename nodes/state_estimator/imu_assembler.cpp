@@ -49,17 +49,45 @@ void ImuAssembler::addDeltaV(const ImuHeader& h, const Eigen::Vector3d& dv, doub
     settle(h.packetCounter);
 }
 
+ImuAssembler::Half* ImuAssembler::auxiliary(const ImuHeader& h)
+{
+    const std::uint64_t k = unwrap(h.packetCounter);
+    // Its sample has gone already: too late to ride along.
+    if (released_ && k <= *released_)
+    {
+        ++late_aux_;
+        return nullptr;
+    }
+    Half& half = pending_[k];
+    half.counter = h.packetCounter;
+    half.tick = h.sampleTimeFine;
+    return &half;
+}
+
+void ImuAssembler::addMagneticField(const ImuHeader& h, const Eigen::Vector3d& au)
+{
+    if (Half* half = auxiliary(h)) half->mag = au;
+}
+
+void ImuAssembler::addPressure(const ImuHeader& h, double pa)
+{
+    if (Half* half = auxiliary(h)) half->pressure = pa;
+}
+
 void ImuAssembler::settle(std::uint16_t)
 {
-    // Emit complete samples in counter order; drop incomplete ones that the
-    // stream has left behind.
+    // Emit complete samples in counter order, each once a later one is
+    // complete too -- by then the rest of its packet has arrived; drop
+    // incomplete ones that the stream has left behind.
+    const auto complete = [](const Half& h) { return h.dq.has_value() && h.dv.has_value(); };
     while (!pending_.empty())
     {
         auto it = pending_.begin();
-        const bool complete = it->second.dq && it->second.dv;
         const bool abandoned = unwrapped_ - it->first > patience_;
-        if (!complete && !abandoned) break;
-        if (complete)
+        const bool followed = std::any_of(std::next(it), pending_.end(), [&](const auto& kv) { return complete(kv.second); });
+        const bool ready = complete(it->second) && followed;
+        if (!ready && !abandoned) break;
+        if (ready || complete(it->second))
         {
             vehicle_estimator::ImuSample s;
             // The counter as the device sent it: the estimator's sequencer
@@ -69,12 +97,15 @@ void ImuAssembler::settle(std::uint16_t)
             s.dq = *it->second.dq;
             s.dv = *it->second.dv;
             s.host_time = it->second.arrival;
+            s.mag_au = it->second.mag;
+            s.pressure_pa = it->second.pressure;
             ready_.push_back(s);
         }
-        else
+        else if (it->second.dq || it->second.dv)
         {
             ++orphans_;
         }
+        released_ = it->first;
         pending_.erase(it);
     }
 }

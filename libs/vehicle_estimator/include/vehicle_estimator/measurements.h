@@ -13,6 +13,15 @@
 namespace vehicle_estimator
 {
 
+// What the heading currently rests on.
+enum class HeadingSource
+{
+    none,          // nothing: yaw is unknown
+    dual_antenna,  // the antenna baseline, within the last second
+    magnetometer,  // the magnetometer is what is holding it
+    inertial,      // carried by the gyro since one of the above
+};
+
 // One MTi sample: the strapdown increments plus the header that says when.
 struct ImuSample
 {
@@ -21,6 +30,11 @@ struct ImuSample
     Eigen::Quaterniond dq = Eigen::Quaterniond::Identity();
     Eigen::Vector3d dv = Eigen::Vector3d::Zero();
     double host_time = 0.0;  // arrival, s; only its minimum over time matters
+    // From the same packet, when the device sent them. The magnetic field in
+    // the MTi's arbitrary units (about 1 at the field it was calibrated in),
+    // IMU frame; the static pressure in pascals.
+    std::optional<Eigen::Vector3d> mag_au;
+    std::optional<double> pressure_pa;
 };
 
 // How much a GNSS fix can be trusted, coarsely. GSOF 38's fix types map onto
@@ -70,6 +84,9 @@ struct GnssEpoch
 struct VehicleState
 {
     double gps_time = 0.0;
+    // False before any GNSS has been heard: there is no GPS time yet, and
+    // gps_time is the host clock the IMU was mapped onto instead.
+    bool gps_time_valid = true;
     bool valid = false;  // initialised and within the configured uncertainty
 
     // At the configured reference point.
@@ -94,6 +111,13 @@ struct VehicleState
     double sigma_sideslip = 0.0;
 
     FixQuality fix = FixQuality::none;
+
+    // Attitude alone can be good when nothing else is: at a start with no
+    // GNSS, roll and pitch come from gravity and heading (if anything) from
+    // the magnetometer -- in which case heading is MAGNETIC, not true.
+    bool attitude_valid = false;
+    bool heading_magnetic = false;
+    HeadingSource heading_source = HeadingSource::none;
 };
 
 }  // namespace vehicle_estimator

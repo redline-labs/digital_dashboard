@@ -74,6 +74,24 @@ struct VehicleState {
   sigmaSideslipDeg @30 :Float64;
 
   fix @31 :VehicleFixQuality;
+
+  # False before any GNSS has been heard: there is no GPS time yet, and
+  # gpsTimeS is the host clock instead.
+  gpsTimeValid @32 :Bool;
+  # Roll and pitch are good, whether or not the rest is. Before the first
+  # GNSS position (an anchored start) this is all there is: position and
+  # velocity are placeholders, valid is false, and the heading -- if any --
+  # is from the magnetometer and MAGNETIC, not true.
+  attitudeValid @33 :Bool;
+  headingMagnetic @34 :Bool;
+  headingSource @35 :VehicleHeadingSource;
+}
+
+enum VehicleHeadingSource {
+  none @0;          # no heading: yaw means nothing
+  dualAntenna @1;   # the antennas, within the last second
+  magnetometer @2;  # the magnetometer, within the last second
+  inertial @3;      # carried by the gyro since either
 }
 
 # Once a second: what the estimator is doing and what it has learned about
@@ -148,4 +166,47 @@ struct VehicleEstimatorStatus {
   # The store was found damaged at start, moved aside, and begun again: the
   # learned history before this session is in the moved file.
   calibrationStoreRecovered @49 :Bool;
+
+  # Started with no GNSS position, attitude only, and re-anchored at a fix.
+  anchored @50 :Bool;
+  reanchors @51 :UInt64;
+  inertialKeyframes @52 :UInt64;
+  zeroVelocityUpdates @53 :UInt64;
+
+  # The magnetometer, in its arbitrary units: hard iron with its sigma, and
+  # the symmetric soft iron. Rejected: readings refused as a disturbance.
+  # Learning: seconds against a dual-antenna heading. Trusted: learned long
+  # enough to give a heading on its own.
+  magUsed @54 :UInt64;
+  magRejected @55 :UInt64;
+  magLearningS @56 :Float64;
+  magTrusted @57 :Bool;
+  magHardIronX @58 :Float64;
+  magHardIronY @59 :Float64;
+  magHardIronZ @60 :Float64;
+  magHardIronSigmaX @61 :Float64;
+  magHardIronSigmaY @62 :Float64;
+  magHardIronSigmaZ @63 :Float64;
+  magSoftIronXx @64 :Float64;
+  magSoftIronYy @65 :Float64;
+  magSoftIronZz @66 :Float64;
+  magSoftIronXy @67 :Float64;
+  magSoftIronXz @68 :Float64;
+  magSoftIronYz @69 :Float64;
+
+  # The barometer. Offset: ellipsoidal height minus ISA pressure altitude,
+  # the weather and the geoid, learned each session and never stored.
+  # Airflow: the fraction of dynamic pressure it sees. Height: its own.
+  baroFactors @70 :UInt64;
+  baroMovingS @71 :Float64;
+  baroHeightM @72 :Float64;
+  baroOffsetM @73 :Float64;
+  baroOffsetSigmaM @74 :Float64;
+  baroAirflow @75 :Float64;
+  baroAirflowSigma @76 :Float64;
+
+  magnetometerFromDatabase @77 :Bool;
+  baroAirflowFromDatabase @78 :Bool;
+  magnetometerMoved @79 :Bool;
+  baroAirflowMoved @80 :Bool;
 }

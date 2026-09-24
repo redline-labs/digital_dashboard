@@ -57,6 +57,34 @@ void testHash()
     check(ve::hashHex(h(CalibrationGroup::boresight, c)) == "99c41a80afa4f452",
           "boresight hash is the one on record: " + ve::hashHex(h(CalibrationGroup::boresight, c)));
 
+    // The magnetometer and the airflow, from non-zero priors so every value
+    // reaches the bytes. Computed the same independent way.
+    auto sensed = c;
+    sensed.mag_hard_iron = Eigen::Vector3d(0.05, -0.08, 0.12);
+    sensed.mag_soft_iron << 0.01, 0.02, -0.03, 0.004, 0.0, -0.005;
+    sensed.baro_airflow = 0.3;
+    check(ve::hashHex(h(CalibrationGroup::magnetometer, sensed)) == "2d5185dbce7e819c",
+          "magnetometer hash is the one on record: " + ve::hashHex(h(CalibrationGroup::magnetometer, sensed)));
+    check(ve::hashHex(h(CalibrationGroup::baro_airflow, sensed)) == "897a69a5a97ed238",
+          "airflow hash is the one on record: " + ve::hashHex(h(CalibrationGroup::baro_airflow, sensed)));
+    // Only its own prior invalidates each: the barometer's offset is weather,
+    // not a stored group, and must orphan nothing.
+    auto weather = sensed;
+    weather.baro_offset = 55.0;
+    weather.mag_sigma = 0.05;
+    for (CalibrationGroup g : ve::kCalibrationGroups)
+        check(h(g, weather) == h(g, sensed), std::string("the offset and sigmas leave the ") + std::string(ve::groupName(g)));
+    auto soft = sensed;
+    soft.mag_soft_iron[4] = 0.01;
+    check(h(CalibrationGroup::magnetometer, soft) != h(CalibrationGroup::magnetometer, sensed),
+          "an off-diagonal soft iron re-stated");
+    check(h(CalibrationGroup::baro_airflow, soft) == h(CalibrationGroup::baro_airflow, sensed), "leaves the airflow");
+    check(h(CalibrationGroup::mounting, sensed) == h(CalibrationGroup::mounting, c) &&
+              h(CalibrationGroup::lever_arm, sensed) == h(CalibrationGroup::lever_arm, c),
+          "and the magnetometer and airflow leave the installation's rows alone");
+    for (CalibrationGroup g : ve::kCalibrationGroups)
+        check(ve::groupName(g) != "baro_offset", "the barometer's offset is never a stored group");
+
     // Sigmas are not what was measured: changing them keeps what was learned.
     auto sure = c;
     sure.lever_arm_sigma = 0.005;
@@ -212,6 +240,25 @@ void testGroupsAndProblems()
     check(set.lever_arm.x() == c.lever_arm.x() + 0.05, "apply sets the mean");
     check(set.cov(3, 6) == 0.0 && set.cov(6, 3) == 0.0, "and drops the correlation it cannot vouch for");
     check(!ve::groupFromName("tyre_pressure"), "an unknown group name is not a group");
+    check(!ve::groupFromName("baro_offset"), "nor is the barometer's offset");
+
+    // The magnetometer and the airflow land where the estimator reads them,
+    // and apply() leaves the offset -- weather -- alone.
+    auto mag = ve::extract(set, CalibrationGroup::magnetometer);
+    check(mag.mean.size() == 9 && mag.cov.rows() == 9, "the magnetometer is nine values");
+    mag.mean << 0.05, -0.08, 0.12, 0.01, 0.02, -0.03, 0.004, 0.0, -0.005;
+    set.baro_offset = 42.0;
+    ve::apply(set, mag);
+    check((set.mag_hard_iron - Eigen::Vector3d(0.05, -0.08, 0.12)).norm() < 1e-15, "hard iron first");
+    check(set.mag_soft_iron[2] == -0.03 && set.mag_soft_iron[5] == -0.005, "then soft iron xx yy zz xy xz yz");
+    check((ve::extract(set, CalibrationGroup::magnetometer).mean - mag.mean).norm() < 1e-15, "and back");
+    auto air = ve::extract(set, CalibrationGroup::baro_airflow);
+    air.mean[0] = 0.3;
+    air.cov(0, 0) = 0.01;
+    ve::apply(set, air);
+    check(set.baro_airflow == 0.3 && set.barometerCov()(1, 1) == 0.01, "the airflow is the barometer's second");
+    check(set.baro_offset == 42.0 && set.barometerCov()(0, 0) == c.baro_offset_sigma * c.baro_offset_sigma,
+          "and the offset beside it is untouched");
 
     auto bad = ve::extract(set, CalibrationGroup::mounting);
     bad.mean *= 1.1;

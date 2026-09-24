@@ -228,7 +228,8 @@ discovery seeing only live traffic, and what `accepted: false` and
   every iteration, not `factorize()`d on a cached pattern: the pattern changes
   when a keyframe goes, and a stale one read out of bounds.
 - **The installation is a prior that walks, and what it learned is kept by
-  hash.** Mounting, lever arm and boresight get new variables every segment,
+  hash.** Mounting, lever arm, boresight, magnetometer and barometer get new
+  variables every segment,
   joined by a random walk -- not `kStatic`, which only ever grows more certain
   and cannot follow a knocked antenna. The mounting's yaw is learned from
   "straight means no slip", so that gate stays strict; loosen it and a drift
@@ -241,9 +242,24 @@ discovery seeing only live traffic, and what `accepted: false` and
   one included, is its own inverse and hides a mounting used backwards.
 - **Course is not heading.** The car slides, so velocity direction says nothing
   about where the body points. The estimator initialises yaw from the
-  dual-antenna baseline only and waits without one; never add a
-  course-over-ground fallback. Sideslip is `atan2(v_y, v_x)` in SAE J670 FRD
+  dual-antenna baseline, or from a magnetometer whose calibration was LEARNED
+  (this session or a stored row with as much evidence), and otherwise waits;
+  never add a course-over-ground fallback. Sideslip is `atan2(v_y, v_x)` in SAE J670 FRD
   at the configured reference point, positive right.
+- **A start without GNSS is the same graph, anchored, with one re-anchor.**
+  No position is ever kept across power cycles, so it starts at a placeholder
+  and on the HOST clock (there is no GPS time either). Its heading is MAGNETIC
+  and flagged so until the first fix rotates it into the true frame,
+  declination included. Keep the anchor's position prior tight: a loose one is
+  below what the covariance's factorisation can resolve against the IMU chain,
+  the window silently has no covariance, and zero sigmas pass every bound --
+  which is why nothing may claim valid without a covariance, and the scenario
+  harness asserts it on every run. Keyframes run on the IMU's clock whenever
+  GNSS is not making them; an outage without them has nowhere to put a
+  factor.
+- **The barometer's offset is weather; never store it.** The magnetometer's
+  hard and soft iron and the barometer's airflow are installation and are
+  kept with the mounting. The offset is learned from GNSS every session.
 - **The IMU and GNSS arrival clocks differ by a latency floor, not by zero.**
   `imu.time_offset_s` is that difference, a calibration; wrong, it shows as a
   position error proportional to speed with every test on a stationary car

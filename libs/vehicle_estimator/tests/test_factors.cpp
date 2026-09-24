@@ -5,6 +5,7 @@
 // loss bending as it should, and the traps -- yaw wrapping at north-by-south,
 // the lever arm's rotational velocity, a covariance that is not one.
 
+#include "vehicle_estimator/atmosphere.h"
 #include "vehicle_estimator/factors.h"
 
 #include "csym/geo/rot3.h"
@@ -62,7 +63,7 @@ double jacobianError(const factor_graph::Factor& f, const Values& at)
             // Not smaller: ECEF coordinates round at ~1e-9 m, which whitened
             // by a 2 cm sigma and divided by a 2e-5 step is noise of 3e-3.
             const double h = 1e-4;
-            std::array<double, 3> d{};
+            std::array<double, 9> d{};
             d[col] = h;
             Values p = at, m = at;
             p.variable(keys[var]).retract(std::span<const double>(d.data(), n));
@@ -188,7 +189,14 @@ void testCalibrationWalkAndPrior()
     v.insert(k1.boresight, csym::Vector2<double>{0.01, -0.02});
 
     // 1e-3 per sqrt(s) over 100 s allows 1e-2.
-    const auto walk = factors::calibrationWalk(k0, k1, 100.0, 1e-3, 1e-3, 1e-3);
+    v.insert(k0.magnetometer, csym::Vector<double, 9>{});
+    v.insert(k0.barometer, csym::Vector2<double>{12.0, 0.2});
+    v.insert(k1.magnetometer, csym::Vector<double, 9>{});
+    v.insert(k1.barometer, csym::Vector2<double>{12.0, 0.2});
+    // 1e-3 per sqrt(s) everywhere.
+    const Eigen::Matrix<double, vehicle_estimator::kCalibrationDim, 1> q =
+        Eigen::Matrix<double, vehicle_estimator::kCalibrationDim, 1>::Constant(1e-3);
+    const auto walk = factors::calibrationWalk(k0, k1, 100.0, q);
     check(walk->residual(v).norm() < 1e-9, "the walk costs nothing when nothing moved");
     check(jacobianError(*walk, v) < 1.0, "walk Jacobians match finite differences");
     Values moved = v;
@@ -204,6 +212,8 @@ void testCalibrationWalkAndPrior()
     prior.mounting = m0;
     prior.lever_arm = Eigen::Vector3d(0.3, 0.0, 1.2);
     prior.boresight = Eigen::Vector2d(0.01, -0.02);
+    prior.baro_offset = 12.0;
+    prior.baro_airflow = 0.2;
     prior.cov = 1e-4 * vehicle_estimator::CalibrationCov::Identity();
     prior.cov(3, 6) = prior.cov(6, 3) = 0.5e-4;
     const auto p = factors::calibrationPrior(k0, prior);
@@ -220,7 +230,9 @@ void testCalibrationWalkAndPrior()
     bool threw = false;
     try
     {
-        factors::calibrationWalk(k0, k1, 1.0, 0.0, 1e-3, 1e-3);
+        auto zero = q;
+        zero[4] = 0.0;
+        factors::calibrationWalk(k0, k1, 1.0, zero);
     }
     catch (const std::invalid_argument&)
     {
@@ -268,6 +280,67 @@ void testMountingFactors()
     check(std::fabs(level->residual(tilted).norm() - 1.0) < 0.02, "1.5 deg of roll reads one sigma");
 }
 
+void testBaroHeight()
+{
+    // A car at 812 m ellipsoidal height, doing 30 m/s, a sensor that sees 30%
+    // of the dynamic pressure, and a 35 m offset: the pressure it reads is
+    // exactly consistent, so the residual is zero there.
+    namespace isa = vehicle_estimator::isa;
+    const Eigen::Vector3d p0(4.2e6, 6.3e5, 4.7e6), up = p0.normalized();
+    const double h0 = 812.0, offset = 35.0, airflow = 0.3;
+    const Eigen::Vector3d v(20.0, 22.0, 0.5);
+    const double H = h0 - offset;
+    const double rho = isa::density(H);
+    const double pressure = isa::pressure(H) + airflow * 0.5 * rho * v.squaredNorm();
+    const Key kp = symbol('p', 0), kv = symbol('v', 0), ko = symbol('o', 0);
+    Values at;
+    at.insert(kp, c(p0));
+    at.insert(kv, c(v));
+    at.insert(ko, csym::Vector2<double>{offset, airflow});
+    const auto f = factors::baroHeight(kp, kv, ko, pressure, p0, up, h0, rho, 0.5, 3.0);
+    check(f->residual(at).norm() < 1e-6, fmt::format("barometric height is zero when consistent ({:.2e})", f->residual(at).norm()));
+    check(jacobianError(*f, at) < 1.0, "barometric Jacobians match finite differences");
+    Values higher = at;
+    higher.update(kp, c(p0 + 0.5 * up));
+    // One sigma, as the pseudo-Huber loss reads it (0.986 at delta 3).
+    check(std::fabs(f->residual(higher).norm() - 1.0) < 0.02, "half a metre up is one sigma");
+    check(jacobianError(*f, higher) < 1.0, "and its Jacobians there");
+}
+
+void testMagnetometerFactors()
+{
+    // The IMU on its side (not a half turn, whose inverse is itself) and a
+    // calibration with every term non-zero, reading exactly the field it
+    // should: zero residual, Jacobians that match finite differences.
+    const Eigen::Quaterniond R_e_i(Eigen::AngleAxisd(0.7, Eigen::Vector3d(1, 1, 1).normalized()));
+    const Eigen::Vector3d B_e(12000.0, -3000.0, 42000.0);
+    const double F = B_e.norm();
+    vehicle_estimator::CalibrationSet cal;
+    cal.mag_hard_iron = Eigen::Vector3d(0.1, -0.2, 0.05);
+    cal.mag_soft_iron << 0.03, -0.02, 0.04, 0.01, -0.015, 0.02;
+    const Eigen::Vector3d m = cal.softIronMatrix() / F * (R_e_i.toRotationMatrix().transpose() * B_e) + cal.mag_hard_iron;
+    const Key kR = symbol('R', 0), kk = symbol('k', 0);
+    Values at;
+    at.insert(kR, c(R_e_i));
+    csym::Vector<double, 9> k;
+    for (std::size_t i = 0; i < 9; ++i) k[i] = cal.magnetometer()[static_cast<Eigen::Index>(i)];
+    at.insert(kk, k);
+    const auto f = factors::magnetometer(kR, kk, m, B_e, F, 0.03, 3.0);
+    check(f->residual(at).norm() < 1e-9, "magnetometer is zero at a consistent reading");
+    check(jacobianError(*f, at) < 1.0, "magnetometer Jacobians match finite differences");
+
+    // Heading only: the corrected field in a level frame, x magnetic north.
+    const Eigen::Matrix3d R_n_e = Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    const Eigen::Vector3d north_down(0.5, 0.0, 0.85);
+    const Eigen::Vector3d corrected_i = R_e_i.toRotationMatrix().transpose() * R_n_e.transpose() * north_down;
+    const auto h = factors::magneticHeading(kR, corrected_i, R_n_e, 0.0, 3.0 * kDeg, 3.0);
+    check(h->residual(at).norm() < 1e-9, "magnetic heading is zero pointing at magnetic north");
+    check(jacobianError(*h, at) < 1.0, "magnetic heading Jacobians match finite differences");
+    Values turned = at;
+    turned.update(kR, c(Eigen::Quaterniond(Eigen::AngleAxisd(3.0 * kDeg, R_n_e.transpose().col(2))) * R_e_i));
+    check(std::fabs(h->residual(turned).norm() - 1.0) < 0.02, "three degrees of yaw reads one sigma");
+}
+
 void testRefusals()
 {
     bool threw = false;
@@ -301,6 +374,8 @@ int main()
     testDualAntenna();
     testCalibrationWalkAndPrior();
     testMountingFactors();
+    testBaroHeight();
+    testMagnetometerFactors();
     testRefusals();
     if (failures)
     {

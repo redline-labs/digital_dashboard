@@ -134,7 +134,8 @@ std::string sessionId()
 // anything has moved since it was.
 void calibrationHealth(node_health::HealthReporter& health, const state_estimator::CalibrationReport& c, bool enabled)
 {
-    static constexpr std::array<const char*, 3> kNames{"mounting", "lever arm", "boresight"};
+    static constexpr std::array<const char*, 5> kNames{"mounting", "lever arm", "boresight", "magnetometer",
+                                                       "barometer airflow"};
     if (!enabled)
     {
         health.setCheck("calibration", node_health::State::ok, "not kept (disabled in the config)");
@@ -310,7 +311,12 @@ int main(int argc, char** argv)
             outputs.status(st, keeper.report());
             calibrationHealth(health, keeper.report(), config.calibration.enabled);
             const auto latest = pipeline.estimator().latest();
-            if (!st.initialized)
+            if (st.anchored)
+                health.setCheck("estimate", node_health::State::degraded,
+                                latest && latest->heading_magnetic
+                                    ? "no GNSS position: attitude only, heading magnetic"
+                                    : "no GNSS position: roll and pitch only");
+            else if (!st.initialized)
                 health.setCheck("estimate", node_health::State::degraded, "waiting for a dual-antenna heading");
             else if (!latest || !latest->valid)
                 health.setCheck("estimate", node_health::State::degraded, "uncertainty above the valid bounds");

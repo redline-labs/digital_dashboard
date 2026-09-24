@@ -14,6 +14,7 @@
 inputs:
   imu_prefix: nodes/mti610/mtdata2   # needs delta_q and delta_v enabled
   gnss_prefix: nodes/bd992/gsof      # needs 1, 2, 8, 12, 27, 38
+  # The IMU prefix also carries magnetic_field and baro_pressure, if enabled.
 
 outputs:
   state_key: nodes/state_estimator/state
@@ -61,13 +62,55 @@ smoother:
   lag_s: 3.0
   max_iterations: 8
   time_budget_ms: 40
+  keyframe_interval_s: 0.1           # on the IMU's clock, when GNSS is not making them
+
+# The MTi's magnetometer, in its arbitrary units (about 1.0 at the field Xsens
+# calibrated it in). A weak heading: through a GNSS outage, and at a start with
+# no GNSS at all. Hard and soft iron are learned against the dual-antenna
+# heading and kept between sessions; a reading that is not the earth's field
+# (a bridge, a car alongside) is refused by gate_sigmas. With no GNSS position
+# the heading it gives is MAGNETIC, and says so, until the first fix.
+magnetometer:
+  enabled: true
+  sigma: 0.03                        # per axis: about 3 deg of heading
+  hard_iron: [0.0, 0.0, 0.0]
+  hard_iron_sigma: 0.3
+  soft_iron: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # xx yy zz xy xz yz, in A = (I + S) / F
+  soft_iron_sigma: 0.1
+  hard_iron_walk_per_sqrt_h: 0.01
+  soft_iron_walk_per_sqrt_h: 0.005
+  gate_sigmas: 5.0
+  trust_after_s: 30                  # of learning before it gives a heading alone
+
+# The MTi's barometer: height through outages and beside a weak GNSS height.
+# offset_m is ellipsoidal height minus ISA pressure altitude -- the weather and
+# the geoid -- learned from GNSS every session and never kept. Until the first
+# fix it gives relative height only. airflow is the fraction of dynamic
+# pressure the sensor sees where it is mounted; it is kept between sessions.
+barometer:
+  enabled: true
+  sigma_m: 0.5
+  offset_m: 0.0
+  offset_sigma_m: 300.0
+  offset_walk_m_per_sqrt_h: 5.0
+  airflow: 0.0
+  airflow_sigma: 0.5
+  airflow_walk_per_sqrt_h: 0.01
+
+# With no GNSS at all: attitude from gravity, heading from the magnetometer if
+# it was learned, position and velocity not valid. No position is ever kept
+# between power cycles, so this is all a start without GNSS has.
+start:
+  anchored: true
+  anchor_wait_s: 1.0
 
 output:
   sideslip_min_speed: 2.0
 
 # What was learned about the installation, kept between sessions.
 #
-# One row per group (mounting, lever_arm, boresight) each time the estimate
+# One row per group (mounting, lever_arm, boresight, magnetometer,
+# baro_airflow) each time the estimate
 # has moved by more than move_threshold_sigma, or its sigma halved, and at most
 # once per min_write_interval_s; once more at shutdown. Rows are never deleted:
 #
@@ -77,6 +120,7 @@ output:
 # A row applies only while the config's values for that group are the ones it
 # was learned against (a hash of them is in the row); re-measure the lever arm
 # and the lever-arm and boresight rows stop applying, the mounting's do not.
+# The barometer's offset is weather, and is never stored.
 # Changing a sigma keeps them.
 #
 # The mounting's yaw is learned from the assumption that the car runs true on

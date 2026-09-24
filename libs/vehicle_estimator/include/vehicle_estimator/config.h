@@ -83,6 +83,44 @@ struct EstimatorConfig
     double level_interval = 10.0;              // s between factors in one long stop
     double level_sigma = 0.026;                // rad (1.5 deg): grade and camber
 
+    // ---- magnetometer ----------------------------------------------------------
+    // In the MTi's arbitrary units, IMU frame: m = A R_i_e B_e + h, with
+    // A = (I + S) / F, F the local field intensity. Hard iron h and the
+    // symmetric soft iron S (xx, yy, zz, xy, xz, yz) are learned, and kept
+    // between sessions; these are their priors.
+    bool use_magnetometer = true;
+    Eigen::Vector3d mag_hard_iron = Eigen::Vector3d::Zero();
+    double mag_hard_iron_sigma = 0.3;  // a.u.
+    Eigen::Matrix<double, 6, 1> mag_soft_iron = Eigen::Matrix<double, 6, 1>::Zero();
+    double mag_soft_iron_sigma = 0.1;
+    double mag_hard_iron_walk = 0.01 / 60.0;   // a.u./sqrt(s): 0.01 per sqrt(h)
+    double mag_soft_iron_walk = 0.005 / 60.0;  // per sqrt(s)
+    // Per axis, a.u.: about 3 deg of heading at a mid-latitude dip. A car's
+    // magnetometer is not better than that, whatever its datasheet says.
+    double mag_sigma = 0.03;
+    double mag_heading_sigma = 0.052;  // rad, the heading-only form, no position
+    // A reading this many sigmas from the prediction is a disturbance -- a
+    // bridge, a car alongside -- and not used. The sigma is the whole
+    // prediction's: the attitude's, the calibration's, the sensor's.
+    double mag_gate_sigmas = 5.0;
+    // Seconds of learning against a dual-antenna heading before the
+    // calibration is trusted to give a heading on its own -- this session's,
+    // or a stored row's.
+    double mag_trust_after = 30.0;
+
+    // ---- barometer ---------------------------------------------------------------
+    // h_ellipsoid = H_ISA(p - airflow * rho v^2 / 2) + offset. The offset is
+    // the weather and the geoid, learned each session and never kept; the
+    // airflow is where the sensor sits, learned and kept.
+    bool use_barometer = true;
+    double baro_offset = 0.0;           // m
+    double baro_offset_sigma = 300.0;   // m
+    double baro_offset_walk = 5.0 / 60.0;  // m/sqrt(s): 5 m per sqrt(h), the weather
+    double baro_airflow = 0.0;
+    double baro_airflow_sigma = 0.5;
+    double baro_airflow_walk = 0.01 / 60.0;
+    double baro_sigma = 0.5;  // m, per keyframe
+
     // ---- GNSS ----------------------------------------------------------------
     // Sigma multiplier per FixQuality (none, autonomous, differential, float,
     // rtx, fixed). The receiver's sigmas are already per-epoch; these are
@@ -132,6 +170,26 @@ struct EstimatorConfig
     // still gets its turn. Output latency is unaffected: between keyframes
     // the IMU carries the state forward anyway.
     double gnss_reorder_window = 0.15;  // s
+    // With no GNSS epoch due, a keyframe is made on the IMU's clock this
+    // often: through an outage, and (with no fix yet) at a cold start.
+    double keyframe_interval = 0.1;  // s
+    // Parked: IMU still for this long AND the estimate's own speed below
+    // the maximum. The IMU alone cannot tell parked from cruising straight.
+    double zero_velocity_hold = 1.0;       // s
+    // Tight: a car easing away from rest is still under 0.5 m/s for a second
+    // while its IMU reads exactly what a parked one does.
+    double zero_velocity_max_speed = 0.1;  // m/s
+    double zero_velocity_sigma = 0.02;     // m/s
+    // With no GNSS position this long after the IMU starts, start anyway --
+    // anchored at a placeholder, attitude only -- and re-anchor at the first
+    // fix. States are in ECEF, and without a position "level" means nothing
+    // there; the anchor gives it a meaning until a real position does. The
+    // anchor's gravity and earth rate are wrong by at most 0.3% and 15 deg/h,
+    // which the biases absorb and relearn after the fix.
+    bool anchored_start = true;
+    double anchor_wait = 1.0;           // s
+    double anchor_latitude = 0.785398;  // rad, 45 deg
+    double anchor_longitude = 0.0;
 };
 
 }  // namespace vehicle_estimator

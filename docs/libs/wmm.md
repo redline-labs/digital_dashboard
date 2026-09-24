@@ -9,9 +9,10 @@ parent: Libraries
 
 The World Magnetic Model has two parts. The first is a compile-time parser for
 NOAA/NCEI `.COF` coefficient files. The second is the field synthesis, ported
-from NCEI's `GeomagnetismLibrary.c`. What the estimator will want from it is
-the reference field vector at a position and date, which a magnetometer
-factor compares with the MTi's reading.
+from NCEI's `GeomagnetismLibrary.c`. The estimator uses it for the reference
+field vector at a position and date, which its magnetometer factor compares
+with the MTi's reading, and for the declination when a start without GNSS is
+turned from magnetic to true north at the first fix.
 
 The library is split into two targets. `wmm` is the generic, header-only part:
 the parser, `Model<N>`, and `magnetic_field`. `wmm_hr2025` is WMM-HR 2025, a
@@ -25,10 +26,9 @@ It takes the WGS 84 ellipsoid from [geodesy](geodesy.html), so the tree has
 one ellipsoid. The geomagnetic reference radius is the model's own.
 
 {: .note }
-As of 2026-09-23 nothing in the estimator uses this library. The magnetometer
-factor is deferred until the MTi's hard- and soft-iron calibration exists,
-because comparing an uncalibrated magnetometer with this reference would
-corrupt heading rather than aid it.
+Evaluating a degree-133 model is not cheap, so
+[vehicle_estimator](vehicle_estimator.html)'s `MagneticReference` caches the
+field and recomputes it only after 1 km or 1 hour.
 
 ## Public headers
 

@@ -9,6 +9,12 @@
 // before the other. A half whose partner never comes is dropped once the
 // counter has moved `patience` samples past it, and counted.
 //
+// The magnetic field and the pressure come from the same packets, with the
+// same header, and ride along: a sample is released once a LATER counter's
+// dq and dv are complete (one sample of latency), carrying whatever magnetic
+// and pressure items arrived for its own counter. They never hold anything
+// up; one that arrives after its sample was released is dropped.
+//
 // Pure: no zenoh, no capnp.
 
 #ifndef STATE_ESTIMATOR_IMU_ASSEMBLER_H
@@ -40,11 +46,14 @@ class ImuAssembler
 
     void addDeltaQ(const ImuHeader& h, const Eigen::Quaterniond& dq, double arrival);
     void addDeltaV(const ImuHeader& h, const Eigen::Vector3d& dv, double arrival);
+    void addMagneticField(const ImuHeader& h, const Eigen::Vector3d& au);
+    void addPressure(const ImuHeader& h, double pa);
 
     // Complete samples, in counter order.
     std::vector<vehicle_estimator::ImuSample> take();
 
     std::uint64_t orphans() const { return orphans_; }
+    std::uint64_t lateAuxiliary() const { return late_aux_; }
 
   private:
     struct Half
@@ -53,6 +62,8 @@ class ImuAssembler
         std::uint32_t tick = 0;
         std::optional<Eigen::Quaterniond> dq;
         std::optional<Eigen::Vector3d> dv;
+        std::optional<Eigen::Vector3d> mag;
+        std::optional<double> pressure;
         double arrival = 0.0;
     };
 
@@ -66,6 +77,9 @@ class ImuAssembler
     std::uint64_t unwrapped_ = 0;
     std::vector<vehicle_estimator::ImuSample> ready_;
     std::uint64_t orphans_ = 0;
+    std::uint64_t late_aux_ = 0;
+    std::optional<std::uint64_t> released_;  // the newest key released
+    Half* auxiliary(const ImuHeader& h);
 
     std::uint64_t unwrap(std::uint16_t counter);
 };

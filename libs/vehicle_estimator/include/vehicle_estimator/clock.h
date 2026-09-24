@@ -58,6 +58,17 @@ class TimeMapper
 
     std::optional<double> currentOffset() const { return mapped_; }
 
+    // Whether the receiver has been heard from at all.
+    bool gnssSeen() const { return first_gnss_host_.has_value(); }
+    // IMU device time to HOST time, through the IMU's own envelope: the only
+    // time base there is before any GNSS, for a start that cannot wait.
+    std::optional<double> imuToHost(double device) const
+    {
+        const auto oi = imu_.offset();
+        if (!oi) return std::nullopt;
+        return device + *oi;
+    }
+
   private:
     ClockOffset imu_, gnss_;
     double settle_, max_slew_;

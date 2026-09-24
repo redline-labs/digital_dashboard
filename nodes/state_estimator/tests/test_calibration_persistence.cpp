@@ -15,12 +15,18 @@
 //      config as it would with no store at all.
 //   5. The IMU knocked between sessions: the mounting is flagged as moved.
 //   6. The store damaged between sessions: moved aside, kept, begun afresh.
+//   7. Parked with no GNSS at power-on: session 1's magnetometer gives a
+//      MAGNETIC heading before any fix -- and the barometer's offset, being
+//      weather, was never stored to be given.
 
 #include "calibration_keeper.h"
 #include "pipeline.h"
 #include "sim_bus.h"
 
 #include "vehicle_estimator/calibration.h"
+#include "vehicle_estimator/magnetic_reference.h"
+
+#include "geodesy/geodetic.h"
 
 #include <spdlog/spdlog.h>
 #include <sqlite3.h>
@@ -148,14 +154,53 @@ Session drive(const state_estimator::NodeConfig& config, const sim::Scenario& sc
     out.initialized = pipeline.estimator().status().initialized;
     if (pipeline.estimator().calibration()) out.last_mount_yaw_error = mountYawError(pipeline.estimator(), truth);
     out.report = keeper.report();
-    SPDLOG_INFO("{}: store {}, from database [{} {} {}], moved [{} {} {}] ({:.1f} {:.1f} {:.1f} sigma), {} rows "
+    SPDLOG_INFO("{}: store {}, from database [{} {} {} {} {}], moved [{} {} {}] ({:.1f} {:.1f} {:.1f} sigma), {} rows "
                 "written; mounting yaw error {:.3f} deg at the start, {:.3f} deg at the end; launch slip error {:.3f} "
                 "deg",
                 name, out.report.store_open ? "open" : out.report.store_error, out.report.from_database[0],
-                out.report.from_database[1], out.report.from_database[2], out.report.moved[0], out.report.moved[1],
+                out.report.from_database[1], out.report.from_database[2], out.report.from_database[3],
+                out.report.from_database[4], out.report.moved[0], out.report.moved[1],
                 out.report.moved[2], out.report.moved_by[0], out.report.moved_by[1], out.report.moved_by[2],
                 out.report.rows_written, out.first_mount_yaw_error / kDeg, out.last_mount_yaw_error / kDeg,
                 out.launch_slip_error / kDeg);
+    return out;
+}
+
+// Power on parked with no GNSS for `outage` s: the states before the first
+// fix, and how far their heading is from true minus the declination.
+struct ColdSession
+{
+    bool anchored = false, magnetic = false;
+    ve::HeadingSource source = ve::HeadingSource::none;
+    double magnetic_heading_error = 0.0;
+};
+
+ColdSession coldSession(const state_estimator::NodeConfig& config, const sim::Scenario& sc, double outage,
+                        const std::filesystem::path& db)
+{
+    ColdSession out;
+    state_estimator::Pipeline pipeline(config);
+    CalibrationKeeper keeper(config, "cold", [] { return std::int64_t{0}; });
+    if (keeper.open(db)) keeper.seed(pipeline.estimator());
+    const auto p = sc.truth(0.0).p_e;
+    const auto llh = geodesy::ecefToLlh(csym::Vector3<double>{p.x(), p.y(), p.z()});
+    const double D = ve::magneticField(llh.lat, llh.lon, llh.h, sc.sensors().gps_epoch).declination;
+    for (const auto& m : state_estimator::toBus(sc))
+    {
+        pipeline.onMessage(m.schema, m.payload, m.arrival);
+        const double t = m.arrival - sc.sensors().host_epoch;
+        for (const auto& st : pipeline.advance(m.arrival))
+        {
+            if (t < 10.0 || t > outage - 1.0) continue;
+            out.anchored = out.anchored || pipeline.estimator().status().anchored;
+            out.magnetic = st.heading_magnetic;
+            out.source = st.heading_source;
+            const double e = std::remainder(st.yaw - (sc.truth(t).yaw - D), 2.0 * std::numbers::pi);
+            out.magnetic_heading_error = std::max(out.magnetic_heading_error, std::fabs(e));
+        }
+    }
+    SPDLOG_INFO("cold session: anchored {}, magnetic {}, magnetic heading error {:.2f} deg", out.anchored,
+                out.magnetic, out.magnetic_heading_error / kDeg);
     return out;
 }
 
@@ -200,16 +245,40 @@ int main()
                 check(shutdown || gap >= 30.0 - 1e-6,
                       fmt::format("{} rows {} s apart, inside the interval, and not at shutdown", ve::groupName(g), gap));
             }
+            if (g == ve::CalibrationGroup::magnetometer && !rows->empty())
+                check(rows->back().evidence_s > 30.0,
+                      fmt::format("the magnetometer was learned against the antennas ({:.0f} s)", rows->back().evidence_s));
             for (const auto& r : *rows) SPDLOG_INFO("  {} row {}: {} at {:.0f} s: {}", r.group, r.id, r.reason,
                                                     static_cast<double>(r.written_at_ns) * 1e-9, r.summary);
         }
+    }
+
+    {
+        // No row of any other group: in particular no barometric offset,
+        // which is the day's weather and must be learned afresh.
+        sqlite3* raw = nullptr;
+        sqlite3_open_v2(db.string().c_str(), &raw, SQLITE_OPEN_READONLY, nullptr);
+        sqlite3_stmt* st = nullptr;
+        sqlite3_prepare_v2(raw, "SELECT DISTINCT grp FROM calibration", -1, &st, nullptr);
+        std::size_t groups = 0;
+        while (sqlite3_step(st) == SQLITE_ROW)
+        {
+            const std::string grp = reinterpret_cast<const char*>(sqlite3_column_text(st, 0));
+            check(ve::groupFromName(grp).has_value(), "a stored group that is not a calibration group: " + grp);
+            check(grp.find("offset") == std::string::npos, "the barometer's offset is never stored");
+            ++groups;
+        }
+        sqlite3_finalize(st);
+        sqlite3_close(raw);
+        check(groups == ve::kCalibrationGroups.size(), "every group, and only those, has rows");
     }
 
     // ---- 2. the same car, the same config -------------------------------------------
     const auto s2 = sensors(32);
     const sim::Scenario sc2(sim::track(shortTrack()), s2);
     const Session second = drive(config, sc2, db, "session 2");
-    check(second.report.from_database[0] && second.report.from_database[1] && second.report.from_database[2],
+    check(second.report.from_database[0] && second.report.from_database[1] && second.report.from_database[2] &&
+              second.report.from_database[3] && second.report.from_database[4],
           "every group starts from what session 1 learned");
     check(std::fabs(second.first_mount_yaw_error) < 0.3 * kDeg,
           "so the mounting is right from the first keyframe, not 2 deg out");
@@ -236,6 +305,44 @@ int main()
         }
         check(old_rows > 0, "the old lever-arm rows are still in the history");
         check(new_rows > 0, "and the new ones carry the new hash");
+    }
+
+    // ---- 7. parked at power-on, no GNSS ---------------------------------------------
+    // Before the lever arm was re-measured in session 3, so run on session 3's
+    // config: the magnetometer's rows do not care about the lever arm.
+    {
+        auto s7 = sensors(37);
+        s7.outages = {{0.0, 40.0}};
+        const sim::Scenario sc7(sim::scripted({{45.0, 0.0}, {6.0, 15.0}, {10.0, 15.0}}), s7);
+        const ColdSession cold = coldSession(remeasured, sc7, 40.0, db);
+        check(cold.anchored, "no GNSS at power-on: an anchored start");
+        check(cold.magnetic && cold.source == ve::HeadingSource::magnetometer,
+              "with a magnetic heading from the stored magnetometer");
+        check(cold.magnetic_heading_error < 3.0 * kDeg, "to 3 degrees");
+
+        // And from an empty store, the same drive has no heading to give.
+        const ColdSession fresh = coldSession(remeasured, sc7, 40.0, dir.path / "empty.sqlite");
+        check(fresh.anchored && fresh.source == ve::HeadingSource::none && !fresh.magnetic,
+              "an unlearned magnetometer gives no heading at all");
+    }
+
+    // ---- 8. a drive that loses the antennas' heading early ----------------------------
+    // The magnetometer is learned only against that heading: its row must say
+    // how little it had, not how long the car drove, or the next cold start
+    // would trust a calibration nothing taught.
+    {
+        auto s8 = sensors(38);
+        s8.attitude_outages = {{20.0, 1e9}};
+        const sim::Scenario sc8(sim::track(shortTrack()), s8);
+        const auto db8 = dir.path / "short_heading.sqlite";
+        drive(config, sc8, db8, "session 8");
+        auto store = calibration_store::Store::open(db8);
+        const auto mag = store->history("magnetometer");
+        const auto lever_rows = store->history("lever_arm");
+        check(lever_rows && !lever_rows->empty() && lever_rows->back().drive_s > 60.0, "a drive of over a minute");
+        double evidence = 0.0;
+        if (mag && !mag->empty()) evidence = mag->back().evidence_s;
+        check(evidence < 20.0, fmt::format("but the magnetometer's row counts only its {:.0f} s of heading", evidence));
     }
 
     // ---- 4. a file that is not a database ---------------------------------------------

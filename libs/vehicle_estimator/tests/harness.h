@@ -76,6 +76,7 @@ struct Run
     vehicle_estimator::EstimatorStatus status;
     std::vector<vehicle_estimator::VehicleState> states;  // one per keyframe
     std::vector<vehicle_estimator::sim::Truth> truths;
+    std::size_t claims_without_covariance = 0;
 };
 
 // Scores keyframes after `settle` seconds of scenario time.
@@ -97,6 +98,9 @@ inline Run run(const vehicle_estimator::sim::Scenario& sc, vehicle_estimator::Es
         const auto truth = sc.truth(t);
         r.states.push_back(*s);
         r.truths.push_back(truth);
+        // Every run, every keyframe: no claim without a covariance behind it.
+        // Sigmas read zero when the window has none, and zero passes a bound.
+        if ((s->attitude_valid || s->valid) && !(s->sigma_attitude.minCoeff() > 0.0)) ++r.claims_without_covariance;
         if (t < settle) continue;
 
         Errors& e = r.errors;
@@ -120,6 +124,8 @@ inline Run run(const vehicle_estimator::sim::Scenario& sc, vehicle_estimator::Es
         }
     }
     r.status = est.status();
+    check(r.claims_without_covariance == 0,
+          std::to_string(r.claims_without_covariance) + " keyframes claimed a valid attitude with no covariance");
     return r;
 }
 
@@ -133,12 +139,13 @@ inline void report(const std::string& label, const Run& r)
     const auto& s = r.status;
     SPDLOG_INFO("{}: keyframes {} resets {} gated p/v/a {}/{}/{} refused {} imu bridged {} discarded {} gnss late {} "
                 "timed out {}; lever arm [{:.3f} {:.3f} {:.3f}] boresight [{:.4f} {:.4f}] mounting [{:.3f} {:.3f} "
-                "{:.3f}] deg sigma [{:.3f} {:.3f} {:.3f}] deg, {} segments, solve {:.2f} ms",
+                "{:.3f}] deg sigma [{:.3f} {:.3f} {:.3f}] deg, {} segments, {} inertial keyframes, {} zero-velocity, solve {:.2f} ms",
                 label, s.keyframes, s.resets, s.gated_position, s.gated_velocity, s.gated_attitude, s.updates_refused,
                 s.imu_bridged, s.imu_discarded, s.gnss_late, s.gnss_timed_out, s.lever_arm.x(), s.lever_arm.y(),
                 s.lever_arm.z(), s.boresight.x(), s.boresight.y(), s.mounting_rpy.x() / kDeg,
                 s.mounting_rpy.y() / kDeg, s.mounting_rpy.z() / kDeg, s.mounting_sigma.x() / kDeg,
-                s.mounting_sigma.y() / kDeg, s.mounting_sigma.z() / kDeg, s.calibration_segments, s.last_solve_ms);
+                s.mounting_sigma.y() / kDeg, s.mounting_sigma.z() / kDeg, s.calibration_segments, s.inertial_keyframes,
+                s.zero_velocity_updates, s.last_solve_ms);
 }
 
 }  // namespace harness

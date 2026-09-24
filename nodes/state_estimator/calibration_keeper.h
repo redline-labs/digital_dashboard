@@ -46,9 +46,9 @@ struct CalibrationReport
     // before it is there, not in the store.
     std::string store_recovered;
     // Indexed as vehicle_estimator::kCalibrationGroups.
-    std::array<bool, 3> from_database{};
-    std::array<bool, 3> moved{};        // latched once past moved_sigma
-    std::array<double, 3> moved_by{};   // sigmas from what was loaded, now
+    std::array<bool, 5> from_database{};
+    std::array<bool, 5> moved{};        // latched once past moved_sigma
+    std::array<double, 5> moved_by{};   // sigmas from what was loaded, now
     std::uint32_t rows_written = 0;
     std::uint32_t rows_skipped = 0;     // malformed rows passed over at load
 };
@@ -84,8 +84,8 @@ class CalibrationKeeper
     WallClock wall_;
 
     std::optional<calibration_store::Store> store_;
-    std::array<std::optional<vehicle_estimator::LastWritten>, 3> last_;
-    std::array<std::optional<vehicle_estimator::GroupEstimate>, 3> loaded_;
+    std::array<std::optional<vehicle_estimator::LastWritten>, 5> last_;
+    std::array<std::optional<vehicle_estimator::GroupEstimate>, 5> loaded_;
     std::optional<double> started_, first_;
     std::uint64_t seen_resets_ = 0;
     CalibrationReport report_;

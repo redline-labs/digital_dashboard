@@ -7,6 +7,7 @@
 #include "gsof_common.capnp.h"
 #include "gsof_position.capnp.h"
 #include "xbus_common.capnp.h"
+#include "xbus_environment.capnp.h"
 #include "xbus_inertial.capnp.h"
 
 #include <capnp/message.h>
@@ -88,6 +89,26 @@ std::vector<BusMessage> toBus(const vehicle_estimator::sim::Scenario& scenario, 
                 b.setDeltaVYMps(s.dv.y());
                 b.setDeltaVZMps(s.dv.z());
             }));
+            // The same packet's other items, with the same header, as the
+            // bridge publishes them.
+            if (s.mag_au)
+            {
+                out.push_back(encode<::XbusMagneticField>(imu + "magnetic_field", "XbusMagneticField", s.host_time + 4e-6,
+                                                          [&](auto b) {
+                                                              header(b.initHeader(), s);
+                                                              b.setMagneticFieldXAu(s.mag_au->x());
+                                                              b.setMagneticFieldYAu(s.mag_au->y());
+                                                              b.setMagneticFieldZAu(s.mag_au->z());
+                                                          }));
+            }
+            if (s.pressure_pa)
+            {
+                out.push_back(encode<::XbusBaroPressure>(imu + "baro_pressure", "XbusBaroPressure", s.host_time + 6e-6,
+                                                         [&](auto b) {
+                                                             header(b.initHeader(), s);
+                                                             b.setPressurePa(static_cast<std::uint32_t>(*s.pressure_pa));
+                                                         }));
+            }
             continue;
         }
         const auto& e = *m.gnss;
