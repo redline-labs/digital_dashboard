@@ -88,7 +88,7 @@ struct DisplayConfig
 {
     uint32_t width_px = 800;
     uint32_t height_px = 600;
-    uint32_t fps = 30;
+    uint32_t fps = 60;  // see airplay::ReceiverConfig::fps
 
     // The panel's physical width in millimetres. The height is derived from it
     // and the pixel aspect ratio, so only one is needed. CarPlay uses this to

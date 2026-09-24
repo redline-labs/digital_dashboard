@@ -528,8 +528,7 @@ void Receiver::acceptLoop()
         }
 
         sockaddr_in6 peer{};
-        socklen_t peer_len = sizeof(peer);
-        const int client = ::accept(server_fd_, reinterpret_cast<sockaddr*>(&peer), &peer_len);
+        const int client = net::acceptNoDelay(server_fd_, &peer);
         if (client < 0)
         {
             if (run_.load() && errno != EINTR && errno != EAGAIN)
@@ -541,9 +540,6 @@ void Receiver::acceptLoop()
 
         char text[INET6_ADDRSTRLEN] = {};
         ::inet_ntop(AF_INET6, &peer.sin6_addr, text, sizeof(text));
-
-        int nodelay = 1;
-        ::setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
         SPDLOG_INFO("[airplay] connection from [{}]:{}", text, ntohs(peer.sin6_port));
         state_->peer_address = text;

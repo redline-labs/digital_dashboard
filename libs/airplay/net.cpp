@@ -4,6 +4,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -72,6 +73,24 @@ int openUdpSocket(uint16_t& port)
         return -1;
     }
     port = ntohs(bound.sin6_port);
+    return fd;
+}
+
+int acceptNoDelay(int listen_fd, sockaddr_in6* peer)
+{
+    sockaddr_in6 addr{};
+    socklen_t len = sizeof(addr);
+    const int fd = ::accept(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len);
+    if (fd < 0)
+    {
+        return -1;
+    }
+    int on = 1;
+    ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+    if (peer != nullptr)
+    {
+        *peer = addr;
+    }
     return fd;
 }
 

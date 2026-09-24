@@ -196,6 +196,14 @@ bool CarPlayWidget::ensureDecoder(CarPlayVideo::Codec codec)
     // and real latency to lose. Revisit only if the panel resolution grows a
     // lot; re-measure by capturing a stream with AIRPLAY_DUMP_VIDEO (see
     // libs/airplay/receiver.cpp) rather than reasoning from defaults.
+    //
+    // LOW_DELAY pins that delay at zero. Without it the H.264 decoder grows a
+    // reorder buffer by itself when picture order looks out of sequence, and
+    // each slot holds back a frame -- 17-33 ms of lag with nothing logged.
+    if (_codec_context != nullptr)
+    {
+        _codec_context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    }
     if (_codec_context == nullptr || avcodec_open2(_codec_context, decoder, nullptr) < 0)
     {
         SPDLOG_ERROR("Failed to open video decoder");

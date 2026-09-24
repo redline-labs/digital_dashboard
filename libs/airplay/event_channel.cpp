@@ -109,7 +109,8 @@ void EventChannel::acceptLoop()
         {
             continue;
         }
-        const int client = ::accept(listen_fd_, nullptr, nullptr);
+        // Every touch report leaves on this socket; see acceptNoDelay.
+        const int client = net::acceptNoDelay(listen_fd_);
         if (client < 0)
         {
             continue;

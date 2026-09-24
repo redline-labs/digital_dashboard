@@ -329,12 +329,13 @@ int main()
                   "display:\n"
                   "  width_px: 1920\n"
                   "  height_px: 720\n"
-                  "  fps: 60\n"
+                  // Not the default, so the check below proves the file was read.
+                  "  fps: 50\n"
                   "  physical_width_mm: 260\n");
         NodeConfig config;
         expect(loadNodeConfig(good.string(), config), "display geometry loads");
         expect(config.display.width_px == 1920 && config.display.height_px == 720, "size");
-        expect(config.display.fps == 60, "frame rate");
+        expect(config.display.fps == 50, "frame rate");
         expect(config.display.physical_width_mm == 260, "physical width");
 
         for (const char* key : {"width_px", "height_px", "fps", "physical_width_mm"})

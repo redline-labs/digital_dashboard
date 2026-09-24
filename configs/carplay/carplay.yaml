@@ -57,7 +57,10 @@ vehicle:
 display:
   width_px: 1280
   height_px: 530
-  fps: 30
+  # The phone captures a frame only this often, so it sets a floor on
+  # touch-to-screen latency: a touch waits for the next capture, 33 ms apart
+  # at 30 against 17 at 60.
+  fps: 60
 
   # Physical width in millimetres; the height follows from the pixel aspect
   # ratio. CarPlay sizes text and touch targets from this, so a wrong value

@@ -13,6 +13,8 @@
 
 #include <cstdint>
 
+struct sockaddr_in6;
+
 namespace airplay::net
 {
 
@@ -23,6 +25,15 @@ int openEphemeralListener(uint16_t& port);
 // Binds a dual-stack UDP socket on an ephemeral port. Returns the fd and writes
 // the chosen port. -1 on failure.
 int openUdpSocket(uint16_t& port);
+
+// Accepts one connection with TCP_NODELAY set, writing the peer's address if
+// asked. -1 on failure, as accept().
+//
+// For every socket we write to the phone on. Each touch report is one small
+// write; with Nagle on, it waits for the phone to acknowledge the previous one,
+// and a TOUCH_UP held that way is felt directly, because iOS acts on the
+// release.
+int acceptNoDelay(int listen_fd, sockaddr_in6* peer = nullptr);
 
 }  // namespace airplay::net
 

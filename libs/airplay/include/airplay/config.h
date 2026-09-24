@@ -54,7 +54,9 @@ struct ReceiverConfig
     // dashboard widget so the phone renders at the widget's aspect ratio.
     uint32_t width = 800;
     uint32_t height = 600;
-    uint32_t fps = 30;
+    // Advertised as maxFPS. 60, not 30: the phone captures a frame only this
+    // often, so the rate is a floor on how soon a touch can show on screen.
+    uint32_t fps = 60;
 
     // The panel's physical width in millimetres; the height is derived from it
     // and the pixel aspect ratio. CarPlay sizes text and touch targets from
