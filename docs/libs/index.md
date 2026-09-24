@@ -90,3 +90,4 @@ Every library is listed; the ones without a page yet say so.
 | `factor_graph` | `factor_graph` | Nonlinear least squares on csym residuals: a fixed-lag smoother with frozen marginal priors, and a batch smoother that is RTS for linear models. | [factor_graph](factor_graph.html) |
 | `imu_preint` | `imu_preint` | IMU preintegration from strapdown dq/dv in ECEF with earth rate; the IMU and bias-walk factors, the MTi sample sequencer, a truth simulator. | [imu_preint](imu_preint.html) |
 | `vehicle_estimator` | `vehicle_estimator` | MTi and dual-antenna GNSS fused into position, attitude, velocity, acceleration and sideslip, with no bus types; the whole-drive smoother; `vehicle_estimator_sim`. | [vehicle_estimator](vehicle_estimator.html) |
+| `calibration_store` | `calibration_store` | What the estimator learned about the installation, kept between sessions as an append-only SQLite history; generic rows, defensive reads. | [calibration_store](calibration_store.html) |

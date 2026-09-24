@@ -37,10 +37,15 @@ struct EstimatorConfig
     double imu_time_offset = 0.0;
 
     // ---- geometry, all in the IMU frame --------------------------------------
-    // Rotation from the IMU frame to the vehicle body (FRD). The default is an
-    // MTi mounted x forward, z up: a half turn about x.
+    // Rotation from the IMU frame to the vehicle body (FRD), as measured;
+    // estimated from here. The default is an MTi mounted x forward, z up: a
+    // half turn about x.
     Eigen::Matrix3d R_b_i = (Eigen::Matrix3d() << 1, 0, 0, 0, -1, 0, 0, 0, -1).finished();
-    // Where sideslip and position are reported: the CG, or the rear axle.
+    // Of the measurement, about the body x, y, z (roll, pitch, yaw), rad.
+    // Yaw is the one that matters: it is sideslip error one for one.
+    Eigen::Vector3d mounting_sigma = Eigen::Vector3d(0.035, 0.035, 0.035);
+    // Where sideslip and position are reported: the CG, or the rear axle. A
+    // definition, not estimated: no kinematic measurement singles out a point.
     Eigen::Vector3d reference_point = Eigen::Vector3d::Zero();
     // IMU to the primary antenna, as measured; estimated from here.
     Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero();
@@ -49,6 +54,34 @@ struct EstimatorConfig
     // matters -- it is the nominal baseline the boresight is estimated around.
     Eigen::Vector3d antenna2_lever_arm = Eigen::Vector3d(-1.0, 0.0, 0.0);
     double boresight_sigma = 0.02;  // rad, per axis
+
+    // ---- learning the installation -----------------------------------------
+    // The installation is a random walk, not a constant: one set of variables
+    // per segment, joined by these densities (units per sqrt(s)). Slow enough
+    // that nothing a car does in a lap moves it, fast enough that it never
+    // hardens and can follow an antenna that was knocked.
+    double calibration_segment = 1.0;       // s; at most half the lag
+    double mounting_walk = 1.5e-5;          // rad/sqrt(s), 0.05 deg/sqrt(h)
+    double lever_arm_walk = 8.3e-5;         // m/sqrt(s), 5 mm/sqrt(h)
+    double boresight_walk = 1.5e-5;         // rad/sqrt(s)
+
+    // What the mounting is learned from. Its roll and pitch: a parked body is
+    // level, to within the grade -- weak alone, good averaged over stops that
+    // face different ways. Its yaw and pitch: a body running straight and true
+    // does not slide or heave. That second one is an ASSUMPTION about the
+    // car, and a drift car breaks it on purpose, so its gate is strict and
+    // held: no factor comes from a moment that merely looks straight.
+    double straight_min_speed = 8.0;           // m/s
+    double straight_max_yaw_rate = 0.026;      // rad/s (1.5 deg/s)
+    double straight_max_lateral_accel = 0.5;   // m/s^2
+    double straight_hold = 2.0;                // s the gate must hold first
+    double straight_interval = 1.0;            // s between factors: the error is correlated
+    double straight_sigma = 0.0087;            // rad (0.5 deg): crosswind, crown, toe
+    double level_max_speed = 0.1;              // m/s
+    double level_max_rate = 0.0087;            // rad/s (0.5 deg/s)
+    double level_hold = 2.0;                   // s
+    double level_interval = 10.0;              // s between factors in one long stop
+    double level_sigma = 0.026;                // rad (1.5 deg): grade and camber
 
     // ---- GNSS ----------------------------------------------------------------
     // Sigma multiplier per FixQuality (none, autonomous, differential, float,

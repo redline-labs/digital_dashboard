@@ -120,4 +120,29 @@ struct VehicleEstimatorStatus {
   # GPS time minus IMU device time, as the arrival-time alignment has it.
   hasImuClockOffset @31 :Bool;
   imuClockOffsetS @32 :Float64;
+
+  # The mounting as learned: roll, pitch, yaw of the IMU in the body (the
+  # config's imu_to_body_rpy_deg convention), and its sigma about the body
+  # axes. Yaw error here is sideslip error.
+  mountingRollDeg @33 :Float64;
+  mountingPitchDeg @34 :Float64;
+  mountingYawDeg @35 :Float64;
+  mountingSigmaRollDeg @36 :Float64;
+  mountingSigmaPitchDeg @37 :Float64;
+  mountingSigmaYawDeg @38 :Float64;
+  # What it was learned from: seconds of straight, true running, and stops.
+  mountingStraightS @39 :Float64;
+  mountingLevelStops @40 :UInt32;
+
+  # Kept between sessions. FromDatabase: this session started from what an
+  # earlier one learned rather than from the config. Moved: the estimate has
+  # since walked far from it -- something was knocked or re-mounted.
+  calibrationStoreOk @41 :Bool;
+  mountingFromDatabase @42 :Bool;
+  leverArmFromDatabase @43 :Bool;
+  boresightFromDatabase @44 :Bool;
+  mountingMoved @45 :Bool;
+  leverArmMoved @46 :Bool;
+  boresightMoved @47 :Bool;
+  calibrationRowsWritten @48 :UInt32;
 }

@@ -224,11 +224,21 @@ discovery seeing only live traffic, and what `accepted: false` and
 - **A marginalised keyframe leaves a prior frozen where it was linearised.**
   `factor_graph::LinearPrior` keeps the first-estimate Jacobians; relinearising
   it lets the smoother invent information about directions it never observed,
-  and the covariance goes confidently wrong. Variables stamped `kStatic` (the
-  lever arm, the boresight) are never marginalised -- they would otherwise be
-  frozen at whatever the first window thought. The sparse LDLT is `compute()`d
+  and the covariance goes confidently wrong. The sparse LDLT is `compute()`d
   every iteration, not `factorize()`d on a cached pattern: the pattern changes
   when a keyframe goes, and a stale one read out of bounds.
+- **The installation is a prior that walks, and what it learned is kept by
+  hash.** Mounting, lever arm and boresight get new variables every segment,
+  joined by a random walk -- not `kStatic`, which only ever grows more certain
+  and cannot follow a knocked antenna. The mounting's yaw is learned from
+  "straight means no slip", so that gate stays strict; loosen it and a drift
+  teaches the mounting its slip angle. Rows in the calibration store are
+  matched by a hash of the configured MEANS per group (never the sigmas) and
+  are never deleted; `vehicle_estimator_test_calibration_policy` pins the hash
+  to values computed outside this code, and changing what is hashed needs a
+  model-version bump, or every car's history is orphaned. Test anything that
+  applies `R_b_i` on an asymmetric mounting: every half turn, the default MTi
+  one included, is its own inverse and hides a mounting used backwards.
 - **Course is not heading.** The car slides, so velocity direction says nothing
   about where the body points. The estimator initialises yaw from the
   dual-antenna baseline only and waits without one; never add a
@@ -424,7 +434,8 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     csym (constexpr symbolic Jacobians) + geodesy + wmm
                     (WMM-HR, parsed at compile time) + factor_graph (fixed-lag
                     and batch smoothers) + imu_preint + vehicle_estimator (the
-                    estimation problem, no bus) -- docs/design/state-estimation.md
+                    estimation problem, no bus) + calibration_store (what
+                    it learned, kept in SQLite) -- docs/design/state-estimation.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay

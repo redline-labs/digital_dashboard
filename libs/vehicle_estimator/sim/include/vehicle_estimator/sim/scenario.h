@@ -18,6 +18,7 @@
 #include <Eigen/Geometry>
 
 #include <memory>
+#include <optional>
 #include <random>
 #include <utility>
 #include <vector>
@@ -75,6 +76,53 @@ std::unique_ptr<VehicleMotion> figureEight(const FigureEightParams& p = {});
 // Parked for the whole duration.
 std::unique_ptr<VehicleMotion> parked(double duration);
 
+// A drive written as phases. Each eases -- C2, so the IMU truth stays exact --
+// from where the last one ended to its own speed, turns the course by `turn`,
+// and settles the body onto `pitch` and `roll` (a parked car on a grade, not a
+// climbing one). Slip is `slip_bias` held through the phase plus a bump of
+// `slip` that is zero at both ends: a corner taken sideways.
+struct Phase
+{
+    double duration = 1.0;
+    double speed = 0.0;      // m/s at the end
+    double turn = 0.0;       // rad of course change
+    double slip = 0.0;       // rad, peak of the bump
+    double slip_bias = 0.0;  // rad, held
+    double pitch = 0.0, roll = 0.0;  // rad, body attitude at the end
+};
+std::unique_ptr<VehicleMotion> scripted(std::vector<Phase> phases, double heading = 0.3);
+
+// Laps of a stadium: straights where the car runs true, half-turn corners
+// taken in a drift. What a mounting yaw is learned on.
+struct TrackParams
+{
+    double park = 5.0;
+    double launch = 6.0;
+    double speed = 22.0;
+    double straight = 6.0;       // s
+    double corner = 10.0;        // s per half turn
+    double corner_slip = 0.35;   // rad
+    double straight_slip = 0.0;  // rad, a car that crabs a little on the straights
+    int laps = 3;
+};
+std::unique_ptr<VehicleMotion> track(const TrackParams& p = {});
+
+// Drive, stop on a grade, wait, drive on at a new heading: what a mounting
+// roll and pitch are learned on. Grades and cambers alternate in sign, as a
+// real set of stops would roughly.
+struct StopAndGoParams
+{
+    double park = 5.0;
+    int stops = 6;
+    double speed = 12.0;
+    double drive = 8.0;  // s accelerating and turning
+    double brake = 4.0;
+    double hold = 8.0;   // s stopped
+    double grade = 0.03, camber = 0.02;  // rad
+    double turn = 1.3;   // rad of course change between stops
+};
+std::unique_ptr<VehicleMotion> stopAndGo(const StopAndGoParams& p = {});
+
 struct Truth
 {
     Eigen::Matrix3d R_n_b = Eigen::Matrix3d::Identity();
@@ -90,6 +138,14 @@ struct SensorModel
 {
     // Mounting, in the IMU frame (as the estimator's config states it).
     Eigen::Matrix3d R_b_i = (Eigen::Matrix3d() << 1, 0, 0, 0, -1, 0, 0, 0, -1).finished();
+    // The IMU knocked in its mount: from t, over `duration`, the true R_b_i
+    // turns by `yaw` about the body's down axis.
+    struct MountStep
+    {
+        double t = 0.0, duration = 0.5, yaw = 0.0;
+    };
+    std::optional<MountStep> mount_step;
+    Eigen::Matrix3d mountingAt(double t) const;
     Eigen::Vector3d reference_point = Eigen::Vector3d::Zero();
     Eigen::Vector3d lever_arm = Eigen::Vector3d(0.3, 0.0, 1.2);         // true, to antenna 1
     Eigen::Vector3d antenna2_lever_arm = Eigen::Vector3d(-1.2, 0.0, 1.2);  // true, to antenna 2

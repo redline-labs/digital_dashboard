@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 
 namespace vehicle_estimator
 {
@@ -94,16 +95,6 @@ std::size_t fixIndex(FixQuality f)
 
 // ---- keys ------------------------------------------------------------------
 
-Key Estimator::leverArmKey()
-{
-    return symbol('l', 0);
-}
-
-Key Estimator::boresightKey()
-{
-    return symbol('s', 0);
-}
-
 imu_preint::KeyframeKeys Estimator::keysFor(std::uint64_t index)
 {
     return {symbol('R', index), symbol('p', index), symbol('v', index), symbol('g', index), symbol('a', index)};
@@ -122,28 +113,26 @@ Estimator::Estimator(EstimatorConfig config)
       }()),
       sequencer_(config_.max_bridge_samples)
 {
+    // A segment's variables are stamped when it opens; one longer than the
+    // lag would be marginalised while keyframes were still being added to it.
+    if (!(config_.calibration_segment > 0.0) || config_.calibration_segment > 0.5 * config_.lag)
+        throw std::invalid_argument("calibration_segment must be positive and at most half the lag");
 }
 
 void Estimator::reset()
 {
-    if (status_.initialized)
-    {
-        const std::array<Key, 2> keys{leverArmKey(), boresightKey()};
-        if (const auto cov = fls_.jointCovariance(keys))
-        {
-            Calibration c;
-            c.lever_arm = status_.lever_arm;
-            c.lever_arm_cov = cov->block<3, 3>(0, 0);
-            c.boresight = status_.boresight;
-            c.boresight_cov = cov->block<2, 2>(3, 3);
-            carried_ = c;
-        }
-    }
+    if (status_.initialized && calibration_) carried_ = calibration_;
     factor_graph::FixedLagParams p;
     p.lag = config_.lag;
     p.lm = config_.lm;
     fls_ = factor_graph::FixedLagSmoother(p);
     newest_.reset();
+    segment_.reset();
+    straight_since_.reset();
+    last_straight_factor_.reset();
+    level_since_.reset();
+    last_level_factor_.reset();
+    level_counted_ = false;
     gated_run_ = {};
     status_.initialized = false;
     ++status_.resets;
@@ -461,11 +450,7 @@ bool Estimator::initialize(const GnssEpoch& e)
     const Eigen::Vector3d antenna_e =
         toE(geodesy::llhToEcef(geodesy::Llh<double>{e.position->lat, e.position->lon, e.position->h}));
     const Eigen::Vector3d omega_i = rateAt(e.gps_time);
-    Calibration cal;
-    cal.lever_arm = config_.lever_arm;
-    cal.lever_arm_cov = std::pow(config_.lever_arm_sigma, 2) * Eigen::Matrix3d::Identity();
-    cal.boresight_cov = std::pow(config_.boresight_sigma, 2) * Eigen::Matrix2d::Identity();
-    if (carried_) cal = *carried_;
+    const CalibrationSet cal = carried_ ? *carried_ : seeded_ ? *seeded_ : configuredCalibration(config_);
 
     const Eigen::Vector3d p_e = antenna_e - R_e_i * cal.lever_arm;
     Eigen::Vector3d v_e = Eigen::Vector3d::Zero();
@@ -481,8 +466,10 @@ bool Estimator::initialize(const GnssEpoch& e)
     values.insert(k.v, toC(v_e));
     values.insert(k.bg, toC(Eigen::Vector3d::Zero()));
     values.insert(k.ba, toC(Eigen::Vector3d::Zero()));
-    values.insert(leverArmKey(), toC(cal.lever_arm));
-    values.insert(boresightKey(), csym::Vector2<double>{cal.boresight.x(), cal.boresight.y()});
+    const Segment seg{next_segment_++, e.gps_time, calibrationKeys(next_segment_ - 1)};
+    values.insert(seg.keys.mounting, toC(cal.mounting));
+    values.insert(seg.keys.lever_arm, toC(cal.lever_arm));
+    values.insert(seg.keys.boresight, csym::Vector2<double>{cal.boresight.x(), cal.boresight.y()});
 
     // Priors deliberately loose wherever this epoch's own measurement
     // factors (added below) carry the information -- a tight prior built from
@@ -500,22 +487,21 @@ bool Estimator::initialize(const GnssEpoch& e)
                                  std::pow(config_.gyro_bias_prior, 2) * Eigen::Matrix3d::Identity(), "gyro bias prior"));
     f.push_back(factors::priorV3(k.ba, Eigen::Vector3d::Zero(),
                                  std::pow(config_.accel_bias_prior, 2) * Eigen::Matrix3d::Identity(), "accel bias prior"));
-    f.push_back(factors::priorV3(leverArmKey(), cal.lever_arm, cal.lever_arm_cov, "lever arm prior"));
-    f.push_back(factors::priorV2(boresightKey(), cal.boresight, cal.boresight_cov, "boresight prior"));
+    f.push_back(factors::calibrationPrior(seg.keys, cal));
 
     imu_preint::NavState predicted{R_e_i, p_e, v_e};
     Newest provisional;
     provisional.nav = predicted;
     provisional.omega_i = omega_i;
     newest_ = provisional;  // for measurementFactors' lever-arm terms and gating
-    const auto meas = measurementFactors(e, k, predicted, 0.0);
+    segment_ = seg;
+    const auto meas = measurementFactors(e, k, predicted, 0.0, cal);
     newest_.reset();
     f.insert(f.end(), meas.begin(), meas.end());
 
     std::map<Key, double> stamps;
-    for (Key key : {k.R, k.p, k.v, k.bg, k.ba}) stamps[key] = e.gps_time;
-    stamps[leverArmKey()] = factor_graph::kStatic;
-    stamps[boresightKey()] = factor_graph::kStatic;
+    for (Key key : {k.R, k.p, k.v, k.bg, k.ba, seg.keys.mounting, seg.keys.lever_arm, seg.keys.boresight})
+        stamps[key] = e.gps_time;
 
     const auto t0 = std::chrono::steady_clock::now();
     const auto report = fls_.update(f, values, stamps);
@@ -523,10 +509,14 @@ bool Estimator::initialize(const GnssEpoch& e)
     if (!report.ok)
     {
         ++status_.updates_refused;
+        segment_.reset();
         return false;
     }
     status_.last_optimize = report.optimize;
-    if (sink_) sink_(KeyframeRecord{e.gps_time, k, f, values, stamps, omega_i, forceAt(e.gps_time), e.fix, true});
+    ++status_.calibration_segments;
+    if (sink_)
+        sink_(KeyframeRecord{e.gps_time, k, f, values, stamps, omega_i, forceAt(e.gps_time), e.fix, true, seg.index,
+                             seg.start});
     status_.initialized = true;
     ++status_.keyframes;
     refreshNewest(e, index, k);
@@ -536,13 +526,13 @@ bool Estimator::initialize(const GnssEpoch& e)
 // ---- measurement factors -----------------------------------------------------------
 
 factor_graph::FactorList Estimator::measurementFactors(const GnssEpoch& e, const imu_preint::KeyframeKeys& k,
-                                                       const imu_preint::NavState& predicted, double dt)
+                                                       const imu_preint::NavState& predicted, double dt,
+                                                       const CalibrationSet& cal)
 {
     factor_graph::FactorList out;
+    const CalibrationKeys& ck = segment_->keys;
     const double scale = config_.fix_sigma_scale[fixIndex(e.fix)];
-    const Eigen::Vector3d la = fls_.estimate().contains(leverArmKey())
-                                   ? toE(fls_.estimate().at<V3c>(leverArmKey()))
-                                   : config_.lever_arm;
+    const Eigen::Vector3d& la = cal.lever_arm;
     const Eigen::Vector3d bg = newest_ ? newest_->bg : Eigen::Vector3d::Zero();
     const Eigen::Matrix3d R_e_i = predicted.R_e_b.toRotationMatrix();
 
@@ -581,7 +571,7 @@ factor_graph::FactorList Estimator::measurementFactors(const GnssEpoch& e, const
         const Eigen::Matrix3d cov_e = R_e_n * cov_ned * R_e_n.transpose();
         const Eigen::Vector3d nu = meas - (predicted.p_e + R_e_i * la);
         if (gate(0, nu, cov_e + P_p))
-            out.push_back(factors::gnssPosition(k.R, k.p, leverArmKey(), meas, cov_e, config_.robust_delta));
+            out.push_back(factors::gnssPosition(k.R, k.p, ck.lever_arm, meas, cov_e, config_.robust_delta));
         else
             ++status_.gated_position;
     }
@@ -599,7 +589,7 @@ factor_graph::FactorList Estimator::measurementFactors(const GnssEpoch& e, const
         const Eigen::Vector3d omega = rateAt(e.gps_time) - bg - R_e_i.transpose() * kOmegaIe;
         const Eigen::Vector3d nu = meas - (predicted.v_e + R_e_i * omega.cross(la));
         if (gate(1, nu, cov_e + P_v))
-            out.push_back(factors::gnssVelocity(k.R, k.v, leverArmKey(), meas, cov_e, omega, config_.robust_delta));
+            out.push_back(factors::gnssVelocity(k.R, k.v, ck.lever_arm, meas, cov_e, omega, config_.robust_delta));
         else
             ++status_.gated_velocity;
     }
@@ -612,10 +602,7 @@ factor_graph::FactorList Estimator::measurementFactors(const GnssEpoch& e, const
                                               config_.attitude_sigma_pitch * config_.attitude_sigma_pitch)
                                   .asDiagonal();
         if (e.attitude->cov) cov = *e.attitude->cov;
-        const Eigen::Vector2d bs = fls_.estimate().contains(boresightKey())
-                                       ? Eigen::Vector2d(fls_.estimate().at<csym::Vector2<double>>(boresightKey())[0],
-                                                         fls_.estimate().at<csym::Vector2<double>>(boresightKey())[1])
-                                       : Eigen::Vector2d::Zero();
+        const Eigen::Vector2d& bs = cal.boresight;
         const Eigen::Vector3d b_n = R_n_e * R_e_i * baseline_.direction(bs);
         const double yaw = std::atan2(b_n.y(), b_n.x());
         const double pitch = std::atan2(-b_n.z(), std::hypot(b_n.x(), b_n.y()));
@@ -624,7 +611,7 @@ factor_graph::FactorList Estimator::measurementFactors(const GnssEpoch& e, const
         // The prediction's own attitude uncertainty, in round terms.
         const Eigen::Matrix2d S = cov + std::pow(0.02 + 0.01 * dt, 2) * Eigen::Matrix2d::Identity();
         if (gate(2, nu, S))
-            out.push_back(factors::dualAntenna(k.R, boresightKey(), R_n_e, baseline_, e.attitude->yaw,
+            out.push_back(factors::dualAntenna(k.R, ck.boresight, R_n_e, baseline_, e.attitude->yaw,
                                                e.attitude->pitch, cov, config_.robust_delta));
         else
             ++status_.gated_attitude;
@@ -656,16 +643,18 @@ bool Estimator::addKeyframe(const GnssEpoch& e)
     values.insert(k.bg, toC(last.bg));
     values.insert(k.ba, toC(last.ba));
 
+    std::map<Key, double> stamps;
+    for (Key key : {k.R, k.p, k.v, k.bg, k.ba}) stamps[key] = e.gps_time;
+
     factor_graph::FactorList f;
     f.push_back(imu_preint::makeImuFactor(last.keys, k, pim.result(), g, kOmegaIe));
     f.push_back(imu_preint::makeBiasWalkFactor(last.keys.bg, k.bg, config_.gyro_bias_walk, dt, "gyro bias walk"));
     f.push_back(imu_preint::makeBiasWalkFactor(last.keys.ba, k.ba, config_.accel_bias_walk, dt, "accel bias walk"));
+    advanceSegment(e.gps_time, f, values, stamps);
+    mountingFactors(e.gps_time, k, predicted, f);
     const std::size_t n_imu = f.size();
-    const auto meas = measurementFactors(e, k, predicted, dt);
+    const auto meas = measurementFactors(e, k, predicted, dt, *calibration_);
     f.insert(f.end(), meas.begin(), meas.end());
-
-    std::map<Key, double> stamps;
-    for (Key key : {k.R, k.p, k.v, k.bg, k.ba}) stamps[key] = e.gps_time;
 
     const auto t0 = std::chrono::steady_clock::now();
     auto report = fls_.update(f, values, stamps);
@@ -685,10 +674,81 @@ bool Estimator::addKeyframe(const GnssEpoch& e)
     status_.last_solve_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     status_.last_optimize = report.optimize;
     if (sink_)
-        sink_(KeyframeRecord{e.gps_time, k, f, values, stamps, rateAt(e.gps_time), forceAt(e.gps_time), e.fix, false});
+        sink_(KeyframeRecord{e.gps_time, k, f, values, stamps, rateAt(e.gps_time), forceAt(e.gps_time), e.fix, false,
+                             segment_->index, segment_->start});
     ++status_.keyframes;
     refreshNewest(e, index, k);
     return true;
+}
+
+void Estimator::advanceSegment(double t, factor_graph::FactorList& f, factor_graph::Values& values,
+                               std::map<Key, double>& stamps)
+{
+    if (t - segment_->start < config_.calibration_segment) return;
+    const Segment next{next_segment_++, t, calibrationKeys(next_segment_ - 1)};
+    // Started where the old segment is now: the walk says it has barely moved.
+    const CalibrationSet& at = *calibration_;
+    values.insert(next.keys.mounting, toC(at.mounting));
+    values.insert(next.keys.lever_arm, toC(at.lever_arm));
+    values.insert(next.keys.boresight, csym::Vector2<double>{at.boresight.x(), at.boresight.y()});
+    f.push_back(factors::calibrationWalk(segment_->keys, next.keys, t - segment_->start, config_.mounting_walk,
+                                         config_.lever_arm_walk, config_.boresight_walk));
+    for (Key key : {next.keys.mounting, next.keys.lever_arm, next.keys.boresight}) stamps[key] = t;
+    segment_ = next;
+    ++status_.calibration_segments;
+}
+
+void Estimator::mountingFactors(double t, const imu_preint::KeyframeKeys& k, const imu_preint::NavState& predicted,
+                                factor_graph::FactorList& f)
+{
+    // Judged from the prediction, through the mounting as it now stands: a
+    // few degrees of mounting error change none of these by enough to matter.
+    const Eigen::Vector3d omega_raw = rateAt(t), f_raw = forceAt(t);
+    const VehicleState s = stateFrom(t, predicted.R_e_b, predicted.p_e, predicted.v_e, newest_->bg, newest_->ba,
+                                     omega_raw, f_raw, calibration_->mounting, std::nullopt, std::nullopt);
+    const Key mounting = segment_->keys.mounting;
+    const double dt = t - newest_->t;
+
+    const bool straight = s.v_body.x() > config_.straight_min_speed &&
+                          std::fabs(s.rate_body.z()) < config_.straight_max_yaw_rate &&
+                          std::fabs(s.accel_body.y()) < config_.straight_max_lateral_accel;
+    if (!straight)
+        straight_since_.reset();
+    else if (!straight_since_)
+        straight_since_ = t;
+    if (straight && t - *straight_since_ >= config_.straight_hold)
+    {
+        status_.mount_straight_s += dt;
+        if (!last_straight_factor_ || t - *last_straight_factor_ >= config_.straight_interval)
+        {
+            const Eigen::Matrix3d R_e_i = predicted.R_e_b.toRotationMatrix();
+            const Eigen::Vector3d omega = omega_raw - newest_->bg - R_e_i.transpose() * kOmegaIe;
+            f.push_back(factors::straightDriving(k.R, k.v, mounting, omega, config_.reference_point,
+                                                 config_.straight_sigma, config_.straight_sigma, config_.robust_delta));
+            last_straight_factor_ = t;
+        }
+    }
+
+    const bool still = s.v_body.norm() < config_.level_max_speed && s.rate_body.norm() < config_.level_max_rate;
+    if (!still)
+    {
+        level_since_.reset();
+        level_counted_ = false;
+    }
+    else if (!level_since_)
+    {
+        level_since_ = t;
+    }
+    if (still && t - *level_since_ >= config_.level_hold &&
+        (!last_level_factor_ || !level_counted_ || t - *last_level_factor_ >= config_.level_interval))
+    {
+        const auto llh = geodesy::ecefToLlh(toC(predicted.p_e));
+        f.push_back(factors::stationaryLevel(k.R, mounting, rotEcefFromNed(llh.lat, llh.lon).transpose(),
+                                             config_.level_sigma, config_.robust_delta));
+        last_level_factor_ = t;
+        if (!level_counted_) ++status_.mount_level_stops;
+        level_counted_ = true;
+    }
 }
 
 void Estimator::refreshNewest(const GnssEpoch& e, std::uint64_t index, const imu_preint::KeyframeKeys& k)
@@ -707,16 +767,27 @@ void Estimator::refreshNewest(const GnssEpoch& e, std::uint64_t index, const imu
     n.f_i = forceAt(e.gps_time);
     n.fix = e.fix;
 
-    const std::array<Key, 5> keys{k.R, k.p, k.v, leverArmKey(), boresightKey()};
+    const CalibrationKeys& ck = segment_->keys;
+    CalibrationSet cal = calibration_ ? *calibration_ : configuredCalibration(config_);
+    cal.mounting = toE(est.at<csym::Rot3<double>>(ck.mounting));
+    cal.lever_arm = toE(est.at<V3c>(ck.lever_arm));
+    const auto bs = est.at<csym::Vector2<double>>(ck.boresight);
+    cal.boresight = Eigen::Vector2d(bs[0], bs[1]);
+    const std::array<Key, 6> keys{k.R, k.p, k.v, ck.mounting, ck.lever_arm, ck.boresight};
     if (const auto cov = fls_.jointCovariance(keys))
     {
         n.cov_Rpv = cov->topLeftCorner(9, 9);
-        status_.lever_arm_sigma = cov->block<3, 3>(9, 9).diagonal().cwiseSqrt();
-        status_.boresight_sigma = cov->block<2, 2>(12, 12).diagonal().cwiseSqrt();
+        cal.cov = cov->block<kCalibrationDim, kCalibrationDim>(9, 9);
+        n.mounting_cov = cal.mountingCov();
     }
-    status_.lever_arm = toE(est.at<V3c>(leverArmKey()));
-    const auto bs = est.at<csym::Vector2<double>>(boresightKey());
-    status_.boresight = Eigen::Vector2d(bs[0], bs[1]);
+    calibration_ = cal;
+    n.R_b_i = cal.mounting;
+    status_.mounting_rpy = mountingRpy(cal.mounting);
+    status_.mounting_sigma = mountingSigmaBody(cal.mounting, cal.mountingCov());
+    status_.lever_arm = cal.lever_arm;
+    status_.lever_arm_sigma = cal.leverArmCov().diagonal().cwiseMax(0.0).cwiseSqrt();
+    status_.boresight = cal.boresight;
+    status_.boresight_sigma = cal.boresightCov().diagonal().cwiseMax(0.0).cwiseSqrt();
     status_.gyro_bias = n.bg;
     status_.accel_bias = n.ba;
     status_.window_variables = est.size();
@@ -729,12 +800,13 @@ void Estimator::refreshNewest(const GnssEpoch& e, std::uint64_t index, const imu
 VehicleState Estimator::stateFrom(double t, const Eigen::Quaterniond& q_e_i, const Eigen::Vector3d& p_e,
                                   const Eigen::Vector3d& v_e, const Eigen::Vector3d& bg, const Eigen::Vector3d& ba,
                                   const Eigen::Vector3d& omega_raw, const Eigen::Vector3d& f_raw,
-                                  const std::optional<Eigen::MatrixXd>& cov) const
+                                  const Eigen::Quaterniond& q_b_i, const std::optional<Eigen::MatrixXd>& cov,
+                                  const std::optional<Eigen::Matrix3d>& mounting_cov) const
 {
     VehicleState s;
     s.gps_time = t;
     const Eigen::Matrix3d R_e_i = q_e_i.toRotationMatrix();
-    const Eigen::Matrix3d& R_b_i = config_.R_b_i;
+    const Eigen::Matrix3d R_b_i = q_b_i.normalized().toRotationMatrix();
     const Eigen::Vector3d& r = config_.reference_point;
 
     // Angular rate relative to the earth, in the IMU frame.
@@ -772,7 +844,12 @@ VehicleState Estimator::stateFrom(double t, const Eigen::Quaterniond& q_e_i, con
     if (cov)
     {
         const Eigen::Matrix3d R_n_i = R_n_e * R_e_i;
-        const Eigen::Matrix3d att = R_n_i * cov->block<3, 3>(0, 0) * R_n_i.transpose();
+        const Eigen::Matrix3d att_nav = R_n_i * cov->block<3, 3>(0, 0) * R_n_i.transpose();
+        // The body's attitude is the IMU's through the mounting, so the
+        // mounting's uncertainty is the body's too -- and its yaw is sideslip.
+        // An IMU-frame tangent on R_b_i reaches NED through R_n_i.
+        Eigen::Matrix3d att = att_nav;
+        if (mounting_cov) att += R_n_i * *mounting_cov * R_n_i.transpose();
         // Small-tilt mapping: rotation about north, east, down reads as
         // roll, pitch, yaw error.
         s.sigma_attitude = att.diagonal().cwiseMax(0.0).cwiseSqrt();
@@ -786,7 +863,9 @@ VehicleState Estimator::stateFrom(double t, const Eigen::Quaterniond& q_e_i, con
             const double sv = std::sqrt(std::max(0.0, lateral_n.dot(cov_vn * lateral_n)));
             s.sigma_sideslip = std::hypot(sv / speed, s.sigma_attitude.z());
         }
-        s.valid = s.sigma_attitude.maxCoeff() < config_.valid_attitude_sigma &&
+        // Valid is about the navigation solution. A mounting still being
+        // learned widens the reported sigmas; it does not blank the output.
+        s.valid = att_nav.diagonal().cwiseMax(0.0).cwiseSqrt().maxCoeff() < config_.valid_attitude_sigma &&
                   s.sigma_position_ned.maxCoeff() < config_.valid_position_sigma;
     }
     return s;
@@ -796,7 +875,8 @@ std::optional<VehicleState> Estimator::keyframeState() const
 {
     if (!newest_) return std::nullopt;
     VehicleState s = stateFrom(newest_->t, newest_->nav.R_e_b, newest_->nav.p_e, newest_->nav.v_e, newest_->bg,
-                               newest_->ba, newest_->omega_i, newest_->f_i, newest_->cov_Rpv);
+                               newest_->ba, newest_->omega_i, newest_->f_i, newest_->R_b_i, newest_->cov_Rpv,
+                               newest_->mounting_cov);
     s.fix = newest_->fix;
     return s;
 }
@@ -812,7 +892,7 @@ std::optional<VehicleState> Estimator::latest() const
     const auto& last = imu_.back();
     VehicleState s = stateFrom(last.t1, nav.R_e_b, nav.p_e, nav.v_e, newest_->bg, newest_->ba,
                                imu_preint::rotationVector(last.inc.dq) / last.inc.dt, last.inc.dv / last.inc.dt,
-                               newest_->cov_Rpv);
+                               newest_->R_b_i, newest_->cov_Rpv, newest_->mounting_cov);
     s.fix = newest_->fix;
     return s;
 }

@@ -70,6 +70,43 @@ smoother:
           "mounting angles compose yaw-pitch-roll");
 }
 
+void testCalibration()
+{
+    NodeConfig c;
+    check(state_estimator::parse_node_config(R"(
+vehicle:
+  imu_to_body_sigma_deg: [1, 1, 3]
+calibration:
+  database: "${REDLINE_DATA_DIR}/cal.sqlite"
+  min_write_interval_s: 600
+  load_inflation: 9
+  segment_s: 0.5
+  mounting_walk_deg_per_sqrt_h: 0.6
+  lever_arm_walk_mm_per_sqrt_h: 6
+)",
+                                             c),
+          "a calibration section parses");
+    const auto e = state_estimator::estimatorConfig(c);
+    constexpr double kDeg = std::numbers::pi / 180.0;
+    check(std::fabs(e.mounting_sigma.z() - 3.0 * kDeg) < 1e-12, "mounting sigma arrives in radians");
+    check(std::fabs(e.mounting_walk - 0.01 * kDeg) < 1e-15, "0.6 deg/sqrt(h) is 0.01 deg/sqrt(s)");
+    check(std::fabs(e.lever_arm_walk - 1e-4) < 1e-15, "6 mm/sqrt(h) is 0.1 mm/sqrt(s)");
+    check(e.calibration_segment == 0.5, "segment length carried");
+    check(c.calibration.minWriteIntervalS == 600.0 && c.calibration.loadInflation == 9.0, "policy carried");
+
+    check(!parses("calibration:\n  load_inflation: 0.5\n"), "inflation below 1 would make a stored value MORE sure");
+    check(!parses("calibration:\n  min_write_interval_s: -1\n"), "a negative interval is refused");
+    check(!parses("smoother:\n  lag_s: 1.0\ncalibration:\n  segment_s: 0.6\n"),
+          "a segment longer than half the lag is refused");
+    check(!parses("calibration:\n  tighten_ratio: 1.0\n"), "a tighten ratio of 1 would write every tick");
+    check(!parses("calibration:\n  mounting_walk_deg_per_sqrt_h: 0\n"), "a zero walk is refused");
+    check(!parses("calibration:\n  moved_sigma: .nan\n"), "a non-finite sigma is refused");
+    check(!parses("vehicle:\n  imu_to_body_sigma_deg: [1, 0, 1]\n"), "a zero mounting sigma is refused");
+    check(!parses("calibration:\n  enabled: sometimes\n"), "enabled must be a boolean");
+    check(!parses("calibration:\n  database: ''\n"), "an empty database path is refused while enabled");
+    check(parses("calibration:\n  enabled: false\n  database: ''\n"), "but fine when disabled");
+}
+
 void testRefusals()
 {
     check(!parses("not: [a mapping"), "malformed YAML");
@@ -100,6 +137,7 @@ int main()
     testShipped();
     testUnits();
     testRefusals();
+    testCalibration();
     if (failures)
     {
         SPDLOG_ERROR("{} failure(s)", failures);

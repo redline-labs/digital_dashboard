@@ -6,15 +6,17 @@
 //
 // Each GNSS epoch becomes a keyframe -- attitude, position, velocity and both
 // IMU biases at that instant -- tied to the previous keyframe by the IMU
-// preintegrated between them. Two static variables live for the whole run:
-// the IMU-to-antenna lever arm and the antenna baseline's boresight, both
-// observable once the car turns. Output between keyframes is the newest
+// preintegrated between them. The installation -- how the IMU is mounted in
+// the body, the IMU-to-antenna lever arm and the antenna baseline's boresight
+// -- is learned alongside, as a slow random walk from its prior (see
+// calibration.h). Output between keyframes is the newest
 // keyframe carried forward through the IMU samples since, so the rate is the
 // IMU's while the smoothing is the GNSS's.
 //
 // Nothing here knows about zenoh or capnp; the node and the offline tool
 // decode into measurements.h and call in.
 
+#include "vehicle_estimator/calibration.h"
 #include "vehicle_estimator/clock.h"
 #include "vehicle_estimator/config.h"
 #include "vehicle_estimator/factors.h"
@@ -57,6 +59,14 @@ struct EstimatorStatus
 
     Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero(), lever_arm_sigma = Eigen::Vector3d::Zero();
     Eigen::Vector2d boresight = Eigen::Vector2d::Zero(), boresight_sigma = Eigen::Vector2d::Zero();
+    // R_b_i as roll, pitch, yaw (the config's convention) and its sigma about
+    // the body axes.
+    Eigen::Vector3d mounting_rpy = Eigen::Vector3d::Zero(), mounting_sigma = Eigen::Vector3d::Zero();
+    std::uint64_t calibration_segments = 0;
+    // What the mounting has been learned from: seconds of straight, true
+    // running, and stops.
+    double mount_straight_s = 0.0;
+    std::uint64_t mount_level_stops = 0;
     Eigen::Vector3d gyro_bias = Eigen::Vector3d::Zero(), accel_bias = Eigen::Vector3d::Zero();
     std::optional<double> imu_clock_offset;  // gps - imu device time
 };
@@ -76,10 +86,13 @@ struct KeyframeRecord
     Eigen::Vector3d omega_i = Eigen::Vector3d::Zero();
     Eigen::Vector3d f_i = Eigen::Vector3d::Zero();
     FixQuality fix = FixQuality::none;
-    // True for the first keyframe after a (re)start. Its priors on the static
-    // variables restate what the smoother had learned; a batch over the whole
-    // drive already has that information and must not count it twice.
+    // True for the first keyframe after a (re)start. Its calibration prior
+    // restates what the smoother had learned; a batch over the whole drive
+    // already has that information and must not count it twice.
     bool start = false;
+    // The calibration segment this keyframe's factors use, and when it began.
+    std::uint64_t segment = 0;
+    double segment_start = 0.0;
 };
 
 class Estimator
@@ -113,15 +126,21 @@ class Estimator
 
     void setKeyframeSink(std::function<void(const KeyframeRecord&)> sink) { sink_ = std::move(sink); }
 
+    // The installation prior for the next start, in place of the config's:
+    // what an earlier session learned. A reset within this session still
+    // carries over what THIS session learned, which takes precedence.
+    void seedCalibration(const CalibrationSet& prior) { seeded_ = prior; }
+    // The installation as the newest segment has it, with its covariance.
+    const std::optional<CalibrationSet>& calibration() const { return calibration_; }
+
     // Turns a state estimate (one keyframe's variables) into the outputs, for
     // the offline smoother, which has its own estimates of every keyframe.
     VehicleState stateFrom(double t, const Eigen::Quaterniond& R_e_i, const Eigen::Vector3d& p_e,
                            const Eigen::Vector3d& v_e, const Eigen::Vector3d& bg, const Eigen::Vector3d& ba,
                            const Eigen::Vector3d& omega_i, const Eigen::Vector3d& f_i,
-                           const std::optional<Eigen::MatrixXd>& cov_Rpv) const;
+                           const Eigen::Quaterniond& R_b_i, const std::optional<Eigen::MatrixXd>& cov_Rpv,
+                           const std::optional<Eigen::Matrix3d>& mounting_cov) const;
 
-    static factor_graph::Key leverArmKey();
-    static factor_graph::Key boresightKey();
     static imu_preint::KeyframeKeys keysFor(std::uint64_t index);
 
   private:
@@ -141,6 +160,8 @@ class Estimator
         imu_preint::NavState nav;
         Eigen::Vector3d bg = Eigen::Vector3d::Zero(), ba = Eigen::Vector3d::Zero();
         std::optional<Eigen::MatrixXd> cov_Rpv;  // 9x9, [R, p, v]
+        Eigen::Quaterniond R_b_i = Eigen::Quaterniond::Identity();
+        std::optional<Eigen::Matrix3d> mounting_cov;
         Eigen::Vector3d omega_i = Eigen::Vector3d::Zero(), f_i = Eigen::Vector3d::Zero();
         FixQuality fix = FixQuality::none;
     };
@@ -155,7 +176,8 @@ class Estimator
     // Measurement factors for keyframe `keys` at epoch `e`, gated against the
     // predicted state.
     factor_graph::FactorList measurementFactors(const GnssEpoch& e, const imu_preint::KeyframeKeys& keys,
-                                                const imu_preint::NavState& predicted, double dt_since_last);
+                                                const imu_preint::NavState& predicted, double dt_since_last,
+                                                const CalibrationSet& calibration);
     void refreshNewest(const GnssEpoch& e, std::uint64_t index, const imu_preint::KeyframeKeys& keys);
     Eigen::Vector3d rateAt(double t) const;       // raw gyro rate, IMU frame
     Eigen::Vector3d forceAt(double t) const;      // raw specific force, IMU frame
@@ -183,17 +205,35 @@ class Estimator
     };
     std::optional<LastVelocity> last_velocity_;
 
-    // What the car taught the last run of the smoother about itself. A reset
-    // (a gap the IMU cannot bridge) loses the state, not the calibration: the
-    // lever arm and boresight carry into the next start as its priors.
-    struct Calibration
+    // The calibration segment the newest keyframes use.
+    struct Segment
     {
-        Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero();
-        Eigen::Matrix3d lever_arm_cov = Eigen::Matrix3d::Identity();
-        Eigen::Vector2d boresight = Eigen::Vector2d::Zero();
-        Eigen::Matrix2d boresight_cov = Eigen::Matrix2d::Identity();
+        std::uint64_t index = 0;
+        double start = 0.0;
+        CalibrationKeys keys;
     };
-    std::optional<Calibration> carried_;
+    std::optional<Segment> segment_;
+    std::uint64_t next_segment_ = 0;
+    // Opens the segment keyframe time t belongs in, if the current one has
+    // run its length: new variables started at the old estimate, and the walk
+    // factor between them.
+    void advanceSegment(double t, factor_graph::FactorList& f, factor_graph::Values& values,
+                        std::map<factor_graph::Key, double>& stamps);
+
+    // What the car taught the last run of the smoother about itself. A reset
+    // (a gap the IMU cannot bridge) loses the state, not the calibration: it
+    // carries into the next start as the prior, ahead of anything seeded.
+    std::optional<CalibrationSet> carried_;
+    std::optional<CalibrationSet> seeded_;
+    std::optional<CalibrationSet> calibration_;
+
+    // The mounting's two pseudo-measurements, gated on how the car is moving
+    // (see config.h), for keyframe `k` at time t with the predicted state.
+    void mountingFactors(double t, const imu_preint::KeyframeKeys& k, const imu_preint::NavState& predicted,
+                         factor_graph::FactorList& f);
+    std::optional<double> straight_since_, last_straight_factor_;
+    std::optional<double> level_since_, last_level_factor_;
+    bool level_counted_ = false;
 
     // Consecutive gated epochs, per measurement: position, velocity, attitude.
     std::array<std::size_t, 3> gated_run_{};

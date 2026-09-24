@@ -54,6 +54,11 @@ inline vehicle_estimator::EstimatorConfig configFor(const vehicle_estimator::sim
 {
     vehicle_estimator::EstimatorConfig c;
     c.R_b_i = s.R_b_i;
+    // The mounting given here is the exact truth, so it is stated as known --
+    // navigation yaw is good to a few hundredths of a degree, and any honest
+    // mounting sigma would swamp it in the consistency test;
+    // the calibration tests widen it where they perturb it.
+    c.mounting_sigma = Eigen::Vector3d::Constant(1e-5);
     c.reference_point = s.reference_point;
     c.lever_arm = s.lever_arm;
     c.antenna2_lever_arm = s.antenna2_lever_arm;
@@ -127,10 +132,13 @@ inline void report(const std::string& label, const Run& r)
                 e.sideslip / kDeg, e.sideslip_scored, e.worst_sideslip_time, e.worst_z_sideslip);
     const auto& s = r.status;
     SPDLOG_INFO("{}: keyframes {} resets {} gated p/v/a {}/{}/{} refused {} imu bridged {} discarded {} gnss late {} "
-                "timed out {}; lever arm [{:.3f} {:.3f} {:.3f}] boresight [{:.4f} {:.4f}] solve {:.2f} ms",
+                "timed out {}; lever arm [{:.3f} {:.3f} {:.3f}] boresight [{:.4f} {:.4f}] mounting [{:.3f} {:.3f} "
+                "{:.3f}] deg sigma [{:.3f} {:.3f} {:.3f}] deg, {} segments, solve {:.2f} ms",
                 label, s.keyframes, s.resets, s.gated_position, s.gated_velocity, s.gated_attitude, s.updates_refused,
                 s.imu_bridged, s.imu_discarded, s.gnss_late, s.gnss_timed_out, s.lever_arm.x(), s.lever_arm.y(),
-                s.lever_arm.z(), s.boresight.x(), s.boresight.y(), s.last_solve_ms);
+                s.lever_arm.z(), s.boresight.x(), s.boresight.y(), s.mounting_rpy.x() / kDeg,
+                s.mounting_rpy.y() / kDeg, s.mounting_rpy.z() / kDeg, s.mounting_sigma.x() / kDeg,
+                s.mounting_sigma.y() / kDeg, s.mounting_sigma.z() / kDeg, s.calibration_segments, s.last_solve_ms);
 }
 
 }  // namespace harness

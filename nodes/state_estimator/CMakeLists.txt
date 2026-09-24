@@ -12,6 +12,7 @@ project(state_estimator)
 # driven through Pipeline -- the same object the node, --replay and the tests
 # run. What is left here is subscriptions, threads and lifecycle.
 add_library(state_estimator_core STATIC
+    calibration_keeper.cpp
     decode.cpp
     gnss_assembler.cpp
     imu_assembler.cpp
@@ -25,6 +26,8 @@ target_include_directories(state_estimator_core PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(state_estimator_core
     PUBLIC
         vehicle_estimator
+        calibration_store
+        core
         zenoh_pub_sub
         schemas
         capnp
@@ -73,3 +76,10 @@ state_estimator_test(pipeline state_estimator_sim_bus)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET state_estimator COMPONENT nodes)
+
+# What was learned, kept between sessions in a real SQLite file: five
+# simulated drives through Pipeline and CalibrationKeeper. Minutes of driving,
+# so `slow`.
+add_executable(state_estimator_test_calibration_persistence tests/test_calibration_persistence.cpp)
+target_link_libraries(state_estimator_test_calibration_persistence PRIVATE state_estimator_core state_estimator_sim_bus)
+add_project_test(TARGET state_estimator_test_calibration_persistence LABELS state_estimator slow TIMEOUT 900)

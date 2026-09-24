@@ -21,6 +21,7 @@
 #include "state_fields.h"
 #include "vehicle_state.capnp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -52,6 +53,19 @@ std::unique_ptr<sim::VehicleMotion> motion(const std::string& name, double drive
         return sim::figureEight(p);
     }
     if (name == "parked") return sim::parked(drive);
+    if (name == "track")
+    {
+        // Laps of straights and drifted corners, as many as fit the drive.
+        sim::TrackParams p;
+        p.laps = std::max(1, static_cast<int>(drive / (2.0 * (p.straight + p.corner))));
+        return sim::track(p);
+    }
+    if (name == "stopandgo")
+    {
+        sim::StopAndGoParams p;
+        p.stops = std::max(1, static_cast<int>(drive / (p.drive + p.brake + p.hold + 3.0)));
+        return sim::stopAndGo(p);
+    }
     return nullptr;
 }
 
@@ -67,7 +81,7 @@ int main(int argc, char** argv)
     core::setupLogging({.program = "estimator_sim"});
     cxxopts::Options options("estimator_sim", "Record a simulated drive for the state estimator");
     options.add_options()("o,out", "Bag directory to write", cxxopts::value<std::string>())(
-        "scenario", "skidpad | spin | figure8 | parked", cxxopts::value<std::string>()->default_value("skidpad"))(
+        "scenario", "skidpad | spin | figure8 | parked | track | stopandgo", cxxopts::value<std::string>()->default_value("skidpad"))(
         "drive", "Seconds of driving after the start", cxxopts::value<double>()->default_value("40"))(
         "seed", "Noise seed", cxxopts::value<unsigned>()->default_value("1"))(
         "outage", "A GNSS outage, 'from:to' in seconds", cxxopts::value<std::string>())("h,help", "Help");

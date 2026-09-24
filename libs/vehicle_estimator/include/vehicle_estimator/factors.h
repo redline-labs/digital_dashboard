@@ -9,6 +9,8 @@
 // Variables: R = R_e_i (Rot3), p and v = IMU position and velocity in ECEF,
 // la = IMU-to-antenna-1 lever arm in the IMU frame, bs = boresight (2-vector).
 
+#include "vehicle_estimator/calibration.h"
+
 #include "factor_graph/factor.h"
 #include "factor_graph/key.h"
 
@@ -48,6 +50,23 @@ struct Baseline
 // The baseline's yaw and pitch in the local NED frame, R_n_e at the vehicle.
 FactorPtr dualAntenna(Key R, Key bs, const Eigen::Matrix3d& R_n_e, const Baseline& baseline, double yaw,
                       double pitch, const Eigen::Matrix2d& cov, double robust_delta);
+
+// The body moves along its own x axis: [sideslip, heave angle] of the
+// reference point's velocity, through the mounting m = R_b_i. Only for
+// keyframes the estimator has judged straight and true (see config.h).
+FactorPtr straightDriving(Key R, Key v, Key mounting, const Eigen::Vector3d& omega_i, const Eigen::Vector3d& r_ref,
+                          double sigma_slip, double sigma_heave, double robust_delta);
+
+// A parked body is level: [roll, pitch] of R_n_e R_e_i R_b_i^T.
+FactorPtr stationaryLevel(Key R, Key mounting, const Eigen::Matrix3d& R_n_e, double sigma, double robust_delta);
+
+// The installation's first segment, from its prior (config, database, or
+// what a previous run of the smoother learned).
+FactorPtr calibrationPrior(const CalibrationKeys& keys, const CalibrationSet& prior);
+
+// Segment to segment: a random walk of each part at its own density.
+FactorPtr calibrationWalk(const CalibrationKeys& from, const CalibrationKeys& to, double dt, double mounting_walk,
+                          double lever_arm_walk, double boresight_walk);
 
 FactorPtr priorRot(Key R, const Eigen::Quaterniond& mean, const Eigen::Matrix3d& cov);
 FactorPtr priorV3(Key x, const Eigen::Vector3d& mean, const Eigen::Matrix3d& cov, const char* name);

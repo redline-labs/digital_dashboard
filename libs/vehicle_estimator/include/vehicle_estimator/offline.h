@@ -30,6 +30,14 @@ class OfflineSmoother
     struct Result
     {
         std::vector<VehicleState> states;  // one per keyframe, in time order
+        // The installation per calibration segment, in time order: how the
+        // mounting, lever arm and boresight moved over the drive, smoothed.
+        struct Calibration
+        {
+            double t = 0.0;  // when the segment began
+            CalibrationSet set;
+        };
+        std::vector<Calibration> calibration;
         factor_graph::OptimizeReport report;
         std::size_t refused = 0;  // records the batch could not take
     };
@@ -45,11 +53,19 @@ class OfflineSmoother
         imu_preint::KeyframeKeys keys;
         Eigen::Vector3d omega_i, f_i;
         FixQuality fix;
+        std::uint64_t segment;
+    };
+    struct Segment
+    {
+        std::uint64_t index;
+        double start;
     };
 
     Estimator view_;  // for stateFrom(): the same outputs, from the batch's variables
     factor_graph::BatchSmoother batch_;
     std::vector<Kept> records_;
+    std::vector<Segment> segments_;
+    EstimatorConfig config_;
     std::size_t refused_ = 0;
 };
 

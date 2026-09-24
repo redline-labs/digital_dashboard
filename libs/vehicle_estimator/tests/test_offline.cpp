@@ -136,6 +136,49 @@ void testRestart()
     check(c.batch.position < 0.10 && c.batch.yaw < 0.5 * kDeg, "both halves solved");
 }
 
+void testCalibrationHistory()
+{
+    // The lever arm configured 5 cm out. The forward pass starts at the prior
+    // and learns it as the car turns; the batch has the whole drive, and the
+    // walk carries what was learned late back to the first segment. With the
+    // segments not joined, the first would sit at its prior in both.
+    sim::SensorModel sensors;
+    sensors.seed = 44;
+    sim::Scenario sc(sim::figureEight(), sensors);
+    auto config = harness::configFor(sensors);
+    config.lever_arm += Eigen::Vector3d(0.05, 0.0, 0.0);
+    config.lever_arm_sigma = 0.1;
+
+    vehicle_estimator::Estimator est(config);
+    vehicle_estimator::OfflineSmoother offline(config);
+    est.setKeyframeSink([&](const vehicle_estimator::KeyframeRecord& r) { offline.add(r); });
+    harness::run(sc, est, 0.0);
+    const auto result = offline.solve();
+
+    const auto& h = result.calibration;
+    const double drive = sc.duration();
+    SPDLOG_INFO("calibration history: {} segments over {:.0f} s; first lever arm error {:.4f} m, last {:.4f} m",
+                h.size(), drive, h.empty() ? 0.0 : (h.front().set.lever_arm - sensors.lever_arm).norm(),
+                h.empty() ? 0.0 : (h.back().set.lever_arm - sensors.lever_arm).norm());
+    check(h.size() + 5 >= static_cast<std::size_t>(drive / config.calibration_segment) - 5,
+          "about one segment per second of drive");
+    bool increasing = true;
+    for (std::size_t i = 1; i < h.size(); ++i) increasing = increasing && h[i].t > h[i - 1].t;
+    check(increasing, "segments in time order");
+    check(!h.empty() && (h.back().set.lever_arm - sensors.lever_arm).norm() < 0.01, "the lever arm is learned");
+    check(!h.empty() && (h.front().set.lever_arm - sensors.lever_arm).norm() < 0.01,
+          "and the batch carries it back to the start of the drive");
+    if (!h.empty())
+    {
+        const Eigen::Vector3d sigma = h.back().set.leverArmCov().diagonal().cwiseSqrt();
+        const Eigen::Vector3d err = h.back().set.lever_arm - sensors.lever_arm;
+        SPDLOG_INFO("lever arm sigma [{:.4f} {:.4f} {:.4f}] m, error [{:.4f} {:.4f} {:.4f}] m", sigma.x(), sigma.y(),
+                    sigma.z(), err.x(), err.y(), err.z());
+        check(sigma.x() < 0.01 && std::fabs(err.x()) < 3.0 * sigma.x(),
+              "with a covariance that says so, along the axis that was wrong");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -143,6 +186,7 @@ int main()
     testWholeDrive();
     testOutage();
     testRestart();
+    testCalibrationHistory();
     if (harness::failures)
     {
         SPDLOG_ERROR("{} failure(s)", harness::failures);

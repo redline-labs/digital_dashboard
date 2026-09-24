@@ -8,13 +8,16 @@
 
 #include "vehicle_state.capnp.h"
 
+#include "calibration_keeper.h"
+
 #include "vehicle_estimator/estimator.h"
 
 namespace state_estimator
 {
 
 void fill(::VehicleState::Builder out, const vehicle_estimator::VehicleState& in);
-void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::EstimatorStatus& in);
+void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::EstimatorStatus& in,
+          const CalibrationReport& calibration = {});
 
 }  // namespace state_estimator
 

@@ -41,7 +41,7 @@ the value calibrated in `configs/state_estimator/state_estimator.yaml`.
 | Option | Default | |
 | --- | --- | --- |
 | `-o, --out <dir>` | required | Bag directory to write. |
-| `--scenario <name>` | `skidpad` | `skidpad`, `spin`, `figure8` or `parked`. |
+| `--scenario <name>` | `skidpad` | `skidpad`, `spin`, `figure8`, `parked`, `track` or `stopandgo`. |
 | `--drive <s>` | `40` | Seconds of driving after the start. |
 | `--seed <n>` | `1` | Sensor-noise seed. |
 | `--outage <from:to>` | none | A GNSS outage, in seconds from the start. |
@@ -56,7 +56,10 @@ a stationary accelerometer. `skidpad` then launches round a 40 m circle to
 18 m/s and swings the slip angle between about 3° and 26° every 8 s; `spin`
 is the same and ends by rotating the nose past 90° of slip; `figure8` drifts a
 figure of eight with slip up to about 29° that changes sign at the crossing;
-`parked` does not move.
+`parked` does not move. `track` laps a stadium at 22 m/s, straights run true
+and corners drifted at up to 20° of slip, which is what a mounting yaw is
+learned on; `stopandgo` drives, stops on a small grade for 8 s, and drives on
+at a new heading, which is what mounting roll and pitch are learned on.
 
 ### estimator_offline
 

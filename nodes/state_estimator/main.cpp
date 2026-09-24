@@ -19,10 +19,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "core/core.h"
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/chrono.h>
 
 #include <cxxopts.hpp>
 
@@ -34,6 +36,7 @@
 #include "vehicle_state.capnp.h"
 
 #include "node_config.h"
+#include "calibration_keeper.h"
 #include "pipeline.h"
 #include "state_fields.h"
 
@@ -108,9 +111,9 @@ class Outputs
         }
     }
 
-    void status(const vehicle_estimator::EstimatorStatus& s)
+    void status(const vehicle_estimator::EstimatorStatus& s, const state_estimator::CalibrationReport& c = {})
     {
-        state_estimator::fill(status_.fields(), s);
+        state_estimator::fill(status_.fields(), s, c);
         status_.put();
     }
 
@@ -121,7 +124,39 @@ class Outputs
     std::uint64_t count_ = 0;
 };
 
-int replay(const state_estimator::NodeConfig& config, const std::string& path)
+std::string sessionId()
+{
+    const auto now = std::chrono::system_clock::now();
+    return fmt::format("{:%Y%m%dT%H%M%S}-{}", std::chrono::floor<std::chrono::seconds>(now), ::getpid());
+}
+
+// The calibration health: whether what is learned is being kept, and whether
+// anything has moved since it was.
+void calibrationHealth(node_health::HealthReporter& health, const state_estimator::CalibrationReport& c, bool enabled)
+{
+    static constexpr std::array<const char*, 3> kNames{"mounting", "lever arm", "boresight"};
+    if (!enabled)
+    {
+        health.setCheck("calibration", node_health::State::ok, "not kept (disabled in the config)");
+        return;
+    }
+    if (!c.store_open)
+    {
+        health.setCheck("calibration", node_health::State::degraded, "not kept: " + c.store_error);
+        return;
+    }
+    for (std::size_t i = 0; i < kNames.size(); ++i)
+        if (c.moved[i])
+        {
+            health.setCheck("calibration", node_health::State::degraded,
+                            fmt::format("{} is {:.1f} sigma from last session's: moved?", kNames[i], c.moved_by[i]));
+            return;
+        }
+    health.setCheck("calibration", node_health::State::ok, fmt::format("{} rows written", c.rows_written));
+}
+
+int replay(const state_estimator::NodeConfig& config, const std::string& path,
+           const std::optional<std::string>& calibration_db)
 {
     bag::BagReader reader(path);
     if (!reader.isValid())
@@ -131,16 +166,35 @@ int replay(const state_estimator::NodeConfig& config, const std::string& path)
     }
     state_estimator::Pipeline pipeline(config);
     Outputs outputs(config);
-    std::uint64_t used = 0, states = 0;
+    // A replay reads and writes the calibration store only when told which:
+    // an old recording must not quietly add rows to the car's live history.
+    std::optional<state_estimator::CalibrationKeeper> keeper;
+    if (calibration_db)
+    {
+        keeper.emplace(config, sessionId() + "-replay");
+        if (!keeper->open(*calibration_db))
+        {
+            SPDLOG_ERROR("calibration store {}: {}", *calibration_db, keeper->report().store_error);
+            return 1;
+        }
+        keeper->seed(pipeline.estimator());
+    }
+    std::uint64_t used = 0, states = 0, seen = 0;
     reader.forEach([&](const bag::BagMessage& m) {
         const double arrival = static_cast<double>(m.log_time_ns) * 1e-9;
         if (pipeline.onMessage(m.schema, m.payload, arrival) == state_estimator::Fed::used) ++used;
         const auto out = pipeline.advance(arrival);
         states += out.size();
         outputs.states(out);
+        if (keeper && pipeline.estimator().status().keyframes != seen)
+        {
+            seen = pipeline.estimator().status().keyframes;
+            keeper->tick(pipeline.estimator());
+        }
         return gRunning.load();
     });
-    outputs.status(pipeline.estimator().status());
+    if (keeper) keeper->tick(pipeline.estimator(), true);
+    outputs.status(pipeline.estimator().status(), keeper ? keeper->report() : state_estimator::CalibrationReport{});
     const auto& st = pipeline.estimator().status();
     SPDLOG_INFO("replay: {} messages used, {} malformed; {} keyframes, {} states, {} resets", used,
                 pipeline.malformed(), st.keyframes, states, st.resets);
@@ -158,6 +212,8 @@ int main(int argc, char** argv)
                                                           "configs/state_estimator/state_estimator.yaml"))(
         "check", "Validate the config and exit")("replay", "Run over a bag directory instead of the bus",
                                                   cxxopts::value<std::string>())(
+        "calibration-db", "With --replay: the calibration store to read and write (none by default)",
+        cxxopts::value<std::string>())(
         "debug", "Debug logging")("h,help", "Help");
     cxxopts::ParseResult args;
     try
@@ -190,7 +246,15 @@ int main(int argc, char** argv)
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
-    if (args.count("replay")) return replay(config, args["replay"].as<std::string>());
+    if (args.count("replay"))
+        return replay(config, args["replay"].as<std::string>(),
+                      args.count("calibration-db") ? std::optional(args["calibration-db"].as<std::string>())
+                                                   : std::nullopt);
+    if (args.count("calibration-db"))
+    {
+        SPDLOG_ERROR("--calibration-db is for --replay; the live node uses calibration.database from the config");
+        return 2;
+    }
 
     node_health::HealthReporter health("state_estimator");
     auto& imu_seen = health.addActivityCheck("imu", std::chrono::milliseconds(200));
@@ -208,6 +272,22 @@ int main(int argc, char** argv)
     std::thread worker([&] {
         state_estimator::Pipeline pipeline(config);
         Outputs outputs(config);
+        state_estimator::CalibrationKeeper keeper(config, sessionId());
+        if (config.calibration.enabled)
+        {
+            const auto db = state_estimator::CalibrationKeeper::databasePath(config);
+            if (keeper.open(db))
+            {
+                SPDLOG_INFO("calibration kept in {}", db.string());
+                keeper.seed(pipeline.estimator());
+            }
+            else
+            {
+                SPDLOG_ERROR("calibration store {}: {}; running on the config's priors", db.string(),
+                             keeper.report().store_error);
+            }
+        }
+        calibrationHealth(health, keeper.report(), config.calibration.enabled);
         auto next_status = std::chrono::steady_clock::now();
         while (gRunning.load())
         {
@@ -219,7 +299,9 @@ int main(int argc, char** argv)
             if (now < next_status) continue;
             next_status = now + std::chrono::seconds(1);
             const auto& st = pipeline.estimator().status();
-            outputs.status(st);
+            keeper.tick(pipeline.estimator());
+            outputs.status(st, keeper.report());
+            calibrationHealth(health, keeper.report(), config.calibration.enabled);
             const auto latest = pipeline.estimator().latest();
             if (!st.initialized)
                 health.setCheck("estimate", node_health::State::degraded, "waiting for a dual-antenna heading");
@@ -232,6 +314,8 @@ int main(int argc, char** argv)
             health.setCheck("solve", st.last_solve_ms < 80.0 ? node_health::State::ok : node_health::State::degraded,
                             fmt::format("{:.1f} ms", st.last_solve_ms));
         }
+        // The last chance to keep what this session learned.
+        keeper.tick(pipeline.estimator(), true);
     });
 
     // Declared after the worker's captures and before the loop; destroyed

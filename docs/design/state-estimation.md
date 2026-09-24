@@ -54,14 +54,14 @@ approximation that has to be re-anchored.
 
 Per keyframe (one per GNSS epoch, 10 Hz) the state is the IMU's attitude
 `R_e_i`, its position and velocity in ECEF, and the gyro and accelerometer
-biases: 15 degrees of freedom. Two static variables sit beside them for the
-life of the smoother: the lever arm from the IMU to the primary antenna, in
-the IMU frame (3), and the boresight of the antenna baseline relative to the
-IMU, as yaw and pitch offsets (2).
+biases: 15 degrees of freedom. Beside them is the installation, one set per
+one-second segment: the IMU's mounting rotation into the body (3), the lever
+arm from the IMU to the primary antenna in the IMU frame (3), and the
+boresight of the antenna baseline relative to the IMU as yaw and pitch
+offsets (2). See [Learned calibration](#learned-calibration).
 
-The body frame is SAE J670: x forward, y right, z down (FRD). The IMU's
-mounting rotation into it and the reference point (the CG, or the rear axle)
-are configured. Outputs are reported at the reference point, with attitude
+The body frame is SAE J670: x forward, y right, z down (FRD). The reference
+point (the CG, or the rear axle) is configured. Outputs are reported at the reference point, with attitude
 and velocity in local NED. Sideslip is `β = atan2(v_y, v_x)` of the body
 velocity at the reference point, positive to the right, and flagged invalid
 below 2 m/s, where it has no meaning.
@@ -114,13 +114,17 @@ frozen point, and the point never moves.
 ## What cannot be observed
 
 Some of the car's description is a definition, not a measurement. The
-reference point and the IMU-to-body rotation cannot be recovered from IMU and
-GNSS: moving the reference point or rotating the body frame gives a different
-but equally consistent answer. So they are configured, and a wrong one is a
-wrong sideslip angle that looks right. A yaw error in the IMU-to-body rotation
-adds straight onto β. The lever arm and the boresight are observable while
-the car turns and accelerates, so they are estimated from measured priors
-(2 cm and 1°).
+reference point cannot be recovered from IMU and GNSS: every point of a rigid
+body moves consistently, so a different point is a different but equally
+consistent answer. It is configured, and a wrong one is a wrong sideslip angle
+that looks right. The IMU-to-body rotation is in the same position as far as
+IMU and GNSS go -- both agree with any mounting -- and it is learned only
+because two statements about the CAR pin it: a parked body is level, and a body
+running straight does not slide. A yaw error in it adds straight onto β. The
+lever arm and the boresight are observable while the car turns and
+accelerates, so they are estimated from measured priors (2 cm and 1°); the
+lever arm's height is the weakest axis (about 6 cm of sigma after a
+figure-of-eight drive), because body roll and pitch are small.
 
 Parked, roll and pitch trade against the accelerometer bias: a tilt and a
 bias produce the same specific force. The estimator cannot separate them until
@@ -132,11 +136,9 @@ the direction it points by the slip angle, which is the thing this estimator
 exists to measure. So the initialiser never takes heading from course: without
 a dual-antenna yaw it waits.
 
-Static variables (the lever arm, the boresight) are stamped `kStatic` and are
-never marginalised. They stay in the window for the smoother's life, and the
-information about them accumulates in the marginal priors of the keyframes
-that leave. Marginalising them would freeze them at whatever the first few
-seconds said.
+Until 2026-09-23 the lever arm and the boresight were single `kStatic`
+variables, never marginalised. That is correct for a constant, and it is why
+they were replaced: see [Learned calibration](#learned-calibration).
 
 ## Time alignment
 
@@ -253,9 +255,73 @@ velocity (3 dimensions each) and 0.8 for yaw (1). All are below their
 dimension, so the reported sigmas are mildly conservative: a consumer trusting
 them is not misled, and a little information is left on the table.
 
+## Learned calibration
+
+Added 2026-09-23. The installation -- mounting, lever arm, boresight -- is a
+prior the car refines, and what it learns is kept between sessions.
+
+**A random walk, not a constant.** A never-marginalised constant can only
+become more certain. Over a long session it grows overconfident, soaks up
+every small model error with growing conviction, and cannot follow an antenna
+that was knocked. Each segment (1 s) now has its own variables, joined by a
+walk at 0.05°/√h (mounting and boresight) and 5 mm/√h (lever arm), and they
+are marginalised with the window like everything else; a prior carried over a
+restart keeps its full 8×8 covariance. The batch solve then returns the
+calibration per segment, smoothed: its history over the drive. The refactor
+left the consistency figures exactly where they were (NEES 1.41, 1.88, 0.80),
+and making the walk effectively infinite fails the check that the batch
+carries the lever arm learned late back to the drive's first segment.
+
+**The mounting from two assumptions.** Parked, the body is level to within
+the grade (σ 1.5°), which over stops facing different ways gives roll and
+pitch. Running straight and true, the body neither slides nor heaves (σ 0.5°),
+which gives yaw and pitch. The second is false in a drift, so its gate is
+strict and held for 2 s (above 8 m/s, yaw rate under 1.5°/s, lateral
+acceleration under 0.5 m/s²), with one factor a second at most because the
+error is correlated. In simulation: a 2° mounting yaw read as 2.04° of slip on
+the first straight and 0.04° on the last, with the mounting learned to
+0.02°; roll and pitch 2° out came in to 0.13° over seven stops; a whole
+skidpad drift (3° to 26° of slip) judged nothing straight and left the
+mounting where it was. With a fast walk, an IMU knocked 1.5° mid-drive was
+followed to 0.008°; without one the estimate ended 0.52° out, a compromise
+between the minute before and the minute after.
+
+**A trap in testing it.** The default MTi mounting is a half turn about x, and
+every half turn is its own inverse -- so is a small yaw error on one -- which
+makes `R_b_i` and `R_b_iᵀ` the same rotation. A factor using the mounting
+backwards passed every test on the default mounting, and on a quarter turn
+composed with it (still a half turn). The mounting tests and the factor
+Jacobian tests use an IMU on its side (120° about (1,1,1)); both
+direction mutations fail there.
+
+**Kept per group, matched by hash, never deleted.** Rows go into SQLite (see
+[calibration_store](../libs/calibration_store.html)) one group at a time, so
+re-measuring the lever arm does not throw away a well-learned mounting. Each
+row carries an FNV-1a hash of the configured means it was learned against --
+the boresight's covers both antennas -- and a model version; sigmas are left
+out, so a change of confidence keeps what was learned. Nothing is deleted: a
+row whose hash no longer matches simply stops being found and stays in the
+history. The golden hashes in the test were computed independently in Python
+from the byte layout, so a change in how the doubles are hashed on another
+host or compiler cannot pass unnoticed.
+
+**When a row is written.** When a group has moved more than 1σ of its last
+row (Mahalanobis, so metres and radians compare) or a sigma has halved; at
+most every 15 minutes; never in the first two minutes after a start; for the
+mounting, only once something has taught it; and once more at shutdown. The
+policy runs on the estimator's GPS time, so a replay decides as the drive did.
+A stored covariance is widened by 4 when loaded, floored at 0.02° or 2 mm, and
+capped at the config's sigma. Over five simulated sessions against one file:
+the second started with the mounting 0.027° out instead of 2°; a re-measured
+lever arm orphaned only the lever-arm and boresight rows; a file that was not
+a database was refused untouched; and an IMU knocked 1.5° between sessions
+was flagged at 6.6σ. The same held live over the bus with `bag play`, and a
+`--replay` without `--calibration-db` left the file alone.
+
 ## Deferred
 
-The magnetometer factor, using `libs/wmm`, is written into the plan but not
+The reference point stays a definition until steering and wheel speeds give a
+vehicle model to estimate it against. The magnetometer factor, using `libs/wmm`, is written into the plan but not
 built: it needs the MTi's hard- and soft-iron calibration first, and dual-antenna
 yaw covers heading in the meantime. A time-offset state (estimating
 `imu.time_offset_s` instead of calibrating it) and the PPS clock are next for

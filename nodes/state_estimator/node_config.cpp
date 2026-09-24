@@ -147,6 +147,7 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     if (const YAML::Node n = section(root, "vehicle", context))
     {
         readVector(n, "imu_to_body_rpy_deg", out.imuToBodyRpyDeg, context, "vehicle.");
+        readVector(n, "imu_to_body_sigma_deg", out.imuToBodySigmaDeg, context, "vehicle.");
         readVector(n, "reference_point_m", out.referencePointM, context, "vehicle.");
         readVector(n, "lever_arm_m", out.leverArmM, context, "vehicle.");
         readNumber(n, "lever_arm_sigma_m", out.leverArmSigmaM, context, "vehicle.");
@@ -187,6 +188,32 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     }
     if (const YAML::Node n = section(root, "output", context))
         readNumber(n, "sideslip_min_speed", out.sideslipMinSpeed, context, "output.");
+    if (const YAML::Node n = section(root, "calibration", context))
+    {
+        auto& c = out.calibration;
+        if (const YAML::Node e = n["enabled"])
+        {
+            try
+            {
+                c.enabled = e.as<bool>();
+            }
+            catch (const YAML::Exception&)
+            {
+                context.fail("calibration.enabled must be true or false");
+            }
+        }
+        readString(n, "database", c.database, context, "calibration.");
+        readNumber(n, "min_write_interval_s", c.minWriteIntervalS, context, "calibration.");
+        readNumber(n, "move_threshold_sigma", c.moveThresholdSigma, context, "calibration.");
+        readNumber(n, "tighten_ratio", c.tightenRatio, context, "calibration.");
+        readNumber(n, "settle_s", c.settleS, context, "calibration.");
+        readNumber(n, "load_inflation", c.loadInflation, context, "calibration.");
+        readNumber(n, "moved_sigma", c.movedSigma, context, "calibration.");
+        readNumber(n, "segment_s", c.segmentS, context, "calibration.");
+        readNumber(n, "mounting_walk_deg_per_sqrt_h", c.mountingWalkDegPerSqrtH, context, "calibration.");
+        readNumber(n, "lever_arm_walk_mm_per_sqrt_h", c.leverArmWalkMmPerSqrtH, context, "calibration.");
+        readNumber(n, "boresight_walk_deg_per_sqrt_h", c.boresightWalkDegPerSqrtH, context, "calibration.");
+    }
 
     checkKey(out.imuPrefix, "inputs.imu_prefix", context);
     checkKey(out.gnssPrefix, "inputs.gnss_prefix", context);
@@ -211,6 +238,23 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     positive(out.lagS, "smoother.lag_s", context);
     if (out.maxIterations < 1) context.fail("smoother.max_iterations must be at least 1");
     positive(out.timeBudgetMs, "smoother.time_budget_ms", context);
+    for (Eigen::Index i = 0; i < 3; ++i)
+        positive(out.imuToBodySigmaDeg[i], "vehicle.imu_to_body_sigma_deg", context);
+
+    const auto& c = out.calibration;
+    if (c.enabled && c.database.empty()) context.fail("calibration.database is empty; set enabled: false instead");
+    if (!(c.minWriteIntervalS >= 0.0)) context.fail("calibration.min_write_interval_s must not be negative");
+    positive(c.moveThresholdSigma, "calibration.move_threshold_sigma", context);
+    if (!(c.tightenRatio > 0.0 && c.tightenRatio < 1.0)) context.fail("calibration.tighten_ratio must be in (0, 1)");
+    if (!(c.settleS >= 0.0)) context.fail("calibration.settle_s must not be negative");
+    // Below 1 a stored value would come back MORE certain than it was learned.
+    if (!(c.loadInflation >= 1.0)) context.fail("calibration.load_inflation must be at least 1");
+    positive(c.movedSigma, "calibration.moved_sigma", context);
+    positive(c.segmentS, "calibration.segment_s", context);
+    if (c.segmentS > 0.5 * out.lagS) context.fail("calibration.segment_s must be at most half of smoother.lag_s");
+    positive(c.mountingWalkDegPerSqrtH, "calibration.mounting_walk_deg_per_sqrt_h", context);
+    positive(c.leverArmWalkMmPerSqrtH, "calibration.lever_arm_walk_mm_per_sqrt_h", context);
+    positive(c.boresightWalkDegPerSqrtH, "calibration.boresight_walk_deg_per_sqrt_h", context);
     return context.ok;
 }
 
@@ -238,6 +282,12 @@ vehicle_estimator::EstimatorConfig estimatorConfig(const NodeConfig& c)
                                    Eigen::AngleAxisd(c.imuToBodyRpyDeg.x() * kDeg, Eigen::Vector3d::UnitX()))
                                       .toRotationMatrix();
     e.R_b_i = R_b_i;
+    e.mounting_sigma = c.imuToBodySigmaDeg * kDeg;
+    // Per sqrt(hour) to per sqrt(second): divide by sqrt(3600) = 60.
+    e.calibration_segment = c.calibration.segmentS;
+    e.mounting_walk = c.calibration.mountingWalkDegPerSqrtH * kDeg / 60.0;
+    e.lever_arm_walk = c.calibration.leverArmWalkMmPerSqrtH * 1e-3 / 60.0;
+    e.boresight_walk = c.calibration.boresightWalkDegPerSqrtH * kDeg / 60.0;
     e.reference_point = c.referencePointM;
     e.lever_arm = c.leverArmM;
     e.lever_arm_sigma = c.leverArmSigmaM;

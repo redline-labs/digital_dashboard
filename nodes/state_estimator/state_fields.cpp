@@ -76,7 +76,8 @@ void fill(::VehicleState::Builder out, const vehicle_estimator::VehicleState& s)
     out.setFix(toWire(s.fix));
 }
 
-void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::EstimatorStatus& s)
+void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::EstimatorStatus& s,
+          const CalibrationReport& c)
 {
     out.setInitialized(s.initialized);
     out.setKeyframes(s.keyframes);
@@ -111,6 +112,22 @@ void fill(::VehicleEstimatorStatus::Builder out, const vehicle_estimator::Estima
     out.setAccelBiasZMps2(s.accel_bias.z());
     out.setHasImuClockOffset(s.imu_clock_offset.has_value());
     out.setImuClockOffsetS(s.imu_clock_offset.value_or(0.0));
+    out.setMountingRollDeg(s.mounting_rpy.x() * kToDeg);
+    out.setMountingPitchDeg(s.mounting_rpy.y() * kToDeg);
+    out.setMountingYawDeg(s.mounting_rpy.z() * kToDeg);
+    out.setMountingSigmaRollDeg(s.mounting_sigma.x() * kToDeg);
+    out.setMountingSigmaPitchDeg(s.mounting_sigma.y() * kToDeg);
+    out.setMountingSigmaYawDeg(s.mounting_sigma.z() * kToDeg);
+    out.setMountingStraightS(s.mount_straight_s);
+    out.setMountingLevelStops(clampU32(s.mount_level_stops));
+    out.setCalibrationStoreOk(c.store_open);
+    out.setMountingFromDatabase(c.from_database[0]);
+    out.setLeverArmFromDatabase(c.from_database[1]);
+    out.setBoresightFromDatabase(c.from_database[2]);
+    out.setMountingMoved(c.moved[0]);
+    out.setLeverArmMoved(c.moved[1]);
+    out.setBoresightMoved(c.moved[2]);
+    out.setCalibrationRowsWritten(c.rows_written);
 }
 
 }  // namespace state_estimator

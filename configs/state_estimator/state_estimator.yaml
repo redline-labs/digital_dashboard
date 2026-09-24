@@ -4,10 +4,12 @@
 # `state_estimator --check --config <this file>` validates it.
 #
 # EVERY NUMBER UNDER `vehicle:` BECOMES A SIDESLIP ERROR IF IT IS WRONG, and a
-# wrong sideslip angle looks exactly like a right one. Measure them. The lever
-# arm and the antenna boresight are refined while driving (see the status
-# topic), so a centimetre or a degree off is fine; the IMU's mounting rotation
-# and the reference point are not estimated at all and must be right.
+# wrong sideslip angle looks exactly like a right one. Measure them. The IMU's
+# mounting, the lever arm and the antenna boresight are PRIORS: refined while
+# driving, and what was learned is kept between sessions (`calibration:`
+# below), so a centimetre or a couple of degrees off is fine. The mounting's
+# yaw is learned only on straights driven straight -- see the note there. The
+# reference point is a definition and is never estimated: it must be right.
 
 inputs:
   imu_prefix: nodes/mti610/mtdata2   # needs delta_q and delta_v enabled
@@ -23,6 +25,9 @@ vehicle:
   # roll, pitch, yaw in degrees. An MTi mounted label-up with x forward is
   # its z axis up, i.e. a half turn about x.
   imu_to_body_rpy_deg: [180.0, 0.0, 0.0]
+  # How sure that is, about the body x, y, z. Yaw is sideslip error one for
+  # one; it is learned on straights, roll and pitch at stops.
+  imu_to_body_sigma_deg: [2.0, 2.0, 2.0]
   # Where to report: the CG, or the rear axle. IMU frame, metres.
   reference_point_m: [0.0, 0.0, 0.0]
   # IMU origin to the primary antenna's phase centre, IMU frame, metres.
@@ -59,3 +64,35 @@ smoother:
 
 output:
   sideslip_min_speed: 2.0
+
+# What was learned about the installation, kept between sessions.
+#
+# One row per group (mounting, lever_arm, boresight) each time the estimate
+# has moved by more than move_threshold_sigma, or its sigma halved, and at most
+# once per min_write_interval_s; once more at shutdown. Rows are never deleted:
+#
+#   sqlite3 <database> 'select datetime(written_at_ns/1e9, "unixepoch"),
+#                              grp, reason, summary from calibration'
+#
+# A row applies only while the config's values for that group are the ones it
+# was learned against (a hash of them is in the row); re-measure the lever arm
+# and the lever-arm and boresight rows stop applying, the mounting's do not.
+# Changing a sigma keeps them.
+#
+# The mounting's yaw is learned from the assumption that the car runs true on
+# a straight: above 8 m/s, yaw rate under 1.5 deg/s and lateral acceleration
+# under 0.5 m/s^2 for two seconds. A drift never qualifies. A car that crabs
+# on straights (toe, a bent subframe) will teach it that crab.
+calibration:
+  enabled: true
+  database: ${REDLINE_DATA_DIR}/state_estimator/calibration.sqlite
+  min_write_interval_s: 900
+  move_threshold_sigma: 1.0
+  tighten_ratio: 0.5
+  settle_s: 120             # after a (re)start, before anything is written
+  load_inflation: 4.0       # a stored covariance times this is the next prior
+  moved_sigma: 4.0          # this far from the stored value: health says "moved?"
+  segment_s: 1.0
+  mounting_walk_deg_per_sqrt_h: 0.05
+  lever_arm_walk_mm_per_sqrt_h: 5.0
+  boresight_walk_deg_per_sqrt_h: 0.05

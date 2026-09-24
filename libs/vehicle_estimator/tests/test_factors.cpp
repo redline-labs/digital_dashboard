@@ -172,6 +172,102 @@ void testDualAntenna()
     check(std::fabs(pitch - std::atan2(-b_n.z(), std::hypot(b_n.x(), b_n.y()))) < 1e-15, "pitch is up-positive");
 }
 
+void testCalibrationWalkAndPrior()
+{
+    // A mounting half a turn about x -- the default MTi installation -- so a
+    // tangent convention that only works near identity shows up.
+    const Eigen::Quaterniond m0 = Eigen::Quaterniond(Eigen::AngleAxisd(std::numbers::pi, Eigen::Vector3d::UnitX())) *
+                                  Eigen::Quaterniond(Eigen::AngleAxisd(0.01, Eigen::Vector3d::UnitZ()));
+    const auto k0 = vehicle_estimator::calibrationKeys(0), k1 = vehicle_estimator::calibrationKeys(1);
+    Values v;
+    v.insert(k0.mounting, c(m0));
+    v.insert(k0.lever_arm, c(Eigen::Vector3d(0.3, 0.0, 1.2)));
+    v.insert(k0.boresight, csym::Vector2<double>{0.01, -0.02});
+    v.insert(k1.mounting, c(m0));
+    v.insert(k1.lever_arm, c(Eigen::Vector3d(0.3, 0.0, 1.2)));
+    v.insert(k1.boresight, csym::Vector2<double>{0.01, -0.02});
+
+    // 1e-3 per sqrt(s) over 100 s allows 1e-2.
+    const auto walk = factors::calibrationWalk(k0, k1, 100.0, 1e-3, 1e-3, 1e-3);
+    check(walk->residual(v).norm() < 1e-9, "the walk costs nothing when nothing moved");
+    check(jacobianError(*walk, v) < 1.0, "walk Jacobians match finite differences");
+    Values moved = v;
+    moved.update(k1.lever_arm, c(Eigen::Vector3d(0.31, 0.0, 1.2)));
+    check(std::fabs(walk->residual(moved).norm() - 1.0) < 1e-9, "1 cm after 100 s at 1 mm/sqrt(s) is one sigma");
+    moved = v;
+    moved.update(k1.mounting, c(m0 * Eigen::Quaterniond(Eigen::AngleAxisd(0.01, Eigen::Vector3d::UnitY()))));
+    check(std::fabs(walk->residual(moved).norm() - 1.0) < 1e-6, "and so is 0.01 rad of mounting");
+    check(jacobianError(*walk, moved) < 1.0, "walk Jacobians away from zero");
+
+    // The prior, with the correlation a carried-over calibration has.
+    vehicle_estimator::CalibrationSet prior;
+    prior.mounting = m0;
+    prior.lever_arm = Eigen::Vector3d(0.3, 0.0, 1.2);
+    prior.boresight = Eigen::Vector2d(0.01, -0.02);
+    prior.cov = 1e-4 * vehicle_estimator::CalibrationCov::Identity();
+    prior.cov(3, 6) = prior.cov(6, 3) = 0.5e-4;
+    const auto p = factors::calibrationPrior(k0, prior);
+    check(p->residual(v).norm() < 1e-9, "the prior is zero at its mean");
+    check(jacobianError(*p, moved) < 1.0, "prior Jacobians match finite differences");
+    moved = v;
+    moved.update(k0.lever_arm, c(Eigen::Vector3d(0.31, 0.0, 1.2)));
+    // Correlated at rho = 0.5 with a boresight that did not move: the lever
+    // arm alone moving is less likely than its own sigma says, by
+    // 1/sqrt(1 - rho^2). An independent-blocks prior would read exactly 1.
+    check(std::fabs(p->residual(moved).norm() - 1.0 / std::sqrt(0.75)) < 1e-9,
+          "the prior keeps the lever arm's correlation with the boresight");
+
+    bool threw = false;
+    try
+    {
+        factors::calibrationWalk(k0, k1, 1.0, 0.0, 1e-3, 1e-3);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    check(threw, "a walk density of zero is refused rather than divided by");
+}
+
+void testMountingFactors()
+{
+    // An IMU on its side (120 deg about (1,1,1)), not a half turn: a half
+    // turn is its own inverse and would hide a mounting used backwards.
+    const Eigen::Quaterniond m(Eigen::AngleAxisd(0.5 * std::numbers::pi, Eigen::Vector3d::UnitZ()) *
+                               Eigen::AngleAxisd(0.5 * std::numbers::pi, Eigen::Vector3d::UnitX()));
+    const Eigen::Matrix3d R_n_e = Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    // The car level and heading 30 deg: R_n_b = R_n_e R_e_i R_b_i^T.
+    const Eigen::Matrix3d R_n_b = Eigen::AngleAxisd(0.52, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    const Eigen::Quaterniond R_e_i(R_n_e.transpose() * R_n_b * m.toRotationMatrix());
+    const double speed = 8.5;  // just over the gate
+    const Eigen::Vector3d v_e = R_n_e.transpose() * R_n_b * Eigen::Vector3d(speed, 0.0, 0.0);
+
+    const Key R = symbol('R', 0), v = symbol('v', 0), mk = symbol('m', 0);
+    Values at;
+    at.insert(R, c(R_e_i));
+    at.insert(v, c(v_e));
+    at.insert(mk, c(m));
+
+    const auto straight = factors::straightDriving(R, v, mk, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+                                                   0.5 * kDeg, 0.5 * kDeg, 3.0);
+    check(straight->residual(at).norm() < 1e-6, "straight driving is zero for a body running true");
+    check(jacobianError(*straight, at) < 1.0, "straight-driving Jacobians match finite differences");
+    Values slid = at;
+    slid.update(v, c(Eigen::Vector3d(R_n_e.transpose() * R_n_b *
+                                     Eigen::Vector3d(speed * std::cos(0.5 * kDeg), speed * std::sin(0.5 * kDeg), 0.0))));
+    const double one = straight->residual(slid).norm();
+    check(std::fabs(one - 1.0) < 0.02, fmt::format("half a degree of slip reads one sigma ({:.3f})", one));
+    check(jacobianError(*straight, slid) < 1.0, "and its Jacobians there");
+
+    const auto level = factors::stationaryLevel(R, mk, R_n_e, 1.5 * kDeg, 3.0);
+    check(level->residual(at).norm() < 1e-6, "stationary level is zero for a level body");
+    check(jacobianError(*level, at) < 1.0, "stationary-level Jacobians match finite differences");
+    Values tilted = at;
+    const Eigen::Matrix3d R_n_b_tilt = R_n_b * Eigen::AngleAxisd(1.5 * kDeg, Eigen::Vector3d::UnitX()).toRotationMatrix();
+    tilted.update(R, c(Eigen::Quaterniond(R_n_e.transpose() * R_n_b_tilt * m.toRotationMatrix())));
+    check(std::fabs(level->residual(tilted).norm() - 1.0) < 0.02, "1.5 deg of roll reads one sigma");
+}
+
 void testRefusals()
 {
     bool threw = false;
@@ -203,6 +299,8 @@ int main()
     testGnssPosition();
     testGnssVelocity();
     testDualAntenna();
+    testCalibrationWalkAndPrior();
+    testMountingFactors();
     testRefusals();
     if (failures)
     {

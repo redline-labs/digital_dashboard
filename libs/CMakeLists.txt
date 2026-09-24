@@ -75,6 +75,9 @@ add_subdirectory(imu_preint)
 # The vehicle state estimator and its driving simulator. After everything
 # above it in the estimation stack.
 add_subdirectory(vehicle_estimator)
+# The estimator's learned installation, kept between sessions in SQLite.
+# Generic rows; links nothing above it.
+add_subdirectory(calibration_store)
 # A display module's record from the rootfs, and the sysfs backlight, IIO light
 # and hwmon temperature devices it names. File I/O only; nodes/backlight puts it
 # on the bus.

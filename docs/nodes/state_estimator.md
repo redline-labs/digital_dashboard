@@ -38,6 +38,7 @@ travel.
 | `--config <file>` | The YAML below. Defaults to `configs/state_estimator/state_estimator.yaml`. |
 | `--check` | Parse and validate the config, print the input and output keys, and exit. |
 | `--replay <bag>` | Run the same pipeline over a recorded bag directory instead of the bus, as fast as it goes, and publish what it computes. Exits 1 if the estimator never initialised. |
+| `--calibration-db <file>` | With `--replay` only: the calibration store to seed from and write to. Without it a replay touches none, so an old recording cannot add rows to the car's history. |
 | `--debug` | Verbose logging. |
 
 Exit codes are 0, 1 for a failure (a bad config, an unreadable bag, a replay
@@ -59,7 +60,8 @@ a new bag.
 | `outputs.state_key` | `nodes/state_estimator/state` | |
 | `outputs.status_key` | `nodes/state_estimator/status` | |
 | `outputs.state_decimation` | `1` | Publish one state in N. `1` is every IMU sample. |
-| `vehicle.imu_to_body_rpy_deg` | `[180, 0, 0]` | The IMU's orientation in the body frame (x forward, y right, z down). An MTi label-up with x forward is a half turn about x. |
+| `vehicle.imu_to_body_rpy_deg` | `[180, 0, 0]` | The IMU's orientation in the body frame (x forward, y right, z down). An MTi label-up with x forward is a half turn about x. Learned from here. |
+| `vehicle.imu_to_body_sigma_deg` | `[2, 2, 2]` | How well that is known, about the body x, y, z. |
 | `vehicle.reference_point_m` | `[0, 0, 0]` | Where to report position and sideslip (the CG, or the rear axle), IMU frame. |
 | `vehicle.lever_arm_m` | `[0, 0, 1.2]` | IMU origin to the primary antenna's phase centre, IMU frame. Estimated from here. |
 | `vehicle.lever_arm_sigma_m` | `0.02` | How well it was measured, per axis. |
@@ -80,14 +82,24 @@ a new bag.
 | `smoother.max_iterations` | `8` | Per keyframe. |
 | `smoother.time_budget_ms` | `40` | |
 | `output.sideslip_min_speed` | `2.0` | m/s. Below it sideslip is undefined and flagged invalid. |
+| `calibration.enabled` | `true` | Keep what is learned between sessions. |
+| `calibration.database` | `${REDLINE_DATA_DIR}/state_estimator/calibration.sqlite` | Created, with its directory, if absent. |
+| `calibration.min_write_interval_s` | `900` | At most one row per group this often (shutdown excepted). |
+| `calibration.move_threshold_sigma` | `1.0` | A row when the estimate has moved this far from the last, in its sigmas... |
+| `calibration.tighten_ratio` | `0.5` | ...or a sigma has fallen to this fraction of the last row's. |
+| `calibration.settle_s` | `120` | Nothing is written this soon after a (re)start. |
+| `calibration.load_inflation` | `4.0` | A stored covariance times this is the next session's prior. At least 1. |
+| `calibration.moved_sigma` | `4.0` | This far from what was loaded, `health` asks whether something moved. |
+| `calibration.segment_s` | `1.0` | One set of installation variables per segment; at most half `smoother.lag_s`. |
+| `calibration.*_walk_*` | `0.05` °/√h, `5` mm/√h, `0.05` °/√h | How fast mounting, lever arm and boresight may wander. |
 
 {: .warning }
 Every number under `vehicle:` becomes a sideslip error if it is wrong, and a
-wrong sideslip angle looks exactly like a right one. The lever arm and the
-boresight are refined while driving, so a centimetre or a degree off is fine.
-The IMU's mounting rotation and the reference point are not estimated at all,
-because nothing the sensors see can tell them apart from the car's own
-motion; they must be measured.
+wrong sideslip angle looks exactly like a right one. The mounting, the lever
+arm and the boresight are priors, refined while driving and kept between
+sessions, so a centimetre or a couple of degrees off is fine. The reference
+point is a definition that nothing the sensors see can check: it must be
+measured.
 
 ## Topics
 
@@ -126,7 +138,11 @@ initialised and while its uncertainty is above the configured bounds.
 `VehicleEstimatorStatus` carries counters (IMU samples bridged and discarded,
 GNSS epochs late, timed out or rejected, measurements gated), the last solve's
 time, iterations and window size, the current lever-arm, boresight and bias
-estimates, and the IMU clock offset.
+estimates, the IMU clock offset, the learned mounting as roll/pitch/yaw with
+its sigma and what it was learned from (`mountingStraightS`,
+`mountingLevelStops`), and the calibration store's state: whether it is open,
+which groups this session started from, which have moved since, and how many
+rows it has written.
 
 ## Health
 
@@ -138,6 +154,32 @@ estimates, and the IMU clock offset.
 | `gnss` | nothing under the GNSS prefix for 1000 ms |
 | `estimate` | degraded while waiting for a dual-antenna heading, or while the uncertainty is above the valid bounds |
 | `solve` | degraded when the last smoother update took 80 ms or more; at 10 Hz keyframes the smoother falls behind the car |
+| `calibration` | degraded when the store cannot be opened (the node then runs on the config), or when a learned group is more than `moved_sigma` from what the last session left |
+
+## Calibration kept between sessions
+
+The mounting, lever arm and boresight the estimator learns are written to
+`calibration.database` as rows, one per group per write, never updated and
+never deleted. At start the newest row for each group is loaded as that
+group's prior, provided it was learned against the same configured values: each
+row carries a hash of them. Re-measure the lever arm and the lever-arm and
+boresight rows stop applying while the mounting's still does; change only a
+sigma and they all still apply. The history reads directly:
+
+```bash
+sqlite3 /data/state_estimator/calibration.sqlite \
+  'select datetime(written_at_ns/1e9, "unixepoch"), grp, reason, summary from calibration'
+```
+
+A row is written when a group's estimate has moved more than a sigma since the
+last row or a sigma has halved, at most every 15 minutes, never in the first
+two minutes after a start, and once more at shutdown. The mounting is not
+written until something has taught it: seconds of straight, true running, or
+stops. The mounting's yaw is learned only on straights, above 8 m/s with the
+yaw rate under 1.5°/s and lateral acceleration under 0.5 m/s² for two
+seconds; a drift never qualifies. The library side is in
+[vehicle_estimator](../libs/vehicle_estimator.html) and
+[calibration_store](../libs/calibration_store.html).
 
 ## Troubleshooting
 
@@ -184,3 +226,23 @@ with GSOF 27.
 **GSOF 27's variances.** They are taken as rad², since the record's angles are
 radians on the wire, and the pitch sign is taken as nose-up positive. Neither
 is confirmed against a receiver yet.
+
+**Straights read a steady sideslip of a degree or two.** That is the mounting
+yaw, and until the car has run a few straights it is the configured one. Check
+`mountingStraightS` on the status topic: if it stays at zero, the gate never
+held (too slow, or never straight for two seconds), and nothing has been
+learned. If it grows and the offset stays, the car really does crab on a
+straight, and the mounting has learned the crab.
+
+**`health` says a group "moved?".** The estimate has walked more than
+`moved_sigma` from what the previous session stored: an antenna knocked, an
+IMU re-seated, a lever arm re-measured without updating the config. The
+estimator keeps learning the new value either way. If the change was
+deliberate, put the new measurement in the config: its hash will no longer
+match the old rows, and the next session starts from the config.
+
+**No rows are being written.** `calibrationStoreOk` false means the database
+could not be opened; the log names the path and the reason, and the node runs
+on the config. Otherwise it is too soon: nothing is written in the first
+`settle_s` after a start, and a group whose estimate has neither moved nor
+tightened since its last row gets no new one.

@@ -13,12 +13,17 @@ project(vehicle_estimator)
 # residual program at compile time, and one TU per factor keeps the slowest
 # of those builds off everybody else's critical path.
 add_library(vehicle_estimator STATIC
+    src/calibration.cpp
     src/clock.cpp
     src/estimator.cpp
+    src/factors/calibration_prior.cpp
+    src/factors/calibration_walk.cpp
     src/factors/dual_antenna.cpp
     src/factors/gnss_position.cpp
     src/factors/gnss_velocity.cpp
     src/factors/priors.cpp
+    src/factors/stationary_level.cpp
+    src/factors/straight_driving.cpp
     src/offline.cpp
 )
 
@@ -55,8 +60,14 @@ vehicle_estimator_test(calibration unit)
 vehicle_estimator_test(robustness unit)
 vehicle_estimator_test(clock unit)
 vehicle_estimator_test(factors unit)
+vehicle_estimator_test(calibration_policy unit)
 vehicle_estimator_test(consistency slow)
 
 # The offline smoother against the fixed-lag one on the same drive: never
 # worse anywhere, and better where the forward pass is weakest.
 vehicle_estimator_test(offline unit)
+
+# The mounting learned from straights and stops, a drift that must teach it
+# nothing, and the walk following a knocked IMU. Minutes of simulated
+# driving, so `slow`.
+vehicle_estimator_test(mounting slow TIMEOUT 600)

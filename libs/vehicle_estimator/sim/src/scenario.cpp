@@ -5,6 +5,7 @@
 #include "imu_preint/preintegrator.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <set>
@@ -154,12 +155,113 @@ class Parked final : public VehicleMotion
     double d_;
 };
 
+// ---- scripted phases ------------------------------------------------------------
+
+class Scripted final : public VehicleMotion
+{
+  public:
+    Scripted(std::vector<Phase> phases, double heading) : phases_(std::move(phases))
+    {
+        double t = 0.0, v = 0.0, psi = heading, pitch = 0.0, roll = 0.0, bias = 0.0;
+        for (const auto& p : phases_)
+        {
+            starts_.push_back({t, v, psi, pitch, roll, bias});
+            t += p.duration;
+            v = p.speed;
+            psi += p.turn;
+            pitch = p.pitch;
+            roll = p.roll;
+            bias = p.slip_bias;
+        }
+        duration_ = t;
+        // Position is the one thing without a closed form: integrate the
+        // (closed-form) velocity once onto a grid, Gauss-Legendre per step.
+        const auto n = static_cast<std::size_t>(std::ceil(duration_ / kGrid)) + 2;
+        grid_.resize(n, Eigen::Vector3d::Zero());
+        for (std::size_t k = 1; k < n; ++k)
+            grid_[k] = grid_[k - 1] + integrate(static_cast<double>(k - 1) * kGrid, static_cast<double>(k) * kGrid);
+    }
+
+    double duration() const override { return duration_; }
+
+    Sample at(double t) const override
+    {
+        const State st = state(t);
+        const auto k = static_cast<std::size_t>(std::clamp(std::floor(t / kGrid), 0.0, static_cast<double>(grid_.size() - 1)));
+        Sample s;
+        s.p = grid_[k] + integrate(static_cast<double>(k) * kGrid, t);
+        s.v = st.V * Eigen::Vector3d(std::cos(st.psi), std::sin(st.psi), 0.0);
+        s.a = st.Vdot * Eigen::Vector3d(std::cos(st.psi), std::sin(st.psi), 0.0) +
+              st.V * st.psidot * Eigen::Vector3d(-std::sin(st.psi), std::cos(st.psi), 0.0);
+        // Body roll into the corner, as the others do, on top of any grade.
+        const double lateral_g = st.V * st.psidot / 9.81;
+        s.R_n_b = yawPitchRoll(st.psi + st.slip, st.pitch, st.roll + 0.03 * lateral_g);
+        return s;
+    }
+
+  private:
+    static constexpr double kGrid = 0.01;
+
+    struct Start
+    {
+        double t, v, psi, pitch, roll, bias;
+    };
+    struct State
+    {
+        double V = 0.0, Vdot = 0.0, psi = 0.0, psidot = 0.0, slip = 0.0, pitch = 0.0, roll = 0.0;
+    };
+
+    State state(double t) const
+    {
+        std::size_t i = 0;
+        while (i + 1 < phases_.size() && t >= starts_[i + 1].t) ++i;
+        const Phase& p = phases_[i];
+        const Start& a = starts_[i];
+        const double x = (t - a.t) / p.duration;
+        const double sm = smooth(x), sd = smoothDot(x) / p.duration;
+        State s;
+        s.V = a.v + (p.speed - a.v) * sm;
+        s.Vdot = (p.speed - a.v) * sd;
+        s.psi = a.psi + p.turn * sm;
+        s.psidot = p.turn * sd;
+        const double xc = std::clamp(x, 0.0, 1.0);
+        const double bump = 16.0 * xc * xc * (1.0 - xc) * (1.0 - xc);
+        s.slip = a.bias + (p.slip_bias - a.bias) * sm + p.slip * bump;
+        s.pitch = a.pitch + (p.pitch - a.pitch) * sm;
+        s.roll = a.roll + (p.roll - a.roll) * sm;
+        return s;
+    }
+
+    Eigen::Vector3d velocity(double t) const
+    {
+        const State s = state(t);
+        return s.V * Eigen::Vector3d(std::cos(s.psi), std::sin(s.psi), 0.0);
+    }
+
+    Eigen::Vector3d integrate(double t0, double t1) const
+    {
+        static constexpr std::array<double, 5> x{0.0, -0.5384693101056831, 0.5384693101056831, -0.9061798459386640,
+                                                 0.9061798459386640};
+        static constexpr std::array<double, 5> w{0.5688888888888889, 0.4786286704993665, 0.4786286704993665,
+                                                 0.2369268850561891, 0.2369268850561891};
+        const double h = 0.5 * (t1 - t0), m = 0.5 * (t0 + t1);
+        Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+        for (std::size_t j = 0; j < x.size(); ++j) sum += w[j] * velocity(m + h * x[j]);
+        return h * sum;
+    }
+
+    std::vector<Phase> phases_;
+    std::vector<Start> starts_;
+    std::vector<Eigen::Vector3d> grid_;
+    double duration_ = 0.0;
+};
+
 // The IMU frame's motion, for imu_preint's simulator.
 class ImuTrajectory final : public imu_preint::LocalTrajectory
 {
   public:
-    ImuTrajectory(const VehicleMotion& m, const Eigen::Matrix3d& R_b_i, double lat, double lon, double h)
-        : LocalTrajectory(lat, lon, h), m_(m), R_b_i_(R_b_i)
+    ImuTrajectory(const VehicleMotion& m, const SensorModel& sensors, double lat, double lon, double h)
+        : LocalTrajectory(lat, lon, h), m_(m), sensors_(sensors)
     {
     }
     Local local(double t) const override
@@ -169,13 +271,13 @@ class ImuTrajectory final : public imu_preint::LocalTrajectory
         l.p = s.p;
         l.v = s.v;
         l.a = s.a;
-        l.R_n_b = s.R_n_b * R_b_i_;  // "body" here is the IMU frame
+        l.R_n_b = s.R_n_b * sensors_.mountingAt(t);  // "body" here is the IMU frame
         return l;
     }
 
   private:
     const VehicleMotion& m_;
-    Eigen::Matrix3d R_b_i_;
+    const SensorModel& sensors_;
 };
 
 }  // namespace
@@ -195,10 +297,53 @@ std::unique_ptr<VehicleMotion> parked(double duration)
     return std::make_unique<Parked>(duration);
 }
 
+std::unique_ptr<VehicleMotion> scripted(std::vector<Phase> phases, double heading)
+{
+    return std::make_unique<Scripted>(std::move(phases), heading);
+}
+
+std::unique_ptr<VehicleMotion> track(const TrackParams& p)
+{
+    std::vector<Phase> phases;
+    phases.push_back({p.park, 0.0});
+    phases.push_back({p.launch, p.speed, 0.0, 0.0, p.straight_slip});
+    for (int lap = 0; lap < 2 * p.laps; ++lap)
+    {
+        phases.push_back({p.straight, p.speed, 0.0, 0.0, p.straight_slip});
+        phases.push_back({p.corner, p.speed, kPi, p.corner_slip, p.straight_slip});
+    }
+    phases.push_back({p.straight, p.speed, 0.0, 0.0, p.straight_slip});
+    return scripted(std::move(phases));
+}
+
+std::unique_ptr<VehicleMotion> stopAndGo(const StopAndGoParams& p)
+{
+    std::vector<Phase> phases;
+    phases.push_back({p.park, 0.0});
+    for (int i = 0; i < p.stops; ++i)
+    {
+        const double k = static_cast<double>(i + 1);
+        const double grade = p.grade * std::sin(1.7 * k), camber = p.camber * std::cos(2.3 * k);
+        phases.push_back({p.drive, p.speed, p.turn});
+        phases.push_back({p.brake, 0.0});
+        phases.push_back({1.5, 0.0, 0.0, 0.0, 0.0, grade, camber});  // settles onto the grade
+        phases.push_back({p.hold, 0.0, 0.0, 0.0, 0.0, grade, camber});
+        phases.push_back({1.5, 0.0});  // and off it
+    }
+    return scripted(std::move(phases));
+}
+
+Eigen::Matrix3d SensorModel::mountingAt(double t) const
+{
+    if (!mount_step) return R_b_i;
+    const double f = smooth((t - mount_step->t) / mount_step->duration);
+    return Eigen::AngleAxisd(mount_step->yaw * f, Eigen::Vector3d::UnitZ()).toRotationMatrix() * R_b_i;
+}
+
 Scenario::Scenario(std::unique_ptr<VehicleMotion> motion, SensorModel sensors, double lat, double lon, double h)
     : motion_(std::move(motion)), sensors_(std::move(sensors))
 {
-    imu_traj_ = std::make_unique<ImuTrajectory>(*motion_, sensors_.R_b_i, lat * kPi / 180.0, lon * kPi / 180.0, h);
+    imu_traj_ = std::make_unique<ImuTrajectory>(*motion_, sensors_, lat * kPi / 180.0, lon * kPi / 180.0, h);
 }
 
 Truth Scenario::truth(double t) const
@@ -208,7 +353,7 @@ Truth Scenario::truth(double t) const
     const Eigen::Matrix3d dR = (motion_->at(t + h).R_n_b - motion_->at(t - h).R_n_b) / (2.0 * h);
     const Eigen::Vector3d w_b = vee(s.R_n_b.transpose() * dR);  // relative to the (earth-fixed) origin frame
 
-    const Eigen::Vector3d r_b = sensors_.R_b_i * sensors_.reference_point;
+    const Eigen::Vector3d r_b = sensors_.mountingAt(t) * sensors_.reference_point;
     const Eigen::Vector3d p_ref_n0 = s.p + s.R_n_b * r_b;
     const Eigen::Vector3d v_ref_n0 = s.v + s.R_n_b * w_b.cross(r_b);
 
@@ -295,9 +440,12 @@ std::vector<Message> Scenario::messages() const
 
         const auto ts = imu_traj_->at(t);
         const auto vm = motion_->at(t);
+        // The IMU's own rate, which includes the mount turning under it.
         const double h = 1e-5;
-        const Eigen::Matrix3d dR = (motion_->at(t + h).R_n_b - motion_->at(t - h).R_n_b) / (2.0 * h);
-        const Eigen::Vector3d w_i = S.R_b_i.transpose() * vee(vm.R_n_b.transpose() * dR);
+        const Eigen::Matrix3d R_n_i_p = motion_->at(t + h).R_n_b * S.mountingAt(t + h);
+        const Eigen::Matrix3d R_n_i_m = motion_->at(t - h).R_n_b * S.mountingAt(t - h);
+        const Eigen::Matrix3d R_n_i = vm.R_n_b * S.mountingAt(t);
+        const Eigen::Vector3d w_i = vee(R_n_i.transpose() * (R_n_i_p - R_n_i_m) / (2.0 * h));
 
         const Eigen::Vector3d ant_e = ts.p_e + ts.R_e_b * S.lever_arm;
         const auto llh0 = geodesy::ecefToLlh(toC(ant_e));

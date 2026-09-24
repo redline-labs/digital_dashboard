@@ -36,6 +36,7 @@ struct NodeConfig
 
     // The vehicle, all in metres and degrees, in the IMU's own frame.
     Eigen::Vector3d imuToBodyRpyDeg{180.0, 0.0, 0.0};  // MTi mounted x forward, z up
+    Eigen::Vector3d imuToBodySigmaDeg{2.0, 2.0, 2.0};  // about the body x, y, z
     Eigen::Vector3d referencePointM{Eigen::Vector3d::Zero()};
     Eigen::Vector3d leverArmM{Eigen::Vector3d::Zero()};
     double leverArmSigmaM{0.02};
@@ -61,6 +62,26 @@ struct NodeConfig
     double timeBudgetMs{40.0};
 
     double sideslipMinSpeed{2.0};
+
+    // What was learned about the installation, kept between sessions.
+    struct Calibration
+    {
+        bool enabled{true};
+        // ${REDLINE_DATA_DIR} expands (core::paths::expand) when the node opens it.
+        std::string database{"${REDLINE_DATA_DIR}/state_estimator/calibration.sqlite"};
+        double minWriteIntervalS{900.0};
+        double moveThresholdSigma{1.0};
+        double tightenRatio{0.5};
+        double settleS{120.0};
+        double loadInflation{4.0};
+        double movedSigma{4.0};
+        // The walk, in units a person can judge.
+        double segmentS{1.0};
+        double mountingWalkDegPerSqrtH{0.05};
+        double leverArmWalkMmPerSqrtH{5.0};
+        double boresightWalkDegPerSqrtH{0.05};
+    };
+    Calibration calibration;
 };
 
 bool parse_node_config(const std::string& yaml, NodeConfig& out);
