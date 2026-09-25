@@ -357,6 +357,9 @@ struct Batch {
   }
 
   constexpr T operator[](std::size_t i) const { return v[i]; }
+  // Replaces lane i and keeps the others -- which it reads, so the batch must already be initialized.
+  // A default-constructed Batch is indeterminate, as a default-constructed double is; build one lane by
+  // lane from from_fn, or from a broadcast value.
   constexpr void set(std::size_t i, T x) {
     *this = from_fn([&](std::size_t j) { return j == i ? x : T(v[j]); });
   }

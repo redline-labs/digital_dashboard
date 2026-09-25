@@ -25,6 +25,17 @@ target_compile_options(csym INTERFACE
     $<$<CXX_COMPILER_ID:GNU>:-fconstexpr-ops-limit=4294967296 -fconstexpr-loop-limit=2147483647>
 )
 
+# -Wpsabi is GCC noting that a function passing or returning a 32- or 64-byte
+# vector -- Batch<double, 4>, or a float batch widened to eight doubles -- is
+# called differently with AVX or AVX-512 enabled than without. That matters
+# only across a call boundary between code built with different -m flags, and
+# Batch's kernels have none: they are header templates marked always_inline,
+# so no such call is ever emitted, and this tree builds every TU with the same
+# flags. Nothing is wrong to fix, so the note is turned off where the types
+# live rather than left to fail -Werror in whichever consumer first uses a
+# wide batch (today, csym_test_batch).
+target_compile_options(csym INTERFACE $<$<CXX_COMPILER_ID:GNU>:-Wno-psabi>)
+
 function(csym_test name)
     add_executable(csym_test_${name} tests/${name}_test.cpp)
     target_include_directories(csym_test_${name} PRIVATE tests)

@@ -67,7 +67,10 @@ int main() {
     std::uniform_real_distribution<double> U(-10, 10);
     double worst = 0;
     for (std::size_t i = 0; i < 100000; ++i) {
-      B4 y, x;
+      // Initialized first: set() rebuilds the whole batch from its other lanes, so filling a
+      // default-constructed (indeterminate, like a double) batch one lane at a time reads the lanes
+      // not yet written.
+      B4 y{0.0}, x{0.0};
       for (std::size_t k = 0; k < 4; ++k) y.set(k, U(rng)), x.set(k, U(rng));
       const B4 r = atan2(y, x);
       for (std::size_t k = 0; k < 4; ++k) worst = std::max(worst, ulps(r[k], std::atan2(y[k], x[k])));

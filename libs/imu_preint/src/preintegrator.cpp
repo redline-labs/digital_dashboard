@@ -198,6 +198,13 @@ std::string Preintegrator::integrate(const Increment& inc, double extra_rot_var,
         case DvFrame::end:
             take(step.template operator()<true>());
             break;
+        default:
+            // Every enumerator is listed above, and -Wswitch-enum keeps it so,
+            // so this is reached only by a frame_ holding a value that is not
+            // one. It is also what lets the compiler see R1..f1 are set on
+            // every path that uses them: without it, it cannot rule out
+            // falling through the switch with all four uninitialized.
+            return "unknown dv frame";
     }
 
     // Covariance over the same state the Jacobians use, the previous force
