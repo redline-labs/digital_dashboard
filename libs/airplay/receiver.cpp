@@ -1222,9 +1222,15 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
 
 
 
-void Receiver::sendTouch(float x, float y, TouchPhase phase)
+void Receiver::sendTouch(const std::vector<TouchContact>& contacts)
 {
-    state_->events.sendTouch(x, y, static_cast<EventChannel::TouchPhase>(phase));
+    std::vector<EventChannel::TouchContact> converted;
+    converted.reserve(contacts.size());
+    for (const auto& c : contacts)
+    {
+        converted.push_back({c.slot, c.x, c.y, c.down});
+    }
+    state_->events.sendTouch(converted);
 }
 
 void Receiver::sendKnob(const hid::KnobState& state, bool momentary)

@@ -140,8 +140,8 @@ int main(int argc, char** argv)
 
     // Input arrives from the dashboard widget on <prefix>/input.
     bridge.setInputHandler([](const carplay::InputEvent& ev) {
-        SPDLOG_DEBUG("[node] input: kind={} x={} y={} code={} value={}",
-                     static_cast<int>(ev.kind), ev.x, ev.y, ev.code, ev.value);
+        SPDLOG_DEBUG("[node] input: kind={} code={} value={} contacts={}",
+                     static_cast<int>(ev.kind), ev.code, ev.value, ev.contacts.size());
     });
     bridge.setMicHandler([](const carplay::AudioChunk& chunk) {
         SPDLOG_DEBUG("[node] mic: {} Hz / {} ch, {} bytes",

@@ -40,12 +40,41 @@ void expect(bool condition, const std::string& what)
     }
 }
 
+// What each published message amounts to for the one finger the mouse is.
+enum class Touch
+{
+    Down,
+    Move,
+    Up,
+    Other,
+};
+
 // Everything the widget published, in order.
 struct Captured
 {
     std::mutex mutex;
-    std::vector<CarPlayInput::Kind> kinds;
+    std::vector<Touch> kinds;
     std::vector<std::pair<uint16_t, uint16_t>> positions;
+
+    // The widget publishes whole touch frames. The mouse is always the one
+    // finger in slot 0, so each frame is filed under what it amounts to -- a
+    // landing, motion, or a lift -- which is what the rate rules below are
+    // stated in.
+    bool finger_down = false;
+
+    void record(CarPlayInput::Reader reader)
+    {
+        if (reader.getKind() != CarPlayInput::Kind::TOUCH || reader.getContacts().size() != 1)
+        {
+            kinds.push_back(Touch::Other);
+            positions.emplace_back(0, 0);
+            return;
+        }
+        const auto c = reader.getContacts()[0];
+        kinds.push_back(!c.getDown() ? Touch::Up : finger_down ? Touch::Move : Touch::Down);
+        positions.emplace_back(c.getX(), c.getY());
+        finger_down = c.getDown();
+    }
 
     void clear()
     {
@@ -54,7 +83,7 @@ struct Captured
         positions.clear();
     }
 
-    size_t countOf(CarPlayInput::Kind kind)
+    size_t countOf(Touch kind)
     {
         std::lock_guard<std::mutex> lock(mutex);
         size_t n = 0;
@@ -102,8 +131,7 @@ int main(int argc, char** argv)
         cfg.input_key,
         [&captured](CarPlayInput::Reader reader) {
             std::lock_guard<std::mutex> lock(captured.mutex);
-            captured.kinds.push_back(reader.getKind());
-            captured.positions.emplace_back(reader.getX(), reader.getY());
+            captured.record(reader);
         });
 
     CarPlayWidget widget(cfg);
@@ -134,8 +162,8 @@ int main(int argc, char** argv)
     }
     pump(std::chrono::milliseconds(200));
 
-    const size_t moves = captured.countOf(CarPlayInput::Kind::TOUCH_MOVE);
-    SPDLOG_INFO("published {} TOUCH_MOVE over ~1.2 s", moves);
+    const size_t moves = captured.countOf(Touch::Move);
+    SPDLOG_INFO("published {} moves over ~1.2 s", moves);
     // Generous bounds: this is a wall-clock test on a loaded machine. The point
     // is that it is near 60 and nowhere near the 500 driven in.
     expect(moves >= 35 && moves <= 90,
@@ -165,7 +193,7 @@ int main(int argc, char** argv)
         bool found_rest = false;
         for (size_t i = 0; i < captured.kinds.size(); ++i)
         {
-            if (captured.kinds[i] == CarPlayInput::Kind::TOUCH_MOVE &&
+            if (captured.kinds[i] == Touch::Move &&
                 captured.positions[i].first == expected_x &&
                 captured.positions[i].second == expected_y)
             {
@@ -190,10 +218,10 @@ int main(int argc, char** argv)
     }
     pump(std::chrono::milliseconds(200));
 
-    const size_t downs = captured.countOf(CarPlayInput::Kind::TOUCH_DOWN);
-    const size_t ups = captured.countOf(CarPlayInput::Kind::TOUCH_UP);
-    expect(downs == 10, "10 rapid taps publish 10 TOUCH_DOWN (got " + std::to_string(downs) + ")");
-    expect(ups == 10, "10 rapid taps publish 10 TOUCH_UP (got " + std::to_string(ups) + ")");
+    const size_t downs = captured.countOf(Touch::Down);
+    const size_t ups = captured.countOf(Touch::Up);
+    expect(downs == 10, "10 rapid taps publish 10 landings (got " + std::to_string(downs) + ")");
+    expect(ups == 10, "10 rapid taps publish 10 lifts (got " + std::to_string(ups) + ")");
 
     // --- Motion outside a drag publishes nothing ----------------------------
     captured.clear();
@@ -202,7 +230,7 @@ int main(int argc, char** argv)
         sendMouse(&widget, QEvent::MouseMove, Qt::NoButton, QPointF(200 + i, 200));
     }
     pump(std::chrono::milliseconds(100));
-    expect(captured.countOf(CarPlayInput::Kind::TOUCH_MOVE) == 0,
+    expect(captured.countOf(Touch::Move) == 0,
            "moves with no button held publish nothing");
 
     if (failures == 0)

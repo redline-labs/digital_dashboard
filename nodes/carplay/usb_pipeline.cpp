@@ -1237,18 +1237,17 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
             bridge.setInputHandler([rx](const InputEvent& event) {
                 switch (event.kind)
                 {
-                    case InputEvent::Kind::TouchDown:
-                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
-                                      airplay::Receiver::TouchPhase::Down);
+                    case InputEvent::Kind::Touch:
+                    {
+                        std::vector<airplay::Receiver::TouchContact> contacts;
+                        contacts.reserve(event.contacts.size());
+                        for (const auto& c : event.contacts)
+                        {
+                            contacts.push_back({c.slot, c.x / 10000.0f, c.y / 10000.0f, c.down});
+                        }
+                        rx->sendTouch(contacts);
                         break;
-                    case InputEvent::Kind::TouchMove:
-                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
-                                      airplay::Receiver::TouchPhase::Move);
-                        break;
-                    case InputEvent::Kind::TouchUp:
-                        rx->sendTouch(event.x / 10000.0f, event.y / 10000.0f,
-                                      airplay::Receiver::TouchPhase::Up);
-                        break;
+                    }
                     // The rest ride their own HID devices; see airplay/hid.h.
                     // Listed rather than folded into a default so that adding a
                     // new input kind is a compile error here, not a silent drop.

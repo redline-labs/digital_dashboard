@@ -32,6 +32,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace airplay
 {
@@ -78,14 +79,19 @@ class EventChannel
     // All of these queue and return immediately, and are safe from any thread.
     // Anything queued while no phone is connected is dropped.
 
-    enum class TouchPhase
+    // One finger of a touch update.
+    struct TouchContact
     {
-        Down,
-        Move,
-        Up,
+        int slot = 0;  // 0 .. hid::kTouchContacts-1; others are ignored
+        float x = 0.0f;  // normalised 0..1 over the display
+        float y = 0.0f;
+        bool down = false;  // false only in the update that lifts this finger
     };
-    // x and y are normalised 0..1 over the display.
-    void sendTouch(float x, float y, TouchPhase phase);
+    // Every finger at once, becoming exactly one HID report. A slot with no
+    // entry has no finger on it; one finger is simply one entry. There is no
+    // phase to pass: whether a finger landed, moved or lifted -- and so whether
+    // the report may coalesce -- is worked out from the sequence.
+    void sendTouch(const std::vector<TouchContact>& contacts);
 
     void sendKnob(const hid::KnobState& state, bool momentary = true);
     void sendMediaKey(hid::MediaKey key);
@@ -125,7 +131,7 @@ class EventChannel
     bool writeLocked(const Bytes& message);
 
     void queueReport(uint32_t uid, const Bytes& report);
-    Bytes buildTouchCommand(float x, float y, bool down) const;
+    Bytes buildTouchCommand(const EventQueue::TouchReport& report) const;
     Bytes buildKeyframeCommand() const;
     Bytes buildNightModeCommand() const;
 

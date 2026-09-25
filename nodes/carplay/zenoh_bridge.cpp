@@ -3,6 +3,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
+#include <optional>
+
 namespace carplay
 {
 
@@ -57,18 +60,18 @@ CarPlayCall::State toCapnp(CallPhase p)
     }
 }
 
-InputEvent::Kind fromCapnp(CarPlayInput::Kind k)
+// Nothing for a value this build has never heard of. Mapping it onto a real
+// kind would invent input: an unknown value used to become a touch-down.
+std::optional<InputEvent::Kind> fromCapnp(CarPlayInput::Kind k)
 {
     switch (k)
     {
-        case CarPlayInput::Kind::TOUCH_MOVE: return InputEvent::Kind::TouchMove;
-        case CarPlayInput::Kind::TOUCH_UP:   return InputEvent::Kind::TouchUp;
-        case CarPlayInput::Kind::KNOB:       return InputEvent::Kind::Knob;
-        case CarPlayInput::Kind::MEDIA_KEY:  return InputEvent::Kind::MediaKey;
-        case CarPlayInput::Kind::SIRI:       return InputEvent::Kind::Siri;
-        case CarPlayInput::Kind::TELEPHONY:  return InputEvent::Kind::Telephony;
-        case CarPlayInput::Kind::TOUCH_DOWN:
-        default:                             return InputEvent::Kind::TouchDown;
+        case CarPlayInput::Kind::TOUCH:              return InputEvent::Kind::Touch;
+        case CarPlayInput::Kind::KNOB:               return InputEvent::Kind::Knob;
+        case CarPlayInput::Kind::MEDIA_KEY:          return InputEvent::Kind::MediaKey;
+        case CarPlayInput::Kind::SIRI:               return InputEvent::Kind::Siri;
+        case CarPlayInput::Kind::TELEPHONY:          return InputEvent::Kind::Telephony;
+        default:                                     return std::nullopt;
     }
 }
 
@@ -99,12 +102,30 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     input_sub_(key_prefix + "/input",
                [this](CarPlayInput::Reader reader)
                {
+                   const auto kind = fromCapnp(reader.getKind());
+                   if (!kind.has_value())
+                   {
+                       // A dashboard from another build can send these at
+                       // 60 Hz, so the first says what is wrong and the rest
+                       // only count.
+                       static std::atomic<uint64_t> ignored{0};
+                       if (ignored.fetch_add(1) % 1000 == 0)
+                       {
+                           SPDLOG_WARN("[node] ignoring CarPlay input of unknown kind {}; is the "
+                                       "dashboard from a different build?",
+                                       static_cast<unsigned>(reader.getKind()));
+                       }
+                       return;
+                   }
                    InputEvent ev;
-                   ev.kind = fromCapnp(reader.getKind());
-                   ev.x = reader.getX();
-                   ev.y = reader.getY();
+                   ev.kind = *kind;
                    ev.code = reader.getCode();
                    ev.value = reader.getValue();
+                   for (auto contact : reader.getContacts())
+                   {
+                       ev.contacts.push_back({contact.getSlot(), contact.getX(),
+                                              contact.getY(), contact.getDown()});
+                   }
                    input_handler_(ev);
                }),
     mic_sub_(key_prefix + "/mic",

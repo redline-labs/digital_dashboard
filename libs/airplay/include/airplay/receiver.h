@@ -83,23 +83,21 @@ class Receiver
     // mirror of the manufacturer button. Queues and returns. UNCONFIRMED.
     void requestPhoneUi(const std::optional<std::string>& url);
 
-    // Which part of a gesture a touch report is. Down and Up both map to the
-    // same single "contact down" bit on the wire, so this does not change the
-    // HID report -- it exists because Move is the only phase that may be
-    // coalesced when reports queue up. Collapsing a Down into a following Move
-    // would move the press to where the finger ended up and turn a drag into a
-    // tap somewhere else.
-    enum class TouchPhase
+    // One finger of a touch update; see EventChannel::sendTouch.
+    struct TouchContact
     {
-        Down,
-        Move,
-        Up,
+        int slot = 0;       // 0 .. hid::kTouchContacts-1
+        float x = 0.0f;     // normalised 0..1 over the screen
+        float y = 0.0f;
+        bool down = false;  // false only in the update that lifts this finger
     };
 
-    // Injects a touch contact. x and y are normalised 0..1 over the screen.
-    // Safe to call from any thread and never blocks: the report is queued for
-    // the event-channel writer. Dropped if the channel is not up.
-    void sendTouch(float x, float y, TouchPhase phase);
+    // Injects every finger at once, as one HID report -- which is what lets a
+    // pinch reach the phone as a pinch rather than as two fingers taking turns.
+    // One finger is one entry. Safe to call from any thread and never blocks:
+    // the report is queued for the event-channel writer. Dropped if the channel
+    // is not up.
+    void sendTouch(const std::vector<TouchContact>& contacts);
 
     // --- The non-touch input devices (see airplay/hid.h) --------------------
     //

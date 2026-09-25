@@ -6,7 +6,8 @@
 #
 # What `code` and `value` mean depends on `kind`:
 #
-#   touchDown/touchMove/touchUp  x, y are the position; code and value unused.
+#   touch                        every finger at once, in `contacts`; code
+#                                and value unused. See below.
 #   knob                         code is a KnobControl; value is the amount --
 #                                detents for rotate (signed, positive
 #                                clockwise), pixels for panX/panY, and 1/0 for
@@ -17,21 +18,29 @@
 #   telephony                    code is a TelephonyKey; value unused.
 #   siri                         code and value unused -- one event asks the
 #                                phone to start listening.
+#
+# WHY TOUCH TRAVELS AS A FRAME. The phone's digitizer report carries every
+# contact slot in one report, so what it needs is the whole touch state at an
+# instant. Sending one event per finger would make the driver reassemble that
+# state, and two fingers moving together would reach the phone as two reports,
+# the first with one finger moved and the other not -- a pinch that stutters.
+# A frame is one Qt touch event, whole, and becomes exactly one HID report.
 struct CarPlayInput {
   kind  @0 :Kind;
-  x     @1 :UInt16;
-  y     @2 :UInt16;
-  code  @3 :UInt16;
-  value @4 :Int32;
+  code  @1 :UInt16;
+  value @2 :Int32;
+
+  contacts @3 :List(CarPlayTouchContact);
+  # A touch event's fingers: one entry per finger on the glass, plus one with
+  # down = false for each finger this frame lifts. A slot with no entry has no
+  # finger on it. Empty for every other kind.
 
   enum Kind {
-    touchDown @0;
-    touchMove @1;
-    touchUp   @2;
-    knob      @3;
-    mediaKey  @4;
-    siri      @5;
-    telephony @6;
+    touch     @0;
+    knob      @1;
+    mediaKey  @2;
+    siri      @3;
+    telephony @4;
   }
 
   # The controls on a rotary controller, as `code` for a knob event.
@@ -78,4 +87,20 @@ struct CarPlayInput {
     pound      @16;
     delete     @17;
   }
+}
+
+# One finger in a touch event.
+struct CarPlayTouchContact {
+  slot @0 :UInt8;
+  # Which of the phone's contact slots this finger occupies, 0 or 1. Fixed for
+  # the finger's whole time on the glass: the phone tracks a finger by the slot
+  # it keeps appearing in, so a finger that changed slot would read as one
+  # lifting and another landing.
+
+  x @1 :UInt16;
+  y @2 :UInt16;
+  # Normalized 0..10000 over the widget.
+
+  down @3 :Bool;
+  # False only in the frame that lifts this finger.
 }

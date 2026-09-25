@@ -20,6 +20,7 @@
 #include <QtMultimedia/QAudioFormat>
 
 #include "carplay/audio_ring.h"
+#include "carplay/touch_slots.h"
 #include "carplay/touch_throttle.h"
 
 #include <QtCore/QObject>
@@ -49,6 +50,7 @@ class QPushButton;
 class QAudioSource;
 class QIODevice;
 class QTimer;
+class QTouchEvent;
 
 // Thin client of the carplay driver node: renders the H.264/H.265 video
 // stream published on zenoh and forwards touch input back to the driver.
@@ -73,6 +75,7 @@ class CarPlayWidget : public QWidget
     QPushButton* returnButton() const { return _return_button; }
 
   protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -106,13 +109,16 @@ class CarPlayWidget : public QWidget
     // unusable.
     bool renderFrameToBackBuffer(const AVFrame* frame);
 
-    // Publishes immediately, with no rate limiting. Everything that reaches the
-    // phone goes through here, so it is also what stamps _last_touch_sent.
-    void publishInput(CarPlayInput::Kind kind, const QPointF& pos);
-    // Rate-limited entry point for drag motion. Down and up are state
-    // transitions and always publish immediately; only motion is limited.
-    void publishTouchMove(const QPointF& pos);
-    static TouchThrottle::Point toThrottlePoint(const QPointF& p) { return {p.x(), p.y()}; }
+    // Touch and mouse both land in _touch_slots and leave as whole frames.
+    // A frame in which a finger landed or lifted is a transition and publishes
+    // at once; one that only moves fingers is rate limited. `lifting` says the
+    // transition includes a lift, which decides whether pending motion is
+    // flushed ahead of it or discarded.
+    void touchChanged(bool transition, bool lifting);
+    // Publishes one frame immediately, with no rate limiting.
+    void publishTouchFrame(const TouchSlots::Frame& frame);
+    // Every Qt touch event. Returns whether it was taken.
+    bool handleTouchEvent(QTouchEvent* e);
     // Publishes the current widget size to _target_size for the decode thread.
     void publishTargetSize();
 
@@ -181,8 +187,8 @@ class CarPlayWidget : public QWidget
 
     // GUI-thread only.
     std::unique_ptr<pub_sub::ZenohPublisher<CarPlayInput>> _input_pub;
-    bool _touch_active = false;
-    QPointF _last_touch_pos;
+    // Which finger holds which of the phone's contact slots; see touch_slots.h.
+    TouchSlots _touch_slots;
 
     // Visibility, GUI thread. _visibility_known is false until the first sync,
     // so the first answer is always published and applied.
@@ -201,17 +207,17 @@ class CarPlayWidget : public QWidget
     QPushButton* _return_button = nullptr;  // owned by Qt; null unless enabled
     std::unique_ptr<dashboard::PageCommandSender> _page_sender;
 
-    // Touch rate limiting. Every mouse event and the flush timer run on the GUI
-    // thread, so none of this needs synchronising.
+    // Touch rate limiting. Every touch and mouse event and the flush timer run
+    // on the GUI thread, so none of this needs synchronising.
     //
-    // _touch_throttle holds the policy and the deferred position; this widget
+    // _touch_throttle holds the policy and the deferred frame; this widget
     // only supplies the clock, the timer and the publishing. The timer is what
     // makes the trailing flush happen -- the part that is easy to leave out and
     // wrong to, since a drag that stops moving but keeps the button down
     // produces no further events, and without a flush the last position is
     // thrown away and the phone's idea of the finger stays an interval behind.
     QTimer* _touch_flush_timer = nullptr;  // single-shot, owned by Qt
-    TouchThrottle _touch_throttle;
+    BasicTouchThrottle<TouchSlots::Frame> _touch_throttle;
 
     // Audio playback. The sink runs in pull mode: it drains _audio_ring on its
     // own audio thread, decoupled from the bursty network delivery. The zenoh

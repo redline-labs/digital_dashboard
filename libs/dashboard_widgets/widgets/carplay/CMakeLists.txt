@@ -11,6 +11,7 @@ add_library(${CARPLAY_WIDGET_LIB} STATIC
     audio_ring.cpp
     include/carplay/carplay_widget.h
     include/carplay/audio_ring.h
+    include/carplay/touch_slots.h
 )
 
 target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
@@ -80,6 +81,13 @@ target_link_libraries(carplay_test_touch_throttle PRIVATE
 add_project_test(TARGET carplay_test_touch_throttle LABELS dashboard unit)
 target_include_directories(carplay_test_touch_throttle PRIVATE include)
 
+# Finger-to-slot assignment for multitouch: stable slots, a third finger
+# refused, lifts reported before the slot frees. Pure logic.
+add_executable(carplay_test_touch_slots test_touch_slots.cpp)
+target_link_libraries(carplay_test_touch_slots PRIVATE spdlog::spdlog)
+target_include_directories(carplay_test_touch_slots PRIVATE include)
+add_project_test(TARGET carplay_test_touch_slots LABELS dashboard unit)
+
 # The same behaviour through a real widget and a real zenoh subscriber, which is
 # what proves the policy is actually wired to the timer and the publisher. Runs
 # headless; no phone or driver node needed, but it does spend real wall clock.
@@ -91,3 +99,18 @@ target_link_libraries(carplay_test_touch_rate PRIVATE
 # Drives a real widget and a real zenoh subscriber, and measures elapsed
 # wall clock -- so it is gui, net and slow all at once.
 add_project_test(TARGET carplay_test_touch_rate LABELS dashboard gui net slow)
+
+# Multitouch through a real widget, Qt's real touch delivery and a real zenoh
+# subscriber: a pinch, a third finger, the return button under a finger, and a
+# page switch mid-touch. Needs QtTest for QTest::touchEvent, the only way to
+# deliver touch the way a touchscreen does; skipped where it is not installed.
+find_package(Qt6 QUIET COMPONENTS Test)
+if(TARGET Qt6::Test)
+    add_executable(carplay_test_multitouch test_multitouch.cpp)
+    target_link_libraries(carplay_test_multitouch PRIVATE
+        ${CARPLAY_WIDGET_LIB}
+        Qt6::Test
+        spdlog::spdlog
+    )
+    add_project_test(TARGET carplay_test_multitouch LABELS dashboard gui net)
+endif()

@@ -6,6 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <optional>
 #include <string>
 
 namespace
@@ -25,19 +26,61 @@ void expect(bool condition, const std::string& what)
     }
 }
 
+// One finger, in slot 0. `down` and `move` build the same report: the queue
+// tells a landing from motion by what came before it, not by anything the
+// report says -- which is the rule most of these tests are about.
+EventQueue::TouchReport one(float x, float y, bool down)
+{
+    EventQueue::TouchReport r;
+    r.contacts[0] = {x, y, down};
+    return r;
+}
+
 EventQueue::TouchReport down(float x, float y)
 {
-    return {x, y, true, false};
+    return one(x, y, true);
 }
 
 EventQueue::TouchReport move(float x, float y)
 {
-    return {x, y, true, true};
+    return one(x, y, true);
 }
 
 EventQueue::TouchReport up(float x, float y)
 {
-    return {x, y, false, false};
+    return one(x, y, false);
+}
+
+// Two fingers. A slot given as nullopt has no finger on it.
+struct Finger
+{
+    float x;
+    float y;
+    bool down;
+};
+
+EventQueue::TouchReport frame(std::optional<Finger> slot0, std::optional<Finger> slot1)
+{
+    EventQueue::TouchReport r;
+    if (slot0)
+    {
+        r.contacts[0] = {slot0->x, slot0->y, slot0->down};
+    }
+    if (slot1)
+    {
+        r.contacts[1] = {slot1->x, slot1->y, slot1->down};
+    }
+    return r;
+}
+
+// Fills the queue with reports that cannot coalesce: taps, landing and lifting
+// in turn, each a transition.
+void fillWithTaps(EventQueue& q, size_t n)
+{
+    for (size_t i = 0; i < n; ++i)
+    {
+        q.pushTouch((i % 2 == 0) ? down(static_cast<float>(i), 0) : up(static_cast<float>(i), 0));
+    }
 }
 
 // A fixed origin plus offsets, so every test states its own timing.
@@ -57,15 +100,17 @@ std::chrono::steady_clock::time_point later(int ms)
 void testCoalescingKeepsNewestPosition()
 {
     EventQueue q;
+    q.pushTouch(down(0, 0));
     q.pushTouch(move(1, 1));
     q.pushTouch(move(2, 2));
     q.pushTouch(move(3, 3));
 
-    expect(q.size() == 1, "three consecutive moves occupy one slot");
+    expect(q.size() == 2, "a landing, then three consecutive moves in one slot");
 
-    const auto next = q.take(later(0));
+    q.take(later(0));
+    const auto next = q.take(later(100));
     expect(next.action == Action::SendTouch, "coalesced move is sent");
-    expect(next.touch.x == 3.0f && next.touch.y == 3.0f,
+    expect(next.touch.contacts[0].x == 3.0f && next.touch.contacts[0].y == 3.0f,
            "coalescing keeps the newest position, not the oldest");
 }
 
@@ -79,18 +124,21 @@ void testCoalescingNeverCrossesDownOrUp()
     expect(q.size() == 2, "a move does not coalesce into a preceding down");
 
     auto next = q.take(later(0));
-    expect(next.action == Action::SendTouch && next.touch.x == 1.0f,
+    expect(next.action == Action::SendTouch && next.touch.contacts[0].x == 1.0f,
            "the down is delivered first, at the position it was pressed");
     next = q.take(later(100));
-    expect(next.action == Action::SendTouch && next.touch.x == 9.0f,
+    expect(next.action == Action::SendTouch && next.touch.contacts[0].x == 9.0f,
            "the move follows, in order");
 
     // Same on the other side: an up must not absorb, or be absorbed by, motion.
     EventQueue q2;
+    q2.pushTouch(down(3, 3));
     q2.pushTouch(move(4, 4));
     q2.pushTouch(up(5, 5));
-    q2.pushTouch(move(6, 6));
-    expect(q2.size() == 3, "up neither coalesces with the move before it nor the one after");
+    q2.pushTouch(down(6, 6));
+    q2.pushTouch(move(7, 7));
+    expect(q2.size() == 5,
+           "an up coalesces neither with the move before it nor the next landing after");
 }
 
 void testGestureOrderIsPreserved()
@@ -108,19 +156,16 @@ void testGestureOrderIsPreserved()
     auto b = q.take(later(t += 100));
     auto c = q.take(later(t += 100));
 
-    expect(a.touch.down && a.touch.x == 0.0f, "down first");
-    expect(b.touch.down && b.touch.x == 2.0f, "then the newest move");
-    expect(!c.touch.down && c.touch.x == 3.0f, "then up, with the contact bit cleared");
+    expect(a.touch.contacts[0].down && a.touch.contacts[0].x == 0.0f, "down first");
+    expect(b.touch.contacts[0].down && b.touch.contacts[0].x == 2.0f, "then the newest move");
+    expect(!c.touch.contacts[0].down && c.touch.contacts[0].x == 3.0f, "then up, with the contact bit cleared");
     expect(q.take(later(t += 100)).action == Action::Idle, "and then nothing");
 }
 
 void testKeyframeOvertakesTouchAndIsNotRateLimited()
 {
     EventQueue q;
-    for (int i = 0; i < 10; ++i)
-    {
-        q.pushTouch(down(static_cast<float>(i), 0));  // non-coalescable, so they stack up
-    }
+    fillWithTaps(q, 10);  // transitions, so they stack up
     q.requestKeyframe();
 
     // Even with ten touch reports already queued, the keyframe goes first.
@@ -150,7 +195,7 @@ void testKeyframeRequestsCollapse()
 void testTouchIsRateLimitedByWaitingNotDropping()
 {
     EventQueue q;
-    q.pushTouch(move(1, 1));
+    q.pushTouch(down(1, 1));
     const auto first = q.take(at(0));
     expect(first.action == Action::SendTouch, "the first report goes immediately");
 
@@ -167,7 +212,7 @@ void testTouchIsRateLimitedByWaitingNotDropping()
     // finally goes out is where the finger is now, not where it was.
     q.pushTouch(move(7, 7));
     const auto after = q.take(at(0) + EventQueue::kMinTouchGap);
-    expect(after.action == Action::SendTouch && after.touch.x == 7.0f,
+    expect(after.action == Action::SendTouch && after.touch.contacts[0].x == 7.0f,
            "the report sent after the wait is the newest position");
 }
 
@@ -176,7 +221,7 @@ void testKeyframeOvertakesDuringATouchWait()
     // The interaction that motivated all of this: a keyframe request must not
     // be stuck behind touch that is itself waiting on the rate limit.
     EventQueue q;
-    q.pushTouch(move(1, 1));
+    q.pushTouch(down(1, 1));
     q.take(at(0));  // consume, arming the rate limit
 
     q.pushTouch(move(2, 2));
@@ -190,11 +235,8 @@ void testKeyframeOvertakesDuringATouchWait()
 void testFullQueueDropsRatherThanGrows()
 {
     EventQueue q;
-    // Only non-coalescable reports can accumulate; moves would collapse.
-    for (size_t i = 0; i < EventQueue::kMaxQueued; ++i)
-    {
-        expect(q.pushTouch(down(1, 1)), "accepted while under the cap");
-    }
+    // Only transitions can accumulate; moves would collapse. Ends on an up.
+    fillWithTaps(q, EventQueue::kMaxQueued);
     expect(q.size() == EventQueue::kMaxQueued, "queue fills to the cap");
 
     expect(!q.pushTouch(down(2, 2)), "a push past the cap is rejected");
@@ -212,13 +254,15 @@ void testFloodOfMotionNeverGrowsTheQueue()
     // The guardrail, stated directly: an unbounded flood of motion costs one
     // slot, no drops, and the phone still ends up with the right position.
     EventQueue q;
+    q.pushTouch(down(0, 0));
     for (int i = 0; i < 100000; ++i)
     {
         q.pushTouch(move(static_cast<float>(i), 0));
     }
-    expect(q.size() == 1, "100k moves occupy one slot");
+    expect(q.size() == 2, "the landing, then 100k moves in one slot");
     expect(q.dropped() == 0, "and none are dropped");
-    expect(q.take(later(0)).touch.x == 99999.0f, "the newest position survives");
+    q.take(later(0));
+    expect(q.take(later(100)).touch.contacts[0].x == 99999.0f, "the newest position survives");
 }
 
 void testFirstReportIsNeverRateLimited()
@@ -335,6 +379,84 @@ void testHasWorkTracksTakeableWork()
     expect(q.hasWork(), "rate-limited touch still counts as work to wake up for");
 }
 
+void testSecondFingerLandingIsNeverCoalesced()
+{
+    // The multitouch form of the down/move rule: motion coalesces, but only
+    // among reports with the same fingers down. A second finger landing is a
+    // transition, and merging it into the motion either side would lose the
+    // moment the pinch began.
+    EventQueue q;
+    q.pushTouch(frame(Finger{1, 1, true}, std::nullopt));           // first finger lands
+    q.pushTouch(frame(Finger{2, 2, true}, std::nullopt));           // moves
+    q.pushTouch(frame(Finger{3, 3, true}, Finger{5, 5, true}));     // second lands
+    q.pushTouch(frame(Finger{4, 4, true}, Finger{6, 6, true}));     // both move
+    q.pushTouch(frame(Finger{5, 5, true}, Finger{7, 7, true}));     // both move again
+    expect(q.size() == 4, "landing, motion, second landing, coalesced two-finger motion (got " +
+                              std::to_string(q.size()) + ")");
+
+    q.take(later(0));
+    q.take(later(100));
+    const auto landing = q.take(later(200));
+    expect(landing.touch.contacts[1].down && landing.touch.contacts[1].x == 5.0f &&
+               landing.touch.contacts[0].x == 3.0f,
+           "the second finger's landing is sent as it was, with the first where it was then");
+    const auto pinch = q.take(later(300));
+    expect(pinch.touch.contacts[0].x == 5.0f && pinch.touch.contacts[1].x == 7.0f,
+           "two-finger motion coalesces to the newest positions of both fingers together");
+}
+
+void testOneFingerLiftingKeepsTheOther()
+{
+    EventQueue q;
+    q.pushTouch(frame(Finger{1, 1, true}, Finger{9, 9, true}));
+    q.pushTouch(frame(Finger{2, 2, false}, Finger{8, 8, true}));    // first lifts
+    q.pushTouch(frame(std::nullopt, Finger{7, 7, true}));          // second moves on
+    q.pushTouch(frame(std::nullopt, Finger{6, 6, true}));
+    expect(q.size() == 3, "landing, lift, then the survivor's motion coalesced (got " +
+                              std::to_string(q.size()) + ")");
+
+    q.take(later(0));
+    const auto lift = q.take(later(100));
+    expect(!lift.touch.contacts[0].down && lift.touch.contacts[1].down,
+           "the lift clears one finger's contact bit and not the other's");
+    const auto survivor = q.take(later(200));
+    expect(survivor.touch.contacts[1].down && survivor.touch.contacts[1].x == 6.0f &&
+               !survivor.touch.contacts[0].down,
+           "the remaining finger carries on in its own slot");
+}
+
+void testMotionNeverMergesAcrossADroppedLanding()
+{
+    // Why the queue compares down masks when both reports are motion. On a
+    // full queue a second finger's landing is dropped, but the queue still
+    // records that two fingers are down, so the two-finger motion after it
+    // counts as motion. Merging that into the one-finger move at the tail
+    // would report the second finger with no landing at all.
+    EventQueue q;
+    fillWithTaps(q, EventQueue::kMaxQueued - 2);
+    q.pushTouch(down(1, 1));
+    q.pushTouch(move(2, 2));  // the tail: one-finger motion
+    expect(q.size() == EventQueue::kMaxQueued, "full, with one-finger motion at the tail");
+
+    expect(!q.pushTouch(frame(Finger{3, 3, true}, Finger{9, 9, true})),
+           "the second finger's landing is dropped on a full queue");
+    expect(!q.pushTouch(frame(Finger{4, 4, true}, Finger{8, 8, true})),
+           "and so is the two-finger motion after it, rather than merging into the tail");
+    expect(q.dropped() == 2, "both drops are counted");
+}
+
+void testClearForgetsWhichFingersWereDown()
+{
+    // A new session starts with nothing on the glass, so its first frame is a
+    // landing even if the old session ended mid-gesture with the same finger.
+    EventQueue q;
+    q.pushTouch(frame(Finger{1, 1, true}, std::nullopt));
+    q.clear();
+    q.pushTouch(frame(Finger{2, 2, true}, std::nullopt));
+    q.pushTouch(frame(Finger{3, 3, true}, std::nullopt));
+    expect(q.size() == 2, "after clear, the first frame is a landing and does not coalesce");
+}
+
 }  // namespace
 
 int main()
@@ -354,6 +476,10 @@ int main()
     testControlIsOrderedAndNotCoalesced();
     testControlQueueIsBoundedAndClearedWithTheSession();
     testHasWorkTracksTakeableWork();
+    testSecondFingerLandingIsNeverCoalesced();
+    testOneFingerLiftingKeepsTheOther();
+    testMotionNeverMergesAcrossADroppedLanding();
+    testClearForgetsWhichFingersWereDown();
 
     if (failures == 0)
     {

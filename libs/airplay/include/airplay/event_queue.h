@@ -4,6 +4,7 @@
 
 #include "helpers/rate_gate.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -29,7 +30,9 @@ namespace airplay
 //    accumulating, which is what bounds this under a publisher sending faster
 //    than the link drains. Down and up never coalesce, so the gesture's shape
 //    survives -- collapsing a down into a following move would relocate the
-//    press and turn a drag into a tap somewhere else.
+//    press and turn a drag into a tap somewhere else. With two fingers the
+//    same rule reads: a report coalesces only onto one with the same fingers
+//    down, so a second finger landing or lifting is never merged away.
 //  - A control command -- a knob turn, a media key, a phone key, a Siri
 //    request -- is queued in its own strictly ordered FIFO, and never
 //    coalesced: each one is a distinct press or detent, and merging two of them
@@ -45,14 +48,41 @@ namespace airplay
 class EventQueue
 {
   public:
-    // A single HID contact update. `down` is the wire-level contact bit, which
-    // is set for both Down and Move; `coalescable` is what distinguishes them.
-    struct TouchReport
+    // Contact slots in a touch report. Matches hid::kTouchContacts, which
+    // event_channel.cpp asserts; not included from there because the queue has
+    // no business knowing HID.
+    static constexpr int kTouchSlots = 2;
+
+    // One slot of a touch report. `down` is the wire-level contact bit, set
+    // for both a press and a move; a slot with no finger is left default.
+    struct TouchContact
     {
         float x = 0.0f;
         float y = 0.0f;
         bool down = false;
-        bool coalescable = false;  // true only for a move
+    };
+
+    // The whole digitizer state at one instant: every slot, because that is
+    // what one HID report carries. One finger is simply slot 0 with slot 1
+    // empty; there is no separate single-touch form.
+    //
+    // `coalescable` is the queue's to set, not the caller's: pushTouch marks a
+    // report motion only when no finger landed or lifted since the last one.
+    struct TouchReport
+    {
+        std::array<TouchContact, kTouchSlots> contacts{};
+        bool coalescable = false;
+
+        // Bit i set when slot i is down.
+        unsigned downMask() const
+        {
+            unsigned mask = 0;
+            for (size_t i = 0; i < contacts.size(); ++i)
+            {
+                mask |= contacts[i].down ? (1u << i) : 0u;
+            }
+            return mask;
+        }
     };
 
     // One already-encoded event-channel command body. Encoded by the caller,
@@ -89,7 +119,12 @@ class EventQueue
     static constexpr std::chrono::milliseconds kMinTouchGap{8};  // 125 Hz
 
     // Returns false if the report was dropped because the queue is full.
-    bool pushTouch(const TouchReport& report);
+    //
+    // The sender gives no phase -- down, move or up -- because the phase is a
+    // property of the sequence, which only the queue sees: a report is motion
+    // when the same fingers are down as in the last one pushed, and otherwise a
+    // finger landed or lifted. For one finger that is exactly down, move, up.
+    bool pushTouch(TouchReport report);
 
     // Same bound, counted against the same drop total. Nothing coalesces here,
     // so a stalled link fills this queue -- but only at the rate a human can
@@ -126,6 +161,10 @@ class EventQueue
     std::deque<TouchReport> _queue;
     std::deque<ControlCommand> _control_queue;
     bool _keyframe_pending = false;
+    // Down mask of the last touch report pushed, dropped or not: what
+    // pushTouch compares against. Zero is "no finger down", which is what
+    // a new session starts from.
+    unsigned _last_touch_mask = 0;
     helpers::RateGate _touch_gate{kMinTouchGap};
     uint64_t _dropped = 0;
 };

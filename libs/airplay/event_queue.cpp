@@ -4,13 +4,22 @@
 namespace airplay
 {
 
-bool EventQueue::pushTouch(const TouchReport& report)
+bool EventQueue::pushTouch(TouchReport report)
 {
+    report.coalescable = (report.downMask() == _last_touch_mask);
+    _last_touch_mask = report.downMask();
+
     // Collapse a run of motion into its newest position. However fast reports
     // arrive, consecutive moves occupy one slot, so a flood costs a memory
     // write rather than an unbounded queue and a burst of link traffic -- and
     // what the phone eventually sees is where the finger actually is.
-    if (report.coalescable && !_queue.empty() && _queue.back().coalescable)
+    //
+    // The mask comparison is not implied by both being motion. A report
+    // dropped on a full queue still moves _last_touch_mask, so motion after a
+    // dropped landing matches the landing's fingers, not the tail's -- and
+    // merging it into the tail would report the new finger with no landing.
+    if (report.coalescable && !_queue.empty() && _queue.back().coalescable &&
+        _queue.back().downMask() == report.downMask())
     {
         _queue.back() = report;
         return true;
@@ -45,6 +54,7 @@ void EventQueue::clear()
     // nobody made.
     _control_queue.clear();
     _keyframe_pending = false;
+    _last_touch_mask = 0;
     // The next session starts fresh: its first touch has nothing to be spaced
     // against, and should not inherit the timing of the one that just ended.
     _touch_gate.reset();

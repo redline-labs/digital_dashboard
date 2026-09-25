@@ -47,7 +47,7 @@ struct DragOptions
 // Press, N interpolated moves, release -- all widget-local.
 //
 // Covers the two drags in this project that are plain mouse tracking: a CarPlay
-// swipe (which becomes TOUCH_DOWN/MOVE/UP, coalesced by TouchThrottle at ~60 Hz)
+// swipe (the widget's one finger, published as touch frames paced to ~60 Hz)
 // and the editor Canvas's own move/resize handling.
 //
 // It does NOT drive Qt's QDrag: QDrag::exec() runs a nested event loop that

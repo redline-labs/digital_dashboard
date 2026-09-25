@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QtGui/QResizeEvent>
+#include <QtGui/QTouchEvent>
 #include <QtMultimedia/QAudioDevice>
 #include <QtMultimedia/QAudioSink>
 #include <QtMultimedia/QAudioSource>
@@ -59,6 +60,9 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _touch_throttle(kTouchMinInterval)
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
+    // Without this Qt turns touch into mouse events, which follow only the
+    // first finger -- and a pinch is the second finger. See handleTouchEvent.
+    setAttribute(Qt::WA_AcceptTouchEvents);
 
     // Seed the scaler target so it is never zero. Whatever size we have now is
     // provisional -- the layout sets real geometry after construction, which
@@ -75,7 +79,7 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
         const auto pending = _touch_throttle.takePending(std::chrono::steady_clock::now());
         if (pending.has_value())
         {
-            publishInput(CarPlayInput::Kind::TOUCH_MOVE, QPointF(pending->x, pending->y));
+            publishTouchFrame(*pending);
         }
     });
 
@@ -771,12 +775,12 @@ void CarPlayWidget::syncVisibility()
 
     if (!visible)
     {
-        // The phone must not be left holding a finger that lifted on another page.
-        if (_touch_active)
+        // The phone must not be left holding a finger that lifted on another
+        // page. Any that are still down lift where they are; the rest of their
+        // Qt touch sequence, if it ever arrives, names ids that hold no slot.
+        if (_touch_slots.releaseAll())
         {
-            _touch_active = false;
-            _touch_flush_timer->stop();
-            publishInput(CarPlayInput::Kind::TOUCH_UP, _last_touch_pos);
+            touchChanged(true, true);
         }
 
         // Undeclaring joins any in-flight callback, so after this line the decode
@@ -863,75 +867,185 @@ void CarPlayWidget::publishTargetSize()
     _target_size.store(packed, std::memory_order_relaxed);
 }
 
-void CarPlayWidget::publishInput(CarPlayInput::Kind kind, const QPointF& pos)
+void CarPlayWidget::publishTouchFrame(const TouchSlots::Frame& frame)
 {
     if (_input_pub == nullptr || width() <= 0 || height() <= 0)
     {
         return;
     }
 
-    const auto clamp01 = [](double v) { return std::clamp(v, 0.0, 1.0); };
+    const auto normalize = [](double v, int extent) {
+        return static_cast<uint16_t>(std::clamp(v / extent, 0.0, 1.0) * 10000.0);
+    };
+    const auto active = static_cast<unsigned>(std::count_if(
+        frame.contacts.begin(), frame.contacts.end(), [](const auto& c) { return c.active; }));
+
     auto& fields = _input_pub->fields();
-    fields.setKind(kind);
-    fields.setX(static_cast<uint16_t>(clamp01(pos.x() / width()) * 10000.0));
-    fields.setY(static_cast<uint16_t>(clamp01(pos.y() / height()) * 10000.0));
+    fields.setKind(CarPlayInput::Kind::TOUCH);
+    auto contacts = fields.initContacts(active);
+    unsigned out = 0;
+    for (size_t slot = 0; slot < frame.contacts.size(); ++slot)
+    {
+        const auto& c = frame.contacts[slot];
+        if (!c.active)
+        {
+            continue;
+        }
+        auto contact = contacts[out++];
+        contact.setSlot(static_cast<uint8_t>(slot));
+        contact.setX(normalize(c.x, width()));
+        contact.setY(normalize(c.y, height()));
+        contact.setDown(c.down);
+    }
     _input_pub->put();
 }
 
-void CarPlayWidget::publishTouchMove(const QPointF& pos)
+void CarPlayWidget::touchChanged(bool transition, bool lifting)
 {
-    const auto decision =
-        _touch_throttle.onMove(toThrottlePoint(pos), std::chrono::steady_clock::now());
-    if (decision.action == TouchThrottle::Action::Publish)
+    const auto now = std::chrono::steady_clock::now();
+    const TouchSlots::Frame& frame = _touch_slots.frame();
+
+    if (!transition)
     {
-        _touch_flush_timer->stop();
-        publishInput(CarPlayInput::Kind::TOUCH_MOVE, pos);
+        const auto decision = _touch_throttle.onMove(frame, now);
+        if (decision.action == decltype(_touch_throttle)::Action::Publish)
+        {
+            _touch_flush_timer->stop();
+            publishTouchFrame(frame);
+            return;
+        }
+
+        // Deferred. The throttle is already holding the frame; all that is left
+        // is making sure something will come back for it. Arming once is
+        // enough -- later motion in the same interval only overwrites what it
+        // will send.
+        if (!_touch_flush_timer->isActive())
+        {
+            const auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(decision.wait);
+            _touch_flush_timer->start(std::max<int>(1, static_cast<int>(remaining.count())));
+        }
         return;
     }
 
-    // Deferred. The throttle is already holding the position; all that is left
-    // is making sure something will come back for it. Arming once is enough --
-    // later moves in the same interval only overwrite what it will send.
-    if (!_touch_flush_timer->isActive())
+    _touch_flush_timer->stop();
+    if (lifting)
     {
-        const auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(decision.wait);
-        _touch_flush_timer->start(std::max<int>(1, static_cast<int>(remaining.count())));
+        // The tail of the gesture still owes its last motion before the lift;
+        // see TouchThrottle::onUp for why.
+        if (const auto flush = _touch_throttle.onUp(frame, now); flush.has_value())
+        {
+            publishTouchFrame(*flush);
+        }
     }
+    else
+    {
+        // A finger landing drops pending motion. Nothing is lost by it: this
+        // frame carries every other finger where it is now.
+        _touch_throttle.onDown(now);
+    }
+    publishTouchFrame(frame);
+    _touch_slots.commit();
+}
+
+// The mouse is one more finger to TouchSlots, under an id no QEventPoint uses.
+// It is what drives the widget on a desktop and in the tests; on the car, touch
+// never reaches these, because handleTouchEvent accepts it and Qt only makes
+// mouse events out of touch that nobody accepted.
+namespace
+{
+constexpr int kMouseTouchId = -1;
 }
 
 void CarPlayWidget::mousePressEvent(QMouseEvent* e)
 {
-    _touch_active = true;
-    _last_touch_pos = e->position();
-    // Drops any motion pending from the previous gesture, which must never land
-    // after this down.
-    _touch_flush_timer->stop();
-    _touch_throttle.onDown(std::chrono::steady_clock::now());
-    publishInput(CarPlayInput::Kind::TOUCH_DOWN, e->position());
+    if (_touch_slots.press(kMouseTouchId, e->position().x(), e->position().y()))
+    {
+        touchChanged(true, false);
+    }
 }
 
 void CarPlayWidget::mouseMoveEvent(QMouseEvent* e)
 {
-    if (_touch_active)
+    if (_touch_slots.move(kMouseTouchId, e->position().x(), e->position().y()))
     {
-        _last_touch_pos = e->position();
-        publishTouchMove(e->position());
+        touchChanged(false, false);
     }
 }
 
 void CarPlayWidget::mouseReleaseEvent(QMouseEvent* e)
 {
-    _touch_active = false;
-    _touch_flush_timer->stop();
-
-    // The throttle decides whether the tail of the gesture still owes a move
-    // before the release; see TouchThrottle::onUp for why.
-    const auto flush =
-        _touch_throttle.onUp(toThrottlePoint(e->position()), std::chrono::steady_clock::now());
-    if (flush.has_value())
+    if (_touch_slots.release(kMouseTouchId, e->position().x(), e->position().y()))
     {
-        publishInput(CarPlayInput::Kind::TOUCH_MOVE, QPointF(flush->x, flush->y));
+        touchChanged(true, true);
     }
-    publishInput(CarPlayInput::Kind::TOUCH_UP, e->position());
+}
+
+bool CarPlayWidget::event(QEvent* event)
+{
+    // Not a switch: -Wswitch-enum would demand every one of QEvent's types.
+    const auto type = event->type();
+    if (type == QEvent::TouchBegin || type == QEvent::TouchUpdate || type == QEvent::TouchEnd ||
+        type == QEvent::TouchCancel)
+    {
+        return handleTouchEvent(static_cast<QTouchEvent*>(event));
+    }
+    return QWidget::event(event);
+}
+
+bool CarPlayWidget::handleTouchEvent(QTouchEvent* e)
+{
+    // THE RETURN BUTTON IS A CHILD, AND A PUSH BUTTON TAKES NO TOUCH EVENTS.
+    // Qt offers a touch to the widget under it and then to each parent in turn
+    // until one accepts, so every touch on the button would arrive here -- and
+    // accepting it would leave the button dead to a finger. Declining the touch
+    // that starts on it makes Qt fall back to synthesizing mouse events, which
+    // go to the widget under the point: the button. Only the start is checked:
+    // a finger landing on it mid-gesture is part of that gesture.
+    if (e->type() == QEvent::TouchBegin && _return_button != nullptr &&
+        _return_button->isVisible() && !e->points().isEmpty() &&
+        _return_button->geometry().contains(e->points().front().position().toPoint()))
+    {
+        e->ignore();
+        return false;
+    }
+
+    bool landed = false;
+    bool lifted = false;
+    bool moved = false;
+    if (e->type() == QEvent::TouchCancel)
+    {
+        lifted = _touch_slots.releaseAll();
+    }
+    else
+    {
+        for (const QEventPoint& p : e->points())
+        {
+            // Stationary points fall through all three: nothing new to say.
+            const QPointF pos = p.position();
+            if (p.state() == QEventPoint::State::Pressed)
+            {
+                landed |= _touch_slots.press(p.id(), pos.x(), pos.y());
+            }
+            else if (p.state() == QEventPoint::State::Updated)
+            {
+                moved |= _touch_slots.move(p.id(), pos.x(), pos.y());
+            }
+            else if (p.state() == QEventPoint::State::Released)
+            {
+                lifted |= _touch_slots.release(p.id(), pos.x(), pos.y());
+            }
+        }
+    }
+
+    if (landed || lifted)
+    {
+        touchChanged(true, lifted);
+    }
+    else if (moved)
+    {
+        touchChanged(false, false);
+    }
+    e->accept();
+    return true;
 }

@@ -156,13 +156,21 @@ struct InputEvent
 {
     enum class Kind
     {
-        TouchDown,
-        TouchMove,
-        TouchUp,
+        Touch,
         Knob,
         MediaKey,
         Siri,
         Telephony
+    };
+
+    // One finger of a Touch event; see CarPlayTouchContact in
+    // schemas/carplay_input.capnp.
+    struct TouchContact
+    {
+        uint8_t slot = 0;
+        uint16_t x = 0;  // 0..10000 normalized over the widget
+        uint16_t y = 0;
+        bool down = false;
     };
 
     // `code` for a Knob event. The rest of the kinds carry HID usage indices in
@@ -178,12 +186,12 @@ struct InputEvent
         PanY = 5,
     };
 
-    Kind kind = Kind::TouchDown;
-    uint16_t x = 0;  // 0..10000 normalized over the widget
-    uint16_t y = 0;
+    Kind kind = Kind::Touch;
     // What `code` and `value` mean depends on `kind`; see schemas/carplay_input.capnp.
     uint16_t code = 0;
     int32_t value = 0;
+    // Touch only: every finger on the glass, and any this event lifts.
+    std::vector<TouchContact> contacts;
 };
 
 // Owns every zenoh endpoint for the driver. Publishers are not thread-safe,

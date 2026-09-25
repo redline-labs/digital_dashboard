@@ -31,7 +31,7 @@ int openUdpSocket(uint16_t& port);
 //
 // For every socket we write to the phone on. Each touch report is one small
 // write; with Nagle on, it waits for the phone to acknowledge the previous one,
-// and a TOUCH_UP held that way is felt directly, because iOS acts on the
+// and a finger's lift held that way is felt directly, because iOS acts on the
 // release.
 int acceptNoDelay(int listen_fd, sockaddr_in6* peer = nullptr);
 

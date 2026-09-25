@@ -7,6 +7,22 @@
 #include <chrono>
 #include <optional>
 
+// A bare position. Kept Qt-free on purpose; the tests use it directly.
+struct TouchThrottlePoint
+{
+    double x = 0.0;
+    double y = 0.0;
+
+    friend bool operator==(const TouchThrottlePoint& a, const TouchThrottlePoint& b)
+    {
+        return a.x == b.x && a.y == b.y;
+    }
+    friend bool operator!=(const TouchThrottlePoint& a, const TouchThrottlePoint& b)
+    {
+        return !(a == b);
+    }
+};
+
 // Decides which touch motion during a drag actually reaches the wire, and holds
 // the one position that is waiting to.
 //
@@ -22,23 +38,16 @@
 // holds at most one deferred position, and never delays a down or an up,
 // because those are user-initiated transitions whose latency is felt directly.
 // The two share the spacing decision (helpers::RateGate) and nothing else.
-class TouchThrottle
+//
+// What is held and published is a template parameter: the widget throttles
+// whole touch frames (TouchSlots::Frame), and the tests exercise the policy on
+// a bare point. Anything with == will do -- onUp uses it to skip a duplicate.
+template <typename PointT>
+class BasicTouchThrottle
 {
   public:
     using clock = std::chrono::steady_clock;
-
-    // Kept Qt-free on purpose; the widget converts to and from QPointF.
-    struct Point
-    {
-        double x = 0.0;
-        double y = 0.0;
-
-        friend bool operator==(const Point& a, const Point& b)
-        {
-            return a.x == b.x && a.y == b.y;
-        }
-        friend bool operator!=(const Point& a, const Point& b) { return !(a == b); }
-    };
+    using Point = PointT;
 
     enum class Action
     {
@@ -52,7 +61,7 @@ class TouchThrottle
         clock::duration wait{};
     };
 
-    explicit TouchThrottle(clock::duration min_interval) : _gate(min_interval) {}
+    explicit BasicTouchThrottle(clock::duration min_interval) : _gate(min_interval) {}
 
     // Motion arrived. Publishes on the leading edge, otherwise becomes the
     // pending position -- overwriting any previous one, so the newest wins and
@@ -110,7 +119,7 @@ class TouchThrottle
     std::optional<Point> onUp(const Point& p, clock::time_point now)
     {
         std::optional<Point> flush;
-        if (_pending.has_value() && *_pending != p)
+        if (_pending.has_value() && !(*_pending == p))
         {
             flush = *_pending;
         }
@@ -125,5 +134,7 @@ class TouchThrottle
     helpers::RateGate _gate;
     std::optional<Point> _pending;
 };
+
+using TouchThrottle = BasicTouchThrottle<TouchThrottlePoint>;
 
 #endif  // CARPLAY_TOUCH_THROTTLE_H_

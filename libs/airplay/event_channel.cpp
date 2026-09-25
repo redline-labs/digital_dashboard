@@ -225,18 +225,26 @@ void EventChannel::acceptLoop()
         SPDLOG_INFO("[airplay] event channel closed");
     }
 }
-Bytes EventChannel::buildTouchCommand(float x, float y, bool down) const
+static_assert(EventQueue::kTouchSlots == hid::kTouchContacts,
+              "a queued touch report must carry exactly the slots the descriptor declares");
+
+Bytes EventChannel::buildTouchCommand(const EventQueue::TouchReport& report) const
 {
     // The descriptor reports absolute coordinates, so the caller's normalised
-    // 0..1 is scaled to the display it was advertised against. We only ever
-    // drive contact 0; the second slot is reported empty.
+    // 0..1 is scaled to the display it was advertised against. Every slot is
+    // reported, empty ones included; see hid::touchReport.
     const auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
-    hid::Contact contact;
-    contact.x = static_cast<uint16_t>(clamp01(x) * static_cast<float>(config_.width));
-    contact.y = static_cast<uint16_t>(clamp01(y) * static_cast<float>(config_.height));
-    contact.down = down;
-
-    return hid::sendReportCommand(hid::kTouchUid, hid::touchReport({contact}));
+    std::vector<hid::Contact> contacts;
+    contacts.reserve(report.contacts.size());
+    for (const auto& c : report.contacts)
+    {
+        hid::Contact contact;
+        contact.x = static_cast<uint16_t>(clamp01(c.x) * static_cast<float>(config_.width));
+        contact.y = static_cast<uint16_t>(clamp01(c.y) * static_cast<float>(config_.height));
+        contact.down = c.down;
+        contacts.push_back(contact);
+    }
+    return hid::sendReportCommand(hid::kTouchUid, hid::touchReport(contacts));
 }
 Bytes EventChannel::buildKeyframeCommand() const
 {
@@ -257,13 +265,21 @@ Bytes EventChannel::buildNightModeCommand() const
     command.set("params", std::move(params));
     return plist::encodeBinary(command);
 }
-void EventChannel::sendTouch(float x, float y, TouchPhase phase)
+void EventChannel::sendTouch(const std::vector<TouchContact>& contacts)
 {
     EventQueue::TouchReport report;
-    report.x = x;
-    report.y = y;
-    report.down = (phase != TouchPhase::Up);
-    report.coalescable = (phase == TouchPhase::Move);
+    for (const auto& c : contacts)
+    {
+        // Out of range is a publisher bug; dropping the finger is better than
+        // letting it alias onto a slot another finger owns.
+        if (c.slot < 0 || c.slot >= EventQueue::kTouchSlots)
+        {
+            SPDLOG_WARN("[airplay] touch contact in slot {} ignored; the digitizer has {}",
+                        c.slot, EventQueue::kTouchSlots);
+            continue;
+        }
+        report.contacts[static_cast<size_t>(c.slot)] = {c.x, c.y, c.down};
+    }
 
     bool dropped = false;
     uint64_t drop_count = 0;
@@ -403,8 +419,7 @@ void EventChannel::sendLoop()
                 writeCommand(next.control);
                 break;
             case EventQueue::Action::SendTouch:
-                writeCommand(
-                    buildTouchCommand(next.touch.x, next.touch.y, next.touch.down));
+                writeCommand(buildTouchCommand(next.touch));
                 break;
             case EventQueue::Action::Idle:
                 break;  // spurious wake, just go round again

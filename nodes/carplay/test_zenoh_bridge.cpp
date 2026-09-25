@@ -16,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <future>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -71,6 +73,8 @@ int main()
 
     std::atomic<bool> seen_present{false};
     std::atomic<int> inputs{0};
+    std::mutex frame_mutex;
+    std::optional<carplay::InputEvent> last_frame;
     std::promise<void> constructed;
     std::promise<void> finish;
     std::shared_future<void> finished = finish.get_future().share();
@@ -79,7 +83,14 @@ int main()
     std::thread node([&]() {
         carplay::ZenohBridge bridge(prefix);
         bridge.setVideoSubscriberHandler([&seen_present](bool present) { seen_present = present; });
-        bridge.setInputHandler([&inputs](const carplay::InputEvent&) { ++inputs; });
+        bridge.setInputHandler([&](const carplay::InputEvent& ev) {
+            ++inputs;
+            if (ev.kind == carplay::InputEvent::Kind::Touch)
+            {
+                const std::lock_guard<std::mutex> lock(frame_mutex);
+                last_frame = ev;
+            }
+        });
         bridge.setVisibilityHandler([](bool) {});
         bridge.setMicHandler([](const carplay::AudioChunk&) {});
         bridge.setLocationHandler([](const carplay::LocationFix&) {});
@@ -103,11 +114,38 @@ int main()
     {
         pub_sub::ZenohPublisher<CarPlayInput> input(prefix + "/input");
         const bool delivered = waitFor(3s, [&]() {
-            input.fields().setKind(CarPlayInput::Kind::TOUCH_DOWN);
+            input.fields().setKind(CarPlayInput::Kind::SIRI);
             input.put();
             return inputs.load() > 0;
         });
         expect(delivered, "input published on <prefix>/input reaches the installed handler");
+
+        // A touch frame arrives whole: both fingers, their slots, and which is
+        // lifting.
+        const bool framed = waitFor(3s, [&]() {
+            input.fields().setKind(CarPlayInput::Kind::TOUCH);
+            auto contacts = input.fields().initContacts(2);
+            contacts[0].setSlot(0);
+            contacts[0].setX(1000);
+            contacts[0].setY(2000);
+            contacts[0].setDown(true);
+            contacts[1].setSlot(1);
+            contacts[1].setX(3000);
+            contacts[1].setY(4000);
+            contacts[1].setDown(false);
+            input.put();
+            const std::lock_guard<std::mutex> lock(frame_mutex);
+            return last_frame.has_value();
+        });
+        expect(framed, "a touch event reaches the handler as Touch");
+        const std::lock_guard<std::mutex> lock(frame_mutex);
+        if (last_frame.has_value())
+        {
+            const auto& c = last_frame->contacts;
+            expect(c.size() == 2 && c[0].slot == 0 && c[0].x == 1000 && c[0].y == 2000 && c[0].down &&
+                       c[1].slot == 1 && c[1].x == 3000 && c[1].y == 4000 && !c[1].down,
+                   "every contact of the frame arrives, with its slot, position and state");
+        }
     }
 
     finish.set_value();
