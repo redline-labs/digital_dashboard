@@ -120,7 +120,9 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
             dashboard::StalenessTracker::Edge::became_stale)
         {
             SPDLOG_INFO("[carplay] no session state for {} ms", _cfg.session_stale_after_ms);
+            dropFrame();
             updateReturnButton();
+            update();
         }
     });
     _session_poll_timer->start(std::chrono::milliseconds(250));
@@ -662,32 +664,17 @@ void CarPlayWidget::pumpMicrophone()
 
 void CarPlayWidget::onSessionMessage(CarPlaySessionState::Reader reader)
 {
-    std::string status;
-    if (!reader.getDeviceConnected())
-    {
-        status = "Connect an iPhone";
-    }
-    else if (reader.getPhase() != CarPlaySessionState::Phase::RECORDING)
-    {
-        status = "Connecting...";
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(_frame_mutex);
-        _status_text = std::move(status);
-    }
-
     // Microphone follows the driver's request; Qt Multimedia objects live on
     // the GUI thread, so hop there.
     const bool mic_active = reader.getMicActive();
     const int mic_rate = static_cast<int>(reader.getMicSampleRateHz());
     const int mic_channels = reader.getMicChannels();
     const bool connected = reader.getDeviceConnected();
-    const bool recording = reader.getPhase() == CarPlaySessionState::Phase::RECORDING;
+    const CarPlaySessionState::Phase phase = reader.getPhase();
     QMetaObject::invokeMethod(
         this,
-        [this, mic_active, mic_rate, mic_channels, connected, recording] {
-            onSessionState(connected, recording);
+        [this, mic_active, mic_rate, mic_channels, connected, phase] {
+            onSessionState(connected, phase);
             if (mic_active && mic_rate > 0 && mic_channels > 0)
             {
                 startMicrophone(mic_rate, mic_channels);
@@ -710,7 +697,9 @@ void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
     // swapped and overwritten while QPainter is reading it.
     std::unique_lock<std::mutex> lock(_frame_mutex);
 
-    if (_front_frame >= 0)
+    // A frame decoded after the session ended -- one already in flight at the
+    // unplug -- is held but not drawn.
+    if (_front_frame >= 0 && sessionLive())
     {
         const QImage& img = _frames[_front_frame];
         if (img.size() == size())
@@ -730,15 +719,67 @@ void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
         return;
     }
 
-    const std::string status = _status_text;
     lock.unlock();
 
     p.fillRect(rect(), Qt::black);
-    if (!status.empty())
+    const carplay::ConnectStatus status = connectStatus();
+    p.setRenderHint(QPainter::Antialiasing);
+
+    // Sized from the widget, so a small tile and a full screen both read.
+    // Centred a little high: the return button sits at the bottom.
+    const qreal headline_px = std::clamp(height() / 16.0, 14.0, 40.0);
+    const qreal hint_px = headline_px * 0.6;
+    const qreal dot = headline_px * 0.35;
+    const qreal gap = headline_px * 0.6;
+    const bool has_hint = !status.hint.empty();
+    const bool has_dots = status.step > 0;
+    const qreal block = headline_px * 1.3 + (has_hint ? gap + hint_px * 1.3 : 0.0) + (has_dots ? gap + dot : 0.0);
+    qreal y = std::max(0.0, (height() - block) / 2.0 - height() * 0.05);
+
+    QFont font = p.font();
+    font.setPixelSize(static_cast<int>(headline_px));
+    p.setFont(font);
+    p.setPen(QColor(0xcc, 0xcc, 0xcc));
+    p.drawText(QRectF(0.0, y, width(), headline_px * 1.3), Qt::AlignCenter,
+               QString::fromUtf8(status.headline.data(), static_cast<qsizetype>(status.headline.size())));
+    y += headline_px * 1.3;
+
+    if (has_hint)
     {
+        y += gap;
+        font.setPixelSize(static_cast<int>(hint_px));
+        p.setFont(font);
         p.setPen(QColor(0x88, 0x88, 0x88));
-        p.drawText(rect(), Qt::AlignCenter, QString::fromStdString(status));
+        p.drawText(QRectF(0.0, y, width(), hint_px * 1.3), Qt::AlignCenter,
+                   QString::fromUtf8(status.hint.data(), static_cast<qsizetype>(status.hint.size())));
+        y += hint_px * 1.3;
     }
+
+    // One dot per step, lit up to the current one: the part that shows the
+    // phone is getting somewhere.
+    if (has_dots)
+    {
+        y += gap;
+        const qreal pitch = dot * 2.2;
+        qreal x = (width() - (pitch * (carplay::kConnectSteps - 1) + dot)) / 2.0;
+        p.setPen(Qt::NoPen);
+        for (int i = 1; i <= carplay::kConnectSteps; ++i, x += pitch)
+        {
+            p.setBrush(i <= status.step ? QColor(0xcc, 0xcc, 0xcc) : QColor(0x44, 0x44, 0x44));
+            p.drawEllipse(QRectF(x, y, dot, dot));
+        }
+    }
+}
+
+carplay::ConnectStatus CarPlayWidget::connectStatus() const
+{
+    return carplay::connectStatus(!_session_staleness.isStale(), _session_connected, _session_phase);
+}
+
+bool CarPlayWidget::showsVideo() const
+{
+    std::lock_guard<std::mutex> lock(_frame_mutex);
+    return _front_frame >= 0 && sessionLive();
 }
 
 void CarPlayWidget::resizeEvent(QResizeEvent* event)
@@ -815,17 +856,39 @@ void CarPlayWidget::publishVisibility()
     _visibility_pub->put();
 }
 
-void CarPlayWidget::onSessionState(bool connected, bool recording)
+void CarPlayWidget::onSessionState(bool connected, CarPlaySessionState::Phase phase)
 {
-    const bool changed = connected != _session_connected || recording != _session_recording;
+    const bool was_live = sessionLive();
+    const bool changed = connected != _session_connected || phase != _session_phase;
     _session_connected = connected;
-    _session_recording = recording;
+    _session_phase = phase;
     const bool became_fresh = _session_staleness.onSample(std::chrono::steady_clock::now()) ==
                               dashboard::StalenessTracker::Edge::became_fresh;
+
+    // On every message with no phone, not only on the edge: that is what also
+    // catches a frame still in flight when the cable came out. Mid bring-up
+    // it is only the edge, because the first frame can beat the session
+    // message that says recording has started.
+    if ((was_live && !sessionLive()) || !connected)
+    {
+        dropFrame();
+    }
     if (changed || became_fresh)
     {
         updateReturnButton();
     }
+}
+
+bool CarPlayWidget::sessionLive() const
+{
+    return !_session_staleness.isStale() && _session_connected &&
+           _session_phase == CarPlaySessionState::Phase::RECORDING;
+}
+
+void CarPlayWidget::dropFrame()
+{
+    std::lock_guard<std::mutex> lock(_frame_mutex);
+    _front_frame = -1;
 }
 
 void CarPlayWidget::updateReturnButton()
@@ -835,7 +898,8 @@ void CarPlayWidget::updateReturnButton()
         return;
     }
     const bool show = carplay::returnButtonVisible(_cfg.return_button.enabled, !_session_staleness.isStale(),
-                                                   _session_connected, _session_recording);
+                                                   _session_connected,
+                                                   _session_phase == CarPlaySessionState::Phase::RECORDING);
     _return_button->setVisible(show);
     if (show)
     {

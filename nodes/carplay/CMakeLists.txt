@@ -34,6 +34,7 @@ add_executable(carplay
     main.cpp
     simulate.cpp
     usb_pipeline.cpp
+    session_status.cpp
     screen_handover.cpp
     iap2_session.cpp
 )
@@ -95,6 +96,12 @@ add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 # Detaching a bridge handler is a barrier: no call runs after set(nullptr).
 add_executable(carplay_test_handler_slot test_handler_slot.cpp)
 add_project_test(TARGET carplay_test_handler_slot LABELS carplay unit)
+
+# What the dashboard is told as a phone comes and goes: phases, connected,
+# the microphone, and publishing only on change. No bus.
+add_executable(carplay_test_session_status test_session_status.cpp session_status.cpp)
+target_link_libraries(carplay_test_session_status PRIVATE carplay_zenoh_bridge spdlog::spdlog)
+add_project_test(TARGET carplay_test_session_status LABELS carplay unit)
 
 # The bridge on a real session, with a renderer subscribed before it starts.
 add_executable(carplay_test_zenoh_bridge test_zenoh_bridge.cpp)

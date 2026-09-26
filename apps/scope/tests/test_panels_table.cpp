@@ -138,7 +138,7 @@ void testATableMarksAStaleReading()
 }
 
 // ENUM SUPPORT, which is the whole reason a cell is better than a lane for a
-// state: `3` and `iap2` are the same number and only one of them is an answer.
+// state: `3` and `ncmUp` are the same number and only one of them is an answer.
 void testATableSpellsAStateByName()
 {
     StubSource source;
@@ -179,7 +179,7 @@ void testATableSpellsAStateByName()
         return;
     }
 
-    expect(rows[0].state && rows[0].text == "iap2",
+    expect(rows[0].state && rows[0].text == "ncmUp",
            "an enum reads as its enumerant name, not as its ordinal");
     expect(rows[0].value == 3.0, "with the ordinal still available underneath");
 

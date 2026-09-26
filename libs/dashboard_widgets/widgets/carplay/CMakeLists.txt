@@ -61,6 +61,22 @@ add_executable(carplay_test_return_button_policy test_return_button_policy.cpp)
 target_include_directories(carplay_test_return_button_policy PRIVATE include)
 add_project_test(TARGET carplay_test_return_button_policy LABELS dashboard unit)
 
+# What the widget says while there is no picture, for every phase. Pure logic.
+add_executable(carplay_test_connect_status test_connect_status.cpp)
+target_include_directories(carplay_test_connect_status PRIVATE include)
+target_link_libraries(carplay_test_connect_status PRIVATE schemas)
+add_project_test(TARGET carplay_test_connect_status LABELS dashboard unit)
+
+# The same through a real widget, a real bus and a real H.264 frame: the text
+# follows the phase, and the picture goes with the phone or the driver.
+# Skipped where libavcodec has no libx264 to make the frame with.
+add_executable(carplay_test_session_display test_session_display.cpp)
+target_link_libraries(carplay_test_session_display PRIVATE
+    ${CARPLAY_WIDGET_LIB}
+    spdlog::spdlog
+)
+add_project_test(TARGET carplay_test_session_display LABELS dashboard gui net)
+
 # The same through a real widget and a real bus: the button appears with no
 # session and goes once one is live, a tap sends one page command, and hiding the
 # widget stops video and reports it. No phone or driver needed.

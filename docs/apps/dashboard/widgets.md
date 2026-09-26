@@ -312,6 +312,13 @@ The widget decodes video only while it is visible. On a hidden
 when it returns, and carries on playing audio and capturing the microphone. It
 publishes `CarPlayVisibility` on every change and once a second.
 
+With no picture, the widget says where the phone has got to: "Connect an
+iPhone" with none plugged in, then a line of text and four dots that fill as
+the bring-up moves on. While the phone is pairing, the text asks the user to
+unlock it and tap Trust. When the phone is unplugged, or the node stops
+sending session state, the last frame is dropped and the text comes back. The
+widget does not freeze on the last frame.
+
 The return button shows unless session state is arriving, a device is connected
 and the session is recording. A driver that stops leaves "recording" as its last
 message, which is why staleness counts too. The button is addressable as

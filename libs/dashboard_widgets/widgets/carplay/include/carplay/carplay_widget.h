@@ -20,6 +20,7 @@
 #include <QtMultimedia/QAudioFormat>
 
 #include "carplay/audio_ring.h"
+#include "carplay/connect_status.h"
 #include "carplay/touch_slots.h"
 #include "carplay/touch_throttle.h"
 
@@ -73,6 +74,10 @@ class CarPlayWidget : public QWidget
     bool reportsVisible() const { return _visible; }
     bool videoSubscribed() const { return _video_sub != nullptr; }
     QPushButton* returnButton() const { return _return_button; }
+    // What the widget says while there is no picture, and whether it has a
+    // picture to show instead.
+    carplay::ConnectStatus connectStatus() const;
+    bool showsVideo() const;
 
   protected:
     bool event(QEvent* event) override;
@@ -128,8 +133,13 @@ class CarPlayWidget : public QWidget
     void syncVisibility();
     void publishVisibility();
 
-    // Session liveness for the return button, GUI thread.
-    void onSessionState(bool connected, bool recording);
+    // Session liveness for the return button and the status text, GUI thread.
+    void onSessionState(bool connected, CarPlaySessionState::Phase phase);
+    bool sessionLive() const;
+    // Forgets the last picture, so a session that ends leaves the status
+    // text rather than a frozen frame, and the next phone does not open on
+    // the last one's screen.
+    void dropFrame();
     void updateReturnButton();
     void placeReturnButton();
 
@@ -177,13 +187,10 @@ class CarPlayWidget : public QWidget
     // allocation, then takes the lock only to publish the index. paintEvent
     // holds the lock for the duration of its blit, which is what stops the
     // decoder from swapping a buffer out from under a live draw.
-    std::mutex _frame_mutex;
+    mutable std::mutex _frame_mutex;
     QImage _frames[2];
     int _front_frame = -1;  // index of the paintable frame, -1 until the first
     int _back_frame = 0;
-
-    // Session state for the placeholder overlay, guarded by _frame_mutex.
-    std::string _status_text = "Waiting for CarPlay driver";
 
     // GUI-thread only.
     std::unique_ptr<pub_sub::ZenohPublisher<CarPlayInput>> _input_pub;
@@ -200,7 +207,7 @@ class CarPlayWidget : public QWidget
     // What the session says, GUI thread. Staleness is what catches a driver that
     // died while "recording".
     bool _session_connected = false;
-    bool _session_recording = false;
+    CarPlaySessionState::Phase _session_phase = CarPlaySessionState::Phase::IDLE;
     dashboard::StalenessTracker _session_staleness;
     QTimer* _session_poll_timer = nullptr;  // owned by Qt
 

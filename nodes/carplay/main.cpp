@@ -14,6 +14,7 @@
 #include "pub_sub/node_identity.h"
 #include "zenoh_bridge.h"
 #include "node_config.h"
+#include "session_status.h"
 #include "simulate.h"
 #include "usb_pipeline.h"
 
@@ -35,10 +36,6 @@ namespace
 {
 
 std::atomic<bool> g_stop{false};
-
-// Set by the AirPlay receiver once a session reaches RECORD, so the idle
-// session-state publisher below stops overwriting the live state.
-std::atomic<bool> g_recording{false};
 
 void handleSignal(int)
 {
@@ -169,23 +166,18 @@ int main(int argc, char** argv)
         return ok ? 0 : 1;
     }
 
-    // Keep the dashboard fed with idle session state while the USB pipeline
-    // runs; the widgets should show "no session" rather than nothing at all.
-    std::thread session_thread([&bridge, &health]() {
-        carplay::SessionState idle;
+    // Published on every change, and re-sent here once a second: zenoh keeps
+    // no last value, and a widget that hears nothing for a few seconds decides
+    // there is no driver.
+    carplay::SessionStatus status([&bridge](const carplay::SessionState& state) { bridge.publishSession(state); });
+    std::thread session_thread([&status, &health]() {
         while (!g_stop.load())
         {
             // This thread is the node's heartbeat: the pipeline below blocks
             // until the process is stopped.
             health.kick();
-            health.setCheck("session", node_health::State::ok,
-                            g_recording.load() ? "recording" : "idle");
-            // Once the AirPlay session is live the receiver publishes the
-            // authoritative state (device connected, recording); don't clobber it.
-            if (!g_recording.load())
-            {
-                bridge.publishSession(idle);
-            }
+            health.setCheck("session", node_health::State::ok, carplay::phaseName(status.state().phase));
+            status.republish();
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     });
@@ -235,7 +227,7 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, &g_recording);
+    const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, status);
     if (!usb_ok)
     {
         health.setCheck("usb", node_health::State::fault, "USB bring-up did not complete");

@@ -325,14 +325,12 @@ struct SessionContext
     std::string state_dir;
     iap2::MfiSigner* mfi_signer = nullptr;
     std::shared_ptr<std::mutex> mfi_mutex;
-    // Set true while an AirPlay session is live, so the caller's idle
-    // session-state publisher stands down. Optional.
-    std::atomic<bool>* recording = nullptr;
+    // What the dashboard is told about the phone, from plug-in to unplug.
+    SessionStatus& status;
 };
 
 // What one AirPlay session shares between the receiver's callbacks, the
-// dashboard's visibility reports and the hold loop: the screen handover, and
-// the session state to re-send while recording.
+// dashboard's visibility reports and the hold loop: the screen handover.
 //
 // Commands go to the receiver under the lock, which is safe because every
 // receiver command only queues. The pointer is cleared under the same lock at
@@ -346,8 +344,6 @@ struct LiveSession
     ScreenHandover handover;
     airplay::Receiver* receiver = nullptr;
     ZenohBridge* bridge = nullptr;
-    std::function<void()> publish_session;
-    std::atomic<bool> recording{false};
 
     template <typename Step>
     void apply(Step step)
@@ -1120,53 +1116,12 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
         }
         else
         {
-            // Session state combines the recording status and the mic status,
-            // both of which change independently; keep the current values in a
-            // shared struct so either handler can publish the whole picture.
-            const auto config = receiver_config;
-            std::atomic<bool>* recording_flag = ctx.recording;
-            struct SessionShare
-            {
-                std::mutex mutex;
-                bool recording = false;
-                bool mic_active = false;
-                uint32_t mic_rate = 0;
-                uint8_t mic_channels = 0;
-            };
-            auto share = std::make_shared<SessionShare>();
-            const bool night_mode = options.night_mode;
-            const auto publish_session = [&bridge, config, share, night_mode]() {
-                std::lock_guard<std::mutex> lock(share->mutex);
-                SessionState state;
-                state.device_connected = share->recording;
-                state.phase = share->recording ? SessionPhase::Recording : SessionPhase::Idle;
-                // What the phone was told, so a widget can match its own chrome
-                // to the theme CarPlay is drawing inside the video.
-                state.night_mode = night_mode;
-                state.main_width_px = static_cast<uint16_t>(config.width);
-                state.main_height_px = static_cast<uint16_t>(config.height);
-                state.mic_active = share->mic_active;
-                state.mic_sample_rate_hz = share->mic_rate;
-                state.mic_channels = share->mic_channels;
-                bridge.publishSession(state);
-            };
+            SessionStatus& status = ctx.status;
+            status.setDisplay(options.night_mode, static_cast<uint16_t>(receiver_config.width),
+                              static_cast<uint16_t>(receiver_config.height));
 
-            {
-                std::lock_guard<std::mutex> lock(live->mutex);
-                live->publish_session = publish_session;
-            }
-
-            receiver->setStatusHandler([recording_flag, share, publish_session, live](bool recording) {
-                if (recording_flag != nullptr)
-                {
-                    recording_flag->store(recording);
-                }
-                {
-                    std::lock_guard<std::mutex> lock(share->mutex);
-                    share->recording = recording;
-                }
-                live->recording.store(recording);
-                publish_session();
+            receiver->setStatusHandler([&status, live](bool recording) {
+                status.setRecording(recording);
                 live->apply([recording](ScreenHandover& h) { return h.onRecording(recording); });
             });
 
@@ -1174,16 +1129,10 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
             // start capturing (via session mic_active); the captured PCM comes
             // back on the mic topic and is fed to the receiver's uplink below.
             receiver->setMicStatusHandler(
-                [share, publish_session](bool active, uint32_t rate, uint8_t channels) {
-                    {
-                        std::lock_guard<std::mutex> lock(share->mutex);
-                        share->mic_active = active;
-                        share->mic_rate = rate;
-                        share->mic_channels = channels;
-                    }
+                [&status](bool active, uint32_t rate, uint8_t channels) {
                     SPDLOG_INFO("[node] microphone {} ({} Hz, {} ch)",
                                 active ? "requested" : "released", rate, channels);
-                    publish_session();
+                    status.setMicrophone(active, rate, channels);
                 });
 
             // Keyframes are only worth asking the phone for while something is
@@ -1311,6 +1260,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
 {
     const NodeConfig& options = ctx.options;
     bool ok = true;
+    ctx.status.setPhase(SessionPhase::Iap2);
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
         iap2_options.signer = ctx.mfi_signer;
@@ -1351,8 +1301,9 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
             // address may not exist until the phone raises carrier. The listener
             // has to be up before the address is handed over, because the phone
             // dials it within milliseconds.
+            SessionStatus* status = &ctx.status;
             iap2_options.endpoint_provider =
-                [link, receiver, accessory_public_key, accessory_bt_mac]() -> std::optional<Iap2SessionOptions::Endpoint> {
+                [link, receiver, accessory_public_key, accessory_bt_mac, status]() -> std::optional<Iap2SessionOptions::Endpoint> {
                 if (!link->running() || !link->refresh())
                 {
                     return std::nullopt;
@@ -1365,6 +1316,9 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
                 endpoint.link_local_address = link->linkLocalAddress();
                 endpoint.device_identifier = accessory_bt_mac;
                 endpoint.public_key = accessory_public_key;
+                // Asked only while CarPlayStartSession is pending, and it goes
+                // out with this answer: the phone dials AirPlay next.
+                status->setPhase(SessionPhase::AirplayHandshake);
                 return endpoint;
             };
         }
@@ -1607,6 +1561,10 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     const std::string& state_dir = ctx.state_dir;
     std::error_code ec;
 
+    // Stages 3 and 4 together, as far as anyone watching can tell: the mux comes
+    // up at once, and pairing is what can wait on the phone's Trust prompt.
+    ctx.status.setPhase(SessionPhase::Lockdown);
+
     // --- Stage 3: usbmux over the vendor-specific interface, then the socket --
     SessionMux mux;
     if (!mux.open(device, state_dir))
@@ -1618,11 +1576,19 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     // has gone. Everything below waits on this rather than the node-wide flag,
     // so an unplug unwinds one session without ending the process.
     std::atomic<bool> session_stop{false};
-    std::thread device_watch([&session_stop, &stop, &mux] {
+    std::thread device_watch([&session_stop, &stop, &mux, &ctx] {
         while (!session_stop.load())
         {
             if (stop.load() || !mux.alive())
             {
+                // Said now, not after teardown: the dashboard should drop the
+                // picture when the cable comes out, not a second later. A mux
+                // that died with the phone still there is left to the
+                // supervisor, which reports the retry.
+                if (!stop.load() && apple_usb::listAppleDevices().empty())
+                {
+                    ctx.status.setPhase(SessionPhase::Idle);
+                }
                 session_stop.store(true);
                 break;
             }
@@ -1685,7 +1651,11 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         {
             ok = false;
         }
-        else if (!ncm.linkLocalAddress().empty())
+        else
+        {
+            ctx.status.setPhase(SessionPhase::NcmUp);
+        }
+        if (ok && !ncm.linkLocalAddress().empty())
         {
             SPDLOG_INFO("[ncm] {} up, accessory link-local {}", ncm.interfaceName(),
                         ncm.linkLocalAddress());
@@ -1749,27 +1719,12 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     // wants to back off and retry, not sit on a half-open session.
     //
     // The loop also ticks the screen handover, which is how a dashboard that
-    // stopped reporting gets the screen handed back, and re-sends the session
-    // state once a second while recording: zenoh keeps no last value, and a
-    // widget that hears nothing for a few seconds decides there is no phone.
-    unsigned hold_ticks = 0;
+    // stopped reporting gets the screen handed back.
     while (ok && !session_stop.load())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         const auto now = std::chrono::steady_clock::now();
         live->apply([now](ScreenHandover& h) { return h.tick(now); });
-        if (++hold_ticks % 5 == 0 && live->recording.load())
-        {
-            std::function<void()> republish;
-            {
-                std::lock_guard<std::mutex> lock(live->mutex);
-                republish = live->publish_session;
-            }
-            if (republish)
-            {
-                republish();
-            }
-        }
     }
 
     SPDLOG_INFO("[node] tearing down the USB pipeline");
@@ -1783,7 +1738,6 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     {
         std::lock_guard<std::mutex> lock(live->mutex);
         live->receiver = nullptr;
-        live->publish_session = nullptr;
     }
     if (receiver)
     {
@@ -1803,7 +1757,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
 }  // namespace
 
 bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<bool>& stop,
-                    std::atomic<bool>* recording)
+                    SessionStatus& status)
 {
     // Said up front, not when a phone finally turns up: without this the
     // operator plugs in, waits through the detection poll, and only then learns
@@ -1860,8 +1814,7 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         }
     }
 
-    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>(),
-                       recording};
+    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>(), status};
 
     // Supervisor loop: one pass per phone attachment. A phone can be unplugged
     // and plugged back in as many times as the user likes -- each replug starts
@@ -1876,6 +1829,8 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         {
             break;  // stop was set while waiting
         }
+
+        status.setPhase(SessionPhase::UsbConfig);
 
         if (options.max_stage < 3)
         {
@@ -1894,20 +1849,17 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
             break;
         }
 
-        // Tell the dashboard the phone is gone, rather than leaving the last
-        // frame and track up. The recording flag has to be cleared too or the
-        // idle publisher in main() keeps deferring to a session that has ended.
-        if (ctx.recording != nullptr)
-        {
-            ctx.recording->store(false);
-        }
-        bridge.publishSession(SessionState{});
+        // Gone, and the dashboard drops the last frame and track. Still there,
+        // and the bring-up is retried: it stays connected meanwhile, so a page
+        // trigger on deviceConnected does not fire again for every attempt.
+        const bool phone_present = !apple_usb::listAppleDevices().empty();
+        status.setPhase(phone_present ? SessionPhase::Error : SessionPhase::Idle);
 
         // Back off when the same phone keeps failing -- a phone whose owner
         // tapped "Don't Trust" would otherwise re-run the whole bring-up every
         // two seconds forever. A clean attach, or the phone being unplugged,
         // resets the delay so a genuine replug is picked up immediately.
-        if (attached || apple_usb::listAppleDevices().empty())
+        if (attached || !phone_present)
         {
             retry_delay = kReattachDelay;
         }
@@ -1923,6 +1875,11 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
              waited += std::chrono::seconds(1))
         {
             std::this_thread::sleep_for(std::chrono::seconds(1));
+            // Unplugged while backing off: nothing is being retried any more.
+            if (status.state().phase == SessionPhase::Error && apple_usb::listAppleDevices().empty())
+            {
+                status.setPhase(SessionPhase::Idle);
+            }
         }
     }
 

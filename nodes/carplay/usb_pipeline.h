@@ -16,6 +16,7 @@
 #define CARPLAY_USB_PIPELINE_H_
 
 #include "node_config.h"
+#include "session_status.h"
 #include "zenoh_bridge.h"
 
 #include <atomic>
@@ -30,10 +31,10 @@ namespace carplay
 // the requested stages have come up. Returns true if every attempted stage
 // succeeded.
 //
-// `recording` is set true while an AirPlay session is live, so the caller's idle
-// session-state publisher stands down. Optional.
+// Every phone's progress through the stages, and the session once it is live,
+// is reported through `status`.
 bool runUsbPipeline(const NodeConfig& config, ZenohBridge& bridge, std::atomic<bool>& stop,
-                    std::atomic<bool>* recording = nullptr);
+                    SessionStatus& status);
 
 }  // namespace carplay
 

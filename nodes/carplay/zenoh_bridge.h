@@ -77,8 +77,8 @@ enum class SessionPhase
     Idle,
     UsbConfig,
     Lockdown,
-    Iap2,
     NcmUp,
+    Iap2,
     AirplayHandshake,
     Recording,
     Error
