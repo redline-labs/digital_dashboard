@@ -108,6 +108,14 @@ void MainWindow::showOnScreen(QScreen* screen)
     // window grows around it.
     setMinimumSize(0, 0);
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
+    // POSITION DECIDES THE SCREEN, NOT setScreen(). With several outputs, eglfs
+    // lays them out as one virtual desktop, and when the native window is created
+    // Qt re-picks its screen from its geometry. A window still at (0, 0) lands on
+    // whichever output sits at the origin -- measured on the carrier with two
+    // modules: the primary's window scanned out on the secondary, and eglfs never
+    // moves a surface once it exists. Put it on its screen before it is created.
+    setGeometry(screen->geometry());
     showFullScreen();
 }
 
