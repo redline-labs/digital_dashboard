@@ -929,6 +929,50 @@ void testCallAndPower()
     expect(tracker.phase() == iap2::CallTracker::Phase::kEnded, "the call has ended");
     expect(tracker.name().empty(), "the call name is cleared when the call ends");
 
+    // The caller's name arriving in a second update while still ringing.
+    {
+        iap2::CallTracker late;
+        csm::ParamList number_only;
+        iap2::csm::addString(number_only, 0, "+491234567");
+        iap2::csm::addU8(number_only, 2, 2);
+        iap2::csm::addString(number_only, 4, "call-b");
+        expect(late.apply(*iap2::decodeCallStateUpdate(number_only)), "a ringing call is reported");
+        expect(late.name().empty(), "with no name yet");
+
+        csm::ParamList named;
+        iap2::csm::addString(named, 1, "Bob");
+        iap2::csm::addU8(named, 2, 2);
+        iap2::csm::addString(named, 4, "call-b");
+        expect(late.apply(*iap2::decodeCallStateUpdate(named)),
+               "a name that arrives without a phase change is reported");
+        expect(late.name() == "Bob" && late.number() == "+491234567",
+               "and shown beside the number from the first update");
+    }
+
+    // Call waiting, answered by holding the first call. The phase stays active
+    // throughout; who is on the line changes. Status 4 is active, 5 held.
+    {
+        iap2::CallTracker waiting;
+        const auto update = [](const char* uuid, const char* name, uint8_t status) {
+            csm::ParamList params;
+            iap2::csm::addString(params, 1, name);
+            iap2::csm::addU8(params, 2, status);
+            iap2::csm::addString(params, 4, uuid);
+            return *iap2::decodeCallStateUpdate(params);
+        };
+        waiting.apply(update("call-a", "Alice", 4));
+        expect(!waiting.apply(update("call-c", "Carol", 2)),
+               "a second incoming call changes nothing shown while one is active");
+        expect(waiting.name() == "Alice", "the active call stays shown");
+        waiting.apply(update("call-a", "Alice", 5));
+        expect(waiting.apply(update("call-c", "Carol", 4)),
+               "answering the waiting call is reported though the phase is unchanged");
+        expect(waiting.phase() == iap2::CallTracker::Phase::kActive && waiting.name() == "Carol",
+               "and the call shown is the one on the line, not the held one");
+        expect(!waiting.apply(update("call-a", "Alice", 0)),
+               "the held call ending changes nothing shown");
+    }
+
     // Power.
     csm::ParamList power_params;
     iap2::csm::addU16(power_params, 0, 500);

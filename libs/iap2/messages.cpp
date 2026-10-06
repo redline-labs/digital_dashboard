@@ -931,28 +931,37 @@ bool CallTracker::apply(const CallState& update)
     }
 
     const Phase phase = active ? Phase::kActive : (ringing ? Phase::kRinging : Phase::kEnded);
-    if (phase == phase_)
-    {
-        return false;
-    }
-    phase_ = phase;
 
-    number_.clear();
-    name_.clear();
-    if (phase_ != Phase::kEnded)
+    // Recomputed on every update, not only on a phase change: the caller's name
+    // can arrive in a second "ringing" update, and a call-waiting swap changes
+    // who is on the line without leaving the active phase.
+    // With one call held and another on the line, the one shown is the one on
+    // the line (status 4), not whichever sorts first.
+    constexpr uint8_t kStatusActive = 4;
+    const Call* shown = nullptr;
+    if (phase != Phase::kEnded)
     {
         for (const auto& [uuid_key, call] : calls_)
         {
             (void)uuid_key;
-            const bool match = (phase_ == Phase::kRinging) ? call.status == 2 : is_active(call.status);
-            if (match)
+            const bool match = (phase == Phase::kRinging) ? call.status == 2 : is_active(call.status);
+            if (match && (shown == nullptr || (call.status == kStatusActive &&
+                                               shown->status != kStatusActive)))
             {
-                number_ = call.number;
-                name_ = call.name;
-                break;
+                shown = &call;
             }
         }
     }
+    std::string number = shown != nullptr ? shown->number : std::string{};
+    std::string name = shown != nullptr ? shown->name : std::string{};
+
+    if (phase == phase_ && number == number_ && name == name_)
+    {
+        return false;
+    }
+    phase_ = phase;
+    number_ = std::move(number);
+    name_ = std::move(name);
 
     SPDLOG_DEBUG("[iap2] call phase={} name='{}' number='{}' ({} tracked)", phaseName(phase_), name_,
                  number_, calls_.size());

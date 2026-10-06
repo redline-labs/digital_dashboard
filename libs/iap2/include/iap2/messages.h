@@ -426,7 +426,8 @@ class CallTracker
         kActive,
     };
 
-    // Returns true when the phase changed as a result of this update.
+    // Returns true when the phase, name or number changed as a result of this
+    // update.
     bool apply(const CallState& update);
 
     Phase phase() const { return phase_; }
