@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "usb_pipeline.h"
 
+#include "device_picker.h"
 #include "iap2_session.h"
 #include "location_cache.h"
 #include "reattach_policy.h"
@@ -231,38 +232,38 @@ std::string defaultStateDir()
 // Blocks until an Apple device shows up, or `stop` is set. Polling sysfs rather
 // than subscribing to udev keeps this working unprivileged and inside a
 // container, and half a second of latency on a plug event is imperceptible.
-std::optional<apple_usb::DeviceInfo> waitForDevice(std::atomic<bool>& stop)
+std::optional<apple_usb::DeviceInfo> waitForDevice(std::atomic<bool>& stop, DevicePicker& picker)
 {
     bool announced = false;
     while (!stop.load())
     {
-        auto devices = apple_usb::listAppleDevices();
-        if (!devices.empty())
+        const auto devices = apple_usb::listAppleDevices();
+        for (const auto& device : devices)
         {
-            for (const auto& device : devices)
-            {
-                SPDLOG_INFO("[usb] found {:04x}:{:04x} at port {} (config {} of {})", device.vid,
-                            device.pid, device.port.toString(), device.active_configuration,
-                            device.num_configurations);
-            }
-            if (devices.size() > 1)
-            {
-                SPDLOG_WARN("[usb] {} Apple devices present; using the one at port {}",
-                            devices.size(), devices.front().port.toString());
-            }
+            SPDLOG_DEBUG("[usb] found {:04x}:{:04x} at port {} (config {} of {}){}", device.vid,
+                         device.pid, device.port.toString(), device.active_configuration,
+                         device.num_configurations,
+                         offersCarPlay(device) ? "" : " -- no CarPlay configuration, ignored");
+        }
 
-            // The UDID is not part of enumeration any more; read it now, once.
-            // A device we cannot open is not usable, so keep waiting rather
-            // than failing the whole bring-up on a transient permission or
-            // settling problem.
-            if (!populateSerial(devices.front()))
+        // The UDID is not part of enumeration any more; read it now, once. A
+        // device that cannot be opened counts against its port and the next
+        // candidate is tried, rather than spinning on the first.
+        const auto candidates = picker.order(devices);
+        for (auto device : candidates)
+        {
+            if (!populateSerial(device))
             {
-                std::this_thread::sleep_for(kDevicePoll);
+                picker.failed(device.port);
                 continue;
             }
-            SPDLOG_INFO("[usb] udid={} at port {}", shortUdid(devices.front().serial),
-                        devices.front().port.toString());
-            return devices.front();
+            SPDLOG_INFO("[usb] udid={} at port {} (config {} of {}){}", shortUdid(device.serial),
+                        device.port.toString(), device.active_configuration,
+                        device.num_configurations,
+                        candidates.size() > 1
+                            ? fmt::format(", of {} candidates", candidates.size())
+                            : std::string());
+            return device;
         }
 
         if (!announced)
@@ -274,6 +275,14 @@ std::optional<apple_usb::DeviceInfo> waitForDevice(std::atomic<bool>& stop)
         std::this_thread::sleep_for(kDevicePoll);
     }
     return std::nullopt;
+}
+
+// Whether anything that could be a CarPlay phone is attached. An Apple
+// keyboard or adapter on its own is not a phone waiting to be retried.
+bool phoneAttached()
+{
+    const auto devices = apple_usb::listAppleDevices();
+    return std::any_of(devices.begin(), devices.end(), offersCarPlay);
 }
 
 // Puts an already-detected phone into the CarPlay configuration, re-reading it
@@ -1623,7 +1632,7 @@ AttachOutcome runAttachedSession(const apple_usb::DeviceInfo& device, const Sess
                 // picture when the cable comes out, not a second later. A mux
                 // that died with the phone still there is left to the
                 // supervisor, which reports the retry.
-                if (!stop.load() && apple_usb::listAppleDevices().empty())
+                if (!stop.load() && !phoneAttached())
                 {
                     ctx.status.setPhase(SessionPhase::Idle);
                 }
@@ -1876,9 +1885,10 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     // survives the re-enumeration.
     bool ever_ok = false;
     ReattachBackoff backoff(kReattachDelay, kMaxReattachDelay, kStableSession);
+    DevicePicker picker;
     while (!stop.load())
     {
-        const auto found = waitForDevice(stop);
+        const auto found = waitForDevice(stop, picker);
         if (!found)
         {
             break;  // stop was set while waiting
@@ -1903,11 +1913,19 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         {
             break;
         }
+        if (outcome == AttachOutcome::kFailed)
+        {
+            picker.failed(found->port);
+        }
+        else
+        {
+            picker.succeeded(found->port);
+        }
 
         // Gone, and the dashboard drops the last frame and track. Still there,
         // and the bring-up is retried: it stays connected meanwhile, so a page
         // trigger on deviceConnected does not fire again for every attempt.
-        const bool phone_present = !apple_usb::listAppleDevices().empty();
+        const bool phone_present = phoneAttached();
         const ReattachBackoff::Decision next =
             backoff.next(outcome, phone_present, std::chrono::steady_clock::now() - attach_started);
         if (!phone_present)
@@ -1934,7 +1952,7 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             // Unplugged while backing off: nothing is being retried any more.
-            if (status.state().phase == SessionPhase::Error && apple_usb::listAppleDevices().empty())
+            if (status.state().phase == SessionPhase::Error && !phoneAttached())
             {
                 status.setPhase(SessionPhase::Idle);
             }

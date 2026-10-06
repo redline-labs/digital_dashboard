@@ -93,6 +93,12 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 
+# Which attached Apple device to bring up: a phone, and not the same failing
+# one every time.
+add_executable(carplay_test_device_picker test_device_picker.cpp)
+target_link_libraries(carplay_test_device_picker PRIVATE apple_usb)
+add_project_test(TARGET carplay_test_device_picker LABELS carplay unit)
+
 # The GPS fix sent to the phone, and when it stops being one.
 add_executable(carplay_test_location_cache test_location_cache.cpp)
 add_project_test(TARGET carplay_test_location_cache LABELS carplay unit)
