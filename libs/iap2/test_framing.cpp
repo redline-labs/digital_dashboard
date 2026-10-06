@@ -1028,6 +1028,29 @@ void testCallAndPower()
     expect(power && power->battery_charging_state == 2, "the charging state decodes");
     expect(power && power->maximum_current_drawn_from_accessory == 500, "the drawn current decodes");
 
+    // Once authenticated: the subscriptions, then the power source the
+    // identification's kAdvanced promised.
+    {
+        const auto frames = iap2::encodeAfterAuthentication(1000);
+        std::vector<uint16_t> ids;
+        for (const auto& frame : frames)
+        {
+            const auto message = iap2::csm::parseMessage(frame);
+            ids.push_back(message ? message->id : 0);
+            if (message && message->id == iap2::kMsgPowerSourceUpdate)
+            {
+                expect(iap2::csm::getU16(message->params, 0) == 1000,
+                       "the power source offers the configured current");
+            }
+        }
+        expect(std::find(ids.begin(), ids.end(), iap2::kMsgPowerSourceUpdate) != ids.end(),
+               "a PowerSourceUpdate goes out after authentication");
+        expect(std::find(ids.begin(), ids.end(), iap2::kMsgStartNowPlayingUpdates) != ids.end() &&
+                   std::find(ids.begin(), ids.end(), iap2::kMsgStartRouteGuidanceUpdates) != ids.end() &&
+                   std::find(ids.begin(), ids.end(), iap2::kMsgStartCallStateUpdates) != ids.end(),
+               "alongside the metadata subscriptions");
+    }
+
     const auto source = iap2::csm::parseMessage(iap2::encodePowerSourceUpdate(2100, true));
     expect(source && source->id == iap2::kMsgPowerSourceUpdate, "PowerSourceUpdate encodes");
     expect(source && iap2::csm::getU16(source->params, 0) == 2100, "the advertised current round trips");

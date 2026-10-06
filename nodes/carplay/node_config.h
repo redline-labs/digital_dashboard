@@ -143,6 +143,12 @@ struct NodeConfig
     };
     ScreenHandoverConfig screen_handover;
 
+    // What the USB port the phone is plugged into can supply, in mA, offered to
+    // the phone in PowerSourceUpdate. 500 is what any USB 2.0 port delivers;
+    // claim more only for a port that really provides it, because the phone
+    // will draw it. 0..2400.
+    uint16_t available_current_ma = 500;
+
     // --- Bring-up knobs -----------------------------------------------------
     // Not in the config file: these exist to take one layer at a time during a
     // hardware session, and a shipped vehicle wants the defaults.

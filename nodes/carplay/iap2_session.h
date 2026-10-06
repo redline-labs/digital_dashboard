@@ -45,6 +45,10 @@ struct Iap2SessionOptions
     // Seconds to wait for the link to negotiate before giving up.
     unsigned negotiate_timeout_ms = 10000;
 
+    // The current the phone may draw from us, sent in PowerSourceUpdate once
+    // it has authenticated us. See NodeConfig::available_current_ma.
+    uint16_t available_current_ma = 500;
+
     // Invoked once the phone reports wired CarPlay available. Returns the
     // accessory endpoint the phone should dial, or nullopt while there is no
     // address to give -- in which case it is asked again, see

@@ -1272,6 +1272,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         // phone learns it: iAP2 identification rather than GET /info.
         iap2_options.identity = options.vehicle;
         iap2_options.vehicle_status = options.vehicle.status;
+        iap2_options.available_current_ma = options.available_current_ma;
 
         if (ncm.running())
         {

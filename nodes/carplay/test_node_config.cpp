@@ -374,6 +374,34 @@ int main()
         expect(config.oem_button.label != "Should not stick", "including keys read before the failure");
     }
 
+    // power: the current offered to the phone. Closed, and bounded: the phone
+    // draws what it is offered.
+    {
+        const NodeConfig defaults;
+        expect(defaults.available_current_ma == 500, "the phone is offered 500 mA by default");
+
+        const fs::path amps = dir / "power.yaml";
+        writeFile(amps, "power:\n  available_current_ma: 2100\n");
+        NodeConfig config;
+        expect(loadNodeConfig(amps.string(), config) && config.available_current_ma == 2100,
+               "power.available_current_ma is read");
+
+        const fs::path too_much = dir / "power_high.yaml";
+        writeFile(too_much, "power:\n  available_current_ma: 3000\n");
+        NodeConfig high;
+        expect(!loadNodeConfig(too_much.string(), high), "more than 2400 mA is rejected");
+
+        const fs::path negative = dir / "power_negative.yaml";
+        writeFile(negative, "power:\n  available_current_ma: -5\n");
+        NodeConfig below;
+        expect(!loadNodeConfig(negative.string(), below), "a negative current is rejected");
+
+        const fs::path typo = dir / "power_typo.yaml";
+        writeFile(typo, "power:\n  available_current: 1000\n");
+        NodeConfig misspelt;
+        expect(!loadNodeConfig(typo.string(), misspelt), "a misspelt power key is rejected");
+    }
+
     // screen_handover: off by default, read when present, and closed.
     {
         const NodeConfig defaults;

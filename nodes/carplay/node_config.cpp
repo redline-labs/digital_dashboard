@@ -272,6 +272,31 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                 return false;
             }
         }
+        if (const YAML::Node power = root["power"])
+        {
+            if (!power.IsMap())
+            {
+                SPDLOG_ERROR("[node] power must be a mapping");
+                return false;
+            }
+            for (const auto& entry : power)
+            {
+                const std::string key = entry.first.as<std::string>();
+                if (key != "available_current_ma")
+                {
+                    SPDLOG_ERROR("[node] power.{} is not a setting; expected available_current_ma",
+                                 key);
+                    return false;
+                }
+            }
+            assignIfPresent(power, "available_current_ma", parsed.available_current_ma);
+            if (parsed.available_current_ma > 2400)
+            {
+                SPDLOG_ERROR("[node] power.available_current_ma is {}; the most a phone takes "
+                             "over USB is 2400", parsed.available_current_ma);
+                return false;
+            }
+        }
         if (const YAML::Node button = root["oem_button"]; button && button.IsMap())
         {
             if (const YAML::Node enabled = button["enabled"])

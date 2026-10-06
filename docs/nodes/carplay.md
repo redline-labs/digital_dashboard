@@ -137,7 +137,7 @@ drop-in; the flag is for a bench. Leave both unset on a desktop with the bridge.
 
 `configs/carplay/carplay.yaml` documents every field: the `vehicle:` block,
 `display:` geometry and `allow_hevc`, `device_id`, `night_mode`, the
-`oem_button:` tile, and `screen_handover:`. The phone records some of the identity against the pairing,
+`oem_button:` tile, `screen_handover:`, and `power:`. The phone records some of the identity against the pairing,
 so change it before pairing a phone you care about. Enumerated keys are closed
 sets and a typo stops the node rather than taking a default; so does a zero in
 the display geometry. The values worth setting rather than leaving:
@@ -149,6 +149,7 @@ the display geometry. The values worth setting rather than leaving:
 | `vehicle.serial_number` | how the phone tells two units apart |
 | `display.physical_width_mm` | CarPlay sizes text and touch targets from it |
 | `device_id` | give each unit its own if you run more than one |
+| `power.available_current_ma` | the current the phone is told it may draw, sent once it has authenticated us. 500 by default, the most any USB 2.0 port supplies; raise it only for a port that delivers more, up to 2400 |
 
 ### Vendor cdc_ncm quirks we do not carry
 

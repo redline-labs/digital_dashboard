@@ -293,12 +293,13 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     case iap2::MfiAuthenticator::Result::kSucceeded:
                         SPDLOG_INFO("[mfi] authentication SUCCEEDED");
                         authenticated = true;
-                        // Subscribe to the metadata streams, exactly as LIVI
-                        // does once identification and auth are done.
-                        SPDLOG_INFO("[iap2] subscribing to now-playing, navigation, call updates");
-                        link.sendControlMessage(iap2::encodeStartNowPlayingUpdates());
-                        link.sendControlMessage(iap2::encodeStartRouteGuidanceUpdates());
-                        link.sendControlMessage(iap2::encodeStartCallStateUpdates());
+                        SPDLOG_INFO("[iap2] subscribing to now-playing, navigation, call updates; "
+                                    "offering {} mA", options.available_current_ma);
+                        for (const auto& subscription :
+                             iap2::encodeAfterAuthentication(options.available_current_ma))
+                        {
+                            link.sendControlMessage(subscription);
+                        }
                         break;
                     case iap2::MfiAuthenticator::Result::kFailed:
                         SPDLOG_ERROR("[mfi] authentication FAILED. Check the protocol major "

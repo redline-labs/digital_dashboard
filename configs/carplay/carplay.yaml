@@ -53,6 +53,12 @@ vehicle:
     outside_temperature_c: 21
     range_warning: false
 
+# What the USB port the phone is plugged into can supply, offered to the phone
+# once it has authenticated us. The phone draws what it is offered, so claim
+# more than 500 mA only for a port that really provides it. 0..2400.
+power:
+  available_current_ma: 500
+
 # The panel CarPlay draws on.
 display:
   width_px: 1280

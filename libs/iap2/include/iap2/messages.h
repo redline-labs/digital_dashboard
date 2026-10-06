@@ -479,6 +479,12 @@ struct PowerState
     std::optional<uint16_t> battery_charge_level;
 };
 
+// What the accessory sends once the phone has authenticated it: the metadata
+// subscriptions, and the power source. PowerProvidingCapability::kAdvanced in
+// identification promises the PowerSourceUpdate, and a phone that never gets
+// one has no current budget to charge against.
+std::vector<std::vector<uint8_t>> encodeAfterAuthentication(uint16_t available_current_ma);
+
 std::optional<PowerState> decodePowerUpdate(const csm::ParamList& params);
 std::vector<uint8_t> encodeStartPowerUpdates();
 std::vector<uint8_t> encodeStopPowerUpdates();

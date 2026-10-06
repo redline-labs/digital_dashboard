@@ -1005,6 +1005,16 @@ std::optional<PowerState> decodePowerUpdate(const csm::ParamList& params)
     return state;
 }
 
+std::vector<std::vector<uint8_t>> encodeAfterAuthentication(uint16_t available_current_ma)
+{
+    return {
+        encodeStartNowPlayingUpdates(),
+        encodeStartRouteGuidanceUpdates(),
+        encodeStartCallStateUpdates(),
+        encodePowerSourceUpdate(available_current_ma, true),
+    };
+}
+
 std::vector<uint8_t> encodeStartPowerUpdates()
 {
     csm::ParamList params;
