@@ -9,6 +9,7 @@ add_library(iap2 STATIC
     mcp2221a_mfi_signer.cpp
     http_mfi_signer.cpp
     shared_mfi_signer.cpp
+    file_transfer.cpp
     csm.cpp
     messages.cpp
     location_nmea.cpp
@@ -72,6 +73,14 @@ target_link_libraries(iap2_test_shared_mfi_signer PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET iap2_test_shared_mfi_signer LABELS iap2 unit)
+
+# The phone's file transfers, reassembled and bounded.
+add_executable(iap2_test_file_transfer test_file_transfer.cpp)
+target_link_libraries(iap2_test_file_transfer PRIVATE
+    iap2
+    spdlog::spdlog
+)
+add_project_test(TARGET iap2_test_file_transfer LABELS iap2 unit)
 
 # The control-session-message parameter codec, at its edges.
 add_executable(iap2_test_csm test_csm.cpp)

@@ -4,6 +4,7 @@
 #include "start_session_gate.h"
 
 #include "iap2/link_layer.h"
+#include "iap2/file_transfer.h"
 #include "iap2/messages.h"
 
 #include <spdlog/spdlog.h>
@@ -571,62 +572,20 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     // file-transfer session after a track change: SETUP announces a transfer id
     // (we ack with START), then data chunks arrive, and a final chunk completes
     // it (we ack with SUCCESS). Per-ftid buffers persist across callbacks.
-    auto ft_buffers = std::make_shared<std::map<uint8_t, std::vector<uint8_t>>>();
-    link.setFileTransferHandler([&link, &options, ft_buffers](const std::vector<uint8_t>& dgram) {
-        if (dgram.size() < 2)
+    auto transfers = std::make_shared<iap2::FileTransferAssembler>();
+    link.setFileTransferHandler([&link, &options, transfers](const std::vector<uint8_t>& dgram) {
+        auto result = transfers->handle(dgram);
+        for (const auto& reply : result.replies)
         {
-            return;
+            link.sendFileTransfer(reply);
         }
-        constexpr uint8_t kSetup = 0x04;
-        constexpr uint8_t kStart = 0x01;
-        constexpr uint8_t kFirstData = 0x80;
-        constexpr uint8_t kFirstAndOnlyData = 0xC0;
-        constexpr uint8_t kData = 0x00;
-        constexpr uint8_t kLastData = 0x40;
-        constexpr uint8_t kCancel = 0x02;
-        constexpr uint8_t kSuccess = 0x05;
-
-        const uint8_t ftid = dgram[0];
-        const uint8_t ctrl = dgram[1];
-        const std::vector<uint8_t> data(dgram.begin() + 2, dgram.end());
-
-        const auto complete = [&](std::vector<uint8_t> image) {
-            ft_buffers->erase(ftid);
-            link.sendFileTransfer({ftid, kSuccess});
-            SPDLOG_INFO("[iap2] album artwork received: {} bytes", image.size());
+        if (result.completed)
+        {
+            SPDLOG_INFO("[iap2] album artwork received: {} bytes", result.completed->size());
             if (options.artwork_handler)
             {
-                options.artwork_handler(image);
+                options.artwork_handler(*result.completed);
             }
-        };
-
-        switch (ctrl)
-        {
-            case kSetup:
-                (*ft_buffers)[ftid] = {};
-                link.sendFileTransfer({ftid, kStart});
-                break;
-            case kFirstData:
-                (*ft_buffers)[ftid] = data;
-                break;
-            case kData:
-                (*ft_buffers)[ftid].insert((*ft_buffers)[ftid].end(), data.begin(), data.end());
-                break;
-            case kFirstAndOnlyData:
-                complete(data);
-                break;
-            case kLastData:
-            {
-                auto& buf = (*ft_buffers)[ftid];
-                buf.insert(buf.end(), data.begin(), data.end());
-                complete(std::move(buf));
-                break;
-            }
-            case kCancel:
-                ft_buffers->erase(ftid);
-                break;
-            default:
-                break;
         }
     });
 
