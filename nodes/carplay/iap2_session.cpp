@@ -612,8 +612,22 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     SPDLOG_INFO("[iap2] sending IdentificationInformation");
     link.sendControlMessage(iap2::encodeIdentificationInformation(identification));
 
+    // Once, a few seconds in: a session that never identifies needs to show
+    // whether the phone said nothing, said garbage, or was not understood.
+    const auto summary_at = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool summarised = false;
+
     while (!stop.load() && !failed && !start_abandoned)
     {
+        if (!summarised && std::chrono::steady_clock::now() >= summary_at)
+        {
+            summarised = true;
+            const auto& stats = link.stats();
+            SPDLOG_INFO("[iap2] after 5 s: {} bytes in, {} out, {} skipped, {} packets dropped, "
+                        "link {}, identified={} authenticated={}",
+                        stats.bytes_in, stats.bytes_out, stats.bytes_skipped, stats.packets_dropped,
+                        stateName(link.state()), identified, authenticated);
+        }
         service_start_session();
         if (!link.poll(200))
         {

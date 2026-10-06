@@ -329,6 +329,7 @@ void LinkLayer::writePacket(const uint8_t* payload, size_t payload_len, uint8_t 
     SPDLOG_DEBUG("[iap2] {} > {} seq={} ack={} session={} len={}", config_.tag, controlName(control), seq,
                  header.ack, session_id, header.length);
 
+    stats_.bytes_out += frame.size();
     if (!transport_.send(frame.data(), frame.size()))
     {
         bailout("transport write failed");
@@ -497,6 +498,7 @@ bool LinkLayer::poll(unsigned timeout_ms)
     std::vector<uint8_t> chunk = transport_.recv(kRecvChunkSize, wait);
     if (!chunk.empty())
     {
+        stats_.bytes_in += chunk.size();
         rx_.insert(rx_.end(), chunk.begin(), chunk.end());
         processRxBuffer();
     }
@@ -593,6 +595,7 @@ void LinkLayer::processRxBuffer()
             // Resynchronise a byte at a time. The iAP2 detection marker the
             // phone echoes back lands here and is skipped silently.
             ++rx_head_;
+            ++stats_.bytes_skipped;
             continue;
         }
 
@@ -601,6 +604,7 @@ void LinkLayer::processRxBuffer()
         {
             SPDLOG_WARN("[iap2] {}: header checksum failed, resynchronising", config_.tag);
             ++rx_head_;
+            ++stats_.packets_dropped;
             continue;
         }
         if (header->length < kLinkHeaderSize)
@@ -627,6 +631,7 @@ void LinkLayer::processRxBuffer()
                 SPDLOG_WARN("[iap2] {}: payload checksum failed, dropping {} byte packet (seq={} {})",
                             config_.tag, header->length, header->seq, controlName(header->control));
                 payload_ok = false;
+                ++stats_.packets_dropped;
             }
             else
             {

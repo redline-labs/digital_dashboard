@@ -1360,6 +1360,31 @@ void testRetransmitThenAck()
     expect(link.state() == iap2::LinkLayer::State::kNormal, "and the link stays up");
 }
 
+// The counters that tell "the phone sent nothing" from "sent garbage" from
+// "sent packets that failed their checksums".
+void testLinkStats()
+{
+    FakeTransport transport;
+    iap2::LinkLayer link(transport, iap2::LinkConfig{});
+    const uint8_t device_seq = negotiate(link, transport, deviceLsp(4, 65535, 0, 0, 0, 0));
+    drainSent(transport);
+    const auto before = link.stats();
+    expect(before.bytes_in > 0 && before.bytes_out > 0, "negotiation is counted both ways");
+
+    transport.push({0xDE, 0xAD, 0xBE});
+    std::vector<uint8_t> corrupt = buildPacket(iap2::kControlAck, static_cast<uint8_t>(device_seq + 1),
+                                               link.sentPsn(), iap2::kControlSessionId,
+                                               iap2::encodeStartNowPlayingUpdates());
+    corrupt.back() = static_cast<uint8_t>(corrupt.back() ^ 0xFF);  // the payload checksum
+    transport.push(corrupt);
+    link.poll(0);
+
+    const auto& after = link.stats();
+    expect(after.bytes_skipped >= before.bytes_skipped + 3, "bytes that start no packet are counted as skipped");
+    expect(after.packets_dropped == before.packets_dropped + 1, "a packet failing its checksum is counted as dropped");
+    expect(after.bytes_in == before.bytes_in + 3 + corrupt.size(), "and every byte received is counted in");
+}
+
 void testHandshakeOverLink()
 {
     FakeTransport transport;
@@ -1521,6 +1546,7 @@ int main()
     testRouteGuidance();
     testCallAndPower();
     testDeviceTime();
+    testLinkStats();
     testRetransmitThenAck();
     testRouteLifecycle();
     testSubscriptionMessages();

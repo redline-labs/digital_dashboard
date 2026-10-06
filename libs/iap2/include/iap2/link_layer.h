@@ -178,6 +178,19 @@ class LinkLayer
     void close();
 
     State state() const { return state_; }
+
+    // What crossed the link, and what was thrown away. A session that never
+    // identifies looks the same from above whether the phone sent nothing,
+    // sent garbage, or sent packets that failed their checksums; these say
+    // which.
+    struct Stats
+    {
+        uint64_t bytes_in = 0;
+        uint64_t bytes_out = 0;
+        uint64_t bytes_skipped = 0;    // resynchronising: not the start of a packet
+        uint64_t packets_dropped = 0;  // header or payload checksum failed
+    };
+    const Stats& stats() const { return stats_; }
     bool negotiated() const { return state_ == State::kNormal; }
     bool alive() const { return state_ != State::kDead; }
     const LinkSynchronizationPayload& linkParameters() const { return lsp_; }
@@ -249,6 +262,7 @@ class LinkLayer
     // Outgoing sequencing. LIVI starts at 99 so the first data packet is 100.
     uint8_t sent_psn_ = 99;
     int last_sent_acknowledged_psn_ = -1;
+    Stats stats_;
     std::vector<OutPacket> unacked_;
     std::deque<OutPacket> queued_;
 
