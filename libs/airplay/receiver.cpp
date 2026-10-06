@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "airplay/receiver.h"
 
+#include "airplay/audio_format.h"
 #include "airplay/channel_crypto.h"
 #include "airplay/info_plist.h"
 #include "airplay/event_channel.h"
@@ -88,49 +89,36 @@ void logTlv(const char* direction, const Bytes& body)
     }
 }
 
-// A CarPlay audioFormat is a single set bit selecting a PCM rate/channel combo.
-// Returns false when the chosen format is not one of the LPCM options (i.e. the
-// phone picked AAC-LC or OPUS, which we do not decode yet).
+// The stream's sample rate and channel count, from the format SETUP chose.
 struct PcmFormat
 {
     uint32_t sample_rate;
     uint8_t channels;
 };
 
+// False when the choice is not one of the LPCM bits -- the phone picked AAC-LC
+// or OPUS. See airplay/audio_format.h for the bits.
 bool decodePcmFormat(int64_t format, PcmFormat& out)
 {
-    switch (format)
+    const auto chosen = audio_format::pcm(format);
+    if (!chosen)
     {
-        case 0x4: out = {8000, 1}; return true;
-        case 0x8: out = {8000, 2}; return true;
-        case 0x10: out = {16000, 1}; return true;
-        case 0x20: out = {16000, 2}; return true;
-        case 0x40: out = {24000, 1}; return true;
-        case 0x80: out = {24000, 2}; return true;
-        case 0x100: out = {32000, 1}; return true;
-        case 0x200: out = {32000, 2}; return true;
-        case 0x400: out = {44100, 1}; return true;
-        case 0x800: out = {44100, 2}; return true;
-        case 0x4000: out = {48000, 1}; return true;
-        case 0x8000: out = {48000, 2}; return true;
-        default: return false;
+        return false;
     }
+    out = {chosen->sample_rate, chosen->channels};
+    return true;
 }
 
-// AAC-LC formats: 0x400000 is 44.1 kHz stereo, 0x800000 is 48 kHz stereo -- the
-// entertainment (type 102) stream. Detected as bit tests because the phone may
-// OR the format with other capability bits.
-constexpr int64_t kAacLc44kStereo = 0x400000;
-constexpr int64_t kAacLc48kStereo = 0x800000;
-
+// AAC-LC, the entertainment (type 102) stream. Detected as bit tests because
+// the phone may OR the format with other capability bits.
 bool decodeAacFormat(int64_t format, PcmFormat& out)
 {
-    if ((format & kAacLc48kStereo) != 0)
+    if ((format & audio_format::kAacLc48kStereo) != 0)
     {
         out = {48000, 2};
         return true;
     }
-    if ((format & kAacLc44kStereo) != 0)
+    if ((format & audio_format::kAacLc44kStereo) != 0)
     {
         out = {44100, 2};
         return true;

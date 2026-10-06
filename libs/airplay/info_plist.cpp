@@ -2,6 +2,8 @@
 
 #include "airplay/info_plist.h"
 
+#include "airplay/audio_format.h"
+
 #include "airplay/hid.h"
 #include "airplay/oem_button.h"
 
@@ -125,15 +127,15 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
         return value;
     };
 
-    // PCM voice rates plus 44.1k media, mono and stereo (LIVI's PCM constants).
-    constexpr int64_t kPcmVoice = 0x3FC;
-    constexpr int64_t kPcm = kPcmVoice | 0xC00;
-    constexpr int64_t kPcmMono = 0x154 | 0x400;
+    namespace af = audio_format;
+    // The voice rates plus 44.1 kHz, mono and stereo; and the mono half of it.
+    constexpr int64_t kPcm = af::kPcmVoice | af::kPcm44kMono | af::kPcm44kStereo;
+    constexpr int64_t kPcmMono = af::kPcmVoiceMono | af::kPcm44kMono;
     // Music gets 44.1 kHz stereo and nothing else. Offered the voice rates too,
     // a phone is free to resume music at 8 kHz, and it plays -- just badly.
-    constexpr int64_t kPcmMedia = 0x800;
+    constexpr int64_t kPcmMedia = af::kPcm44kStereo;
     // AAC-LC 44.1 kHz stereo for the buffered entertainment stream (type 102).
-    constexpr int64_t kAacLcMedia = 0x400000;
+    constexpr int64_t kAacLcMedia = af::kAacLc44kStereo;
 
     info.set("audioLatencies", plist::Value::array({audio_latency(100, nullptr),
                                                     audio_latency(100, "default"),

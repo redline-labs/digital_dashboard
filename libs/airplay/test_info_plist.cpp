@@ -13,6 +13,8 @@
 // the point: they stop it changing by accident.
 #include "airplay/info_plist.h"
 
+#include "airplay/audio_format.h"
+
 #include "airplay/hid.h"
 #include "plist/binary.h"
 
@@ -24,6 +26,35 @@
 
 namespace
 {
+
+// The named bits, against the masks /info has always carried. A wrong shift in
+// audio_format.h changes what the phone is offered and fails the build here.
+namespace af = airplay::audio_format;
+static_assert(af::kPcmVoice == 0x3FC, "8/16/24/32 kHz, mono and stereo");
+static_assert(af::kPcmVoiceMono == 0x154, "8/16/24/32 kHz mono");
+static_assert((af::kPcmVoice | af::kPcm44kMono | af::kPcm44kStereo) == 0xFFC, "voice plus 44.1 kHz");
+static_assert((af::kPcmVoiceMono | af::kPcm44kMono) == 0x554, "voice plus 44.1 kHz, mono");
+static_assert(af::kPcm44kStereo == 0x800 && af::kPcm48kStereo == 0x8000, "44.1 and 48 kHz stereo");
+static_assert(af::kAacLc44kStereo == 0x400000 && af::kAacLc48kStereo == 0x800000, "AAC-LC");
+// Every PCM bit the table decodes is one bit, and each appears once.
+constexpr bool singleBits()
+{
+    int64_t seen = 0;
+    for (const auto& format : af::kPcmFormats)
+    {
+        if (format.bit == 0 || (format.bit & (format.bit - 1)) != 0 || (seen & format.bit) != 0)
+        {
+            return false;
+        }
+        seen |= format.bit;
+    }
+    return true;
+}
+static_assert(singleBits(), "each PCM format is its own bit");
+static_assert(af::pcm(af::kPcm8kMono)->sample_rate == 8000 && af::pcm(af::kPcm8kMono)->channels == 1);
+static_assert(af::pcm(af::kPcm44kStereo)->sample_rate == 44100 && af::pcm(af::kPcm44kStereo)->channels == 2);
+static_assert(!af::pcm(af::kPcm44kMono | af::kPcm44kStereo), "a mask is not a choice");
+static_assert(!af::pcm(af::kAacLc44kStereo), "AAC is not PCM");
 
 int failures = 0;
 
