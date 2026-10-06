@@ -262,20 +262,41 @@ rtsp::Message PairingSession::handlePairSetup(const rtsp::Message& request)
             const auto inner = tlv8::decode(*plain);
             const Bytes* device_id = tlv8::find(inner, kTlvIdentifier);
             const Bytes* device_ltpk = tlv8::find(inner, kTlvPublicKey);
-            SPDLOG_INFO("[airplay] pair-setup M5: device id {} bytes, LTPK {} bytes",
+            const Bytes* device_signature = tlv8::find(inner, kTlvSignature);
+            SPDLOG_INFO("[airplay] pair-setup M5: device id {} bytes, LTPK {} bytes, signature {} bytes",
                         device_id != nullptr ? device_id->size() : 0,
-                        device_ltpk != nullptr ? device_ltpk->size() : 0);
-            if (device_id != nullptr)
+                        device_ltpk != nullptr ? device_ltpk->size() : 0,
+                        device_signature != nullptr ? device_signature->size() : 0);
+
+            // The phone proves it holds the key it is handing over by signing
+            // (controller-x | identifier | LTPK). Checked before anything is
+            // kept: the key is filed and trusted on every later pair-verify,
+            // so an M5 that is malformed or unsigned would poison the store.
+            if (device_id == nullptr || device_id->empty() || device_ltpk == nullptr ||
+                device_ltpk->size() != 32 || device_signature == nullptr ||
+                device_signature->size() != 64)
             {
-                state_->device_identifier.assign(device_id->begin(), device_id->end());
+                SPDLOG_ERROR("[airplay] pair-setup M5 is missing its identifier, key or signature");
+                return rtsp::makeResponse(200, "OK", kTlvContentType,
+                                          state_->failure(6, kErrorAuthentication));
             }
-            if (device_ltpk != nullptr)
+            Bytes device_info = crypto::hkdfSha512(state_->srp_session_key,
+                                                   "Pair-Setup-Controller-Sign-Salt",
+                                                   "Pair-Setup-Controller-Sign-Info", 32);
+            device_info.insert(device_info.end(), device_id->begin(), device_id->end());
+            device_info.insert(device_info.end(), device_ltpk->begin(), device_ltpk->end());
+            if (!crypto::ed25519Verify(*device_ltpk, device_info, *device_signature))
             {
-                state_->device_ltpk = *device_ltpk;
-                // Persist it so this phone is recognised on the next run
-                // instead of pairing from scratch.
-                state_->store.savePhoneKey(state_->device_identifier, *device_ltpk);
+                SPDLOG_ERROR("[airplay] pair-setup M5 signature does not verify; not pairing");
+                return rtsp::makeResponse(200, "OK", kTlvContentType,
+                                          state_->failure(6, kErrorAuthentication));
             }
+
+            state_->device_identifier.assign(device_id->begin(), device_id->end());
+            state_->device_ltpk = *device_ltpk;
+            // Persist it so this phone is recognised on the next run instead of
+            // pairing from scratch.
+            state_->store.savePhoneKey(state_->device_identifier, *device_ltpk);
 
             // M6: our identifier, our long-term public key, and a signature
             // over (accessory-x | identifier | LTPK) proving we hold the key.
@@ -437,14 +458,16 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
 
             if (expected.empty())
             {
-                // No pair-setup this session and nothing on file. Nothing to
-                // check the signature against, so there is no security here to
-                // claim -- say so rather than logging a reassuring "verified".
-                SPDLOG_WARN("[airplay] pair-verify M3 from '{}' with no key to check it against "
-                            "(no pair-setup this session, nothing on file); allowing",
-                            phone_id);
+                // No pair-setup this session and nothing on file: a phone we
+                // have no key for. Refused, as a wrong signature is -- there is
+                // nothing to verify it against, and the phone pairs afresh.
+                SPDLOG_ERROR("[airplay] pair-verify M3 from '{}' with no key on file and no "
+                             "pair-setup this session; refusing",
+                             phone_id);
+                return rtsp::makeResponse(200, "OK", kTlvContentType,
+                                          state_->failure(4, kErrorAuthentication));
             }
-            else if (!crypto::ed25519Verify(expected, signed_material, *signature))
+            if (!crypto::ed25519Verify(expected, signed_material, *signature))
             {
                 // With a key on file this is a real failure: either the phone
                 // is not who it claims, or it rotated its key without redoing
@@ -456,11 +479,8 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
                 return rtsp::makeResponse(200, "OK", kTlvContentType,
                                           state_->failure(4, kErrorAuthentication));
             }
-            else
-            {
-                SPDLOG_INFO("[airplay] pair-verify M3 signature verified against the {} key",
-                            stored ? "stored" : "session");
-            }
+            SPDLOG_INFO("[airplay] pair-verify M3 signature verified against the {} key",
+                        stored ? "stored" : "session");
 
             // Control channel keys for everything after this point.
             state_->control_read = crypto::hkdfSha512(state_->verify_shared, "Control-Salt",

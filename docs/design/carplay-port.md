@@ -1171,7 +1171,14 @@ multitouch report matching the descriptor in `/info` (six bytes per contact:
 
 pair-setup is transient SRP with password `3939`. Username is `Pair-Setup`.
 M5/M6 exchange long-term Ed25519 identities under
-`Pair-Setup-Encrypt-Salt`/`-Info` with nonces `PS-Msg05`/`06`.
+`Pair-Setup-Encrypt-Salt`/`-Info` with nonces `PS-Msg05`/`06`. The phone's M5
+is checked before its key is filed (2026-10-05): it must carry an identifier, a
+32-byte key and a signature over
+`HKDF(K, "Pair-Setup-Controller-Sign-Salt", "-Info") | identifier | key` that
+verifies with that key. The filed key is trusted at every later pair-verify, so
+an unchecked M5 could poison the store. A pair-verify from a phone with no key
+on file and no pair-setup this session is refused, where it used to be allowed
+with a warning.
 
 `A` is occasionally 383 bytes, not 384. Roughly one run in 256 the phone strips
 a leading zero from its SRP public key, and until 2026-09-21 that run failed

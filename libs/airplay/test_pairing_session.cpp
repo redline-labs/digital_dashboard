@@ -91,8 +91,18 @@ struct PairedPhone
     crypto::Ed25519Pair identity;
 };
 
+// How the stand-in phone builds its M5. Well formed unless a test says otherwise.
+enum class M5
+{
+    kGood,
+    kNoIdentifier,
+    kShortKey,
+    kNoSignature,
+    kWrongSignature,
+};
+
 // Runs pair-setup M1..M6 against `session` as the phone would.
-std::optional<PairedPhone> runPairSetup(airplay::PairingSession& session)
+std::optional<PairedPhone> runPairSetup(airplay::PairingSession& session, M5 shape = M5::kGood)
 {
     // M1 -> M2
     const auto m2 = session.handlePairSetup(
@@ -139,13 +149,41 @@ std::optional<PairedPhone> runPairSetup(airplay::PairingSession& session)
     PairedPhone phone;
     phone.identity = crypto::ed25519Generate();
     const Bytes phone_id{'p', 'h', 'o', 'n', 'e'};
-    const Bytes inner = tlv8::encode(
-        {{kTlvIdentifier, phone_id}, {kTlvPublicKey, phone.identity.public_key}});
+    // As a phone signs it: controller-x | identifier | LTPK, with its own key.
+    Bytes device_info = crypto::hkdfSha512(proof.session_key, "Pair-Setup-Controller-Sign-Salt",
+                                           "Pair-Setup-Controller-Sign-Info", 32);
+    device_info.insert(device_info.end(), phone_id.begin(), phone_id.end());
+    device_info.insert(device_info.end(), phone.identity.public_key.begin(),
+                       phone.identity.public_key.end());
+    Bytes signature_m5 = crypto::ed25519Sign(phone.identity.private_key, device_info);
+    std::vector<tlv8::Item> fields;
+    if (shape != M5::kNoIdentifier)
+    {
+        fields.push_back({kTlvIdentifier, phone_id});
+    }
+    fields.push_back({kTlvPublicKey, shape == M5::kShortKey
+                                         ? Bytes(phone.identity.public_key.begin(),
+                                                 phone.identity.public_key.begin() + 16)
+                                         : phone.identity.public_key});
+    if (shape == M5::kWrongSignature)
+    {
+        signature_m5 = crypto::ed25519Sign(crypto::ed25519Generate().private_key, device_info);
+    }
+    if (shape != M5::kNoSignature)
+    {
+        fields.push_back({kTlvSignature, signature_m5});
+    }
+    const Bytes inner = tlv8::encode(fields);
     const Bytes sealed = crypto::chachaSeal(encrypt_key, crypto::nonceLabel("PS-Msg05"), inner);
 
     const auto m6 = session.handlePairSetup(
         request("/pair-setup", tlv8::encode({{kTlvState, {5}}, {kTlvEncryptedData, sealed}})));
     const auto m6_items = tlv8::decode(m6.body);
+    if (shape != M5::kGood)
+    {
+        expectTlvError(m6, 6, "a malformed pair-setup M5");
+        return std::nullopt;
+    }
     expect(!isError(m6_items) && stateOf(m6_items) == 6, "the accessory completes pair-setup");
     if (isError(m6_items))
     {
@@ -312,6 +350,53 @@ int main()
                        "the read key is what the phone derives with the same label");
             }
         }
+    }
+
+    // A malformed or unsigned M5 is refused, and nothing of it is kept: the key
+    // in it would be trusted on every later pair-verify.
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "airplay_pairing_m5_test";
+        for (const M5 shape : {M5::kNoIdentifier, M5::kShortKey, M5::kNoSignature, M5::kWrongSignature})
+        {
+            fs::remove_all(dir);
+            {
+                PairingSession session(makeConfig(dir.string()));
+                expect(!runPairSetup(session, shape).has_value(), "a malformed M5 does not pair");
+                expect(!session.paired(), "and leaves the session unpaired");
+            }
+
+            // Nothing was filed, so a pair-verify straight away -- as from a
+            // phone that believes it is paired -- has no key to check against,
+            // and is refused rather than waved through.
+            PairingSession later(makeConfig(dir.string()));
+            const crypto::X25519Pair ephemeral = crypto::x25519Generate();
+            const auto m2 = later.handlePairVerify(request(
+                "/pair-verify", tlv8::encode({{kTlvState, {1}}, {kTlvPublicKey, ephemeral.public_key}})));
+            const auto m2_items = tlv8::decode(m2.body);
+            const Bytes* accessory_ephemeral = tlv8::find(m2_items, kTlvPublicKey);
+            if (accessory_ephemeral == nullptr)
+            {
+                return EXIT_FAILURE;
+            }
+            const Bytes shared = crypto::x25519Shared(ephemeral.private_key, *accessory_ephemeral);
+            const Bytes key = crypto::hkdfSha512(shared, "Pair-Verify-Encrypt-Salt",
+                                                 "Pair-Verify-Encrypt-Info", 32);
+            const crypto::Ed25519Pair stranger = crypto::ed25519Generate();
+            const Bytes phone_id{'p', 'h', 'o', 'n', 'e'};
+            Bytes material = ephemeral.public_key;
+            material.insert(material.end(), phone_id.begin(), phone_id.end());
+            material.insert(material.end(), accessory_ephemeral->begin(), accessory_ephemeral->end());
+            const Bytes inner = tlv8::encode(
+                {{kTlvIdentifier, phone_id}, {kTlvSignature, crypto::ed25519Sign(stranger.private_key, material)}});
+            const auto m4 = later.handlePairVerify(request(
+                "/pair-verify",
+                tlv8::encode({{kTlvState, {3}},
+                              {kTlvEncryptedData, crypto::chachaSeal(key, crypto::nonceLabel("PV-Msg03"), inner)}})));
+            expectTlvError(m4, 4, "a pair-verify from a phone with no key on file");
+            expect(!later.verified(), "and the session is not verified");
+        }
+        fs::remove_all(dir);
     }
 
     // A wrong setup password is rejected at M3 -- the single most likely
