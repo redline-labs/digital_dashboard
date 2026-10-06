@@ -239,8 +239,11 @@ void runScreenStream(int listen_fd, Bytes key, const std::atomic<bool>& run,
 void runAudioStream(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
                     int stream_type, std::string audio_type, bool is_aac,
                     const std::atomic<bool>& run,
-                    const std::function<void(const AudioPacket&)>& on_packet)
+                    const std::function<void(const AudioPacket&)>& on_packet,
+                    const std::function<void(uint32_t rtp_timestamp, int64_t arrived_ns)>&
+                        on_first_packet)
 {
+    bool origin_reported = false;
     // Each UDP datagram is [12B RTP header][ciphertext][16B tag][8B nonce LE],
     // sealed with ChaCha20-Poly1305. The AAD is the RTP header's timestamp+SSRC
     // (bytes 4..12), and the nonce is 4 zero bytes followed by the 8-byte tail.
@@ -309,6 +312,18 @@ void runAudioStream(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channe
         {
             SPDLOG_WARN("[audio] type {} packet failed to decrypt", stream_type);
             continue;
+        }
+        if (!origin_reported && on_first_packet)
+        {
+            origin_reported = true;
+            const uint32_t rtp_timestamp = (static_cast<uint32_t>(buffer[4]) << 24) |
+                                           (static_cast<uint32_t>(buffer[5]) << 16) |
+                                           (static_cast<uint32_t>(buffer[6]) << 8) |
+                                           static_cast<uint32_t>(buffer[7]);
+            on_first_packet(rtp_timestamp,
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count());
         }
 
         Bytes samples;

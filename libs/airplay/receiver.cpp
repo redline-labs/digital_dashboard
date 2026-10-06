@@ -238,6 +238,11 @@ struct Receiver::State
     {
         int64_t type = 0;
         uint32_t sample_rate = 0;
+        uint64_t connection_id = 0;
+        // The playout latency the phone negotiated (audioLatencyMs in SETUP).
+        uint32_t latency_ms = 0;
+        // The media clock's origin: the first sample received, and when.
+        std::optional<std::pair<uint32_t, int64_t>> origin;
     };
     std::mutex audio_mutex;
     std::vector<AudioStreamInfo> audio_streams;
@@ -1061,9 +1066,19 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
                 addStream(stream_type, {data_fd, control_fd},
                           [this, data_fd, output_key, pcm, stream_type, audio_type,
                            is_aac](const std::atomic<bool>& run) {
-                              runAudioStream(data_fd, output_key, pcm.sample_rate, pcm.channels,
-                                             static_cast<int>(stream_type), audio_type, is_aac,
-                                             run, audio_handler_);
+                              runAudioStream(
+                                  data_fd, output_key, pcm.sample_rate, pcm.channels,
+                                  static_cast<int>(stream_type), audio_type, is_aac, run,
+                                  audio_handler_, [this, stream_type](uint32_t first, int64_t at) {
+                                      std::lock_guard<std::mutex> lock(state_->audio_mutex);
+                                      for (State::AudioStreamInfo& info : state_->audio_streams)
+                                      {
+                                          if (info.type == stream_type)
+                                          {
+                                              info.origin = std::make_pair(first, at);
+                                          }
+                                      }
+                                  });
                           });
             }
             else
@@ -1105,7 +1120,13 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
                               [&](const State::AudioStreamInfo& info) {
                                   return info.type == stream_type;
                               });
-                state_->audio_streams.push_back({stream_type, pcm.sample_rate});
+                const plist::Value* latency = stream.find("audioLatencyMs");
+                state_->audio_streams.push_back(
+                    {stream_type, pcm.sample_rate, static_cast<uint64_t>(stream_connection_id),
+                     latency != nullptr && latency->asInteger() > 0
+                         ? static_cast<uint32_t>(latency->asInteger())
+                         : 0u,
+                     std::nullopt});
             }
 
             plist::Value entry = plist::Value::dict();
@@ -1466,12 +1487,14 @@ rtsp::Message Receiver::handleFeedback(const rtsp::Message& request)
     // answer reads as "that stream is gone", and the phone tears the stream
     // down and re-opens it every few seconds.
     //
-    // What a full answer adds is a playback anchor -- a timestamp and the
-    // sample the sink is currently playing -- which paces the phone's sending
-    // to real time. We have no such anchor: the PCM is handed to the dashboard
-    // over zenoh and played there, so this side does not know where playback
-    // has reached. Naming the streams without inventing a position is the
-    // honest half, and is what keeps them alive.
+    // The buffered stream (type 102) is clock-driven, so it also gets a
+    // playback anchor: the sample playing now (see feedbackSampleTime) and
+    // when, in the phone's clock domain. Playback itself is on the far side of
+    // zenoh, but it runs at real time from the first packet, less the latency
+    // the phone negotiated, so the position extrapolates. The low-latency
+    // streams (100, 101) are answered with their type and rate only, as they
+    // were when verified on hardware.
+    const int64_t now_ns = TimingSync::rawNowNs();
     std::vector<plist::Value> streams;
     {
         std::lock_guard<std::mutex> lock(state_->audio_mutex);
@@ -1481,6 +1504,17 @@ rtsp::Message Receiver::handleFeedback(const rtsp::Message& request)
             plist::Value entry = plist::Value::dict();
             entry.set("type", plist::Value::integer(info.type));
             entry.set("sampleRate", plist::Value::integer(info.sample_rate));
+            if (info.type == kStreamMainHighAudio && info.origin)
+            {
+                entry.set("streamConnectionID", plist::Value::unsignedInteger(info.connection_id));
+                entry.set("timestamp", plist::Value::unsignedInteger(state_->timing.syncedNtp()));
+                entry.set("timestampRawNs", plist::Value::integer(now_ns));
+                entry.set("sampleTime",
+                          plist::Value::integer(feedbackSampleTime(info.origin->first,
+                                                                   info.origin->second, now_ns,
+                                                                   info.sample_rate,
+                                                                   info.latency_ms)));
+            }
             streams.push_back(std::move(entry));
         }
     }

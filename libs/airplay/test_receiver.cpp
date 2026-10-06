@@ -7,6 +7,9 @@
 // decides on its own: how requests are routed, and what it owns per stream.
 #include "airplay/receiver.h"
 
+#include "airplay/crypto.h"
+#include "airplay/media_stream.h"
+
 #include "airplay/rtsp.h"
 #include "plist/binary.h"
 #include "plist/value.h"
@@ -363,6 +366,129 @@ void testStreamLifetime(const std::filesystem::path& state_dir)
     receiver.stop();
 }
 
+// Where the phone's buffered stream is playing, as /feedback reports it.
+void testFeedbackSampleTime()
+{
+    using airplay::feedbackSampleTime;
+    constexpr int64_t kSecond = 1000000000;
+    expect(feedbackSampleTime(1000, 0, kSecond / 2, 44100, 1000) == 1000,
+           "inside the playout latency, the first sample is still the one playing");
+    expect(feedbackSampleTime(1000, 0, kSecond * 3 / 2, 44100, 1000) == 1000 + 22050,
+           "half a second past the latency is half a second of samples on");
+    expect(feedbackSampleTime(0xFFFFFFF0u, 0, kSecond, 1000, 0) == 1000u - 16u,
+           "the position wraps as RTP timestamps do");
+    const int64_t three_weeks = 21LL * 24 * 3600 * kSecond;
+    expect(feedbackSampleTime(0, 0, three_weeks, 48000, 0) ==
+               static_cast<uint32_t>(21ULL * 24 * 3600 * 48000),
+           "and stays exact on a stream that has run for weeks");
+}
+
+// The buffered stream (102) is clock-driven: /feedback carries where it is
+// playing. The low-latency streams are answered with type and rate only.
+void testFeedbackAnchor(const std::filesystem::path& state_dir)
+{
+    airplay::Receiver receiver(makeConfig(state_dir));
+    expect(receiver.start(), "the feedback receiver starts");
+    Client phone(receiver.port());
+    plist::Value session = plist::Value::dict();
+    session.set("name", plist::Value::string("Test Phone"));
+    phone.request("SETUP", "rtsp://[::1]/1234", encode(session), kPlist);
+
+    plist::Value buffered = plist::Value::dict();
+    buffered.set("type", plist::Value::integer(102));
+    buffered.set("audioFormat", plist::Value::integer(0x400000));
+    buffered.set("audioType", plist::Value::string("media"));
+    buffered.set("streamConnectionID", plist::Value::integer(9));
+    buffered.set("audioLatencyMs", plist::Value::integer(1000));
+    plist::Value prompt = plist::Value::dict();
+    prompt.set("type", plist::Value::integer(101));
+    prompt.set("audioFormat", plist::Value::integer(0x800));
+    prompt.set("audioType", plist::Value::string("default"));
+    prompt.set("streamConnectionID", plist::Value::integer(10));
+    plist::Value body = plist::Value::dict();
+    body.set("streams", plist::Value::array({buffered, prompt}));
+    const auto setup = phone.request("SETUP", "rtsp://[::1]/1234", encode(body), kPlist);
+    expect(setup && setup->status == 200, "the buffered stream is set up");
+    if (!setup)
+    {
+        return;
+    }
+    const auto reply = plist::decodeBinary(airplay::Bytes(setup->body.begin(), setup->body.end()));
+    int64_t data_port = 0;
+    int64_t prompt_port = 0;
+    if (reply && reply->find("streams") != nullptr)
+    {
+        const plist::Value& streams = *reply->find("streams");
+        for (size_t i = 0; i < streams.size(); ++i)
+        {
+            const int64_t type = streams.at(i).find("type")->asInteger();
+            (type == 102 ? data_port : prompt_port) = streams.at(i).find("dataPort")->asInteger();
+        }
+    }
+    expect(data_port > 0 && prompt_port > 0, "with data ports");
+
+    // A packet as the phone seals it: RTP timestamp 5000, the stream's own key
+    // (no pair-verify here, so the empty secret), AAD the timestamp+SSRC.
+    const auto seal = [](const std::string& connection_id) {
+        const airplay::Bytes key = airplay::crypto::hkdfSha512(
+            {}, "DataStream-Salt" + connection_id, "DataStream-Output-Encryption-Key", 32);
+        airplay::Bytes packet = {0x80, 0x60, 0x00, 0x01, 0x00, 0x00, 0x13, 0x88, 0x11, 0x22, 0x33, 0x44};
+        const airplay::Bytes nonce = airplay::crypto::nonce64(1);
+        const airplay::Bytes aad(packet.begin() + 4, packet.begin() + 12);
+        const airplay::Bytes sealed = airplay::crypto::chachaSeal(key, nonce, airplay::Bytes(32, 0), aad);
+        packet.insert(packet.end(), sealed.begin(), sealed.end());
+        packet.insert(packet.end(), nonce.begin() + 4, nonce.end());
+        return packet;
+    };
+    const airplay::Bytes packet = seal("9");
+    const airplay::Bytes prompt_packet = seal("10");
+    const int fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    sockaddr_in6 to{};
+    to.sin6_family = AF_INET6;
+    to.sin6_port = htons(static_cast<uint16_t>(data_port));
+    to.sin6_addr = in6addr_loopback;
+    sockaddr_in6 to_prompt = to;
+    to_prompt.sin6_port = htons(static_cast<uint16_t>(prompt_port));
+
+    std::optional<int64_t> sample_time;
+    bool prompt_plain = false;
+    int64_t echoed_id = 0;
+    const bool anchored = eventually([&] {
+        ::sendto(fd, packet.data(), packet.size(), 0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+        ::sendto(fd, prompt_packet.data(), prompt_packet.size(), 0,
+                 reinterpret_cast<sockaddr*>(&to_prompt), sizeof(to_prompt));
+        const auto feedback = phone.request("POST", "/feedback");
+        if (!feedback || feedback->body.empty())
+        {
+            return false;
+        }
+        const auto parsed =
+            plist::decodeBinary(airplay::Bytes(feedback->body.begin(), feedback->body.end()));
+        const plist::Value* streams = parsed ? parsed->find("streams") : nullptr;
+        for (size_t i = 0; streams != nullptr && i < streams->size(); ++i)
+        {
+            const plist::Value& entry = streams->at(i);
+            if (entry.find("type")->asInteger() == 102 && entry.find("sampleTime") != nullptr)
+            {
+                sample_time = entry.find("sampleTime")->asInteger();
+                echoed_id = entry.find("streamConnectionID")->asInteger();
+            }
+            if (entry.find("type")->asInteger() == 101)
+            {
+                prompt_plain = entry.find("sampleTime") == nullptr && entry.find("timestamp") == nullptr;
+            }
+        }
+        return sample_time.has_value();
+    });
+    ::close(fd);
+    expect(anchored, "once the buffered stream has a packet, /feedback anchors it");
+    expect(sample_time && *sample_time == 5000,
+           "at its first sample while still inside the negotiated latency");
+    expect(echoed_id == 9, "naming the stream it describes");
+    expect(prompt_plain, "and a low-latency stream is answered with its type and rate only");
+    receiver.stop();
+}
+
 }  // namespace
 
 int main()
@@ -387,6 +513,8 @@ int main()
     }
     testSessionLost(state_dir);
     testStreamLifetime(state_dir);
+    testFeedbackSampleTime();
+    testFeedbackAnchor(state_dir);
 
     std::filesystem::remove_all(state_dir);
     if (failures == 0)

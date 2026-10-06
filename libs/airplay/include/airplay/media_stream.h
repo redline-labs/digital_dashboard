@@ -72,10 +72,37 @@ void runScreenStream(int listen_fd, Bytes key, const std::atomic<bool>& run,
 
 // Receives one audio stream on its UDP data port until `run` goes false.
 // Leaves `data_fd` open: the caller owns it, and closes it after this returns.
+//
+// `on_first_packet`, if set, is called once with the RTP timestamp of the first
+// packet that decrypted and the steady_clock time it arrived: the origin of
+// the stream's media clock.
 void runAudioStream(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
                     int stream_type, std::string audio_type, bool is_aac,
                     const std::atomic<bool>& run,
-                    const std::function<void(const AudioPacket&)>& on_packet);
+                    const std::function<void(const AudioPacket&)>& on_packet,
+                    const std::function<void(uint32_t rtp_timestamp, int64_t arrived_ns)>&
+                        on_first_packet = {});
+
+// The sample a buffered stream is playing now, as POST /feedback reports it:
+// the first sample received, plus real time since it arrived, less the
+// playout latency the phone negotiated for the stream. The phone paces a
+// clock-driven stream by this; without it, it has no idea where playback is.
+// RTP timestamps wrap at 32 bits, and so does this.
+constexpr uint32_t feedbackSampleTime(uint32_t first_sample, int64_t origin_ns, int64_t now_ns,
+                                      uint32_t sample_rate, uint32_t latency_ms)
+{
+    const int64_t played_ns = now_ns - origin_ns - static_cast<int64_t>(latency_ms) * 1000000;
+    if (played_ns <= 0)
+    {
+        return first_sample;
+    }
+    // Samples played: ns x rate / 1e9, split so neither product overflows on a
+    // stream that has run for weeks.
+    const uint64_t ns = static_cast<uint64_t>(played_ns);
+    const uint64_t samples = (ns / 1000000000u) * sample_rate +
+                             ((ns % 1000000000u) * sample_rate + 500000000u) / 1000000000u;
+    return static_cast<uint32_t>(first_sample + samples);  // wraps with RTP
+}
 
 }  // namespace airplay
 

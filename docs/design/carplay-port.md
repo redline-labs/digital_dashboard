@@ -67,7 +67,7 @@ Rows are dated individually.
 | Knob / media key / telephony HID + Siri | written 2026-08-02, unit-tested (`airplay_test_hid`), not hardware-verified. Advertised in `/info` and wired to the `input` topic; nothing publishes them yet |
 | Event channel inbound commands | written 2026-08-01; the phone's own commands are parsed and acknowledged (they were previously read and discarded). `requestUI`, `modesChanged`, `duckAudio`/`unduckAudio`, `suggestUI` and `disableBluetooth` routed 2026-08-02 |
 | Session lifecycle (TEARDOWN) | written 2026-08-02; TEARDOWN was acknowledged and otherwise ignored, so the dashboard never learned a session had ended. Not hardware-verified |
-| `POST /feedback` media clock | written 2026-08-02; names the open audio streams instead of answering empty. No playback anchor |
+| `POST /feedback` media clock | written 2026-08-02; names the open audio streams instead of answering empty. Playback anchor for type 102 since 2026-10-05, not exercised: no wired phone has opened 102 |
 | Night mode | written 2026-08-02, set by `night_mode:` in the config and reflected in `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
 | Keepalive port | written 2026-08-02; `/info` declines `keepAliveLowPower` since 2026-10-05, and a port is still given to a phone that asks. Idle audio-only sessions not soak-tested |
 | Cluster (alt) display, 48 kHz entertainment audio | deliberately not done; see What LIVI has that we do not |
@@ -1815,12 +1815,17 @@ secret set last. Neither path has run on a phone.
 `POST /feedback` now answers with the open audio streams (`{type, sampleRate}`
 each) instead of an empty 200. An empty answer reads to the phone as "that
 stream is gone", and it tears the stream down and re-opens it every few
-seconds. What a full answer would add is a playback anchor, a timestamp and the
-sample the sink is currently playing, which paces the phone to real time. We
-have none: the PCM goes to the dashboard over zenoh and is played there, so this
-side does not know where playback has reached. Inventing one would be worse than
-omitting it. If a buffered stream (type 102) is ever exercised end to end and
-drifts, this is the first thing to revisit.
+seconds. The buffered stream (type 102) also gets a playback anchor
+(2026-10-05): the sample playing now and when, in the phone's clock domain,
+which is how the phone paces a clock-driven stream. Playback happens on the far
+side of zenoh, but it runs at real time from the first packet, so the position
+is the first RTP timestamp plus the real time since it arrived, less the
+`audioLatencyMs` the phone negotiated (`feedbackSampleTime`). The low-latency
+streams (100, 101) are still answered with `{type, sampleRate}` only, as they
+were when verified on hardware. No wired phone has opened 102 yet, so the anchor
+has only run against `airplay_test_receiver`. Its NTP timestamp is above
+INT64_MAX, so it goes out as a 16-byte plist integer, as Apple writes a UInt64
+(`plist::Value::unsignedInteger`).
 
 Night mode switches CarPlay's own UI between its day and night themes. It is set
 by `night_mode:` in the config, with no command-line override, because what the
@@ -2099,9 +2104,9 @@ exists. A 48 kHz entertainment rate: LIVI picks 44.1 or 48 kHz for the type-102
 stream; we advertise 44.1 only, and type 102 has never been exercised on the
 wired path at all, so a second untested variant of it is not worth having.
 `disableAudioOutput`: LIVI can mask the audio feature bits to advertise a head
-unit with no audio, which is not a configuration this vehicle wants. A playback
-anchor in `POST /feedback`, which we cannot produce honestly because playback
-happens on the far side of zenoh. HEVC was on this list and is done and
+unit with no audio, which is not a configuration this vehicle wants. The
+`POST /feedback` playback anchor was on this list too and is done for type 102
+(see Session lifecycle). HEVC was on this list and is done and
 hardware-verified (2026-08-02). So, since 2026-10-05, are the power and
 communications subscriptions: identification had always listed
 `StartPowerUpdates` and `StartCommunicationsUpdates` among the messages we
