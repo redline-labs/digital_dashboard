@@ -281,6 +281,11 @@ void Receiver::setHandshakeFailedHandler(HandshakeFailedHandler handler)
     handshake_failed_handler_ = std::move(handler);
 }
 
+void Receiver::setSessionLostHandler(SessionLostHandler handler)
+{
+    session_lost_handler_ = std::move(handler);
+}
+
 rtsp::Message Receiver::noteHandshake(rtsp::Message response, const char* stage)
 {
     if (state_->pairing.failed() && !handshake_failure_reported_)
@@ -550,18 +555,27 @@ void Receiver::acceptLoop()
         state_->peer_address = text;
         state_->peer_scope = peer.sin6_scope_id;
         session_threads_.emplace_back([this, client, peer_text = std::string(text)] {
-            sessionLoop(client, peer_text);
+            const bool was_live = sessionLoop(client, peer_text);
             // However sessionLoop got here -- TEARDOWN, the phone unplugged, a
             // frame that failed to authenticate -- the control connection is
             // gone, and with it the session. Reporting it from one place means
             // no exit path can forget to.
             endSession("control connection closed");
+            // Only for a connection that carried a session, and not for our own
+            // stop(): a connection that closes before RECORD is the phone
+            // still setting up, and is left alone.
+            if (was_live && run_.load() && session_lost_handler_)
+            {
+                SPDLOG_WARN("[airplay] the phone closed a live session's control connection");
+                session_lost_handler_();
+            }
         });
     }
 }
 
-void Receiver::sessionLoop(int client_fd, std::string peer)
+bool Receiver::sessionLoop(int client_fd, std::string peer)
 {
+    bool reached_record = false;
     Bytes buffer;      // raw bytes off the socket
     Bytes plaintext;   // RTSP bytes, after decryption once the channel is up
     Bytes chunk(8192);
@@ -594,7 +608,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
                 SPDLOG_ERROR("[airplay] control channel frame failed to authenticate; "
                              "closing. Suspect the key direction or the nonce counter.");
                 ::close(client_fd);
-                return;
+                return reached_record;
             }
         }
         else
@@ -613,7 +627,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
                 SPDLOG_WARN("[airplay] malformed request from {}, closing", peer);
                 buffer.clear();
                 ::close(client_fd);
-                return;
+                return reached_record;
             }
             if (*consumed == 0)
             {
@@ -622,6 +636,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
             plaintext.erase(plaintext.begin(), plaintext.begin() + static_cast<long>(*consumed));
 
             rtsp::Message response = handle(request);
+            reached_record = reached_record || request.method == "RECORD";
 
             // RTSP requires the CSeq to be echoed; the phone drops responses
             // without it and simply retries, which looks like a hang.
@@ -652,7 +667,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
                 {
                     SPDLOG_DEBUG("[airplay] send failed: {}", std::strerror(errno));
                     ::close(client_fd);
-                    return;
+                    return reached_record;
                 }
                 sent += static_cast<size_t>(written);
             }
@@ -669,6 +684,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
 
     SPDLOG_INFO("[airplay] connection from {} closed", peer);
     ::close(client_fd);
+    return reached_record;
 }
 
 rtsp::Message Receiver::handle(const rtsp::Message& request)
@@ -814,11 +830,13 @@ rtsp::Message Receiver::handleSessionSetup(const plist::Value& body)
                     body.find("model") != nullptr ? body.find("model")->asString() : "?");
     }
 
+    // Keyed from the pair-verify secret, which by now exists: the phone does
+    // not reach SETUP without completing pair-verify first. Every session, not
+    // only the first: a later session verified afresh, and the event channel
+    // derives its keys when the phone connects, from whatever was set last.
+    state_->events.useSharedSecret(state_->pairing.verifySharedSecret());
     if (state_->event_port == 0)
     {
-        // Keyed from the pair-verify secret, which by now exists: the phone
-        // does not reach SETUP without completing pair-verify first.
-        state_->events.useSharedSecret(state_->pairing.verifySharedSecret());
         if (!state_->events.start(state_->event_port))
         {
             return rtsp::makeResponse(500, "Internal Server Error", "", {});

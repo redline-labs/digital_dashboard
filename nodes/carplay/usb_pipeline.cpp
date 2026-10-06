@@ -2,6 +2,7 @@
 #include "usb_pipeline.h"
 
 #include "iap2_session.h"
+#include "reattach_policy.h"
 #include "screen_handover.h"
 
 #include "core/core.h"
@@ -109,6 +110,9 @@ constexpr auto kRediscoverTimeout = std::chrono::seconds(15);
 constexpr auto kDevicePoll = std::chrono::milliseconds(500);
 constexpr auto kReattachDelay = std::chrono::seconds(2);
 constexpr auto kMaxReattachDelay = std::chrono::seconds(30);
+// A session that ran at least this long before the phone ended it is a session
+// that worked, and is restarted promptly; a shorter one backs off.
+constexpr auto kStableSession = std::chrono::seconds(30);
 
 std::string shortUdid(const std::string& udid)
 {
@@ -1554,8 +1558,8 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
     return ok;
 }
 
-bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContext& ctx,
-                        ZenohBridge& bridge, std::atomic<bool>& stop)
+AttachOutcome runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContext& ctx,
+                                ZenohBridge& bridge, std::atomic<bool>& stop)
 {
     const NodeConfig& options = ctx.options;
     const std::string& state_dir = ctx.state_dir;
@@ -1569,7 +1573,7 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
     SessionMux mux;
     if (!mux.open(device, state_dir))
     {
-        return false;
+        return AttachOutcome::kFailed;
     }
 
     // Session-scoped stop: set when the node is shutting down *or* the phone
@@ -1596,13 +1600,19 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         }
     });
     // Any exit from here on has to release the watchdog before returning.
-    const auto finish = [&session_stop, &device_watch](bool result) {
+    // Set when the phone ends a live AirPlay session with USB still attached.
+    std::atomic<bool> airplay_lost{false};
+    const auto finish = [&session_stop, &device_watch, &airplay_lost](bool result) {
         session_stop.store(true);
         if (device_watch.joinable())
         {
             device_watch.join();
         }
-        return result;
+        if (!result)
+        {
+            return AttachOutcome::kFailed;
+        }
+        return airplay_lost.load() ? AttachOutcome::kRestart : AttachOutcome::kEnded;
     };
 
     const std::string& socket_path = mux.socketPath();
@@ -1698,6 +1708,16 @@ bool runAttachedSession(const apple_usb::DeviceInfo& device, const SessionContex
         {
             receiver->setHandshakeFailedHandler([&handshake_failed, &session_stop](const char*) {
                 handshake_failed.store(true);
+                session_stop.store(true);
+            });
+            // The phone ended CarPlay (or lost it) with the cable still in. It
+            // offers CarPlay again only on a fresh iAP2 session, and iAP2
+            // alone would keep this one up indefinitely with no picture, so
+            // the session ends and the supervisor runs the bring-up again.
+            receiver->setSessionLostHandler([&airplay_lost, &session_stop] {
+                SPDLOG_WARN("[node] the AirPlay session ended with the phone still attached; "
+                            "restarting iAP2 so the phone offers CarPlay again");
+                airplay_lost.store(true);
                 session_stop.store(true);
             });
         }
@@ -1821,7 +1841,7 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     // a fresh mux, socket, and iAP2 session, because none of that state
     // survives the re-enumeration.
     bool ever_ok = false;
-    auto retry_delay = kReattachDelay;
+    ReattachBackoff backoff(kReattachDelay, kMaxReattachDelay, kStableSession);
     while (!stop.load())
     {
         const auto found = waitForDevice(stop);
@@ -1838,11 +1858,12 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
             return switchToCarPlay(*found).has_value();
         }
 
-        bool attached = false;
+        const auto attach_started = std::chrono::steady_clock::now();
+        AttachOutcome outcome = AttachOutcome::kFailed;
         if (const auto device = switchToCarPlay(*found))
         {
-            attached = runAttachedSession(*device, ctx, bridge, stop);
-            ever_ok |= attached;
+            outcome = runAttachedSession(*device, ctx, bridge, stop);
+            ever_ok |= outcome != AttachOutcome::kFailed;
         }
         if (stop.load())
         {
@@ -1853,24 +1874,27 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         // and the bring-up is retried: it stays connected meanwhile, so a page
         // trigger on deviceConnected does not fire again for every attempt.
         const bool phone_present = !apple_usb::listAppleDevices().empty();
-        status.setPhase(phone_present ? SessionPhase::Error : SessionPhase::Idle);
-
-        // Back off when the same phone keeps failing -- a phone whose owner
-        // tapped "Don't Trust" would otherwise re-run the whole bring-up every
-        // two seconds forever. A clean attach, or the phone being unplugged,
-        // resets the delay so a genuine replug is picked up immediately.
-        if (attached || !phone_present)
+        const ReattachBackoff::Decision next =
+            backoff.next(outcome, phone_present, std::chrono::steady_clock::now() - attach_started);
+        if (!phone_present)
         {
-            retry_delay = kReattachDelay;
+            status.setPhase(SessionPhase::Idle);
+        }
+        else if (next.failing)
+        {
+            status.setPhase(SessionPhase::Error);
+            SPDLOG_WARN("[node] bring-up failed with the phone still attached; retrying in {}s",
+                        std::chrono::duration_cast<std::chrono::seconds>(next.delay).count());
         }
         else
         {
-            retry_delay = std::min(retry_delay * 2, kMaxReattachDelay);
-            SPDLOG_WARN("[node] bring-up failed with the phone still attached; retrying in {}s",
-                        retry_delay.count());
+            // A restart, or a session that ran and ended: the bring-up is
+            // starting over, not failing.
+            status.setPhase(SessionPhase::UsbConfig);
         }
 
         SPDLOG_INFO("[node] session ended; waiting for a phone to be plugged in");
+        const auto retry_delay = std::chrono::duration_cast<std::chrono::seconds>(next.delay);
         for (auto waited = std::chrono::seconds(0); waited < retry_delay && !stop.load();
              waited += std::chrono::seconds(1))
         {

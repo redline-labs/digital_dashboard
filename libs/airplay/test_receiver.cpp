@@ -17,13 +17,16 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace
 {
@@ -194,6 +197,50 @@ void testRouting(uint16_t port)
     expect(after && after->status == 200, "the connection is still served afterwards");
 }
 
+// Polls `done` for up to a second; the receiver reports from its own threads.
+template <typename Predicate>
+bool eventually(Predicate done)
+{
+    for (int i = 0; i < 100 && !done(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return done();
+}
+
+// A control connection that carried a session closing, with USB still there, is
+// the phone ending CarPlay: the owner has to restart iAP2 to get it back. One
+// that closes before RECORD is the phone still setting up, and one closed by
+// our own stop() is not the phone's doing.
+void testSessionLost(const std::filesystem::path& state_dir)
+{
+    airplay::Receiver receiver(makeConfig(state_dir));
+    std::atomic<int> lost{0};
+    receiver.setSessionLostHandler([&lost] { ++lost; });
+    expect(receiver.start(), "a second receiver starts");
+
+    {
+        Client probe(receiver.port());
+        expect(probe.request("GET", "/info").has_value(), "a probing connection is answered");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    expect(lost.load() == 0, "a connection that never reached RECORD is not a lost session");
+
+    {
+        Client phone(receiver.port());
+        const auto record = phone.request("RECORD", "rtsp://[::1]/1234");
+        expect(record && record->status == 200, "RECORD is answered");
+    }
+    expect(eventually([&] { return lost.load() == 1; }),
+           "closing a live session's connection reports the session lost");
+
+    Client again(receiver.port());
+    const auto record = again.request("RECORD", "rtsp://[::1]/1234");
+    expect(record && record->status == 200, "a new session reaches RECORD");
+    receiver.stop();
+    expect(lost.load() == 1, "stopping the receiver under a live session is not reported");
+}
+
 }  // namespace
 
 int main()
@@ -216,6 +263,7 @@ int main()
 
         receiver.stop();
     }
+    testSessionLost(state_dir);
 
     std::filesystem::remove_all(state_dir);
     if (failures == 0)

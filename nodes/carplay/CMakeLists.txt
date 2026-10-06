@@ -93,6 +93,11 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 
+# When the supervisor runs a phone's bring-up again: back off on failure, restart
+# promptly when the phone ends a session that had been running.
+add_executable(carplay_test_reattach_policy test_reattach_policy.cpp)
+add_project_test(TARGET carplay_test_reattach_policy LABELS carplay unit)
+
 # Detaching a bridge handler is a barrier: no call runs after set(nullptr).
 add_executable(carplay_test_handler_slot test_handler_slot.cpp)
 add_project_test(TARGET carplay_test_handler_slot LABELS carplay unit)

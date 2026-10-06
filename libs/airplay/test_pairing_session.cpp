@@ -448,6 +448,48 @@ int main()
             expect(session.verified(), "and the session is verified");
             expect(session.recognised(),
                    "and it is recognised from the store, not from this session");
+
+            // A second pair-verify on the same session: the phone ending a
+            // session and starting another on a fresh connection. Until its M4
+            // the session must not claim to be verified, or the receiver
+            // switches the new connection to encryption a message early, with
+            // the previous connection's keys, and every retry fails the same way.
+            const Bytes first_write_key = session.controlWriteKey();
+            {
+                const crypto::X25519Pair again = crypto::x25519Generate();
+                const auto m2b = session.handlePairVerify(request(
+                    "/pair-verify",
+                    tlv8::encode({{kTlvState, {1}}, {kTlvPublicKey, again.public_key}})));
+                const auto m2b_items = tlv8::decode(m2b.body);
+                expect(!isError(m2b_items), "a second pair-verify M1 is accepted");
+                expect(!session.verified(), "and clears the previous verification");
+                expect(!session.recognised(), "and the previous recognition");
+
+                const Bytes* accessory_b = tlv8::find(m2b_items, kTlvPublicKey);
+                if (accessory_b == nullptr)
+                {
+                    return EXIT_FAILURE;
+                }
+                const Bytes shared_b = crypto::x25519Shared(again.private_key, *accessory_b);
+                const Bytes key_b = crypto::hkdfSha512(shared_b, "Pair-Verify-Encrypt-Salt",
+                                                       "Pair-Verify-Encrypt-Info", 32);
+                Bytes material_b = again.public_key;
+                material_b.insert(material_b.end(), phone_id.begin(), phone_id.end());
+                material_b.insert(material_b.end(), accessory_b->begin(), accessory_b->end());
+                const Bytes inner_b = tlv8::encode(
+                    {{kTlvIdentifier, phone_id},
+                     {kTlvSignature, crypto::ed25519Sign(phone->identity.private_key, material_b)}});
+                const auto m4b = session.handlePairVerify(request(
+                    "/pair-verify",
+                    tlv8::encode({{kTlvState, {3}},
+                                  {kTlvEncryptedData,
+                                   crypto::chachaSeal(key_b, crypto::nonceLabel("PV-Msg03"),
+                                                      inner_b)}})));
+                expect(!isError(tlv8::decode(m4b.body)) && session.verified(),
+                       "the second pair-verify completes");
+                expect(session.controlWriteKey() != first_write_key,
+                       "with control keys of its own");
+            }
         }
 
         // An impostor claiming the same identifier, signing with a different

@@ -1774,6 +1774,27 @@ behind it are the same session ending, and the dashboard should hear about it
 once. It also drops the queued event-channel work, stops the mic uplink, and
 clears the audio-stream registry.
 
+A session the phone ends with the cable still in is restarted (2026-10-05). A
+wired phone offers CarPlay again only on a fresh iAP2 session, and iAP2 on its
+own keeps the old one up indefinitely, so toggling CarPlay off and on in the
+phone's settings, or the phone recovering from an error, used to leave a black
+screen until a replug. When a control connection that reached RECORD closes
+while the receiver is still running, `Receiver` reports the session lost, the
+pipeline ends the attached session, and the supervisor runs the bring-up again
+after the usual two seconds. A connection that closes before RECORD is the
+phone still setting up and is left alone. A session that ran under 30 seconds
+before the phone ended it backs off like a failure instead
+(`ReattachBackoff`, `carplay_test_reattach_policy`), so a phone that drops
+every session at once cannot loop the bring-up.
+
+Pair-verify forgets its previous result at every M1. One `PairingSession` lives
+as long as the receiver, and it used to report itself verified from the first
+session's M4 onward. On a second control connection that switched the channel
+to encryption after M2, with the old keys, so M3 never authenticated and every
+retry failed the same way. The event channel is re-keyed at every session SETUP
+for the same reason; it derives its keys when the phone connects, from the
+secret set last. Neither path has run on a phone.
+
 `POST /feedback` now answers with the open audio streams (`{type, sampleRate}`
 each) instead of an empty 200. An empty answer reads to the phone as "that
 stream is gone", and it tears the stream down and re-opens it every few

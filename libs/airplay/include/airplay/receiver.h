@@ -66,10 +66,18 @@ class Receiver
     // on this session (see PairingSession::failed), so the owner ends it.
     using HandshakeFailedHandler = std::function<void(const char* stage)>;
 
+    // Called on the RTSP session thread when a control connection that reached
+    // RECORD closes while the receiver is still running: the phone ended the
+    // CarPlay session (or lost it) with USB still attached. A wired phone
+    // offers CarPlay again only on a fresh iAP2 session, so the owner has to
+    // restart that rather than wait for a connection that will not come.
+    using SessionLostHandler = std::function<void()>;
+
     void setVideoHandler(VideoHandler handler);
     void setAudioHandler(AudioHandler handler);
     void setStatusHandler(StatusHandler handler);
     void setHandshakeFailedHandler(HandshakeFailedHandler handler);
+    void setSessionLostHandler(SessionLostHandler handler);
     void setOemButtonHandler(OemButtonHandler handler);
     void setScreenOwnerHandler(ScreenOwnerHandler handler);
     void setAppUiRequestHandler(AppUiRequestHandler handler);
@@ -170,7 +178,9 @@ class Receiver
 
   private:
     void acceptLoop();
-    void sessionLoop(int client_fd, std::string peer);
+    // Serves one control connection until it closes. Returns whether it
+    // reached RECORD.
+    bool sessionLoop(int client_fd, std::string peer);
 
     // Dispatch for one parsed request. Returns the response to send.
     rtsp::Message handle(const rtsp::Message& request);
@@ -224,6 +234,7 @@ class Receiver
     AudioHandler audio_handler_;
     StatusHandler status_handler_;
     HandshakeFailedHandler handshake_failed_handler_;
+    SessionLostHandler session_lost_handler_;
     // So a failure is reported once, not on every step the phone gives up on.
     bool handshake_failure_reported_ = false;
     OemButtonHandler oem_button_handler_;

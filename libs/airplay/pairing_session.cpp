@@ -325,6 +325,17 @@ rtsp::Message PairingSession::handlePairVerify(const rtsp::Message& request)
         {
             // M1 -> M2. Ephemeral X25519 exchange, then prove we hold the
             // long-term key the phone learned during pair-setup.
+            //
+            // An M1 starts a new verification, so the last one's result goes
+            // now. The phone runs this again on every fresh control connection,
+            // and a session still claiming verified() after M2 makes the
+            // receiver encrypt the rest of the handshake with the previous
+            // connection's keys -- every retry then fails the same way.
+            state_->verified = false;
+            state_->recognised = false;
+            state_->control_read.clear();
+            state_->control_write.clear();
+
             const Bytes* device_public = tlv8::find(items, kTlvPublicKey);
             if (device_public == nullptr || device_public->size() != 32)
             {
