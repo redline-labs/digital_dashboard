@@ -84,6 +84,8 @@ constexpr uint16_t kComponentSupportsIap2 = 2;
 constexpr uint16_t kUsbHostCarPlayInterfaceNumber = 3;
 constexpr uint16_t kUsbHostSupportsCarPlay = 4;
 constexpr uint16_t kVehicleEngineType = 2;
+constexpr uint16_t kVehicleDisplayName = 6;
+constexpr uint16_t kVehicleMapsDisplayName = 8;
 constexpr uint16_t kVehicleStatusRange = 3;
 constexpr uint16_t kVehicleStatusOutsideTemperature = 4;
 constexpr uint16_t kLocationGpsFixData = 17;
@@ -385,6 +387,9 @@ std::vector<uint8_t> encodeIdentificationInformation(const IdentificationConfig&
         csm::addU16(component, kComponentId, 0);
         csm::addString(component, kComponentName, config.name);
         csm::addEnum(component, kVehicleEngineType, static_cast<uint8_t>(config.engine_type));
+        // What the phone calls the car in its own UI and in Maps.
+        csm::addString(component, kVehicleDisplayName, config.name);
+        csm::addString(component, kVehicleMapsDisplayName, config.name);
         csm::addGroup(params, kIdVehicleInformationComponent, component);
     }
 

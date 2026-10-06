@@ -710,6 +710,13 @@ void testIdentification()
                "supports_car_play is a none-like flag");
     }
 
+    // The vehicle is named for the phone's UI and for Maps.
+    const auto vehicle = iap2::csm::getGroup(params, 20);
+    expect(vehicle && iap2::csm::getString(*vehicle, 6) == "Mercedes 190E",
+           "the vehicle information carries a display name");
+    expect(vehicle && iap2::csm::getString(*vehicle, 8) == "Mercedes 190E",
+           "and a name for Maps");
+
     // The route guidance component declares what it can show; without the
     // capacities the phone does not send the per-maneuver updates.
     const auto guidance = iap2::csm::getGroup(params, 30);
