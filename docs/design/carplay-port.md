@@ -1844,7 +1844,7 @@ The phone's own commands are routed rather than logged as unhandled:
 |---|---|
 | `requestUI` | manufacturer button, or an app naming a url; see The manufacturer button |
 | `modesChanged` | tracks `speechMode` on appStateID 1, so Siri listening/speaking is logged on the transition; reads the main screen's owner (2026-09-16) and hands it to the screen handover |
-| `duckAudio` / `unduckAudio` | logged with the computed linear level. Not acted on: this is the phone asking the head unit to attenuate its own sources, and there are none; the phone mixes its music and prompts before sending them to us |
+| `duckAudio` / `unduckAudio` | logged with the computed linear level. Not acted on yet. The phone does not mix for us: a navigation prompt arrives on the alternate stream (101) beside music on the main one (100), and ducking is the head unit lowering the music under it. The dashboard plays both streams through one buffer today, so a prompt over music garbles both; a per-stream mixer with a ramped duck gain on music is the fix, and is deferred |
 | `suggestUI` | logged with the url count; the dashboard decides what it shows |
 | `disableBluetooth` | logged. Not applicable on the wired path: iAP2 already runs over USB, so there is no Bluetooth link of ours to drop |
 | anything else | acknowledged, and logged with its full body, which is how the next one gets identified |

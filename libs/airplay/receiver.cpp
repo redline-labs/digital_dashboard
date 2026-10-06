@@ -1279,10 +1279,11 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
     }
     else if (type == "duckAudio" || type == "unduckAudio")
     {
-        // The phone asking the head unit to attenuate *its own* audio sources
-        // under a navigation prompt or a call. Logged rather than acted on:
-        // this head unit has no source of its own to duck yet -- the phone
-        // mixes its music and prompts together before sending them to us.
+        // The phone asking the head unit to lower music under a prompt or a
+        // call. The phone does not mix them for us -- a prompt arrives on the
+        // alternate stream beside music on the main one -- so this is ours to
+        // apply. Logged and not acted on yet: the dashboard has no per-stream
+        // mixer to apply it in.
         double volume_db = 0.0;
         int64_t duration_ms = 0;
         if (params != nullptr && params->isDict())
@@ -1303,7 +1304,7 @@ rtsp::Message Receiver::handleEventCommand(const rtsp::Message& request)
         if (type == "duckAudio")
         {
             SPDLOG_INFO("[airplay] duckAudio: {:.1f} dB (linear {:.3f}) over {} ms -- not acted "
-                        "on, this head unit has no audio source of its own to duck",
+                        "on yet: no per-stream mixer",
                         volume_db, level, duration_ms);
         }
         else
