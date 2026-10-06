@@ -489,6 +489,39 @@ std::optional<ConfigInfo> readActiveConfig(const DeviceInfo& device)
 
 // ---------------- configuration ----------------
 
+bool restoreConfiguration(const PortPath& port, uint8_t configuration)
+{
+    const auto current = findDeviceAt(port);
+    if (!current || current->active_configuration == configuration)
+    {
+        return current.has_value();
+    }
+    if (std::string why_not; !canDetachDevices(why_not))
+    {
+        SPDLOG_DEBUG("[usb] not restoring configuration {} at port {}: {}", configuration,
+                     port.toString(), why_not);
+        return false;
+    }
+    DeviceHandle handle = openDevice(port);
+    if (!handle)
+    {
+        return false;
+    }
+    if (const auto cfg = readActiveConfig(port); cfg)
+    {
+        detachKernelDrivers(handle, *cfg);
+    }
+    const int rc = libusb_set_configuration(handle.native(), configuration);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        SPDLOG_WARN("[usb] could not put the phone at port {} back in configuration {}: {}",
+                    port.toString(), configuration, libusb_strerror(rc));
+        return false;
+    }
+    SPDLOG_INFO("[usb] phone at port {} back in configuration {}", port.toString(), configuration);
+    return true;
+}
+
 bool switchToCarPlayConfiguration(const DeviceInfo& device)
 {
     const PortPath port = device.port;

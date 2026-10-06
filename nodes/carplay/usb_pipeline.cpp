@@ -1872,6 +1872,15 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         }
         if (stop.load())
         {
+            // Hand the phone back as it was found, or it stays in the CarPlay
+            // configuration -- invisible to Finder, tethering and the system
+            // usbmuxd -- until it is unplugged. Only on the way out: between
+            // sessions it would re-enumerate the phone for nothing.
+            if (found->active_configuration != 0 &&
+                found->active_configuration != apple_usb::kCarPlayConfiguration)
+            {
+                apple_usb::restoreConfiguration(found->port, found->active_configuration);
+            }
             break;
         }
         if (outcome == AttachOutcome::kFailed)

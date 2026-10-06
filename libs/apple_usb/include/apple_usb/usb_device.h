@@ -174,6 +174,13 @@ std::optional<ConfigInfo> readActiveConfig(const PortPath& port);
 // address will have changed.
 bool switchToCarPlayConfiguration(const DeviceInfo& device);
 
+// Selects `configuration` on the device at `port` -- the one it was in before
+// switchToCarPlayConfiguration, as a node shutting down hands the phone back.
+// Left in configuration 6 the phone is invisible to Finder, tethering and the
+// system usbmuxd until it is unplugged. Best effort: false, logged, if it
+// cannot be done.
+bool restoreConfiguration(const PortPath& port, uint8_t configuration);
+
 // Whether this process is able to take a device away from the drivers that
 // already own it, which everything from the configuration switch onwards needs.
 //
