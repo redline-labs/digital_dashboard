@@ -373,7 +373,6 @@ void runAudioStream(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channe
         std::fclose(dump);
     }
     SPDLOG_INFO("[audio] stream type {} closed after {} packets", stream_type, packets);
-    ::close(data_fd);
 }
 
 }  // namespace airplay

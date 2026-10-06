@@ -1774,6 +1774,16 @@ behind it are the same session ending, and the dashboard should hear about it
 once. It also drops the queued event-channel work, stops the mic uplink, and
 clears the audio-stream registry.
 
+Each stream owns its loop and its sockets (2026-10-05). The loops used to stop
+only with the receiver, on the theory that they end when the phone closes the
+socket -- untrue for UDP, and for the screen stream, which goes back to
+`accept()`. Since the phone sets up and tears down an audio stream for every
+prompt, track and call, a long drive accumulated hundreds of threads, and SETUP
+would eventually fail for want of descriptors. Now a stream ends, joined and
+closed, when the phone tears it down, when a SETUP of the same type replaces
+it, or with the session; `airplay_test_receiver` counts descriptors across 25
+cycles. Keyframes are asked for only while a screen stream is open.
+
 A session the phone ends with the cable still in is restarted (2026-10-05). A
 wired phone offers CarPlay again only on a fresh iAP2 session, and iAP2 on its
 own keeps the old one up indefinitely, so toggling CarPlay off and on in the

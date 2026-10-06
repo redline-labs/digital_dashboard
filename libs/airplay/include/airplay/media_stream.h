@@ -60,7 +60,8 @@ struct AudioPacket
 };
 
 // Accepts the phone's video data connection on `listen_fd` and pumps frames
-// until it closes or `run` goes false. `key` is the per-stream key.
+// until `run` goes false, accepting again if the phone reconnects. `key` is the
+// per-stream key. Leaves `listen_fd` open for the caller to close.
 //
 // `on_keyframe` is called with the steady_clock time of each keyframe or
 // parameter set the phone sent, so the caller can tell a stream that is already
@@ -70,7 +71,7 @@ void runScreenStream(int listen_fd, Bytes key, const std::atomic<bool>& run,
                      const std::function<void(int64_t)>& on_keyframe);
 
 // Receives one audio stream on its UDP data port until `run` goes false.
-// Consumes `data_fd`.
+// Leaves `data_fd` open: the caller owns it, and closes it after this returns.
 void runAudioStream(int data_fd, Bytes key, uint32_t sample_rate, uint8_t channels,
                     int stream_type, std::string audio_type, bool is_aac,
                     const std::atomic<bool>& run,

@@ -8,10 +8,13 @@
 #include "airplay/receiver.h"
 
 #include "airplay/rtsp.h"
+#include "plist/binary.h"
+#include "plist/value.h"
 
 #include <spdlog/spdlog.h>
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -241,6 +244,125 @@ void testSessionLost(const std::filesystem::path& state_dir)
     expect(lost.load() == 1, "stopping the receiver under a live session is not reported");
 }
 
+// Descriptors this process has open. Every stream is sockets, so a stream that
+// outlives its TEARDOWN shows here.
+int openFdCount()
+{
+    int count = 0;
+    if (DIR* dir = ::opendir("/dev/fd"); dir != nullptr)
+    {
+        while (::readdir(dir) != nullptr)
+        {
+            ++count;
+        }
+        ::closedir(dir);
+    }
+    return count;
+}
+
+std::string encode(const plist::Value& value)
+{
+    const auto bytes = plist::encodeBinary(value);
+    return std::string(bytes.begin(), bytes.end());
+}
+
+std::string streamsBody(std::initializer_list<int64_t> types)
+{
+    std::vector<plist::Value> streams;
+    int64_t connection_id = 1;
+    for (const int64_t type : types)
+    {
+        plist::Value entry = plist::Value::dict();
+        entry.set("type", plist::Value::integer(type));
+        entry.set("streamConnectionID", plist::Value::integer(connection_id++));
+        if (type != 110)
+        {
+            entry.set("audioFormat", plist::Value::integer(0x800));
+            entry.set("audioType", plist::Value::string(type == 101 ? "default" : "media"));
+        }
+        streams.push_back(std::move(entry));
+    }
+    plist::Value body = plist::Value::dict();
+    body.set("streams", plist::Value::array(std::move(streams)));
+    return encode(body);
+}
+
+const std::string kPlist = "application/x-apple-binary-plist";
+
+bool setupStreams(Client& phone, std::initializer_list<int64_t> types)
+{
+    const auto reply = phone.request("SETUP", "rtsp://[::1]/1234", streamsBody(types), kPlist);
+    return reply && reply->status == 200;
+}
+
+bool teardownStreams(Client& phone, std::initializer_list<int64_t> types)
+{
+    const auto reply = phone.request("TEARDOWN", "rtsp://[::1]/1234", streamsBody(types), kPlist);
+    return reply && reply->status == 200;
+}
+
+// Every stream the phone sets up is a thread and its sockets. A TEARDOWN that
+// only forgot about the stream left both behind, once for every prompt, track
+// and call -- on a long drive, hundreds of threads, then SETUP failing when
+// the descriptors ran out.
+void testStreamLifetime(const std::filesystem::path& state_dir)
+{
+    airplay::Receiver receiver(makeConfig(state_dir));
+    expect(receiver.start(), "the stream receiver starts");
+    Client phone(receiver.port());
+    plist::Value session = plist::Value::dict();
+    session.set("name", plist::Value::string("Test Phone"));
+    const auto session_reply = phone.request("SETUP", "rtsp://[::1]/1234", encode(session), kPlist);
+    expect(session_reply && session_reply->status == 200, "the session SETUP is answered");
+
+    const int baseline = openFdCount();
+    expect(setupStreams(phone, {100, 110}), "audio and video SETUP is answered");
+    expect(receiver.openStreamCount() == 2, "two streams are open");
+    expect(openFdCount() == baseline + 3, "audio holds two sockets and video one");
+
+    expect(teardownStreams(phone, {100}), "the audio TEARDOWN is answered");
+    expect(receiver.openStreamCount() == 1, "tearing down audio closes only audio");
+    expect(openFdCount() == baseline + 1, "and releases both of its sockets");
+
+    expect(teardownStreams(phone, {110}), "the video TEARDOWN is answered");
+    expect(receiver.openStreamCount() == 0 && openFdCount() == baseline,
+           "tearing down video releases its listener too");
+
+    // What a long drive does: a prompt, a track, a call, each a SETUP and a
+    // TEARDOWN of the same stream.
+    for (int i = 0; i < 25; ++i)
+    {
+        setupStreams(phone, {100, 101});
+        teardownStreams(phone, {101});
+        teardownStreams(phone, {100});
+    }
+    expect(receiver.openStreamCount() == 0, "25 audio cycles leave no stream open");
+    expect(openFdCount() == baseline, "and no socket behind");
+
+    // A SETUP for a type already open replaces it rather than adding a second.
+    setupStreams(phone, {100});
+    setupStreams(phone, {100});
+    expect(receiver.openStreamCount() == 1 && openFdCount() == baseline + 2,
+           "a repeated SETUP replaces the open stream");
+
+    // A TEARDOWN with no stream list ends the session, and its streams.
+    setupStreams(phone, {110});
+    expect(phone.request("TEARDOWN", "rtsp://[::1]/1234").has_value(), "a full TEARDOWN is answered");
+    expect(receiver.openStreamCount() == 0 && openFdCount() == baseline,
+           "a full TEARDOWN closes every stream");
+
+    // So does the control connection closing, without a TEARDOWN at all.
+    setupStreams(phone, {100, 110});
+    expect(receiver.openStreamCount() == 2, "streams are open again");
+    {
+        Client other(receiver.port());
+        expect(setupStreams(other, {101}), "a stream set up on a second connection");
+    }
+    expect(eventually([&] { return receiver.openStreamCount() == 0; }),
+           "a control connection closing ends the session's streams");
+    receiver.stop();
+}
+
 }  // namespace
 
 int main()
@@ -264,6 +386,7 @@ int main()
         receiver.stop();
     }
     testSessionLost(state_dir);
+    testStreamLifetime(state_dir);
 
     std::filesystem::remove_all(state_dir);
     if (failures == 0)

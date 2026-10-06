@@ -176,6 +176,10 @@ class Receiver
     // that was 0. Valid after start().
     uint16_t port() const { return bound_port_; }
 
+    // Streams the phone has set up and not torn down. For diagnostics and the
+    // tests: each one is a thread and its sockets.
+    size_t openStreamCount() const;
+
   private:
     void acceptLoop();
     // Serves one control connection until it closes. Returns whether it
@@ -197,6 +201,20 @@ class Receiver
     rtsp::Message handleRecord(const rtsp::Message& request);
     rtsp::Message handleTeardown(const rtsp::Message& request);
     rtsp::Message handleFeedback(const rtsp::Message& request);
+
+    // The CarPlay stream types.
+    static constexpr int64_t kStreamMainAudio = 100;
+    static constexpr int64_t kStreamAltAudio = 101;
+    static constexpr int64_t kStreamMainHighAudio = 102;
+    static constexpr int64_t kStreamMainScreen = 110;
+
+    // Starts a stream's loop on a run flag of its own, replacing any open
+    // stream of the same type. `loop` may be empty for a stream that is
+    // answered but not read; its sockets are still owned and closed.
+    void addStream(int64_t type, std::vector<int> fds,
+                   std::function<void(const std::atomic<bool>& run)> loop);
+    // Stops, joins and closes every stream `which` selects.
+    void endStreams(const std::function<bool(int64_t type)>& which);
 
     // Reports the session as over, once, however it ended. Idempotent, because
     // a polite TEARDOWN and the control connection closing behind it are both
@@ -264,6 +282,8 @@ class Receiver
     // keyframe thread only nudges the phone when this goes stale, so an animated
     // screen (already emitting keyframes) is not asked for redundant ones.
     std::atomic<int64_t> last_keyframe_ns_{0};
+    // Whether a screen stream is open; keyframes are only asked for while one is.
+    std::atomic<bool> video_open_{false};
     std::vector<std::thread> session_threads_;
 
     struct State;

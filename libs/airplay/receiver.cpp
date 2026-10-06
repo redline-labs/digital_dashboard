@@ -211,8 +211,20 @@ struct Receiver::State
     EventChannel events;
     uint16_t event_port = 0;
 
-    // Per-stream data listeners.
-    std::vector<int> stream_fds;
+    // One per stream the phone has SETUP and not yet torn down: its sockets,
+    // and the loop reading them on a flag of its own. A stream ends when the
+    // phone tears it down, when a SETUP of the same type replaces it, or with
+    // the session -- not only with the receiver, which on a long drive left a
+    // thread and its sockets behind for every prompt, track and call.
+    struct Stream
+    {
+        int64_t type = 0;
+        std::vector<int> fds;  // closed once the loop has stopped
+        std::unique_ptr<std::atomic<bool>> run;
+        std::thread loop;  // none for a stream that is answered but not read
+    };
+    std::mutex streams_mutex;
+    std::vector<Stream> streams;
 
     // Where a low-power phone sends its keepalive datagrams. Never read: the
     // socket exists so the datagrams have somewhere to land.
@@ -233,6 +245,78 @@ struct Receiver::State
     // Captured audio going back to the phone (Siri, a call).
     MicUplink mic;
 };
+
+void Receiver::endStreams(const std::function<bool(int64_t type)>& which)
+{
+    std::vector<State::Stream> gone;
+    {
+        std::lock_guard<std::mutex> lock(state_->streams_mutex);
+        for (auto it = state_->streams.begin(); it != state_->streams.end();)
+        {
+            if (which(it->type))
+            {
+                gone.push_back(std::move(*it));
+                it = state_->streams.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        video_open_.store(std::any_of(state_->streams.begin(), state_->streams.end(),
+                                      [](const State::Stream& open) {
+                                          return open.type == kStreamMainScreen;
+                                      }));
+    }
+    // Outside the lock: a join can take a poll interval.
+    for (auto& stream : gone)
+    {
+        stream.run->store(false);
+    }
+    for (auto& stream : gone)
+    {
+        if (stream.loop.joinable())
+        {
+            stream.loop.join();
+        }
+        for (const int fd : stream.fds)
+        {
+            ::close(fd);
+        }
+        SPDLOG_INFO("[airplay] stream type {} closed", stream.type);
+    }
+}
+
+void Receiver::addStream(int64_t type, std::vector<int> fds,
+                         std::function<void(const std::atomic<bool>& run)> loop)
+{
+    // A SETUP for a type that is already open replaces it: the phone re-keys a
+    // stream by setting it up again, and the old loop would go on reading the
+    // old port with the old key.
+    endStreams([type](int64_t open) { return open == type; });
+
+    State::Stream stream;
+    stream.type = type;
+    stream.fds = std::move(fds);
+    stream.run = std::make_unique<std::atomic<bool>>(true);
+    if (loop)
+    {
+        const std::atomic<bool>* run = stream.run.get();
+        stream.loop = std::thread([body = std::move(loop), run] { body(*run); });
+    }
+    std::lock_guard<std::mutex> lock(state_->streams_mutex);
+    state_->streams.push_back(std::move(stream));
+    if (type == kStreamMainScreen)
+    {
+        video_open_.store(true);
+    }
+}
+
+size_t Receiver::openStreamCount() const
+{
+    std::lock_guard<std::mutex> lock(state_->streams_mutex);
+    return state_->streams.size();
+}
 
 Receiver::Receiver(ReceiverConfig config) : config_(std::move(config))
 {
@@ -454,11 +538,12 @@ bool Receiver::start()
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            if (!renderers_present_.load())
+            if (!renderers_present_.load() || !video_open_.load())
             {
                 // Nobody is decoding, so a keyframe would be encoded by the
                 // phone, sent over USB and dropped. On a static screen this is
-                // otherwise a request every couple of seconds, forever.
+                // otherwise a request every couple of seconds, forever. And with
+                // no screen stream open there is nothing to key at all.
                 continue;
             }
             const auto last = std::chrono::steady_clock::time_point(
@@ -504,6 +589,7 @@ void Receiver::stop()
         }
     }
     session_threads_.clear();
+    endStreams([](int64_t) { return true; });
 
     state_->event_port = 0;
     // The keepalive listener handleSetup opened. Closed only here, after the
@@ -901,11 +987,6 @@ rtsp::Message Receiver::handleSessionSetup(const plist::Value& body)
 
 rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
 {
-    constexpr int64_t kStreamMainScreen = 110;
-    constexpr int64_t kStreamMainAudio = 100;
-    constexpr int64_t kStreamAltAudio = 101;
-    constexpr int64_t kStreamMainHighAudio = 102;
-
     SPDLOG_INFO("[airplay] SETUP with {} stream(s)", streams.size());
     std::vector<plist::Value> out_streams;
 
@@ -938,11 +1019,10 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
             }
             SPDLOG_INFO("[airplay] video stream -> dataPort {} (connectionID {})", data_port,
                         stream_connection_id);
-            session_threads_.emplace_back([this, fd, output_key] {
-                runScreenStream(fd, output_key, run_, video_handler_,
+            addStream(stream_type, {fd}, [this, fd, output_key](const std::atomic<bool>& run) {
+                runScreenStream(fd, output_key, run, video_handler_,
                                 [this](int64_t ns) { last_keyframe_ns_.store(ns); });
             });
-            state_->stream_fds.push_back(fd);
 
             plist::Value entry = plist::Value::dict();
             entry.set("type", plist::Value::integer(stream_type));
@@ -972,21 +1052,19 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
                 if (control_fd >= 0) ::close(control_fd);
                 return rtsp::makeResponse(500, "Internal Server Error", "", {});
             }
-            state_->stream_fds.push_back(data_fd);
-            state_->stream_fds.push_back(control_fd);
-
             if (is_pcm || is_aac)
             {
                 SPDLOG_INFO("[airplay] audio stream type {} '{}' -> {} {} Hz {} ch, dataPort {} "
                             "controlPort {}",
                             stream_type, audio_type, is_aac ? "AAC-LC" : "PCM", pcm.sample_rate,
                             pcm.channels, data_port, control_port);
-                session_threads_.emplace_back([this, data_fd, output_key, pcm, stream_type,
-                                               audio_type, is_aac] {
-                    runAudioStream(data_fd, output_key, pcm.sample_rate, pcm.channels,
-                                   static_cast<int>(stream_type), audio_type, is_aac, run_,
-                                   audio_handler_);
-                });
+                addStream(stream_type, {data_fd, control_fd},
+                          [this, data_fd, output_key, pcm, stream_type, audio_type,
+                           is_aac](const std::atomic<bool>& run) {
+                              runAudioStream(data_fd, output_key, pcm.sample_rate, pcm.channels,
+                                             static_cast<int>(stream_type), audio_type, is_aac,
+                                             run, audio_handler_);
+                          });
             }
             else
             {
@@ -997,6 +1075,7 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
                 SPDLOG_WARN("[airplay] audio stream type {} '{}' uses an unsupported format "
                             "(0x{:x}); not decoded",
                             stream_type, audio_type, format_bits);
+                addStream(stream_type, {data_fd, control_fd}, nullptr);
             }
 
             // Microphone uplink: a main-audio SETUP that carries the phone's own
@@ -1051,7 +1130,7 @@ rtsp::Message Receiver::handleStreamSetup(const plist::Value& streams)
             {
                 return rtsp::makeResponse(500, "Internal Server Error", "", {});
             }
-            state_->stream_fds.push_back(fd);
+            addStream(stream_type, {fd}, nullptr);
             SPDLOG_INFO("[airplay] stream type {} -> dataPort {} (not handled yet)", stream_type,
                         data_port);
 
@@ -1354,6 +1433,10 @@ rtsp::Message Receiver::handleRecord(const rtsp::Message& request)
 
 void Receiver::endSession(const char* reason)
 {
+    // Every stream belongs to the session, whether or not it reached RECORD.
+    // Idempotent, so it is safe ahead of the once-only report below.
+    endStreams([](int64_t) { return true; });
+
     // Exchange, not a plain store: several paths can reach here for the same
     // session (a TEARDOWN, then the connection closing behind it), and the
     // dashboard should be told the session ended once, not twice.
@@ -1444,10 +1527,10 @@ rtsp::Message Receiver::handleTeardown(const rtsp::Message& request)
             });
         }
 
-        // The stream loops themselves end when the phone closes the socket, so
-        // there is nothing else to stop here -- except the mic uplink, which is
-        // ours and would otherwise keep sending into a stream that is gone.
-        constexpr int64_t kStreamMainAudio = 100;
+        // The loop and its sockets: a UDP stream has no connection whose close
+        // would end it. And the mic uplink, which is ours and would otherwise
+        // keep sending into a stream that is gone.
+        endStreams([stream_type](int64_t open) { return open == stream_type; });
         if (stream_type == kStreamMainAudio)
         {
             state_->mic.stop();
