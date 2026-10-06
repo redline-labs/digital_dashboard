@@ -2,6 +2,7 @@
 #include "usb_pipeline.h"
 
 #include "iap2_session.h"
+#include "location_cache.h"
 #include "reattach_policy.h"
 #include "screen_handover.h"
 
@@ -113,6 +114,9 @@ constexpr auto kMaxReattachDelay = std::chrono::seconds(30);
 // A session that ran at least this long before the phone ended it is a session
 // that worked, and is restarted promptly; a shorter one backs off.
 constexpr auto kStableSession = std::chrono::seconds(30);
+// A GPS source publishes about once a second; three missed and the position is
+// no longer where the car is.
+constexpr auto kFixStaleAfter = std::chrono::milliseconds(3000);
 
 std::string shortUdid(const std::string& udid)
 {
@@ -1512,40 +1516,33 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         // fixes on nodes/carplay/location; cache the latest and hand it to the
         // session, which uplinks NMEA while the phone is asking for location. A
         // --location fix, when given, wins over anything published.
-        auto latest_fix = std::make_shared<LocationFix>();
-        auto fix_mutex = std::make_shared<std::mutex>();
-        auto fix_valid = std::make_shared<std::atomic<bool>>(false);
+        auto fixes = std::make_shared<LocationCache>(kFixStaleAfter);
         if (options.static_location)
         {
-            std::lock_guard<std::mutex> lock(*fix_mutex);
-            *latest_fix = *options.static_location;
-            fix_valid->store(true);
+            fixes->pin(*options.static_location);
         }
         else
         {
-            bridge.setLocationHandler([latest_fix, fix_mutex, fix_valid](const LocationFix& fix) {
-                std::lock_guard<std::mutex> lock(*fix_mutex);
-                *latest_fix = fix;
-                fix_valid->store(true);
+            bridge.setLocationHandler([fixes](const LocationFix& fix) {
+                fixes->update(fix, std::chrono::steady_clock::now(), std::chrono::system_clock::now());
             });
         }
-        iap2_options.location_provider =
-            [latest_fix, fix_mutex, fix_valid]() -> std::optional<iap2::LocationFix> {
-            if (!fix_valid->load())
+        iap2_options.location_provider = [fixes]() -> std::optional<iap2::LocationFix> {
+            const auto fix = fixes->current(std::chrono::steady_clock::now());
+            if (!fix)
             {
                 return std::nullopt;  // no GPS source has published yet
             }
-            std::lock_guard<std::mutex> lock(*fix_mutex);
             iap2::LocationFix out;
-            out.latitude_deg = latest_fix->latitude_deg;
-            out.longitude_deg = latest_fix->longitude_deg;
-            out.altitude_m = latest_fix->altitude_m;
-            out.speed_knots = latest_fix->speed_knots;
-            out.course_deg = latest_fix->course_deg;
-            out.satellites = latest_fix->satellites;
-            out.hdop = latest_fix->hdop;
-            out.utc_epoch_ms = latest_fix->utc_epoch_ms;
-            out.valid = latest_fix->valid;
+            out.latitude_deg = fix->latitude_deg;
+            out.longitude_deg = fix->longitude_deg;
+            out.altitude_m = fix->altitude_m;
+            out.speed_knots = fix->speed_knots;
+            out.course_deg = fix->course_deg;
+            out.satellites = fix->satellites;
+            out.hdop = fix->hdop;
+            out.utc_epoch_ms = fix->utc_epoch_ms;
+            out.valid = fix->valid;
             return out;
         };
 

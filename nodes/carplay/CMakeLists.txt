@@ -93,6 +93,10 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 
+# The GPS fix sent to the phone, and when it stops being one.
+add_executable(carplay_test_location_cache test_location_cache.cpp)
+add_project_test(TARGET carplay_test_location_cache LABELS carplay unit)
+
 # Vehicle status: config values, live values over them key by key, and a change
 # sent once while the phone is subscribed.
 add_executable(carplay_test_vehicle_status_feed test_vehicle_status_feed.cpp)

@@ -436,7 +436,7 @@ Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
 | `ui_event` | `CarPlayUiEvent` | out | one message per occurrence: the manufacturer tile, the phone taking or returning the screen, an app asking for the head unit's UI |
 | `input` | `CarPlayInput` | in | `touch`, `knob`, `mediaKey`, `telephony`, `siri`; `code` and `value` per kind are documented in the schema |
 | `mic` | `CarPlayAudio` | in | captured PCM while the phone has asked for the uplink |
-| `location` | `CarPlayLocation` | in | GPS fixes for the NMEA uplink |
+| `location` | `CarPlayLocation` | in | GPS fixes for the NMEA uplink. One older than 3 s goes to the phone as "no fix", so a source that stops publishing does not leave the car parked on the map; a fix with no time of its own is stamped with when it arrived |
 | `vehicle_status` | `CarPlayVehicleStatus` | in | range, outside temperature and the range warning, with `vehicle.status.live: true`. Each field only when its `has*` flag is set; an unset one keeps the value already known. Sent to the phone on every change while it is subscribed |
 | `visibility` | `CarPlayVisibility` | in | whether the dashboard's CarPlay widget is on screen, once a second; drives [screen handover](#screen-handover) |
 
