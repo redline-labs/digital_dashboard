@@ -807,6 +807,34 @@ void testCarPlaySession()
     expect(availability && availability->usb_transport_identifier == "1122334455667788",
            "the USB transport identifier round trips");
     expect(availability && !availability->has_wireless, "no wireless attributes were sent");
+    expect(availability && availability->permitsWiredStart(), "available starts the session");
+
+    // Only an explicit, readable "unavailable" withholds the start.
+    {
+        const auto decode_wired = [](const csm::ParamList& wired) {
+            csm::ParamList params;
+            iap2::csm::addGroup(params, 0, wired);
+            return iap2::decodeCarPlayAvailability(params);
+        };
+        csm::ParamList unavailable;
+        iap2::csm::addBool(unavailable, 0, false);
+        const auto no = decode_wired(unavailable);
+        expect(no && !no->permitsWiredStart(), "an explicit false withholds the start");
+
+        csm::ParamList zero_length;
+        iap2::csm::addNone(zero_length, 0);
+        const auto bare = decode_wired(zero_length);
+        expect(bare && !bare->wired_available.has_value(), "a zero-length flag decodes as absent");
+        expect(bare && bare->permitsWiredStart(), "and still starts the session");
+
+        csm::ParamList flagless;
+        iap2::csm::addString(flagless, 1, "1122334455667788");
+        const auto missing = decode_wired(flagless);
+        expect(missing && missing->permitsWiredStart(), "a missing flag starts the session");
+
+        const auto empty = iap2::decodeCarPlayAvailability({});
+        expect(empty && empty->permitsWiredStart(), "so does a message with no wired group");
+    }
 
     // DeviceTransportIdentifierNotification.
     csm::ParamList transport_params;

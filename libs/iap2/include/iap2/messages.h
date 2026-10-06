@@ -267,6 +267,15 @@ struct CarPlayAvailability
     bool has_wireless = false;
     std::optional<bool> wireless_available;
     std::optional<std::string> bluetooth_transport_identifier;
+
+    // Whether to answer with CarPlayStartSession: unless the phone said, in a
+    // boolean we could read, that wired CarPlay is unavailable. An absent or
+    // zero-length flag starts the session -- refusing on it fails silently,
+    // and a phone that does not want the session simply ignores the start.
+    bool permitsWiredStart() const
+    {
+        return !(wired_available.has_value() && !*wired_available);
+    }
 };
 
 std::optional<CarPlayAvailability> decodeCarPlayAvailability(const csm::ParamList& params);

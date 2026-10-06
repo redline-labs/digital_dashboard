@@ -56,10 +56,10 @@ const char* stateName(iap2::LinkLayer::State state)
     return "?";
 }
 
-// CarPlayAvailability carries wired_available as a boolean that some phones
-// send zero-length. csm::getBool() reports that as absent (LIVI's behaviour),
-// which silently suppresses CarPlayStartSession -- so decode it here with
-// enough detail to say which case actually occurred.
+// CarPlayAvailability carries wired_available as a boolean that a phone may
+// send zero-length. csm::getBool() reports that as absent and the session is
+// started anyway (CarPlayAvailability::permitsWiredStart), but it is logged so
+// the case is visible if it ever turns up.
 void logAvailability(const iap2::csm::Message& message, const iap2::CarPlayAvailability& availability)
 {
     const iap2::csm::Param* wired = nullptr;
@@ -75,14 +75,8 @@ void logAvailability(const iap2::csm::Message& message, const iap2::CarPlayAvail
 
     if (wired != nullptr && wired->data.empty())
     {
-        // Not observed on the phone tested during bring-up, which sends a
-        // proper one-byte boolean. Kept as a loud warning because the failure
-        // it causes is otherwise silent: availability decodes as absent and
-        // CarPlayStartSession is simply never sent. See
-        // docs/nodes/carplay.md if this ever fires.
-        SPDLOG_WARN("[iap2] CarPlayAvailability wired parameter is ZERO LENGTH -- decoded as "
-                    "absent, so CarPlayStartSession will be skipped and the session will "
-                    "never start. See docs/nodes/carplay.md.");
+        SPDLOG_INFO("[iap2] CarPlayAvailability wired parameter is zero length; read as "
+                    "available");
     }
 
     SPDLOG_INFO("[iap2] CarPlayAvailability: has_wired={} wired_available={} usb_transport_id={}",
@@ -327,7 +321,7 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 }
                 logAvailability(*message, *availability);
 
-                if (availability->wired_available.value_or(false))
+                if (availability->permitsWiredStart())
                 {
                     SPDLOG_INFO("[iap2] phone reports wired CarPlay AVAILABLE");
 

@@ -873,17 +873,14 @@ node path is recycled, so a handle opened too early lands on the dying node), so
 
 ### The zero-length boolean
 
-If the phone reports CarPlay availability but the session never starts, check
-this first. LIVI decodes a zero-length `bool` iAP2 parameter as `None`, which
-makes `CarPlayAvailability.wired_available` falsy and silently skips sending
-`CarPlayStartSession`. That behaviour was ported faithfully (returns `nullopt`),
-but the spec arguably intends presence-as-value here. Not observed on the phone
-tested during bring-up, which sends a proper one-byte boolean
-(`wired=true available=1`). It is not worth a runtime switch, but it is worth
-recognising: `runIap2Session` logs a loud warning naming the zero-length case
-specifically, because the resulting failure is otherwise completely silent. If
-that warning appears, changing `csm::getBool()` to treat a zero-length boolean
-as `true` is the one-line fix.
+An iAP2 boolean can arrive zero-length, and `csm::getBool()` decodes that as
+absent. `CarPlayStartSession` used to be sent only when `wired_available` read
+`true`, so a phone that sent the flag that way got no session and no error. It is
+now sent unless the flag reads an explicit `false`
+(`CarPlayAvailability::permitsWiredStart()`): a start the phone does not want is
+ignored, while a start withheld is a failure nothing reports. The phone tested
+during bring-up sends a proper one-byte boolean (`wired=true available=1`), so
+the zero-length case has not been seen; it is logged at info if it is.
 
 ### Other iAP2 caveats
 
