@@ -226,9 +226,20 @@ std::vector<uint8_t> usbControl(const DeviceHandle& handle, uint8_t bmRequestTyp
                                 uint16_t wLength, const uint8_t* out_data = nullptr,
                                 unsigned timeout_ms = 3000);
 
-// Synchronous bulk OUT transfer.
-void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, const uint8_t* data, size_t len,
-                unsigned timeout_ms = 2000);
+// Whether a bulk OUT transfer of `len` bytes needs a zero-length packet after
+// it. The device sees a transfer end only at a short packet, so one that fills
+// its last packet exactly is still open, and the phone waits for more of a mux
+// packet that is complete. 0 means the packet size is unknown: no ZLP, since a
+// stray one is an empty transfer of its own.
+constexpr bool needsZeroLengthPacket(size_t len, uint16_t max_packet_size)
+{
+    return len != 0 && max_packet_size != 0 && len % max_packet_size == 0;
+}
+
+// Synchronous bulk OUT transfer, followed by a zero-length packet when
+// needsZeroLengthPacket() says the transfer would otherwise not end.
+void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, uint16_t max_packet_size,
+                const uint8_t* data, size_t len, unsigned timeout_ms = 2000);
 
 // Synchronous bulk IN transfer. A timeout that still moved data returns that
 // data rather than throwing; a timeout that moved none throws ETIMEDOUT.

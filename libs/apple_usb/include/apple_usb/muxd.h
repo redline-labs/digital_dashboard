@@ -106,6 +106,7 @@ class MuxHost
     uint8_t iface_ = 0;
     uint8_t ep_in_ = 0;
     uint8_t ep_out_ = 0;
+    uint16_t ep_out_max_packet_ = 0;  // 0 on the fallback endpoints: unknown
     bool claimed_ = false;
 
     std::mutex write_mutex_;

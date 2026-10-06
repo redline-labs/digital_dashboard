@@ -843,8 +843,8 @@ std::vector<uint8_t> usbControl(const DeviceHandle& handle, uint8_t bmRequestTyp
     return buffer;
 }
 
-void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, const uint8_t* data, size_t len,
-                unsigned timeout_ms)
+void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, uint16_t max_packet_size,
+                const uint8_t* data, size_t len, unsigned timeout_ms)
 {
     // libusb keeps the buffer non-const; copy into a scratch buffer.
     std::vector<uint8_t> scratch(data, data + len);
@@ -859,6 +859,17 @@ void usbBulkOut(const DeviceHandle& handle, uint8_t endpoint, const uint8_t* dat
     {
         throw std::system_error(EIO, std::generic_category(),
                                 "libusb_bulk_transfer(out): short write");
+    }
+    // Sent explicitly: LIBUSB_TRANSFER_ADD_ZERO_PACKET is Linux-only. Upstream
+    // usbmuxd does the same.
+    if (needsZeroLengthPacket(len, max_packet_size))
+    {
+        const int zlp = libusb_bulk_transfer(handle.native(), endpoint, nullptr, 0, &transferred,
+                                             timeout_ms);
+        if (zlp != LIBUSB_SUCCESS)
+        {
+            throwUsb("libusb_bulk_transfer(out, zero-length packet)", zlp);
+        }
     }
 }
 

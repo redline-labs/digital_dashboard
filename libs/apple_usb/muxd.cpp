@@ -273,26 +273,37 @@ bool MuxHost::locateMuxInterface()
     iface_ = match->number;
     ep_in_ = 0;
     ep_out_ = 0;
+    ep_out_max_packet_ = 0;
     for (const auto& ep : match->endpoints)
     {
         if (ep.type() != TransferType::Bulk)
         {
             continue;
         }
-        (ep.isIn() ? ep_in_ : ep_out_) = ep.address;
+        if (ep.isIn())
+        {
+            ep_in_ = ep.address;
+        }
+        else
+        {
+            ep_out_ = ep.address;
+            ep_out_max_packet_ = ep.max_packet_size;
+        }
     }
 
     if (ep_in_ == 0 || ep_out_ == 0)
     {
         SPDLOG_WARN("[muxd] interface {} exposes no bulk pair (in=0x{:02x} out=0x{:02x}); "
-                    "falling back to the hardcoded endpoints", iface_, ep_in_, ep_out_);
+                    "falling back to the hardcoded endpoints, with no zero-length packets "
+                    "because their packet size is unknown", iface_, ep_in_, ep_out_);
         ep_in_ = kFallbackEpIn;
         ep_out_ = kFallbackEpOut;
+        ep_out_max_packet_ = 0;
     }
 
     SPDLOG_INFO("[muxd] mux on interface {} (class {:02x}/{:02x}/{:02x}), bulk in 0x{:02x} / "
-                "out 0x{:02x}", iface_, match->iface_class, match->subclass, match->protocol,
-                ep_in_, ep_out_);
+                "out 0x{:02x} ({} byte packets)", iface_, match->iface_class, match->subclass,
+                match->protocol, ep_in_, ep_out_, ep_out_max_packet_);
     return true;
 }
 
@@ -348,7 +359,7 @@ bool MuxHost::open()
         put_be32(version, 0);
         {
             std::lock_guard<std::mutex> lock(write_mutex_);
-            usbBulkOut(handle_, ep_out_, version.data(), version.size());
+            usbBulkOut(handle_, ep_out_, ep_out_max_packet_, version.data(), version.size());
         }
         // Drain the version reply.
         usbBulkIn(handle_, ep_in_, 65536, 2000);
@@ -406,7 +417,7 @@ void MuxHost::muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len
     {
         pkt.insert(pkt.end(), payload, payload + payload_len);
     }
-    usbBulkOut(handle_, ep_out_, pkt.data(), pkt.size());
+    usbBulkOut(handle_, ep_out_, ep_out_max_packet_, pkt.data(), pkt.size());
 }
 
 void MuxHost::readerLoop()
