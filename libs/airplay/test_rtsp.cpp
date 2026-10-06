@@ -259,6 +259,24 @@ int main()
                "a short unterminated header block still waits");
     }
 
+    // Requests are routed on the path, whatever form the URI takes.
+    {
+        const auto path_of = [](const char* uri) {
+            Message request;
+            request.uri = uri;
+            return std::string(request.path());
+        };
+        expect(path_of("/pair-setup") == "/pair-setup", "a bare path is its own path");
+        expect(path_of("rtsp://[fe80::1%en5]:7000/pair-setup") == "/pair-setup",
+               "an absolute URI routes on its path");
+        expect(path_of("http://10.0.0.1/info?verbose=1") == "/info", "the query is not the path");
+        expect(path_of("/feedback#x") == "/feedback", "nor is a fragment");
+        expect(path_of("rtsp://fe80::1") == "/", "an absolute URI with no path is the root");
+        expect(path_of("rtsp://host/1234567890") == "/1234567890",
+               "a session URI keeps its id");
+        expect(path_of("") == "" && path_of("*") == "*", "OPTIONS-style URIs pass through");
+    }
+
     // Header handling details the dispatch depends on.
     {
         const Bytes wire = bytes("GET / RTSP/1.0\r\n"

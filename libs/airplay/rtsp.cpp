@@ -65,6 +65,21 @@ std::string Message::contentType() const
     return value != nullptr ? *value : std::string{};
 }
 
+std::string_view Message::path() const
+{
+    std::string_view path = uri;
+    if (const size_t scheme = path.find("://"); scheme != std::string_view::npos)
+    {
+        const size_t slash = path.find('/', scheme + 3);
+        path = slash == std::string_view::npos ? std::string_view("/") : path.substr(slash);
+    }
+    if (const size_t query = path.find_first_of("?#"); query != std::string_view::npos)
+    {
+        path = path.substr(0, query);
+    }
+    return path;
+}
+
 bool Message::isResponse() const
 {
     // Both spellings: RTSP is the one CarPlay uses, HTTP the one a stray client

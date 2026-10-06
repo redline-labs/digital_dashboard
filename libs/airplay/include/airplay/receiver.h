@@ -164,6 +164,10 @@ class Receiver
     void stop();
     bool running() const { return run_.load(); }
 
+    // The port actually bound: config.port, or the one the kernel chose when
+    // that was 0. Valid after start().
+    uint16_t port() const { return bound_port_; }
+
   private:
     void acceptLoop();
     void sessionLoop(int client_fd, std::string peer);
@@ -230,6 +234,7 @@ class Receiver
     std::optional<ScreenEntity> screen_owner_;
 
     int server_fd_ = -1;
+    uint16_t bound_port_ = 0;
     std::atomic<bool> run_{false};
     // True between RECORD and whatever ends the session. Atomic because the
     // RTSP session thread sets it and stop() reads it from the caller's.

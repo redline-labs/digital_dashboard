@@ -42,6 +42,11 @@ struct Message
     // Content-Type of the body, or empty.
     std::string contentType() const;
 
+    // The URI's path: "/pair-setup" whether the phone sent it bare or as
+    // "rtsp://[fe80::1%en5]:7000/pair-setup?x". Requests are routed on this, so
+    // the form a later iOS happens to use cannot make a handled request unknown.
+    std::string_view path() const;
+
     // True when this is a *response* rather than a request.
     //
     // parseRequest() cannot tell the difference from the shape alone -- a

@@ -415,6 +415,11 @@ bool Receiver::start()
         server_fd_ = -1;
         return false;
     }
+    sockaddr_in6 bound{};
+    socklen_t bound_len = sizeof(bound);
+    bound_port_ = ::getsockname(server_fd_, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0
+                      ? ntohs(bound.sin6_port)
+                      : config_.port;
 
     run_.store(true);
     accept_thread_ = std::thread([this] { acceptLoop(); });
@@ -461,7 +466,7 @@ bool Receiver::start()
     });
     SPDLOG_INFO("[airplay] RTSP receiver listening on {}:{}",
                 config_.bind_address.empty() ? "[::]" : config_.bind_address.c_str(),
-                config_.port);
+                bound_port_);
     return true;
 }
 
@@ -631,7 +636,7 @@ void Receiver::sessionLoop(int client_fd, std::string peer)
             // pair-verify M4 is the last plaintext message; everything after it
             // on this connection is encrypted, in both directions.
             const bool activates_encryption =
-                !channel.active() && request.uri == "/pair-verify" && state_->pairing.verified();
+                !channel.active() && request.path() == "/pair-verify" && state_->pairing.verified();
 
             if (channel.active())
             {
@@ -704,19 +709,19 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
         }
     }
 
-    if (request.uri == "/pair-setup")
+    if (request.path() == "/pair-setup")
     {
         return noteHandshake(state_->pairing.handlePairSetup(request), "pair-setup");
     }
-    if (request.uri == "/pair-verify")
+    if (request.path() == "/pair-verify")
     {
         return noteHandshake(state_->pairing.handlePairVerify(request), "pair-verify");
     }
-    if (request.uri == "/auth-setup")
+    if (request.path() == "/auth-setup")
     {
         return noteHandshake(state_->pairing.handleAuthSetup(request), "auth-setup");
     }
-    if (request.method == "GET" && request.uri == "/info")
+    if (request.method == "GET" && request.path() == "/info")
     {
         return handleInfo(request);
     }
@@ -740,11 +745,11 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
                            "GET_PARAMETER, SET_PARAMETER, POST, GET");
         return response;
     }
-    if (request.uri == "/feedback")
+    if (request.path() == "/feedback")
     {
         return handleFeedback(request);
     }
-    if (request.uri == "/command")
+    if (request.path() == "/command")
     {
         // A phone-initiated command arriving on the control channel rather than
         // the event one. Answering 501 makes the phone treat the session as
@@ -758,8 +763,23 @@ rtsp::Message Receiver::handle(const rtsp::Message& request)
         return rtsp::makeResponse(200, "OK", "", {});
     }
 
-    SPDLOG_WARN("[airplay] no handler for {} {} -- answering 501", request.method, request.uri);
-    return rtsp::makeResponse(501, "Not Implemented", "", {});
+    // Acknowledged rather than refused: a 501 makes the phone treat the whole
+    // session as broken, so a request type a later iOS adds would end every
+    // session. The body is logged so the request can be identified.
+    SPDLOG_WARN("[airplay] no handler for {} {} ({} byte body) -- acknowledging", request.method,
+                request.uri, request.body.size());
+    if (!request.body.empty())
+    {
+        if (const auto parsed = plist::decodeBinary(request.body); parsed)
+        {
+            describePlist(*parsed, "  ", {});
+        }
+        else
+        {
+            SPDLOG_INFO("[airplay]   body: {}", hexPreview(request.body));
+        }
+    }
+    return rtsp::makeResponse(200, "OK", "", {});
 }
 
 
