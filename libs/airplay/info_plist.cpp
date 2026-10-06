@@ -129,6 +129,9 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
     constexpr int64_t kPcmVoice = 0x3FC;
     constexpr int64_t kPcm = kPcmVoice | 0xC00;
     constexpr int64_t kPcmMono = 0x154 | 0x400;
+    // Music gets 44.1 kHz stereo and nothing else. Offered the voice rates too,
+    // a phone is free to resume music at 8 kHz, and it plays -- just badly.
+    constexpr int64_t kPcmMedia = 0x800;
     // AAC-LC 44.1 kHz stereo for the buffered entertainment stream (type 102).
     constexpr int64_t kAacLcMedia = 0x400000;
 
@@ -150,7 +153,7 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
                                   audio_format(101, "compatibility", kPcm, 0),
                                   audio_format(100, "default", kPcm, kPcmMono),
                                   audio_format(100, "alert", kPcm, 0),
-                                  audio_format(100, "media", kPcm, 0),
+                                  audio_format(100, "media", kPcmMedia, 0),
                                   audio_format(100, "telephony", kPcmMono, kPcmMono),
                                   audio_format(100, "speechRecognition", kPcmMono, kPcmMono),
                                   audio_format(101, "default", kPcm, 0),

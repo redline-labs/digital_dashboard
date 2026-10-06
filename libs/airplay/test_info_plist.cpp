@@ -199,6 +199,26 @@ int main()
                       at(formats->at(i), "audioType") != nullptr;
         }
         expect(spelled, "every audio format names audioType and audioOutputFormats");
+
+        const auto output_formats = [&](int64_t type, const std::string& audio_type) -> int64_t {
+            for (size_t i = 0; i < formats->size(); ++i)
+            {
+                const plist::Value& entry = formats->at(i);
+                const plist::Value* name = at(entry, "audioType");
+                if (hasInteger(entry, "type", type) && name != nullptr && name->isString() &&
+                    name->asString() == audio_type)
+                {
+                    return at(entry, "audioOutputFormats")->asInteger();
+                }
+            }
+            return -1;
+        };
+        // Music at 44.1 kHz stereo only: with the voice rates on offer the
+        // phone may pick 8 kHz for it.
+        expect(output_formats(100, "media") == 0x800, "media is offered 44.1 kHz stereo only");
+        // Telephony keeps every voice rate (8/16/24/32 kHz mono).
+        expect((output_formats(100, "telephony") & 0x154) == 0x154,
+               "telephony keeps the voice rates");
     }
 
     // A knob-primary head unit changes one field and nothing else.
