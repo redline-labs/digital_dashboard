@@ -57,11 +57,19 @@ struct Message
     bool isResponse() const;
 };
 
+// The largest header block and body a request may carry. Everything the phone
+// sends on these channels is a few kilobytes; a peer that announces more is
+// either broken or trying to make us buffer without bound, and waiting for it
+// would do exactly that.
+inline constexpr size_t kMaxHeaderBytes = 64 * 1024;
+inline constexpr size_t kMaxBodyBytes = 4 * 1024 * 1024;
+
 // Parses one complete request from the front of `buffer`.
 //
 // Returns the number of bytes consumed, or 0 when more data is needed. A
-// malformed request line or an unparseable Content-Length yields nullopt, which
-// the caller should treat as fatal for that connection.
+// malformed request line, an unparseable Content-Length, or a header block or
+// body over the limits above yields nullopt, which the caller should treat as
+// fatal for that connection.
 std::optional<size_t> parseRequest(const Bytes& buffer, Message& out);
 
 // Serialises a response. Content-Length is always emitted so the peer can frame

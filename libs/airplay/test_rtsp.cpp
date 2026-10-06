@@ -45,6 +45,8 @@ std::string text(const airplay::rtsp::Bytes& data)
 int main()
 {
     using airplay::rtsp::Bytes;
+    using airplay::rtsp::kMaxBodyBytes;
+    using airplay::rtsp::kMaxHeaderBytes;
     using airplay::rtsp::makeResponse;
     using airplay::rtsp::Message;
     using airplay::rtsp::parseRequest;
@@ -219,12 +221,42 @@ int main()
                "a Content-Length that overflows is fatal");
     }
 
-    // An enormous but valid Content-Length must simply wait, not allocate.
+    // An enormous but well-formed Content-Length is fatal: waiting for it means
+    // buffering whatever the peer sends, without bound.
     {
         Message request;
         expect(parseRequest(bytes("GET / RTSP/1.0\r\nContent-Length: 4000000000\r\n\r\n"),
-                            request) == std::optional<size_t>(0),
-               "an oversized Content-Length waits rather than failing or allocating");
+                            request) == std::nullopt,
+               "an oversized Content-Length is fatal");
+        // The largest value from_chars accepts. Added to the header length it
+        // wraps to less than the buffer, which used to read as a complete
+        // request with its body copied from a reversed range.
+        expect(parseRequest(bytes("GET / RTSP/1.0\r\nContent-Length: 18446744073709551615"
+                                  "\r\n\r\nabc"),
+                            request) == std::nullopt,
+               "a Content-Length of SIZE_MAX is fatal, not wrapped");
+        const std::string at_limit = "GET / RTSP/1.0\r\nContent-Length: " +
+                                     std::to_string(kMaxBodyBytes) + "\r\n\r\n";
+        expect(parseRequest(bytes(at_limit), request) == std::optional<size_t>(0),
+               "a body at the limit still waits for its bytes");
+    }
+
+    // A header block that never ends is fatal once it passes the limit, rather
+    // than being buffered for ever.
+    {
+        Message request;
+        std::string endless = "GET / RTSP/1.0\r\n";
+        while (endless.size() <= kMaxHeaderBytes)
+        {
+            endless += "X-Padding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n";
+        }
+        expect(parseRequest(bytes(endless), request) == std::nullopt,
+               "an unterminated header block past the limit is fatal");
+        expect(parseRequest(bytes(endless + "\r\n"), request) == std::nullopt,
+               "and so is a terminated one that long");
+        expect(parseRequest(bytes("GET / RTSP/1.0\r\nCSeq: 1\r\n"), request) ==
+                   std::optional<size_t>(0),
+               "a short unterminated header block still waits");
     }
 
     // Header handling details the dispatch depends on.

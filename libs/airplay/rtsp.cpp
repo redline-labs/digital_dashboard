@@ -80,7 +80,15 @@ std::optional<size_t> parseRequest(const Bytes& buffer, Message& out)
     const size_t header_end = text.find(kTerminator);
     if (header_end == std::string_view::npos)
     {
+        if (buffer.size() > kMaxHeaderBytes)
+        {
+            return std::nullopt;
+        }
         return 0;  // incomplete
+    }
+    if (header_end > kMaxHeaderBytes)
+    {
+        return std::nullopt;
     }
     const size_t body_start = header_end + kTerminator.size();
 
@@ -134,6 +142,12 @@ std::optional<size_t> parseRequest(const Bytes& buffer, Message& out)
         {
             return std::nullopt;
         }
+    }
+    // Checked before the sum below, which a length near SIZE_MAX would wrap
+    // round to "already complete".
+    if (content_length > kMaxBodyBytes)
+    {
+        return std::nullopt;
     }
 
     if (buffer.size() < body_start + content_length)
