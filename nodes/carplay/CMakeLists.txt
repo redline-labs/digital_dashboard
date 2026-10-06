@@ -93,6 +93,11 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 
+# What the dashboard is told about navigation and the track.
+add_executable(carplay_test_metadata_merge test_metadata_merge.cpp)
+target_link_libraries(carplay_test_metadata_merge PRIVATE carplay_zenoh_bridge iap2 spdlog::spdlog)
+add_project_test(TARGET carplay_test_metadata_merge LABELS carplay unit)
+
 # Which attached Apple device to bring up: a phone, and not the same failing
 # one every time.
 add_executable(carplay_test_device_picker test_device_picker.cpp)

@@ -800,6 +800,22 @@ std::vector<uint8_t> encodeStopRouteGuidanceUpdates()
 
 void NavGuidance::apply(const RouteGuidance& update)
 {
+    // A route ending, or a new one replacing it, takes its maneuvers with it.
+    // Indices restart per route, so a stale maneuver 3 would otherwise lend its
+    // turn arrow and road name to the new route's maneuver 3.
+    constexpr uint8_t kNoRouteSet = 0;
+    if (update.state == kNoRouteSet)
+    {
+        *this = NavGuidance{};
+        status = kNoRouteSet;
+        return;
+    }
+    if (update.destination_name && destination_name && *update.destination_name != *destination_name)
+    {
+        maneuvers_.clear();
+        current_index.reset();
+    }
+
     if (update.state)
     {
         status = update.state;
@@ -879,13 +895,17 @@ void NavGuidance::apply(const RouteManeuver& update)
 
 void NavGuidance::refreshCurrent()
 {
-    if (!current_index)
-    {
-        return;
-    }
-    const auto it = maneuvers_.find(*current_index);
+    // A current maneuver not described yet shows nothing, not the last one:
+    // keeping the previous turn's arrow under the new index is a wrong turn
+    // drawn with confidence.
+    const auto it = current_index ? maneuvers_.find(*current_index) : maneuvers_.end();
     if (it == maneuvers_.end())
     {
+        maneuver_type.reset();
+        turn_side.reset();
+        junction_type.reset();
+        turn_angle.reset();
+        after_road_name.reset();
         return;
     }
 

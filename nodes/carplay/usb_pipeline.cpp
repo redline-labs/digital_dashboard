@@ -4,6 +4,7 @@
 #include "device_picker.h"
 #include "iap2_session.h"
 #include "location_cache.h"
+#include "metadata_merge.h"
 #include "reattach_policy.h"
 #include "screen_handover.h"
 
@@ -1360,34 +1361,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
                                             now_playing_last_log](const iap2::NowPlaying& update) {
             std::lock_guard<std::mutex> lock(*now_playing_mutex);
             NowPlaying& np = *now_playing;
-            if (update.title)
-            {
-                np.title = *update.title;
-            }
-            if (update.artist)
-            {
-                np.artist = *update.artist;
-            }
-            if (update.album)
-            {
-                np.album = *update.album;
-            }
-            if (update.app_name)
-            {
-                np.app = *update.app_name;
-            }
-            if (update.duration_ms)
-            {
-                np.duration_sec = static_cast<float>(*update.duration_ms) / 1000.0f;
-            }
-            if (update.elapsed_ms)
-            {
-                np.elapsed_sec = static_cast<float>(*update.elapsed_ms) / 1000.0f;
-            }
-            if (update.status)
-            {
-                np.playing = (*update.status == iap2::PlaybackStatus::kPlaying);
-            }
+            mergeNowPlaying(np, update);
             now_playing_valid->store(true);
 
             // Announce the track at INFO only when what a user would see
@@ -1425,51 +1399,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
                                     nav_valid](const iap2::NavGuidance& g) {
             std::lock_guard<std::mutex> lock(*nav_mutex);
             NavGuidance& nav = *nav_state;
-            // A non-zero route-guidance state means guidance is active.
-            nav.active = g.status.value_or(0) != 0;
-            if (g.road_name)
-            {
-                nav.road_name = *g.road_name;
-            }
-            if (g.after_road_name)
-            {
-                nav.after_road_name = *g.after_road_name;
-            }
-            if (g.destination_name)
-            {
-                nav.destination_name = *g.destination_name;
-            }
-            if (g.maneuver_type)
-            {
-                nav.maneuver_type = *g.maneuver_type;
-            }
-            if (g.turn_angle)
-            {
-                nav.maneuver_angle_deg = *g.turn_angle;
-            }
-            if (g.junction_type)
-            {
-                nav.junction_type = *g.junction_type;
-            }
-            // iap2::NavGuidance names these confusingly:
-            //   distance_to_destination = total distance remaining
-            //   remain_distance         = distance to the next maneuver
-            if (g.distance_to_destination)
-            {
-                nav.distance_remaining_m = static_cast<float>(*g.distance_to_destination);
-            }
-            if (g.remain_distance)
-            {
-                nav.distance_to_maneuver_m = static_cast<float>(*g.remain_distance);
-            }
-            if (g.time_to_destination)
-            {
-                nav.time_remaining_sec = static_cast<float>(*g.time_to_destination);
-            }
-            if (g.eta_epoch)
-            {
-                nav.eta_epoch_sec = *g.eta_epoch;
-            }
+            nav = navFromSession(g);
             nav_valid->store(true);
             SPDLOG_DEBUG("[node] nav publish: active={} road='{}' dest='{}' toManeuver={}m "
                          "remain={}m eta_in={}s",
@@ -1596,6 +1526,13 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
 
         session_stop.store(true);  // release the republish thread if the session ended
         metadata_republish.join();
+
+        // Said once, at the end, rather than left to go stale: no track, no
+        // route, no call. A consumer that only knew the last published state
+        // would otherwise show the last of each until its own timeout.
+        bridge.publishNowPlaying(NowPlaying{});
+        bridge.publishNav(NavGuidance{});
+        bridge.publishCall(CallState{});
         // The feed is this function's; nothing may apply to it once it is gone.
         bridge.setVehicleStatusHandler(nullptr);
     return ok;

@@ -866,6 +866,54 @@ void testCarPlaySession()
            "WirelessCarPlayUpdate decodes");
 }
 
+// What a finished or replaced route leaves behind: nothing of itself.
+void testRouteLifecycle()
+{
+    const auto guidance = [](uint8_t state, const char* destination, uint16_t current) {
+        iap2::RouteGuidance g;
+        g.state = state;
+        g.destination_name = destination;
+        g.current_road_name = "Hauptstrasse";
+        g.current_maneuver_list =
+            std::vector<uint8_t>{static_cast<uint8_t>(current >> 8), static_cast<uint8_t>(current)};
+        return g;
+    };
+    const auto maneuver = [](uint16_t index, uint8_t type, const char* after) {
+        iap2::RouteManeuver m;
+        m.index = index;
+        m.maneuver_type = type;
+        m.after_maneuver_road_name = after;
+        return m;
+    };
+
+    iap2::NavGuidance nav;
+    nav.apply(maneuver(3, 4, "Bahnhofstrasse"));
+    nav.apply(guidance(1, "Home", 3));
+    expect(nav.maneuver_type == 4 && nav.after_road_name == "Bahnhofstrasse", "the current turn is shown");
+
+    // The phone moves to a maneuver it has not described yet.
+    nav.apply(guidance(1, "Home", 4));
+    expect(!nav.maneuver_type && !nav.after_road_name,
+           "an undescribed current maneuver shows nothing, not the previous turn");
+
+    // A new destination is a new route; its maneuver 3 is not the old one.
+    nav.apply(guidance(1, "Work", 3));
+    expect(!nav.maneuver_type, "a new route forgets the old route's maneuvers");
+    nav.apply(maneuver(3, 7, "Ring"));
+    nav.apply(guidance(1, "Work", 3));
+    expect(nav.maneuver_type == 7 && nav.after_road_name == "Ring", "and shows its own once described");
+
+    // The route ends.
+    iap2::RouteGuidance ended;
+    ended.state = 0;
+    nav.apply(ended);
+    expect(nav.status == 0, "a route that ends reports no route");
+    expect(!nav.road_name && !nav.destination_name && !nav.maneuver_type && !nav.current_index,
+           "and keeps nothing of it");
+    nav.apply(guidance(1, "Work", 3));
+    expect(!nav.maneuver_type, "a route started afterwards does not inherit its maneuvers");
+}
+
 void testRouteGuidance()
 {
     csm::ParamList guidance_params;
@@ -1386,6 +1434,7 @@ int main()
     testRouteGuidance();
     testCallAndPower();
     testDeviceTime();
+    testRouteLifecycle();
     testSubscriptionMessages();
     testMfiAuthentication();
     testHandshakeOverLink();
