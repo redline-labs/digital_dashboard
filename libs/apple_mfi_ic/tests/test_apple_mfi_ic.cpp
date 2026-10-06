@@ -100,7 +100,8 @@ constexpr auto kYieldGap = std::chrono::microseconds(300);
 class FakeCoprocessor : public i2c::Bus
 {
   public:
-    explicit FakeCoprocessor(Transport transport) : transport_(transport)
+    explicit FakeCoprocessor(Transport transport, uint8_t address = AppleMFIIC::I2C_ADDRESS) :
+        transport_(transport), address_(address)
     {
         // Each register is its own object with its own length, as on the part:
         // 0x11 is a 2-byte length and 0x12 the 128-byte response it describes.
@@ -203,7 +204,7 @@ class FakeCoprocessor : public i2c::Bus
         }
         std::this_thread::sleep_for(transport_.latency);
         const auto now = Clock::now();
-        bool ack = address == AppleMFIIC::I2C_ADDRESS;
+        bool ack = address == address_;
         if (ack && now - last_activity_ > std::chrono::milliseconds(30))
         {
             if (transport_.wakes_by_stretching)
@@ -234,6 +235,7 @@ class FakeCoprocessor : public i2c::Bus
     }
 
     Transport transport_;
+    uint8_t address_;
     std::map<uint8_t, std::vector<uint8_t>> regs_;
     uint8_t pointer_ = 0;
     bool pointer_valid_ = false;
@@ -243,14 +245,23 @@ class FakeCoprocessor : public i2c::Bus
     std::optional<Clock::time_point> auth_done_at_;
 };
 
-void exercise(Transport transport)
+void exercise(Transport transport, uint8_t address = AppleMFIIC::I2C_ADDRESS)
 {
-    auto fake = std::make_unique<FakeCoprocessor>(transport);
+    auto fake = std::make_unique<FakeCoprocessor>(transport, address);
     FakeCoprocessor* raw = fake.get();
     AppleMFIIC ic(std::move(fake));
 
     const auto t0 = Clock::now();
     CHECK(ic.init());
+    CHECK(ic.address() == address);  // found at whichever strapping it has
+    if (address != AppleMFIIC::I2C_ADDRESS)
+    {
+        // Finding it at the second address costs the first one's whole wake
+        // budget -- asleep and absent NACK alike -- once, at init. What
+        // follows is held to the same bound as everywhere else.
+        raw->writes = 0;
+        raw->reads = 0;
+    }
 
     // Cold: the part is asleep, so the first START is the wake NACK.
     auto info = ic.query_device_info();
@@ -304,6 +315,15 @@ int main()
     exercise(kBridgeLoaded);
     exercise(kNativeFrozen);
     exercise(kNativeStretch);
+    // The other MODE-pin strapping: found at 0x10 after 0x11 says nothing.
+    exercise(kNative, AppleMFIIC::ALTERNATE_I2C_ADDRESS);
+    exercise(kBridge, AppleMFIIC::ALTERNATE_I2C_ADDRESS);
+
+    // Absent at both addresses: init fails rather than claiming a part.
+    {
+        AppleMFIIC nobody(std::make_unique<FakeCoprocessor>(kNative, uint8_t{0x42}));
+        CHECK(!nobody.init());
+    }
     std::puts("ok");
     return 0;
 }

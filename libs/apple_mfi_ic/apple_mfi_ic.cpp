@@ -154,7 +154,7 @@ std::string asn1_time_string(const ASN1_TIME* time)
 
 bool AppleMFIIC::write_with_retry(const std::vector<uint8_t>& data)
 {
-    return until_done([&] { return bus_->write(I2C_ADDRESS, data) ? Step::done : Step::nack; });
+    return until_done([&] { return bus_->write(address_, data) ? Step::done : Step::nack; });
 }
 
 bool AppleMFIIC::wake()
@@ -162,7 +162,7 @@ bool AppleMFIIC::wake()
     // The coprocessor ignores the first transaction after it has been idle;
     // that NACK *is* the wake-up, and the next access succeeds. Retry rather
     // than treating one failure as absence.
-    return until_done([&] { return bus_->read(I2C_ADDRESS, 1).empty() ? Step::nack : Step::done; });
+    return until_done([&] { return bus_->read(address_, 1).empty() ? Step::nack : Step::done; });
 }
 
 bool AppleMFIIC::init(const std::string& bus_hint)
@@ -187,12 +187,29 @@ bool AppleMFIIC::init(const std::string& bus_hint)
         return false;
     }
 
-    if (!wake())
+    // Either strapping of the MODE pin. The first is the one this was brought
+    // up on, so a working board pays nothing for the second.
+    bool answered = false;
+    for (const uint8_t candidate : {I2C_ADDRESS, ALTERNATE_I2C_ADDRESS})
     {
-        SPDLOG_ERROR("Apple MFI IC at 0x{:02x} did not respond on {}. Check power, the SDA/SCL "
-                     "wiring, and that the RESET pin is released.",
-                     I2C_ADDRESS, bus_->description());
+        address_ = candidate;
+        if (wake())
+        {
+            answered = true;
+            break;
+        }
+    }
+    if (!answered)
+    {
+        address_ = I2C_ADDRESS;
+        SPDLOG_ERROR("Apple MFI IC did not respond at 0x{:02x} or 0x{:02x} on {}. Check power, "
+                     "the SDA/SCL wiring, and that the RESET pin is released.",
+                     I2C_ADDRESS, ALTERNATE_I2C_ADDRESS, bus_->description());
         return false;
+    }
+    if (address_ != I2C_ADDRESS)
+    {
+        SPDLOG_INFO("Apple MFI IC answered at 0x{:02x}", address_);
     }
 
     connected_ = true;
@@ -237,14 +254,14 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::read_register(Register reg, size
         if (!selected_at)
         {
             const auto started = SteadyClock::now();
-            if (!bus_->write(I2C_ADDRESS, reg_addr))
+            if (!bus_->write(address_, reg_addr))
             {
                 return Step::nack;
             }
             selected_at = started;
             return Step::progress;
         }
-        data = bus_->read(I2C_ADDRESS, length);
+        data = bus_->read(address_, length);
         const bool in_window = SteadyClock::now() - *selected_at <= kSelectWindow;
         if (!in_window)
         {
@@ -564,17 +581,25 @@ std::optional<std::vector<uint8_t>> AppleMFIIC::sign_challenge(const std::vector
     
     SPDLOG_DEBUG("Started authentication process");
 
-    // It seems like its on the order of 400ms to complete the authentication.
-    // Lets wait the majority of the time here.
-    std::this_thread::sleep_for(std::chrono::milliseconds(400u));
-    
-    // Step 4: Poll Authentication Control and Status (0x10) until ready
+    // Step 4: Poll Authentication Control and Status (0x10) until ready.
+    //
+    // A signature takes on the order of 400 ms. The poll interval sits inside
+    // the part's ~30 ms idle threshold, so a poll finds it awake rather than
+    // paying a wake NACK each time, and the answer is taken within a poll of
+    // being ready rather than up to 100 ms after. The budget is generous: a
+    // part that is slow, or a host that is loaded, should cost time, not a
+    // failed authentication -- the old ~1.4 s left little margin over 400.
+    constexpr auto kFirstPoll = std::chrono::milliseconds(250);
+    constexpr auto kPollInterval = std::chrono::milliseconds(25);
+    constexpr auto kSignBudget = std::chrono::milliseconds(3000);
+    const auto kicked = std::chrono::steady_clock::now();
+    std::this_thread::sleep_for(kFirstPoll);
+
     bool authentication_complete = false;
-    const int max_attempts = 10;  // Give it up to 1 second
-    
-    for (int attempt = 0; attempt < max_attempts; ++attempt) {
-        // It seems like its on the order of 400ms to complete the authentication.
-        std::this_thread::sleep_for(std::chrono::milliseconds(100u));
+    for (int attempt = 0; std::chrono::steady_clock::now() - kicked < kSignBudget; ++attempt) {
+        if (attempt > 0) {
+            std::this_thread::sleep_for(kPollInterval);
+        }
         
         auto status_data = read_register(Register::AuthenticationControlAndStatus, 1);
         if (!status_data) {

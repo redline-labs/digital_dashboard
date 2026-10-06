@@ -14,8 +14,11 @@ typedef struct pkcs7_st PKCS7;
 
 class AppleMFIIC {
 public:
-    // MFI IC I2C address
+    // The part's 7-bit I2C address is strapped by its MODE pin: 0x11 on the
+    // board this was brought up on, 0x10 on the other strapping. init() tries
+    // both, in that order.
     static constexpr uint8_t I2C_ADDRESS = 0x11;
+    static constexpr uint8_t ALTERNATE_I2C_ADDRESS = 0x10;
     
     // Register addresses
     enum class Register : uint8_t {
@@ -84,6 +87,9 @@ public:
     
     // Check if connected
     bool is_connected() const;
+
+    // The address the part answered on. Valid once init() has succeeded.
+    uint8_t address() const { return address_; }
     
     // Read a single register
     std::optional<std::vector<uint8_t>> read_register(Register reg, size_t length = 1);
@@ -115,4 +121,5 @@ private:
 
     std::unique_ptr<i2c::Bus> bus_;
     bool connected_;
+    uint8_t address_ = I2C_ADDRESS;
 }; 
