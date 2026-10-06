@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -1284,6 +1285,81 @@ void testMfiAuthentication()
 // ---------------------------------------------------------------------------
 // End to end: identification and authentication over the link layer.
 // ---------------------------------------------------------------------------
+// With a peer that acknowledges (not the wired zero-ack path), a packet that
+// was retransmitted and then acknowledged must stop being retransmitted. The
+// retransmit timer used to reorder the unacknowledged list by deadline while
+// acknowledgements assume it is in sequence order: once the first packet was
+// resent it sorted behind the second, its ACK matched nothing at the front,
+// and it was resent until the link gave up.
+void testRetransmitThenAck()
+{
+    using namespace std::chrono_literals;
+    FakeTransport transport;
+    iap2::LinkConfig config;
+    config.zero_ack = false;
+    iap2::LinkLayer link(transport, config);
+    const uint8_t device_seq = negotiate(link, transport, deviceLsp(4, 65535, 100, 1000, 30, 1));
+    drainSent(transport);
+
+    const auto data_packets = [&]() {
+        std::vector<uint8_t> psns;
+        for (const auto& packet : drainSent(transport))
+        {
+            if (!packet.payload.empty())
+            {
+                psns.push_back(packet.header.seq);
+            }
+        }
+        return psns;
+    };
+
+    link.sendControlMessage(iap2::encodeStartNowPlayingUpdates());
+    const auto first = data_packets();
+    std::this_thread::sleep_for(50ms);
+    link.sendControlMessage(iap2::encodeStartCallStateUpdates());
+    const auto second = data_packets();
+    expect(first.size() == 1 && second.size() == 1, "two packets go out");
+    if (first.size() != 1 || second.size() != 1)
+    {
+        return;
+    }
+    const uint8_t p1 = first[0];
+    const uint8_t p2 = second[0];
+
+    // The first packet's deadline passes and it is resent.
+    std::this_thread::sleep_for(70ms);
+    link.poll(0);
+    const auto resent = data_packets();
+    expect(std::find(resent.begin(), resent.end(), p1) != resent.end(),
+           "the first packet is retransmitted at its own deadline, not the second's");
+
+    // Then the second's deadline passes too. Its resend is what used to sort
+    // it in front of the first.
+    std::this_thread::sleep_for(50ms);
+    link.poll(0);
+    const auto resent_second = data_packets();
+    expect(std::find(resent_second.begin(), resent_second.end(), p2) != resent_second.end(),
+           "the second packet is retransmitted at its deadline");
+
+    // Now the peer acknowledges the first, and only it.
+    transport.push(buildPacket(iap2::kControlAck, device_seq, p1, 0, {}));
+    link.poll(0);
+    data_packets();
+
+    // Long enough for several more deadlines of both.
+    for (int i = 0; i < 6; ++i)
+    {
+        std::this_thread::sleep_for(60ms);
+        link.poll(0);
+    }
+    const auto after = data_packets();
+    expect(std::find(after.begin(), after.end(), p1) == after.end(),
+           "an acknowledged packet is not retransmitted again");
+    expect(std::find(after.begin(), after.end(), p2) != after.end(),
+           "while the unacknowledged one still is");
+    expect(link.state() == iap2::LinkLayer::State::kNormal, "and the link stays up");
+}
+
 void testHandshakeOverLink()
 {
     FakeTransport transport;
@@ -1445,6 +1521,7 @@ int main()
     testRouteGuidance();
     testCallAndPower();
     testDeviceTime();
+    testRetransmitThenAck();
     testRouteLifecycle();
     testSubscriptionMessages();
     testMfiAuthentication();

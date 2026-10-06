@@ -234,6 +234,8 @@ class LinkLayer
     void disarmSendAckTimer() { send_ack_deadline_.reset(); }
     void rearmSendAckTimer();
     void disarmRecvAckTimer() { recv_ack_deadline_.reset(); }
+    // Arms the retransmit timer for whichever unacknowledged packet is due first.
+    void rearmToEarliestUnacked();
     void rearmRecvAckTimer(Clock::time_point deadline);
 
     void bailout(const char* reason);

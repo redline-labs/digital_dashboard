@@ -430,8 +430,8 @@ void LinkLayer::enqueuePacket(OutPacket packet)
 
     if (lsp_.max_retransmissions > 0)
     {
-        rearmRecvAckTimer(packet.timeout);
         unacked_.push_back(std::move(packet));
+        rearmToEarliestUnacked();
     }
     else
     {
@@ -739,7 +739,6 @@ void LinkLayer::handleAck(uint8_t ack)
         const uint8_t distance = sequenceDistance(unacked_.front().psn, last_sent_acknowledged_psn_);
         if (distance > 0 && distance <= lsp_.max_ack + 10)
         {
-            rearmRecvAckTimer(unacked_.front().timeout);
             break;
         }
         unacked_.erase(unacked_.begin());
@@ -747,6 +746,10 @@ void LinkLayer::handleAck(uint8_t ack)
     if (unacked_.empty())
     {
         disarmRecvAckTimer();
+    }
+    else
+    {
+        rearmToEarliestUnacked();
     }
 
     size_t guard = queued_.size();
@@ -785,10 +788,13 @@ void LinkLayer::handleEak(const std::vector<uint8_t>& psns)
 
         SPDLOG_WARN("[iap2] {}: retransmitting seq={} after EAK (attempt {})", config_.tag, packet.psn,
                     packet.counter);
+        // Resent now, so not due again for a full timeout -- not at the old
+        // deadline, which would resend it a second time straight away.
+        packet.timeout = Clock::now() + std::chrono::milliseconds(lsp_.retransmission_timeout);
         sendData(packet);
         disarmSendAckTimer();
-        rearmRecvAckTimer(packet.timeout);
     }
+    rearmToEarliestUnacked();
 }
 
 void LinkLayer::handleData(const std::vector<uint8_t>& payload, uint8_t psn, uint8_t session_id)
@@ -1004,10 +1010,12 @@ void LinkLayer::onExpectAckTimer()
         return;
     }
 
-    std::sort(unacked_.begin(), unacked_.end(),
-              [](const OutPacket& a, const OutPacket& b) { return a.timeout < b.timeout; });
-
-    OutPacket& packet = unacked_.front();
+    // The list stays in sequence order -- handleAck releases a prefix of it --
+    // so the packet that is due is found, not sorted to the front. Sorting
+    // put a resent packet behind a later one, and its ACK then matched nothing.
+    OutPacket& packet = *std::min_element(
+        unacked_.begin(), unacked_.end(),
+        [](const OutPacket& a, const OutPacket& b) { return a.timeout < b.timeout; });
     packet.timeout = Clock::now() + std::chrono::milliseconds(lsp_.retransmission_timeout);
     ++packet.counter;
     if (packet.counter == lsp_.max_retransmissions)
@@ -1020,7 +1028,20 @@ void LinkLayer::onExpectAckTimer()
 
     SPDLOG_WARN("[iap2] {}: retransmitting seq={} (attempt {})", config_.tag, packet.psn, packet.counter);
     sendData(packet);
-    rearmRecvAckTimer(unacked_.size() == 1 ? unacked_.front().timeout : unacked_[1].timeout);
+    rearmToEarliestUnacked();
+}
+
+void LinkLayer::rearmToEarliestUnacked()
+{
+    // The earliest deadline, not the latest packet's: arming on every send
+    // made the first packet wait for the last one's retransmission time.
+    const auto due = std::min_element(
+        unacked_.begin(), unacked_.end(),
+        [](const OutPacket& a, const OutPacket& b) { return a.timeout < b.timeout; });
+    if (due != unacked_.end())
+    {
+        rearmRecvAckTimer(due->timeout);
+    }
 }
 
 void LinkLayer::rearmSendAckTimer()
