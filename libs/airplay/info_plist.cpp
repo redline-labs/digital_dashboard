@@ -171,7 +171,11 @@ plist::Value buildInfoPlist(const ReceiverConfig& config)
     info.set("bluetoothIDs", plist::Value::array({plist::Value::string(config.device_id)}));
     info.set("name", plist::Value::string(config.name));
     info.set("rightHandDrive", plist::Value::boolean(config.right_hand_drive));
-    info.set("keepAliveLowPower", plist::Value::boolean(true));
+    // Not offered: a low-power keepalive is a promise to keep an idle,
+    // audio-only session alive on datagrams alone, and nothing here acts on
+    // them. Claiming it lets the phone tear down exactly the sessions that sit
+    // idle -- a locked phone playing music, or the screen handed back.
+    info.set("keepAliveLowPower", plist::Value::boolean(false));
     info.set("keepAliveSendStatsAsBody", plist::Value::boolean(false));
     info.set("modes", std::move(modes));
     info.set("extendedFeatures",

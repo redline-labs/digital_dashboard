@@ -69,7 +69,7 @@ Rows are dated individually.
 | Session lifecycle (TEARDOWN) | written 2026-08-02; TEARDOWN was acknowledged and otherwise ignored, so the dashboard never learned a session had ended. Not hardware-verified |
 | `POST /feedback` media clock | written 2026-08-02; names the open audio streams instead of answering empty. No playback anchor |
 | Night mode | written 2026-08-02, set by `night_mode:` in the config and reflected in `CarPlaySessionState.nightMode`. No light sensor drives it; not hardware-verified |
-| Keepalive port | written 2026-08-02; `/info` advertised `keepAliveLowPower` with no port behind it |
+| Keepalive port | written 2026-08-02; `/info` declines `keepAliveLowPower` since 2026-10-05, and a port is still given to a phone that asks. Idle audio-only sessions not soak-tested |
 | Cluster (alt) display, 48 kHz entertainment audio | deliberately not done; see What LIVI has that we do not |
 | Manufacturer button (`/info` advertisement + press decode) | fully verified on hardware 2026-08-02: tile, label, artwork (needs `prerendered: true`) and the press. Nothing is hooked to the handler yet |
 | AirPlay audio downlink (PCM) | verified on hardware 2026-07-22 (types 100/101) |
@@ -1806,10 +1806,12 @@ The phone's own commands are routed rather than logged as unhandled:
 | `disableBluetooth` | logged. Not applicable on the wired path: iAP2 already runs over USB, so there is no Bluetooth link of ours to drop |
 | anything else | acknowledged, and logged with its full body, which is how the next one gets identified |
 
-A keepalive port is now advertised. `/info` had always claimed
-`keepAliveLowPower`, and the SETUP response never gave the phone anywhere to
-send them. A UDP socket is bound and its port returned when the phone's SETUP
-asks for it. Nothing reads the datagrams; their arrival is the whole message.
+`/info` declines `keepAliveLowPower` (2026-10-05). It used to claim it, first
+with no port behind it and then with a UDP socket that nothing read. A
+low-power keepalive is a promise to hold an idle, audio-only session on
+datagrams alone, and with nothing acting on them the phone was free to end
+exactly the sessions that sit idle: a locked phone playing music, or the screen
+handed back. A phone whose SETUP asks for one anyway is still given a port.
 
 ## What the vehicle tells the phone about itself
 

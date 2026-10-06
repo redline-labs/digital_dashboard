@@ -84,6 +84,11 @@ int main()
         expect(model != nullptr && model->asString() == config.model, "model comes from config");
         const plist::Value* name = at(info, "name");
         expect(name != nullptr && name->asString() == config.name, "name comes from config");
+        // Declined: nothing acts on low-power keepalives, and claiming them
+        // lets the phone end idle audio-only sessions.
+        const plist::Value* low_power = at(info, "keepAliveLowPower");
+        expect(low_power != nullptr && low_power->isBool() && !low_power->asBool(),
+               "low-power keepalive is declined");
     }
 
     // The display entry. The spelling here is the classic silent failure: the

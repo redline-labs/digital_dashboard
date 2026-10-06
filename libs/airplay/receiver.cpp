@@ -823,10 +823,9 @@ rtsp::Message Receiver::handleSessionSetup(const plist::Value& body)
         }
     }
 
-    // We advertise keepAliveLowPower in /info, so a phone that takes us up
-    // on it needs somewhere to send them. Nothing reads the datagrams --
-    // their arrival is the whole message -- but without a bound port the
-    // phone is keeping a session alive against a closed socket.
+    // /info declines keepAliveLowPower, but a phone that asks for it anyway
+    // still gets somewhere to send them rather than a closed socket. Nothing
+    // reads the datagrams.
     uint16_t keep_alive_port = 0;
     if (const plist::Value* low_power = body.find("keepAliveLowPower");
         low_power != nullptr && low_power->asBool())
