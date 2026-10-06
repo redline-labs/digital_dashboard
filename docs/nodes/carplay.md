@@ -53,8 +53,13 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo cp nodes/carplay/udev/carplay-i2c.conf /etc/modules-load.d/
 sudo modprobe hid_mcp2221 && sudo modprobe i2c-dev
 i2cdetect -l                              # expect "MCP2221 usb-i2c bridge"
-i2cdetect -y 0                            # expect a device at 0x11 (maybe on the second run)
+i2cdetect -y 0                            # expect a device at 0x11, or 0x10 on the other MODE-pin strapping (maybe on the second run)
 ```
+
+The node opens the coprocessor on first use and, if it is not answering, looks
+again every two seconds, so a bridge that enumerates after the node starts is
+picked up without a restart. Both consumers -- iAP2 authentication and AirPlay
+`/auth-setup` -- go through the same lock.
 
 Mask the system `usbmuxd` (stopping it is not enough: its udev rule restarts it
 when the configuration switch re-enumerates the phone), and give the phone's NCM

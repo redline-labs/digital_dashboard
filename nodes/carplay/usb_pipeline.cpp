@@ -17,6 +17,7 @@
 #include "airplay/receiver.h"
 #include "iap2/mcp2221a_mfi_signer.h"
 #include "iap2/http_mfi_signer.h"
+#include "iap2/shared_mfi_signer.h"
 #include "apple_usb/usb_device.h"
 #include "apple_usb/usbmuxd_server.h"
 
@@ -118,6 +119,8 @@ constexpr auto kStableSession = std::chrono::seconds(30);
 // A GPS source publishes about once a second; three missed and the position is
 // no longer where the car is.
 constexpr auto kFixStaleAfter = std::chrono::milliseconds(3000);
+// How often a coprocessor that is not answering is looked for again.
+constexpr auto kMfiRetry = std::chrono::milliseconds(2000);
 
 std::string shortUdid(const std::string& udid)
 {
@@ -340,8 +343,8 @@ struct SessionContext
 {
     const NodeConfig& options;
     std::string state_dir;
-    iap2::MfiSigner* mfi_signer = nullptr;
-    std::shared_ptr<std::mutex> mfi_mutex;
+    // Opened on demand and serialised; see iap2::SharedMfiSigner.
+    iap2::SharedMfiSigner* mfi_signer = nullptr;
     // What the dashboard is told about the phone, from plug-in to unplug.
     SessionStatus& status;
 };
@@ -979,7 +982,6 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
                                                         const std::shared_ptr<LiveSession>& live)
 {
     const NodeConfig& options = ctx.options;
-    auto mfi_mutex = ctx.mfi_mutex;
     std::unique_ptr<airplay::Receiver> receiver;
         airplay::ReceiverConfig receiver_config;
 
@@ -1017,22 +1019,18 @@ std::unique_ptr<airplay::Receiver> startAirPlayReceiver(const SessionContext& ct
                         "--config configs/carplay/carplay.yaml to supply the artwork");
         }
 
+        // Wired whether or not the chip is up yet: it is opened when first
+        // asked, so a bridge that enumerated late still serves /auth-setup.
         if (ctx.mfi_signer != nullptr)
         {
-            iap2::MfiSigner* signer = ctx.mfi_signer;
-            receiver_config.mfi_certificate = [signer, mfi_mutex]() -> std::vector<uint8_t> {
-                std::lock_guard<std::mutex> lock(*mfi_mutex);
+            iap2::SharedMfiSigner* signer = ctx.mfi_signer;
+            receiver_config.mfi_certificate = [signer]() -> std::vector<uint8_t> {
                 return signer->certificate().value_or(std::vector<uint8_t>{});
             };
-            receiver_config.mfi_sign =
-                [signer, mfi_mutex](const std::vector<uint8_t>& digest) -> std::vector<uint8_t> {
-                std::lock_guard<std::mutex> lock(*mfi_mutex);
+            receiver_config.mfi_sign = [signer](const std::vector<uint8_t>& digest) -> std::vector<uint8_t> {
                 return signer->signChallenge(digest).value_or(std::vector<uint8_t>{});
             };
-            receiver_config.mfi_protocol_major = [signer, mfi_mutex]() {
-                std::lock_guard<std::mutex> lock(*mfi_mutex);
-                return signer->protocolMajor();
-            };
+            receiver_config.mfi_protocol_major = [signer]() { return signer->protocolMajor(); };
         }
         receiver = std::make_unique<airplay::Receiver>(receiver_config);
         // Set before start(): the receiver pushes it to the phone at RECORD.
@@ -1280,7 +1278,9 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
     ctx.status.setPhase(SessionPhase::Iap2);
         Iap2SessionOptions iap2_options;
         iap2_options.allow_missing_mfi = options.allow_missing_mfi;
-        iap2_options.signer = ctx.mfi_signer;
+        // Opening it is retried here, once per session, if it was not up before.
+        iap2_options.signer =
+            ctx.mfi_signer != nullptr && ctx.mfi_signer->ready() ? ctx.mfi_signer : nullptr;
         // The same identity the AirPlay side advertises, by the other route the
         // phone learns it: iAP2 identification rather than GET /info.
         iap2_options.identity = options.vehicle;
@@ -1720,11 +1720,6 @@ AttachOutcome runAttachedSession(const apple_usb::DeviceInfo& device, const Sess
     // Started before the iAP2 session for the same reason the NCM bridge is:
     // the phone dials port 7000 within milliseconds of CarPlayStartSession, and
     // anything not listening by then just gets connection-refused.
-    // One coprocessor, two consumers: iAP2 authentication and AirPlay
-    // /auth-setup. It sits on a single I2C bus, and the two run on different
-    // threads, so access is serialised. It is owned by the caller and shared by
-    // every session, since it has nothing to do with the phone.
-    auto mfi_mutex = ctx.mfi_mutex;
 
     // Stage 7. Started before stage 5 below: see startAirPlayReceiver.
     ScreenHandover::Config handover_config;
@@ -1846,38 +1841,35 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     }
     SPDLOG_INFO("[node] state dir {}", state_dir);
 
-    // The coprocessor is on I2C, not USB, so it is initialised once and outlives
-    // every phone that comes and goes below. --mfi-remote swaps the transport
-    // for HTTP and changes nothing else: the chip is behind the same three
-    // calls either way, which is the whole reason MfiSigner is an interface.
-    std::unique_ptr<iap2::MfiSigner> mfi_signer;
-    if (!options.mfi_remote_url.empty())
-    {
-        auto remote = std::make_unique<iap2::HttpMfiSigner>(options.mfi_remote_url,
-                                                            options.mfi_remote_token);
-        if (remote->init())
-        {
-            mfi_signer = std::move(remote);
-        }
-        else
-        {
-            SPDLOG_WARN("[mfi] remote coprocessor at {} unavailable", options.mfi_remote_url);
-        }
-    }
-    else
-    {
-        auto local = std::make_unique<iap2::Mcp2221aMfiSigner>();
-        if (local->init(options.mfi_i2c_device))
-        {
-            mfi_signer = std::move(local);
-        }
-        else
-        {
-            SPDLOG_WARN("[mfi] coprocessor unavailable");
-        }
-    }
+    // The coprocessor is on I2C, not USB, so it outlives every phone that comes
+    // and goes below -- but it may not be there yet: a USB-I2C bridge can
+    // enumerate after the node starts. So it is opened on first use and again,
+    // at most every few seconds, until it answers. --mfi-remote swaps the
+    // transport for HTTP and changes nothing else.
+    iap2::SharedMfiSigner mfi_signer(
+        [&options]() -> std::unique_ptr<iap2::MfiSigner> {
+            if (!options.mfi_remote_url.empty())
+            {
+                auto remote = std::make_unique<iap2::HttpMfiSigner>(options.mfi_remote_url,
+                                                                    options.mfi_remote_token);
+                if (remote->init())
+                {
+                    return remote;
+                }
+                SPDLOG_WARN("[mfi] remote coprocessor at {} unavailable", options.mfi_remote_url);
+                return nullptr;
+            }
+            auto local = std::make_unique<iap2::Mcp2221aMfiSigner>();
+            if (local->init(options.mfi_i2c_device))
+            {
+                return local;
+            }
+            return nullptr;
+        },
+        kMfiRetry);
+    mfi_signer.ready();  // say now, in the log, whether it is there
 
-    SessionContext ctx{options, state_dir, mfi_signer.get(), std::make_shared<std::mutex>(), status};
+    SessionContext ctx{options, state_dir, &mfi_signer, status};
 
     // Supervisor loop: one pass per phone attachment. A phone can be unplugged
     // and plugged back in as many times as the user likes -- each replug starts

@@ -4,7 +4,6 @@
 #include "start_session_gate.h"
 
 #include "iap2/link_layer.h"
-#include "iap2/mcp2221a_mfi_signer.h"
 #include "iap2/messages.h"
 
 #include <spdlog/spdlog.h>
@@ -102,7 +101,8 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     iap2::LinkLayer link(transport, config);
 
     // --- MFi coprocessor -----------------------------------------------------
-    std::unique_ptr<iap2::Mcp2221aMfiSigner> owned_signer;
+    // The caller's, shared with AirPlay /auth-setup, and null when it is not up
+    // (the caller retries opening it every session).
     iap2::MfiSigner* signer = options.signer;
     std::unique_ptr<iap2::MfiAuthenticator> authenticator;
     if (signer != nullptr)
@@ -111,29 +111,18 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                     signer->protocolMajor());
         authenticator = std::make_unique<iap2::MfiAuthenticator>(*signer);
     }
+    else if (options.allow_missing_mfi)
+    {
+        SPDLOG_WARN("[mfi] coprocessor unavailable -- continuing anyway as requested. "
+                    "The phone will refuse CarPlay, but the link layer and "
+                    "identification are still exercised.");
+    }
     else
     {
-        auto candidate = std::make_unique<iap2::Mcp2221aMfiSigner>();
-        if (candidate->init())
-        {
-            SPDLOG_INFO("[mfi] coprocessor ready, protocol major {}", candidate->protocolMajor());
-            owned_signer = std::move(candidate);
-            signer = owned_signer.get();
-            authenticator = std::make_unique<iap2::MfiAuthenticator>(*signer);
-        }
-        else if (options.allow_missing_mfi)
-        {
-            SPDLOG_WARN("[mfi] coprocessor unavailable -- continuing anyway as requested. "
-                        "The phone will refuse CarPlay, but the link layer and "
-                        "identification are still exercised.");
-        }
-        else
-        {
-            SPDLOG_ERROR("[mfi] coprocessor unavailable. Verify it standalone with "
-                         "./build/libs/apple_mfi_ic/apple_mfi_demo, or pass "
-                         "--iap2-allow-missing-mfi to continue without it.");
-            return false;
-        }
+        SPDLOG_ERROR("[mfi] coprocessor unavailable. Verify it standalone with "
+                     "./build/libs/apple_mfi_ic/apple_mfi_demo, or pass "
+                     "--iap2-allow-missing-mfi to continue without it.");
+        return false;
     }
 
     iap2::IdentificationConfig identification;

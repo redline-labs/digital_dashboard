@@ -8,6 +8,7 @@ add_library(iap2 STATIC
     link_layer.cpp
     mcp2221a_mfi_signer.cpp
     http_mfi_signer.cpp
+    shared_mfi_signer.cpp
     csm.cpp
     messages.cpp
     location_nmea.cpp
@@ -62,6 +63,15 @@ target_link_libraries(iap2_test_nmea PRIVATE
     spdlog::spdlog
 )
 add_project_test(TARGET iap2_test_nmea LABELS iap2 unit)
+
+# One coprocessor for both consumers: opened late if it has to be, never driven
+# from two threads at once.
+add_executable(iap2_test_shared_mfi_signer test_shared_mfi_signer.cpp)
+target_link_libraries(iap2_test_shared_mfi_signer PRIVATE
+    iap2
+    spdlog::spdlog
+)
+add_project_test(TARGET iap2_test_shared_mfi_signer LABELS iap2 unit)
 
 # The control-session-message parameter codec, at its edges.
 add_executable(iap2_test_csm test_csm.cpp)
