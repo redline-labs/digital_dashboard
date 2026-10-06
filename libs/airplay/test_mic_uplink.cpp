@@ -11,6 +11,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <cstdlib>
 #include <numeric>
 #include <string>
@@ -32,6 +38,98 @@ void expect(bool condition, const std::string& what)
 airplay::Bytes key()
 {
     return airplay::Bytes(32, 0x5A);
+}
+
+// A UDP socket on [::1] standing in for the phone's mic port.
+struct PhonePort
+{
+    int fd = -1;
+    uint16_t port = 0;
+
+    PhonePort()
+    {
+        fd = ::socket(AF_INET6, SOCK_DGRAM, 0);
+        sockaddr_in6 addr{};
+        addr.sin6_family = AF_INET6;
+        addr.sin6_addr = in6addr_loopback;
+        ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        socklen_t len = sizeof(addr);
+        ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len);
+        port = ntohs(addr.sin6_port);
+    }
+    ~PhonePort() { ::close(fd); }
+
+    // The next packet, or empty after a second.
+    airplay::Bytes receive() const
+    {
+        pollfd pfd{fd, POLLIN, 0};
+        if (::poll(&pfd, 1, 1000) <= 0)
+        {
+            return {};
+        }
+        airplay::Bytes packet(2048);
+        const ssize_t n = ::recv(fd, packet.data(), packet.size(), 0);
+        packet.resize(n > 0 ? static_cast<size_t>(n) : 0);
+        return packet;
+    }
+};
+
+// Whether `packet` opens under the key the phone derives for `connection_id`.
+bool opensFor(const airplay::Bytes& packet, const airplay::Bytes& shared, uint64_t connection_id)
+{
+    if (packet.size() < 12 + 16 + 8)
+    {
+        return false;
+    }
+    const airplay::Bytes stream_key = airplay::crypto::hkdfSha512(
+        shared, "DataStream-Salt" + std::to_string(connection_id), "DataStream-Input-Encryption-Key", 32);
+    airplay::Bytes nonce(4, 0);
+    nonce.insert(nonce.end(), packet.end() - 8, packet.end());
+    const airplay::Bytes aad(packet.begin() + 4, packet.begin() + 12);
+    const airplay::Bytes sealed(packet.begin() + 12, packet.end() - 8);
+    return airplay::crypto::chachaOpen(stream_key, nonce, sealed, aad).has_value();
+}
+
+uint16_t sequenceOf(const airplay::Bytes& packet)
+{
+    return packet.size() >= 4 ? static_cast<uint16_t>((packet[2] << 8) | packet[3]) : 0xFFFF;
+}
+
+// The phone sets up the main audio stream again -- a call placed from Siri --
+// without tearing the first down. The uplink must follow the new key and port;
+// left on the old ones, the call is one-way.
+void testReSetup()
+{
+    using airplay::Bytes;
+    airplay::MicUplink uplink;
+    int ups = 0;
+    uplink.setStatusHandler([&ups](bool active, uint32_t, uint8_t) { ups += active ? 1 : 0; });
+
+    const Bytes shared(32, 0x33);
+    const airplay::MicUplink::Peer peer{"::1", 0};
+    const Bytes frame(4 * 2, 0x01);  // four mono samples, framesPerPacket 4
+
+    PhonePort siri;
+    uplink.start(peer, siri.port, shared, 16000, 1, 100, 1, 4);
+    uplink.feed(frame);
+    const Bytes first = siri.receive();
+    expect(opensFor(first, shared, 1), "the uplink sends under the stream's key");
+
+    uplink.start(peer, siri.port, shared, 16000, 1, 100, 1, 4);
+    uplink.feed(frame);
+    const Bytes repeat = siri.receive();
+    expect(ups == 1 && sequenceOf(repeat) == 1,
+           "an identical SETUP leaves the running uplink alone");
+
+    PhonePort call;
+    uplink.start(peer, call.port, shared, 24000, 1, 100, 2, 4);
+    uplink.feed(frame);
+    const Bytes moved = call.receive();
+    expect(ups == 2, "a SETUP with a new connection id and rate brings the uplink up again");
+    expect(opensFor(moved, shared, 2), "under the new stream's key");
+    expect(!opensFor(moved, shared, 1), "not the old one");
+    expect(sequenceOf(moved) == 0, "starting its sequence afresh");
+    uplink.stop();
 }
 
 }  // namespace
@@ -149,6 +247,8 @@ int main()
         expect(accum.size() == (10 * 7) % frame, "and the remainder is carried forward");
         expect(accum.size() < frame, "never more than a frame is held back");
     }
+
+    testReSetup();
 
     if (failures == 0)
     {

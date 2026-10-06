@@ -76,7 +76,11 @@ class MicUplink
 
     void setStatusHandler(StatusHandler handler);
 
-    // Brings the uplink up. A second call while one is live is ignored.
+    // Brings the uplink up. A second call while one is live with the same
+    // destination, key and format is ignored; one that differs replaces it --
+    // the phone re-sets up the main audio stream for a call placed from Siri,
+    // with a new connection id and perhaps a new rate, without tearing the old
+    // one down, and an uplink left on the old key is a call nobody can hear.
     // `connection_id` salts the key derivation and must be the stream's, and
     // `frames_per_packet` is what the phone asked for (0 selects 20 ms).
     void start(const Peer& peer, uint16_t phone_port, const Bytes& verify_shared,

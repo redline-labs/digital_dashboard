@@ -79,41 +79,55 @@ void MicUplink::start(const Peer& peer, uint16_t phone_port, const Bytes& verify
                       uint64_t connection_id, size_t frames_per_packet)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (fd_ >= 0)
-    {
-        return;  // already up
-    }
 
-    fd_ = ::socket(AF_INET6, SOCK_DGRAM, 0);
-    if (fd_ < 0)
-    {
-        SPDLOG_ERROR("[audio] mic uplink socket() failed: {}", std::strerror(errno));
-        return;
-    }
-
-    dest_ = {};
-    dest_.sin6_family = AF_INET6;
-    dest_.sin6_port = htons(phone_port);
-    dest_.sin6_scope_id = peer.scope_id;
-    if (::inet_pton(AF_INET6, peer.address.c_str(), &dest_.sin6_addr) != 1)
+    sockaddr_in6 dest{};
+    dest.sin6_family = AF_INET6;
+    dest.sin6_port = htons(phone_port);
+    dest.sin6_scope_id = peer.scope_id;
+    if (::inet_pton(AF_INET6, peer.address.c_str(), &dest.sin6_addr) != 1)
     {
         SPDLOG_ERROR("[audio] mic uplink: cannot parse peer '{}'", peer.address);
-        ::close(fd_);
-        fd_ = -1;
         return;
     }
 
     // The input key mirrors the downlink (output) key: same DataStream salt
     // (this stream's connection id), the Input rather than Output label.
     const std::string cid_text = std::to_string(connection_id);
-    key_ = crypto::hkdfSha512(verify_shared, "DataStream-Salt" + cid_text,
+    const Bytes key = crypto::hkdfSha512(verify_shared, "DataStream-Salt" + cid_text,
                                          "DataStream-Input-Encryption-Key", 32);
 
     // Frame granularity: the phone's framesPerPacket if it named one, else
     // 20 ms worth.
-    samples_per_frame_ =
+    const size_t samples_per_frame =
         frames_per_packet > 0 ? frames_per_packet : (sample_rate * 20 / 1000);
 
+    if (fd_ >= 0)
+    {
+        const bool same = std::memcmp(&dest.sin6_addr, &dest_.sin6_addr, sizeof(in6_addr)) == 0 &&
+                          dest.sin6_port == dest_.sin6_port &&
+                          dest.sin6_scope_id == dest_.sin6_scope_id && key == key_ &&
+                          sample_rate == sample_rate_ && channels == channels_ &&
+                          stream_type == payload_type_ && samples_per_frame == samples_per_frame_;
+        if (same)
+        {
+            return;  // already up, exactly like this
+        }
+        SPDLOG_INFO("[audio] mic uplink set up again by the phone; replacing it");
+        ::close(fd_);
+        fd_ = -1;
+    }
+
+    fd_ = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    if (fd_ < 0)
+    {
+        SPDLOG_ERROR("[audio] mic uplink socket() failed: {}", std::strerror(errno));
+        active_ = false;
+        return;
+    }
+
+    dest_ = dest;
+    key_ = key;
+    samples_per_frame_ = samples_per_frame;
     sample_rate_ = sample_rate;
     channels_ = channels;
     payload_type_ = stream_type;
