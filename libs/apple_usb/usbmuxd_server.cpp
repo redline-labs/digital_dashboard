@@ -308,7 +308,10 @@ void UsbmuxdServer::relay(int client_fd, std::shared_ptr<MuxTcpConn> conn)
         {
             break;
         }
-        conn->send(buf.data(), static_cast<size_t>(r));
+        if (!conn->send(buf.data(), static_cast<size_t>(r)))
+        {
+            break;
+        }
     }
     conn->close();
     up.join();

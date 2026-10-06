@@ -21,6 +21,17 @@ namespace apple_usb
 
 class MuxHost;
 
+// The bulk pipe usbmux runs over: the phone's endpoints in production, a fake in
+// the tests. Both calls throw std::system_error; read() throws ETIMEDOUT when
+// nothing arrived in time.
+class MuxTransport
+{
+  public:
+    virtual ~MuxTransport() = default;
+    virtual void write(const uint8_t* data, size_t len) = 0;
+    virtual std::vector<uint8_t> read(unsigned timeout_ms) = 0;
+};
+
 // A single TCP-over-USB stream to the phone, riding Apple's usbmux protocol.
 // Mirrors MuxTcpConn in muxd.py: a minimal TCP state machine (SYN/ACK/FIN/RST)
 // where the accessory is the active opener.
@@ -29,8 +40,9 @@ class MuxTcpConn
   public:
     MuxTcpConn(MuxHost& host, uint16_t sport, uint16_t dport);
 
-    // Blocking send/recv over the stream. recv returns an empty buffer on EOF.
-    void send(const uint8_t* data, size_t len);
+    // Blocking send/recv over the stream. recv returns an empty buffer on EOF;
+    // send returns false once the transport has failed.
+    bool send(const uint8_t* data, size_t len);
     std::vector<uint8_t> recv();
     void close();
 
@@ -51,7 +63,7 @@ class MuxTcpConn
 
   private:
     friend class MuxHost;
-    void sendTcp(uint8_t flags, const uint8_t* payload = nullptr, size_t payload_len = 0);
+    bool sendTcp(uint8_t flags, const uint8_t* payload = nullptr, size_t payload_len = 0);
 
     MuxHost& host_;
     uint16_t sport_;
@@ -72,6 +84,9 @@ class MuxHost
 {
   public:
     explicit MuxHost(DeviceInfo device);
+    // A host over a pipe that is already open, claimed by nobody. What the
+    // tests use; open() then skips everything USB.
+    explicit MuxHost(std::unique_ptr<MuxTransport> transport);
     ~MuxHost();
 
     // Locate the usbmux interface from the configuration descriptor, claim it,
@@ -84,23 +99,39 @@ class MuxHost
 
     const std::string& serial() const { return device_.serial; }
 
-    // False once the reader thread has stopped. The usual cause is the phone
-    // being unplugged, which surfaces as an I/O error on the bulk-in endpoint;
-    // callers poll this to notice a disconnect and tear the session down.
-    bool alive() const { return run_.load() && !reader_stopped_.load(); }
+    // False once the reader thread has stopped or a write has failed. The
+    // usual cause is the phone being unplugged, which surfaces as an I/O error
+    // on either endpoint; callers poll this to notice a disconnect and tear the
+    // session down.
+    bool alive() const
+    {
+        return run_.load() && !reader_stopped_.load() && !write_failed_.load();
+    }
 
   private:
     friend class MuxTcpConn;
 
     // Serialized so mux sequence numbers and bulk writes stay consistent.
-    void muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len);
+    // Never throws: false once the transport has failed.
+    bool muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len);
     void readerLoop();
+
+    // The version and setup exchange, then the reader. Shared by both kinds
+    // of host.
+    bool startMux();
+    void releaseUsb();
+
+    // Releases every stream still waiting on the transport, as an unplug does.
+    void failConnections();
 
     // Fills iface_/ep_in_/ep_out_ from the active configuration descriptor.
     bool locateMuxInterface();
 
     DeviceInfo device_;
     DeviceHandle handle_;
+    // False for a host built over an injected transport.
+    bool usb_ = true;
+    std::unique_ptr<MuxTransport> transport_;
 
     // Discovered in open() rather than hardcoded; see locateMuxInterface().
     uint8_t iface_ = 0;
@@ -120,6 +151,7 @@ class MuxHost
     std::vector<uint8_t> rxbuf_;
     std::atomic<bool> run_{false};
     std::atomic<bool> reader_stopped_{false};
+    std::atomic<bool> write_failed_{false};
     std::thread reader_;
 };
 

@@ -66,6 +66,32 @@ uint32_t get_be32(const uint8_t* p)
            (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
 
+// The phone's bulk endpoints.
+class UsbPipe final : public MuxTransport
+{
+  public:
+    UsbPipe(const DeviceHandle& handle, uint8_t ep_in, uint8_t ep_out, uint16_t max_packet) :
+        handle_(handle), ep_in_(ep_in), ep_out_(ep_out), max_packet_(max_packet)
+    {
+    }
+
+    void write(const uint8_t* data, size_t len) override
+    {
+        usbBulkOut(handle_, ep_out_, max_packet_, data, len);
+    }
+
+    std::vector<uint8_t> read(unsigned timeout_ms) override
+    {
+        return usbBulkIn(handle_, ep_in_, 65536, timeout_ms);
+    }
+
+  private:
+    const DeviceHandle& handle_;
+    uint8_t ep_in_;
+    uint8_t ep_out_;
+    uint16_t max_packet_;
+};
+
 }  // namespace
 
 // ---------------- MuxTcpConn ----------------
@@ -75,7 +101,7 @@ MuxTcpConn::MuxTcpConn(MuxHost& host, uint16_t sport, uint16_t dport) :
 {
 }
 
-void MuxTcpConn::sendTcp(uint8_t flags, const uint8_t* payload, size_t payload_len)
+bool MuxTcpConn::sendTcp(uint8_t flags, const uint8_t* payload, size_t payload_len)
 {
     // 20-byte TCP header: offset 0x50 (5 words), window scaled down by 8.
     std::vector<uint8_t> th;
@@ -93,7 +119,7 @@ void MuxTcpConn::sendTcp(uint8_t flags, const uint8_t* payload, size_t payload_l
     {
         th.insert(th.end(), payload, payload + payload_len);
     }
-    host_.muxSend(kProtoTcp, th.data(), th.size());
+    return host_.muxSend(kProtoTcp, th.data(), th.size());
 }
 
 void MuxTcpConn::onPacket(uint8_t flags, uint32_t seq, uint32_t ack, uint16_t win,
@@ -148,16 +174,20 @@ void MuxTcpConn::onPacket(uint8_t flags, uint32_t seq, uint32_t ack, uint16_t wi
     }
 }
 
-void MuxTcpConn::send(const uint8_t* data, size_t len)
+bool MuxTcpConn::send(const uint8_t* data, size_t len)
 {
     size_t offset = 0;
     while (offset < len)
     {
         const size_t chunk = std::min(kMaxPayload, len - offset);
-        sendTcp(kThAck, data + offset, chunk);
+        if (!sendTcp(kThAck, data + offset, chunk))
+        {
+            return false;
+        }
         tx_seq_ += static_cast<uint32_t>(chunk);
         offset += chunk;
     }
+    return true;
 }
 
 std::vector<uint8_t> MuxTcpConn::recv()
@@ -194,14 +224,8 @@ void MuxTcpConn::close()
 {
     if (!closed_.exchange(true))
     {
-        try
-        {
-            sendTcp(kThFin | kThAck);
-        }
-        catch (const std::exception&)
-        {
-            // Best-effort; the host fd may already be gone.
-        }
+        // Best-effort: the transport may already be gone.
+        sendTcp(kThFin | kThAck);
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -213,6 +237,11 @@ void MuxTcpConn::close()
 // ---------------- MuxHost ----------------
 
 MuxHost::MuxHost(DeviceInfo device) : device_(std::move(device)) {}
+
+MuxHost::MuxHost(std::unique_ptr<MuxTransport> transport) :
+    usb_(false), transport_(std::move(transport))
+{
+}
 
 MuxHost::~MuxHost()
 {
@@ -309,6 +338,11 @@ bool MuxHost::locateMuxInterface()
 
 bool MuxHost::open()
 {
+    if (!usb_)
+    {
+        return startMux();
+    }
+
     handle_ = openDevice(device_);
     if (!handle_)
     {
@@ -348,6 +382,18 @@ bool MuxHost::open()
         return false;
     }
 
+    transport_ = std::make_unique<UsbPipe>(handle_, ep_in_, ep_out_, ep_out_max_packet_);
+    if (!startMux())
+    {
+        releaseUsb();
+        return false;
+    }
+    return true;
+}
+
+bool MuxHost::startMux()
+{
+    write_failed_.store(false);
     try
     {
         // Version packet: header {proto, length} then {2, 0, 0}.
@@ -359,20 +405,20 @@ bool MuxHost::open()
         put_be32(version, 0);
         {
             std::lock_guard<std::mutex> lock(write_mutex_);
-            usbBulkOut(handle_, ep_out_, ep_out_max_packet_, version.data(), version.size());
+            transport_->write(version.data(), version.size());
         }
         // Drain the version reply.
-        usbBulkIn(handle_, ep_in_, 65536, 2000);
-
-        const uint8_t setup = 0x07;
-        muxSend(kProtoSetup, &setup, 1);
+        transport_->read(2000);
     }
     catch (const std::system_error& e)
     {
         SPDLOG_ERROR("[muxd] handshake failed: {}", e.what());
-        usbReleaseInterface(handle_, iface_);
-        claimed_ = false;
-        handle_.reset();
+        return false;
+    }
+    const uint8_t setup = 0x07;
+    if (!muxSend(kProtoSetup, &setup, 1))
+    {
+        SPDLOG_ERROR("[muxd] handshake failed: the setup packet was not sent");
         return false;
     }
 
@@ -380,6 +426,17 @@ bool MuxHost::open()
     reader_stopped_.store(false);
     reader_ = std::thread([this] { readerLoop(); });
     return true;
+}
+
+void MuxHost::releaseUsb()
+{
+    transport_.reset();
+    if (claimed_)
+    {
+        usbReleaseInterface(handle_, iface_);
+        claimed_ = false;
+    }
+    handle_.reset();
 }
 
 void MuxHost::close()
@@ -390,34 +447,64 @@ void MuxHost::close()
         reader_.join();
     }
     std::lock_guard<std::mutex> lock(write_mutex_);
-    if (claimed_)
+    if (usb_)
     {
-        usbReleaseInterface(handle_, iface_);
-        claimed_ = false;
+        releaseUsb();
     }
-    handle_.reset();
 }
 
-void MuxHost::muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len)
+bool MuxHost::muxSend(uint32_t proto, const uint8_t* payload, size_t payload_len)
 {
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    if (!handle_)
+    std::string error;
     {
-        return;
+        std::lock_guard<std::mutex> lock(write_mutex_);
+        if (!transport_ || write_failed_.load())
+        {
+            return false;
+        }
+        std::vector<uint8_t> pkt;
+        pkt.reserve(16 + payload_len);
+        put_be32(pkt, proto);
+        put_be32(pkt, static_cast<uint32_t>(16 + payload_len));
+        put_be32(pkt, kMuxMagic);
+        put_be16(pkt, mux_tx_);
+        put_be16(pkt, mux_rx_);
+        ++mux_tx_;
+        if (payload != nullptr && payload_len > 0)
+        {
+            pkt.insert(pkt.end(), payload, payload + payload_len);
+        }
+        try
+        {
+            transport_->write(pkt.data(), pkt.size());
+            return true;
+        }
+        catch (const std::system_error& e)
+        {
+            error = e.what();
+            write_failed_.store(true);
+        }
     }
-    std::vector<uint8_t> pkt;
-    pkt.reserve(16 + payload_len);
-    put_be32(pkt, proto);
-    put_be32(pkt, static_cast<uint32_t>(16 + payload_len));
-    put_be32(pkt, kMuxMagic);
-    put_be16(pkt, mux_tx_);
-    put_be16(pkt, mux_rx_);
-    ++mux_tx_;
-    if (payload != nullptr && payload_len > 0)
+    // Every caller is a thread with nothing above it to catch -- the reader
+    // sending an ACK, a relay pump, connect()'s SYN -- so a throw here ended
+    // the process. A write that fails is the transport failing: the mux goes
+    // down the way an unplug takes it down, and alive() says so.
+    SPDLOG_WARN("[muxd] usb write failed ({}); the mux is down", error);
+    failConnections();
+    return false;
+}
+
+void MuxHost::failConnections()
+{
+    std::map<uint16_t, std::shared_ptr<MuxTcpConn>> orphans;
     {
-        pkt.insert(pkt.end(), payload, payload + payload_len);
+        std::lock_guard<std::mutex> lock(conns_mutex_);
+        orphans.swap(conns_);
     }
-    usbBulkOut(handle_, ep_out_, ep_out_max_packet_, pkt.data(), pkt.size());
+    for (auto& [sport, conn] : orphans)
+    {
+        conn->fail();
+    }
 }
 
 void MuxHost::readerLoop()
@@ -427,7 +514,7 @@ void MuxHost::readerLoop()
         std::vector<uint8_t> data;
         try
         {
-            data = usbBulkIn(handle_, ep_in_, 65536, 1000);
+            data = transport_->read(1000);
         }
         catch (const std::system_error& e)
         {
@@ -491,15 +578,7 @@ void MuxHost::readerLoop()
     // usbmuxd relay threads sit in MuxTcpConn::recv(), and without this they
     // wait forever and the teardown that follows deadlocks joining them.
     reader_stopped_.store(true);
-    std::map<uint16_t, std::shared_ptr<MuxTcpConn>> orphans;
-    {
-        std::lock_guard<std::mutex> lock(conns_mutex_);
-        orphans.swap(conns_);
-    }
-    for (auto& [sport, conn] : orphans)
-    {
-        conn->fail();
-    }
+    failConnections();
 }
 
 std::shared_ptr<MuxTcpConn> MuxHost::connect(uint16_t dport)
@@ -520,8 +599,7 @@ std::shared_ptr<MuxTcpConn> MuxHost::connect(uint16_t dport)
         conns_[sport] = conn;
     }
 
-    conn->sendTcp(kThSyn);
-    if (!conn->waitConnected())
+    if (!conn->sendTcp(kThSyn) || !conn->waitConnected())
     {
         std::lock_guard<std::mutex> lock(conns_mutex_);
         conns_.erase(sport);

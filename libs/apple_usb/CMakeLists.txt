@@ -112,6 +112,14 @@ target_link_libraries(apple_usb_test_usbmuxd_framing PRIVATE
 )
 add_project_test(TARGET apple_usb_test_usbmuxd_framing LABELS apple_usb unit)
 
+# MuxHost over a fake pipe: a failed USB write takes the mux down, not the node.
+add_executable(apple_usb_test_muxd test_muxd.cpp)
+target_link_libraries(apple_usb_test_muxd PRIVATE
+    apple_usb
+    spdlog::spdlog
+)
+add_project_test(TARGET apple_usb_test_muxd LABELS apple_usb unit)
+
 # When a bulk write must be followed by a zero-length packet to end it.
 add_executable(apple_usb_test_zero_length_packet test_zero_length_packet.cpp)
 target_link_libraries(apple_usb_test_zero_length_packet PRIVATE
