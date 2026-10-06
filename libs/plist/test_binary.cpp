@@ -94,6 +94,31 @@ void testScalars()
     expect(integer && integer->isInteger() && integer->asInteger() == 7, "integer keeps its type");
     const auto real = plist::decodeBinary(plist::encodeBinary(Value::real(7.0)));
     expect(real && real->isReal() && real->asReal() == 7.0, "real keeps its type");
+
+    // A UInt64 above INT64_MAX -- an NTP timestamp, a phone's stream id -- goes
+    // out as Apple writes it, in sixteen bytes, and comes back unsigned. As a
+    // signed eight-byte integer a CFNumber reader would take it as negative.
+    {
+        const uint64_t big = 0xE8F0123456789ABCull;
+        const Bytes wire = plist::encodeBinary(Value::unsignedInteger(big));
+        bool wide = false;
+        for (size_t i = 0; i + 17 <= wire.size(); ++i)
+        {
+            wide = wide || (wire[i] == 0x14 && wire[i + 1] == 0 && wire[i + 8] == 0 &&
+                            wire[i + 9] == 0xE8 && wire[i + 16] == 0xBC);
+        }
+        expect(wide, "a UInt64 above INT64_MAX is written as a 16-byte integer");
+        const auto back = plist::decodeBinary(wire);
+        expect(back && back->isUnsigned() && back->asUnsigned() == big,
+               "and decodes to the same unsigned value");
+        const auto again = plist::decodeBinary(plist::encodeBinary(*back));
+        expect(again && again->asUnsigned() == big, "and survives a second round trip");
+
+        const auto small = plist::decodeBinary(plist::encodeBinary(Value::unsignedInteger(7)));
+        expect(small && small->asInteger() == 7, "a small unsigned value is an ordinary integer");
+        expect(plist::encodeBinary(Value::unsignedInteger(7)) == plist::encodeBinary(Value::integer(7)),
+               "encoded exactly as one");
+    }
 }
 
 void testContainers()

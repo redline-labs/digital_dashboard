@@ -42,6 +42,10 @@ public:
 
     static Value boolean(bool value);
     static Value integer(int64_t value);
+    // An integer meant unsigned. One above INT64_MAX is written as Apple writes
+    // a UInt64 -- sixteen bytes, high half zero -- where integer() would write
+    // a negative eight-byte one, which a CFNumber reader takes as negative.
+    static Value unsignedInteger(uint64_t value);
     static Value real(double value);
     static Value string(std::string value);
     static Value data(Bytes value);
@@ -65,6 +69,9 @@ public:
     // parsing a phone's payload never have to guard first.
     bool asBool(bool fallback = false) const;
     int64_t asInteger(int64_t fallback = 0) const;
+    // The same bits, read unsigned.
+    uint64_t asUnsigned(uint64_t fallback = 0) const;
+    bool isUnsigned() const { return type_ == Type::Integer && unsigned_; }
     // Accepts Integer as well, since bplist writers freely mix the two.
     double asReal(double fallback = 0.0) const;
     double asDate(double fallback = 0.0) const;
@@ -91,6 +98,7 @@ private:
     Type type_ = Type::Null;
     bool bool_ = false;
     int64_t integer_ = 0;
+    bool unsigned_ = false;
     double real_ = 0.0;
     std::string string_;
     Bytes data_;

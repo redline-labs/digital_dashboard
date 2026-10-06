@@ -194,6 +194,15 @@ Value Value::integer(int64_t value)
     return v;
 }
 
+Value Value::unsignedInteger(uint64_t value)
+{
+    Value v;
+    v.type_ = Type::Integer;
+    v.integer_ = static_cast<int64_t>(value);  // the bits; asUnsigned() reads them back
+    v.unsigned_ = true;
+    return v;
+}
+
 Value Value::real(double value)
 {
     Value v;
@@ -244,6 +253,11 @@ Value Value::dict()
 bool Value::asBool(bool fallback) const
 {
     return type_ == Type::Bool ? bool_ : fallback;
+}
+
+uint64_t Value::asUnsigned(uint64_t fallback) const
+{
+    return type_ == Type::Integer ? static_cast<uint64_t>(integer_) : fallback;
 }
 
 int64_t Value::asInteger(int64_t fallback) const
@@ -452,7 +466,18 @@ bool addNode(const Value& value, std::vector<Node>& nodes, size_t depth, size_t&
             nodes[index].head = Bytes{static_cast<uint8_t>(value.asBool() ? 0x09 : 0x08)};
             break;
         case Value::Type::Integer:
-            nodes[index].head = encodeInteger(value.asInteger());
+            if (value.isUnsigned() && value.asUnsigned() > static_cast<uint64_t>(INT64_MAX))
+            {
+                // A UInt64 the signed form cannot hold, as Apple writes it.
+                Bytes wide{0x14};
+                appendBigEndian(wide, 0, 8);
+                appendBigEndian(wide, value.asUnsigned(), 8);
+                nodes[index].head = std::move(wide);
+            }
+            else
+            {
+                nodes[index].head = encodeInteger(value.asInteger());
+            }
             break;
         case Value::Type::Real:
         {
@@ -766,7 +791,7 @@ private:
                         SPDLOG_ERROR("[airplay] plist decode: 128-bit integer too large");
                         return std::nullopt;
                     }
-                    return Value::integer(static_cast<int64_t>(readSized(p + 8, 8)));
+                    return Value::unsignedInteger(readSized(p + 8, 8));
                 }
                 const uint64_t raw = readSized(p, nbytes);
                 // Apple reads 1/2/4-byte integers unsigned and 8-byte signed.
