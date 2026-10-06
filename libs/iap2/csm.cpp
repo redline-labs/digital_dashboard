@@ -299,6 +299,16 @@ std::optional<uint64_t> getU64(const ParamList& params, uint16_t id)
     return getBigEndian<uint64_t>(params, id);
 }
 
+std::optional<int64_t> getI64(const ParamList& params, uint16_t id)
+{
+    const auto value = getBigEndian<uint64_t>(params, id);
+    if (!value)
+    {
+        return std::nullopt;
+    }
+    return static_cast<int64_t>(*value);
+}
+
 std::optional<std::string> getString(const ParamList& params, uint16_t id)
 {
     const Param* param = find(params, id);

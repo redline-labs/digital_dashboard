@@ -40,6 +40,7 @@ enum MessageId : uint16_t
     // car_play.py
     kMsgCarPlayAvailability = 0x4300,
     kMsgCarPlayStartSession = 0x4301,
+    kMsgDeviceTimeUpdate = 0x4E0B,
     kMsgWirelessCarPlayUpdate = 0x4E0D,
     kMsgDeviceTransportIdentifierNotification = 0x4E0E,
 
@@ -309,6 +310,21 @@ struct DeviceTransportIdentifiers
 };
 
 std::optional<DeviceTransportIdentifiers> decodeDeviceTransportIdentifierNotification(const csm::ParamList& params);
+
+// DeviceTimeUpdate (0x4E0B): the phone's clock and time zone.
+//
+// The offset already includes daylight saving. The separate daylight-saving
+// field says how much of it is daylight saving; adding it again counts the
+// hour twice, which is a clock wrong by exactly one hour for half the year.
+struct DeviceTime
+{
+    std::optional<int64_t> unix_seconds;        // the phone's wall clock
+    std::optional<int16_t> utc_offset_minutes;  // daylight saving included
+    std::optional<int8_t> dst_offset_minutes;   // the part of it that is daylight saving
+};
+
+// nullopt when the message carries none of the three in a readable form.
+std::optional<DeviceTime> decodeDeviceTimeUpdate(const csm::ParamList& params);
 std::optional<WirelessCarPlayStatus> decodeWirelessCarPlayUpdate(const csm::ParamList& params);
 
 // ---------------------------------------------------------------------------

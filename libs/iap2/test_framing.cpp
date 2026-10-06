@@ -932,6 +932,44 @@ void testRouteGuidance()
     expect(!ignored.maneuver_type.has_value(), "a maneuver update without an index is ignored");
 }
 
+void testDeviceTime()
+{
+    // A zone east of UTC in summer: +2 h including the hour of daylight saving.
+    csm::ParamList summer;
+    iap2::csm::addU64(summer, 0, 1790000000u);
+    iap2::csm::addI16(summer, 1, 120);
+    iap2::csm::addI8(summer, 2, 60);
+    const auto berlin = iap2::decodeDeviceTimeUpdate(summer);
+    expect(berlin && berlin->unix_seconds == 1790000000, "the phone's clock decodes");
+    expect(berlin && berlin->utc_offset_minutes == 120,
+           "the offset is taken as sent: daylight saving is already in it, not added again");
+    expect(berlin && berlin->dst_offset_minutes == 60, "the daylight-saving part decodes");
+
+    // West of UTC: the offset is signed.
+    csm::ParamList west;
+    iap2::csm::addI16(west, 1, -300);
+    const auto new_york = iap2::decodeDeviceTimeUpdate(west);
+    expect(new_york && new_york->utc_offset_minutes == -300, "a negative offset decodes");
+    expect(new_york && !new_york->unix_seconds, "and an absent clock stays absent");
+
+    // Malformed: a one-byte offset is not an offset, and nothing is invented.
+    csm::ParamList short_offset;
+    iap2::csm::addU8(short_offset, 1, 120);
+    expect(!iap2::decodeDeviceTimeUpdate(short_offset).has_value(),
+           "a wrong-sized offset alone decodes to nothing");
+    csm::ParamList mixed;
+    iap2::csm::addU8(mixed, 1, 120);
+    iap2::csm::addU64(mixed, 0, 1790000000u);
+    const auto partial = iap2::decodeDeviceTimeUpdate(mixed);
+    expect(partial && partial->unix_seconds && !partial->utc_offset_minutes,
+           "a wrong-sized offset beside a good clock keeps the clock and drops the offset");
+    expect(!iap2::decodeDeviceTimeUpdate({}).has_value(), "an empty update decodes to nothing");
+
+    const auto received = iap2::identificationMessagesReceived(iap2::IdentificationConfig{});
+    expect(std::find(received.begin(), received.end(), iap2::kMsgDeviceTimeUpdate) != received.end(),
+           "identification says we take DeviceTimeUpdate");
+}
+
 void testCallAndPower()
 {
     iap2::CallTracker tracker;
@@ -1347,6 +1385,7 @@ int main()
     testCarPlaySession();
     testRouteGuidance();
     testCallAndPower();
+    testDeviceTime();
     testSubscriptionMessages();
     testMfiAuthentication();
     testHandshakeOverLink();

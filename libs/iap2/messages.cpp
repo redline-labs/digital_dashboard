@@ -187,6 +187,11 @@ constexpr uint16_t kVsRangeWarning = 6;
 constexpr uint16_t kDtiBluetooth = 0;
 constexpr uint16_t kDtiUsb = 1;
 
+// DeviceTimeUpdate sub-parameters.
+constexpr uint16_t kDtSeconds = 0;
+constexpr uint16_t kDtTimeZoneOffsetMinutes = 1;
+constexpr uint16_t kDtDaylightSavingOffsetMinutes = 2;
+
 // Authentication sub-parameters (single unannotated field -> id 0).
 constexpr uint16_t kAuthPayload = 0;
 
@@ -252,6 +257,7 @@ const char* messageIdName(uint16_t msg_id)
         case kMsgPowerUpdate: return "PowerUpdate";
         case kMsgStopPowerUpdates: return "StopPowerUpdates";
         case kMsgPowerSourceUpdate: return "PowerSourceUpdate";
+        case kMsgDeviceTimeUpdate: return "DeviceTimeUpdate";
         case kMsgStartVehicleStatusUpdates: return "StartVehicleStatusUpdates";
         case kMsgVehicleStatusUpdate: return "VehicleStatusUpdate";
         case kMsgStopVehicleStatusUpdates: return "StopVehicleStatusUpdates";
@@ -317,6 +323,10 @@ std::vector<uint16_t> identificationMessagesReceived(const IdentificationConfig&
         // wireless flag: it also carries the phone's *USB* transport id, which
         // is about the link we are actually on.
         kMsgDeviceTransportIdentifierNotification,
+        // The phone's clock and time zone. The zone is the one thing here the
+        // vehicle has no other source for: GNSS gives UTC, not where the
+        // driver's clock should be.
+        kMsgDeviceTimeUpdate,
         kMsgNowPlayingUpdate,
         kMsgRouteGuidanceUpdate,
         kMsgRouteGuidanceManeuverUpdate,
@@ -651,6 +661,20 @@ std::optional<DeviceTransportIdentifiers> decodeDeviceTransportIdentifierNotific
                  identifiers.bluetooth_transport_id.value_or(""),
                  identifiers.usb_transport_id.value_or(""));
     return identifiers;
+}
+
+std::optional<DeviceTime> decodeDeviceTimeUpdate(const csm::ParamList& params)
+{
+    DeviceTime time;
+    time.unix_seconds = csm::getI64(params, kDtSeconds);
+    time.utc_offset_minutes = csm::getI16(params, kDtTimeZoneOffsetMinutes);
+    time.dst_offset_minutes = csm::getI8(params, kDtDaylightSavingOffsetMinutes);
+    if (!time.unix_seconds && !time.utc_offset_minutes && !time.dst_offset_minutes)
+    {
+        SPDLOG_WARN("[iap2] DeviceTimeUpdate carries nothing readable");
+        return std::nullopt;
+    }
+    return time;
 }
 
 std::optional<WirelessCarPlayStatus> decodeWirelessCarPlayUpdate(const csm::ParamList& params)

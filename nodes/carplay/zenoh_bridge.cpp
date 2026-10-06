@@ -98,6 +98,7 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     nav_pub_(key_prefix + "/nav"),
     nowplaying_pub_(key_prefix + "/nowplaying"),
     call_pub_(key_prefix + "/call"),
+    time_pub_(key_prefix + "/time"),
     ui_event_pub_(key_prefix + "/ui_event"),
     input_sub_(key_prefix + "/input",
                [this](CarPlayInput::Reader reader)
@@ -278,6 +279,18 @@ void ZenohBridge::publishNowPlaying(const NowPlaying& np)
 
     SPDLOG_DEBUG("[node] nowplaying: '{}' / '{}' playing={} art={}B",
                  np.title, np.artist, np.playing, np.album_art.size());
+}
+
+void ZenohBridge::publishTime(const PhoneTime& time)
+{
+    std::lock_guard<std::mutex> lock(meta_mutex_);
+    auto& f = time_pub_.fields();
+    f.setHasUtcOffset(time.utc_offset_minutes.has_value());
+    f.setUtcOffsetMinutes(time.utc_offset_minutes.value_or(0));
+    f.setDstOffsetMinutes(time.dst_offset_minutes);
+    f.setHasUnixSeconds(time.unix_seconds.has_value());
+    f.setUnixSeconds(time.unix_seconds.value_or(0));
+    time_pub_.put();
 }
 
 void ZenohBridge::publishCall(const CallState& call)

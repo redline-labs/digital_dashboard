@@ -91,6 +91,9 @@ struct Iap2SessionOptions
     // Called when the phone's call state changes (ringing, active, ended).
     std::function<void(const iap2::CallTracker&)> call_handler;
 
+    // Called with the phone's clock and time zone (DeviceTimeUpdate).
+    std::function<void(const iap2::DeviceTime&)> device_time_handler;
+
     // Supplies the current GPS fix, if the vehicle has one. The phone asks for
     // location (StartLocationInformation) so it can dead-reckon where its own
     // signal is weak; while it is asking, the session polls this and uplinks

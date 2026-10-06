@@ -148,6 +148,35 @@ int main()
         }
     }
 
+    // The phone's time zone: the offset goes out as sent, daylight saving
+    // already in it, and an absent clock is marked absent rather than zero.
+    {
+        const std::string time_prefix = prefix + "/time_test";
+        std::mutex time_mutex;
+        std::optional<std::pair<int16_t, bool>> received;
+        bool clock_present = true;
+        pub_sub::ZenohTypedSubscriber<CarPlayTime> listener(
+            time_prefix + "/time", [&](CarPlayTime::Reader reader) {
+                const std::lock_guard<std::mutex> lock(time_mutex);
+                received = std::make_pair(reader.getUtcOffsetMinutes(), reader.getHasUtcOffset());
+                clock_present = reader.getHasUnixSeconds();
+            });
+        carplay::ZenohBridge time_bridge(time_prefix);
+        carplay::PhoneTime time;
+        time.utc_offset_minutes = 120;
+        time.dst_offset_minutes = 60;
+        const bool arrived = waitFor(3s, [&]() {
+            time_bridge.publishTime(time);
+            const std::lock_guard<std::mutex> lock(time_mutex);
+            return received.has_value();
+        });
+        expect(arrived, "the phone's time zone is published on <prefix>/time");
+        const std::lock_guard<std::mutex> lock(time_mutex);
+        expect(received && received->first == 120 && received->second,
+               "with the offset as the phone sent it");
+        expect(!clock_present, "and a clock the phone did not send marked absent");
+    }
+
     finish.set_value();
     node.join();
 

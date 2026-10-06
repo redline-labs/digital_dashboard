@@ -19,6 +19,7 @@
 #include "carplay_nav.capnp.h"
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
+#include "carplay_time.capnp.h"
 #include "carplay_location.capnp.h"
 #include "carplay_ui.capnp.h"
 
@@ -27,6 +28,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -135,6 +137,14 @@ enum class CallPhase
     Disconnected
 };
 
+// The phone's time zone and clock; see schemas/carplay_time.capnp.
+struct PhoneTime
+{
+    std::optional<int16_t> utc_offset_minutes;  // daylight saving included
+    int8_t dst_offset_minutes = 0;
+    std::optional<int64_t> unix_seconds;
+};
+
 struct CallState
 {
     CallPhase phase = CallPhase::Idle;
@@ -227,6 +237,7 @@ class ZenohBridge
     void publishNav(const NavGuidance& nav);
     void publishNowPlaying(const NowPlaying& np);
     void publishCall(const CallState& call);
+    void publishTime(const PhoneTime& time);
     // One occurrence, on <prefix>/ui_event. Safe from any thread; never blocks
     // for long, so the event-channel thread may call it.
     void publishUiEvent(UiEventKind kind, const std::string& detail = {});
@@ -273,6 +284,7 @@ class ZenohBridge
     pub_sub::ZenohPublisher<CarPlayNav> nav_pub_;
     pub_sub::ZenohPublisher<CarPlayNowPlaying> nowplaying_pub_;
     pub_sub::ZenohPublisher<CarPlayCall> call_pub_;
+    pub_sub::ZenohPublisher<CarPlayTime> time_pub_;
     pub_sub::ZenohPublisher<CarPlayUiEvent> ui_event_pub_;
 
     // Declared once, in the constructor, and dispatched through the slots

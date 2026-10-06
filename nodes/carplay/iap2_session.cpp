@@ -498,6 +498,23 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 break;
             }
 
+            case iap2::kMsgDeviceTimeUpdate:
+            {
+                const auto time = iap2::decodeDeviceTimeUpdate(message->params);
+                if (!time)
+                {
+                    break;
+                }
+                SPDLOG_INFO("[iap2] phone time zone: UTC{:+} min ({} min of it daylight saving)",
+                            time->utc_offset_minutes.value_or(0),
+                            time->dst_offset_minutes.value_or(0));
+                if (options.device_time_handler)
+                {
+                    options.device_time_handler(*time);
+                }
+                break;
+            }
+
             case iap2::kMsgDeviceTransportIdentifierNotification:
             {
                 // The phone naming the transports it can be reached on. Only

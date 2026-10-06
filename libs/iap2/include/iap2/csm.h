@@ -107,6 +107,7 @@ std::optional<uint16_t> getU16(const ParamList& params, uint16_t id);
 std::optional<int16_t> getI16(const ParamList& params, uint16_t id);
 std::optional<uint32_t> getU32(const ParamList& params, uint16_t id);
 std::optional<uint64_t> getU64(const ParamList& params, uint16_t id);
+std::optional<int64_t> getI64(const ParamList& params, uint16_t id);
 std::optional<std::string> getString(const ParamList& params, uint16_t id);
 std::optional<std::vector<uint8_t>> getBytes(const ParamList& params, uint16_t id);
 std::optional<ParamList> getGroup(const ParamList& params, uint16_t id);

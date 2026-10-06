@@ -1480,6 +1480,27 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
             bridge.publishCall(call);
         };
 
+        // The phone's time zone: the vehicle's only source for one. Merged, as
+        // an update may carry only some of the fields.
+        auto phone_time = std::make_shared<PhoneTime>();
+        auto time_mutex = std::make_shared<std::mutex>();
+        auto time_valid = std::make_shared<std::atomic<bool>>(false);
+        iap2_options.device_time_handler = [&bridge, phone_time, time_mutex,
+                                            time_valid](const iap2::DeviceTime& update) {
+            std::lock_guard<std::mutex> lock(*time_mutex);
+            if (update.utc_offset_minutes)
+            {
+                phone_time->utc_offset_minutes = update.utc_offset_minutes;
+                phone_time->dst_offset_minutes = update.dst_offset_minutes.value_or(0);
+            }
+            if (update.unix_seconds)
+            {
+                phone_time->unix_seconds = update.unix_seconds;
+            }
+            time_valid->store(true);
+            bridge.publishTime(*phone_time);
+        };
+
         // GPS location the phone can dead-reckon from. A GPS source publishes
         // fixes on nodes/carplay/location; cache the latest and hand it to the
         // session, which uplinks NMEA while the phone is asking for location. A
@@ -1526,7 +1547,8 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         // (a paused track, a steady navigation screen) shows nothing.
         std::thread metadata_republish([&bridge, now_playing, now_playing_mutex, now_playing_valid,
                                         nav_state, nav_mutex, nav_valid, last_call, call_mutex,
-                                        call_valid, &session_stop]() {
+                                        call_valid, phone_time, time_mutex, time_valid,
+                                        &session_stop]() {
             while (!session_stop.load())
             {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -1544,6 +1566,11 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
                 {
                     std::lock_guard<std::mutex> lock(*call_mutex);
                     bridge.publishCall(*last_call);
+                }
+                if (time_valid->load())
+                {
+                    std::lock_guard<std::mutex> lock(*time_mutex);
+                    bridge.publishTime(*phone_time);
                 }
             }
         });
