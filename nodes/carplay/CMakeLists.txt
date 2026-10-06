@@ -93,6 +93,11 @@ add_project_test(TARGET carplay_test_screen_handover LABELS carplay unit)
 add_executable(carplay_test_start_session_gate test_start_session_gate.cpp)
 add_project_test(TARGET carplay_test_start_session_gate LABELS carplay unit)
 
+# Vehicle status: config values, live values over them key by key, and a change
+# sent once while the phone is subscribed.
+add_executable(carplay_test_vehicle_status_feed test_vehicle_status_feed.cpp)
+add_project_test(TARGET carplay_test_vehicle_status_feed LABELS carplay unit)
+
 # When the supervisor runs a phone's bring-up again: back off on failure, restart
 # promptly when the phone ends a session that had been running.
 add_executable(carplay_test_reattach_policy test_reattach_policy.cpp)

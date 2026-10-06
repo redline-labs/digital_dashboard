@@ -157,6 +157,24 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
                       fix.valid = reader.getValid();
                       location_handler_(fix);
                   }),
+    vehicle_status_sub_(key_prefix + "/vehicle_status",
+                        [this](CarPlayVehicleStatus::Reader reader)
+                        {
+                            VehicleStatus status;
+                            if (reader.getHasRangeKm())
+                            {
+                                status.range_km = reader.getRangeKm();
+                            }
+                            if (reader.getHasOutsideTemperature())
+                            {
+                                status.outside_temperature_c = reader.getOutsideTemperatureC();
+                            }
+                            if (reader.getHasRangeWarning())
+                            {
+                                status.range_warning = reader.getRangeWarning();
+                            }
+                            vehicle_status_handler_(status);
+                        }),
     visibility_sub_(key_prefix + "/visibility",
                     [this](CarPlayVisibility::Reader reader) { visibility_handler_(reader.getVisible()); })
 {
@@ -351,6 +369,11 @@ void ZenohBridge::setInputHandler(std::function<void(const InputEvent&)> handler
 void ZenohBridge::setMicHandler(std::function<void(const AudioChunk&)> handler)
 {
     mic_handler_.set(std::move(handler));
+}
+
+void ZenohBridge::setVehicleStatusHandler(std::function<void(const VehicleStatus&)> handler)
+{
+    vehicle_status_handler_.set(std::move(handler));
 }
 
 void ZenohBridge::setLocationHandler(std::function<void(const LocationFix&)> handler)

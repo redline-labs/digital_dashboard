@@ -195,6 +195,7 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                 {
                     out_status.range_warning = node.as<bool>();
                 }
+                assignIfPresent(status, "live", out_vehicle.status_live);
             }
 
             if (const YAML::Node languages = vehicle["supported_languages"];

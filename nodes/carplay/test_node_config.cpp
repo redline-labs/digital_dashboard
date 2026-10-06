@@ -374,6 +374,18 @@ int main()
         expect(config.oem_button.label != "Should not stick", "including keys read before the failure");
     }
 
+    // vehicle.status.live: off unless asked for, and read beside the values.
+    {
+        const NodeConfig defaults;
+        expect(!defaults.vehicle.status_live, "live vehicle status is off by default");
+        const fs::path live = dir / "status_live.yaml";
+        writeFile(live, "vehicle:\n  status:\n    range_km: 300\n    live: true\n");
+        NodeConfig config;
+        expect(loadNodeConfig(live.string(), config) && config.vehicle.status_live &&
+                   config.vehicle.status.range_km == 300,
+               "vehicle.status.live is read beside the configured values");
+    }
+
     // power: the current offered to the phone. Closed, and bounded: the phone
     // draws what it is offered.
     {

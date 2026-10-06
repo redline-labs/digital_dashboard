@@ -11,6 +11,7 @@
 #include "iap2/messages.h"
 #include "iap2/mfi_signer.h"
 #include "node_config.h"
+#include "vehicle_status_feed.h"
 
 #include <atomic>
 #include <chrono>
@@ -28,9 +29,11 @@ struct Iap2SessionOptions
     std::optional<VehicleIdentity> identity;
 
     // What the vehicle reports while the session runs. Advertised in
-    // identification only when it carries something, and pushed when the phone
-    // subscribes with StartVehicleStatusUpdates.
-    VehicleStatus vehicle_status;
+    // identification only when it has or will have something to say, sent when
+    // the phone subscribes with StartVehicleStatusUpdates and again on every
+    // change while it stays subscribed. Owned by the caller; null reports
+    // nothing.
+    VehicleStatusFeed* vehicle_status = nullptr;
 
     // Continue past MFi authentication when the coprocessor is unreachable.
     // The phone will refuse CarPlay, but the link layer, identification and the

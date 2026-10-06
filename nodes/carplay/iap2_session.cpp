@@ -156,11 +156,12 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
         // StartVehicleStatusUpdates on every session; advertising range and
         // outside temperature and then never sending an update is a promise
         // broken every time.
-        identification.include_vehicle_status = options.vehicle_status.any();
+        identification.include_vehicle_status =
+            options.vehicle_status != nullptr && options.vehicle_status->advertised();
         SPDLOG_INFO("[iap2] vehicle status {}",
                     identification.include_vehicle_status
-                        ? "advertised (range/temperature configured)"
-                        : "not advertised (nothing configured)");
+                        ? "advertised (configured or live)"
+                        : "not advertised (nothing configured, no live source)");
         SPDLOG_INFO("[iap2] identifying as {} / {} ({}), serial {}", identification.manufacturer,
                     identification.model_identifier, identification.name,
                     identification.serial_number);
@@ -181,6 +182,27 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
     // Set/cleared by Start/StopLocationInformation, serviced from the poll loop.
     iap2::LocationRequest location_request;
     auto last_location_send = std::chrono::steady_clock::now();
+
+    // Sends the vehicle status if it changed since the phone was last told. The
+    // values may be live, so this is polled as well as called on subscription.
+    const auto send_vehicle_status = [&] {
+        if (!vehicle_status_active || options.vehicle_status == nullptr)
+        {
+            return;
+        }
+        const auto status = options.vehicle_status->takeChange();
+        if (!status)
+        {
+            return;
+        }
+        SPDLOG_INFO("[iap2] vehicle status: range={} temp={} warning={}",
+                    status->range_km ? std::to_string(*status->range_km) : "unset",
+                    status->outside_temperature_c ? std::to_string(*status->outside_temperature_c)
+                                                  : "unset",
+                    status->range_warning ? (*status->range_warning ? "true" : "false") : "unset");
+        link.sendControlMessage(iap2::encodeVehicleStatusUpdate(
+            status->range_km, status->outside_temperature_c, status->range_warning));
+    };
 
     // CarPlayStartSession needs the NCM link-local, which may not exist yet when
     // the phone asks: see StartSessionGate. Called from the handler below and
@@ -457,28 +479,17 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
 
             case iap2::kMsgStartVehicleStatusUpdates:
             {
-                // The phone subscribing. It expects the current values now, and
-                // then again whenever they change -- which, while these come
-                // from static config, is never.
+                // The phone subscribing. It wants the current values now, and
+                // then again whenever they change; the poll loop sends those.
                 vehicle_status_active = true;
-                const VehicleStatus& status = options.vehicle_status;
-                if (!status.any())
+                if (options.vehicle_status == nullptr)
                 {
-                    // Only reachable if the phone asks without us having
-                    // advertised the component, which it should not do.
                     SPDLOG_WARN("[iap2] phone subscribed to vehicle status but none is "
                                 "configured; nothing to send");
                     break;
                 }
-                SPDLOG_INFO("[iap2] vehicle status subscribed: range={} temp={} warning={}",
-                            status.range_km ? std::to_string(*status.range_km) : "unset",
-                            status.outside_temperature_c
-                                ? std::to_string(*status.outside_temperature_c)
-                                : "unset",
-                            status.range_warning ? (*status.range_warning ? "true" : "false")
-                                                 : "unset");
-                link.sendControlMessage(iap2::encodeVehicleStatusUpdate(
-                    status.range_km, status.outside_temperature_c, status.range_warning));
+                options.vehicle_status->subscribed();
+                send_vehicle_status();
                 break;
             }
 
@@ -646,6 +657,8 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
             SPDLOG_ERROR("[iap2] carkit channel died underneath the link layer");
             break;
         }
+
+        send_vehicle_status();
 
         // While the phone wants location, feed it ~1 Hz. Each requested NMEA
         // family goes in its own LocationInformation message.

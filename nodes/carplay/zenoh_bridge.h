@@ -8,6 +8,7 @@
 
 #include "handler_slot.h"
 #include "location_fix.h"
+#include "vehicle_status.h"
 
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
@@ -20,6 +21,7 @@
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
 #include "carplay_time.capnp.h"
+#include "carplay_vehicle_status.capnp.h"
 #include "carplay_location.capnp.h"
 #include "carplay_ui.capnp.h"
 
@@ -255,6 +257,9 @@ class ZenohBridge
     // A GPS source publishes fixes on <prefix>/location; the latest is cached
     // and read via latestLocation() from the iAP2 thread.
     void setLocationHandler(std::function<void(const LocationFix&)> handler);
+    // Live vehicle status from <prefix>/vehicle_status, fields unset where the
+    // publisher's has* flag was.
+    void setVehicleStatusHandler(std::function<void(const VehicleStatus&)> handler);
     // Whether the dashboard's CarPlay widget is on screen, from
     // <prefix>/visibility.
     void setVisibilityHandler(std::function<void(bool visible)> handler);
@@ -269,6 +274,7 @@ class ZenohBridge
     HandlerSlot<const InputEvent&> input_handler_;
     HandlerSlot<const AudioChunk&> mic_handler_;
     HandlerSlot<const LocationFix&> location_handler_;
+    HandlerSlot<const VehicleStatus&> vehicle_status_handler_;
     HandlerSlot<bool> visibility_handler_;
     std::atomic<bool> video_subscribers_present_{false};
 
@@ -294,6 +300,7 @@ class ZenohBridge
     pub_sub::ZenohTypedSubscriber<CarPlayInput> input_sub_;
     pub_sub::ZenohTypedSubscriber<CarPlayAudio> mic_sub_;
     pub_sub::ZenohTypedSubscriber<CarPlayLocation> location_sub_;
+    pub_sub::ZenohTypedSubscriber<CarPlayVehicleStatus> vehicle_status_sub_;
     pub_sub::ZenohTypedSubscriber<CarPlayVisibility> visibility_sub_;
 
     uint32_t video_seq_ = 0;

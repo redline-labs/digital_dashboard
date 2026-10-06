@@ -1271,7 +1271,14 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         // The same identity the AirPlay side advertises, by the other route the
         // phone learns it: iAP2 identification rather than GET /info.
         iap2_options.identity = options.vehicle;
-        iap2_options.vehicle_status = options.vehicle.status;
+        // Config values first, live ones over them; see VehicleStatusFeed.
+        VehicleStatusFeed vehicle_status(options.vehicle.status, options.vehicle.status_live);
+        iap2_options.vehicle_status = &vehicle_status;
+        if (options.vehicle.status_live)
+        {
+            bridge.setVehicleStatusHandler(
+                [&vehicle_status](const VehicleStatus& update) { vehicle_status.apply(update); });
+        }
         iap2_options.available_current_ma = options.available_current_ma;
 
         if (ncm.running())
@@ -1583,6 +1590,8 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
 
         session_stop.store(true);  // release the republish thread if the session ended
         metadata_republish.join();
+        // The feed is this function's; nothing may apply to it once it is gone.
+        bridge.setVehicleStatusHandler(nullptr);
     return ok;
 }
 

@@ -177,6 +177,33 @@ int main()
         expect(!clock_present, "and a clock the phone did not send marked absent");
     }
 
+    // Live vehicle status: only the fields the publisher flagged arrive.
+    {
+        const std::string status_prefix = prefix + "/status_test";
+        std::mutex status_mutex;
+        std::optional<carplay::VehicleStatus> got;
+        carplay::ZenohBridge status_bridge(status_prefix);
+        status_bridge.setVehicleStatusHandler([&](const carplay::VehicleStatus& status) {
+            const std::lock_guard<std::mutex> lock(status_mutex);
+            got = status;
+        });
+        pub_sub::ZenohPublisher<CarPlayVehicleStatus> vehicle(status_prefix + "/vehicle_status");
+        const bool arrived = waitFor(3s, [&]() {
+            vehicle.fields().setRangeKm(380);
+            vehicle.fields().setHasRangeKm(true);
+            vehicle.fields().setOutsideTemperatureC(-4);  // not flagged: must not arrive
+            vehicle.put();
+            const std::lock_guard<std::mutex> lock(status_mutex);
+            return got.has_value();
+        });
+        expect(arrived, "vehicle status published on <prefix>/vehicle_status reaches the handler");
+        const std::lock_guard<std::mutex> lock(status_mutex);
+        expect(got && got->range_km == 380, "with the flagged range");
+        expect(got && !got->outside_temperature_c && !got->range_warning,
+               "and nothing the publisher did not flag");
+        status_bridge.setVehicleStatusHandler(nullptr);
+    }
+
     finish.set_value();
     node.join();
 

@@ -437,6 +437,7 @@ Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
 | `input` | `CarPlayInput` | in | `touch`, `knob`, `mediaKey`, `telephony`, `siri`; `code` and `value` per kind are documented in the schema |
 | `mic` | `CarPlayAudio` | in | captured PCM while the phone has asked for the uplink |
 | `location` | `CarPlayLocation` | in | GPS fixes for the NMEA uplink |
+| `vehicle_status` | `CarPlayVehicleStatus` | in | range, outside temperature and the range warning, with `vehicle.status.live: true`. Each field only when its `has*` flag is set; an unset one keeps the value already known. Sent to the phone on every change while it is subscribed |
 | `visibility` | `CarPlayVisibility` | in | whether the dashboard's CarPlay widget is on screen, once a second; drives [screen handover](#screen-handover) |
 
 Nothing publishes `knob`, `mediaKey` or `telephony` yet; on hardware they are
