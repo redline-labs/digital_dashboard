@@ -39,6 +39,21 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", MODE="0660", GROUP="plugdev", TAG+="ua
 # by hand before each run.
 SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ENV{ID_GPHOTO2}="", ENV{GPHOTO2_DRIVER}=""
 
+# Keep the rest of the desktop off it too. ModemManager probes USB network
+# functions that may be modems, and the phone's NCM function is not one; it
+# reads this property from the device and everything under it.
+# ID_MEDIA_PLAYER (set by media-player-info) wakes the desktop's phone
+# monitor, which wants the system usbmuxd that this setup masks.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MEDIA_PLAYER}=""
+
+# --- The phone's CarPlay network link --------------------------------------
+# Duplicate address detection holds the link-local back for about a second,
+# and there is nobody else on this link to collide with. The networkd profile
+# turns DAD off itself; doing it here covers NetworkManager too, whichever owns
+# the link -- both wait for udev to finish with an interface before taking it.
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="cdc_ncm", ATTRS{idVendor}=="05ac", \
+    RUN+="/bin/sh -c 'echo 0 > /proc/sys/net/ipv6/conf/%k/accept_dad'"
+
 # --- MFi coprocessor, reached over I2C --------------------------------------
 # On Linux the MCP2221A is driven by the in-kernel hid_mcp2221 driver, which
 # registers it as a standard I2C adapter; we talk to the MFi chip through
