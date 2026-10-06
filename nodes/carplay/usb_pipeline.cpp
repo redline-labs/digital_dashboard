@@ -905,13 +905,18 @@ bool AvLink::start(const apple_usb::DeviceInfo& device)
 
     if (ifname_.empty())
     {
-        SPDLOG_ERROR("[ncm] no network interface has the host MAC {}. The system NCM driver "
-                     "(AppleUSBNCM / cdc_ncm) should have created one when configuration 6 was "
-                     "applied -- check `ip -br addr` or `ifconfig`, and that nothing captured "
-                     "the device away from it.", host_mac_);
-        return false;
+        // Not fatal, for the same reason a missing address is not: the
+        // interface can appear only once iAP2 runs over the cable (seen with a
+        // phone on a Mac), and refresh() looks for it again whenever
+        // CarPlayStartSession needs it. If it never appears, the start is
+        // held until StartSessionGate gives up, and that says so.
+        SPDLOG_WARN("[ncm] no network interface has the host MAC {} yet. The system NCM driver "
+                    "(AppleUSBNCM / cdc_ncm) should create one once configuration 6 is applied "
+                    "-- if it never does, check `ip -br addr` or `ifconfig`, and that nothing "
+                    "captured the device away from it. Carrying on; CarPlayStartSession waits "
+                    "for it.", host_mac_);
     }
-    if (link_local_.empty())
+    else if (link_local_.empty())
     {
         // Two causes that used to share one message, and only one is ours.
         switch (carrierOf(ifname_))
