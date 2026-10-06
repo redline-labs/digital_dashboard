@@ -26,6 +26,11 @@ autoconnect=true
 # Ahead of the default wired profile, which would otherwise claim the interface
 # first and start the DHCP cycle described above.
 autoconnect-priority=100
+# The phone dials in on this link -- TCP 7000, then the stream ports -- and on
+# a machine running firewalld the default zone drops all of it, which looks
+# exactly like a phone that never connects. Nothing but the phone is on the
+# link. Ignored where firewalld is not running.
+zone=trusted
 
 [match]
 # NetworkManager cannot match on USB vendor, so unlike the networkd unit this

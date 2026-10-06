@@ -61,6 +61,13 @@ again every two seconds, so a bridge that enumerates after the node starts is
 picked up without a restart. Both consumers -- iAP2 authentication and AirPlay
 `/auth-setup` -- go through the same lock.
 
+On a machine running firewalld (Fedora and its relatives), the phone's
+connections to the accessory on the NCM link -- TCP 7000, then the stream ports
+-- are dropped by the default zone, which looks exactly like a phone that never
+dials in. The NetworkManager profile below puts the link in the `trusted` zone;
+under systemd-networkd, do the same by hand with
+`sudo firewall-cmd --zone=trusted --add-interface=<the enx... interface>`.
+
 Mask the system `usbmuxd` (stopping it is not enough: its udev rule restarts it
 when the configuration switch re-enumerates the phone), and give the phone's NCM
 interface a link-local address with whichever profile matches who owns links on
