@@ -437,6 +437,7 @@ Every key is under `--key-prefix`, default `nodes/carplay`. The schemas are in
 | `nowplaying` | `CarPlayNowPlaying` | out | merged partial updates, album art by sequence; re-published every 2 s |
 | `nav` | `CarPlayNav` | out | turn-by-turn metadata, re-published every 2 s |
 | `call` | `CarPlayCall` | out | call state, re-published every 2 s |
+| `phone` | `CarPlayPhone` | out | the phone's battery, charging state, signal bars, carrier and airplane mode, each behind a `has*` flag; re-published every 2 s, cleared when the session ends |
 | `time` | `CarPlayTime` | out | the phone's UTC offset (daylight saving included -- do not add `dstOffsetMinutes` to it) and its clock, re-published every 2 s. GNSS gives UTC but no zone, so this is where local time comes from. Nothing sets the system clock from it |
 | `ui_event` | `CarPlayUiEvent` | out | one message per occurrence: the manufacturer tile, the phone taking or returning the screen, an app asking for the head unit's UI |
 | `input` | `CarPlayInput` | in | `touch`, `knob`, `mediaKey`, `telephony`, `siri`; `code` and `value` per kind are documented in the schema |

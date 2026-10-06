@@ -99,6 +99,7 @@ ZenohBridge::ZenohBridge(const std::string& key_prefix) :
     nowplaying_pub_(key_prefix + "/nowplaying"),
     call_pub_(key_prefix + "/call"),
     time_pub_(key_prefix + "/time"),
+    phone_pub_(key_prefix + "/phone"),
     ui_event_pub_(key_prefix + "/ui_event"),
     input_sub_(key_prefix + "/input",
                [this](CarPlayInput::Reader reader)
@@ -309,6 +310,22 @@ void ZenohBridge::publishTime(const PhoneTime& time)
     f.setHasUnixSeconds(time.unix_seconds.has_value());
     f.setUnixSeconds(time.unix_seconds.value_or(0));
     time_pub_.put();
+}
+
+void ZenohBridge::publishPhone(const PhoneStatus& phone)
+{
+    std::lock_guard<std::mutex> lock(meta_mutex_);
+    auto& f = phone_pub_.fields();
+    f.setHasBattery(phone.battery_percent.has_value());
+    f.setBatteryPercent(phone.battery_percent.value_or(0.0f));
+    f.setHasCharging(phone.charging.has_value());
+    f.setCharging(phone.charging.value_or(false));
+    f.setHasSignal(phone.signal_bars.has_value());
+    f.setSignalBars(phone.signal_bars.value_or(0));
+    f.setCarrierName(phone.carrier_name);
+    f.setHasAirplaneMode(phone.airplane_mode.has_value());
+    f.setAirplaneMode(phone.airplane_mode.value_or(false));
+    phone_pub_.put();
 }
 
 void ZenohBridge::publishCall(const CallState& call)

@@ -79,6 +79,40 @@ int main()
         expect(np.album_art_seq == 6, "and says so, so the widget clears the image");
     }
 
+    // The phone's status, as partial updates build it.
+    {
+        carplay::PhoneStatus phone;
+        iap2::PowerState power;
+        power.battery_charge_level = 65535;
+        power.battery_charging_state = 1;
+        carplay::mergePower(phone, power);
+        expect(phone.battery_percent && *phone.battery_percent > 99.9f, "a full battery is 100 percent");
+        expect(phone.charging == true, "state 1 is charging");
+
+        iap2::PowerState half;
+        half.battery_charge_level = 32768;
+        carplay::mergePower(phone, half);
+        expect(phone.battery_percent && *phone.battery_percent > 49.9f && *phone.battery_percent < 50.1f,
+               "half the range is half the battery");
+        expect(phone.charging == true, "and an update without a charging state keeps the last one");
+
+        iap2::PowerState charged;
+        charged.battery_charging_state = 2;
+        carplay::mergePower(phone, charged);
+        expect(phone.charging == false, "charged is not charging");
+
+        iap2::CellularState cell;
+        cell.signal_strength = 3;
+        cell.carrier_name = "Telekom";
+        carplay::mergeCommunications(phone, cell);
+        iap2::CellularState bars_only;
+        bars_only.signal_strength = 1;
+        carplay::mergeCommunications(phone, bars_only);
+        expect(phone.signal_bars == 1 && phone.carrier_name == "Telekom",
+               "a signal update keeps the carrier it did not mention");
+        expect(!phone.airplane_mode, "and nothing the phone has not reported is invented");
+    }
+
     if (failures == 0)
     {
         std::printf("all metadata merge checks passed\n");

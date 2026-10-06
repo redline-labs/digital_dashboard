@@ -1456,6 +1456,26 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
             bridge.publishTime(*phone_time);
         };
 
+        // The phone's battery, charging, signal and carrier: what a status bar
+        // shows. Merged, as each update carries only what changed.
+        auto phone_status = std::make_shared<PhoneStatus>();
+        auto phone_mutex = std::make_shared<std::mutex>();
+        auto phone_valid = std::make_shared<std::atomic<bool>>(false);
+        iap2_options.power_handler = [&bridge, phone_status, phone_mutex,
+                                      phone_valid](const iap2::PowerState& update) {
+            std::lock_guard<std::mutex> lock(*phone_mutex);
+            mergePower(*phone_status, update);
+            phone_valid->store(true);
+            bridge.publishPhone(*phone_status);
+        };
+        iap2_options.communications_handler = [&bridge, phone_status, phone_mutex,
+                                               phone_valid](const iap2::CellularState& update) {
+            std::lock_guard<std::mutex> lock(*phone_mutex);
+            mergeCommunications(*phone_status, update);
+            phone_valid->store(true);
+            bridge.publishPhone(*phone_status);
+        };
+
         // GPS location the phone can dead-reckon from. A GPS source publishes
         // fixes on nodes/carplay/location; cache the latest and hand it to the
         // session, which uplinks NMEA while the phone is asking for location. A
@@ -1496,6 +1516,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         std::thread metadata_republish([&bridge, now_playing, now_playing_mutex, now_playing_valid,
                                         nav_state, nav_mutex, nav_valid, last_call, call_mutex,
                                         call_valid, phone_time, time_mutex, time_valid,
+                                        phone_status, phone_mutex, phone_valid,
                                         &session_stop]() {
             while (!session_stop.load())
             {
@@ -1520,6 +1541,11 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
                     std::lock_guard<std::mutex> lock(*time_mutex);
                     bridge.publishTime(*phone_time);
                 }
+                if (phone_valid->load())
+                {
+                    std::lock_guard<std::mutex> lock(*phone_mutex);
+                    bridge.publishPhone(*phone_status);
+                }
             }
         });
 
@@ -1538,6 +1564,7 @@ bool runIap2Stage(const SessionContext& ctx, apple_usb::CarkitChannel& carkit, A
         bridge.publishNowPlaying(NowPlaying{});
         bridge.publishNav(NavGuidance{});
         bridge.publishCall(CallState{});
+        bridge.publishPhone(PhoneStatus{});
         // The feed is this function's; nothing may apply to it once it is gone.
         bridge.setVehicleStatusHandler(nullptr);
     return ok;

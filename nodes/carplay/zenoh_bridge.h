@@ -20,6 +20,7 @@
 #include "carplay_nav.capnp.h"
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
+#include "carplay_phone.capnp.h"
 #include "carplay_time.capnp.h"
 #include "carplay_vehicle_status.capnp.h"
 #include "carplay_location.capnp.h"
@@ -139,6 +140,17 @@ enum class CallPhase
     Disconnected
 };
 
+// The phone's own state; see schemas/carplay_phone.capnp. Unset fields are ones
+// the phone has not reported.
+struct PhoneStatus
+{
+    std::optional<float> battery_percent;
+    std::optional<bool> charging;
+    std::optional<uint8_t> signal_bars;
+    std::string carrier_name;
+    std::optional<bool> airplane_mode;
+};
+
 // The phone's time zone and clock; see schemas/carplay_time.capnp.
 struct PhoneTime
 {
@@ -240,6 +252,7 @@ class ZenohBridge
     void publishNowPlaying(const NowPlaying& np);
     void publishCall(const CallState& call);
     void publishTime(const PhoneTime& time);
+    void publishPhone(const PhoneStatus& phone);
     // One occurrence, on <prefix>/ui_event. Safe from any thread; never blocks
     // for long, so the event-channel thread may call it.
     void publishUiEvent(UiEventKind kind, const std::string& detail = {});
@@ -291,6 +304,7 @@ class ZenohBridge
     pub_sub::ZenohPublisher<CarPlayNowPlaying> nowplaying_pub_;
     pub_sub::ZenohPublisher<CarPlayCall> call_pub_;
     pub_sub::ZenohPublisher<CarPlayTime> time_pub_;
+    pub_sub::ZenohPublisher<CarPlayPhone> phone_pub_;
     pub_sub::ZenohPublisher<CarPlayUiEvent> ui_event_pub_;
 
     // Declared once, in the constructor, and dispatched through the slots

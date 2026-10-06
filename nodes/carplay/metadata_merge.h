@@ -75,6 +75,38 @@ inline void mergeNowPlaying(NowPlaying& np, const iap2::NowPlaying& update)
     }
 }
 
+// The phone's battery and charging state, from a partial PowerUpdate. The
+// charge level is a fraction of 65535.
+inline void mergePower(PhoneStatus& phone, const iap2::PowerState& update)
+{
+    if (update.battery_charge_level)
+    {
+        phone.battery_percent = static_cast<float>(*update.battery_charge_level) * 100.0f / 65535.0f;
+    }
+    if (update.battery_charging_state)
+    {
+        constexpr uint8_t kCharging = 1;  // 0 disabled, 1 charging, 2 charged
+        phone.charging = *update.battery_charging_state == kCharging;
+    }
+}
+
+// Its signal, carrier and airplane mode, from a partial CommunicationsUpdate.
+inline void mergeCommunications(PhoneStatus& phone, const iap2::CellularState& update)
+{
+    if (update.signal_strength)
+    {
+        phone.signal_bars = update.signal_strength;
+    }
+    if (update.carrier_name)
+    {
+        phone.carrier_name = *update.carrier_name;
+    }
+    if (update.airplane_mode)
+    {
+        phone.airplane_mode = update.airplane_mode;
+    }
+}
+
 }  // namespace carplay
 
 #endif  // CARPLAY_METADATA_MERGE_H_

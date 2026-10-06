@@ -498,6 +498,26 @@ bool runIap2Session(apple_usb::CarkitChannel& channel, const Iap2SessionOptions&
                 break;
             }
 
+            case iap2::kMsgPowerUpdate:
+            {
+                if (const auto power = iap2::decodePowerUpdate(message->params);
+                    power && options.power_handler)
+                {
+                    options.power_handler(*power);
+                }
+                break;
+            }
+
+            case iap2::kMsgCommunicationsUpdate:
+            {
+                if (const auto comms = iap2::decodeCommunicationsUpdate(message->params);
+                    comms && options.communications_handler)
+                {
+                    options.communications_handler(*comms);
+                }
+                break;
+            }
+
             case iap2::kMsgDeviceTimeUpdate:
             {
                 const auto time = iap2::decodeDeviceTimeUpdate(message->params);

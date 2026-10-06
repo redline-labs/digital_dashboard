@@ -1055,6 +1055,10 @@ std::vector<std::vector<uint8_t>> encodeAfterAuthentication(uint16_t available_c
         encodeStartNowPlayingUpdates(),
         encodeStartRouteGuidanceUpdates(),
         encodeStartCallStateUpdates(),
+        // Advertised in identification as messages we send; asking is what
+        // makes the phone report its battery, charging, signal and carrier.
+        encodeStartPowerUpdates(),
+        encodeStartCommunicationsUpdates(),
         encodePowerSourceUpdate(available_current_ma, true),
     };
 }
@@ -1103,6 +1107,7 @@ std::vector<uint8_t> encodeStartCommunicationsUpdates()
 {
     csm::ParamList params;
     csm::addNone(params, kCommSignalStrength);
+    csm::addNone(params, kCommAirplaneMode);
     csm::addNone(params, kCommCarrierName);
     csm::addNone(params, kCommCellularSupported);
     return csm::encodeMessage(kMsgStartCommunicationsUpdates, params);

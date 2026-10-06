@@ -1131,6 +1131,9 @@ void testCallAndPower()
         }
         expect(std::find(ids.begin(), ids.end(), iap2::kMsgPowerSourceUpdate) != ids.end(),
                "a PowerSourceUpdate goes out after authentication");
+        expect(std::find(ids.begin(), ids.end(), iap2::kMsgStartPowerUpdates) != ids.end() &&
+                   std::find(ids.begin(), ids.end(), iap2::kMsgStartCommunicationsUpdates) != ids.end(),
+               "and the power and communications subscriptions identification promised");
         expect(std::find(ids.begin(), ids.end(), iap2::kMsgStartNowPlayingUpdates) != ids.end() &&
                    std::find(ids.begin(), ids.end(), iap2::kMsgStartRouteGuidanceUpdates) != ids.end() &&
                    std::find(ids.begin(), ids.end(), iap2::kMsgStartCallStateUpdates) != ids.end(),
@@ -1181,7 +1184,8 @@ void testSubscriptionMessages()
     expect(calls && calls->params.size() == 6, "we subscribe to the six call state fields LIVI asks for");
 
     const auto comms = iap2::csm::parseMessage(iap2::encodeStartCommunicationsUpdates());
-    expect(comms && comms->params.size() == 3, "we subscribe to signal, carrier and cellular support");
+    expect(comms && comms->params.size() == 4 && iap2::csm::has(comms->params, 2),
+           "we subscribe to signal, airplane mode, carrier and cellular support");
 
     const auto guidance = iap2::csm::parseMessage(iap2::encodeStartRouteGuidanceUpdates());
     expect(guidance && guidance->params.empty(),

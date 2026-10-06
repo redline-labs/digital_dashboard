@@ -2101,13 +2101,14 @@ wired path at all, so a second untested variant of it is not worth having.
 `disableAudioOutput`: LIVI can mask the audio feature bits to advertise a head
 unit with no audio, which is not a configuration this vehicle wants. A playback
 anchor in `POST /feedback`, which we cannot produce honestly because playback
-happens on the far side of zenoh. And `encodePowerUpdate` /
-`encodeCommunicationsUpdate`, written and tested in `libs/iap2`, never called;
-unlike vehicle status these are not advertised and the phone has never asked for
-them across every session logged, so they are dead code for an unrequested
-feature rather than a broken promise, left in place because the encoding is the
-hard part and it is done. HEVC was on this list and is done and
-hardware-verified (2026-08-02).
+happens on the far side of zenoh. HEVC was on this list and is done and
+hardware-verified (2026-08-02). So, since 2026-10-05, are the power and
+communications subscriptions: identification had always listed
+`StartPowerUpdates` and `StartCommunicationsUpdates` among the messages we
+send, and nothing sent them. They now go out after authentication, with the
+`PowerSourceUpdate` the advertised power capability promises, and the phone's
+battery, charging state, signal and carrier are published on
+`nodes/carplay/phone`. None of the three has been checked against a phone.
 
 ## Where the code lives
 
