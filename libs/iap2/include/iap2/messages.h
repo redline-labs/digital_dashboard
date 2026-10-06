@@ -202,6 +202,13 @@ struct IdentificationConfig
     bool include_vehicle_status = true;
     bool include_location_information = true;
     bool include_route_guidance_display = true;
+
+    // RouteGuidanceDisplayComponent capacities: the longest road, destination
+    // and maneuver text we show, and how many maneuvers we keep ahead of the
+    // current one. 0 asks for the current maneuver as it comes rather than a
+    // list stored in advance, which is what NavGuidance folds.
+    uint16_t route_guidance_max_text_length = 128;
+    uint16_t route_guidance_maneuver_capacity = 0;
 };
 
 std::vector<uint8_t> encodeIdentificationInformation(const IdentificationConfig& config);

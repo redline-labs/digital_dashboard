@@ -710,6 +710,19 @@ void testIdentification()
                "supports_car_play is a none-like flag");
     }
 
+    // The route guidance component declares what it can show; without the
+    // capacities the phone does not send the per-maneuver updates.
+    const auto guidance = iap2::csm::getGroup(params, 30);
+    expect(guidance.has_value(), "identification advertises a RouteGuidanceDisplayComponent");
+    if (guidance)
+    {
+        expect(iap2::csm::getU16(*guidance, 2) == 128, "max current road name length");
+        expect(iap2::csm::getU16(*guidance, 3) == 128, "max destination name length");
+        expect(iap2::csm::getU16(*guidance, 4) == 128, "max after-maneuver road name length");
+        expect(iap2::csm::getU16(*guidance, 5) == 128, "max maneuver description length");
+        expect(iap2::csm::getU16(*guidance, 6) == 0, "maneuver storage capacity");
+    }
+
     // The message id lists.
     const auto sent_blob = iap2::csm::getBytes(params, 6);
     const auto received_blob = iap2::csm::getBytes(params, 7);

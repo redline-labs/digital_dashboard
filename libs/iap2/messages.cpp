@@ -88,6 +88,11 @@ constexpr uint16_t kVehicleStatusRange = 3;
 constexpr uint16_t kVehicleStatusOutsideTemperature = 4;
 constexpr uint16_t kLocationGpsFixData = 17;
 constexpr uint16_t kLocationRecommendedMinimum = 18;
+constexpr uint16_t kRouteGuidanceMaxCurrentRoadNameLength = 2;
+constexpr uint16_t kRouteGuidanceMaxDestinationNameLength = 3;
+constexpr uint16_t kRouteGuidanceMaxAfterManeuverRoadNameLength = 4;
+constexpr uint16_t kRouteGuidanceMaxManeuverDescriptionLength = 5;
+constexpr uint16_t kRouteGuidanceMaxManeuverStorageCapacity = 6;
 
 // ExternalAccessoryProtocol sub-parameters.
 constexpr uint16_t kEaProtocolId = 0;
@@ -395,9 +400,23 @@ std::vector<uint8_t> encodeIdentificationInformation(const IdentificationConfig&
 
     if (config.include_route_guidance_display)
     {
+        // A component that declares no text capacity gives the phone nothing to
+        // size maneuver updates against. With only an id and a name, no
+        // RouteGuidanceManeuverUpdate -- maneuver type, angle, junction, the
+        // road after the turn -- has ever been seen to arrive here.
         csm::ParamList component;
         csm::addU16(component, kComponentId, 0);
         csm::addString(component, kComponentName, config.name);
+        csm::addU16(component, kRouteGuidanceMaxCurrentRoadNameLength,
+                    config.route_guidance_max_text_length);
+        csm::addU16(component, kRouteGuidanceMaxDestinationNameLength,
+                    config.route_guidance_max_text_length);
+        csm::addU16(component, kRouteGuidanceMaxAfterManeuverRoadNameLength,
+                    config.route_guidance_max_text_length);
+        csm::addU16(component, kRouteGuidanceMaxManeuverDescriptionLength,
+                    config.route_guidance_max_text_length);
+        csm::addU16(component, kRouteGuidanceMaxManeuverStorageCapacity,
+                    config.route_guidance_maneuver_capacity);
         csm::addGroup(params, kIdRouteGuidanceDisplayComponent, component);
     }
 
