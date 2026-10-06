@@ -152,7 +152,7 @@ the display geometry, or an odd width or height. The values worth setting rather
 | `vehicle.right_hand_drive` | CarPlay mirrors its own layout for it |
 | `vehicle.engine_type` | gas, diesel, electric or cng; affects what the phone offers |
 | `vehicle.serial_number` | how the phone tells two units apart |
-| `display.physical_width_mm` | CarPlay sizes text and touch targets from it |
+| `display.physical_width_mm` | CarPlay sizes text and touch targets from it. The width of the area the picture fills -- the widget on the panel, not the whole panel, unless it fills it |
 | `device_id` | give each unit its own if you run more than one |
 | `power.available_current_ma` | the current the phone is told it may draw, sent once it has authenticated us. 500 by default, the most any USB 2.0 port supplies; raise it only for a port that delivers more, up to 2400 |
 

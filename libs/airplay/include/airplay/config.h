@@ -58,10 +58,11 @@ struct ReceiverConfig
     // often, so the rate is a floor on how soon a touch can show on screen.
     uint32_t fps = 60;
 
-    // The panel's physical width in millimetres; the height is derived from it
-    // and the pixel aspect ratio. CarPlay sizes text and touch targets from
-    // this, so a wrong value gives a UI that is legible on a desk and not in a
-    // car.
+    // The physical width, in millimetres, of what CarPlay is drawn on: the
+    // area the picture fills, which is the whole panel only when it fills the
+    // panel. The height is derived from it and the pixel aspect ratio. CarPlay
+    // sizes text and touch targets from this, so a wrong value gives a UI that
+    // is legible on a desk and not in a car.
     uint32_t physical_width_mm = 200;
 
     // Which side the driver sits on. CarPlay mirrors its own layout for it.

@@ -70,9 +70,11 @@ display:
   # at 30 against 17 at 60.
   fps: 60
 
-  # Physical width in millimetres; the height follows from the pixel aspect
-  # ratio. CarPlay sizes text and touch targets from this, so a wrong value
-  # gives a UI that is legible on a desk and not at arm's length in a car.
+  # Physical width in millimetres of the area the CarPlay picture fills: the
+  # widget's width on the panel, not the panel's, unless the picture fills it.
+  # The height follows from the pixel aspect ratio. CarPlay sizes text and
+  # touch targets from this, so a wrong value gives a UI that is legible on a
+  # desk and not at arm's length in a car.
   physical_width_mm: 159
 
   # Which input CarPlay lays its own UI out for: "touch" or "knob". A

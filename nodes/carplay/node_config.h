@@ -66,10 +66,12 @@ struct DisplayConfig
     uint32_t height_px = 600;
     uint32_t fps = 60;  // see airplay::ReceiverConfig::fps
 
-    // The panel's physical width in millimetres. The height is derived from it
-    // and the pixel aspect ratio, so only one is needed. CarPlay uses this to
-    // size text and touch targets to something the hand actually meets --
-    // getting it wrong gives a UI that is legible on a desk and not in a car.
+    // The physical width in millimetres of the area the CarPlay picture fills
+    // -- the widget, in a layout, not the whole panel. The height is derived
+    // from it and the pixel aspect ratio, so only one is needed. CarPlay uses
+    // this to size text and touch targets to something the hand actually
+    // meets: given the panel's width for a picture that fills a third of it,
+    // everything comes out a third the size.
     uint32_t physical_width_mm = 200;
 
     // Which input CarPlay lays its own UI out for. Both the touchscreen and the
