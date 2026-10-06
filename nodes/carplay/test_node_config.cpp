@@ -346,6 +346,14 @@ int main()
             expect(!loadNodeConfig(zero.string(), rejected),
                    std::string("a zero ") + key + " is rejected");
         }
+        for (const char* key : {"width_px", "height_px"})
+        {
+            const fs::path odd = dir / "odd.yaml";
+            writeFile(odd, std::string("display:\n  ") + key + ": 1279\n");
+            NodeConfig rejected;
+            expect(!loadNodeConfig(odd.string(), rejected),
+                   std::string("an odd ") + key + " is rejected: 4:2:0 video cannot be that size");
+        }
     }
 
     // An empty language list would leave the phone nothing to pick.

@@ -145,7 +145,7 @@ drop-in; the flag is for a bench. Leave both unset on a desktop with the bridge.
 `oem_button:` tile, `screen_handover:`, and `power:`. The phone records some of the identity against the pairing,
 so change it before pairing a phone you care about. Enumerated keys are closed
 sets and a typo stops the node rather than taking a default; so does a zero in
-the display geometry. The values worth setting rather than leaving:
+the display geometry, or an odd width or height. The values worth setting rather than leaving:
 
 | Key | Why |
 |---|---|

@@ -241,6 +241,15 @@ bool loadNodeConfig(const std::string& path, NodeConfig& out)
                              "must all be non-zero");
                 return false;
             }
+            // The phone encodes 4:2:0, which halves both dimensions for chroma:
+            // an odd size is not a frame it can send, and what it does instead
+            // is its own business.
+            if (out_display.width_px % 2 != 0 || out_display.height_px % 2 != 0)
+            {
+                SPDLOG_ERROR("[node] display width_px and height_px must be even, not {}x{}",
+                             out_display.width_px, out_display.height_px);
+                return false;
+            }
         }
         if (const YAML::Node handover = root["screen_handover"])
         {
