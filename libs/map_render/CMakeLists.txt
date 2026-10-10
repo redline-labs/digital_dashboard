@@ -88,6 +88,7 @@ add_library(${MAP_RENDER_LIB} STATIC
     src/tessellator.cpp
     src/tile_cache.cpp
     src/tile_workers.cpp
+    src/viewport.cpp
     ${MAP_VERT_HEADER}
     ${MAP_FRAG_HEADER}
     ${MAP_HIGHLIGHT_VERT_HEADER}
@@ -187,6 +188,25 @@ target_link_libraries(map_test_projection
 )
 
 add_project_test(TARGET map_test_projection LABELS map unit)
+
+# The camera policy both map surfaces share: what the centre is, how a drag and
+# a zoom move it, and when follow is suspended. Qt-free, so the rules are pinned
+# without a widget.
+add_executable(map_test_viewport
+    tests/test_viewport.cpp
+    src/viewport.cpp
+    src/projection.cpp
+)
+
+target_include_directories(map_test_viewport PRIVATE include)
+
+target_link_libraries(map_test_viewport
+    PRIVATE
+        reflection
+        spdlog::spdlog
+)
+
+add_project_test(TARGET map_test_viewport LABELS map unit)
 
 # The tessellator: vector tiles to triangles. Qt-free, so it runs with no
 # display and no GPU -- which matters, because this is where the geometry is

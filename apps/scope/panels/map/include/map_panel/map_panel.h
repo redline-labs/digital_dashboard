@@ -23,6 +23,7 @@
 #include "map_surface/map_surface.h"
 #include "map_render/labels.h"
 #include "map_render/projection.h"
+#include "map_render/viewport.h"
 
 #include <QString>
 
@@ -127,12 +128,9 @@ class MapPanel : public Panel
     void zoomStep(double levels);
     MapPanelOrientation_t effectiveOrientation() const
     {
-        return orientation_override_.value_or(cfg_.orientation);
+        return viewport_.trackUp() ? MapPanelOrientation_t::course_up : MapPanelOrientation_t::north_up;
     }
-    MapViewMode_t effectiveViewMode() const
-    {
-        return view_override_.value_or(cfg_.view_mode);
-    }
+    MapViewMode_t effectiveViewMode() const { return viewport_.viewMode(); }
     // Drop the pan and the wheel zoom and go back to Follow Cursor -- the way
     // back that the panel never had; see stats().camera_moved.
     void recentreCamera();
@@ -301,10 +299,11 @@ class MapPanel : public Panel
     std::vector<map_render::LabelTile> label_tiles_;
     std::vector<map_render::TextQuad> text_quads_;
 
-    // Where a drag put the camera, if anywhere. Empty means Follow Cursor or
-    // the configured centre decides -- see camera().
-    std::optional<map_render::Coordinate> drag_centre_;
-    std::optional<double> drag_zoom_;
+    // Where the map looks -- the policy shared with the dashboard's map widget.
+    // Its target is the marker under the cursor and its track bearing the
+    // course there, both set each paint before the camera is built. A drag
+    // suspends Follow Cursor; a zoom does not.
+    map_render::Viewport viewport_;
 
     // Mid-gesture state. A press either grabs the TRACK (scrubbing the shared
     // time base) or the MAP (panning), decided once at press time and not
@@ -327,19 +326,6 @@ class MapPanel : public Panel
     double marker_t_ = 0.0;
     map_render::Coordinate marker_coordinate_;
 
-    // Course over ground at the marker, smoothed over its neighbours --
-    // computed beside the marker each paint, consumed by camera() when the
-    // orientation is course_up. Empty when the track is too short to say.
-    std::optional<double> course_deg_;
-
-    // The mode toggles, mirroring drag_centre_/drag_zoom_ above: empty means
-    // "as configured", set means a button was pressed this session. Never
-    // written to cfg_ -- a view button must not edit the workspace.
-    std::optional<MapPanelOrientation_t> orientation_override_;
-    std::optional<MapViewMode_t> view_override_;
-    // The compass drag's spin; beats the configured bearing while set,
-    // cleared by a compass click. A drag forces north_up on its way in.
-    std::optional<double> bearing_override_;
 
     // Null unless the panel is interactive. Corner chrome, top-right --
     // paintLegend owns the bottom-right.

@@ -157,12 +157,36 @@ const PositionSchema* positionSchemaFor(pub_sub::schema_type_t schema)
     return nullptr;
 }
 
+map_render::Viewport::Settings viewportSettings(const MapPanelConfig_t& cfg)
+{
+    map_render::Viewport::Settings settings;
+    settings.center = map_render::Coordinate{cfg.center_latitude, cfg.center_longitude};
+    settings.zoom = cfg.zoom;
+    settings.bearing = cfg.bearing;
+    settings.pitch = cfg.pitch;
+    settings.min_zoom = static_cast<double>(cfg.min_zoom);
+    settings.max_zoom = static_cast<double>(cfg.max_zoom);
+    settings.follow = cfg.follow_cursor;
+    switch (cfg.orientation)
+    {
+    case MapPanelOrientation_t::north_up:
+        settings.track_up = false;
+        break;
+    case MapPanelOrientation_t::course_up:
+        settings.track_up = true;
+        break;
+    }
+    settings.view_mode = cfg.view_mode;
+    return settings;
+}
+
 }  // namespace
 
 MapPanel::MapPanel(const config_t& cfg, DataSource& source, double history_seconds,
                    QWidget* parent)
     : Panel(parent), cfg_(cfg), source_(&source), history_seconds_(history_seconds)
 {
+    viewport_.setSettings(viewportSettings(cfg_));
     setMinimumSize(120, 90);
     setMouseTracking(false);
 
@@ -530,8 +554,7 @@ void MapPanel::rebindTo(DataSource& source)
     rebindAll();
     // A new source is a new clock, so where the camera was told to look no
     // longer follows from where it was looking.
-    drag_centre_.reset();
-    drag_zoom_.reset();
+    viewport_.forgetUserCamera();
     update();
 }
 
@@ -545,6 +568,7 @@ void MapPanel::applyConfig(const config_t& cfg)
     const config_t previous = cfg_;
     cfg_ = cfg;
     (void)config_codec::applyLimits(cfg_);
+    viewport_.setSettings(viewportSettings(cfg_));
 
     // Only rebind the roles whose SIGNAL changed. A colour, a width or a title
     // must not cost a binding its history.
@@ -758,87 +782,41 @@ void MapPanel::rebuildTrack()
 
 map_render::Camera MapPanel::camera() const
 {
-    map_render::Camera out;
-    out.zoom = drag_zoom_.value_or(cfg_.zoom);
-    // The modes, not the raw config: the buttons override for the session.
-    // Orientation is independent of the centre on purpose -- panning away
-    // does not straighten the map, and recentring does not turn it.
-    out.bearing = (effectiveOrientation() == MapPanelOrientation_t::course_up &&
-                   course_deg_.has_value())
-                      ? *course_deg_
-                      : bearing_override_.value_or(cfg_.bearing);
-    out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? cfg_.pitch : 0.0;
-
-    if (drag_centre_.has_value())
-    {
-        out.center = *drag_centre_;
-        return out;
-    }
-
-    if (cfg_.follow_cursor && marker_valid_)
-    {
-        out.center = marker_coordinate_;
-        return out;
-    }
-
-    out.center = map_render::Coordinate{cfg_.center_latitude, cfg_.center_longitude};
-    return out;
+    return viewport_.camera();
 }
 
 void MapPanel::cycleOrientation()
 {
-    // Straighten first -- see the header. One click un-spins a manually
-    // rotated map; only the next click changes mode.
-    if (bearing_override_.has_value())
-    {
-        bearing_override_.reset();
-        update();
-        return;
-    }
-
-    orientation_override_ = effectiveOrientation() == MapPanelOrientation_t::north_up
-                                ? MapPanelOrientation_t::course_up
-                                : MapPanelOrientation_t::north_up;
+    viewport_.cycleOrientation();
     update();
 }
 
 void MapPanel::setManualBearing(double degrees)
 {
-    // Grabbing the needle IS taking manual control, whatever was driving the
-    // bearing before.
-    orientation_override_ = MapPanelOrientation_t::north_up;
-    bearing_override_ = degrees;
+    viewport_.setManualBearing(degrees);
     update();
 }
 
 void MapPanel::zoomStep(double levels)
 {
-    // The wheel's semantics, anchored on the centre: zooming about the
-    // middle moves no world point on screen, but it still sets drag_zoom_
-    // and so, like the wheel here, breaks Follow Cursor -- recentre undoes
-    // both together.
-    const map_render::Camera current = camera();
-    drag_zoom_ = std::clamp(current.zoom + levels, double(cfg_.min_zoom),
-                            double(cfg_.max_zoom));
+    // About the centre. While following that keeps following, and otherwise it
+    // keeps the centre where the user put it.
+    viewport_.zoomAbout(viewport_.camera().zoom + levels,
+                        map_render::ScreenPoint{width() / 2.0, height() / 2.0}, width(), height(),
+                        devicePixelRatioF());
     layOutMapButtons();
     update();
 }
 
 void MapPanel::toggleViewMode()
 {
-    view_override_ = effectiveViewMode() == MapViewMode_t::top_down
-                         ? MapViewMode_t::perspective
-                         : MapViewMode_t::top_down;
+    viewport_.toggleViewMode();
     update();
 }
 
 void MapPanel::recentreCamera()
 {
-    // Both, deliberately: in this panel the wheel breaks Follow Cursor too
-    // (unlike the dashboard widget), so coming back means coming all the way
-    // back to the configured zoom as well.
-    drag_centre_.reset();
-    drag_zoom_.reset();
+    viewport_.recentre();
     layOutMapButtons();
     update();
 }
@@ -857,8 +835,7 @@ void MapPanel::layOutMapButtons()
     // Top-right: the legend owns the bottom-right corner. The recentre button
     // appears only once the camera has been moved -- a button that is always
     // there is a button that is usually a lie.
-    recentre_->setVisible(room &&
-                          (drag_centre_.has_value() || drag_zoom_.has_value()));
+    recentre_->setVisible(room && viewport_.moved());
     compass_->setVisible(room);
     view_mode_->setVisible(room);
     zoom_in_->setVisible(room);
@@ -1042,7 +1019,7 @@ void MapPanel::paintEvent(QPaintEvent* /*event*/)
     // Cursor makes the camera depend on it.
     marker_t_ = readoutTime();
     marker_valid_ = false;
-    course_deg_.reset();
+    std::optional<double> course_deg;
     if (const std::optional<std::size_t> index = track::at(track_, marker_t_))
     {
         marker_valid_ = true;
@@ -1062,10 +1039,13 @@ void MapPanel::paintEvent(QPaintEvent* /*event*/)
             const double dy = to.y - from.y;
             if (dx != 0.0 || dy != 0.0)
             {
-                course_deg_ = std::atan2(dx, -dy) * 180.0 / std::numbers::pi;
+                course_deg = std::atan2(dx, -dy) * 180.0 / std::numbers::pi;
             }
         }
     }
+    viewport_.setTarget(marker_valid_ ? std::optional<map_render::Coordinate>(marker_coordinate_)
+                                      : std::nullopt);
+    viewport_.setTrackBearing(course_deg);
 
     const map_render::Projection projection(camera(), width(), height(),
                                             devicePixelRatioF());
@@ -1461,16 +1441,7 @@ void MapPanel::mouseMoveEvent(QMouseEvent* event)
 
     // Anchored rather than approximate: the world point grabbed at press time
     // is put back under the pointer, which is what keeps a drag from sliding.
-    // In world units, so it stays correct under rotation.
-    const map_render::Projection projection(camera(), width(), height(), devicePixelRatioF());
-    const map_render::WorldPoint now = projection.worldForScreen(screen);
-    const map_render::Camera current = projection.camera();
-    const map_render::WorldPoint centre = map_render::worldFor(current.center);
-
-    const map_render::WorldPoint moved{centre.x - (now.x - press_world_.x),
-                                       centre.y - (now.y - press_world_.y)};
-    drag_centre_ = map_render::coordinateFor(moved);
-    drag_zoom_ = current.zoom;
+    viewport_.moveSoThat(press_world_, screen, width(), height(), devicePixelRatioF());
     // The recentre button appears the moment there is something to undo --
     // from the gesture, not the next paint, which an unmapped panel never gets.
     layOutMapButtons();
@@ -1497,25 +1468,12 @@ void MapPanel::wheelEvent(QWheelEvent* event)
         return;
     }
 
-    const map_render::Projection projection(camera(), width(), height(), devicePixelRatioF());
-    const map_render::ScreenPoint screen{event->position().x(), event->position().y()};
-    // The point under the pointer, kept there while the scale changes.
-    const map_render::WorldPoint anchor = projection.worldForScreen(screen);
-
-    const map_render::Camera current = projection.camera();
-    const double zoom = std::clamp(current.zoom + (notches * kZoomPerWheelNotch),
-                                   double(cfg_.min_zoom), double(cfg_.max_zoom));
-
-    map_render::Camera zoomed = current;
-    zoomed.zoom = zoom;
-    const map_render::Projection after(zoomed, width(), height(), devicePixelRatioF());
-    const map_render::WorldPoint moved_anchor = after.worldForScreen(screen);
-    const map_render::WorldPoint centre = map_render::worldFor(current.center);
-
-    drag_centre_ = map_render::coordinateFor(
-        map_render::WorldPoint{centre.x - (moved_anchor.x - anchor.x),
-                               centre.y - (moved_anchor.y - anchor.y)});
-    drag_zoom_ = zoom;
+    // About the pointer, keeping the point under it where it is -- unless
+    // the map is following the cursor, where it zooms about the centre and
+    // keeps following.
+    viewport_.zoomAbout(viewport_.camera().zoom + (notches * kZoomPerWheelNotch),
+                        map_render::ScreenPoint{event->position().x(), event->position().y()},
+                        width(), height(), devicePixelRatioF());
     layOutMapButtons();
     update();
 }
@@ -1569,7 +1527,7 @@ MapPanelStats_t MapPanel::stats() const
     out.camera_zoom = cam.zoom;
     out.camera_bearing = cam.bearing;
     out.camera_pitch = cam.pitch;
-    out.camera_moved = drag_centre_.has_value();
+    out.camera_moved = viewport_.moved();
 
     for (const auto& reader : readers_)
     {

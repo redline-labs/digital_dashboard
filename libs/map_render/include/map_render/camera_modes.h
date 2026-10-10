@@ -3,12 +3,12 @@
 // The camera modes both map surfaces share.
 //
 // One enum, here rather than in either widget's config, because the dashboard
-// map widget and the scope map panel are deliberately separate implementations
-// that share exactly the rendering -- and a mode that changes what the
-// renderer is asked to draw belongs on the shared side of that line.
-// Orientation modes are NOT here: what "heading up" means differs per surface
-// (the vehicle's live heading on the dashboard, the track's course under the
-// cursor in scope), so each declares its own.
+// map widget and the scope map panel share the rendering and the camera policy
+// (map_render::Viewport) -- and a mode that changes what the renderer is asked
+// to draw belongs on the shared side of that line. Orientation modes are NOT
+// here: what "heading up" means differs per surface (the vehicle's live heading
+// on the dashboard, the track's course under the cursor in scope), so each
+// declares its own and hands the Viewport a bearing.
 #ifndef MAP_CAMERA_MODES_H
 #define MAP_CAMERA_MODES_H
 

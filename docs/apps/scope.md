@@ -362,7 +362,10 @@ instant by the table's rule. Clicking within `click_radius_px` of the track
 moves the shared cursor to the nearest track point, so every plot, table and
 video frame jumps to that corner, and seeks if the point is outside the
 current view; clicks away from the track pan the map. `Follow Cursor` keeps the
-camera on the marker, and a manual pan or zoom overrides it for the session.
+camera on the marker. A pan suspends it until you press recentre, which keeps
+your zoom; zooming while following zooms about the marker and keeps following.
+The dashboard's map widget behaves the same way, because the two share one
+camera policy (`map_render::Viewport`).
 
 Bind a third signal and the trail takes a colour ramp along its length:
 `viridis` by default (perceptually uniform, colour-blind safe, dark at the low

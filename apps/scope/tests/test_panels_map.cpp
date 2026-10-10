@@ -287,8 +287,9 @@ void testRecentreRestoresFollowCursor()
     expect(recentre->isHidden(), "and the button hides again");
 }
 
-// The zoom pair steps the panel's camera like the wheel does -- including
-// breaking Follow Cursor, which recentre then undoes together with the pan.
+// The zoom pair steps the panel's camera. Following the cursor, it zooms about
+// the centre and keeps following -- the dashboard map's rule, from the camera
+// policy the two share -- and recentre after a pan leaves the zoom alone.
 void testTheZoomButtonsStepThePanelCamera()
 {
     StubSource source;
@@ -310,12 +311,53 @@ void testTheZoomButtonsStepThePanelCamera()
     zoomIn->click();
     expect(std::abs(panel.stats().camera_zoom - 13.0) < 1e-9,
            "one press of plus zooms a level");
-    expect(!recentre->isHidden(),
-           "and, wheel-like, it suspends Follow Cursor so recentre appears");
+    expect(!panel.stats().camera_moved && recentre->isHidden(),
+           "and does not suspend Follow Cursor, so there is nothing to recentre");
+
+    const auto mouse = [&](QEvent::Type type, QPointF at) {
+        QMouseEvent event(type, at, panel.mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(&panel, &event);
+    };
+    mouse(QEvent::MouseButtonPress, QPointF(150, 100));
+    mouse(QEvent::MouseMove, QPointF(170, 120));
+    mouse(QEvent::MouseButtonRelease, QPointF(170, 120));
+    zoomIn->click();
+    expect(std::abs(panel.stats().camera_zoom - 14.0) < 1e-9, "after a pan plus still zooms");
+    expect(!recentre->isHidden(), "and the pan left something to recentre");
 
     recentre->click();
-    expect(std::abs(panel.stats().camera_zoom - 12.0) < 1e-9,
-           "recentre restores the configured zoom");
+    expect(!panel.stats().camera_moved, "recentre restores Follow Cursor");
+    expect(std::abs(panel.stats().camera_zoom - 14.0) < 1e-9, "and keeps the zoom the user chose");
+}
+
+// A drag far past the top of the world stops at the Mercator limit. The
+// panel's own copy of the pan wrote whatever coordinate the drag produced.
+void testADragPastThePoleStopsThere()
+{
+    StubSource source;
+    MapPanelConfig_t cfg;
+    cfg.zoom = 2.0;
+    cfg.min_zoom = 0;
+    scope::MapPanel panel(cfg, source);
+    panel.resize(300, 200);
+    panel.show();
+    panel.repaint();
+
+    const auto mouse = [&](QEvent::Type type, QPointF at) {
+        QMouseEvent event(type, at, panel.mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(&panel, &event);
+    };
+    mouse(QEvent::MouseButtonPress, QPointF(150, 20));
+    mouse(QEvent::MouseMove, QPointF(150, 5000));
+    mouse(QEvent::MouseButtonRelease, QPointF(150, 5000));
+    const double latitude = panel.stats().camera_latitude;
+    expect(latitude <= 85.06 && latitude >= -85.06, "a drag past the pole stops at the Mercator limit");
 }
 
 // Compass drag and straighten-first click, panel edition.
@@ -360,6 +402,7 @@ void runMapPanelTests()
     testTheCameraModesAreSessionOverrides();
     testRecentreRestoresFollowCursor();
     testTheZoomButtonsStepThePanelCamera();
+    testADragPastThePoleStopsThere();
     testTheCompassSpinAndStraightenOnThePanel();
 }
 

@@ -35,6 +35,7 @@ costs, is in [Map renderer](../design/map-renderer.html).
 |---|---|
 | `projection.h` | Web Mercator, `Camera` (centre, zoom, bearing, pitch up to `kMaxPitch = 60`), `TileId`, visible-tile walks, stand-in substitution, `kMaxSubstituteLevelsUp` |
 | `camera_modes.h` | `MapViewMode_t` (`top_down`, `perspective`), shared by both surfaces; orientation modes are per surface and not here |
+| `viewport.h` | `Viewport`: the camera policy both surfaces share -- user centre over followed target over configured centre, drag and zoom anchoring, clamping, the mode buttons, recentre. No Qt and no clock; eases are the host's |
 | `style.h` | `MapStyle_t`, `MapWidths_t`, `MapDetail_t`: the reflected style struct and its `validate()` |
 | `tessellator.h` | Vector tile to triangles in tile-local coordinates, once per tile; earcut polygons with holes, mitre-joined lines, `roadPriority()` |
 | `map_pass.h` | The GPU pass: every resource and draw call, no target; `kMaxTilesPerFrame`, `Stats` |
@@ -183,7 +184,9 @@ dashboard or editor, which link `Qt6::Sql`.
 Each unit test compiles the translation unit it is about rather than linking
 the library, so it proves the dependency set its comment claims.
 `map_test_projection` pins the Mercator anchors, rotation, the date line, the
-stand-in walk and the tile budget with no Qt; `map_test_tessellator` the
+stand-in walk and the tile budget with no Qt; `map_test_viewport` the camera
+policy: a drag keeps the grabbed point under the pointer and stops at the pole,
+a zoom while following keeps following, recentre keeps the zoom; `map_test_tessellator` the
 triangles, joins and `roadPriority()`; `map_test_tile_cache` the eviction
 policy with QtCore only; `map_test_tile_workers` the pool;
 `map_test_buffer_arena` the suballocator. `map_test_gpu` (label `gui`) renders

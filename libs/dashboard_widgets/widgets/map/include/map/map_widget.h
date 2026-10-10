@@ -53,6 +53,7 @@
 #include "map_render/labels.h"
 #include "map_render/map_pass.h"
 #include "map_render/projection.h"
+#include "map_render/viewport.h"
 #include "map_surface/map_surface.h"
 #include "map_controls/compass_button.h"
 #include "map_controls/recentre_button.h"
@@ -150,15 +151,12 @@ class MapWidget : public QWidget
     // session. Forces north-up -- grabbing the needle IS taking manual
     // control, whatever mode was driving the bearing before.
     void setManualBearing(double degrees);
-    std::optional<double> manualBearing() const { return mBearingOverride; }
+    std::optional<double> manualBearing() const { return mViewport.manualBearing(); }
     MapOrientation_t effectiveOrientation() const
     {
-        return mOrientationOverride.value_or(mConfig.orientation);
+        return mViewport.trackUp() ? MapOrientation_t::heading_up : MapOrientation_t::north_up;
     }
-    MapViewMode_t effectiveViewMode() const
-    {
-        return mViewModeOverride.value_or(mConfig.view_mode);
-    }
+    MapViewMode_t effectiveViewMode() const { return mViewport.viewMode(); }
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -276,8 +274,8 @@ class MapWidget : public QWidget
     float tileFadeAlpha(const map_render::TileId& id, std::chrono::steady_clock::time_point now);
 
     // Advance the camera eases to `now`, writing the eased values into the
-    // same mInteractionZoom/mInteractionCentre optionals camera() already
-    // reads -- the precedence rules are untouched. Returns true while an ease
+    // viewport's user zoom and centre, which camera() already reads -- the
+    // precedence rules are untouched. Returns true while an ease
     // is still in flight. Called at the top of paintEvent, so an ease
     // progresses exactly as fast as frames are drawn.
     bool tickAnimations(std::chrono::steady_clock::time_point now);
@@ -367,7 +365,7 @@ class MapWidget : public QWidget
     // A recentre fly-back in flight: the centre glides from where the drag
     // left it toward the LIVE target -- re-read every tick, so a moving
     // vehicle is flown TO, not to where it was when the button was pressed.
-    // While it flies, mInteractionCentre stays set (that is what "following
+    // While it flies, the viewport's user centre stays set (that is what "following
     // suspended" means); landing resets it and normal follow resumes.
     struct RecentreEase
     {
@@ -386,29 +384,12 @@ class MapWidget : public QWidget
     std::optional<double> mLongitude;
     std::optional<double> mHeading;
 
-    // The camera the USER put the map on, which beats both the configured
-    // centre and the vehicle. Two separate optionals rather than one Camera,
-    // because they are suspended independently and only one of them breaks
-    // Follow Vehicle:
-    //
-    //   * A drag sets the centre, and having a centre IS what "following is
-    //     suspended" means. There is no second flag to keep in step with it.
-    //   * The wheel sets only the zoom. Zooming while following the vehicle
-    //     zooms about the CENTRE rather than the pointer, so the vehicle does
-    //     not move on screen and there is no reason to stop tracking it --
-    //     wanting a closer look is not asking to be left behind.
-    std::optional<map_render::Coordinate> mInteractionCentre;
-    std::optional<double> mInteractionZoom;
-
-    // The mode toggles, mirroring the interaction optionals above: empty means
-    // "as configured", set means the user pressed a button this session. Never
-    // written to mConfig -- a view button must not edit the layout.
-    std::optional<MapOrientation_t> mOrientationOverride;
-    std::optional<MapViewMode_t> mViewModeOverride;
-    // The compass drag's spin. Beats the configured bearing while set;
-    // cleared by a compass click. Never consulted in heading-up -- a drag
-    // forces north-up on its way in.
-    std::optional<double> mBearingOverride;
+    // Where the map looks: the configured camera, the vehicle it follows, and
+    // what the user has done to both -- shared with scope's map panel. A drag
+    // suspends follow; a wheel zoom while following does not, because wanting
+    // a closer look is not asking to be left behind. The mode buttons override
+    // for the session and never write to mConfig.
+    map_render::Viewport mViewport;
 
     // The world point grabbed on mouse-down, held for the whole drag. Fixed at
     // press rather than recomputed per move: chasing a delta between successive

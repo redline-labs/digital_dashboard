@@ -97,9 +97,38 @@ double easeProgress(std::chrono::steady_clock::time_point start,
 
 } // namespace
 
+namespace
+{
+
+map_render::Viewport::Settings viewportSettings(const MapWidget::config_t& config)
+{
+    map_render::Viewport::Settings settings;
+    settings.center = map_render::Coordinate { config.center_latitude, config.center_longitude };
+    settings.zoom = config.zoom;
+    settings.bearing = config.bearing;
+    settings.pitch = config.pitch;
+    settings.min_zoom = static_cast<double>(config.min_zoom);
+    settings.max_zoom = static_cast<double>(config.max_zoom);
+    settings.follow = config.follow_vehicle;
+    switch (config.orientation)
+    {
+    case MapOrientation_t::north_up:
+        settings.track_up = false;
+        break;
+    case MapOrientation_t::heading_up:
+        settings.track_up = true;
+        break;
+    }
+    settings.view_mode = config.view_mode;
+    return settings;
+}
+
+} // namespace
+
 MapWidget::MapWidget(const config_t& config, QWidget* parent) :
     QWidget(parent), mConfig(config)
 {
+    mViewport.setSettings(viewportSettings(mConfig));
     setAutoFillBackground(false);
 
     // The map, filling this widget and under everything else in it. It picks
@@ -265,72 +294,24 @@ MapWidget::~MapWidget() = default;
 
 map_render::Camera MapWidget::camera() const
 {
-    map_render::Camera out;
-
-    // Three sources, in this order and not another: where the user dragged to,
-    // then the vehicle if follow is on, then the configured centre -- which is
-    // also what the editor previews. A drag beats Follow Vehicle rather than
-    // fighting it, because the alternative is a map that snaps back on the
-    // next position fix and cannot be looked away from at all.
-    if (mInteractionCentre.has_value())
-    {
-        out.center = *mInteractionCentre;
-    }
-    else if (mConfig.follow_vehicle && hasPosition())
-    {
-        out.center = map_render::Coordinate { *mLatitude, *mLongitude };
-    }
-    else
-    {
-        out.center =
-            map_render::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
-    }
-
-    out.zoom = mInteractionZoom.value_or(mConfig.zoom);
-    // The modes, not the raw config: the buttons override for the session and
-    // the config is only where a layout opens. Orientation is independent of
-    // the centre on purpose -- panning away does not stop the map turning
-    // with the vehicle, and recentring does not straighten it.
-    out.bearing = (effectiveOrientation() == MapOrientation_t::heading_up && mHeading.has_value())
-                      ? *mHeading
-                      : mBearingOverride.value_or(mConfig.bearing);
-    out.pitch = effectiveViewMode() == MapViewMode_t::perspective ? mConfig.pitch : 0.0;
-    return out;
+    return mViewport.camera();
 }
 
 void MapWidget::cycleOrientation()
 {
-    // Straighten first -- see the header. A manually spun map takes one click
-    // to un-spin, and only the next click changes mode.
-    if (mBearingOverride.has_value())
-    {
-        mBearingOverride.reset();
-        update();
-        return;
-    }
-
-    const MapOrientation_t next = effectiveOrientation() == MapOrientation_t::north_up
-                                      ? MapOrientation_t::heading_up
-                                      : MapOrientation_t::north_up;
-    // Stored as an override even when it lands back on the configured mode --
-    // value_or makes that indistinguishable, and clearing it would only save
-    // an optional.
-    mOrientationOverride = next;
+    mViewport.cycleOrientation();
     update();
 }
 
 void MapWidget::setManualBearing(double degrees)
 {
-    mOrientationOverride = MapOrientation_t::north_up;
-    mBearingOverride = degrees;
+    mViewport.setManualBearing(degrees);
     update();
 }
 
 void MapWidget::toggleViewMode()
 {
-    mViewModeOverride = effectiveViewMode() == MapViewMode_t::top_down
-                            ? MapViewMode_t::perspective
-                            : MapViewMode_t::top_down;
+    mViewport.toggleViewMode();
     update();
 }
 
@@ -477,13 +458,7 @@ map_render::Projection MapWidget::interactionProjection() const
 
 void MapWidget::setInteractionCentreQuiet(const map_render::Coordinate& where)
 {
-    // Clamped and wrapped HERE rather than trusted. A drag past the top of the
-    // world produces a latitude Web Mercator has no answer for, and one across
-    // the date line produces a longitude outside [-180, 180) that would project
-    // a whole world away. Both functions are the projection's own, so the map
-    // stops at the poles and runs continuously round the equator.
-    mInteractionCentre = map_render::Coordinate { map_render::clampLatitude(where.latitude),
-                                                  map_render::wrapLongitude(where.longitude) };
+    mViewport.setUserCentre(where);
 }
 
 void MapWidget::setInteractionCentre(const map_render::Coordinate& where)
@@ -495,20 +470,8 @@ void MapWidget::setInteractionCentre(const map_render::Coordinate& where)
 
 void MapWidget::moveCameraSoThatQuiet(const map_render::WorldPoint& world, const QPointF& screen)
 {
-    const map_render::Projection projection = interactionProjection();
-
-    // What is under the pointer NOW, at the camera as it currently stands. The
-    // difference between that and where the caller wants it is exactly how far
-    // the centre has to move -- in world units, so it is right at every zoom,
-    // and through worldForScreen(), so it is right under rotation too. A
-    // rotated map dragged with a screen-space delta moves off at an angle to
-    // the pointer, and that inverse is already written and tested.
-    const map_render::WorldPoint under =
-        projection.worldForScreen(map_render::ScreenPoint { screen.x(), screen.y() });
-    const map_render::WorldPoint centre = map_render::worldFor(projection.camera().center);
-
-    setInteractionCentreQuiet(map_render::coordinateFor(map_render::WorldPoint {
-        centre.x + (world.x - under.x), centre.y + (world.y - under.y) }));
+    mViewport.moveSoThat(world, map_render::ScreenPoint { screen.x(), screen.y() }, width(), height(),
+                         devicePixelRatioF());
 }
 
 void MapWidget::moveCameraSoThat(const map_render::WorldPoint& world, const QPointF& screen)
@@ -527,9 +490,7 @@ void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::millisecon
     // answer is a perfectly reasonable thing to want -- refreshTiles() draws
     // the deepest level there is, magnified, and magnified vector tiles stay
     // sharp.
-    const double wanted = std::clamp(before.camera().zoom + levels,
-                                     static_cast<double>(mConfig.min_zoom),
-                                     static_cast<double>(mConfig.max_zoom));
+    const double wanted = mViewport.clampZoom(before.camera().zoom + levels);
     if (wanted == before.camera().zoom)
     {
         return;
@@ -537,7 +498,7 @@ void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::millisecon
 
     // Following the vehicle: zoom about the CENTRE. The vehicle does not move
     // on screen, so there is nothing to suspend and the map keeps tracking --
-    // see mInteractionCentre. Anchoring on the pointer here would drag the
+    // see mViewport. Anchoring on the pointer here would drag the
     // camera off the vehicle as a side effect of wanting a closer look.
     //
     // Deliberately NOT conditioned on hasPosition(): Follow Vehicle is a
@@ -550,7 +511,7 @@ void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::millisecon
     // retargets from the CURRENT eased value -- `wanted` above was already
     // computed from it -- so repeated scrolling accelerates smoothly instead
     // of queueing jumps.
-    if (!mInteractionCentre.has_value() && mConfig.follow_vehicle)
+    if (mViewport.following())
     {
         mZoomEase = ZoomEase { before.camera().zoom, wanted, {}, at, false,
                                std::chrono::steady_clock::now(), ease };
@@ -567,16 +528,16 @@ void MapWidget::zoomBy(double levels, const QPointF& at, std::chrono::millisecon
 
 void MapWidget::recentreCamera()
 {
-    if (!mInteractionCentre.has_value())
+    if (!mViewport.moved())
     {
         layOutMapButtons();
         update();
         return;
     }
     // Fly back rather than snap: the centre glides toward the live target
-    // (see RecentreEase) and mInteractionCentre is reset only on landing.
+    // (see RecentreEase) and the user centre is cleared only on landing.
     // The button hides at once -- see layOutMapButtons().
-    mRecentreEase = RecentreEase { *mInteractionCentre, std::chrono::steady_clock::now() };
+    mRecentreEase = RecentreEase { *mViewport.userCentre(), std::chrono::steady_clock::now() };
     layOutMapButtons();
     update();
 }
@@ -594,11 +555,11 @@ void MapWidget::layOutMapButtons()
 
     // The recentre button is shown only when it has something to undo -- a
     // button that is always there is a button that is usually a lie -- and
-    // hidden the moment the fly-back starts, even though mInteractionCentre
+    // hidden the moment the fly-back starts, even though the user centre
     // technically stays set until it lands: mid-flight there is nothing left
     // to press for. The compass and view toggle are standing controls and
     // only yield when the widget has no room for chrome at all.
-    mRecentre->setVisible(room && mInteractionCentre.has_value() && !mRecentreEase.has_value());
+    mRecentre->setVisible(room && mViewport.moved() && !mRecentreEase.has_value());
     mCompass->setVisible(room);
     mViewMode->setVisible(room);
     mZoomIn->setVisible(room);
@@ -715,6 +676,7 @@ void MapWidget::setLongitude(double degrees)
 void MapWidget::setHeading(double degrees)
 {
     mHeading = degrees;
+    mViewport.setTrackBearing(degrees);
     if (effectiveOrientation() == MapOrientation_t::heading_up)
     {
         // A frame only: the driver refreshes the tile set itself, at the
@@ -731,6 +693,7 @@ void MapWidget::onPositionChanged()
     }
 
     const map_render::Coordinate here { *mLatitude, *mLongitude };
+    mViewport.setTarget(here);
 
     if (mConfig.show_track && mConfig.track_points > 0)
     {
@@ -751,8 +714,7 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
     if (mZoomEase.has_value())
     {
         const double t = easeProgress(mZoomEase->start, now, mZoomEase->length);
-        mInteractionZoom =
-            mZoomEase->from + ((mZoomEase->to - mZoomEase->from) * easeSmooth(t));
+        mViewport.setUserZoom(mZoomEase->from + ((mZoomEase->to - mZoomEase->from) * easeSmooth(t)));
         if (mZoomEase->anchored)
         {
             // Re-solved at EVERY eased step: zoom-about-the-pointer is a
@@ -763,7 +725,7 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
         }
         if (t >= 1.0)
         {
-            mInteractionZoom = mZoomEase->to;
+            mViewport.setUserZoom(mZoomEase->to);
             mZoomEase.reset();
         }
         else
@@ -776,17 +738,14 @@ bool MapWidget::tickAnimations(std::chrono::steady_clock::time_point now)
     {
         // The LIVE target, re-read each tick: a moving vehicle is flown TO,
         // not to where it was when the button was pressed.
-        const map_render::Coordinate target =
-            (mConfig.follow_vehicle && hasPosition())
-                ? map_render::Coordinate { *mLatitude, *mLongitude }
-                : map_render::Coordinate { mConfig.center_latitude, mConfig.center_longitude };
+        const map_render::Coordinate target = mViewport.homeCentre();
 
         const double t = easeProgress(mRecentreEase->start, now, kRecentreEaseMs);
         if (t >= 1.0)
         {
             // Landed: normal follow resumes, exactly as the instant recentre
             // used to leave things.
-            mInteractionCentre.reset();
+            mViewport.recentre();
             mRecentreEase.reset();
         }
         else
@@ -1357,7 +1316,7 @@ MapWidget::Status MapWidget::status() const
     out.labelsPlaced = mLastLabelsPlaced;
     out.hasPosition = hasPosition();
     out.camera = camera();
-    out.cameraMoved = mInteractionCentre.has_value();
+    out.cameraMoved = mViewport.moved();
     out.gpuReady = mSurface != nullptr && mSurface->isUsable();
     out.retryPending = mRetryTimer.isActive();
     out.tilesFading = mLastTilesFading;
