@@ -2,6 +2,8 @@
 
 #include "scope/data_source.h"
 
+#include "config_codec/config_apply_limits.h"
+
 #include <spdlog/spdlog.h>
 
 #include <string>
@@ -13,23 +15,14 @@ namespace scope
 namespace
 {
 
-// The ADL-found validate(cfg) hook a panel config may declare, same contract as
-// the dashboard widgets'. Optional, so a config with nothing worth clamping
-// declares nothing.
-template <typename Cfg>
-concept HasValidate = requires(Cfg& cfg) {
-    { validate(cfg) } -> std::same_as<std::vector<std::string>>;
-};
-
+// Every validate() hook in a panel config, nested ones included -- same
+// contract as the dashboard widgets'.
 template <typename Cfg>
 void applyLimits(Cfg& cfg, std::string_view panel_type)
 {
-    if constexpr (HasValidate<Cfg>)
+    for (const std::string& note : config_codec::applyLimits(cfg))
     {
-        for (const std::string& note : validate(cfg))
-        {
-            SPDLOG_WARN("{}: {}.", panel_type, note);
-        }
+        SPDLOG_WARN("{}: {}.", panel_type, note);
     }
 }
 

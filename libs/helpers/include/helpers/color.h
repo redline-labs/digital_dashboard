@@ -4,6 +4,8 @@
 #include <string>
 #include <string_view>
 
+#include "helpers/string_leaf.h"
+
 namespace helpers
 {
 
@@ -42,6 +44,7 @@ public:
     
     // Get the hex string value
     const std::string& value() const { return value_; }
+    const std::string& str() const { return value_; }
     std::string& value() { return value_; }
     
     // Implicit conversion to string for backwards compatibility
@@ -86,6 +89,15 @@ public:
 
     bool isValidFormat() const { return isValidFormat(value_); }
 
+    // The StringLeaf contract (helpers/string_leaf.h).
+    static constexpr std::string_view kTypeName = "color";
+    static constexpr std::string_view kFormatHint = "#rrggbb";
+    static std::string problem(std::string_view text)
+    {
+        return isValidFormat(text) ? std::string()
+                                   : std::string("is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA");
+    }
+
     // Comparison operators
     bool operator==(const Color& other) const { return value_ == other.value_; }
     bool operator!=(const Color& other) const { return value_ != other.value_; }
@@ -98,32 +110,7 @@ private:
 
 } // namespace helpers
 
-// YAML serialization support
-#include <yaml-cpp/yaml.h>
-
-namespace YAML
-{
-    template<>
-    struct convert<helpers::Color>
-    {
-        static Node encode(const helpers::Color& rhs)
-        {
-            Node node;
-            node = rhs.value();
-            return node;
-        }
-
-        static bool decode(const Node& node, helpers::Color& rhs)
-        {
-            if (!node.IsScalar())
-            {
-                return false;
-            }
-            rhs = helpers::Color(node.as<std::string>());
-            return true;
-        }
-    };
-}
+static_assert(helpers::StringLeaf<helpers::Color>);
 
 #endif // HELPERS_COLOR_H
 

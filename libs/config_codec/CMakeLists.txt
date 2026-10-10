@@ -26,3 +26,11 @@ target_link_libraries(config_codec INTERFACE
     yaml-cpp
     nlohmann_json::nlohmann_json
 )
+
+# Nested validate() hooks run once, children first, each note with its path.
+# String leaves (colour, keys) obey their rules in every codec.
+foreach(codec_test limits string_leaf)
+    add_executable(config_codec_test_${codec_test} tests/test_${codec_test}.cpp)
+    target_link_libraries(config_codec_test_${codec_test} PRIVATE config_codec)
+    add_project_test(TARGET config_codec_test_${codec_test} LABELS config_codec unit)
+endforeach()

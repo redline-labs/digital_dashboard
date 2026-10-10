@@ -8,6 +8,7 @@
 // For the reflection-generated operator==, which is what lets applyConfig() tell
 // a changed BINDING from a changed colour without a hand-written comparison
 // that would rot against the config's fields.
+#include "config_codec/config_apply_limits.h"
 #include "config_codec/config_yaml.h"
 #include "qt_helpers/widget_colors.h"
 
@@ -557,7 +558,7 @@ void MapPanel::applyConfig(const config_t& cfg)
 {
     const config_t previous = cfg_;
     cfg_ = cfg;
-    validate(cfg_);
+    (void)config_codec::applyLimits(cfg_);
 
     // Only rebind the roles whose SIGNAL changed. A colour, a width or a title
     // must not cost a binding its history.

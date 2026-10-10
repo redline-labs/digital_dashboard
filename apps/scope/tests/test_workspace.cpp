@@ -13,6 +13,8 @@
 
 #include "scope/workspace.h"
 
+#include "config_codec/config_apply_limits.h"
+
 #include <spdlog/spdlog.h>
 #include <yaml-cpp/yaml.h>
 
@@ -695,7 +697,7 @@ void testTheMapConfigClampsItsRanges()
     config.color_min = 100.0;          // inverted
     config.color_max = 100.0;
 
-    const std::vector<std::string> notes = validate(config);
+    const std::vector<std::string> notes = config_codec::applyLimits(config);
     expect(!notes.empty(), "silly numbers are reported rather than silently kept");
     expect(config.center_latitude <= 85.06,
            "a latitude past the Mercator limit is clamped -- past it every later "

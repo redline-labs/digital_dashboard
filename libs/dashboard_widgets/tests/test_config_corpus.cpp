@@ -7,7 +7,7 @@
 // nothing to say is.
 
 #include "dashboard/app_config.h"
-#include "dashboard/widget_factory.h"
+#include "config_codec/config_apply_limits.h"
 #include "dashboard/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
@@ -43,14 +43,10 @@ void collectClampNotes(const std::vector<widget_config_t>& widgets, const std::s
         const std::string here = path + "[" + std::to_string(i) + "]";
         std::visit([&](const auto& cfg)
         {
-            using cfg_t = std::decay_t<decltype(cfg)>;
-            if constexpr (widget_factory::HasValidate<cfg_t>)
+            auto copy = cfg;
+            for (const std::string& note : config_codec::applyLimits(copy))
             {
-                cfg_t copy = cfg;
-                for (const std::string& note : validate(copy))
-                {
-                    notes.push_back(here + ": " + note);
-                }
+                notes.push_back(here + ": " + note);
             }
         }, widgets[i].config);
 

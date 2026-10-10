@@ -2,9 +2,8 @@
 #define DASHBOARD_WIDGET_FACTORY_H
 
 #include "dashboard/app_config.h"
-#include "config_codec/config_limits.h"
+#include "config_codec/config_apply_limits.h"
 
-#include <concepts>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -14,27 +13,16 @@
 namespace widget_factory
 {
 
-// Detects the optional validate() hook described in config_codec/config_limits.h.
-// Found by ADL, so a config declares it as a free function next to the struct
-// and REFLECT_STRUCT does not have to know about it.
-template <typename Cfg>
-concept HasValidate = requires(Cfg& cfg) {
-    { validate(cfg) } -> std::same_as<std::vector<std::string>>;
-};
-
-// Runs a config's range checking, if it has any, and logs what it changed.
-// Called on the way to construction, so a widget never sees a config it cannot
-// draw -- a max of zero to divide by, an inverted range, a list long enough to
-// stall a paint.
+// Runs every validate() hook in a config, nested ones included, and logs what
+// it changed. Called on the way to construction, so a widget never sees a
+// config it cannot draw -- a max of zero to divide by, an inverted range, a
+// list long enough to stall a paint.
 template <typename Cfg>
 void applyLimits(Cfg& cfg, std::string_view widget_type)
 {
-    if constexpr (HasValidate<Cfg>)
+    for (const std::string& note : config_codec::applyLimits(cfg))
     {
-        for (const std::string& note : validate(cfg))
-        {
-            SPDLOG_WARN("{}: {}.", widget_type, note);
-        }
+        SPDLOG_WARN("{}: {}.", widget_type, note);
     }
 }
 

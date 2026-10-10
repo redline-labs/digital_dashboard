@@ -240,9 +240,6 @@ inline std::vector<std::string> validate(MapPanelConfig_t& cfg)
         notes.emplace_back("colour range was empty; widened it to 1 unit");
     }
 
-    const std::vector<std::string> style_notes = validate(cfg.style);
-    notes.insert(notes.end(), style_notes.begin(), style_notes.end());
-
     return notes;
 }
 

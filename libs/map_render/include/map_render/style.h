@@ -324,11 +324,6 @@ inline std::vector<std::string> validate(MapStyle_t& style)
     config_codec::limits::clampInto<uint16_t>(style.label_repeat_distance, 0u, 4096u,
                                               "label_repeat_distance", notes);
 
-    const std::vector<std::string> widthNotes = validate(style.widths);
-    notes.insert(notes.end(), widthNotes.begin(), widthNotes.end());
-    const std::vector<std::string> detailNotes = validate(style.detail);
-    notes.insert(notes.end(), detailNotes.begin(), detailNotes.end());
-
     return notes;
 }
 

@@ -17,13 +17,16 @@
 // sparkline's update_rate of 2000 became `1000 / 2000 == 0` and repainted on
 // every pass of the event loop.
 //
-// THE CONTRACT: a config struct may declare
+// THE CONTRACT: a config struct may declare, as a free function found by ADL,
 //
-//     std::vector<std::string> validate();
+//     std::vector<std::string> validate(Config&);
 //
-// It is called once, by widget_factory::createWidgetFromConfig, before the
-// widget is constructed. It CLAMPS the config into a range the widget can
-// actually draw and returns one message per adjustment, which the factory logs.
+// config_codec::applyLimits (config_apply_limits.h) calls it before the widget
+// or panel is constructed -- for the config AND for every struct nested in it,
+// so a nested struct's limits are declared once, on that struct, and a parent
+// never calls a child's validate() itself. It CLAMPS the config into a range
+// the widget can actually draw and returns one message per adjustment, which
+// the factory logs.
 // It does not reject: a dashboard that comes up with one gauge showing a
 // clamped range beats one that refuses to start on the way to a track day.
 //

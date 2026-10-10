@@ -6,7 +6,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "helpers/color.h"
+#include "helpers/string_leaf.h"
 #include "reflection/reflection.h"
 
 namespace config_codec {
@@ -138,12 +138,12 @@ void validateStruct(const YAML::Node& node, const std::string& path, std::vector
                 }
             }
         }
-        else if constexpr (std::is_same_v<Field, helpers::Color>)
+        else if constexpr (helpers::StringLeaf<Field>)
         {
-            // An unparseable colour reaches QColor as "invalid", which paints as
-            // transparent black or -- where the value goes into a stylesheet --
-            // makes Qt drop the rule entirely. Both are silent, so catch the
-            // typo here where the field's path can be named.
+            // A colour, a topic key, a service key: each has rules a plain
+            // string conversion would wave through, and each fails silently
+            // downstream -- an invalid QColor paints transparent, a bad key
+            // subscribes to nothing. Caught here, where the path can be named.
             std::string text;
             try
             {
@@ -151,14 +151,14 @@ void validateStruct(const YAML::Node& node, const std::string& path, std::vector
             }
             catch (const std::exception&)
             {
-                issues.push_back({Issue::Severity::error, field_path, "expected a colour string"});
+                issues.push_back({Issue::Severity::error, field_path,
+                                  "expected a " + std::string(Field::kTypeName) + " string"});
                 return;
             }
 
-            if (!helpers::Color::isValidFormat(text))
+            if (const std::string problem = Field::problem(text); !problem.empty())
             {
-                issues.push_back({Issue::Severity::error, field_path,
-                                  "'" + text + "' is not a colour; expected #RGB, #RRGGBB or #RRGGBBAA"});
+                issues.push_back({Issue::Severity::error, field_path, "'" + text + "' " + problem});
             }
         }
         else if constexpr (std::is_enum_v<Field>)

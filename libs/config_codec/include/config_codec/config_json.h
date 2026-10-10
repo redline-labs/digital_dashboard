@@ -1,7 +1,7 @@
 #ifndef CONFIG_CODEC_CONFIG_JSON_H_
 #define CONFIG_CODEC_CONFIG_JSON_H_
 
-#include "helpers/color.h"
+#include "helpers/string_leaf.h"
 #include "reflection/reflection.h"
 
 #include <nlohmann/json.hpp>
@@ -55,12 +55,11 @@ json leafToJson(const T& value)
 {
     using U = std::decay_t<T>;
 
-    if constexpr (std::is_same_v<U, helpers::Color>)
+    if constexpr (helpers::StringLeaf<U>)
     {
-        // A Color is a hex string on the wire; the editor knows to show a
-        // picker for it, and describe() reports the distinct type so an agent
-        // can too.
-        return value.value();
+        // A string on the wire; describe() reports the distinct type, so an
+        // agent knows it is a colour or a key rather than free text.
+        return value.str();
     }
     else if constexpr (std::is_same_v<U, std::string>)
     {
@@ -140,14 +139,23 @@ void applyLeaf(const json& value, T& target, const std::string& path,
 {
     using U = std::decay_t<T>;
 
-    if constexpr (std::is_same_v<U, helpers::Color>)
+    if constexpr (helpers::StringLeaf<U>)
     {
         if (!value.is_string())
         {
-            errors.push_back(path + ": expected a hex colour string like \"#ff8800\".");
+            errors.push_back(path + ": expected a " + std::string(U::kTypeName) + " string like \"" +
+                             std::string(U::kFormatHint) + "\".");
             return;
         }
-        target = helpers::Color(value.get<std::string>());
+        // Refused here too, not only at load: a patch that sets a key the
+        // publisher will then refuse is a change that silently does nothing.
+        const std::string text = value.get<std::string>();
+        if (const std::string problem = U::problem(text); !problem.empty())
+        {
+            errors.push_back(path + ": '" + text + "' " + problem + ".");
+            return;
+        }
+        target = U{text};
     }
     else if constexpr (std::is_same_v<U, std::string>)
     {
@@ -303,10 +311,10 @@ json describeLeafType()
     using U = std::decay_t<T>;
     json out = json::object();
 
-    if constexpr (std::is_same_v<U, helpers::Color>)
+    if constexpr (helpers::StringLeaf<U>)
     {
-        out["type"] = "color";
-        out["format"] = "#rrggbb";
+        out["type"] = std::string(U::kTypeName);
+        out["format"] = std::string(U::kFormatHint);
     }
     else if constexpr (std::is_same_v<U, std::string>)
     {

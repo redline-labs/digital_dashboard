@@ -79,8 +79,8 @@ namespace YAML {
 // normally ill-formed for a partial specialization. C++20 permits it when the
 // specialization is more constrained ([temp.spec.partial]), which is what the
 // requires-clauses provide. Hand-written full specializations -- widget_config_t
-// in app_config.h, helpers::Color -- are more specialized still and continue to
-// win.
+// in app_config.h -- are more specialized still and continue to win. String
+// leaves (colours, keys) have their own in helpers/string_leaf.h.
 template <typename T>
     requires reflection::is_reflected_struct_v<T>
 struct convert<T>

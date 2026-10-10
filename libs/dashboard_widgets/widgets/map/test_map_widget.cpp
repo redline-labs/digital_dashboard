@@ -26,6 +26,7 @@
 #include "map/map_widget.h"
 #include "map_render/labels.h"
 
+#include "config_codec/config_apply_limits.h"
 #include "config_codec/config_json.h"
 
 #include <QAbstractButton>
@@ -97,7 +98,7 @@ void test_out_of_range_values_are_clamped_not_refused()
     config.marker_size = 999;
     config.style.road_width_scale = 100.0;
 
-    const std::vector<std::string> notes = validate(config);
+    const std::vector<std::string> notes = config_codec::applyLimits(config);
 
     check(config.zoom == 22.0, "a zoom past 22 is clamped");
     check(config.center_latitude < 85.06 && config.center_latitude > 85.05,
@@ -207,7 +208,7 @@ void test_style_groups_are_clamped_not_refused()
     config.style.label_halo_width = -3.0;
     config.style.label_spacing = 900;
 
-    const std::vector<std::string> notes = validate(config);
+    const std::vector<std::string> notes = config_codec::applyLimits(config);
 
     check(config.style.widths.motorway == 40.0, "an absurd width is clamped");
     check(config.style.detail.building == 22, "a threshold past z22 is clamped");

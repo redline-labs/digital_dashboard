@@ -200,9 +200,6 @@ inline std::vector<std::string> validate(MapConfig_t& config)
         config.bearing = config.bearing - (360.0 * std::floor(config.bearing / 360.0));
     }
 
-    const std::vector<std::string> styleNotes = validate(config.style);
-    notes.insert(notes.end(), styleNotes.begin(), styleNotes.end());
-
     return notes;
 }
 
