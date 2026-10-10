@@ -15,21 +15,15 @@
 // 10 Hz forever -- the shape dashboard/widgets/map/map_widget.cpp settled on
 // after the CarPlay widget fell behind doing it the other way.
 
-#include <atomic>
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include <QLabel>
 #include <QWidget>
 
+#include "dashboard/delivery_ticker.h"
 #include "dashboard/widget_types.h"
 #include "road_info/config.h"
-
-namespace pub_sub
-{
-class RawSubscriber;
-}
 
 class RoadInfoWidget : public QWidget
 {
@@ -59,25 +53,24 @@ class RoadInfoWidget : public QWidget
         float sigmaM { 0.0F };
     };
 
-    State state() const;
+    State state() const { return _state; }
 
   private:
     void applyConfig();
     void refresh();
+    void setState(State state);
 
     RoadInfoConfig_t _cfg;
 
     QLabel* _name { nullptr };
     QLabel* _detail { nullptr };
 
-    mutable std::mutex _mutex;
     State _state;
 
-    // Set by the RX thread, cleared by the GUI thread. Coalesces a burst into
-    // one repaint.
-    std::atomic<bool> _drainPending { false };
-
-    std::unique_ptr<pub_sub::RawSubscriber> _subscriber;
+    // A dashboard::TypedSubscription<MapHorizon, State>, held by its base so
+    // this header stays free of capnp: decoded on the RX thread, delivered
+    // coalesced on the GUI thread.
+    std::unique_ptr<dashboard::DeliveryTarget> _subscription;
 };
 
 #endif // ROAD_INFO_WIDGET_H

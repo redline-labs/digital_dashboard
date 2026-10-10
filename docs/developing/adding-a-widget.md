@@ -36,6 +36,15 @@ _expression_parser =
 
 An unbound field (empty key) gives `nullptr` and logs nothing.
 
+A widget that needs a whole message rather than one number -- text, a list,
+an image -- uses `dashboard::makeTypedSubscription<Schema, Value>()`
+(`dashboard/typed_subscription.h`) instead. It checks the stamped schema name,
+turns each message into a `Value` on the zenoh thread, and delivers the latest
+one on the GUI thread through the same coalescing ticker, with the same
+staleness. Use it only for streams whose every message is a full snapshot; an
+event stream (a page trigger) or a media stream (video, audio) must not drop
+messages.
+
 That is the whole wiring. The subscription repaints the widget when the answer
 changes; the widget asks it where it paints:
 

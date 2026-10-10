@@ -1,17 +1,12 @@
 #include "road_info/road_info.h"
 
 #include <QFont>
-#include <QMetaObject>
 #include <QVBoxLayout>
 
-#include <capnp/message.h>
-#include <capnp/serialize.h>
+#include <optional>
 
-#include <spdlog/spdlog.h>
-
+#include "dashboard/typed_subscription.h"
 #include "map_horizon.capnp.h"
-#include "pub_sub/capnp_payload.h"
-#include "pub_sub/raw_subscriber.h"
 #include "qt_helpers/widget_colors.h"
 
 namespace
@@ -22,6 +17,56 @@ namespace
 int toMph(std::uint16_t kph)
 {
     return static_cast<int>((kph * 1000 + 804) / 1609);
+}
+
+// ON A ZENOH RX THREAD: the horizon reduced to what the panel shows.
+std::optional<RoadInfoWidget::State> decodeHorizon(::MapHorizon::Reader horizon)
+{
+    RoadInfoWidget::State next;
+    next.haveHorizon = true;
+    next.matched = horizon.getHasPosition();
+    if (next.matched)
+    {
+        const auto position = horizon.getPosition();
+        next.confidence = position.getConfidence();
+        next.sigmaM = position.getSigmaM();
+    }
+
+    // The profile runs the vehicle is standing in. Profiles are
+    // FILTERED, not switched: a kind this build does not know is
+    // ignored, which is the whole reason the horizon can grow a
+    // curvature profile later without breaking this widget.
+    const std::uint32_t at = next.matched ? horizon.getPosition().getOffsetCm() : 0;
+    for (const auto profile : horizon.getProfiles())
+    {
+        if (profile.getStartOffsetCm() > at || profile.getEndOffsetCm() < at)
+        {
+            continue;
+        }
+        const auto value = profile.getValue();
+        switch (value.which())
+        {
+            case ::HorizonProfile::Value::ROAD_NAME:
+                next.name = value.getRoadName().cStr();
+                break;
+            case ::HorizonProfile::Value::ROAD_REF:
+                next.ref = value.getRoadRef().cStr();
+                break;
+            case ::HorizonProfile::Value::SPEED:
+            {
+                const auto speed = value.getSpeed();
+                next.hasPosted = speed.getHasPosted();
+                next.postedKph = speed.getPostedKph();
+                break;
+            }
+            case ::HorizonProfile::Value::UNKNOWN:
+            case ::HorizonProfile::Value::ROAD_CLASS:
+            case ::HorizonProfile::Value::LANE_COUNT:
+            case ::HorizonProfile::Value::SEGMENT:
+                break;
+        }
+    }
+    return next;
 }
 
 } // namespace
@@ -45,120 +90,18 @@ RoadInfoWidget::RoadInfoWidget(const RoadInfoConfig_t& cfg, QWidget* parent) :
     applyConfig();
     refresh();
 
-    if (_cfg.horizon_zenoh_key.empty())
-    {
-        // A legitimate configuration: a layout that wants the panel without a
-        // live bus, in the editor or in a screenshot.
-        return;
-    }
-
-    // RawSubscriber rather than the expression binding: the payload is text and
-    // a struct, and ZenohExpressionSubscriber yields a double.
-    _subscriber = std::make_unique<pub_sub::RawSubscriber>(
-        _cfg.horizon_zenoh_key,
-        [this](const std::vector<std::uint8_t>& bytes, std::string_view schema) {
-            // ON A ZENOH RX THREAD. The only safe thing to do here is decode
-            // into the mailbox and post; touching Qt would race the paint.
-            if (schema != "MapHorizon")
-            {
-                // Decoding against the wrong schema is SILENT -- capnp reads
-                // the same bytes at different offsets and hands back a
-                // plausible wrong answer -- so the publisher's own stamp is
-                // checked rather than trusted.
-                return;
-            }
-
-            const pub_sub::WordAlignedPayload payload(
-                reinterpret_cast<const kj::byte*>(bytes.data()), bytes.size());
-            if (payload.empty())
-            {
-                return;
-            }
-
-            State next;
-            try
-            {
-                ::capnp::FlatArrayMessageReader reader(payload.words());
-                const auto horizon = reader.getRoot<::MapHorizon>();
-
-                next.haveHorizon = true;
-                next.matched = horizon.getHasPosition();
-                if (next.matched)
-                {
-                    const auto position = horizon.getPosition();
-                    next.confidence = position.getConfidence();
-                    next.sigmaM = position.getSigmaM();
-                }
-
-                // The profile runs the vehicle is standing in. Profiles are
-                // FILTERED, not switched: a kind this build does not know is
-                // ignored, which is the whole reason the horizon can grow a
-                // curvature profile later without breaking this widget.
-                const std::uint32_t at = next.matched ? horizon.getPosition().getOffsetCm() : 0;
-                for (const auto profile : horizon.getProfiles())
-                {
-                    if (profile.getStartOffsetCm() > at || profile.getEndOffsetCm() < at)
-                    {
-                        continue;
-                    }
-                    const auto value = profile.getValue();
-                    switch (value.which())
-                    {
-                        case ::HorizonProfile::Value::ROAD_NAME:
-                            next.name = value.getRoadName().cStr();
-                            break;
-                        case ::HorizonProfile::Value::ROAD_REF:
-                            next.ref = value.getRoadRef().cStr();
-                            break;
-                        case ::HorizonProfile::Value::SPEED:
-                        {
-                            const auto speed = value.getSpeed();
-                            next.hasPosted = speed.getHasPosted();
-                            next.postedKph = speed.getPostedKph();
-                            break;
-                        }
-                        case ::HorizonProfile::Value::UNKNOWN:
-                        case ::HorizonProfile::Value::ROAD_CLASS:
-                        case ::HorizonProfile::Value::LANE_COUNT:
-                        case ::HorizonProfile::Value::SEGMENT:
-                            break;
-                    }
-                }
-            }
-            catch (const kj::Exception&)
-            {
-                // A malformed message. Dropped: one bad sample must not take
-                // the widget down, and the next one is 100 ms away.
-                return;
-            }
-
-            {
-                const std::lock_guard<std::mutex> lock(_mutex);
-                _state = next;
-            }
-
-            // The coalescing gate. The first message of a burst posts one
-            // invoke; the rest see the flag set and post nothing.
-            if (_drainPending.exchange(true))
-            {
-                return;
-            }
-            QMetaObject::invokeMethod(
-                this,
-                [this]() {
-                    _drainPending.store(false);
-                    refresh();
-                },
-                Qt::QueuedConnection);
-        });
+    // Empty is a legitimate configuration: a layout that wants the panel
+    // without a live bus, in the editor or in a screenshot.
+    _subscription = dashboard::makeTypedSubscription<::MapHorizon, State>(
+        _cfg.horizon_zenoh_key, &decodeHorizon, this, &RoadInfoWidget::setState);
 }
 
 RoadInfoWidget::~RoadInfoWidget() = default;
 
-RoadInfoWidget::State RoadInfoWidget::state() const
+void RoadInfoWidget::setState(State state)
 {
-    const std::lock_guard<std::mutex> lock(_mutex);
-    return _state;
+    _state = std::move(state);
+    refresh();
 }
 
 void RoadInfoWidget::applyConfig()

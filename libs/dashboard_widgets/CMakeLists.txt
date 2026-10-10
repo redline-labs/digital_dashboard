@@ -145,6 +145,20 @@ target_link_libraries(dashboard_widgets_test_subscription PRIVATE
 add_project_test(TARGET dashboard_widgets_test_subscription
                  LABELS dashboard_widgets net gui)
 
+# Whole-message subscriptions: a burst coalesces to the latest, another schema
+# on the key and a malformed payload never reach the widget, staleness lands at
+# its deadline, and extractor state survives coalescing.
+add_executable(dashboard_widgets_test_typed_subscription tests/test_typed_subscription.cpp)
+target_link_libraries(dashboard_widgets_test_typed_subscription PRIVATE
+    dashboard_widgets
+    zenoh_pub_sub
+    schemas
+    capnp
+    spdlog::spdlog
+)
+add_project_test(TARGET dashboard_widgets_test_typed_subscription
+                 LABELS dashboard_widgets net gui)
+
 # The one timer every subscription delivers through, against fake targets: idle
 # means no timer, a cross-thread burst is one pass, a racing wake never strands
 # a sample, and staleness lands at its deadline without polling. Real timers,

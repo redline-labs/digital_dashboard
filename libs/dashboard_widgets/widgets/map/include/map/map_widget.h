@@ -45,10 +45,6 @@
 #include <QTimer>
 #include <QWidget>
 
-namespace pub_sub
-{
-class RawSubscriber;
-}
 
 #include "dashboard/expression_subscription.h"
 #include "dashboard/widget_types.h"
@@ -299,16 +295,11 @@ class MapWidget : public QWidget
     // something is backing off, so an idle healthy map still costs nothing.
     QTimer mRetryTimer;
 
-    // The matched-road highlight, fed by nodes/map_match's horizon. Decoded
-    // and reduced to way ids on the zenoh thread (see highlight_ids.h); the
-    // GUI thread only swaps the result in. Its OWN coalescing flag, not the
-    // tile gate's -- that handler drains tile sources and must not be
-    // entangled with this one.
-    std::unique_ptr<pub_sub::RawSubscriber> mHighlightSubscription;
-    std::mutex mHighlightMutex;
-    std::vector<std::uint64_t> mHighlightMailbox;
-    bool mHighlightMailboxFresh { false };
-    std::atomic<bool> mHighlightPending { false };
+    // The matched-road highlight, fed by nodes/map_match's horizon: a
+    // dashboard::TypedSubscription<MapHorizon, way ids>, held by its base so
+    // this header stays free of capnp. Decoded on the zenoh thread; the GUI
+    // thread only swaps the result in.
+    std::unique_ptr<dashboard::DeliveryTarget> mHighlightSubscription;
     // GUI thread only: what the paint pass hands the renderer.
     std::vector<std::uint64_t> mHighlightWayIds;
 

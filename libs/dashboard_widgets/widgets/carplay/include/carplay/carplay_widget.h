@@ -12,7 +12,7 @@
 #include "carplay_session.capnp.h"
 #include "carplay_ui.capnp.h"
 
-#include "dashboard/staleness.h"
+#include "dashboard/typed_subscription.h"
 
 #include <QtWidgets/QWidget>
 #include <QtGui/QMouseEvent>
@@ -96,7 +96,6 @@ class CarPlayWidget : public QWidget
     // Runs on the zenoh subscriber thread.
     void onVideoMessage(CarPlayVideo::Reader reader);
     void onAudioMessage(CarPlayAudio::Reader reader);
-    void onSessionMessage(CarPlaySessionState::Reader reader);
 
     // Rebuilds the sink when the phone changes format. Called from the
     // subscriber thread; queues the work onto the GUI thread and returns
@@ -133,8 +132,21 @@ class CarPlayWidget : public QWidget
     void syncVisibility();
     void publishVisibility();
 
+    // One session-state message, copied out on the zenoh thread. Each is a full
+    // snapshot, so the latest is all that matters.
+    struct SessionSnapshot
+    {
+        bool connected = false;
+        CarPlaySessionState::Phase phase = CarPlaySessionState::Phase::IDLE;
+        bool mic_active = false;
+        int mic_rate = 0;
+        int mic_channels = 0;
+    };
+
     // Session liveness for the return button and the status text, GUI thread.
-    void onSessionState(bool connected, CarPlaySessionState::Phase phase);
+    void onSessionState(SessionSnapshot session);
+    // A staleness edge on the session stream, either way.
+    void onSessionStaleEdge();
     bool sessionLive() const;
     // Forgets the last picture, so a session that ends leaves the status
     // text rather than a frozen frame, and the next phone does not open on
@@ -208,8 +220,6 @@ class CarPlayWidget : public QWidget
     // died while "recording".
     bool _session_connected = false;
     CarPlaySessionState::Phase _session_phase = CarPlaySessionState::Phase::IDLE;
-    dashboard::StalenessTracker _session_staleness;
-    QTimer* _session_poll_timer = nullptr;  // owned by Qt
 
     QPushButton* _return_button = nullptr;  // owned by Qt; null unless enabled
     std::unique_ptr<dashboard::PageCommandSender> _page_sender;
@@ -251,7 +261,9 @@ class CarPlayWidget : public QWidget
 
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayVideo>> _video_sub;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayAudio>> _audio_sub;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlaySessionState>> _session_sub;
+    // Coalesced like a gauge's binding, and its staleness is the subscription's:
+    // it fires at the deadline rather than on a poll.
+    dashboard::TypedSubscriptionPtr<CarPlaySessionState, SessionSnapshot> _session_sub;
 };
 
 #endif  // CARPLAY_WIDGET_H_

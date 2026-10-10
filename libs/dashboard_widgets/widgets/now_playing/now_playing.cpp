@@ -86,15 +86,54 @@ NowPlayingWidget::NowPlayingWidget(NowPlayingConfig_t cfg, QWidget* parent) :
     // actually hands the widget back to the music.
     connect(&_linger, &QTimer::timeout, this, [this] { driveTransition(false); });
 
-    _sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayNowPlaying>>(
+    // Every message is a full snapshot -- the node re-sends the artwork with
+    // each one -- so coalescing to the latest is safe. The extractor keeps the
+    // last decoded artwork between calls (they are serialised per
+    // subscription), which is what decodes it once per track, not per update.
+    _sub = dashboard::makeTypedSubscription<CarPlayNowPlaying, Track>(
         _cfg.zenoh_key,
-        [this](CarPlayNowPlaying::Reader reader) { onNowPlaying(reader); });
+        [last_seq = kNoArtSeq, last_art = QImage{}](CarPlayNowPlaying::Reader reader) mutable
+        {
+            Track track;
+            track.title = QString::fromStdString(reader.getTitle());
+            track.artist = QString::fromStdString(reader.getArtist());
+            track.album = QString::fromStdString(reader.getAlbum());
+            track.app = QString::fromStdString(reader.getApp());
+            track.duration_sec = reader.getDurationSec();
+            track.elapsed_sec = reader.getElapsedSec();
+            track.playing = reader.getPlaying();
+
+            const uint32_t seq = reader.getAlbumArtSeq();
+            if (seq != last_seq)
+            {
+                last_seq = seq;
+                last_art = QImage{};
+                const auto art = reader.getAlbumArt();
+                if (art.size() > 0 && !last_art.loadFromData(art.begin(), static_cast<int>(art.size())))
+                {
+                    SPDLOG_WARN("[now_playing] failed to decode {} bytes of album art (seq {})", art.size(), seq);
+                }
+            }
+            track.art_seq = last_seq;
+            track.album_art = last_art;
+            return std::optional<Track>(std::move(track));
+        },
+        this, &NowPlayingWidget::setTrack);
 
     if (_cfg.show_calls)
     {
-        _call_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayCall>>(
+        _call_sub = dashboard::makeTypedSubscription<CarPlayCall, Call>(
             _cfg.call_zenoh_key,
-            [this](CarPlayCall::Reader reader) { onCall(reader); });
+            [](CarPlayCall::Reader reader)
+            {
+                Call call;
+                call.state = reader.getState();
+                call.name = QString::fromStdString(reader.getRemoteName());
+                call.number = QString::fromStdString(reader.getRemoteNumber());
+                call.duration_sec = reader.getDurationSec();
+                return std::optional<Call>(std::move(call));
+            },
+            this, &NowPlayingWidget::setCall);
     }
 }
 
@@ -105,69 +144,29 @@ NowPlayingWidget::~NowPlayingWidget()
     _call_sub.reset();
 }
 
-void NowPlayingWidget::onNowPlaying(CarPlayNowPlaying::Reader reader)
+void NowPlayingWidget::setTrack(Track track)
 {
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _title = QString::fromStdString(reader.getTitle());
-        _artist = QString::fromStdString(reader.getArtist());
-        _album = QString::fromStdString(reader.getAlbum());
-        _app = QString::fromStdString(reader.getApp());
-        _duration_sec = reader.getDurationSec();
-        _elapsed_sec = reader.getElapsedSec();
-        _playing = reader.getPlaying();
-
-        // Artwork only arrives on track change; keep the previous image when
-        // the sequence is unchanged so we don't decode on every update.
-        const uint32_t seq = reader.getAlbumArtSeq();
-        auto art = reader.getAlbumArt();
-        if (seq != _art_seq)
-        {
-            _art_seq = seq;
-            _album_art = QImage{};
-            if (art.size() > 0 && !_album_art.loadFromData(art.begin(), static_cast<int>(art.size())))
-            {
-                SPDLOG_WARN("[now_playing] failed to decode {} bytes of album art (seq {})", art.size(), seq);
-            }
-        }
-    }
-
-    QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
+    _track = std::move(track);
+    update();
 }
 
-void NowPlayingWidget::onCall(CarPlayCall::Reader reader)
+void NowPlayingWidget::setCall(Call call)
 {
-    CarPlayCall::State state = CarPlayCall::State::IDLE;
+    _call = std::move(call);
+    driveTransition(callIsLive(_call.state));
+
+    // A hang-up keeps the face up for the linger and then reverts. An outright
+    // idle -- the phone dropping straight back to no call -- reverts
+    // immediately, so cancel any linger already running.
+    if (callHasEnded(_call.state))
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _call_state = reader.getState();
-        _call_name = QString::fromStdString(reader.getRemoteName());
-        _call_number = QString::fromStdString(reader.getRemoteNumber());
-        _call_duration_sec = reader.getDurationSec();
-        state = _call_state;
+        _linger.start();
     }
-
-    // Hop to the Qt thread: driveTransition touches a QVariantAnimation and a
-    // QTimer, and neither may be driven from a zenoh callback thread.
-    QMetaObject::invokeMethod(
-        this,
-        [this, state] {
-            driveTransition(callIsLive(state));
-
-            // A hang-up keeps the face up for the linger and then reverts. An
-            // outright idle -- the phone dropping straight back to no call --
-            // reverts immediately, so cancel any linger already running.
-            if (callHasEnded(state))
-            {
-                _linger.start();
-            }
-            else
-            {
-                _linger.stop();
-            }
-            update();
-        },
-        Qt::QueuedConnection);
+    else
+    {
+        _linger.stop();
+    }
+    update();
 }
 
 void NowPlayingWidget::driveTransition(bool to_call)
@@ -255,16 +254,10 @@ void NowPlayingWidget::paintEvent(QPaintEvent* /*event*/)
 
 void NowPlayingWidget::paintCall(QPainter& p, const QRectF& bounds)
 {
-    CarPlayCall::State state = CarPlayCall::State::IDLE;
-    QString name, number;
-    float duration = 0.0f;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        state = _call_state;
-        name = _call_name;
-        number = _call_number;
-        duration = _call_duration_sec;
-    }
+    const CarPlayCall::State state = _call.state;
+    const QString& name = _call.name;
+    const QString& number = _call.number;
+    const float duration = _call.duration_sec;
 
     const qreal s = std::max<qreal>(0.4, bounds.height() / 90.0);
     rebuildFontsFor(s);
@@ -328,24 +321,14 @@ void NowPlayingWidget::paintCall(QPainter& p, const QRectF& bounds)
 
 void NowPlayingWidget::paintMusic(QPainter& p, const QRectF& bounds)
 {
-    QString title, artist, album, app;
-    float duration = 0.0f;
-    float elapsed = 0.0f;
-    bool playing = false;
-    QImage art;
-    uint32_t art_seq = kNoArtSeq;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        title = _title;
-        artist = _artist;
-        album = _album;
-        app = _app;
-        duration = _duration_sec;
-        elapsed = _elapsed_sec;
-        playing = _playing;
-        art = _album_art;
-        art_seq = _art_seq;
-    }
+    const QString& title = _track.title;
+    const QString& artist = _track.artist;
+    const QString& album = _track.album;
+    const float duration = _track.duration_sec;
+    const float elapsed = _track.elapsed_sec;
+    const bool playing = _track.playing;
+    const QImage& art = _track.album_art;
+    const uint32_t art_seq = _track.art_seq;
 
     if (title.isEmpty())
     {

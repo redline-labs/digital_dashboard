@@ -6,12 +6,8 @@
 
 #include "map_render/labels.h"
 
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-
+#include "dashboard/typed_subscription.h"
 #include "map/highlight_ids.h"
-#include "pub_sub/capnp_payload.h"
-#include "pub_sub/raw_subscriber.h"
 #include "qt_helpers/widget_colors.h"
 #include "road_graph/format.h"
 
@@ -237,74 +233,14 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
         layOutMapButtons();
     }
 
-    if (!mConfig.highlight_zenoh_key.empty())
-    {
-        // RawSubscriber rather than the expression binding: the payload is a
-        // struct and the answer is a LIST of way ids, and
-        // ZenohExpressionSubscriber yields a double.
-        mHighlightSubscription = std::make_unique<pub_sub::RawSubscriber>(
-            mConfig.highlight_zenoh_key,
-            [this](const std::vector<std::uint8_t>& bytes, std::string_view schema) {
-                // ON A ZENOH RX THREAD. Decode into the mailbox and post;
-                // touching Qt here would race the paint.
-                if (schema != "MapHorizon")
-                {
-                    // Decoding against the wrong schema is SILENT -- capnp
-                    // reads the same bytes at different offsets and hands back
-                    // a plausible wrong answer -- so the publisher's own stamp
-                    // is checked rather than trusted.
-                    return;
-                }
-
-                const pub_sub::WordAlignedPayload payload(
-                    reinterpret_cast<const kj::byte*>(bytes.data()), bytes.size());
-                if (payload.empty())
-                {
-                    return;
-                }
-
-                std::vector<std::uint64_t> ids;
-                try
-                {
-                    ::capnp::FlatArrayMessageReader reader(payload.words());
-                    ids = map_widget::highlightWayIds(reader.getRoot<::MapHorizon>());
-                }
-                catch (const kj::Exception&)
-                {
-                    // A malformed message. Dropped: one bad sample must not
-                    // take the widget down, and the next is 100 ms away.
-                    return;
-                }
-
-                {
-                    const std::lock_guard<std::mutex> lock(mHighlightMutex);
-                    mHighlightMailbox = std::move(ids);
-                    mHighlightMailboxFresh = true;
-                }
-                if (mHighlightPending.exchange(true))
-                {
-                    return;
-                }
-                QMetaObject::invokeMethod(
-                    this,
-                    [this]() {
-                        mHighlightPending.store(false);
-                        std::vector<std::uint64_t> drained;
-                        bool fresh = false;
-                        {
-                            const std::lock_guard<std::mutex> lock(mHighlightMutex);
-                            fresh = mHighlightMailboxFresh;
-                            mHighlightMailboxFresh = false;
-                            drained.swap(mHighlightMailbox);
-                        }
-                        if (fresh)
-                        {
-                            setHighlightWayIds(std::move(drained));
-                        }
-                    },
-                    Qt::QueuedConnection);
-            });
-    }
+    // A TypedSubscription rather than the expression binding: the answer is a
+    // LIST of way ids, reduced on the zenoh thread (highlight_ids.h). Unbound
+    // when the key is empty.
+    mHighlightSubscription = dashboard::makeTypedSubscription<::MapHorizon, std::vector<std::uint64_t>>(
+        mConfig.highlight_zenoh_key,
+        [](::MapHorizon::Reader horizon)
+        { return std::optional<std::vector<std::uint64_t>>(map_widget::highlightWayIds(horizon)); },
+        this, &MapWidget::setHighlightWayIds);
 
     // The retry wake-up. Single-shot and re-armed only while something is
     // backing off, so a healthy idle map keeps costing nothing. The paint the

@@ -54,9 +54,6 @@ constexpr auto kTouchMinInterval = std::chrono::microseconds(1'000'000 / kTouchP
 CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     QWidget(parent),
     _cfg(std::move(cfg)),
-    _session_staleness(dashboard::staleness::suppressed() ? std::chrono::milliseconds{0}
-                                                          : std::chrono::milliseconds{_cfg.session_stale_after_ms},
-                       std::chrono::steady_clock::now()),
     _touch_throttle(kTouchMinInterval)
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
@@ -100,9 +97,23 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
         _cfg.audio_key,
         [this](CarPlayAudio::Reader reader) { onAudioMessage(reader); });
 
-    _session_sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlaySessionState>>(
-        _cfg.session_key,
-        [this](CarPlaySessionState::Reader reader) { onSessionMessage(reader); });
+    if (!_cfg.session_key.empty())
+    {
+        _session_sub = std::make_unique<dashboard::TypedSubscription<CarPlaySessionState, SessionSnapshot>>(
+            _cfg.session_key,
+            [](CarPlaySessionState::Reader reader)
+            {
+                SessionSnapshot session;
+                session.connected = reader.getDeviceConnected();
+                session.phase = reader.getPhase();
+                session.mic_active = reader.getMicActive();
+                session.mic_rate = static_cast<int>(reader.getMicSampleRateHz());
+                session.mic_channels = reader.getMicChannels();
+                return std::optional<SessionSnapshot>(session);
+            },
+            [this](SessionSnapshot session) { onSessionState(session); },
+            std::chrono::milliseconds{_cfg.session_stale_after_ms}, [this] { onSessionStaleEdge(); });
+    }
 
     _mic_pub = std::make_unique<pub_sub::ZenohPublisher<CarPlayAudio>>(_cfg.mic_key);
 
@@ -113,19 +124,6 @@ CarPlayWidget::CarPlayWidget(CarplayConfig_t cfg, QWidget* parent) :
     _visibility_timer = new QTimer(this);
     connect(_visibility_timer, &QTimer::timeout, this, [this] { publishVisibility(); });
     _visibility_timer->start(std::chrono::seconds(1));
-
-    _session_poll_timer = new QTimer(this);
-    connect(_session_poll_timer, &QTimer::timeout, this, [this] {
-        if (_session_staleness.poll(std::chrono::steady_clock::now()) ==
-            dashboard::StalenessTracker::Edge::became_stale)
-        {
-            SPDLOG_INFO("[carplay] no session state for {} ms", _cfg.session_stale_after_ms);
-            dropFrame();
-            updateReturnButton();
-            update();
-        }
-    });
-    _session_poll_timer->start(std::chrono::milliseconds(250));
 
     if (_cfg.return_button.enabled)
     {
@@ -662,32 +660,6 @@ void CarPlayWidget::pumpMicrophone()
     _mic_pub->put();
 }
 
-void CarPlayWidget::onSessionMessage(CarPlaySessionState::Reader reader)
-{
-    // Microphone follows the driver's request; Qt Multimedia objects live on
-    // the GUI thread, so hop there.
-    const bool mic_active = reader.getMicActive();
-    const int mic_rate = static_cast<int>(reader.getMicSampleRateHz());
-    const int mic_channels = reader.getMicChannels();
-    const bool connected = reader.getDeviceConnected();
-    const CarPlaySessionState::Phase phase = reader.getPhase();
-    QMetaObject::invokeMethod(
-        this,
-        [this, mic_active, mic_rate, mic_channels, connected, phase] {
-            onSessionState(connected, phase);
-            if (mic_active && mic_rate > 0 && mic_channels > 0)
-            {
-                startMicrophone(mic_rate, mic_channels);
-            }
-            else
-            {
-                stopMicrophone();
-            }
-            update();
-        },
-        Qt::QueuedConnection);
-}
-
 void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter p(this);
@@ -773,7 +745,7 @@ void CarPlayWidget::paintEvent(QPaintEvent* /*event*/)
 
 carplay::ConnectStatus CarPlayWidget::connectStatus() const
 {
-    return carplay::connectStatus(!_session_staleness.isStale(), _session_connected, _session_phase);
+    return carplay::connectStatus(!dashboard::isStale(_session_sub), _session_connected, _session_phase);
 }
 
 bool CarPlayWidget::showsVideo() const
@@ -856,14 +828,24 @@ void CarPlayWidget::publishVisibility()
     _visibility_pub->put();
 }
 
-void CarPlayWidget::onSessionState(bool connected, CarPlaySessionState::Phase phase)
+void CarPlayWidget::onSessionState(SessionSnapshot session)
 {
-    const bool was_live = sessionLive();
+    // Microphone follows the driver's request.
+    if (session.mic_active && session.mic_rate > 0 && session.mic_channels > 0)
+    {
+        startMicrophone(session.mic_rate, session.mic_channels);
+    }
+    else
+    {
+        stopMicrophone();
+    }
+
+    const bool connected = session.connected;
+    const CarPlaySessionState::Phase phase = session.phase;
+    const bool was_live = _session_connected && _session_phase == CarPlaySessionState::Phase::RECORDING;
     const bool changed = connected != _session_connected || phase != _session_phase;
     _session_connected = connected;
     _session_phase = phase;
-    const bool became_fresh = _session_staleness.onSample(std::chrono::steady_clock::now()) ==
-                              dashboard::StalenessTracker::Edge::became_fresh;
 
     // On every message with no phone, not only on the edge: that is what also
     // catches a frame still in flight when the cable came out. Mid bring-up
@@ -873,15 +855,29 @@ void CarPlayWidget::onSessionState(bool connected, CarPlaySessionState::Phase ph
     {
         dropFrame();
     }
-    if (changed || became_fresh)
+    if (changed)
     {
         updateReturnButton();
     }
+    update();
+}
+
+void CarPlayWidget::onSessionStaleEdge()
+{
+    // Coming back is handled by the message that brought it; going quiet is a
+    // driver that died while "recording", and must not leave its last frame up.
+    if (dashboard::isStale(_session_sub))
+    {
+        SPDLOG_INFO("[carplay] no session state for {} ms", _cfg.session_stale_after_ms);
+        dropFrame();
+    }
+    updateReturnButton();
+    update();
 }
 
 bool CarPlayWidget::sessionLive() const
 {
-    return !_session_staleness.isStale() && _session_connected &&
+    return !dashboard::isStale(_session_sub) && _session_connected &&
            _session_phase == CarPlaySessionState::Phase::RECORDING;
 }
 
@@ -897,7 +893,7 @@ void CarPlayWidget::updateReturnButton()
     {
         return;
     }
-    const bool show = carplay::returnButtonVisible(_cfg.return_button.enabled, !_session_staleness.isStale(),
+    const bool show = carplay::returnButtonVisible(_cfg.return_button.enabled, !dashboard::isStale(_session_sub),
                                                    _session_connected,
                                                    _session_phase == CarPlaySessionState::Phase::RECORDING);
     _return_button->setVisible(show);

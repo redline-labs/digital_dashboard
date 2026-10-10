@@ -70,9 +70,23 @@ CarPlayNavWidget::CarPlayNavWidget(CarPlayNavConfig_t cfg, QWidget* parent) :
 {
     _font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
 
-    _sub = std::make_unique<pub_sub::ZenohTypedSubscriber<CarPlayNav>>(
+    _sub = dashboard::makeTypedSubscription<CarPlayNav, Guidance>(
         _cfg.zenoh_key,
-        [this](CarPlayNav::Reader reader) { onNav(reader); });
+        [](CarPlayNav::Reader reader)
+        {
+            Guidance guidance;
+            guidance.active = reader.getActive();
+            guidance.road_name = QString::fromStdString(reader.getRoadName());
+            guidance.after_road_name = QString::fromStdString(reader.getAfterRoadName());
+            guidance.destination_name = QString::fromStdString(reader.getDestinationName());
+            guidance.maneuver_angle_deg = static_cast<float>(reader.getManeuverAngleDeg());
+            guidance.distance_to_maneuver_m = reader.getDistanceToManeuverM();
+            guidance.distance_remaining_m = reader.getDistanceRemainingM();
+            guidance.time_remaining_sec = reader.getTimeRemainingSec();
+            guidance.eta_epoch_sec = reader.getEtaEpochSec();
+            return std::optional<Guidance>(std::move(guidance));
+        },
+        this, &CarPlayNavWidget::setGuidance);
 }
 
 CarPlayNavWidget::~CarPlayNavWidget()
@@ -81,22 +95,10 @@ CarPlayNavWidget::~CarPlayNavWidget()
     _sub.reset();
 }
 
-void CarPlayNavWidget::onNav(CarPlayNav::Reader reader)
+void CarPlayNavWidget::setGuidance(Guidance guidance)
 {
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _active = reader.getActive();
-        _road_name = QString::fromStdString(reader.getRoadName());
-        _after_road_name = QString::fromStdString(reader.getAfterRoadName());
-        _destination_name = QString::fromStdString(reader.getDestinationName());
-        _maneuver_angle_deg = static_cast<float>(reader.getManeuverAngleDeg());
-        _distance_to_maneuver_m = reader.getDistanceToManeuverM();
-        _distance_remaining_m = reader.getDistanceRemainingM();
-        _time_remaining_sec = reader.getTimeRemainingSec();
-        _eta_epoch_sec = reader.getEtaEpochSec();
-    }
-
-    QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
+    _guidance = std::move(guidance);
+    update();
 }
 
 void CarPlayNavWidget::rebuildFontsFor(qreal scale)
@@ -165,11 +167,7 @@ QPainterPath CarPlayNavWidget::arrowPath(ManeuverGlyph glyph)
 
 void CarPlayNavWidget::paintEvent(QPaintEvent* /*event*/)
 {
-    bool active = false;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        active = _active;
-    }
+    const bool active = _guidance.active;
 
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -204,23 +202,14 @@ void CarPlayNavWidget::paintIdle(QPainter& p, const QRectF& bounds)
 
 void CarPlayNavWidget::paintGuidance(QPainter& p, const QRectF& bounds)
 {
-    QString road, after_road, destination;
-    float angle = 0.0f;
-    float to_maneuver = 0.0f;
-    float remaining = 0.0f;
-    float time_remaining = 0.0f;
-    uint64_t eta = 0;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        road = _road_name;
-        after_road = _after_road_name;
-        destination = _destination_name;
-        angle = _maneuver_angle_deg;
-        to_maneuver = _distance_to_maneuver_m;
-        remaining = _distance_remaining_m;
-        time_remaining = _time_remaining_sec;
-        eta = _eta_epoch_sec;
-    }
+    const QString& road = _guidance.road_name;
+    const QString& after_road = _guidance.after_road_name;
+    const QString& destination = _guidance.destination_name;
+    const float angle = _guidance.maneuver_angle_deg;
+    const float to_maneuver = _guidance.distance_to_maneuver_m;
+    const float remaining = _guidance.distance_remaining_m;
+    const float time_remaining = _guidance.time_remaining_sec;
+    const uint64_t eta = _guidance.eta_epoch_sec;
 
     const QFontMetricsF& distance_fm = *_distance_fm;
     const QFontMetricsF& road_fm = *_road_fm;

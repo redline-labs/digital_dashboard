@@ -4,7 +4,7 @@
 #include "now_playing/config.h"
 #include "dashboard/widget_types.h"
 
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/typed_subscription.h"
 #include "carplay_nowplaying.capnp.h"
 #include "carplay_call.capnp.h"
 
@@ -19,7 +19,6 @@
 #include <QVariantAnimation>
 
 #include <memory>
-#include <mutex>
 #include <string_view>
 
 // Supplemental CarPlay widget: shows what the phone is playing. Subscribes to
@@ -41,9 +40,39 @@ class NowPlayingWidget : public QWidget
     void paintEvent(QPaintEvent* event) override;
 
   private:
-    // Both run on zenoh subscriber threads.
-    void onNowPlaying(CarPlayNowPlaying::Reader reader);
-    void onCall(CarPlayCall::Reader reader);
+    // Sentinel rather than 0: the artwork is only decoded when the sequence
+    // changes, and a publisher whose first artwork carries seq 0 -- a fresh
+    // process, or one that never sets the field -- matched the initial value and
+    // had its artwork dropped forever.
+    static constexpr uint32_t kNoArtSeq = UINT32_MAX;
+
+    // One now-playing message, copied out on the zenoh thread. The artwork is
+    // decoded there too, once per sequence number, so the GUI never blocks on
+    // an image decode.
+    struct Track
+    {
+        QString title;
+        QString artist;
+        QString album;
+        QString app;
+        float duration_sec = 0.0f;
+        float elapsed_sec = 0.0f;
+        bool playing = false;
+        uint32_t art_seq = kNoArtSeq;
+        QImage album_art;
+    };
+
+    struct Call
+    {
+        CarPlayCall::State state = CarPlayCall::State::IDLE;
+        QString name;
+        QString number;
+        float duration_sec = 0.0f;
+    };
+
+    // Qt thread: the latest snapshot of each, delivered coalesced.
+    void setTrack(Track track);
+    void setCall(Call call);
 
     // Qt thread. Starts the fade towards `to_call` if it is not already headed
     // there, and arms the linger timer when a call has just ended.
@@ -54,22 +83,9 @@ class NowPlayingWidget : public QWidget
 
     NowPlayingConfig_t _cfg;
 
-    // Guards everything below; written by the subscriber thread, read by paint.
-    std::mutex _mutex;
-    QString _title;
-    QString _artist;
-    QString _album;
-    QString _app;
-    float _duration_sec = 0.0f;
-    float _elapsed_sec = 0.0f;
-    bool _playing = false;
-    // Sentinel rather than 0: the artwork is only decoded when the sequence
-    // changes, and a publisher whose first artwork carries seq 0 -- a fresh
-    // process, or one that never sets the field -- matched the initial value and
-    // had its artwork dropped forever.
-    static constexpr uint32_t kNoArtSeq = UINT32_MAX;
-    uint32_t _art_seq = kNoArtSeq;
-    QImage _album_art;
+    // GUI thread only; written by the delivery tick, read by paint.
+    Track _track;
+    Call _call;
 
     // Paint-path caches. None of this belongs in paintEvent: the font family
     // came from a QFontDatabase registration on every repaint, and the fonts,
@@ -89,14 +105,6 @@ class NowPlayingWidget : public QWidget
     QSize _scaled_art_size;
     uint32_t _scaled_art_seq = kNoArtSeq;
 
-    // ---- Call takeover -----------------------------------------------------
-    // Guarded by _mutex like the media fields above; written by the call
-    // subscriber thread, read by paint.
-    CarPlayCall::State _call_state = CarPlayCall::State::IDLE;
-    QString _call_name;
-    QString _call_number;
-    float _call_duration_sec = 0.0f;
-
     // 0 is fully music, 1 is fully call. Qt thread only -- the animation that
     // drives it and the paint that reads it both run there, so it needs no lock.
     qreal _call_mix = 0.0;
@@ -107,8 +115,8 @@ class NowPlayingWidget : public QWidget
     // Holds the call face up for call_linger_ms after the phone hangs up.
     QTimer _linger;
 
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayNowPlaying>> _sub;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayCall>> _call_sub;
+    dashboard::TypedSubscriptionPtr<CarPlayNowPlaying, Track> _sub;
+    dashboard::TypedSubscriptionPtr<CarPlayCall, Call> _call_sub;
 };
 
 #endif  // NOW_PLAYING_WIDGET_H_

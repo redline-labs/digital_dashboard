@@ -5,7 +5,7 @@
 #include "carplay_nav/format.h"
 #include "dashboard/widget_types.h"
 
-#include "pub_sub/zenoh_subscriber.h"
+#include "dashboard/typed_subscription.h"
 #include "carplay_nav.capnp.h"
 
 #include <QtWidgets/QWidget>
@@ -16,7 +16,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string_view>
 
 // Supplemental CarPlay widget: the turn card. Subscribes to the driver node's
@@ -39,8 +38,24 @@ class CarPlayNavWidget : public QWidget
     void paintEvent(QPaintEvent* event) override;
 
   private:
-    // Runs on the zenoh subscriber thread.
-    void onNav(CarPlayNav::Reader reader);
+    // One guidance message, copied out on the zenoh thread. Each is a full
+    // snapshot of the node's accumulated state, so the latest is all that
+    // matters.
+    struct Guidance
+    {
+        bool active = false;
+        QString road_name;
+        QString after_road_name;
+        QString destination_name;
+        float maneuver_angle_deg = 0.0f;
+        float distance_to_maneuver_m = 0.0f;
+        float distance_remaining_m = 0.0f;
+        float time_remaining_sec = 0.0f;
+        uint64_t eta_epoch_sec = 0;
+    };
+
+    // Qt thread.
+    void setGuidance(Guidance guidance);
 
     void paintIdle(QPainter& p, const QRectF& bounds);
     void paintGuidance(QPainter& p, const QRectF& bounds);
@@ -51,17 +66,8 @@ class CarPlayNavWidget : public QWidget
 
     CarPlayNavConfig_t _cfg;
 
-    // Guards everything below; written by the subscriber thread, read by paint.
-    std::mutex _mutex;
-    bool _active = false;
-    QString _road_name;
-    QString _after_road_name;
-    QString _destination_name;
-    float _maneuver_angle_deg = 0.0f;
-    float _distance_to_maneuver_m = 0.0f;
-    float _distance_remaining_m = 0.0f;
-    float _time_remaining_sec = 0.0f;
-    uint64_t _eta_epoch_sec = 0;
+    // GUI thread only; written by the delivery tick, read by paint.
+    Guidance _guidance;
 
     // Paint-path caches, for the same reason now_playing has them: the font
     // family came from a QFontDatabase registration and the metrics were rebuilt
@@ -77,7 +83,7 @@ class CarPlayNavWidget : public QWidget
     std::unique_ptr<QFontMetricsF> _road_fm;
     std::unique_ptr<QFontMetricsF> _detail_fm;
 
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<CarPlayNav>> _sub;
+    dashboard::TypedSubscriptionPtr<CarPlayNav, Guidance> _sub;
 };
 
 #endif  // CARPLAY_NAV_WIDGET_H_
