@@ -9,6 +9,7 @@
 #include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
+#include "dashboard/widget_limits.h"
 
 REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (uint32_t, max_rpm, 6000,
@@ -51,7 +52,7 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
 inline std::vector<std::string> validate(MotecC125TachometerConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
+    dashboard::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
     config_codec::limits::clampInto<uint32_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
     return notes;
 }

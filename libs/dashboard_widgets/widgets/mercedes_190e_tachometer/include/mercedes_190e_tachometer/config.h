@@ -8,6 +8,7 @@
 #include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
+#include "dashboard/widget_limits.h"
 
 REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
     (uint16_t, max_rpm, 7000,
@@ -25,7 +26,7 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
 inline std::vector<std::string> validate(Mercedes190ETachometerConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
+    dashboard::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
     return notes;
 }

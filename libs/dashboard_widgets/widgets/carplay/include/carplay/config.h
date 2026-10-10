@@ -5,9 +5,10 @@
 #include <string>
 #include <vector>
 
-#include "config_codec/config_limits.h"
 #include "dashboard/page_command.h"
 #include "reflection/reflection.h"
+#include "config_codec/config_limits.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 
 // A way off the CarPlay page with no phone connected. The phone's own
@@ -52,7 +53,7 @@ REFLECT_STRUCT(CarplayConfig_t,
 inline std::vector<std::string> validate(CarplayConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampStaleAfter(cfg.session_stale_after_ms, "session_stale_after_ms", notes);
+    pub_sub::clampStaleAfter(cfg.session_stale_after_ms, "session_stale_after_ms", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.return_button.width, 40u, 2000u, "return_button.width", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.return_button.height, 24u, 2000u, "return_button.height", notes);
     return notes;

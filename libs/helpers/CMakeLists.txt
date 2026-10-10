@@ -1,9 +1,8 @@
+# Header-only and dependency-free: the YAML conversion of its string leaves
+# lives in config_codec, so nothing here pulls yaml-cpp in.
 add_library(helpers INTERFACE)
 target_include_directories(helpers INTERFACE
     include
-)
-target_link_libraries(helpers INTERFACE
-    yaml-cpp
 )
 
 # Hex <-> bytes. The rejections are what is pinned: the copies helpers/hex.h
@@ -21,7 +20,7 @@ add_project_test(TARGET helpers_test_hex LABELS helpers unit)
 #
 # Optional, because the REQUIRED probe below used to make libavutil a hard
 # prerequisite of this whole directory -- including the interface target above,
-# which is headers and yaml-cpp. ON by default; OFF is a consumer saying it has
+# which is headers only. ON by default; OFF is a consumer saying it has
 # no ffmpeg, not a fallback we pick when the probe fails. Guessing there is how
 # a build silently drops video logging.
 option(HELPERS_WITH_FFMPEG "Build the ffmpeg-to-spdlog log bridge (needs libavutil)" ON)

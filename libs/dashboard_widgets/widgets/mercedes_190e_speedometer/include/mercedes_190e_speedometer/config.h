@@ -9,6 +9,7 @@
 #include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
+#include "dashboard/widget_limits.h"
 
 // Widget-specific configuration structs
 REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
@@ -37,7 +38,7 @@ inline std::vector<std::string> validate(Mercedes190ESpeedometerConfig_t& cfg)
     std::vector<std::string> notes;
     config_codec::limits::clampInto<uint16_t>(cfg.max_speed, 1u, 1000u, "max_speed", notes);
     config_codec::limits::clampInto<uint32_t>(cfg.odometer_value, 0u, 999999u, "odometer_value", notes);
-    config_codec::limits::capLength(cfg.shift_box_markers, config_codec::limits::kMaxMarkers,
+    config_codec::limits::capLength(cfg.shift_box_markers, dashboard::limits::kMaxMarkers,
                                  "shift_box_markers", notes);
     return notes;
 }

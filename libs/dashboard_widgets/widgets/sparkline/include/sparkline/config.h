@@ -9,6 +9,7 @@
 #include "pub_sub/topic_key.h"
 #include "helpers/color.h"
 #include "config_codec/config_limits.h"
+#include "dashboard/widget_limits.h"
 
 REFLECT_STRUCT(SparklineConfig_t,
     (std::string, units, "Untitled",
@@ -40,7 +41,7 @@ REFLECT_STRUCT(SparklineConfig_t,
 inline std::vector<std::string> validate(SparklineConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampInto<uint16_t>(cfg.update_rate, 1u, config_codec::limits::kMaxUpdateRateHz,
+    config_codec::limits::clampInto<uint16_t>(cfg.update_rate, 1u, dashboard::limits::kMaxUpdateRateHz,
                                            "update_rate", notes);
     config_codec::limits::orderRange(cfg.min_value, cfg.max_value, "the value range", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.font_size_value, 1u, 200u, "font_size_value", notes);

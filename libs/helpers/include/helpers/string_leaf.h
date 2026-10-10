@@ -5,8 +5,6 @@
 #include <string>
 #include <string_view>
 
-#include <yaml-cpp/yaml.h>
-
 namespace helpers
 {
 
@@ -20,6 +18,9 @@ namespace helpers
 //
 // `problem(text)` is empty when the text is acceptable, otherwise the reason it
 // is not, phrased to follow the quoted value: "'#GG' is not a colour; ...".
+//
+// No yaml-cpp here: the YAML conversion is in config_codec/config_yaml.h, with
+// the rest of the codec, so a key or a colour can be used without it.
 template <typename T>
 concept StringLeaf = requires(const T& leaf, const std::string& text, std::string_view view) {
     { leaf.str() } -> std::same_as<const std::string&>;
@@ -33,27 +34,5 @@ concept StringLeaf = requires(const T& leaf, const std::string& text, std::strin
 
 }  // namespace helpers
 
-namespace YAML
-{
-
-// A string leaf is a plain scalar in YAML. Its rules are checked by the
-// validator, which can name the field; the decode only refuses a non-scalar.
-template <helpers::StringLeaf T>
-struct convert<T>
-{
-    static Node encode(const T& rhs) { return Node(rhs.str()); }
-
-    static bool decode(const Node& node, T& rhs)
-    {
-        if (!node.IsScalar())
-        {
-            return false;
-        }
-        rhs = T{node.as<std::string>()};
-        return true;
-    }
-};
-
-}  // namespace YAML
 
 #endif  // HELPERS_STRING_LEAF_H

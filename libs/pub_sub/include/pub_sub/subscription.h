@@ -1,11 +1,11 @@
 #ifndef PUB_SUB_SUBSCRIPTION_H_
 #define PUB_SUB_SUBSCRIPTION_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include "config_codec/config_limits.h"
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/topic_key.h"
 #include "reflection/reflection.h"
@@ -55,12 +55,34 @@ inline bool sameSignal(const subscription_t& lhs, const subscription_t& rhs)
            lhs.expression == rhs.expression;
 }
 
+// A loss-of-comm timeout, in milliseconds. Zero is meaningful and stays: it is
+// how a binding says never. Anything else is pulled into a range a person could
+// have meant -- under 50 ms is inside three delivery ticks, so a gauge would
+// flicker between fresh and stale on a healthy stream.
+inline constexpr std::uint32_t kMinStaleAfterMs = 50;
+inline constexpr std::uint32_t kMaxStaleAfterMs = 600000;
+
+inline void clampStaleAfter(std::uint32_t& value, const char* field, std::vector<std::string>& notes)
+{
+    if (value == 0)
+    {
+        return;
+    }
+    const std::uint32_t before = value;
+    value = std::clamp(value, kMinStaleAfterMs, kMaxStaleAfterMs);
+    if (value != before)
+    {
+        notes.push_back(std::string(field) + " was " + std::to_string(before) + ", clamped to " +
+                        std::to_string(value));
+    }
+}
+
 // Run for every subscription in a config by config_codec::applyLimits, so no
 // config that holds one repeats these.
 inline std::vector<std::string> validate(subscription_t& subscription)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampStaleAfter(subscription.stale_after_ms, "stale_after_ms", notes);
+    clampStaleAfter(subscription.stale_after_ms, "stale_after_ms", notes);
     if (!subscription.zenoh_key.empty() && subscription.expression.empty())
     {
         // Still subscribed, so the binding goes stale rather than reading zero;

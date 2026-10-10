@@ -23,27 +23,10 @@ using json = nlohmann::json;
 // the agent interface cover every widget automatically: a new widget with a
 // reflected config becomes inspectable and settable with no work here.
 
-// Detects a REFLECT_ENUM: the macro emits enum_names/enum_values found by ADL.
-template <typename T, typename = void>
-struct is_reflected_enum : std::false_type
-{
-};
-
-template <typename T>
-struct is_reflected_enum<T, std::void_t<decltype(enum_names(std::declval<T>()))>>
-    : std::is_enum<T>::type
-{
-};
-
-template <typename T, typename = void>
-struct is_std_vector : std::false_type
-{
-};
-
-template <typename T>
-struct is_std_vector<std::vector<T>> : std::true_type
-{
-};
+// reflection's own traits, so the two cannot drift: a local copy here matched
+// only std::vector<T> with the default allocator.
+using reflection::is_reflected_enum;
+using reflection::is_std_vector;
 
 // ---------------------------------------------------------------- to JSON
 

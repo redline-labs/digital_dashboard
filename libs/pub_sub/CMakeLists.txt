@@ -78,9 +78,6 @@ target_link_libraries(zenoh_pub_sub PUBLIC
     zenohcxx::zenohc
     helpers
     reflection
-    # Header-only and zenoh-free: subscription_t's validate() clamps through
-    # config_codec::limits like every other config.
-    config_codec
     nlohmann_json::nlohmann_json
 )
 

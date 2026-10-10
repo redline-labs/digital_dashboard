@@ -8,6 +8,7 @@
 #include "dashboard/app_config.h"
 #include "config_codec/config_apply_limits.h"
 #include "config_codec/config_limits.h"
+#include "dashboard/widget_limits.h"
 #include "dashboard/widget_registry.h"
 
 #include <yaml-cpp/yaml.h>
@@ -497,7 +498,7 @@ void testFullScaleIsCapped()
     MotecCdl3TachometerConfig_t cdl3;
     cdl3.max_rpm = 4294967200u;
     check(!config_codec::applyLimits(cdl3).empty(), "an absurd max_rpm is reported");
-    check(cdl3.max_rpm <= config_codec::limits::kMaxRpmCeiling,
+    check(cdl3.max_rpm <= dashboard::limits::kMaxRpmCeiling,
           "an absurd max_rpm is capped to something drawable");
 }
 
@@ -600,7 +601,7 @@ void testOverlongListsAreCapped()
     Mercedes190ESpeedometerConfig_t speedo;
     speedo.shift_box_markers.assign(5000, 42);
     check(!config_codec::applyLimits(speedo).empty(), "an overlong marker list is reported");
-    check(speedo.shift_box_markers.size() <= config_codec::limits::kMaxMarkers,
+    check(speedo.shift_box_markers.size() <= dashboard::limits::kMaxMarkers,
           "an overlong marker list is truncated, so paint stays bounded");
 }
 

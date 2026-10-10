@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "helpers/string_leaf.h"
 #include "reflection/reflection.h"
 
 #include <yaml-cpp/yaml.h>
@@ -87,7 +88,7 @@ namespace YAML {
 // specialization is more constrained ([temp.spec.partial]), which is what the
 // requires-clauses provide. Hand-written full specializations -- widget_config_t
 // in app_config.h -- are more specialized still and continue to win. String
-// leaves (colours, keys) have their own in helpers/string_leaf.h.
+// leaves (colours, keys) have their own, below.
 template <typename T>
     requires reflection::is_reflected_struct_v<T>
 struct convert<T>
@@ -141,6 +142,24 @@ struct convert<T>
         {
             return false;
         }
+    }
+};
+
+// A string leaf is a plain scalar in YAML. Its rules are checked by the
+// validator, which can name the field; the decode only refuses a non-scalar.
+template <helpers::StringLeaf T>
+struct convert<T>
+{
+    static Node encode(const T& rhs) { return Node(rhs.str()); }
+
+    static bool decode(const Node& node, T& rhs)
+    {
+        if (!node.IsScalar())
+        {
+            return false;
+        }
+        rhs = T{node.as<std::string>()};
+        return true;
     }
 };
 

@@ -131,7 +131,7 @@ void testStaleAfterIsClampedWhereverTheStructSits()
     pub_sub::subscription_t too_short;
     too_short.stale_after_ms = 3;
     const auto notes = config_codec::applyLimits(too_short);
-    check(too_short.stale_after_ms == config_codec::limits::kMinStaleAfterMs && notes.size() == 1,
+    check(too_short.stale_after_ms == pub_sub::kMinStaleAfterMs && notes.size() == 1,
           "a timeout inside three delivery ticks is clamped, and said");
 
     pub_sub::subscription_t never;

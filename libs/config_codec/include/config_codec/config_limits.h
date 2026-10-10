@@ -7,7 +7,8 @@
 #include <utility>
 #include <vector>
 
-// Range checking for widget configuration.
+// Range checking for configuration: the generic clamps. Widget ceilings are in
+// dashboard/widget_limits.h and a subscription's timeout in pub_sub/subscription.h.
 //
 // A widget config comes straight from a YAML file, and until this existed every
 // widget re-derived its own defensive logic -- mostly by not having any. The
@@ -34,13 +35,6 @@
 // one -- and the factory detects it, so nothing breaks by leaving it out.
 namespace config_codec::limits {
 
-// Ceilings chosen so a typo cannot turn into a hang. Each one is far above any
-// plausible real value and far below the point where the drawing loops that
-// consume them become expensive.
-inline constexpr uint32_t kMaxRpmCeiling = 30000;
-inline constexpr uint16_t kMaxUpdateRateHz = 240;
-inline constexpr std::size_t kMaxMarkers = 64;
-
 // Forces `value` into [lo, hi], appending a message if it had to move.
 template <typename T>
 void clampInto(T& value, T lo, T hi, const char* field, std::vector<std::string>& notes)
@@ -52,31 +46,6 @@ void clampInto(T& value, T lo, T hi, const char* field, std::vector<std::string>
         notes.push_back(std::string(field) + " was " + std::to_string(before) + ", clamped to " +
                         std::to_string(value));
     }
-}
-
-// A binding's loss-of-comm timeout, in milliseconds. Zero is meaningful and
-// stays: it is how a binding says never. Anything else is pulled into a range
-// a person could have meant -- under 50 ms is inside three delivery ticks, so
-// the gauge would flicker between fresh and stale on a healthy stream.
-inline constexpr std::uint32_t kMinStaleAfterMs = 50;
-inline constexpr std::uint32_t kMaxStaleAfterMs = 600000;
-
-inline void clampStaleAfter(std::uint32_t& value, const char* field,
-                            std::vector<std::string>& notes)
-{
-    if (value == 0)
-    {
-        return;
-    }
-    clampInto<std::uint32_t>(value, kMinStaleAfterMs, kMaxStaleAfterMs, field, notes);
-}
-
-// A gauge's full-scale value. Zero is the dangerous one: it is the divisor in
-// every "how far round the dial is this" calculation.
-template <typename T>
-void clampFullScale(T& value, const char* field, std::vector<std::string>& notes)
-{
-    clampInto<T>(value, T{1}, static_cast<T>(kMaxRpmCeiling), field, notes);
 }
 
 // Puts a min/max pair in order. std::clamp's precondition is !(max < min), so an
