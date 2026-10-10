@@ -5,6 +5,7 @@
 #include "scope/sample_ring.h"
 
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/subscription.h"
 
 #include <cstdint>
 #include <memory>
@@ -38,24 +39,12 @@ struct RawHandle
 };
 inline constexpr RawHandle kInvalidRaw{};
 
-// What identifies a plottable signal: the tree's existing binding form.
-//
-// The same triple a dashboard widget uses, deliberately. A signal picked in
-// scope's browser is the same thing a gauge binds, so a workspace and a
-// dashboard config describe signals identically, and the degenerate expression
-// -- just the field name -- is the "plot this field" case.
-struct SignalKey
-{
-    std::string zenoh_key;
-    pub_sub::schema_type_t schema_type{};
-    std::string value_expression;
-
-    friend bool operator==(const SignalKey& lhs, const SignalKey& rhs)
-    {
-        return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
-               lhs.value_expression == rhs.value_expression;
-    }
-};
+// What a panel asks a source for: the same pub_sub::subscription_t a dashboard
+// widget binds with, deliberately. A signal picked in scope's browser is the
+// same thing a gauge binds, so a workspace and a dashboard config describe
+// signals identically, and the degenerate expression -- just the field name --
+// is the "plot this field" case. Identity is pub_sub::sameSignal().
+using SignalKey = pub_sub::subscription_t;
 
 // A topic this source can offer.
 struct TopicInfo

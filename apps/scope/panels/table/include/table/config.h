@@ -4,6 +4,7 @@
 #include "config_codec/config_limits.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 
 #include <cstdint>
@@ -41,21 +42,15 @@ REFLECT_ENUM(cell_format_t,
 
 // One row: what to read, and how to print it.
 //
-// DELIBERATELY NOT signal_binding_t. The first three fields are the same
-// binding triple -- the tree's one form, the same one a dashboard gauge uses --
-// but a plot's trace also carries `color`, `right_axis` and `display`, and a
-// table can honour none of them. Sharing the struct would put three fields in
-// this panel's reflected config that the YAML encoder writes, the agent
-// interface advertises as settable, `scope.panel_set_config` accepts, and the
-// panel then silently ignores. A config that accepts a setting it does not
-// implement is worse than two structs that share three field names.
+// DELIBERATELY NOT signal_binding_t. Both hold the same `source`, but a plot's
+// trace also carries `color`, `right_axis` and `display`, and a table can
+// honour none of them. Sharing the struct would put fields in this panel's
+// reflected config that the YAML encoder writes, the agent interface
+// advertises as settable, and the panel then silently ignores. A non-zero
+// source.stale_after_ms replaces the panel's stale_seconds for this row.
 REFLECT_STRUCT(table_row_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
-        "Schema Type", "Data schema the topic is published with"),
-    (std::string, value_expression, "",
-        "Value Expression", "Arithmetic over the schema's numeric fields, e.g. 'rpm / 1000'"),
+    (pub_sub::subscription_t, source, pub_sub::subscriptionFor(pub_sub::schema_type_t::EngineRpm),
+        "Source", "Topic, schema and expression to show, e.g. 'rpm / 1000'. Stale After overrides the panel's"),
     (std::string, label, "",
         "Label", "Name shown in the first column. Defaults to the expression when empty"),
     (std::string, units, "",

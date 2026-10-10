@@ -218,14 +218,14 @@ std::uint64_t LiveZenohSource::topicsRevision() const
 
 SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into)
 {
-    if (key.zenoh_key.empty() || key.value_expression.empty() || !into)
+    if (key.zenoh_key.empty() || key.expression.empty() || !into)
     {
         SPDLOG_ERROR("Refusing to bind a signal with an empty key, expression or buffer.");
         return kInvalidSignal;
     }
 
     auto evaluator = std::make_unique<pub_sub::ExpressionEvaluator>(
-        key.schema_type, key.value_expression, key.zenoh_key);
+        key.schema_type, key.expression, key.zenoh_key);
 
     // A definite no rather than a handle that never produces anything. The
     // evaluator has already logged which of the several possible reasons it was.
@@ -252,7 +252,7 @@ SignalHandle LiveZenohSource::bind(const SignalKey& key, std::shared_ptr<SignalB
     impl_->handle_keys.emplace(binding->handle, key.zenoh_key);
 
     SPDLOG_DEBUG("Bound signal {} to '{}' ({}), expression '{}'.", binding->handle, key.zenoh_key,
-                 reflection::enum_to_string(key.schema_type), key.value_expression);
+                 reflection::enum_to_string(key.schema_type), key.expression);
     return binding->handle;
 }
 

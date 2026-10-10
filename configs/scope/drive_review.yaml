@@ -62,11 +62,11 @@ panels:
       latitude:
         zenoh_key: nodes/bd992/gsof/lat_long_height
         schema_type: GsofLatLongHeight
-        value_expression: latitudeDeg
+        expression: latitudeDeg
       longitude:
         zenoh_key: nodes/bd992/gsof/lat_long_height
         schema_type: GsofLatLongHeight
-        value_expression: longitudeDeg
+        expression: longitudeDeg
 
       # The third signal colours the trail along its length -- the view a plot
       # cannot give you, because a plot says WHEN you were slow and this says
@@ -74,7 +74,7 @@ panels:
       color_by:
         zenoh_key: nodes/bd992/gsof/velocity
         schema_type: GsofVelocity
-        value_expression: horizontalSpeedMps
+        expression: horizontalSpeedMps
       color_ramp: viridis
 
   # The same signal as a trace, so the map and the plot are two views of one
@@ -84,9 +84,10 @@ panels:
     config:
       title: Speed
       traces:
-        - zenoh_key: nodes/bd992/gsof/velocity
-          schema_type: GsofVelocity
-          value_expression: horizontalSpeedMps
+        - source:
+            zenoh_key: nodes/bd992/gsof/velocity
+            schema_type: GsofVelocity
+            expression: horizontalSpeedMps
           label: speed
           color: "#4FC3F7"
           units: m/s

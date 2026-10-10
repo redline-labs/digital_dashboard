@@ -173,17 +173,17 @@ class MapPanel : public Panel
 
     struct Signal
     {
-        map_binding_t binding;
+        pub_sub::subscription_t binding;
         std::shared_ptr<SignalBuffer> buffer;
         SignalHandle handle = kInvalidSignal;
         bool bound = false;
     };
 
-    void bindRole(Role role, const map_binding_t& binding);
+    void bindRole(Role role, const pub_sub::subscription_t& binding);
     void rebindAll();
     void releaseAll();
-    const map_binding_t& bindingFor(Role role) const;
-    map_binding_t& bindingFor(Role role);
+    const pub_sub::subscription_t& bindingFor(Role role) const;
+    pub_sub::subscription_t& bindingFor(Role role);
     Signal& signalFor(Role role);
     const Signal& signalFor(Role role) const;
 

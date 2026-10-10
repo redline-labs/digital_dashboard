@@ -33,25 +33,28 @@ panels:
       show_grid: true
       show_legend: true
       traces:
-        - zenoh_key: sim/truth
-          schema_type: VehicleState
-          value_expression: sideslipDeg
+        - source:
+            zenoh_key: sim/truth
+            schema_type: VehicleState
+            expression: sideslipDeg
           label: truth
           color: "#4FC3F7"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/fls
-          schema_type: VehicleState
-          value_expression: sideslipDeg
+        - source:
+            zenoh_key: estimator/fls
+            schema_type: VehicleState
+            expression: sideslipDeg
           label: fixed-lag
           color: "#FFB74D"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/batch
-          schema_type: VehicleState
-          value_expression: sideslipDeg
+        - source:
+            zenoh_key: estimator/batch
+            schema_type: VehicleState
+            expression: sideslipDeg
           label: batch
           color: "#81C784"
           units: ""
@@ -69,25 +72,28 @@ panels:
       show_grid: true
       show_legend: true
       traces:
-        - zenoh_key: sim/truth
-          schema_type: VehicleState
-          value_expression: speedMps
+        - source:
+            zenoh_key: sim/truth
+            schema_type: VehicleState
+            expression: speedMps
           label: truth
           color: "#4FC3F7"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/fls
-          schema_type: VehicleState
-          value_expression: speedMps
+        - source:
+            zenoh_key: estimator/fls
+            schema_type: VehicleState
+            expression: speedMps
           label: fixed-lag
           color: "#FFB74D"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/batch
-          schema_type: VehicleState
-          value_expression: speedMps
+        - source:
+            zenoh_key: estimator/batch
+            schema_type: VehicleState
+            expression: speedMps
           label: batch
           color: "#81C784"
           units: ""
@@ -105,25 +111,28 @@ panels:
       show_grid: true
       show_legend: true
       traces:
-        - zenoh_key: sim/truth
-          schema_type: VehicleState
-          value_expression: yawDeg
+        - source:
+            zenoh_key: sim/truth
+            schema_type: VehicleState
+            expression: yawDeg
           label: truth
           color: "#4FC3F7"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/fls
-          schema_type: VehicleState
-          value_expression: yawDeg
+        - source:
+            zenoh_key: estimator/fls
+            schema_type: VehicleState
+            expression: yawDeg
           label: fixed-lag
           color: "#FFB74D"
           units: ""
           right_axis: false
           display: automatic
-        - zenoh_key: estimator/batch
-          schema_type: VehicleState
-          value_expression: yawDeg
+        - source:
+            zenoh_key: estimator/batch
+            schema_type: VehicleState
+            expression: yawDeg
           label: batch
           color: "#81C784"
           units: ""

@@ -29,27 +29,23 @@ namespace scope
 //   plot went blank, and nothing logged it, because from the panel's point of
 //   view it had just bound successfully.
 //
-// An Entry provides: `binding` (with zenoh_key / schema_type /
-// value_expression), `buffer` (shared_ptr<SignalBuffer>), `handle`
+// An Entry provides: `binding` (whose `source` is the subscription), `buffer` (shared_ptr<SignalBuffer>), `handle`
 // (SignalHandle), `bound` (bool) and `states` (StateNames). Everything beyond
 // that -- a colour, a lane flag, a cell format -- is the panel's own, applied
 // through the presentation callback.
 
-// Do these two bindings name THE SAME SIGNAL? The binding triple and nothing
-// else: a colour, a label, a units suffix, an axis, a display mode or a cell
-// format is presentation, and changing one must not cost the entry its history.
-//
-// The same triple SignalKey is built from, deliberately -- this is the identity
-// the source issues a handle against, so two entries that compare equal here
-// are two the source cannot tell apart.
+// Do these two bindings name THE SAME SIGNAL? Their sources and nothing else: a
+// colour, a label, a units suffix, an axis, a display mode or a cell format is
+// presentation, and changing one must not cost the entry its history. This is
+// the identity the source issues a handle against, so two entries that compare
+// equal here are two the source cannot tell apart.
 template <typename A, typename B>
 bool sameBoundSignal(const A& lhs, const B& rhs)
 {
-    return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
-           lhs.value_expression == rhs.value_expression;
+    return pub_sub::sameSignal(lhs.source, rhs.source);
 }
 
-// Build one entry and bind it: the buffer, the SignalKey, the bind, and the
+// Build one entry and bind it: the buffer, the bind, and the
 // state-name resolution every list panel does identically. State names are
 // resolved HERE rather than at paint time because resolution reads the schema
 // registry and builds a JSON description -- fine once per binding, absurd at
@@ -66,21 +62,16 @@ std::unique_ptr<Entry> makeBoundSignal(DataSource& source, const Binding& bindin
     entry->buffer =
         std::make_shared<SignalBuffer>(history_seconds, max_points, staging_capacity);
 
-    SignalKey key;
-    key.zenoh_key = binding.zenoh_key;
-    key.schema_type = binding.schema_type;
-    key.value_expression = binding.value_expression;
-
-    entry->handle = source.bind(key, entry->buffer);
+    entry->handle = source.bind(binding.source, entry->buffer);
     entry->bound = entry->handle != kInvalidSignal;
 
-    entry->states = resolveStateNames(binding.schema_type, binding.value_expression);
+    entry->states = resolveStateNames(binding.source.schema_type, binding.source.expression);
 
     if (!entry->bound)
     {
         // Already logged in detail by the evaluator; this says which panel.
         SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", panel_title,
-                    binding.value_expression, binding.zenoh_key);
+                    binding.source.expression, binding.source.zenoh_key);
     }
 
     return entry;

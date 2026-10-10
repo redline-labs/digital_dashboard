@@ -46,6 +46,15 @@ inline subscription_t subscriptionFor(schema_type_t schema)
     return subscription;
 }
 
+// Do these name THE SAME SIGNAL? Topic, schema and expression; the timeout is
+// how a consumer treats the stream, not which stream it is, so two bindings
+// that differ only in it share one buffer and one bus subscription.
+inline bool sameSignal(const subscription_t& lhs, const subscription_t& rhs)
+{
+    return lhs.zenoh_key == rhs.zenoh_key && lhs.schema_type == rhs.schema_type &&
+           lhs.expression == rhs.expression;
+}
+
 // Run for every subscription in a config by config_codec::applyLimits, so no
 // config that holds one repeats these.
 inline std::vector<std::string> validate(subscription_t& subscription)

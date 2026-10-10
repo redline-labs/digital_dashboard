@@ -12,9 +12,9 @@ namespace panel_tests
 table_row_t phaseRow()
 {
     table_row_t row;
-    row.zenoh_key = "nodes/carplay/session";
-    row.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
-    row.value_expression = "phase";
+    row.source.zenoh_key = "nodes/carplay/session";
+    row.source.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    row.source.expression = "phase";
     return row;
 }
 
@@ -116,7 +116,7 @@ void testATableMarksAStaleReading()
     cfg.stale_seconds = 2.0;
     cfg.rows.push_back(rpmRow());
     cfg.rows.push_back(rpmRow());
-    cfg.rows[1].value_expression = "oilPressurePsi";
+    cfg.rows[1].source.expression = "oilPressurePsi";
     cfg.rows[1].label = "oil";
     scope::TablePanel table(cfg, source);
 
@@ -147,15 +147,15 @@ void testATableSpellsAStateByName()
 
     cfg.rows.push_back(phaseRow());                     // Automatic -> named.
     cfg.rows.push_back(phaseRow());
-    cfg.rows[1].value_expression = "micActive";         // A bool, also named.
+    cfg.rows[1].source.expression = "micActive";         // A bool, also named.
     cfg.rows.push_back(phaseRow());
     cfg.rows[2].format = cell_format_t::number;         // Forced to the ordinal.
     cfg.rows[2].decimals = 0;
     cfg.rows.push_back(phaseRow());
-    cfg.rows[3].value_expression = "phase * 2";         // Arithmetic: a number.
+    cfg.rows[3].source.expression = "phase * 2";         // Arithmetic: a number.
     cfg.rows[3].decimals = 0;
     cfg.rows.push_back(phaseRow());
-    cfg.rows[4].value_expression = "mainWidthPx";       // Plain integer...
+    cfg.rows[4].source.expression = "mainWidthPx";       // Plain integer...
     cfg.rows[4].format = cell_format_t::state;          // ...forced to a state.
     cfg.rows[4].decimals = 0;
 
@@ -332,7 +332,7 @@ void testOnlyTheChangedRowsAreRebound()
     TablePanelConfig_t cfg;
     cfg.rows.push_back(rpmRow());
     cfg.rows.push_back(rpmRow());
-    cfg.rows[1].value_expression = "oilPressurePsi";
+    cfg.rows[1].source.expression = "oilPressurePsi";
     cfg.rows[1].label = "oil";
 
     scope::TablePanel table(cfg, source);
@@ -361,7 +361,7 @@ void testOnlyTheChangedRowsAreRebound()
 
     // Repointing a row IS a new binding, and the old one has to go.
     TablePanelConfig_t repointed = table.getConfig();
-    repointed.rows[0].value_expression = "coolantTempC";
+    repointed.rows[0].source.expression = "coolantTempC";
     table.applyConfig(repointed);
 
     expect(source.bound.size() == 3, "a changed expression binds anew");
@@ -452,9 +452,9 @@ void testAddingATraceDoesNotWipeTheOthersHistory()
 
     TimeSeriesPanelConfig_t cfg;
     signal_binding_t first;
-    first.zenoh_key = "vehicle/engine/rpm";
-    first.schema_type = pub_sub::schema_type_t::EngineRpm;
-    first.value_expression = "rpm";
+    first.source.zenoh_key = "vehicle/engine/rpm";
+    first.source.schema_type = pub_sub::schema_type_t::EngineRpm;
+    first.source.expression = "rpm";
     cfg.traces.push_back(first);
 
     scope::TimeSeriesPanel plot(cfg, source);
@@ -492,9 +492,9 @@ void testStatsReportUnboundSignals()
     TimeSeriesPanelConfig_t config;
 
     signal_binding_t binding;
-    binding.zenoh_key = "vehicle/engine/rpm";
-    binding.schema_type = pub_sub::schema_type_t::EngineRpm;
-    binding.value_expression = "rpm";
+    binding.source.zenoh_key = "vehicle/engine/rpm";
+    binding.source.schema_type = pub_sub::schema_type_t::EngineRpm;
+    binding.source.expression = "rpm";
     binding.label = "rpm";
     config.traces.push_back(binding);
 

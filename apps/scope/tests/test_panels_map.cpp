@@ -43,9 +43,9 @@ void testATopicLevelPositionDropFillsBothCoordinates()
     expect(panel.acceptsBinding(positionTopic()), "a recognised position topic is accepted");
     expect(panel.addBinding(positionTopic()), "and the drop lands");
 
-    expect(panel.getConfig().latitude.value_expression == "latitudeDeg",
+    expect(panel.getConfig().latitude.expression == "latitudeDeg",
            "latitude is filled from the schema's own field name");
-    expect(panel.getConfig().longitude.value_expression == "longitudeDeg",
+    expect(panel.getConfig().longitude.expression == "longitudeDeg",
            "and so is longitude, from ONE drop");
     expect(panel.getConfig().latitude.zenoh_key == panel.getConfig().longitude.zenoh_key,
            "both on the same topic, which is what lets them pair by timestamp");

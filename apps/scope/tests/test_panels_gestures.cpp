@@ -274,11 +274,11 @@ void testAWidthChangeDoesNotDiscardHistory()
     // But a changed BINDING must rebind, or the panel would be reading a signal
     // its config no longer names.
     TablePanelConfig_t repointed = cfg;
-    repointed.rows[0].value_expression = "oilPressurePsi";
+    repointed.rows[0].source.expression = "oilPressurePsi";
     table.applyConfig(repointed);
 
     expect(source.bound.size() == 2, "a changed row rebinds");
-    expect(source.bound.back().value_expression == "oilPressurePsi", "onto the new expression");
+    expect(source.bound.back().expression == "oilPressurePsi", "onto the new expression");
     expect(table.stats().rows.at(0).retained == 0, "with the history honestly gone");
 }
 

@@ -165,9 +165,9 @@ scope::scope_workspace_t sampleWorkspace()
     plot.y_max = 7000.0;
 
     signal_binding_t binding;
-    binding.zenoh_key = "vehicle/engine/rpm";
-    binding.schema_type = pub_sub::schema_type_t::EngineRpm;
-    binding.value_expression = "rpm / 1000.0";
+    binding.source.zenoh_key = "vehicle/engine/rpm";
+    binding.source.schema_type = pub_sub::schema_type_t::EngineRpm;
+    binding.source.expression = "rpm / 1000.0";
     binding.label = "krpm";
     binding.units = "krpm";
     binding.right_axis = true;
@@ -235,10 +235,10 @@ void testEveryFieldSurvivesARoundTrip()
 
     // The binding triple is the part that matters most: get any of it wrong and
     // the plot silently shows nothing, or shows the wrong field's bytes.
-    expect(plot->traces[0].zenoh_key == "vehicle/engine/rpm", "the zenoh key survives");
-    expect(plot->traces[0].schema_type == pub_sub::schema_type_t::EngineRpm,
+    expect(plot->traces[0].source.zenoh_key == "vehicle/engine/rpm", "the zenoh key survives");
+    expect(plot->traces[0].source.schema_type == pub_sub::schema_type_t::EngineRpm,
            "the schema type survives, by name rather than by ordinal");
-    expect(plot->traces[0].value_expression == "rpm / 1000.0", "the expression survives verbatim");
+    expect(plot->traces[0].source.expression == "rpm / 1000.0", "the expression survives verbatim");
     expect(plot->traces[0].units == "krpm", "the units survive");
     expect(plot->traces[0].right_axis, "the axis assignment survives");
 
@@ -437,18 +437,18 @@ void testATablePanelRoundTripsThroughTheCodec()
     config.units_width = -1.0;
 
     table_row_t row;
-    row.zenoh_key = "nodes/carplay/session";
-    row.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
-    row.value_expression = "phase";
+    row.source.zenoh_key = "nodes/carplay/session";
+    row.source.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    row.source.expression = "phase";
     row.label = "session";
     row.format = cell_format_t::state;
     row.decimals = 0;
     config.rows.push_back(row);
 
     table_row_t second;
-    second.zenoh_key = "vehicle/engine/rpm";
-    second.schema_type = pub_sub::schema_type_t::EngineRpm;
-    second.value_expression = "rpm";
+    second.source.zenoh_key = "vehicle/engine/rpm";
+    second.source.schema_type = pub_sub::schema_type_t::EngineRpm;
+    second.source.expression = "rpm";
     second.units = "rpm";
     second.format = cell_format_t::hex;
     config.rows.push_back(second);
@@ -481,7 +481,7 @@ void testATablePanelRoundTripsThroughTheCodec()
                 expect(table->rows[0].format == cell_format_t::state,
                        "a row's format enum survived BY NAME, which is the thing a "
                        "sub-struct in a list gets wrong");
-                expect(table->rows[0].schema_type == pub_sub::schema_type_t::CarPlaySessionState,
+                expect(table->rows[0].source.schema_type == pub_sub::schema_type_t::CarPlaySessionState,
                        "and so did its schema");
                 expect(table->rows[0].decimals == 0,
                        "zero decimals survived rather than reverting to the -1 default");
@@ -589,6 +589,38 @@ void testAPanelWithNoIdLoadsWithAWarning()
     std::filesystem::remove(path);
 }
 
+// A workspace written before traces and rows held a `source:`. Loaded with the
+// generic "unknown key" warning, every trace would come up silently unbound;
+// the old keys are refused instead, naming where they went.
+void testMovedBindingKeysAreRefused()
+{
+    const std::vector<config_codec::Issue> issues = scope::validate_workspace(YAML::Load(R"(
+name: old
+panels:
+  - type: time_series
+    id: plot
+    config:
+      traces:
+        - zenoh_key: vehicle/engine/rpm
+          value_expression: rpm
+)"));
+    const auto find = [&](const std::string& path) -> const config_codec::Issue*
+    {
+        for (const auto& issue : issues)
+        {
+            if (issue.path == path) return &issue;
+        }
+        return nullptr;
+    };
+    const config_codec::Issue* expr = find("panels[0].config.traces[0].value_expression");
+    expect(expr != nullptr && expr->severity == config_codec::Issue::Severity::error &&
+               expr->message.find("source") != std::string::npos,
+           "an old value_expression is an error that points into source:");
+    const config_codec::Issue* key = find("panels[0].config.traces[0].zenoh_key");
+    expect(key != nullptr && key->severity == config_codec::Issue::Severity::error,
+           "and so is an old flat zenoh_key");
+}
+
 void testAnEmptyWorkspaceIsValid()
 {
     const std::filesystem::path path = tempPath("scope_empty.yaml");
@@ -635,12 +667,12 @@ void testAMapPanelRoundTripsThroughTheCodec()
 
     config.latitude.zenoh_key = "nodes/bd992/gsof/lat_long_height";
     config.latitude.schema_type = pub_sub::schema_type_t::GsofLatLongHeight;
-    config.latitude.value_expression = "latitudeDeg";
+    config.latitude.expression = "latitudeDeg";
     config.longitude = config.latitude;
-    config.longitude.value_expression = "longitudeDeg";
+    config.longitude.expression = "longitudeDeg";
     config.color_by.zenoh_key = "nodes/bd992/gsof/velocity";
     config.color_by.schema_type = pub_sub::schema_type_t::GsofVelocity;
-    config.color_by.value_expression = "horizontalSpeedMps";
+    config.color_by.expression = "horizontalSpeedMps";
 
     entry.config = config;
     written.panels.push_back(entry);
@@ -673,13 +705,13 @@ void testAMapPanelRoundTripsThroughTheCodec()
             // The three bindings are the part worth checking one field at a
             // time: a codec that dropped one would leave a panel that loads
             // cleanly and draws nothing.
-            expect(map->latitude.value_expression == "latitudeDeg", "latitude survived");
-            expect(map->longitude.value_expression == "longitudeDeg", "longitude survived");
+            expect(map->latitude.expression == "latitudeDeg", "latitude survived");
+            expect(map->longitude.expression == "longitudeDeg", "longitude survived");
             expect(map->latitude.zenoh_key == map->longitude.zenoh_key,
                    "and both kept the one topic they pair on");
             expect(map->color_by.schema_type == pub_sub::schema_type_t::GsofVelocity,
                    "the colour binding kept its schema");
-            expect(map->color_by.value_expression == "horizontalSpeedMps", "and its expression");
+            expect(map->color_by.expression == "horizontalSpeedMps", "and its expression");
         }
     }
 }
@@ -735,6 +767,7 @@ int main()
     testTheMapConfigClampsItsRanges();
     testAPanelWithNoIdLoadsWithAWarning();
     testAnEmptyWorkspaceIsValid();
+    testMovedBindingKeysAreRefused();
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

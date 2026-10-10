@@ -66,7 +66,7 @@ void testAddingASignalBindsIt()
     if (!source.bound.empty())
     {
         expect(source.bound[0].zenoh_key == "vehicle/engine/rpm", "bound on the right topic");
-        expect(source.bound[0].value_expression == "rpm",
+        expect(source.bound[0].expression == "rpm",
                "the degenerate expression is the bare field name");
     }
 }
@@ -136,23 +136,23 @@ void testEnumsAndBoolsBecomeLanes()
     TimeSeriesPanelConfig_t cfg;
 
     signal_binding_t enum_trace;
-    enum_trace.zenoh_key = "nodes/carplay/session";
-    enum_trace.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
-    enum_trace.value_expression = "phase";
+    enum_trace.source.zenoh_key = "nodes/carplay/session";
+    enum_trace.source.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    enum_trace.source.expression = "phase";
     cfg.traces.push_back(enum_trace);
 
     signal_binding_t bool_trace = enum_trace;
-    bool_trace.value_expression = "micActive";
+    bool_trace.source.expression = "micActive";
     cfg.traces.push_back(bool_trace);
 
     signal_binding_t numeric_trace = enum_trace;
-    numeric_trace.value_expression = "mainWidthPx";
+    numeric_trace.source.expression = "mainWidthPx";
     cfg.traces.push_back(numeric_trace);
 
     // An enum with arithmetic done to it is a NUMBER, not a state. Labelling it
     // with enumerant names would be a lie, so it stays a line.
     signal_binding_t derived = enum_trace;
-    derived.value_expression = "phase * 2";
+    derived.source.expression = "phase * 2";
     cfg.traces.push_back(derived);
 
     scope::TimeSeriesPanel plot(cfg, source);
@@ -180,14 +180,14 @@ void testTheDisplayOverrideWinsBothWays()
     TimeSeriesPanelConfig_t cfg;
 
     signal_binding_t forced_line;
-    forced_line.zenoh_key = "nodes/carplay/session";
-    forced_line.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
-    forced_line.value_expression = "phase";
+    forced_line.source.zenoh_key = "nodes/carplay/session";
+    forced_line.source.schema_type = pub_sub::schema_type_t::CarPlaySessionState;
+    forced_line.source.expression = "phase";
     forced_line.display = trace_display_t::line;
     cfg.traces.push_back(forced_line);
 
     signal_binding_t forced_lane = forced_line;
-    forced_lane.value_expression = "mainWidthPx";
+    forced_lane.source.expression = "mainWidthPx";
     forced_lane.display = trace_display_t::lane;
     cfg.traces.push_back(forced_lane);
 

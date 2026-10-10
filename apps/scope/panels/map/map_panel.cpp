@@ -110,18 +110,9 @@ QColor sampleRamp(const RampStop* stops, std::size_t count, double t)
     return QColor(stops[count - 1].r, stops[count - 1].g, stops[count - 1].b);
 }
 
-// Do these two bindings name THE SAME SIGNAL? The triple and nothing else --
-// which is the identity the source issues a handle against, so two bindings
-// equal here are two the source cannot tell apart.
-bool sameSignal(const map_binding_t& a, const map_binding_t& b)
+bool isBound(const pub_sub::subscription_t& binding)
 {
-    return a.zenoh_key == b.zenoh_key && a.schema_type == b.schema_type &&
-           a.value_expression == b.value_expression;
-}
-
-bool isBound(const map_binding_t& binding)
-{
-    return !binding.zenoh_key.empty() && !binding.value_expression.empty();
+    return !binding.zenoh_key.empty() && !binding.expression.empty();
 }
 
 // Which fields carry latitude and longitude on the position schemas in this
@@ -231,7 +222,7 @@ MapPanel::~MapPanel()
 
 // ------------------------------------------------------------------ bindings
 
-const map_binding_t& MapPanel::bindingFor(Role role) const
+const pub_sub::subscription_t& MapPanel::bindingFor(Role role) const
 {
     switch (role)
     {
@@ -245,9 +236,9 @@ const map_binding_t& MapPanel::bindingFor(Role role) const
     return cfg_.color_by;
 }
 
-map_binding_t& MapPanel::bindingFor(Role role)
+pub_sub::subscription_t& MapPanel::bindingFor(Role role)
 {
-    return const_cast<map_binding_t&>(std::as_const(*this).bindingFor(role));
+    return const_cast<pub_sub::subscription_t&>(std::as_const(*this).bindingFor(role));
 }
 
 const MapPanel::Signal& MapPanel::signalFor(Role role) const
@@ -269,7 +260,7 @@ MapPanel::Signal& MapPanel::signalFor(Role role)
     return const_cast<Signal&>(std::as_const(*this).signalFor(role));
 }
 
-void MapPanel::bindRole(Role role, const map_binding_t& binding)
+void MapPanel::bindRole(Role role, const pub_sub::subscription_t& binding)
 {
     Signal& signal = signalFor(role);
     signal.binding = binding;
@@ -285,19 +276,14 @@ void MapPanel::bindRole(Role role, const map_binding_t& binding)
     signal.buffer =
         std::make_shared<SignalBuffer>(history_seconds_, kMaxPointsPerSignal, kStagingCapacity);
 
-    SignalKey key;
-    key.zenoh_key = binding.zenoh_key;
-    key.schema_type = binding.schema_type;
-    key.value_expression = binding.value_expression;
-
-    signal.handle = source_->bind(key, signal.buffer);
+    signal.handle = source_->bind(binding, signal.buffer);
     signal.bound = signal.handle != kInvalidSignal;
 
     if (!signal.bound)
     {
         // Already logged in detail by the evaluator; this says which panel.
         SPDLOG_WARN("Panel '{}': signal '{}' on '{}' could not be bound.", cfg_.title,
-                    binding.value_expression, binding.zenoh_key);
+                    binding.expression, binding.zenoh_key);
     }
 }
 
@@ -404,11 +390,11 @@ bool MapPanel::addBinding(const BindingCandidate& candidate)
 
         cfg_.latitude.zenoh_key = candidate.zenoh_key;
         cfg_.latitude.schema_type = *schema;
-        cfg_.latitude.value_expression = position->latitude;
+        cfg_.latitude.expression = position->latitude;
 
         cfg_.longitude.zenoh_key = candidate.zenoh_key;
         cfg_.longitude.schema_type = *schema;
-        cfg_.longitude.value_expression = position->longitude;
+        cfg_.longitude.expression = position->longitude;
 
         bindRole(Role::Latitude, cfg_.latitude);
         bindRole(Role::Longitude, cfg_.longitude);
@@ -417,10 +403,10 @@ bool MapPanel::addBinding(const BindingCandidate& candidate)
         return true;
     }
 
-    map_binding_t binding;
+    pub_sub::subscription_t binding;
     binding.zenoh_key = candidate.zenoh_key;
     binding.schema_type = *schema;
-    binding.value_expression = candidate.defaultExpression();
+    binding.expression = candidate.defaultExpression();
 
     const Role role = !isBound(cfg_.latitude)    ? Role::Latitude
                       : !isBound(cfg_.longitude) ? Role::Longitude
@@ -438,7 +424,7 @@ std::vector<QString> MapPanel::bindingLabels() const
     std::vector<QString> labels;
     // The ROLE is named, because unlike a plot's traces these three are not
     // interchangeable and "remove the second one" is otherwise a guess.
-    const std::pair<const char*, const map_binding_t*> roles[] = {
+    const std::pair<const char*, const pub_sub::subscription_t*> roles[] = {
         {"latitude", &cfg_.latitude},
         {"longitude", &cfg_.longitude},
         {"colour", &cfg_.color_by},
@@ -449,7 +435,7 @@ std::vector<QString> MapPanel::bindingLabels() const
         {
             labels.push_back(QStringLiteral("%1 — %2")
                                  .arg(QString::fromUtf8(name),
-                                      QString::fromStdString(binding->value_expression)));
+                                      QString::fromStdString(binding->expression)));
         }
     }
     return labels;
@@ -497,7 +483,7 @@ bool MapPanel::removeBinding(std::size_t index)
         source_->release(signal.handle);
     }
     signal = Signal{};
-    bindingFor(role) = map_binding_t{};
+    bindingFor(role) = pub_sub::subscription_t{};
 
     emit configChanged();
     update();
@@ -562,7 +548,7 @@ void MapPanel::applyConfig(const config_t& cfg)
 
     // Only rebind the roles whose SIGNAL changed. A colour, a width or a title
     // must not cost a binding its history.
-    if (!sameSignal(previous.latitude, cfg_.latitude))
+    if (!pub_sub::sameSignal(previous.latitude, cfg_.latitude))
     {
         if (latitude_.handle != kInvalidSignal)
         {
@@ -570,7 +556,7 @@ void MapPanel::applyConfig(const config_t& cfg)
         }
         bindRole(Role::Latitude, cfg_.latitude);
     }
-    if (!sameSignal(previous.longitude, cfg_.longitude))
+    if (!pub_sub::sameSignal(previous.longitude, cfg_.longitude))
     {
         if (longitude_.handle != kInvalidSignal)
         {
@@ -578,7 +564,7 @@ void MapPanel::applyConfig(const config_t& cfg)
         }
         bindRole(Role::Longitude, cfg_.longitude);
     }
-    if (!sameSignal(previous.color_by, cfg_.color_by))
+    if (!pub_sub::sameSignal(previous.color_by, cfg_.color_by))
     {
         if (color_.handle != kInvalidSignal)
         {

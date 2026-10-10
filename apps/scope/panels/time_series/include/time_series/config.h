@@ -5,6 +5,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 
 #include <string>
@@ -38,20 +39,16 @@ REFLECT_ENUM(trace_display_t,
 
 // One plotted signal.
 //
-// The first three fields are the tree's existing binding form -- the same
-// triple a dashboard widget uses -- so a signal picked in scope's browser is
-// the same thing a gauge binds, and a workspace and a dashboard config describe
-// signals identically. Dragging a field out of the browser fills the expression
-// in with the bare field name, which is the degenerate "just plot this" case;
+// `source` is the tree's one binding form -- the pub_sub::subscription_t a
+// dashboard widget binds with -- so a signal picked in scope's browser is the
+// same thing a gauge binds. Dragging a field out of the browser fills the
+// expression in with the bare field name, the degenerate "just plot this" case;
 // leaving it editable is what makes `temperatureCelsius * 1.8 + 32` work with
-// no new UI at all.
+// no new UI at all. A plot has no stale look, so its stale_after_ms is carried
+// and unused.
 REFLECT_STRUCT(signal_binding_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
-        "Schema Type", "Data schema the topic is published with"),
-    (std::string, value_expression, "",
-        "Value Expression", "Arithmetic over the schema's numeric fields, e.g. 'rpm / 1000'"),
+    (pub_sub::subscription_t, source, pub_sub::subscriptionFor(pub_sub::schema_type_t::EngineRpm),
+        "Source", "Topic, schema and expression to plot, e.g. 'rpm / 1000'"),
     (std::string, label, "",
         "Label", "Name shown in the legend. Defaults to the expression when empty"),
     (helpers::Color, color, "#4FC3F7",

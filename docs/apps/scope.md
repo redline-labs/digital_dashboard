@@ -124,9 +124,10 @@ panels:
     config:
       title: Engine
       traces:
-        - zenoh_key: vehicle/engine/rpm
-          schema_type: EngineRpm
-          value_expression: rpm
+        - source:
+            zenoh_key: vehicle/engine/rpm
+            schema_type: EngineRpm
+            expression: rpm
           label: rpm
           units: rpm
 dock_state: ""
@@ -205,7 +206,7 @@ that is really a state. Only a bare field (`phase`) or one list element
 | `autoscale_y` | `true` | Fit the vertical axis to the visible data |
 | `y_min`, `y_max` | `0`, `100` | Axis range when autoscale is off |
 | `show_grid`, `show_legend` | `true` | Grid behind the traces; legend with current values |
-| `traces[]` | | `zenoh_key`, `schema_type`, `value_expression`, `label`, `color`, `units`, `right_axis`, `display` |
+| `traces[]` | | `source` (a [subscription](dashboard/widgets.html#subscriptions): `zenoh_key`, `schema_type`, `expression`; its `stale_after_ms` is unused by a plot), `label`, `color`, `units`, `right_axis`, `display` |
 
 Every gesture moves the one window every panel shares:
 
@@ -310,7 +311,7 @@ overflowing, and the name column keeps a minimum.
 | `stale_seconds` | `2.0` | A value older than this is dimmed and marked stale |
 | `show_units` | `true` | Units column |
 | `value_width`, `units_width`, `age_width` | `-1` | Column widths in pixels (24 to 400); `-1` is automatic |
-| `rows[]` | | `zenoh_key`, `schema_type`, `value_expression`, `label`, `units`, `format`, `decimals` (`-1` picks a width from the magnitude) |
+| `rows[]` | | `source` (a subscription; a non-zero `stale_after_ms` overrides `stale_seconds` for that row), `label`, `units`, `format`, `decimals` (`-1` picks a width from the magnitude) |
 
 `scope.stats` reports `readout_t` and `at_cursor` for the panel and, per row,
 `bound`, `retained`, `received`, `dropped`, `has_value`, `value`, `text`,
@@ -380,7 +381,7 @@ widened range rather than an empty one.
 | `orientation`, `bearing` | `north_up`, `0` | `course_up` turns the map so the drive's direction points up; the compass button cycles this |
 | `view_mode`, `pitch` | `top_down`, `45` | `perspective` tilts the view back by `pitch` degrees; the view button toggles this |
 | `click_seeks`, `click_radius_px` | `true`, `12` | Clicking the track moves the shared cursor |
-| `latitude`, `longitude`, `color_by` | | Each is `zenoh_key`, `schema_type`, `value_expression` |
+| `latitude`, `longitude`, `color_by` | | Each is a subscription: `zenoh_key`, `schema_type`, `expression` |
 | `color_ramp`, `color_autoscale`, `color_min`, `color_max`, `show_color_legend` | `viridis`, `true`, `0`, `100`, `true` | The trail ramp |
 | `track_color`, `track_width`, `track_opacity`, `view_track_width` | `#FF3B30`, `3`, `0.35`, `4.5` | The trail |
 | `marker_color`, `marker_size`, `marker_outline_color` | `#FFFFFF`, `7`, `#101216` | The marker |

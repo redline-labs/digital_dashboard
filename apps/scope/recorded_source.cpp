@@ -990,14 +990,14 @@ std::uint64_t RecordedSource::topicsRevision() const
 
 SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBuffer> into)
 {
-    if (key.zenoh_key.empty() || key.value_expression.empty() || !into)
+    if (key.zenoh_key.empty() || key.expression.empty() || !into)
     {
         SPDLOG_ERROR("Refusing to bind a signal with an empty key, expression or buffer.");
         return kInvalidSignal;
     }
 
     auto evaluator = std::make_unique<pub_sub::ExpressionEvaluator>(
-        key.schema_type, key.value_expression, key.zenoh_key);
+        key.schema_type, key.expression, key.zenoh_key);
 
     // Checked here rather than on the worker, so a bad expression is a definite
     // no immediately instead of a handle whose decode quietly produces nothing.
@@ -1024,7 +1024,7 @@ SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBu
 
     SPDLOG_DEBUG("Bound recorded signal {} to '{}' ({}), expression '{}'; decoding.",
                  binding->handle, key.zenoh_key, reflection::enum_to_string(key.schema_type),
-                 key.value_expression);
+                 key.expression);
     return binding->handle;
 }
 

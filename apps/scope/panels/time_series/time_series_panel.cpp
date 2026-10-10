@@ -146,7 +146,7 @@ struct TimeSeriesPanel::Trace
         {
             return QString::fromStdString(binding.label);
         }
-        return QString::fromStdString(binding.value_expression);
+        return QString::fromStdString(binding.source.expression);
     }
 };
 
@@ -298,19 +298,17 @@ bool TimeSeriesPanel::addBinding(const BindingCandidate& candidate)
     }
 
     signal_binding_t binding;
-    binding.zenoh_key = candidate.zenoh_key;
-    binding.schema_type = *schema;
+    binding.source.zenoh_key = candidate.zenoh_key;
+    binding.source.schema_type = *schema;
     // The degenerate expression: just read the field. Editable afterwards.
-    binding.value_expression = candidate.defaultExpression();
+    binding.source.expression = candidate.defaultExpression();
     binding.label = candidate.field_name;
 
     // Already plotted? Adding it twice draws the same line on top of itself and
     // doubles the decode cost for nothing.
     const auto duplicate = std::find_if(
         cfg_.traces.begin(), cfg_.traces.end(), [&binding](const signal_binding_t& existing) {
-            return existing.zenoh_key == binding.zenoh_key &&
-                   existing.schema_type == binding.schema_type &&
-                   existing.value_expression == binding.value_expression;
+            return pub_sub::sameSignal(existing.source, binding.source);
         });
     if (duplicate != cfg_.traces.end())
     {

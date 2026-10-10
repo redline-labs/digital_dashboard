@@ -197,6 +197,9 @@ class TablePanel : public Panel
 
     std::unique_ptr<Row> makeRow(const table_row_t& binding);
 
+    // The row's own source.stale_after_ms when it sets one, else the panel's.
+    double staleSecondsFor(const Row& row) const;
+
     // Re-read the presentation half of a binding: which of `format`'s modes the
     // row is in. Separate from makeRow() because a row that only changed how it
     // PRINTS must not be rebound.

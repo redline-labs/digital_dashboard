@@ -122,7 +122,7 @@ struct TablePanel::Row
         {
             return QString::fromStdString(binding.label);
         }
-        return QString::fromStdString(binding.value_expression);
+        return QString::fromStdString(binding.source.expression);
     }
 };
 
@@ -287,19 +287,17 @@ bool TablePanel::addBinding(const BindingCandidate& candidate)
     }
 
     table_row_t binding;
-    binding.zenoh_key = candidate.zenoh_key;
-    binding.schema_type = *schema;
+    binding.source.zenoh_key = candidate.zenoh_key;
+    binding.source.schema_type = *schema;
     // The degenerate expression: just read the field. Editable afterwards.
-    binding.value_expression = candidate.defaultExpression();
+    binding.source.expression = candidate.defaultExpression();
     binding.label = candidate.field_name;
 
     // Already listed? A second identical row reads out the same number twice and
     // doubles the decode cost for nothing.
     const auto duplicate =
         std::find_if(cfg_.rows.begin(), cfg_.rows.end(), [&binding](const table_row_t& existing) {
-            return existing.zenoh_key == binding.zenoh_key &&
-                   existing.schema_type == binding.schema_type &&
-                   existing.value_expression == binding.value_expression;
+            return pub_sub::sameSignal(existing.source, binding.source);
         });
     if (duplicate != cfg_.rows.end())
     {
@@ -408,6 +406,12 @@ void TablePanel::onFrame()
 bool TablePanel::readingAtCursor() const
 {
     return cfg_.follow_cursor && time_base_ != nullptr && time_base_->cursor().has_value();
+}
+
+double TablePanel::staleSecondsFor(const Row& row) const
+{
+    const std::uint32_t own_ms = row.binding.source.stale_after_ms;
+    return own_ms > 0 ? own_ms / 1000.0 : cfg_.stale_seconds;
 }
 
 double TablePanel::readoutTime() const
@@ -885,7 +889,7 @@ void TablePanel::paintEvent(QPaintEvent* event)
             continue;
         }
 
-        const bool stale = reading.age > cfg_.stale_seconds;
+        const bool stale = reading.age > staleSecondsFor(row);
 
         painter.setPen(stale ? kStale : kValue);
         painter.drawText(value_rect, Qt::AlignRight | Qt::AlignVCenter,
@@ -954,7 +958,7 @@ TablePanel::stats_t TablePanel::stats() const
             stats.text = formatCell(*row, reading.value).toStdString();
             stats.sample_t = reading.sample_t;
             stats.age_seconds = reading.age;
-            stats.stale = reading.age > cfg_.stale_seconds;
+            stats.stale = reading.age > staleSecondsFor(*row);
         }
 
         all.rows.push_back(std::move(stats));

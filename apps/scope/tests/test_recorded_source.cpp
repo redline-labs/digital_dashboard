@@ -140,7 +140,7 @@ scope::SignalKey rpmKey()
     scope::SignalKey key;
     key.zenoh_key = "vehicle/engine/rpm";
     key.schema_type = pub_sub::schema_type_t::EngineRpm;
-    key.value_expression = "rpm";
+    key.expression = "rpm";
     return key;
 }
 
@@ -233,7 +233,7 @@ void testQueuedDecodesShareOnePass()
 
     source.bind(rpmKey(), b);
     scope::SignalKey doubled = rpmKey();
-    doubled.value_expression = "rpm * 2";
+    doubled.expression = "rpm * 2";
     source.bind(doubled, c);
 
     gated->openGate();
@@ -472,7 +472,7 @@ void testABadExpressionIsRefusedImmediately()
     scope::RecordedSource source(std::make_unique<StubProvider>(10, 100'000'000));
 
     scope::SignalKey key = rpmKey();
-    key.value_expression = "no_such_field * 2";
+    key.expression = "no_such_field * 2";
 
     auto buffer = std::make_shared<scope::SignalBuffer>(30.0, 1000, 4096);
     expect(source.bind(key, buffer) == scope::kInvalidSignal,

@@ -20,6 +20,38 @@ bool operator==(const panel_entry_t& lhs, const panel_entry_t& rhs)
     return lhs.type == rhs.type && lhs.id == rhs.id && lhs.config == rhs.config;
 }
 
+namespace
+{
+
+// Binding keys that moved into a pub_sub::subscription_t, and where. Left to
+// the generic check, an old workspace loads with "unknown key, ignored" and
+// every trace silently unbound; refused instead, with the new spelling.
+void refuseMovedKeys(std::vector<config_codec::Issue>& issues)
+{
+    for (config_codec::Issue& issue : issues)
+    {
+        if (issue.severity != config_codec::Issue::Severity::warning ||
+            !issue.message.starts_with("unknown key"))
+        {
+            continue;
+        }
+        const std::size_t dot = issue.path.rfind('.');
+        const std::string leaf = dot == std::string::npos ? issue.path : issue.path.substr(dot + 1);
+        if (leaf == "value_expression")
+        {
+            issue.severity = config_codec::Issue::Severity::error;
+            issue.message = "moved; it is now `expression`, inside `source:` on a trace or row";
+        }
+        else if (leaf == "zenoh_key" || leaf == "schema_type")
+        {
+            issue.severity = config_codec::Issue::Severity::error;
+            issue.message = "moved; it now lives under `source:`";
+        }
+    }
+}
+
+}  // namespace
+
 std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root)
 {
     std::vector<config_codec::Issue> issues;
@@ -173,6 +205,7 @@ std::vector<config_codec::Issue> validate_workspace(const YAML::Node& root)
         }
     }
 
+    refuseMovedKeys(issues);
     return issues;
 }
 

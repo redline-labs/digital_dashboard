@@ -3,6 +3,7 @@
 #include "scope/panel.h"
 
 #include "helpers/color.h"
+#include "pub_sub/subscription.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -81,13 +82,17 @@ QString elementLabel(const Item& item, std::size_t index)
                 {
                     label = QString::fromStdString(field);
                 }
-                else if (name == "value_expression")
-                {
-                    expression = QString::fromStdString(field);
-                }
+
                 else if (fallback.isEmpty())
                 {
                     fallback = QString::fromStdString(field);
+                }
+            }
+            else if constexpr (std::is_same_v<F, pub_sub::subscription_t>)
+            {
+                if (!field.expression.empty())
+                {
+                    expression = QString::fromStdString(field.expression);
                 }
             }
             else if constexpr (helpers::StringLeaf<F> && !std::is_same_v<F, helpers::Color>)

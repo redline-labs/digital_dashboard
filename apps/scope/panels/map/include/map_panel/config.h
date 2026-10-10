@@ -8,6 +8,7 @@
 #include "map_render/style.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 
 #include <cmath>
@@ -45,23 +46,6 @@ REFLECT_ENUM(map_color_ramp_t,
 REFLECT_ENUM(MapPanelOrientation_t,
     north_up,
     course_up
-)
-
-// One signal the panel reads.
-//
-// The tree's binding triple, and DELIBERATELY NOT table_row_t or
-// signal_binding_t: a plot's trace carries `color`, `right_axis` and `display`
-// and a table's row carries `format`, `units` and `decimals`, none of which a
-// map coordinate has any meaning for. Sharing one of those structs would put
-// fields in this panel's reflected config that the YAML encoder writes, the
-// agent interface advertises as settable and the panel silently ignores.
-REFLECT_STRUCT(map_binding_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to. Empty means this role is unbound"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::GsofLatLongHeight,
-        "Schema Type", "Data schema the topic is published with"),
-    (std::string, value_expression, "",
-        "Value Expression", "Arithmetic over the schema's numeric fields, e.g. 'latitudeDeg'")
 )
 
 // Where the vehicle went, under the shared clock.
@@ -137,12 +121,12 @@ REFLECT_STRUCT(MapPanelConfig_t,
         "Click Radius", "How close a click has to land to count as on the track. Outside "
                         "it, a drag pans the map instead"),
 
-    (map_binding_t, latitude, {},
+    (pub_sub::subscription_t, latitude, pub_sub::subscriptionFor(pub_sub::schema_type_t::GsofLatLongHeight),
         "Latitude", "Signal giving degrees north"),
-    (map_binding_t, longitude, {},
+    (pub_sub::subscription_t, longitude, pub_sub::subscriptionFor(pub_sub::schema_type_t::GsofLatLongHeight),
         "Longitude", "Signal giving degrees east. Must be on the same topic as latitude -- "
                      "they pair by the timestamp their shared message carries"),
-    (map_binding_t, color_by, {},
+    (pub_sub::subscription_t, color_by, pub_sub::subscriptionFor(pub_sub::schema_type_t::GsofLatLongHeight),
         "Colour By", "Optional third signal driving a colour ramp along the trail"),
 
     (map_color_ramp_t, color_ramp, map_color_ramp_t::viridis,

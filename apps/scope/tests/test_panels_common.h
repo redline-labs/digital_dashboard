@@ -220,9 +220,9 @@ inline void feed(StubSource& source, std::size_t index, const std::vector<scope:
 inline table_row_t rpmRow()
 {
     table_row_t row;
-    row.zenoh_key = "vehicle/engine/rpm";
-    row.schema_type = pub_sub::schema_type_t::EngineRpm;
-    row.value_expression = "rpm";
+    row.source.zenoh_key = "vehicle/engine/rpm";
+    row.source.schema_type = pub_sub::schema_type_t::EngineRpm;
+    row.source.expression = "rpm";
     row.label = "rpm";
     row.units = "rpm";
     return row;

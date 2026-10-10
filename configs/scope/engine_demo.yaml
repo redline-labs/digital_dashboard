@@ -15,16 +15,18 @@ panels:
       show_grid: true
       show_legend: true
       traces:
-        - zenoh_key: vehicle/engine/rpm
-          schema_type: EngineRpm
-          value_expression: rpm
+        - source:
+            zenoh_key: vehicle/engine/rpm
+            schema_type: EngineRpm
+            expression: rpm
           label: rpm
           color: "#4FC3F7"
           units: rpm
           right_axis: false
-        - zenoh_key: vehicle/engine/rpm
-          schema_type: EngineRpm
-          value_expression: oilPressurePsi
+        - source:
+            zenoh_key: vehicle/engine/rpm
+            schema_type: EngineRpm
+            expression: oilPressurePsi
           label: oil pressure
           color: "#FFB74D"
           units: psi
@@ -41,16 +43,18 @@ panels:
       show_grid: true
       show_legend: true
       traces:
-        - zenoh_key: vehicle/speed_mps
-          schema_type: VehicleSpeed
-          value_expression: mps_to_mph(speedMps)
+        - source:
+            zenoh_key: vehicle/speed_mps
+            schema_type: VehicleSpeed
+            expression: mps_to_mph(speedMps)
           label: speed
           color: "#81C784"
           units: mph
           right_axis: false
-        - zenoh_key: vehicle/engine/temperature_celsius
-          schema_type: EngineTemperature
-          value_expression: temperatureCelsius
+        - source:
+            zenoh_key: vehicle/engine/temperature_celsius
+            schema_type: EngineTemperature
+            expression: temperatureCelsius
           label: coolant
           color: "#E57373"
           units: C
