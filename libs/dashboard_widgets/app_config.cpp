@@ -79,6 +79,61 @@ void collectCommand(const YAML::Node& command, const std::string& path, Validati
                             scalarText(command["page"]).value_or("")});
 }
 
+// Every page command in a widget's YAML, found through its config TYPE: a
+// field of type page_command_t, in a nested struct or a list of them. A block
+// with an `enabled: false` (or no `enabled:`, where false is the default) is
+// skipped -- a disabled button's command is not sent, so it is not checked.
+//
+// By type rather than by naming the widgets that have one, so a widget that
+// gains a command is checked without touching this file.
+template <typename T>
+void collectCommandsAs(const YAML::Node& node, const std::string& path, ValidationContext& ctx)
+{
+    if constexpr (std::is_same_v<T, page_command_t>)
+    {
+        collectCommand(node, path, ctx);
+    }
+    else if constexpr (reflection::is_reflected_struct_v<T>)
+    {
+        if (!node || !node.IsMap())
+        {
+            return;
+        }
+        const T defaults{};
+        bool enabled = true;
+        reflection::visit_fields(defaults, [&](std::string_view name, const auto& field, std::string_view) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(field)>, bool>)
+            {
+                if (name == "enabled")
+                {
+                    enabled = node["enabled"] ? scalarTrue(node["enabled"]) : field;
+                }
+            }
+        });
+        if (!enabled)
+        {
+            return;
+        }
+        reflection::visit_fields(defaults, [&](std::string_view name, const auto& field, std::string_view) {
+            using Field = std::decay_t<decltype(field)>;
+            const std::string key(name);
+            collectCommandsAs<Field>(node[key], path + "." + key, ctx);
+        });
+    }
+    else if constexpr (reflection::is_std_vector<T>::value)
+    {
+        if (!node || !node.IsSequence())
+        {
+            return;
+        }
+        for (std::size_t i = 0; i < node.size(); ++i)
+        {
+            collectCommandsAs<typename reflection::is_std_vector<T>::value_type>(
+                node[i], path + "[" + std::to_string(i) + "]", ctx);
+        }
+    }
+}
+
 void validateWidget(const YAML::Node& node, const std::string& prefix, std::size_t index,
                     std::vector<Issue>& issues, ValidationContext& ctx);
 
@@ -399,23 +454,10 @@ void validateWidget(const YAML::Node& node, const std::string& prefix, std::size
             }
             validatePageStack(node, path, issues, ctx);
             break;
-        case widget_type_t::page_button:
-            if (node["config"] && node["config"].IsMap())
-            {
-                collectCommand(node["config"]["command"], path + ".config.command", ctx);
-            }
-            break;
         case widget_type_t::carplay:
             ctx.carplay_paths.push_back(path);
-            if (node["config"] && node["config"].IsMap())
-            {
-                const YAML::Node return_button = node["config"]["return_button"];
-                if (return_button && return_button.IsMap() && scalarTrue(return_button["enabled"]))
-                {
-                    collectCommand(return_button["command"], path + ".config.return_button.command", ctx);
-                }
-            }
             break;
+        case widget_type_t::page_button:
         case widget_type_t::static_text:
         case widget_type_t::road_info:
         case widget_type_t::value_readout:
@@ -435,6 +477,16 @@ void validateWidget(const YAML::Node& node, const std::string& prefix, std::size
         case widget_type_t::unknown:
             break;
     }
+
+    std::visit(
+        [&](const auto& config) {
+            using Config = std::decay_t<decltype(config)>;
+            if constexpr (!std::is_same_v<Config, std::monostate>)
+            {
+                collectCommandsAs<Config>(node["config"], path + ".config", ctx);
+            }
+        },
+        default_widget_config(*type));
 
     if (!node["config"])
     {

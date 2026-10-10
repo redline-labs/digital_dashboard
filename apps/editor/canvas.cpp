@@ -3,6 +3,7 @@
 #include "editor/selection_frame.h"
 
 #include "qt_helpers/widget_colors.h"
+#include "dashboard/page_command_walk.h"
 #include "dashboard/widget_identity.h"
 
 #include <QDragEnterEvent>
@@ -1028,18 +1029,14 @@ bool pageNameTaken(const widget_config_t& stack, const std::string& name)
                        [&](const widget_page_t& page) { return page.name == name; });
 }
 
-// Every page command in a widget's config that targets `stack_id`.
+// Every page command in a widget's config that targets `stack_id`, found by
+// type; see dashboard::forEachPageCommand.
 std::vector<page_command_t*> commandsIn(widget_config_t& widget, const std::string& stack_id)
 {
     std::vector<page_command_t*> out;
-    if (auto* button = std::get_if<PageButtonWidget::config_t>(&widget.config))
-    {
-        if (button->command.target == stack_id) out.push_back(&button->command);
-    }
-    if (auto* carplay = std::get_if<CarPlayWidget::config_t>(&widget.config))
-    {
-        if (carplay->return_button.command.target == stack_id) out.push_back(&carplay->return_button.command);
-    }
+    dashboard::forEachPageCommand(widget, [&](page_command_t& command) {
+        if (command.target == stack_id) out.push_back(&command);
+    });
     return out;
 }
 

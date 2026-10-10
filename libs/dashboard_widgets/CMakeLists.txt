@@ -188,6 +188,11 @@ endforeach()
 # Every layout under configs/dashboard validates with nothing to say. A
 # renamed field leaves an "unknown key, ignored" warning in any layout nobody
 # rewrote, and the binding it named is gone; that must fail here, not on a car.
+# Page commands found by type wherever a config holds one.
+add_executable(dashboard_widgets_test_page_command_walk tests/test_page_command_walk.cpp)
+target_link_libraries(dashboard_widgets_test_page_command_walk PRIVATE dashboard_widgets)
+add_project_test(TARGET dashboard_widgets_test_page_command_walk LABELS dashboard_widgets unit)
+
 add_executable(dashboard_widgets_test_config_corpus tests/test_config_corpus.cpp)
 target_compile_definitions(dashboard_widgets_test_config_corpus PRIVATE
     DASHBOARD_CONFIG_DIR="${CMAKE_SOURCE_DIR}/configs/dashboard")
