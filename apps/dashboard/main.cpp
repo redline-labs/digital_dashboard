@@ -6,7 +6,7 @@
 #include "dashboard/config_override.h"
 #include "dashboard/display_binding.h"
 #include "dashboard/main_window.h"
-#include "dashboard/quit_on_signal.h"
+#include "qt_helpers/quit_on_signal.h"
 
 #include "agent_control/app_bootstrap.h"
 #include "agent_control/log_sink.h"
@@ -169,7 +169,7 @@ int main(int argc, char** argv)
     // SIGTERM is what systemd stops the unit with; SIGINT is Ctrl+C at a desk.
     // Both leave app.exec() so the teardown at the end runs -- including one
     // that arrives during startup, which waits in the pipe for the loop.
-    dashboard::quitOnSignals(&app, {SIGINT, SIGTERM});
+    qt_helpers::quitOnSignals(&app, {SIGINT, SIGTERM});
 
     // Create windows from configuration. A lambda because a rejected override is
     // rebuilt from the shipped config below.

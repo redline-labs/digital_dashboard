@@ -60,6 +60,7 @@ qt_add_executable(switchboard
 
 target_link_libraries(switchboard PRIVATE
     core
+    qt_helpers
     switchboard_core
     agent_control
 )

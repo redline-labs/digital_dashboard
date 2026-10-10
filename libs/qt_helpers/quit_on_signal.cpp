@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "dashboard/quit_on_signal.h"
+#include "qt_helpers/quit_on_signal.h"
 
 #include <QCoreApplication>
 #include <QSocketNotifier>
@@ -14,7 +14,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-namespace dashboard
+namespace qt_helpers
 {
 namespace
 {
@@ -47,11 +47,17 @@ std::string signalName(int signum)
 
 bool quitOnSignals(QObject* context, std::initializer_list<int> signums)
 {
+    // pipe() and fcntl() rather than pipe2(), which macOS does not have.
     int fds[2];
-    if (::pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0)
+    if (::pipe(fds) != 0)
     {
-        SPDLOG_ERROR("quitOnSignals: pipe2 failed: {}", std::strerror(errno));
+        SPDLOG_ERROR("quitOnSignals: pipe failed: {}", std::strerror(errno));
         return false;
+    }
+    for (const int fd : fds)
+    {
+        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+        ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
     }
     g_write_fd = fds[1];
 
@@ -63,7 +69,10 @@ bool quitOnSignals(QObject* context, std::initializer_list<int> signums)
         {
             SPDLOG_WARN("{} received, quitting.", signalName(byte));
         }
-        QCoreApplication::quit();
+        // exit(), not quit(): since Qt 6 quit() asks every window to close
+        // first, and a window may veto -- the editor's "discard changes?"
+        // dialog did, and under the offscreen platform nobody can answer it.
+        QCoreApplication::exit(0);
     });
 
     struct sigaction action {};
@@ -85,4 +94,4 @@ bool quitOnSignals(QObject* context, std::initializer_list<int> signums)
     return true;
 }
 
-}  // namespace dashboard
+}  // namespace qt_helpers

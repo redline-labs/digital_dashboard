@@ -9,19 +9,17 @@
 #include "agent_control/zenoh_methods.h"
 #include "core/core.h"
 #include "pub_sub/node_identity.h"
+#include "qt_helpers/quit_on_signal.h"
 
 #include <spdlog/spdlog.h>
 
 #include <unistd.h>
 
-#include <atomic>
-#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <memory>
 
 #include <QApplication>
-#include <QTimer>
 
 int main(int argc, char** argv)
 {
@@ -78,21 +76,7 @@ int main(int argc, char** argv)
         }
     }
 
-    // Only a flag from the handler; the timer does the real work on the GUI
-    // thread. Neither spdlog nor quit() is async-signal-safe.
-    static std::atomic<bool> interrupted{false};
-    std::signal(SIGINT, [](int /*signum*/) { interrupted.store(true, std::memory_order_relaxed); });
-
-    QTimer interrupt_poll;
-    QObject::connect(&interrupt_poll, &QTimer::timeout, &app, [&]()
-    {
-        if (interrupted.load(std::memory_order_relaxed))
-        {
-            SPDLOG_WARN("SIGINT received, quitting.");
-            QCoreApplication::quit();
-        }
-    });
-    interrupt_poll.start(std::chrono::milliseconds{100});
+    qt_helpers::quitOnSignals(&app, {SIGINT, SIGTERM});
 
     app.exec();  // Blocking.
 

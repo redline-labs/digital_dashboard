@@ -1,5 +1,6 @@
 #include "dashboard/staleness.h"
 #include "pub_sub/node_identity.h"
+#include "qt_helpers/quit_on_signal.h"
 #include <QApplication>
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -23,6 +24,7 @@
 
 #include <unistd.h>
 
+#include <csignal>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -199,6 +201,7 @@ int main(int argc, char** argv)
         }
     }
 
+    qt_helpers::quitOnSignals(&app, {SIGINT, SIGTERM});
     const int rc = app.exec();
 
     if (agent)

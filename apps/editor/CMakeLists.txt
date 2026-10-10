@@ -61,6 +61,7 @@ qt_add_executable(editor
 
 target_link_libraries(editor PRIVATE
     core
+    qt_helpers
     editor_core
     agent_control
     cxxopts::cxxopts
