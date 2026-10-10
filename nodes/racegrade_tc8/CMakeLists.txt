@@ -39,11 +39,13 @@ target_link_libraries(racegrade_tc8 PRIVATE
     core
 )
 
-add_executable(test_racegrade_tc8_query
-    test/test_racegrade_tc8_query.cpp
+# Calls the node's service once and prints the reply. A command-line tool, not
+# a test, despite what it used to be called.
+add_executable(racegrade_tc8_query
+    query.cpp
 )
 
-target_link_libraries(test_racegrade_tc8_query PRIVATE
+target_link_libraries(racegrade_tc8_query PRIVATE
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc
@@ -67,4 +69,4 @@ add_project_test(TARGET racegrade_tc8_test_messages LABELS racegrade_tc8 unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET racegrade_tc8 COMPONENT nodes)
-redline_install(TARGET test_racegrade_tc8_query COMPONENT nodes)
+redline_install(TARGET racegrade_tc8_query COMPONENT nodes)

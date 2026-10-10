@@ -37,12 +37,12 @@ Logging is at info level unless `--debug` is given.
 
 ### Running without hardware
 
-`megasquirt_test_frames`, built alongside the node, publishes a full cycle of
+`megasquirt_send_frames`, built alongside the node, publishes a full cycle of
 the five dash frames about twenty times a second with slowly varying values, on
 the same topic the node reads.
 
 ```bash
-./build/nodes/megasquirt/megasquirt_test_frames          # -k to use another key
+./build/nodes/megasquirt/megasquirt_send_frames          # -k to use another key
 ./build/nodes/megasquirt/megasquirt &
 ./build/nodes/inspect/inspect echo nodes/megasquirt/dash -n 3
 ```

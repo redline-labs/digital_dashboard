@@ -45,7 +45,7 @@ on the topic the node reads.
 ```
 
 The mock sends no `Diagnostics` frames, so `diagnostics` stays silent under
-it. `test_racegrade_tc8_query`, built next to the node, calls the placeholder
+it. `racegrade_tc8_query`, built next to the node, calls the placeholder
 service once and prints the reply.
 
 ## Topics

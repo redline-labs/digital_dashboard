@@ -13,7 +13,7 @@ int main(int argc, char** argv)
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
-    cxxopts::Options options("racegrade_tc8_querier", "Querier for racegrade_tc8 node");
+    cxxopts::Options options("racegrade_tc8_query", "Calls the racegrade_tc8 node's service once and prints the reply");
     options.add_options()
         ("k,key", "Key expression to query", cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8/configure"))
         ("h,help", "Print usage");

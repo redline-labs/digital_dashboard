@@ -37,11 +37,13 @@ target_link_libraries(megasquirt PRIVATE
     megasquirt_messages
 )
 
-add_executable(megasquirt_test_frames
-    test_frames.cpp
+# Publishes invented dash frames for bench work: a bring-up tool, packaged with
+# the mock data rather than with the node.
+add_executable(megasquirt_send_frames
+    send_frames.cpp
 )
 
-target_link_libraries(megasquirt_test_frames PRIVATE
+target_link_libraries(megasquirt_send_frames PRIVATE
     spdlog::spdlog
     cxxopts::cxxopts
     zenohcxx::zenohc
@@ -64,4 +66,4 @@ add_project_test(TARGET megasquirt_test_messages LABELS megasquirt unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET megasquirt COMPONENT nodes)
-redline_install(TARGET megasquirt_test_frames COMPONENT nodes)
+redline_install(TARGET megasquirt_send_frames COMPONENT mockdata)

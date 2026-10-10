@@ -34,7 +34,7 @@ int main(int argc, char** argv)
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%Y/%m/%d %H:%M:%S.%e%z] [%^%l%$] [%t:%s:%#] %v");
 
-    cxxopts::Options options("megasquirt_test_frames", "Publishes simulated Megasquirt dash CAN frames (dash0..4)");
+    cxxopts::Options options("megasquirt_send_frames", "Publishes simulated Megasquirt dash CAN frames (dash0..4)");
     options.add_options()
         ("k,key", "Zenoh key to publish frames to", cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
         ("h,help", "Print usage");
