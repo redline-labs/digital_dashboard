@@ -126,11 +126,13 @@ discovery seeing only live traffic, and what `accepted: false` and
   scratch state out of a deployment manifest.
 - **Where samples come from is one interface.** `scope::DataSource` has two
   implementations -- the live bus and a recording -- and nothing above it knows
-  which it has. Swapping between them (`ScopeWindow::setSource()`) has ONE
+  which it has. Swapping between them (`ScopeSession::setSource()`) has ONE
   ordering rule: panels release their handles against the OLD source before the
   pointer moves, because a handle means nothing to a source that did not issue
-  it. The window destroys the old source only after that, precisely so the
-  releases have somewhere to go.
+  it. The session destroys the old source only after that, precisely so the
+  releases have somewhere to go -- and replaces the recorder only after the
+  source, because a review of the capture reads the recorder's buffer.
+  `scope_test_session` pins both without a bus or a window.
 - **A plotted buffer's times must be non-decreasing.**
   `SampleHistory::lowerBound()` is a binary search that assumes it and cannot
   detect otherwise -- it returns a plausible wrong index, and the autoscale, the

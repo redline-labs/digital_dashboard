@@ -30,6 +30,7 @@ class OverviewController;
 class OverviewStrip;
 class Panel;
 class ScopeRecorder;
+class ScopeSession;
 class SignalBrowser;
 class TimeBase;
 class TransportBar;
@@ -80,12 +81,9 @@ class ScopeWindow : public QMainWindow
     SignalBrowser* browser() { return browser_; }
 
     // Swap the whole source out: into review over a recording, or back to live.
-    //
-    // Performs the sequence, and the sequence is the point. Panels rebind
-    // FIRST, while the old source is still alive and can honour the releases;
-    // the browser and the time base follow; only then is the old source
-    // destroyed. Nothing above here knows which kind it now has -- that is what
-    // the DataSource seam was for.
+    // ScopeSession holds the ordering rule (panels, browser and time base move
+    // first; the old source dies after); nothing above here knows which kind it
+    // now has -- that is what the DataSource seam was for.
     void setSource(std::unique_ptr<DataSource> source);
 
     // Open a recording on disk: a bag DIRECTORY, from `bag record` or from
@@ -153,7 +151,7 @@ class ScopeWindow : public QMainWindow
     // The wrapper. False when the user cancelled.
     bool saveCaptureDialog();
 
-    ScopeRecorder* recorder() { return recorder_.get(); }
+    ScopeRecorder* recorder();
 
     // Messages per uniform bucket over [begin, end] on the source's clock.
     //
@@ -347,42 +345,10 @@ class ScopeWindow : public QMainWindow
     // remember its directory as where the file dialogs open next.
     void noteRecent(std::vector<std::string>& list, const QString& path);
 
-    // DECLARED BEFORE source_, so it is destroyed AFTER it: a RecordedSource
-    // over a CaptureProvider holds a pointer into this recorder's buffer, and
-    // its destructor joins a worker thread that may still be reading it. The
-    // last-declared member is destroyed first, so the recorder must come
-    // first here or ~ScopeWindow frees the buffer under that worker.
-    std::unique_ptr<ScopeRecorder> recorder_;
-
-    // The INTERFACE, not the concrete live type. Holding LiveZenohSource here
-    // was what blocked recorded playback: everything above this line already
-    // spoke DataSource, and only the member's type said otherwise.
-    std::unique_ptr<DataSource> source_;
+    // The source, the capture, and the order they change in.
+    std::unique_ptr<ScopeSession> session_;
 
     std::unique_ptr<TimeBase> time_base_;
-
-    // The CaptureBuffer revision at the last successful save -- a WATERMARK,
-    // not a latch. A bool that latched true at the first save meant everything
-    // captured AFTER that save was discarded without a prompt, which is exactly
-    // the loss the prompt exists to prevent. Tracked separately from the
-    // workspace's dirty flag because they are lost differently: a workspace can
-    // be re-made by hand, a capture cannot be re-made at all.
-    std::uint64_t capture_saved_revision_ = 0;
-
-    // True when the capture holds messages newer than the last save (or never
-    // saved at all). The question confirmDiscardCapture() and the "(unsaved)"
-    // suffix both ask, answered in one place.
-    bool captureUnsaved() const;
-
-    // What the offline source is, for the top bar's chip: a bag's directory
-    // name and duration, or empty when the source is the capture or nothing.
-    // Held rather than re-derived because a RecordedSource does not know where
-    // it came from -- it has a provider, and a CaptureProvider has no path at
-    // all.
-    QString source_label_;
-
-    std::uint64_t capture_max_bytes_ = 0;
-    double capture_max_seconds_ = 0.0;
 
     std::vector<PanelEntry> panels_;
     int next_panel_ordinal_ = 1;

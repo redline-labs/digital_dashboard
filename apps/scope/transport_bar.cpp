@@ -6,6 +6,7 @@
 #include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
 #include "scope/scope_window.h"
+#include "scope/scope_session.h"
 #include "scope/time_base.h"
 
 #include <QComboBox>
@@ -229,8 +230,8 @@ void TransportBar::update()
         return;
     }
 
-    const SourceCaps caps = window_.source_->caps();
-    const double position = window_.source_->now();
+    const SourceCaps caps = window_.session_->source().caps();
+    const double position = window_.session_->source().now();
     TimeBase& time_base = *window_.time_base_;
 
     const bool was_updating = window_.updating_transport_;
@@ -258,7 +259,7 @@ void TransportBar::update()
     QString text = QObject::tr("  t = %1 s").arg(t, 0, 'f', 3);
     if (!caps.live)
     {
-        if (const auto* recorded = dynamic_cast<const RecordedSource*>(window_.source_.get()))
+        if (const auto* recorded = dynamic_cast<const RecordedSource*>(&window_.session_->source()))
         {
             const QString wall = formatWallClock(recorded->wallClockNanosAt(t));
             if (!wall.isEmpty())
@@ -288,7 +289,7 @@ void TransportBar::update()
         // for as long as the decode takes -- indistinguishable from a bag that
         // does not contain those signals. The agent reads the same fact from
         // scope.source's decodes_pending; this is the human's copy.
-        if (const auto* recorded = dynamic_cast<const RecordedSource*>(window_.source_.get()))
+        if (const auto* recorded = dynamic_cast<const RecordedSource*>(&window_.session_->source()))
         {
             if (const std::size_t pending = recorded->decodesPending(); pending > 0)
             {
@@ -297,12 +298,12 @@ void TransportBar::update()
             }
         }
 
-        if (window_.recorder_ != nullptr)
+        if (window_.session_->recorder() != nullptr)
         {
             // One lock acquisition for all four numbers. This runs per render
             // tick, and taking the capture's mutex four separate times was four
             // chances per frame to contend with the RX thread for one answer.
-            const CaptureBuffer::Stats capture = window_.recorder_->buffer().stats();
+            const CaptureBuffer::Stats capture = window_.session_->recorder()->buffer().stats();
             state += window_.isOnline()
                          ? QObject::tr("  ⏺ %1 s captured")
                                .arg(capture.retained_span_seconds, 0, 'f', 0)
@@ -312,7 +313,7 @@ void TransportBar::update()
             {
                 state += QObject::tr(", %1 evicted").arg(capture.evicted);
             }
-            if (capture.messages > 0 && capture.revision != window_.capture_saved_revision_)
+            if (capture.messages > 0 && capture.revision != window_.session_->captureSavedRevision())
             {
                 state += QObject::tr(" (unsaved)");
             }

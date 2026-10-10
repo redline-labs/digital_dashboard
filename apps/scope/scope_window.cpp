@@ -3,18 +3,15 @@
 #include "scope/add_signal_dialog.h"
 #include "scope/panel_config_dialog.h"
 #include "scope/data_source.h"
-#include "scope/empty_source.h"
-#include "scope/live_zenoh_source.h"
 #include "scope/overview_controller.h"
 #include "scope/overview_strip.h"
 #include "scope/transport_bar.h"
 #include "scope/panel.h"
-#include "scope/recorded_source.h"
 #include "scope/scope_recorder.h"
+#include "scope/scope_session.h"
 #include "scope/settings_dialog.h"
 
 #include "map_panel/map_panel.h"
-#include "pub_sub/node_identity.h"
 #include "scope/signal_browser.h"
 #include "scope/time_base.h"
 
@@ -188,18 +185,24 @@ ScopeWindow::ScopeWindow(QWidget* parent) : QMainWindow(parent)
     // "Offline" a label rather than a fact -- and scope is a diagnostic tool, so
     // an instance that quietly joins the bus is exactly the thing you do not
     // want running unattended next to the system you are measuring. Going online
-    // is what constructs a LiveZenohSource and a recorder; see goOnline().
-    source_ = std::make_unique<EmptySource>();
-    time_base_ = std::make_unique<TimeBase>(*source_);
+    // is what constructs a live source and a recorder; see ScopeSession.
+    ScopeSession::Hooks hooks;
+    hooks.rebind = [this](DataSource& next)
+    {
+        // Panels first: rebindTo() releases every handle against the old
+        // source before repointing.
+        for (PanelEntry& entry : panels_)
+        {
+            entry.panel->rebindTo(next);
+        }
+        browser_->setSource(next);
+        time_base_->setSource(next);
+    };
+    hooks.changed = [this]() { applySourceCaps(); };
+    session_ = std::make_unique<ScopeSession>(std::move(hooks));
+    time_base_ = std::make_unique<TimeBase>(session_->source());
 
-    // The capture's bounds are read now and held, because the recorder they
-    // configure does not exist yet: it is built on the way online, possibly
-    // several times, and each one needs the limits the workspace last set.
-    const scope_workspace_t defaults;
-    capture_max_bytes_ = defaults.max_capture_bytes;
-    capture_max_seconds_ = defaults.max_capture_seconds;
-
-    browser_ = new SignalBrowser(*source_, this);
+    browser_ = new SignalBrowser(session_->source(), this);
     browser_dock_ = new QDockWidget(tr("Signals"), this);
     browser_dock_->setObjectName("dock_signal_browser");
     browser_dock_->setWidget(browser_);
@@ -271,7 +274,7 @@ ScopeWindow::~ScopeWindow()
 {
     // Panels release their signal bindings in their destructors, which reach
     // into the source. Tear the docks down while the source is still alive
-    // rather than letting member destruction order decide -- source_ is
+    // rather than letting member destruction order decide -- session_ is
     // declared before the panel list, so it would otherwise go first.
     for (PanelEntry& entry : panels_)
     {
@@ -282,44 +285,12 @@ ScopeWindow::~ScopeWindow()
 
 DataSource& ScopeWindow::source()
 {
-    return *source_;
+    return session_->source();
 }
 
 void ScopeWindow::setSource(std::unique_ptr<DataSource> next)
 {
-    if (!next || next.get() == source_.get())
-    {
-        return;
-    }
-
-    DataSource& to = *next;
-
-    // ORDER IS THE WHOLE THING HERE.
-    //
-    // Panels first, while the OLD source is still alive: rebindTo() releases
-    // every handle against it before repointing, and a handle means nothing to
-    // a source that did not issue it. Moving the unique_ptr first would destroy
-    // the old source with its subscriptions still registered -- and for the
-    // live source that means zenoh callbacks still running against buffers
-    // nobody will drain.
-    for (PanelEntry& entry : panels_)
-    {
-        entry.panel->rebindTo(to);
-    }
-
-    browser_->setSource(to);
-    time_base_->setSource(to);
-
-    // Only now. This is where the old source is destroyed, and by here nothing
-    // holds a handle on it.
-    source_ = std::move(next);
-
-    // The direct call IS the mechanism. A sourceChanged() signal used to be
-    // emitted here too, documented as what rebuilt the transport bar -- and
-    // nothing anywhere connected to it. Deleted rather than kept: a signal
-    // that describes a wiring that does not exist teaches the next maintainer
-    // the wrong architecture.
-    applySourceCaps();
+    session_->setSource(std::move(next));
 }
 
 // ---------------------------------------------------------------------- panels
@@ -350,7 +321,7 @@ QString ScopeWindow::addPanel(panel_type_t type, const QString& id)
 
 QString ScopeWindow::addPanelFromConfig(const panel_config_variant_t& config, const QString& id)
 {
-    std::unique_ptr<Panel> panel = createPanel(config, *source_, history_seconds_, nullptr);
+    std::unique_ptr<Panel> panel = createPanel(config, session_->source(), history_seconds_, nullptr);
     if (!panel)
     {
         SPDLOG_WARN("Refusing to add a panel of unknown type.");
@@ -517,7 +488,7 @@ void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
 
     if (chosen == add)
     {
-        AddSignalDialog dialog(*source_, *entry->panel, this);
+        AddSignalDialog dialog(session_->source(), *entry->panel, this);
         if (dialog.exec() == QDialog::Accepted)
         {
             entry->panel->addBinding(dialog.selected());
@@ -659,7 +630,7 @@ void ScopeWindow::updateEmptyHint()
     // were tried, and each broke the layout in a different direction. It costs
     // nothing: a window with panels already says what it is on the toolbar, and
     // its central area is a sliver nobody reads.
-    const bool nothing_loaded = !isOnline() && !source_->caps().seekable;
+    const bool nothing_loaded = !isOnline() && !session_->source().caps().seekable;
 
     if (empty_panel_ != nullptr)
     {
@@ -716,8 +687,8 @@ scope_workspace_t ScopeWindow::toWorkspace() const
     // edit and "my workspace * *" after the next.
     workspace.name = workspace_name_.toStdString();
     workspace.history_seconds = history_seconds_;
-    workspace.max_capture_bytes = capture_max_bytes_;
-    workspace.max_capture_seconds = capture_max_seconds_;
+    workspace.max_capture_bytes = session_->captureMaxBytes();
+    workspace.max_capture_seconds = session_->captureMaxSeconds();
     workspace.window_seconds = time_base_->windowSeconds();
     workspace.render_rate_hz = static_cast<uint16_t>(time_base_->renderRateHz());
 
@@ -788,13 +759,7 @@ bool ScopeWindow::loadWorkspace(const QString& path)
     // In place on the existing buffer, not by rebuilding the recorder: capture
     // started with the window, so a rebuild would discard everything recorded
     // before the workspace was opened.
-    capture_max_bytes_ = workspace->max_capture_bytes;
-    capture_max_seconds_ = workspace->max_capture_seconds;
-    if (recorder_)
-    {
-        recorder_->buffer().setBounds(static_cast<std::size_t>(capture_max_bytes_),
-                                      capture_max_seconds_);
-    }
+    session_->setCaptureBounds(workspace->max_capture_bytes, workspace->max_capture_seconds);
 
     time_base_->setWindowSeconds(workspace->window_seconds);
     time_base_->setRenderRateHz(workspace->render_rate_hz);
@@ -890,35 +855,24 @@ void ScopeWindow::reportProblems(const QString& summary, const std::vector<std::
 
 bool ScopeWindow::isOnline() const
 {
-    return source_->caps().live;
+    return session_->isOnline();
 }
 
 bool ScopeWindow::hasCapture() const
 {
-    return recorder_ != nullptr && recorder_->buffer().size() > 0;
+    return session_->hasCapture();
 }
 
-bool ScopeWindow::captureUnsaved() const
+ScopeRecorder* ScopeWindow::recorder()
 {
-    if (!hasCapture())
-    {
-        return false;
-    }
-    // Anything pushed (or evicted -- eviction only happens on a push) since the
-    // watermark means the file on disk no longer holds this session.
-    return recorder_->buffer().revision() != capture_saved_revision_;
+    return session_->recorder();
 }
 
 bool ScopeWindow::openRecording(const QString& directory)
 {
-    auto provider = std::make_unique<BagFileProvider>(directory.toStdString());
-
-    // Checked BEFORE anything is swapped. A failed open that had already
-    // replaced the source would drop the window into a review of nothing, which
-    // looks exactly like a recording that turned out to be empty.
-    if (!provider->isValid())
+    const auto opened = session_->openRecording(directory.toStdString());
+    if (!opened)
     {
-        SPDLOG_ERROR("'{}' is not a readable bag directory.", directory.toStdString());
         statusBar()->showMessage(
             tr("%1 is not a readable recording. `bag reindex` can rebuild a missing index.")
                 .arg(directory),
@@ -926,40 +880,10 @@ bool ScopeWindow::openRecording(const QString& directory)
         return false;
     }
 
-    // Reported, not swallowed. A torn part or a non-zero drop count changes how
-    // the data should be read: a gap in a trace means something quite different
-    // when the recorder is known to have dropped messages, and it is already
-    // computed by the time the bag is open.
-    const std::vector<std::string> problems = provider->problems();
-
-    const auto [t_begin, t_end] = provider->spanNanos();
-    const double duration = t_end > t_begin ? static_cast<double>(t_end - t_begin) / 1e9 : 0.0;
-
-    // A bag is an offline source, so opening one takes the window offline --
-    // including the capture, which only runs while online. The buffer is kept
-    // rather than dropped: Review Session Capture is still how you get back to
-    // what the last online session recorded, and a bag opened by mistake should
-    // not be able to destroy it.
-    if (recorder_ != nullptr)
-    {
-        recorder_->stop();
-    }
-
-    // Set BEFORE the swap, so the chip that applySourceCaps() refreshes at the
-    // end of setSource() already describes the recording rather than the source
-    // it replaced.
-    source_label_ = tr("%1 · %2 s")
-                        .arg(QFileInfo(directory).fileName())
-                        .arg(duration, 0, 'f', 0);
-
-    setSource(std::make_unique<RecordedSource>(std::move(provider)));
-
     // How many of the workspace's signals this recording does not contain.
     // Surfaced rather than left as empty traces: an unbound signal and a signal
     // that was recorded but never published draw identically, and only one of
-    // them is worth chasing. Through Panel's own interface -- this used to cast
-    // to TimeSeriesPanel, so a table, map or video panel's missing signals were
-    // silently not counted.
+    // them is worth chasing.
     std::size_t unbound = 0;
     std::size_t total = 0;
     for (const PanelEntry& entry : panels_)
@@ -968,7 +892,8 @@ bool ScopeWindow::openRecording(const QString& directory)
         unbound += entry.panel->unboundBindingCount();
     }
 
-    QString summary = tr("Reviewing %1 (%2 s)").arg(directory).arg(duration, 0, 'f', 1);
+    QString summary =
+        tr("Reviewing %1 (%2 s)").arg(directory).arg(opened->duration_seconds, 0, 'f', 1);
     if (unbound > 0)
     {
         summary += tr(" -- %1 of %2 signals are not in this recording")
@@ -976,20 +901,19 @@ bool ScopeWindow::openRecording(const QString& directory)
                        .arg(total);
     }
 
-    if (!problems.empty())
+    if (!opened->problems.empty())
     {
-        for (const std::string& problem : problems)
+        for (const std::string& problem : opened->problems)
         {
             SPDLOG_WARN("{}: {}", directory.toStdString(), problem);
         }
-        // A details box, not only a status line: a status-bar message -- even a
-        // "permanent" one -- is REPLACED by the next transient message ("Added
-        // rpm to plot1") and then gone. A torn part or a drop count changes how
-        // every gap in every trace should be read, so it must survive the first
-        // bind.
+        // A details box, not only a status line: a status-bar message is
+        // REPLACED by the next transient one ("Added rpm to plot1"). A torn part
+        // or a drop count changes how every gap in every trace should be read,
+        // so it must survive the first bind.
         reportProblems(summary + tr(" -- %n problem(s) with the recording", nullptr,
-                                    static_cast<int>(problems.size())),
-                       problems);
+                                    static_cast<int>(opened->problems.size())),
+                       opened->problems);
     }
     else
     {
@@ -998,35 +922,22 @@ bool ScopeWindow::openRecording(const QString& directory)
         statusBar()->showMessage(summary, 0);
     }
 
-    SPDLOG_INFO("Reviewing '{}': {:.1f}s, {} problem(s).", directory.toStdString(), duration,
-                problems.size());
+    SPDLOG_INFO("Reviewing '{}': {:.1f}s, {} problem(s).", directory.toStdString(),
+                opened->duration_seconds, opened->problems.size());
     noteRecent(settings_.recent_recordings, directory);
     return true;
 }
 
 bool ScopeWindow::reviewCapture()
 {
-    if (!hasCapture())
+    if (!session_->reviewCapture())
     {
         SPDLOG_WARN("Nothing has been captured yet.");
         statusBar()->showMessage(
             tr("Nothing captured yet -- go online first, or load a recording."), 5000);
         return false;
     }
-
-    // The capture stops here, and its buffer does not.
-    //
-    // ScopeRecorder::stop() drops only the subscriber, which is the difference
-    // between a snapshot you can scrub and a dangling pointer: the
-    // CaptureProvider below holds a reference into that same buffer for as long
-    // as this source lives.
-    recorder_->stop();
-
-    const CaptureBuffer& buffer = recorder_->buffer();
-    source_label_ = tr("session capture · %1 s").arg(buffer.retainedSpanSeconds(), 0, 'f', 0);
-
-    setSource(std::make_unique<RecordedSource>(std::make_unique<CaptureProvider>(buffer)));
-
+    const CaptureBuffer& buffer = session_->recorder()->buffer();
     statusBar()->showMessage(tr("Reviewing the session capture (%1 messages, %2 s)")
                                  .arg(buffer.size())
                                  .arg(buffer.retainedSpanSeconds(), 0, 'f', 1),
@@ -1036,28 +947,12 @@ bool ScopeWindow::reviewCapture()
 
 bool ScopeWindow::saveCaptureTo(const QString& directory)
 {
-    if (!recorder_ || directory.isEmpty())
+    if (!session_->saveCaptureTo(directory.toStdString()))
     {
-        return false;
-    }
-
-    // Read BEFORE the save. A message arriving while saveTo() walks the buffer
-    // may or may not land in the file; marking the watermark afterwards would
-    // count it as saved either way. Taken first, an in-flight message keeps the
-    // capture "unsaved", which errs on the side of prompting.
-    const std::uint64_t revision_at_save = recorder_->buffer().revision();
-
-    if (!recorder_->saveTo(directory.toStdString()))
-    {
-        SPDLOG_ERROR("Failed to save the capture to '{}'.", directory.toStdString());
         statusBar()->showMessage(tr("Could not save the capture to %1").arg(directory), 8000);
         return false;
     }
-
-    capture_saved_revision_ = revision_at_save;
     statusBar()->showMessage(tr("Saved the capture to %1").arg(directory), 5000);
-    SPDLOG_INFO("Saved {} captured message(s) to '{}'.", recorder_->buffer().size(),
-                directory.toStdString());
     return true;
 }
 
@@ -1109,46 +1004,20 @@ bool ScopeWindow::goOnline()
         return false;
     }
 
-    source_label_.clear();
-
-    // Announce this process on the bus, once, the first time it actually joins
-    // it. Constructing this any earlier (it used to live in main()) opens a
-    // zenoh session in a window that is supposed to be offline. Tools can put
-    // a name to the session id from here on; a scope that never goes online is
-    // genuinely invisible on the bus, which is the honest answer. A function
-    // local static so it lives until process exit -- the identity token should
-    // not flap when the user toggles offline and back.
-    static const pub_sub::NodeIdentity node_identity("scope");
-    (void)node_identity;
-
-    // The source FIRST, then the recorder, and the order is load-bearing. The
-    // old source may be a RecordedSource over a CaptureProvider pointing into
-    // the recorder's buffer; setSource() destroys it only after every panel has
-    // rebound. Replacing the recorder first would free that buffer underneath a
-    // source that is still live for a few more statements.
-    setSource(std::make_unique<LiveZenohSource>());
-
-    // Everything on the bus, with no exclusions: the point of capturing is that
-    // a signal nobody thought to plot can still be added afterwards, and a
-    // filter taken from the panels would only ever record what was already on
-    // screen -- which is exactly what you do not need after the fact.
-    recorder_ = std::make_unique<ScopeRecorder>(static_cast<std::size_t>(capture_max_bytes_),
-                                                capture_max_seconds_);
-    // A fresh buffer starts at revision 0 with nothing in it; the first push
-    // moves it past the watermark and the capture reads as unsaved.
-    capture_saved_revision_ = recorder_->buffer().revision();
-
-    if (!recorder_->isValid())
+    switch (session_->goOnline())
     {
-        // The window still works, tailing the bus through the live source; it
-        // simply has nothing to go back and review. Said out loud because the
-        // difference only shows up later, as a Review action that never enables.
+    case ScopeSession::Online::kAlready:
+        break;
+    case ScopeSession::Online::kCapturing:
+        statusBar()->showMessage(tr("Online"), 3000);
+        break;
+    case ScopeSession::Online::kWithoutCapture:
+        // The window still tails the bus; it simply has nothing to review
+        // afterwards. Said now because otherwise it only shows later, as a
+        // Review action that never enables.
         statusBar()->showMessage(
             tr("Online, but the capture could not start -- nothing to review afterwards."), 8000);
-    }
-    else
-    {
-        statusBar()->showMessage(tr("Online"), 3000);
+        break;
     }
 
     updateModeActions();
@@ -1157,27 +1026,23 @@ bool ScopeWindow::goOnline()
 
 void ScopeWindow::goOffline()
 {
-    if (!isOnline())
+    switch (session_->goOffline())
     {
-        return;
-    }
-
-    // Land on what was just recorded, which is what leaving online is almost
-    // always for. reviewCapture() stops the recorder itself; the empty case
-    // below has to do it explicitly.
-    if (reviewCapture())
+    case ScopeSession::Offline::kAlready:
+        break;
+    case ScopeSession::Offline::kReviewingCapture:
     {
-        return;
+        const CaptureBuffer& buffer = session_->recorder()->buffer();
+        statusBar()->showMessage(tr("Reviewing the session capture (%1 messages, %2 s)")
+                                     .arg(buffer.size())
+                                     .arg(buffer.retainedSpanSeconds(), 0, 'f', 1),
+                                 0);
+        break;
     }
-
-    if (recorder_ != nullptr)
-    {
-        recorder_->stop();
+    case ScopeSession::Offline::kEmpty:
+        statusBar()->showMessage(tr("Offline -- nothing was captured."), 5000);
+        break;
     }
-
-    source_label_.clear();
-    setSource(std::make_unique<EmptySource>());
-    statusBar()->showMessage(tr("Offline -- nothing was captured."), 5000);
 }
 
 // ------------------------------------------------------ dialogs and dirty state
@@ -1255,7 +1120,7 @@ void ScopeWindow::updateWindowTitle()
 
 bool ScopeWindow::confirmDiscardCapture(const QString& action)
 {
-    if (!captureUnsaved())
+    if (!session_->captureUnsaved())
     {
         return true;
     }
@@ -1264,7 +1129,7 @@ bool ScopeWindow::confirmDiscardCapture(const QString& action)
     {
         SPDLOG_WARN("Discarding an unsaved capture of {} message(s) on {} (headless: nobody "
                     "to ask).",
-                    recorder_->buffer().size(), action.toStdString());
+                    session_->recorder()->buffer().size(), action.toStdString());
         return true;
     }
 
@@ -1272,7 +1137,7 @@ bool ScopeWindow::confirmDiscardCapture(const QString& action)
         this, tr("Unsaved capture"),
         tr("%1 captured message(s) have not been saved and cannot be recovered "
            "afterwards.\n\nSave the recording before %2?")
-            .arg(recorder_->buffer().size())
+            .arg(session_->recorder()->buffer().size())
             .arg(action),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
 
@@ -1433,7 +1298,7 @@ void ScopeWindow::buildNavigationActions()
     // kind of source is behind the panels. On a live source that is following;
     // on a recording it is playback, which turns following back on itself.
     add("action_toggle_follow", tr("Follow / Play"), QKeySequence(Qt::Key_Space), [this]() {
-        if (source_->caps().seekable)
+        if (session_->source().caps().seekable)
         {
             time_base_->setPlaying(!time_base_->playing());
         }
@@ -1750,7 +1615,7 @@ void ScopeWindow::buildTransportBar()
 
 void ScopeWindow::applySourceCaps()
 {
-    const SourceCaps caps = source_->caps();
+    const SourceCaps caps = session_->source().caps();
 
     if (transport_bar_ != nullptr)
     {
@@ -1824,17 +1689,19 @@ void ScopeWindow::updateSourceChip()
 
     if (isOnline())
     {
-        const std::uint64_t captured = recorder_ != nullptr ? recorder_->buffer().size() : 0;
+        const ScopeRecorder* recorder = session_->recorder();
+        const std::uint64_t captured = recorder != nullptr ? recorder->buffer().size() : 0;
         source_chip_->setText(captured > 0
                                   ? tr("⏺ capturing · %1 messages").arg(captured)
                                   : tr("⏺ capturing"));
         return;
     }
 
-    // source_label_ is set by whatever opened the source. Empty means nothing
-    // is loaded, which is a state worth naming rather than leaving blank -- a
-    // blank chip beside "Offline" reads as a label that failed to render.
-    source_chip_->setText(source_label_.isEmpty() ? tr("nothing loaded") : source_label_);
+    // Empty means nothing is loaded, which is worth naming rather than leaving
+    // blank -- a blank chip beside "Offline" reads as a label that failed to
+    // render.
+    const std::string& label = session_->label();
+    source_chip_->setText(label.empty() ? tr("nothing loaded") : QString::fromStdString(label));
 }
 
 void ScopeWindow::updateTransport()

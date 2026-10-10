@@ -56,13 +56,23 @@ stamps samples on arrival. `RecordedSource` reads through a provider:
 `BagFileProvider` over a bag on disk, or `CaptureProvider` over the in-memory
 capture the recorder made while the window was online.
 
-The source is reseatable. `ScopeWindow::setSource()` swaps the whole thing,
-into review over a recording or back to live, and the sequence is the
-substance: panels rebind first, while the old source is still alive and can
-honour their releases; the browser and the time base follow; only then is the
-old source destroyed. A handle means nothing to a source that did not issue
-it, so repointing before releasing leaks every subscription on the old one.
-`scope_test_panels` pins the ordering.
+The source is reseatable. `ScopeSession` owns it, the capture's recorder and
+the save watermark, and makes every transition: into review over a recording
+or the capture, back to live, or to nothing. The window supplies two hooks and
+keeps the dialogs and status messages. In `setSource()` the sequence is the
+substance: the `rebind` hook moves the panels, the browser and the time base
+first, while the old source is still alive and can honour their releases; only
+then is the old source destroyed. A handle means nothing to a source that did
+not issue it, so repointing before releasing leaks every subscription on the
+old one.
+
+Going online has a second ordering rule. A review of the capture is a
+`RecordedSource` over a `CaptureProvider` pointing into the recorder's buffer,
+so the new live source goes in, and the review is destroyed, before the
+recorder is replaced. The recorder is declared before the source for the same
+reason, so the session's own destructor frees the buffer last.
+`scope_test_session` pins both, with a stub live source and a recorder built
+with `ScopeRecorder::Feed::kNothing`, which subscribes to nothing.
 
 The browser asks the source, not the bus. `DataSource::topics()` is cheap and
 non-blocking, and the browser polls it on a timer, comparing
@@ -1177,6 +1187,7 @@ ctest --test-dir build -R scope --output-on-failure
 | `scope_test_map_tiles_real` | slow | the same reader against the real socal archive, opt-in through `REDLINE_MAP_DATA_DIR` |
 | `scope_test_workspace` | unit | the codec, weighted towards hand-edited files that are wrong in the usual ways |
 | `scope_test_recorded_source` | unit | scrubbing, over a stub provider with synthetic messages |
+| `scope_test_session` | unit | the source and capture transitions: rebinding before the old source dies, the review destroyed before its recorder, a failed open changing nothing, the save watermark |
 | `scope_test_capture_buffer` | unit | eviction by bytes, by time, and the accounting invariant under real threads |
 | `scope_test_raw_buffer` | unit | the same two-bound argument one layer up, plus the backwards seek |
 | `scope_test_video_decoder` | unit | the decoder, against a stream the test encodes itself |

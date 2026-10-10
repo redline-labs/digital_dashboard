@@ -34,7 +34,16 @@ namespace scope
 class ScopeRecorder
 {
   public:
-    ScopeRecorder(std::size_t max_bytes, double max_seconds);
+    // kBus subscribes to everything. kNothing subscribes to nothing and is
+    // never valid: its buffer is filled by whoever holds buffer(), which is how
+    // ScopeSession's tests drive a capture without a bus.
+    enum class Feed
+    {
+        kBus,
+        kNothing,
+    };
+
+    ScopeRecorder(std::size_t max_bytes, double max_seconds, Feed feed = Feed::kBus);
     ~ScopeRecorder();
 
     ScopeRecorder(const ScopeRecorder&) = delete;

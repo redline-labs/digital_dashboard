@@ -4,6 +4,7 @@
 #include "scope/overview_strip.h"
 #include "scope/scope_recorder.h"
 #include "scope/scope_window.h"
+#include "scope/scope_session.h"
 #include "scope/time_base.h"
 
 #include <QDateTime>
@@ -32,8 +33,8 @@ void OverviewController::updateOverview()
         return;
     }
 
-    const SourceCaps caps = window_.source_->caps();
-    const double now = window_.source_->now();
+    const SourceCaps caps = window_.session_->source().caps();
+    const double now = window_.session_->source().now();
 
     // The extent, and the two source kinds answer it differently for a real
     // reason. A recording has a beginning; a bus does not, so the honest bound
@@ -69,9 +70,9 @@ void OverviewController::updateOverview()
     // the right edge of the extent, where a playhead would be noise.
     overview->setPlayhead(caps.seekable ? std::optional<double>(now) : std::nullopt);
 
-    if (window_.recorder_ != nullptr)
+    if (window_.session_->recorder() != nullptr)
     {
-        overview->setEvicted(window_.recorder_->buffer().evicted());
+        overview->setEvicted(window_.session_->recorder()->buffer().evicted());
     }
 
     refreshDensity();
@@ -80,7 +81,7 @@ void OverviewController::updateOverview()
 bool OverviewController::densityFor(double begin, double end, std::size_t buckets,
                                     std::vector<std::uint32_t>& out)
 {
-    if (window_.source_->density(begin, end, buckets, out))
+    if (window_.session_->source().density(begin, end, buckets, out))
     {
         return true;
     }
@@ -90,8 +91,8 @@ bool OverviewController::densityFor(double begin, double end, std::size_t bucket
     // since the window opened, and THAT is the honest picture of where the
     // traffic is. The window is the only thing holding both, which is why the
     // reconciliation lives here rather than behind the DataSource seam.
-    const auto* live = dynamic_cast<const LiveZenohSource*>(window_.source_.get());
-    if (live == nullptr || window_.recorder_ == nullptr)
+    const auto* live = dynamic_cast<const LiveZenohSource*>(&window_.session_->source());
+    if (live == nullptr || window_.session_->recorder() == nullptr)
     {
         out.clear();
         return false;
@@ -104,13 +105,13 @@ bool OverviewController::densityFor(double begin, double end, std::size_t bucket
     const auto to_nanos = [epoch](double t) {
         return epoch + static_cast<std::uint64_t>(std::max(t, 0.0) * 1e9);
     };
-    window_.recorder_->buffer().density(to_nanos(begin), to_nanos(end), buckets, out);
+    window_.session_->recorder()->buffer().density(to_nanos(begin), to_nanos(end), buckets, out);
     return true;
 }
 
 std::pair<double, double> OverviewController::densityRange() const
 {
-    const SourceCaps caps = window_.source_->caps();
+    const SourceCaps caps = window_.session_->source().caps();
     if (caps.seekable)
     {
         return {caps.t_begin, caps.t_end};
@@ -121,7 +122,7 @@ std::pair<double, double> OverviewController::densityRange() const
     // counts before that would label the histogram with a range it was never
     // counted over. The view itself is deliberately not floored -- see
     // TimeBase::availableRange().
-    const double now = window_.source_->now();
+    const double now = window_.session_->source().now();
     return {std::max(now - window_.history_seconds_, 0.0), now};
 }
 

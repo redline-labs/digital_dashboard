@@ -53,9 +53,17 @@ struct ScopeRecorder::Impl
     Impl(std::size_t max_bytes, double max_seconds) : buffer(max_bytes, max_seconds) {}
 };
 
-ScopeRecorder::ScopeRecorder(std::size_t max_bytes, double max_seconds) :
+ScopeRecorder::ScopeRecorder(std::size_t max_bytes, double max_seconds, Feed feed) :
     impl_(std::make_unique<Impl>(max_bytes, max_seconds))
 {
+    switch (feed)
+    {
+    case Feed::kBus:
+        break;
+    case Feed::kNothing:
+        return;
+    }
+
     Impl* const impl = impl_.get();
 
     impl_->directory = std::make_unique<pub_sub::TopicDirectory>();

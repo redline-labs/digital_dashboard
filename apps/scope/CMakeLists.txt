@@ -26,6 +26,7 @@ add_library(scope_core STATIC
     recorded_source.cpp
     capture_buffer.cpp
     scope_recorder.cpp
+    scope_session.cpp
     time_base.cpp
     state_names.cpp
     panel_registry.cpp
@@ -375,6 +376,19 @@ target_link_libraries(scope_test_capture_buffer PRIVATE
 )
 
 add_project_test(TARGET scope_test_capture_buffer LABELS scope unit)
+
+# Where samples come from and the capture: the source/recorder transitions and
+# their lifetime rules, with a stub live source and a recorder that subscribes
+# to nothing, so no bus and no window.
+add_executable(scope_test_session
+    tests/test_session.cpp
+)
+
+target_link_libraries(scope_test_session PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_session LABELS scope unit)
 
 # The shared view window: zooming, panning, and what clamps it.
 #
