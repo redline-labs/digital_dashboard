@@ -25,7 +25,7 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     odometer_expression_parser_ = dashboard::makeExpressionSubscription<int>(
         cfg_.odometer, this, &Mercedes190ESpeedometer::setOdometerValue);
 
-    QString font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
+    QString font_family = qt_helpers::futuraFamily();
 
     // Set up the odometer font
     odo_font_ = QFont(font_family);

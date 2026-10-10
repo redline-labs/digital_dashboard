@@ -37,7 +37,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     
     // Apply text color from configuration
-    valueLabel->setStyleSheet(QString("color: %1;").arg(_cfg.text_color.c_str()));
+    valueLabel->setStyleSheet(QString("color: %1;").arg(qt_helpers::colorStyle(_cfg.text_color)));
 
     unitsLabel = new QLabel(_cfg.units.c_str(), this);
     QFont unitsFont(_cfg.font_family.c_str());
@@ -46,7 +46,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
     unitsLabel->setAlignment(Qt::AlignRight | Qt::AlignTop);
     
     // Apply text color from configuration
-    unitsLabel->setStyleSheet(QString("color: %1;").arg(_cfg.text_color.c_str()));
+    unitsLabel->setStyleSheet(QString("color: %1;").arg(qt_helpers::colorStyle(_cfg.text_color)));
 
     valueUnitsLayout->addWidget(valueLabel);
     valueUnitsLayout->addWidget(unitsLabel);

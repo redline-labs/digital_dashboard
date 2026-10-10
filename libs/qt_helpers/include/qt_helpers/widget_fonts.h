@@ -62,6 +62,33 @@ inline QString loadResourceFont(const char* resource_path, const QString& fallba
     return families.at(0);
 }
 
+// Futura, the face most widgets are set in. One call, so every widget falls
+// back to the same family if the resource is missing -- they used to pick
+// "Helvetica", "sans-serif" or nothing, each its own way.
+inline QString futuraFamily()
+{
+    return loadResourceFont(":/fonts/futura.ttf", QStringLiteral("sans-serif"));
+}
+
+// The family for a font NAME a config gives. A bundled face is registered from
+// the resources first; any other name is handed to Qt as a system family.
+inline QString familyForName(const QString& name)
+{
+    static const QHash<QString, const char*> kBundled = {
+        {QStringLiteral("DSEG7 Classic"), ":/fonts/DSEG7Classic-Bold.ttf"},
+        {QStringLiteral("DSEG7 Classic Mini"), ":/fonts/DSEG7ClassicMini-Bold.ttf"},
+        {QStringLiteral("DSEG14 Classic"), ":/fonts/DSEG14Classic-Regular.ttf"},
+        {QStringLiteral("futura"), ":/fonts/futura.ttf"},
+        {QStringLiteral("Futura"), ":/fonts/futura.ttf"},
+        {QStringLiteral("futura.ttf"), ":/fonts/futura.ttf"},
+    };
+    if (const auto it = kBundled.constFind(name); it != kBundled.constEnd())
+    {
+        return loadResourceFont(it.value(), name);
+    }
+    return name;
+}
+
 }  // namespace qt_helpers
 
 #endif  // QT_HELPERS_WIDGET_FONTS_H_

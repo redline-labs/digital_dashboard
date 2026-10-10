@@ -34,7 +34,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
     rpm_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         _cfg.rpm, this, &Mercedes190ETachometer::setRpm);
 
-    m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf");
+    m_fontFamily = qt_helpers::futuraFamily();
     // Adjusted font sizes based on new reference image (numbers are quite large)
     m_dialFont = QFont(m_fontFamily, 12, QFont::Normal);
     m_labelFont = QFont(m_fontFamily, 7, QFont::Normal);
@@ -141,9 +141,8 @@ void Mercedes190ETachometer::drawScaleAndNumbers(QPainter *painter) {
         currentPen.setWidthF(isMajor ? 3.0f : 1.75f);
 
         painter->setPen(currentPen);
-        QPointF p1((m_scaleRadius - tickLength) * std::cos(angleRad), (m_scaleRadius - tickLength) * std::sin(angleRad));
-        QPointF p2(m_scaleRadius * std::cos(angleRad), m_scaleRadius * std::sin(angleRad));
-        painter->drawLine(p1, p2);
+        // valueToAngle is clockwise, down the screen; drawRadialTick is not.
+        gauge_paint::drawRadialTick(*painter, -angleDeg, m_scaleRadius - tickLength, m_scaleRadius);
 
         // Draw numbers for: 5, 10, 20, 30, 40, 50, 60, 70 (NOT 0) - these are from val_for_logic
         if (val_for_logic == 5 || (val_for_logic >= 10 && val_for_logic <= displayedMaxWhole && val_for_logic % 10 == 0))

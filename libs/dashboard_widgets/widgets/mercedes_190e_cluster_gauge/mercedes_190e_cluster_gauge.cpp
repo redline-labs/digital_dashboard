@@ -1,4 +1,5 @@
 #include "mercedes_190e_cluster_gauge/mercedes_190e_cluster_gauge.h"
+#include "qt_helpers/widget_colors.h"
 #include <QPaintEvent>
 #include <QFontMetrics>
 #include <QSvgRenderer>
@@ -294,7 +295,7 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
   coolant_temperature_gauge_current_value_(0.0f),
   economy_gauge_current_value_(0.0f)
 {
-    m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
+    m_fontFamily = qt_helpers::futuraFamily();
 
     top_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
         m_config.fuel_gauge.source, this, &Mercedes190EClusterGauge::setFuelGaugeValue);
@@ -549,8 +550,8 @@ void Mercedes190EClusterGauge::drawEconomyGaugeBase(QPainter *painter, const sub
     // Not drawGaugeBase: the real economy gauge has no ticks and no numbers. It
     // is a printed crescent that thickens towards the uneconomical end, with the
     // upper part of that end filled red, and the needle simply sweeps across it.
-    const QColor outline_color(QString::fromStdString(sweep.outline_color.value()));
-    const QColor red_color(QString::fromStdString(sweep.red_color.value()));
+    const QColor outline_color = qt_helpers::toQColor(sweep.outline_color, Qt::white);
+    const QColor red_color = qt_helpers::toQColor(sweep.red_color);
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);

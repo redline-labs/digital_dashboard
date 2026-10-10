@@ -1,5 +1,6 @@
 #include "dashboard/main_window.h"
 
+#include "qt_helpers/widget_colors.h"
 #include <spdlog/spdlog.h>
 #include <QDebug>
 #include <QLabel>
@@ -28,7 +29,7 @@ MainWindow::MainWindow(const app_config_t& app_cfg):
 
     // Set background color from configuration
     setStyleSheet(QString("MainWindow { background-color: %1; }")
-                 .arg(QString::fromStdString(_app_cfg.background_color)));
+                      .arg(qt_helpers::colorStyle(_app_cfg.background_color)));
 
     // Create widgets from configuration
     createWidgetsFromConfig();

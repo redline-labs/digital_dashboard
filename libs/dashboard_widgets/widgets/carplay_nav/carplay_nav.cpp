@@ -68,7 +68,7 @@ CarPlayNavWidget::CarPlayNavWidget(CarPlayNavConfig_t cfg, QWidget* parent) :
     QWidget(parent),
     _cfg(std::move(cfg))
 {
-    _font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _font_family = qt_helpers::futuraFamily();
 
     _sub = dashboard::makeTypedSubscription<CarPlayNav, Guidance>(
         _cfg.zenoh_key,

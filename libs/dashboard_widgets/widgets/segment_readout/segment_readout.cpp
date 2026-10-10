@@ -1,5 +1,7 @@
 #include "segment_readout/segment_readout.h"
 
+#include "dashboard/value_format.h"
+
 #include "dashboard/gauge_painting.h"
 
 #include <QFontMetricsF>
@@ -75,7 +77,7 @@ SegmentReadoutWidget::SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QW
             break;
     }
 
-    _caption_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _caption_family = qt_helpers::futuraFamily();
 
     _ghost = QString(static_cast<int>(_cfg.digits), kAllSegmentsOn);
 
@@ -112,8 +114,7 @@ void SegmentReadoutWidget::setValue(double value)
     }
 
     const int cells = static_cast<int>(_cfg.digits);
-    QString rendered =
-        QString::number(std::clamp(value, -1.0e9, 1.0e9), 'f', static_cast<int>(_cfg.decimals));
+    QString rendered = dashboard::formatFixed(value, static_cast<int>(_cfg.decimals));
 
     // The prefix owns the leading cells and the value is pushed to the far end of
     // what remains, so the whole field is exactly `digits` cells wide and lines

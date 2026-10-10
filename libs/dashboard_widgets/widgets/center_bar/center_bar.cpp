@@ -27,7 +27,7 @@ CenterBarWidget::CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent) 
     QWidget(parent),
     _cfg{cfg}
 {
-    const QString family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    const QString family = qt_helpers::futuraFamily();
     _label_font = QFont(family, 9, QFont::DemiBold);
 
     _expression_parser =

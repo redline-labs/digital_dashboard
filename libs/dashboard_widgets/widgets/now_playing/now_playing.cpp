@@ -68,7 +68,7 @@ NowPlayingWidget::NowPlayingWidget(NowPlayingConfig_t cfg, QWidget* parent) :
 {
     // Resolved once, here, like every other widget. paintEvent used to call this
     // per repaint, which re-registered the font with QFontDatabase each time.
-    _font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+    _font_family = qt_helpers::futuraFamily();
 
     // The cross-fade and the linger both live on the Qt thread; the zenoh
     // callbacks only ever post to them.

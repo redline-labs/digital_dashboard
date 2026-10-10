@@ -88,7 +88,7 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
   _rpm{0.0f}
 {
     // font for the center digit (use bundled Futura if available)
-    _digitFont = QFont(qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica"), 40, QFont::Bold);
+    _digitFont = QFont(qt_helpers::futuraFamily(), 40, QFont::Bold);
     _digitFont.setItalic(_cfg.italic);
 
     _expression_parser =
@@ -266,17 +266,16 @@ void MotecC125Tachometer::drawTicks(QPainter* painter)
         float proportion = static_cast<float>(rpm) / static_cast<float>(_cfg.max_rpm);
         float a = kSweepStartDeg + kSweepTotalDeg * proportion; // clockwise
         if (a >= 360.0f) a -= 360.0f;
-        float rad = degrees_to_radians(a);
 
         bool isMajor = (rpm % 1000 == 0);
         bool isMid   = (!isMajor && (rpm % 500 == 0));
         pen.setWidthF(isMajor ? kTickWidthMajor : (isMid ? kTickWidthMid : kTickWidthMinor));
         painter->setPen(pen);
 
-        float inner = isMajor ? kTickInnerMajor : (isMid ? kTickInnerMid : kTickInnerMinor);
-        QPointF p1(inner * std::cos(rad), inner * std::sin(rad));
-        QPointF p2(kTickOuterRadius * std::cos(rad), kTickOuterRadius * std::sin(rad));
-        painter->drawLine(p1, p2);
+        // This dial measures angles clockwise, down the screen; drawRadialTick
+        // takes them the gauges' usual way, so the sign flips here.
+        const float inner = isMajor ? kTickInnerMajor : (isMid ? kTickInnerMid : kTickInnerMinor);
+        gauge_paint::drawRadialTick(*painter, -a, inner, kTickOuterRadius);
     }
 
     // Labels for each 1000 RPM (single digit 1..)

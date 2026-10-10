@@ -63,6 +63,14 @@ inline QColor toQColor(const helpers::Color& color, const QColor& fallback = Qt:
     return fallback;
 }
 
+// A configured colour as stylesheet text. Through toQColor, so an invalid one
+// falls back with a warning instead of making Qt drop the whole rule, and
+// #RRGGBBAA keeps its alpha in the order Qt's stylesheets read (#AARRGGBB).
+inline QString colorStyle(const helpers::Color& color, const QColor& fallback = Qt::black)
+{
+    return toQColor(color, fallback).name(QColor::HexArgb);
+}
+
 }  // namespace qt_helpers
 
 #endif  // QT_HELPERS_WIDGET_COLORS_H_

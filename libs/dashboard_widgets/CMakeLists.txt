@@ -159,6 +159,11 @@ target_link_libraries(dashboard_widgets_test_typed_subscription PRIVATE
 add_project_test(TARGET dashboard_widgets_test_typed_subscription
                  LABELS dashboard_widgets net gui)
 
+# The fixed-point text every numeric readout prints, signed zero included.
+add_executable(dashboard_widgets_test_value_format tests/test_value_format.cpp)
+target_link_libraries(dashboard_widgets_test_value_format PRIVATE dashboard_widgets)
+add_project_test(TARGET dashboard_widgets_test_value_format LABELS dashboard_widgets unit)
+
 # The one timer every subscription delivers through, against fake targets: idle
 # means no timer, a cross-thread burst is one pass, a racing wake never strands
 # a sample, and staleness lands at its deadline without polling. Real timers,

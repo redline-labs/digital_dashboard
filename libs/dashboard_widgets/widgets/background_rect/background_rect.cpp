@@ -3,6 +3,8 @@
 #include <QPainter>
 #include <QLinearGradient>
 
+#include "qt_helpers/widget_colors.h"
+
 BackgroundRectWidget::BackgroundRectWidget(const BackgroundRectConfig_t& cfg, QWidget* parent)
 	: QWidget(parent), _cfg{cfg}
 {}
@@ -21,12 +23,12 @@ void BackgroundRectWidget::drawRect(QPainter* painter)
 
 	if (_cfg.colors.empty())
 	{
-		painter->fillRect(r, QColor(QString::fromStdString("#000000")));
+		painter->fillRect(r, Qt::black);
 		return;
 	}
 	else if (_cfg.colors.size() == 1)
 	{
-		painter->fillRect(r, QColor(QString::fromStdString(_cfg.colors.front().value())));
+		painter->fillRect(r, qt_helpers::toQColor(_cfg.colors.front()));
 		return;
 	}
 
@@ -38,7 +40,7 @@ void BackgroundRectWidget::drawRect(QPainter* painter)
 	for (int i = 0; i < n; ++i)
 	{
 		const double pos = static_cast<double>(i) / static_cast<double>(n - 1);
-		grad.setColorAt(pos, QColor(QString::fromStdString(_cfg.colors[static_cast<size_t>(i)].value())));
+		grad.setColorAt(pos, qt_helpers::toQColor(_cfg.colors[static_cast<size_t>(i)]));
 	}
 
 	painter->fillRect(r, grad);

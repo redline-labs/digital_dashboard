@@ -1,5 +1,7 @@
 #include "value_readout/value_readout.h"
 
+#include "dashboard/value_format.h"
+
 #include <QPainter>
 
 #include <spdlog/spdlog.h>
@@ -16,7 +18,7 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 	: QWidget(parent), _cfg{cfg}, _value{0.0}
 {
 	// Load fonts similar to other widgets
-	QString family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
+	QString family = qt_helpers::futuraFamily();
 	_labelFont = QFont(family, 14, QFont::DemiBold);
 	_valueFont = QFont(family, 40, QFont::Bold);
 	_labelFont.setItalic(_cfg.italic);
@@ -55,15 +57,8 @@ QString ValueReadoutWidget::renderValue(const ValueReadoutConfig_t& cfg, double 
 		}
 
 		case ValueReadoutFormat::number:
-			text = QString::number(value, 'f', static_cast<int>(cfg.decimals));
+			text = dashboard::formatFixed(value, static_cast<int>(cfg.decimals));
 			break;
-	}
-
-	// QString::number renders -0.4 at zero decimals as "-0"; a readout showing a
-	// signed zero looks like a fault rather than a rounding.
-	if (text.startsWith('-') && text.mid(1).toDouble() == 0.0)
-	{
-		text = text.mid(1);
 	}
 
 	if (cfg.show_sign && !text.startsWith('-'))
@@ -86,7 +81,7 @@ void ValueReadoutWidget::setValue(double value)
 		return;
 	}
 
-	const double clamped = std::clamp(value, -1.0e9, 1.0e9);
+	const double clamped = std::clamp(value, -dashboard::kReadoutLimit, dashboard::kReadoutLimit);
 	const QString rendered = renderValue(_cfg, clamped);
 	if (_value_valid && rendered == _rendered_text)
 	{
