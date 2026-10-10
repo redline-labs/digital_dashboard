@@ -235,6 +235,23 @@ following screenshot observes the effect rather than the previous frame. See the
 `editor.save` / `editor.load` registrations in `apps/editor/main.cpp` for the
 shape.
 
+Read parameters with `requireParam<T>` and `optionalParam<T>` from
+`agent_control/params.h`, and read them all before changing anything:
+
+```cpp
+const auto key = requireParam<std::string>(params, "zenoh_key");
+const auto index = optionalParam<std::size_t>(params, "element_index");
+if (auto error = firstError(key, index)) return std::unexpected(*error);
+```
+
+A parameter of the wrong type is then a `BAD_PARAMS` that names it. The
+hand-written form, `if (p != params.end() && p->is_string())`, treats a wrong
+type as an absent parameter: `"id": 7` added a panel with a generated id, and
+`"pan": "left"` was ignored while the rest of the request was applied. Null
+counts as absent, because an MCP client sends unset arguments as null.
+Integers are range-checked for the type they land in, so `-1` is not a very
+large `size_t`.
+
 New methods are reachable from Claude Code immediately via `app_call(method,
 params)` — no Python change needed. `app_methods` lists what a running build
 supports.

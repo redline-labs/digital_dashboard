@@ -1,4 +1,5 @@
 #include "agent_control/zenoh_methods.h"
+#include "agent_control/params.h"
 
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/capnp_json.h"
@@ -48,25 +49,6 @@ std::expected<capnp::Schema, AgentError> schemaByName(const std::string& name)
     return *schema;
 }
 
-std::expected<std::string, AgentError> requiredString(const json& params, const char* key)
-{
-    if (!params.contains(key) || !params[key].is_string())
-    {
-        return std::unexpected(
-            badParams(std::string("'") + key + "' is required and must be a string."));
-    }
-    return params[key].get<std::string>();
-}
-
-int optIntOr(const json& params, const char* key, int fallback)
-{
-    if (params.contains(key) && params[key].is_number_integer())
-    {
-        return params[key].get<int>();
-    }
-    return fallback;
-}
-
 }  // namespace
 
 void registerZenohMethods(AgentServer& server)
@@ -76,11 +58,14 @@ void registerZenohMethods(AgentServer& server)
         "zenoh.list",
         [](const json& params) -> MethodResult
         {
-            const std::string keyexpr =
-                params.contains("key") && params["key"].is_string()
-                    ? params["key"].get<std::string>()
-                    : std::string("**");
-            const int window_ms = optIntOr(params, "window_ms", 1000);
+            const auto key = optionalParam<std::string>(params, "key");
+            const auto window = optionalParam<int>(params, "window_ms");
+            if (auto error = firstError(key, window))
+            {
+                return std::unexpected(*error);
+            }
+            const std::string keyexpr = key->value_or("**");
+            const int window_ms = window->value_or(1000);
 
             const auto observed = pub_sub::observeTopics(keyexpr, window_ms);
 
@@ -118,12 +103,17 @@ void registerZenohMethods(AgentServer& server)
         "zenoh.read",
         [](const json& params) -> MethodResult
         {
-            const auto key = requiredString(params, "key");
+            const auto key = requireParam<std::string>(params, "key");
             if (!key.has_value())
             {
                 return std::unexpected(key.error());
             }
-            const int timeout_ms = optIntOr(params, "timeout_ms", 2000);
+            const auto timeout_ms_param = optionalParam<int>(params, "timeout_ms");
+            if (!timeout_ms_param)
+            {
+                return std::unexpected(timeout_ms_param.error());
+            }
+            const int timeout_ms = timeout_ms_param->value_or(2000);
 
             const auto sample = pub_sub::readOneSample(key.value(), timeout_ms);
             if (!sample.has_value())
@@ -188,12 +178,12 @@ void registerZenohMethods(AgentServer& server)
         "zenoh.publish",
         [](const json& params) -> MethodResult
         {
-            const auto key = requiredString(params, "key");
+            const auto key = requireParam<std::string>(params, "key");
             if (!key.has_value())
             {
                 return std::unexpected(key.error());
             }
-            const auto schema_name = requiredString(params, "schema");
+            const auto schema_name = requireParam<std::string>(params, "schema");
             if (!schema_name.has_value())
             {
                 return std::unexpected(schema_name.error());
@@ -274,12 +264,17 @@ void registerZenohMethods(AgentServer& server)
         "zenoh.rate",
         [](const json& params) -> MethodResult
         {
-            const auto key = requiredString(params, "key");
+            const auto key = requireParam<std::string>(params, "key");
             if (!key.has_value())
             {
                 return std::unexpected(key.error());
             }
-            const int window_ms = optIntOr(params, "window_ms", 1000);
+            const auto window_ms_param = optionalParam<int>(params, "window_ms");
+            if (!window_ms_param)
+            {
+                return std::unexpected(window_ms_param.error());
+            }
+            const int window_ms = window_ms_param->value_or(1000);
 
             const auto observed = pub_sub::observeTopics(key.value(), window_ms);
 
@@ -318,7 +313,7 @@ void registerZenohMethods(AgentServer& server)
                 return out;
             }
 
-            const auto schema_name = requiredString(params, "schema");
+            const auto schema_name = requireParam<std::string>(params, "schema");
             if (!schema_name.has_value())
             {
                 return std::unexpected(schema_name.error());

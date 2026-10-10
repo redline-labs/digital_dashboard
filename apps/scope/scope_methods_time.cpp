@@ -19,175 +19,181 @@ void registerTimeMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& w
         [win](const json& params) -> MethodResult {
             TimeBase& time_base = win->timeBase();
 
-            if (const auto seconds = params.find("window_seconds");
-                seconds != params.end() && seconds->is_number())
+            // Everything is read and checked before anything is applied: a
+            // request refused for its fifth parameter must not have applied its
+            // first four.
+            const auto window_seconds = optionalParam<double>(params, "window_seconds");
+            const auto mode = optionalParam<std::string>(params, "mode");
+            const auto render_rate = optionalParam<int>(params, "render_rate_hz");
+            const auto rate = optionalParam<double>(params, "rate");
+            const auto playing = optionalParam<bool>(params, "playing");
+            const auto seek = optionalParam<double>(params, "seek");
+            const auto pan = optionalParam<double>(params, "pan");
+            const auto fit = optionalParam<bool>(params, "fit");
+            const auto following = optionalParam<bool>(params, "following");
+            if (auto error = firstError(window_seconds, mode, render_rate, rate, playing, seek, pan,
+                                        fit, following))
             {
-                time_base.setWindowSeconds(seconds->get<double>());
+                return std::unexpected(*error);
             }
 
-            // `mode` is validated here but APPLIED after the view movers, beside
-            // `following` -- it is the same flag, and a pan clears it. Applying
-            // it here would make {"mode":"live","pan":-10} depend on the order
-            // the handlers happen to be written in.
+            // `mode` is APPLIED after the view movers, beside `following` -- it
+            // is the same flag, and a pan clears it. Applying it first would
+            // make {"mode":"live","pan":-10} depend on the order the handlers
+            // happen to be written in.
             std::optional<bool> want_following;
-            if (const auto mode = params.find("mode"); mode != params.end() && mode->is_string())
+            if (*mode == "live")
             {
-                const std::string text = mode->get<std::string>();
-                if (text == "live")
+                want_following = true;
+            }
+            else if (*mode == "paused")
+            {
+                want_following = false;
+            }
+            else if (mode->has_value())
+            {
+                return std::unexpected(
+                    badParams("'mode' must be 'live' or 'paused', not '" + **mode + "'."));
+            }
+
+            // `view` is a pair and `zoom` a factor or {factor, anchor}, so they
+            // are read by hand -- but here, with the rest.
+            const json* const view = params.contains("view") && !params["view"].is_null()
+                                         ? &params["view"]
+                                         : nullptr;
+            if (view != nullptr && (!view->is_array() || view->size() != 2 ||
+                                    !(*view)[0].is_number() || !(*view)[1].is_number()))
+            {
+                return std::unexpected(badParams("'view' must be [begin, end], both numbers."));
+            }
+
+            // A bare number is the factor; an object carries an anchor. The
+            // anchor is what a wheel gesture has and a keyboard shortcut does
+            // not, so both shapes are worth accepting.
+            std::optional<double> zoom_factor;
+            std::optional<double> zoom_anchor;
+            if (params.contains("zoom") && !params["zoom"].is_null())
+            {
+                const json& zoom = params["zoom"];
+                if (zoom.is_number())
                 {
-                    want_following = true;
+                    zoom_factor = zoom.get<double>();
                 }
-                else if (text == "paused")
+                else if (zoom.is_object())
                 {
-                    want_following = false;
-                }
-                else
-                {
-                    return std::unexpected(
-                        badParams("'mode' must be 'live' or 'paused', not '" + text + "'."));
-                }
-            }
-
-            if (const auto rate = params.find("render_rate_hz");
-                rate != params.end() && rate->is_number())
-            {
-                time_base.setRenderRateHz(rate->get<int>());
-            }
-
-            // Playback. All three are no-ops on a live source, which has
-            // nothing to seek to -- so a caller that did not read caps() first
-            // gets an unchanged reply rather than an error, and the reply says
-            // why.
-            if (const auto rate = params.find("rate"); rate != params.end() && rate->is_number())
-            {
-                time_base.setRate(rate->get<double>());
-            }
-
-            // BEFORE the seek, so {"playing": true, "seek": 0} starts from the
-            // sought position rather than from wherever the head already was.
-            if (const auto playing = params.find("playing");
-                playing != params.end() && playing->is_boolean())
-            {
-                time_base.setPlaying(playing->get<bool>());
-            }
-
-            // ---------------------------------------------------- the view
-            //
-            // AT MOST ONE of these, and the check is not pedantry. They all move
-            // the window, so composing two silently produces a result nobody can
-            // explain from the request -- and the caller is usually a model that
-            // will then reason from the wrong position.
-            {
-                int movers = 0;
-                for (const char* name : {"seek", "view", "pan", "zoom", "fit"})
-                {
-                    if (params.contains(name))
+                    const auto factor = requireParam<double>(zoom, "factor");
+                    const auto anchor = optionalParam<double>(zoom, "anchor");
+                    if (auto error = firstError(factor, anchor))
                     {
-                        ++movers;
+                        AgentError wrapped = *error;
+                        wrapped.message = "zoom: " + wrapped.message;
+                        return std::unexpected(std::move(wrapped));
                     }
-                }
-                if (movers > 1)
-                {
-                    return std::unexpected(badParams(
-                        "seek, view, pan, zoom and fit all move the view; name one."));
-                }
-            }
-
-            if (const auto seek = params.find("seek"); seek != params.end() && seek->is_number())
-            {
-                if (!time_base.source().caps().seekable)
-                {
-                    return std::unexpected(badParams(
-                        "This source is not seekable. Open a recording with "
-                        "scope.open_recording first."));
-                }
-                time_base.seek(seek->get<double>());
-            }
-
-            if (const auto view = params.find("view"); view != params.end())
-            {
-                if (!view->is_array() || view->size() != 2 || !(*view)[0].is_number() ||
-                    !(*view)[1].is_number())
-                {
-                    return std::unexpected(
-                        badParams("'view' must be [begin, end], both numbers."));
-                }
-                time_base.setView((*view)[0].get<double>(), (*view)[1].get<double>());
-            }
-
-            if (const auto pan = params.find("pan"); pan != params.end() && pan->is_number())
-            {
-                time_base.panBy(pan->get<double>());
-            }
-
-            if (const auto zoom = params.find("zoom"); zoom != params.end())
-            {
-                // A bare number is the factor; an object carries an anchor. The
-                // anchor is what a wheel gesture has and a keyboard shortcut does
-                // not, so both shapes are worth accepting.
-                double factor = 0.0;
-                double anchor = (time_base.viewBegin() + time_base.viewEnd()) / 2.0;
-
-                if (zoom->is_number())
-                {
-                    factor = zoom->get<double>();
-                }
-                else if (zoom->is_object() && zoom->contains("factor") &&
-                         (*zoom)["factor"].is_number())
-                {
-                    factor = (*zoom)["factor"].get<double>();
-                    if (zoom->contains("anchor") && (*zoom)["anchor"].is_number())
-                    {
-                        anchor = (*zoom)["anchor"].get<double>();
-                    }
+                    zoom_factor = *factor;
+                    zoom_anchor = *anchor;
                 }
                 else
                 {
                     return std::unexpected(badParams(
                         "'zoom' must be a factor, or {factor, anchor}. Below 1 zooms in."));
                 }
-
-                if (!(factor > 0.0))
+                if (!(*zoom_factor > 0.0))
                 {
-                    return std::unexpected(
-                        badParams("'zoom' factor must be greater than zero."));
+                    return std::unexpected(badParams("'zoom' factor must be greater than zero."));
                 }
-                time_base.zoomAt(anchor, factor);
             }
 
-            if (const auto fit = params.find("fit");
-                fit != params.end() && fit->is_boolean() && fit->get<bool>())
+            // Null clears the cursor, so for this one null is not "absent".
+            const bool cursor_given = params.is_object() && params.contains("cursor");
+            if (cursor_given && !params["cursor"].is_null() && !params["cursor"].is_number())
+            {
+                return std::unexpected(badParams("'cursor' must be a number or null."));
+            }
+
+            // AT MOST ONE mover, and the check is not pedantry. They all move
+            // the window, so composing two silently produces a result nobody can
+            // explain from the request -- and the caller is usually a model that
+            // will then reason from the wrong position. `fit: false` asks for
+            // nothing, so it is not one.
+            const int movers = int(seek->has_value()) + int(view != nullptr) + int(pan->has_value()) +
+                               int(zoom_factor.has_value()) + int(fit->value_or(false));
+            if (movers > 1)
+            {
+                return std::unexpected(
+                    badParams("seek, view, pan, zoom and fit all move the view; name one."));
+            }
+            if (seek->has_value() && !time_base.source().caps().seekable)
+            {
+                return std::unexpected(badParams(
+                    "This source is not seekable. Open a recording with "
+                    "scope.open_recording first."));
+            }
+
+            // ------------------------------------------------------ applying
+
+            if (window_seconds->has_value())
+            {
+                time_base.setWindowSeconds(**window_seconds);
+            }
+            if (render_rate->has_value())
+            {
+                time_base.setRenderRateHz(**render_rate);
+            }
+
+            // Playback. All three are no-ops on a live source, which has
+            // nothing to seek to -- so a caller that did not read caps() first
+            // gets an unchanged reply rather than an error, and the reply says
+            // why.
+            if (rate->has_value())
+            {
+                time_base.setRate(**rate);
+            }
+            // BEFORE the seek, so {"playing": true, "seek": 0} starts from the
+            // sought position rather than from wherever the head already was.
+            if (playing->has_value())
+            {
+                time_base.setPlaying(**playing);
+            }
+
+            if (seek->has_value())
+            {
+                time_base.seek(**seek);
+            }
+            if (view != nullptr)
+            {
+                time_base.setView((*view)[0].get<double>(), (*view)[1].get<double>());
+            }
+            if (pan->has_value())
+            {
+                time_base.panBy(**pan);
+            }
+            if (zoom_factor)
+            {
+                time_base.zoomAt(
+                    zoom_anchor.value_or((time_base.viewBegin() + time_base.viewEnd()) / 2.0),
+                    *zoom_factor);
+            }
+            if (fit->value_or(false))
             {
                 time_base.fitAll();
             }
 
             // AFTER the movers, so {"pan": -10, "following": true} resolves to
             // the explicit flag rather than to the pan's side effect.
-            if (const auto following = params.find("following");
-                following != params.end() && following->is_boolean())
+            if (following->has_value())
             {
-                want_following = following->get<bool>();
+                want_following = **following;
             }
             if (want_following)
             {
                 time_base.setFollowing(*want_following);
             }
 
-            if (const auto cursor = params.find("cursor"); cursor != params.end())
+            if (cursor_given)
             {
-                if (cursor->is_null())
-                {
-                    time_base.setCursor(std::nullopt);
-                }
-                else if (cursor->is_number())
-                {
-                    time_base.setCursor(cursor->get<double>());
-                }
-                else
-                {
-                    return std::unexpected(
-                        badParams("'cursor' must be a number or null."));
-                }
+                const json& cursor = params["cursor"];
+                time_base.setCursor(cursor.is_null() ? std::nullopt
+                                                     : std::optional<double>(cursor.get<double>()));
             }
 
             // Any mover above only PARKED its seek (they coalesce to the
@@ -251,12 +257,12 @@ void registerTimeMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& w
     // bucket sum against scope.capture's `messages` is the assertion worth
     // making.
     registerFlushed("scope.density", [win](const json& params) -> MethodResult {
-        std::size_t buckets = 200;
-        if (const auto requested = params.find("buckets");
-            requested != params.end() && requested->is_number_unsigned())
+        const auto requested = optionalParam<std::size_t>(params, "buckets");
+        if (!requested)
         {
-            buckets = std::min<std::size_t>(requested->get<std::size_t>(), 4096);
+            return std::unexpected(requested.error());
         }
+        const std::size_t buckets = std::min<std::size_t>(requested->value_or(200), 4096);
         if (buckets == 0)
         {
             return std::unexpected(badParams("'buckets' must be at least 1."));

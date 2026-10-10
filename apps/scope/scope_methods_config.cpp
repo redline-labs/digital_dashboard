@@ -244,16 +244,16 @@ void registerConfigMethods(const FlushedRegistrar& registerFlushed, ScopeWindow&
     // kinds there are.
 
     registerFlushed("scope.stats", [win](const json& params) -> MethodResult {
-        const auto wanted = params.find("panel");
-        if (wanted != params.end() && !wanted->is_string())
+        const auto wanted = optionalParam<std::string>(params, "panel");
+        if (!wanted)
         {
-            return std::unexpected(badParams("'panel', when given, must be a string."));
+            return std::unexpected(wanted.error());
         }
 
         json panels = json::array();
         for (const ScopeWindow::PanelEntry& entry : win->panels())
         {
-            if (wanted != params.end() && entry.id.toStdString() != wanted->get<std::string>())
+            if (wanted->has_value() && entry.id.toStdString() != **wanted)
             {
                 continue;
             }
@@ -291,12 +291,19 @@ void registerConfigMethods(const FlushedRegistrar& registerFlushed, ScopeWindow&
     // reflected form always emits every field, which is the better answer for a
     // new caller and a silently different one for an old.
     registerFlushed("scope.sample_stats", [win](const json& params) -> MethodResult {
+        // A null panel is "every panel", as it is for scope.stats; value()
+        // threw on it.
+        const auto wanted = optionalParam<std::string>(params, "panel");
+        if (!wanted)
+        {
+            return std::unexpected(wanted.error());
+        }
+
         json panels = json::array();
 
         for (const ScopeWindow::PanelEntry& entry : win->panels())
         {
-            if (params.contains("panel") &&
-                entry.id.toStdString() != params.value("panel", std::string{}))
+            if (wanted->has_value() && entry.id.toStdString() != **wanted)
             {
                 continue;
             }

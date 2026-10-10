@@ -35,6 +35,7 @@ the debugging loop. This page is about linking and extending the library.
 | `agent_control/methods.h` | `registerCoreMethods()`: `ui.*`, `input.*`, `app.info`, `app.quit`, and `AppInfo`. |
 | `agent_control/zenoh_methods.h` | `registerZenohMethods()`: `zenoh.list`, `read`, `publish`, `rate`, `describe_schema`. |
 | `agent_control/error.h` | `ErrorCode`, `AgentError`, `Result<T>`, `MethodResult`, and the `badParams`-style builders. |
+| `agent_control/params.h` | `requireParam<T>`, `optionalParam<T>` and `firstError`: typed parameter reads that refuse a wrong type by name. |
 | `agent_control/locator.h` | `WidgetLocator`: selectors to live widgets, stable refs, the tree revision. |
 | `agent_control/inspector.h` | `buildSnapshot()` and `describeWidget()`: the flat widget list. |
 | `agent_control/capture.h` | `captureWidget()` and `CaptureOptions`: the PNG plus the metadata that fixes its coordinates. |
@@ -109,5 +110,6 @@ two cannot disagree about what is on the bus.
 | Target | Labels | Proves |
 | --- | --- | --- |
 | `agent_control_test_framing` | `agent_control unit` | The JSON-RPC envelope through the real `handleLine`, weighted towards truncated lines, wrong-typed fields, unknown parameters and throwing handlers. |
+| `agent_control_test_params` | `agent_control unit` | A wrong type is an error naming the parameter, never an absent one; null is absent; integers are range-checked for their target type. |
 | `agent_control_test_log_ring` | `agent_control unit` | `seq` is monotonic and never reused, `since_seq` returns only what is new, eviction is reported, and Qt messages arrive. |
 | `agent_control_test_selector` | `agent_control gui` | Selector resolution against a real widget tree fails loudly on ambiguity, staleness and out-of-range indices. |

@@ -35,18 +35,17 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
     registerFlushed(
         "scope.add_panel",
         [win](const json& params) -> MethodResult {
-            const auto type_name = params.find("type");
-            if (type_name == params.end() || !type_name->is_string())
+            const auto type_name = requireParam<std::string>(params, "type");
+            const auto requested = optionalParam<std::string>(params, "id");
+            if (auto error = firstError(type_name, requested))
             {
-                return std::unexpected(badParams("'type' (string) is required."));
+                return std::unexpected(*error);
             }
 
-            const auto type = reflection::enum_traits<panel_type_t>::try_from_string(
-                type_name->get<std::string>());
+            const auto type = reflection::enum_traits<panel_type_t>::try_from_string(*type_name);
             if (!type || *type == panel_type_t::unknown)
             {
-                AgentError error =
-                    badParams("Unknown panel type '" + type_name->get<std::string>() + "'.");
+                AgentError error = badParams("Unknown panel type '" + *type_name + "'.");
                 json known = json::array();
                 for (const PanelTypeInfo& info : availablePanelTypes())
                 {
@@ -56,14 +55,8 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
                 return std::unexpected(std::move(error));
             }
 
-            QString id;
-            if (const auto requested = params.find("id");
-                requested != params.end() && requested->is_string())
-            {
-                id = QString::fromStdString(requested->get<std::string>());
-            }
-
-            const QString created = win->addPanel(*type, id);
+            const QString created =
+                win->addPanel(*type, QString::fromStdString(requested->value_or(std::string{})));
             if (created.isEmpty())
             {
                 return std::unexpected(internalError("Failed to create the panel."));
@@ -120,10 +113,15 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
                 return std::unexpected(entry.error());
             }
 
-            const auto key = params.find("zenoh_key");
-            if (key == params.end() || !key->is_string())
+            const auto key = requireParam<std::string>(params, "zenoh_key");
+            const auto field = optionalParam<std::string>(params, "field");
+            const auto schema = optionalParam<std::string>(params, "schema");
+            const auto type_category = optionalParam<std::string>(params, "type_category");
+            const auto element_category = optionalParam<std::string>(params, "element_category");
+            const auto element = optionalParam<int>(params, "element_index");
+            if (auto error = firstError(key, field, schema, type_category, element_category, element))
             {
-                return std::unexpected(badParams("'zenoh_key' (string) is required."));
+                return std::unexpected(*error);
             }
 
             BindingCandidate candidate;
@@ -132,17 +130,13 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
             // it, which is how a caller avoids having to know the schema. Or
             // spell out schema and category directly, which works before any
             // scan has happened.
-            const auto field = params.find("field");
-            const auto schema = params.find("schema");
-            if (field != params.end() && field->is_string() && schema == params.end())
+            if (field->has_value() && !schema->has_value())
             {
-                if (!win->browser()->findCandidate(
-                        QString::fromStdString(key->get<std::string>()),
-                        QString::fromStdString(field->get<std::string>()), candidate))
+                if (!win->browser()->findCandidate(QString::fromStdString(*key),
+                                                   QString::fromStdString(**field), candidate))
                 {
                     AgentError error = badParams(
-                        "The browser has not seen field '" + field->get<std::string>() +
-                        "' on '" + key->get<std::string>() +
+                        "The browser has not seen field '" + **field + "' on '" + *key +
                         "'. Pass 'schema' and 'type_category' explicitly, or check "
                         "scope.browser for what is advertised.");
                     return std::unexpected(std::move(error));
@@ -150,18 +144,17 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
             }
             else
             {
-                if (schema == params.end() || !schema->is_string())
+                if (!schema->has_value())
                 {
                     return std::unexpected(
                         badParams("'schema' (string) is required when 'field' is not resolvable "
                                   "through the browser."));
                 }
-                candidate.zenoh_key = key->get<std::string>();
-                candidate.schema_name = schema->get<std::string>();
-                candidate.field_name =
-                    field != params.end() && field->is_string() ? field->get<std::string>() : "";
-                candidate.type_category = params.value("type_category", std::string{"float"});
-                candidate.element_category = params.value("element_category", std::string{});
+                candidate.zenoh_key = *key;
+                candidate.schema_name = **schema;
+                candidate.field_name = field->value_or(std::string{});
+                candidate.type_category = type_category->value_or(std::string{"float"});
+                candidate.element_category = element_category->value_or(std::string{});
 
                 // Whether the list declares a length is a fact about the SCHEMA,
                 // so it is read from the schema rather than taken from the
@@ -189,9 +182,9 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
             // Naming an element of something that is not a list is a caller
             // error rather than something to ignore: the expression it would
             // produce is not the one asked for.
-            if (const auto element = params.find("element_index"); element != params.end())
+            if (element->has_value())
             {
-                if (!element->is_number_integer() || element->get<int>() < 0)
+                if (**element < 0)
                 {
                     return std::unexpected(
                         badParams("'element_index', when given, must be a non-negative integer."));
@@ -202,7 +195,7 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
                         "'element_index' was given but '" + candidate.field_name +
                         "' is not a list."));
                 }
-                candidate.element_index = element->get<int>();
+                candidate.element_index = **element;
             }
 
             Panel* const panel = entry.value()->panel;
@@ -238,17 +231,17 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
                 return std::unexpected(entry.error());
             }
 
-            const auto index = params.find("index");
-            if (index == params.end() || !index->is_number_unsigned())
+            const auto index = requireParam<std::size_t>(params, "index");
+            if (!index)
             {
-                return std::unexpected(badParams("'index' (unsigned) is required."));
+                return std::unexpected(index.error());
             }
 
             // Through Panel's own interface. It used to cast to
             // TimeSeriesPanel, so this answered "that panel has no removable
             // signals" for a video panel holding a stream -- a definite no about
             // a binding that was definitely there.
-            if (!entry.value()->panel->removeBinding(index->get<std::size_t>()))
+            if (!entry.value()->panel->removeBinding(*index))
             {
                 return std::unexpected(badParams("No signal at that index."));
             }
@@ -272,19 +265,16 @@ void registerPanelMethods(const FlushedRegistrar& registerFlushed, ScopeWindow& 
                 return std::unexpected(entry.error());
             }
 
-            const auto key = params.find("zenoh_key");
-            const auto field = params.find("field");
-            if (key == params.end() || !key->is_string() || field == params.end() ||
-                !field->is_string())
+            const auto key = requireParam<std::string>(params, "zenoh_key");
+            const auto field = requireParam<std::string>(params, "field");
+            if (auto error = firstError(key, field))
             {
-                return std::unexpected(
-                    badParams("'zenoh_key' and 'field' (strings) are required."));
+                return std::unexpected(*error);
             }
 
             BindingCandidate candidate;
-            if (!win->browser()->findCandidate(QString::fromStdString(key->get<std::string>()),
-                                               QString::fromStdString(field->get<std::string>()),
-                                               candidate))
+            if (!win->browser()->findCandidate(QString::fromStdString(*key),
+                                               QString::fromStdString(*field), candidate))
             {
                 return std::unexpected(badParams(
                     "The browser has not seen that field; check scope.browser for what is "

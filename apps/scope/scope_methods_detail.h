@@ -30,6 +30,7 @@
 #include "time_series/time_series_panel.h"
 
 #include "agent_control/error.h"
+#include "agent_control/params.h"
 #include "agent_control/server.h"
 
 #include "config_codec/config_json.h"
@@ -56,6 +57,9 @@ namespace methods_detail
 
 using agent_control::AgentError;
 using agent_control::badParams;
+using agent_control::firstError;
+using agent_control::optionalParam;
+using agent_control::requireParam;
 using agent_control::json;
 using agent_control::MethodResult;
 
@@ -118,17 +122,16 @@ inline std::string panelTypeName(const Panel& panel)
 inline std::expected<ScopeWindow::PanelEntry*, AgentError> panelFrom(ScopeWindow& window,
                                                               const json& params)
 {
-    const auto id = params.find("panel");
-    if (id == params.end() || !id->is_string())
+    const auto id = agent_control::requireParam<std::string>(params, "panel");
+    if (!id)
     {
-        return std::unexpected(badParams("'panel' (string) is required."));
+        return std::unexpected(id.error());
     }
 
-    const QString panel_id = QString::fromStdString(id->get<std::string>());
-    ScopeWindow::PanelEntry* entry = window.findPanel(panel_id);
+    ScopeWindow::PanelEntry* entry = window.findPanel(QString::fromStdString(*id));
     if (entry == nullptr)
     {
-        AgentError error = badParams("No panel with id '" + id->get<std::string>() + "'.");
+        AgentError error = badParams("No panel with id '" + *id + "'.");
         json known = json::array();
         for (const ScopeWindow::PanelEntry& candidate : window.panels())
         {

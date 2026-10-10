@@ -3,6 +3,8 @@
 #include "dashboard/page_command.h"
 #include "dashboard/widget_registry.h"
 
+#include "agent_control/params.h"
+
 #include <QApplication>
 #include <QWidget>
 
@@ -120,9 +122,12 @@ void registerPageMethods(AgentServer& server)
                                                  "'; expected one of: " +
                                                  reflection::enum_traits<page_action_t>::known_values()));
             }
-            const std::string page = params.contains("page") && params["page"].is_string()
-                                         ? params["page"].get<std::string>()
-                                         : std::string();
+            const auto page_param = agent_control::optionalParam<std::string>(params, "page");
+            if (!page_param)
+            {
+                return std::unexpected(page_param.error());
+            }
+            const std::string page = page_param->value_or(std::string());
 
             const std::string target = params["target"].get<std::string>();
             json known = json::array();

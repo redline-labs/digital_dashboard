@@ -64,6 +64,12 @@ add_executable(agent_control_test_log_ring test_log_ring.cpp)
 target_link_libraries(agent_control_test_log_ring PRIVATE agent_control spdlog::spdlog)
 add_project_test(TARGET agent_control_test_log_ring LABELS agent_control unit)
 
+# Typed parameter reading: a wrong type is an error naming the parameter, never
+# an absent one, and integers are range-checked for their target type.
+add_executable(agent_control_test_params test_params.cpp)
+target_link_libraries(agent_control_test_params PRIVATE agent_control)
+add_project_test(TARGET agent_control_test_params LABELS agent_control unit)
+
 add_executable(agent_control_test_selector test_selector.cpp)
 target_link_libraries(agent_control_test_selector PRIVATE agent_control spdlog::spdlog)
 add_project_test(TARGET agent_control_test_selector LABELS agent_control gui)
