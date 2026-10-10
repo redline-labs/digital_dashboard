@@ -155,7 +155,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   `CarPlayVideo` is, one panel's schema is in the interface every panel shares.
   Two flag bits are reserved: `kSeekPoint` ("you can start here") and `kPreamble`
   ("replay me before the seek point after me"). See `docs/apps/scope.md`.
-- **Adding a widget** is a 5-step registration documented at the top of
+- **Adding a widget** is a 4-step registration documented at the top of
   `libs/dashboard_widgets/include/dashboard/widget_registry.h`. Follow it exactly; several
   generated things (the config variant, the palette, the YAML decoder) derive
   from that one macro list. Widgets built this way are automatically inspectable

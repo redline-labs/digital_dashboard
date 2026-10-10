@@ -32,8 +32,6 @@ class Mercedes190ESpeedometer : public qt_helpers::CachedPaintWidget
     Q_OBJECT
 public:
     using config_t = Mercedes190ESpeedometerConfig_t;
-    static constexpr std::string_view kFriendlyName = "Mercedes 190E Speedometer";
-    static constexpr widget_type_t kWidgetType = widget_type_t::mercedes_190e_speedometer;
 
     explicit Mercedes190ESpeedometer(const config_t& cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return cfg_; }

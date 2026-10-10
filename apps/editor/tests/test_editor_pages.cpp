@@ -397,7 +397,7 @@ void testDropsLandOnTheShownPage()
 
     drop(canvas, widget_type_t::page_stack, QPoint(100 + 50, 50 + 60));
     doc = canvas.exportDocument();
-    check(doc.windows[0].widgets.size() == 2 && doc.windows[0].widgets[1].type == widget_type_t::page_stack,
+    check(doc.windows[0].widgets.size() == 2 && doc.windows[0].widgets[1].type() == widget_type_t::page_stack,
           "a page_stack dropped on a stack lands on the window instead");
 
     drop(canvas, widget_type_t::static_text, QPoint(700, 500));

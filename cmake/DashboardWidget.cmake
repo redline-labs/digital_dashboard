@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
                       "${CMAKE_CURRENT_LIST_DIR}/../libs/dashboard_widgets/include" ABSOLUTE)
 
-# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # One way to declare a dashboard widget library.
 #
@@ -45,9 +46,10 @@ get_filename_component(DASHBOARD_WIDGET_INCLUDE_DIR
 # So Qt components go in PUBLIC too. A widget that truly needs something only
 # in its .cpp can still pass it as PRIVATE_LIBS.
 #
-# Anything genuinely unusual should not be forced through here. carplay needs
-# ffmpeg via pkg-config and several extra Qt components; it keeps its own
-# hand-written CMakeLists and calls dashboard_widget_register() directly.
+# The first argument is the target name, which need not match the directory:
+# carplay's is carplay_widget. A widget with extra dependencies (ffmpeg via
+# pkg-config, the map renderer) passes them as PUBLIC_LIBS / PRIVATE_LIBS and
+# QT_COMPONENTS rather than writing its own library block.
 
 function(dashboard_widget_register widget_name)
     if(NOT TARGET ${widget_name})

@@ -33,36 +33,29 @@ namespace widget_registry
 // Widget Registration List
 // ============================================================================
 // To add a new widget type:
-//   1. Ensure your widget class has these static members:
-//      - static constexpr widget_type_t kWidgetType = widget_type_t::your_widget_type;
-//      - static constexpr std::string_view kFriendlyName = "User Friendly Name for Widget";
-//      - using config_t = YourConfigType
-//      - config_t getConfig() const method
-//   2. Add ONE line to DASHBOARD_WIDGET_TABLE in dashboard/widget_table.h
-//   3. Call add_dashboard_widget() in your widget's CMakeLists.txt, and
-//      add_subdirectory() in libs/dashboard_widgets/widgets/CMakeLists.txt
+//   1. Give the widget class `using config_t = YourConfigType;` and a
+//      `const config_t& getConfig() const`, and construct it from a config_t.
+//   2. Add ONE row to DASHBOARD_WIDGET_TABLE in dashboard/widget_table.h:
+//      the type name, the class, and the name the palette shows.
+//   3. Include its header below, and add its case to validate_widget's switch
+//      in app_config.cpp (-Wswitch-enum names the missing one).
+//   4. Give it a CMakeLists calling add_dashboard_widget(); widgets/CMakeLists
+//      picks up every directory on its own.
 //
 // Config types need no registration. Anything declared with REFLECT_STRUCT or
 // REFLECT_ENUM converts to and from YAML on its own, nested structs and enums
-// included -- see the constrained convert<> specializations in app_config.h.
+// included -- see the constrained convert<> specializations in config_yaml.h.
 //
-// DASHBOARD_WIDGET_TABLE drives every sweep over the widget set, and the
-// widget_type_t enumerators come from the same table, so the two cannot drift
-// apart. Everything else is derived from the widget class: the widget name
-// string comes from kWidgetType via reflection::enum_to_string(), and the
-// widget_config_t variant alternatives from the table.
-//
-// A sweep macro takes both columns -- X(enum_name, WidgetClass) -- and most
-// ignore the first. Threading a one-argument macro through the table instead
-// would need an adapter holding the caller's macro in a fixed name, which is
-// less readable than an unused parameter.
+// A sweep macro takes all three columns -- X(enum_name, WidgetClass,
+// friendly_name) -- and most ignore some. Anything that needs only the names
+// reads kWidgetDescriptors (widget_types.h) instead of sweeping.
 // ============================================================================
 
 // The enum and the sweeps are generated from the same table, so they cannot
 // drift apart on their own. This pins that they were in fact generated: it
 // fires if an enumerator is ever added to widget_types.h by hand, which is the
 // one way back to the silent failure the table exists to prevent.
-#define DASHBOARD_WIDGET_COUNT_ONE(enum_name, widget_class) +1
+#define DASHBOARD_WIDGET_COUNT_ONE(enum_name, widget_class, friendly_name) +1
 static_assert(
 	reflection::enum_traits<widget_type_t>::names().size()
 		== static_cast<std::size_t>(1 DASHBOARD_WIDGET_TABLE(DASHBOARD_WIDGET_COUNT_ONE)),
@@ -77,25 +70,16 @@ static_assert(
 // at compile time.
 template <typename Config> struct config_traits;
 
-#define WIDGET_TRAITS_SPECIALIZATION(enum_name, widget_class) \
+#define WIDGET_TRAITS_SPECIALIZATION(enum_name, widget_class, friendly_name) \
 	template <> \
 	struct config_traits<widget_class::config_t> \
 	{ \
-		static constexpr widget_type_t type = widget_class::kWidgetType; \
+		static constexpr widget_type_t type = widget_type_t::enum_name; \
 		using widget_t = widget_class; \
 	};
 
 DASHBOARD_WIDGET_TABLE(WIDGET_TRAITS_SPECIALIZATION)
 #undef WIDGET_TRAITS_SPECIALIZATION
-
-// There is no instantiateWidget() here any more.
-//
-// It built a widget straight from a default-constructed config, which meant the
-// editor had a second construction path that skipped the range checking in
-// widget_factory::createWidgetFromConfig -- so a config the dashboard clamped
-// was previewed unclamped, and the editor was the optimistic one. Both apps now
-// go through widget_factory. To build a widget of a given type with its own
-// defaults, ask for default_widget_config(type) and hand that to the factory.
 
 } // namespace widget_registry
 

@@ -12,27 +12,16 @@ cmake_minimum_required(VERSION 3.16)
 
 set(MAP_WIDGET_LIB map_widget)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
-
-add_library(${MAP_WIDGET_LIB} STATIC
-    map_widget.cpp
-    tile_source.cpp
-    include/map/config.h
-    include/map/highlight_ids.h
-    include/map/map_widget.h
-    include/map/tile_source.h
-)
-
-target_include_directories(${MAP_WIDGET_LIB} PUBLIC
-    ${DASHBOARD_WIDGET_INCLUDE_DIR}
-    include
-)
-
-target_link_libraries(${MAP_WIDGET_LIB}
-    PUBLIC
-        Qt6::Core
-        Qt6::Gui
-        Qt6::Widgets
+add_dashboard_widget(${MAP_WIDGET_LIB}
+    SOURCES
+        map_widget.cpp
+        tile_source.cpp
+        include/map/config.h
+        include/map/highlight_ids.h
+        include/map/map_widget.h
+        include/map/tile_source.h
+    QT_COMPONENTS Core Gui
+    PUBLIC_LIBS
         # The renderer. PUBLIC because map_widget.h and tile_source.h both
         # expose its types -- Projection, TileId, CachedTile, MapPass::Stats.
         map_render
@@ -43,26 +32,13 @@ target_link_libraries(${MAP_WIDGET_LIB}
         # The floating buttons. PUBLIC because map_widget.h holds pointers to
         # its widget types.
         map_controls
-        helpers
-        qt_helpers
-        reflection
-        config_codec
         schemas
-        zenoh_pub_sub
         mvt
-    PRIVATE
+    PRIVATE_LIBS
         # Only for road_graph/format.h's constexpr wayOf(): the highlight joins
         # horizon segment ids back to the way ids stamped on tile features.
         road_graph
-        spdlog::spdlog
 )
-
-# Registered by hand rather than through add_dashboard_widget(), the way the
-# carplay widget is: this one links map_render, mvt and road_graph beyond the
-# shared defaults.
-dashboard_widget_register(${MAP_WIDGET_LIB})
-
-set_target_properties(${MAP_WIDGET_LIB} PROPERTIES AUTOMOC ON)
 
 # ------------------------------------------------------------------- tests
 

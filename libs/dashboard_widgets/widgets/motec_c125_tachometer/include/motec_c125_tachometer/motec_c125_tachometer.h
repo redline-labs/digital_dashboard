@@ -23,8 +23,6 @@ class MotecC125Tachometer : public qt_helpers::CachedPaintWidget
 
 public:
     using config_t = MotecC125TachometerConfig_t;
-    static constexpr std::string_view kFriendlyName = "MoTeC C125 Tachometer";
-    static constexpr widget_type_t kWidgetType = widget_type_t::motec_c125_tachometer;
 
     explicit MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

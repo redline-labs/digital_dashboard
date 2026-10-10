@@ -44,10 +44,10 @@ std::expected<widget_type_t, AgentError> parseType(const json& params)
     // Offering the valid set matters: the type names come from an enum the
     // caller cannot see, so a rejection without them is a dead end.
     json known = json::array();
-#define KNOWN_CASE(enum_name, widget_class) \
-    known.push_back(std::string(reflection::enum_to_string(widget_class::kWidgetType)));
-    DASHBOARD_WIDGET_TABLE(KNOWN_CASE)
-#undef KNOWN_CASE
+    for (const widget_descriptor_t& descriptor : kWidgetDescriptors)
+    {
+        known.push_back(std::string(descriptor.name));
+    }
     json data = json::object();
     data["known_types"] = std::move(known);
     return std::unexpected(AgentError{
@@ -265,15 +265,13 @@ void registerEditorMethods(AgentServer& server, EditorWindow& window)
         [](const json&) -> MethodResult
         {
             json items = json::array();
-#define PALETTE_CASE(enum_name, widget_class)                                                       \
-    {                                                                                    \
-        json entry = json::object();                                                     \
-        entry["type"] = std::string(reflection::enum_to_string(widget_class::kWidgetType)); \
-        entry["friendly_name"] = std::string(widget_class::kFriendlyName);                \
-        items.push_back(std::move(entry));                                                \
-    }
-            DASHBOARD_WIDGET_TABLE(PALETTE_CASE)
-#undef PALETTE_CASE
+            for (const widget_descriptor_t& descriptor : kWidgetDescriptors)
+            {
+                json entry = json::object();
+                entry["type"] = std::string(descriptor.name);
+                entry["friendly_name"] = std::string(descriptor.friendly_name);
+                items.push_back(std::move(entry));
+            }
             json out = json::object();
             out["widgets"] = std::move(items);
             return out;

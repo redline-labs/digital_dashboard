@@ -182,7 +182,7 @@ public:
     widget_config_t toWidgetConfig(const QRect& frameRect) const
     {
         widget_config_t wc;
-        wc.type = type_;
+        wc.config = default_widget_config(type_);
         wc.id = id_;
         wc.x = static_cast<int16_t>(frameRect.x());
         wc.y = static_cast<int16_t>(frameRect.y());

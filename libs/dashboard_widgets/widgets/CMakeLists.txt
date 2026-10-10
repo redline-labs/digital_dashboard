@@ -1,28 +1,15 @@
-# Widgets CMakeLists.txt
-# This file manages all widget libraries under the widgets directory
+# Every widget lives in its own directory here and registers itself through
+# add_dashboard_widget() (cmake/DashboardWidget.cmake), so there is no list to
+# keep in step: a new directory with a CMakeLists is a new widget library.
+# Sorted, so the configure order -- and the link order it feeds -- does not
+# depend on the filesystem.
 
-cmake_minimum_required(VERSION 3.10)
-
-# Add all widget subdirectories
-add_subdirectory(mercedes_190e_telltales)
-add_subdirectory(carplay)
-add_subdirectory(carplay_nav)
-add_subdirectory(now_playing)
-add_subdirectory(mercedes_190e_speedometer)
-add_subdirectory(mercedes_190e_tachometer)
-add_subdirectory(mercedes_190e_cluster_gauge)
-add_subdirectory(sparkline)
-add_subdirectory(motec_c125_tachometer)
-add_subdirectory(motec_cdl3_tachometer)
-add_subdirectory(road_info)
-add_subdirectory(static_text)
-add_subdirectory(value_readout)
-add_subdirectory(segment_readout)
-add_subdirectory(center_bar)
-add_subdirectory(background_rect)
-# Offline maps. Tessellates vector tiles and draws them through QRhi;
-# everything it draws comes from nodes/map_server over zenoh.
-add_subdirectory(map)
-# Pages of widgets, and a button that changes them.
-add_subdirectory(page_stack)
-add_subdirectory(page_button)
+file(GLOB widget_dirs LIST_DIRECTORIES true RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+     ${CMAKE_CURRENT_SOURCE_DIR}/*)
+list(SORT widget_dirs)
+foreach(widget_dir IN LISTS widget_dirs)
+    if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${widget_dir}
+       AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${widget_dir}/CMakeLists.txt)
+        add_subdirectory(${widget_dir})
+    endif()
+endforeach()

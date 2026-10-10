@@ -28,11 +28,6 @@ void applyLimits(Cfg& cfg, std::string_view widget_type)
 
 inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWidget* parent)
 {
-    if (widget_config.type == widget_type_t::unknown)
-    {
-        return nullptr;
-    }
-
     QWidget* widget = nullptr;
     std::visit([&](const auto& cfg) {
         using cfg_t = std::decay_t<decltype(cfg)>;
@@ -44,14 +39,6 @@ inline QWidget* createWidgetFromConfig(const widget_config_t& widget_config, QWi
         {
             using traits = widget_registry::config_traits<cfg_t>;
             using widget_t = typename traits::widget_t;
-
-            if (widget_config.type != traits::type)
-            {
-                SPDLOG_WARN("Widget config type mismatch: expected '{}', got '{}'",
-                            reflection::enum_to_string(traits::type),
-                            reflection::enum_to_string(widget_config.type));
-                return;
-            }
 
             // Copy, because clamping has to happen before the widget reads the
             // config and the caller's copy is const.

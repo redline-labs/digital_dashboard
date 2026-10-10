@@ -69,7 +69,7 @@ app_config_t twoStaticTexts(const std::string& window_name)
     for (const char* text : {"first", "second"})
     {
         widget_config_t wc;
-        wc.type = StaticTextWidget::kWidgetType;
+        wc.config = default_widget_config(widget_type_t::static_text);
         wc.id = text;
         wc.x = 10;
         wc.y = 20;
@@ -233,7 +233,7 @@ void testAnUnknownWidgetDoesNotShiftLaterNames()
 
     // Insert an entry the editor will skip, ahead of the others.
     widget_config_t broken;
-    broken.type = widget_type_t::unknown;
+    broken.config = default_widget_config(widget_type_t::unknown);
     cfg.widgets.insert(cfg.widgets.begin(), broken);
 
     // Strip the explicit ids so the derived names are what gets tested.
@@ -664,7 +664,7 @@ void testApplyRoundTripsAVectorField()
     app.width = 640;
     app.height = 480;
     widget_config_t wc;
-    wc.type = Mercedes190ESpeedometer::kWidgetType;
+    wc.config = default_widget_config(widget_type_t::mercedes_190e_speedometer);
     wc.id = "speedo";
     wc.width = 200;
     wc.height = 200;
@@ -724,7 +724,7 @@ void testApplyFollowsVectorAddAndRemove()
     app.width = 640;
     app.height = 480;
     widget_config_t wc;
-    wc.type = BackgroundRectWidget::kWidgetType;
+    wc.config = default_widget_config(widget_type_t::background_rect);
     wc.id = "bg";
     wc.width = 100;
     wc.height = 100;
@@ -928,7 +928,7 @@ void testThePreviewIsClampedButTheSaveIsNot()
     app.width = 640;
     app.height = 480;
     widget_config_t wc;
-    wc.type = MotecC125Tachometer::kWidgetType;
+    wc.config = default_widget_config(widget_type_t::motec_c125_tachometer);
     wc.id = "tach";
     wc.width = 200;
     wc.height = 200;

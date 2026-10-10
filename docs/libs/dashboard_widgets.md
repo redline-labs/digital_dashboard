@@ -31,7 +31,7 @@ describe a dashboard layout whoever is asking.
 | `dashboard/widget_registry.h` | Includes every widget header; `config_traits<>` from config type back to widget class; the `static_assert` that the enum matches the table. |
 | `dashboard/app_config.h` | `widget_config_t`, `widget_page_t`, `app_config_t` (one window), `dashboard_config_t` (the file), `load_dashboard_config()`, `validate_app_config()`, `default_widget_config()`, `default_widget_pages()`. |
 | `dashboard/widget_factory.h` | `createWidgetFromConfig()`: clamps through `validate()` and constructs. |
-| `dashboard/widget_identity.h` | `widgetObjectName()`, `pageObjectName()`, `childWidgetObjectName()` and `applyWidgetIdentity()`: the one naming rule both apps share. |
+| `dashboard/widget_identity.h` | `widgetObjectName()`, `pageObjectName()` and `childWidgetObjectName()`: the one naming rule both apps share. |
 | `dashboard/expression_subscription.h` | `ExpressionSubscription<T>` and `makeExpressionSubscription()`: a bus value delivered to the GUI thread, coalesced. |
 | `dashboard/widget_methods.h` | `registerWidgetMethods()` and `ConfigApplier`: `widget.describe_config`, `get_config`, `set_config`. |
 | `dashboard/widget_tree.h` | `buildWidget()`: a configured widget and, for a `page_stack`, its pages and their widgets. Both apps build through it. |
@@ -57,7 +57,7 @@ for (std::size_t i = 0; i < window.widgets.size(); ++i)
 {
     const widget_config_t& wc = window.widgets[i];
     QWidget* widget = widget_factory::createWidgetFromConfig(wc, this);
-    dashboard::applyWidgetIdentity(widget, wc, i);
+    widget->setObjectName(dashboard::widgetObjectName(wc, i));
 }
 ```
 
@@ -69,7 +69,7 @@ _expression_parser =
     dashboard::makeExpressionSubscription<double>(_cfg.value, this, &ValueReadoutWidget::setValue);
 ```
 
-Adding a widget is a five-step registration; [Adding a widget](../developing/adding-a-widget.html)
+Adding a widget is a short registration; [Adding a widget](../developing/adding-a-widget.html)
 walks it, and the comment at the top of `widget_registry.h` is the canonical
 version.
 

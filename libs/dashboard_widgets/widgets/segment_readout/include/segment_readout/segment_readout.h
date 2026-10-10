@@ -22,8 +22,6 @@ class SegmentReadoutWidget : public QWidget
 
   public:
     using config_t = SegmentReadoutConfig_t;
-    static constexpr std::string_view kFriendlyName = "Segment Readout";
-    static constexpr widget_type_t kWidgetType = widget_type_t::segment_readout;
 
     explicit SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

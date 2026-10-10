@@ -30,8 +30,6 @@ class Mercedes190ETachometer : public qt_helpers::CachedPaintWidget
 
 public:
     using config_t = Mercedes190ETachometerConfig_t;
-    static constexpr std::string_view kFriendlyName = "Mercedes 190E Tachometer";
-    static constexpr widget_type_t kWidgetType = widget_type_t::mercedes_190e_tachometer;
 
     explicit Mercedes190ETachometer(Mercedes190ETachometerConfig_t cfg, QWidget *parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

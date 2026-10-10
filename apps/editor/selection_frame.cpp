@@ -114,14 +114,14 @@ std::vector<std::vector<QString>> SelectionFrame::pageChildNames() const
 
 SelectionFrame* SelectionFrame::buildPageChild(const widget_config_t& cfg, const QString& name, bool editorMode)
 {
-    if (cfg.type == widget_type_t::unknown || cfg.type == widget_type_t::page_stack)
+    if (cfg.type() == widget_type_t::unknown || cfg.type() == widget_type_t::page_stack)
     {
         SPDLOG_WARN("'{}': a {} cannot be on a page; left out.", objectName().toStdString(),
-                    reflection::enum_to_string(cfg.type));
+                    reflection::enum_to_string(cfg.type()));
         return nullptr;
     }
 
-    auto* frame = new SelectionFrame(cfg.type, this);
+    auto* frame = new SelectionFrame(cfg.type(), this);
     frame->setId(cfg.id);
     frame->setObjectName(name);
     frame->applyStoredConfig(cfg.config);
@@ -176,7 +176,7 @@ void SelectionFrame::applyPages(const std::vector<widget_page_t>& pages,
                                            : dashboard::childWidgetObjectName(objectName(), page.name, cfg, w);
 
             SelectionFrame* frame = nullptr;
-            if (const auto it = live.find(name); it != live.end() && it->second->type() == cfg.type)
+            if (const auto it = live.find(name); it != live.end() && it->second->type() == cfg.type())
             {
                 frame = it->second;
                 live.erase(it);
@@ -293,7 +293,6 @@ SelectionFrame* SelectionFrame::addPageChild(std::size_t page, widget_type_t typ
     }
 
     widget_config_t cfg;
-    cfg.type = type;
     cfg.config = default_widget_config(type);
     cfg.x = static_cast<int16_t>(localPos.x());
     cfg.y = static_cast<int16_t>(localPos.y());
@@ -433,7 +432,6 @@ void SelectionFrame::rebuildChild()
     // config_ itself is left alone. The clamp applies to the copy the widget is
     // built from, so what gets saved is still what was configured.
     widget_config_t wc;
-    wc.type = type_;
     wc.config = config_;
     setChild(widget_factory::createWidgetFromConfig(wc, nullptr));
     restack();

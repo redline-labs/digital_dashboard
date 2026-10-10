@@ -28,8 +28,8 @@ inline QString widgetObjectName(const widget_config_t& cfg, std::size_t index)
     }
 
     return QString("%1#%2")
-        .arg(QString::fromUtf8(reflection::enum_to_string(cfg.type).data(),
-                               static_cast<qsizetype>(reflection::enum_to_string(cfg.type).size())))
+        .arg(QString::fromUtf8(reflection::enum_to_string(cfg.type()).data(),
+                               static_cast<qsizetype>(reflection::enum_to_string(cfg.type()).size())))
         .arg(index);
 }
 
@@ -52,16 +52,6 @@ inline QString childWidgetObjectName(const QString& stack_name, const std::strin
         return QString::fromStdString(cfg.id);
     }
     return pageObjectName(stack_name, page_name) + ":" + widgetObjectName(cfg, index);
-}
-
-// Applies the name from the rule above. Kept as a function rather than an
-// inlined setObjectName() call so there is exactly one place that decides.
-inline void applyWidgetIdentity(QWidget* widget, const widget_config_t& cfg, std::size_t index)
-{
-    if (widget != nullptr)
-    {
-        widget->setObjectName(widgetObjectName(cfg, index));
-    }
 }
 
 }  // namespace dashboard

@@ -357,13 +357,7 @@ void validateWidget(const YAML::Node& node, const std::string& prefix, std::size
         // Built from the widget table rather than the enum, so `unknown` -- which
         // is an internal state, not something anyone should write in a file --
         // is not offered as a suggestion.
-        std::string known;
-#define KNOWN_TYPE(enum_name, widget_class)                                                             \
-    if (!known.empty()) known += ", ";                                                       \
-    known += std::string(reflection::enum_to_string(widget_class::kWidgetType));
-
-        DASHBOARD_WIDGET_TABLE(KNOWN_TYPE)
-#undef KNOWN_TYPE
+        const std::string known = knownWidgetTypeNames();
 
         issues.push_back({Issue::Severity::error, path + ".type",
                           "unknown widget type '" + type_name + "'; expected one of: " + known});
@@ -451,8 +445,8 @@ void validateWidget(const YAML::Node& node, const std::string& prefix, std::size
     }
 
     const std::string cfg_path = path + ".config";
-#define VALIDATE_CONFIG_CASE(enum_name, widget_class)                                                   \
-    if (*type == widget_class::kWidgetType)                                                  \
+#define VALIDATE_CONFIG_CASE(enum_name, widget_class, friendly_name)                                                   \
+    if (*type == widget_type_t::enum_name)                                                  \
     {                                                                                        \
         config_codec::detail::validateStruct<widget_class::config_t>(                   \
             node["config"], cfg_path, issues);                                               \

@@ -178,7 +178,6 @@ void testRebuildsKeepPagesAndPlace()
     // A widget on a page, as widget.set_config would rebuild it: type and
     // settings only, no id, no geometry.
     widget_config_t changed;
-    changed.type = widget_type_t::static_text;
     StaticTextConfig_t text;
     text.text = "rebuilt";
     changed.config = text;
@@ -197,7 +196,6 @@ void testRebuildsKeepPagesAndPlace()
 
     // The stack itself, as set_config would: its pages are not in `config`.
     widget_config_t stack_change;
-    stack_change.type = widget_type_t::page_stack;
     PageStackConfig_t stack_cfg;
     stack_cfg.default_page = "second";
     stack_change.config = stack_cfg;
@@ -220,7 +218,6 @@ void testBrokenChildrenCount()
     widget_config_t unknown;  // type unknown: nothing to build
     broken.widgets.push_back(unknown);
     widget_config_t nested;
-    nested.type = widget_type_t::page_stack;
     nested.id = "nested";
     nested.config = PageStackConfig_t{};
     nested.pages = default_widget_pages(widget_type_t::page_stack);

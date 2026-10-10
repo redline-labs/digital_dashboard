@@ -64,8 +64,6 @@ class PageStackWidget : public QWidget
 
   public:
     using config_t = PageStackConfig_t;
-    static constexpr std::string_view kFriendlyName = "Page Stack";
-    static constexpr widget_type_t kWidgetType = widget_type_t::page_stack;
 
     PageStackWidget(PageStackConfig_t cfg, QWidget* parent = nullptr);
     ~PageStackWidget() override;

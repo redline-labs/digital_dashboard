@@ -29,8 +29,6 @@ class NowPlayingWidget : public QWidget
 
   public:
     using config_t = NowPlayingConfig_t;
-    static constexpr std::string_view kFriendlyName = "Now Playing";
-    static constexpr widget_type_t kWidgetType = widget_type_t::now_playing;
 
     NowPlayingWidget(NowPlayingConfig_t cfg, QWidget* parent = nullptr);
     ~NowPlayingWidget();

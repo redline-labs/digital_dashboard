@@ -31,8 +31,6 @@ class RoadInfoWidget : public QWidget
 
   public:
     using config_t = RoadInfoConfig_t;
-    static constexpr std::string_view kFriendlyName = "Road Info";
-    static constexpr widget_type_t kWidgetType = widget_type_t::road_info;
 
     explicit RoadInfoWidget(const RoadInfoConfig_t& cfg, QWidget* parent = nullptr);
     ~RoadInfoWidget() override;

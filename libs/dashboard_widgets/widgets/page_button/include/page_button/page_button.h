@@ -26,8 +26,6 @@ class PageButtonWidget : public QWidget
 
   public:
     using config_t = PageButtonConfig_t;
-    static constexpr std::string_view kFriendlyName = "Page Button";
-    static constexpr widget_type_t kWidgetType = widget_type_t::page_button;
 
     explicit PageButtonWidget(PageButtonConfig_t cfg, QWidget* parent = nullptr);
     ~PageButtonWidget() override;

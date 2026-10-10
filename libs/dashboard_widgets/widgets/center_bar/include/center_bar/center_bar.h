@@ -19,8 +19,6 @@ class CenterBarWidget : public QWidget
 
   public:
     using config_t = CenterBarConfig_t;
-    static constexpr std::string_view kFriendlyName = "Center Bar";
-    static constexpr widget_type_t kWidgetType = widget_type_t::center_bar;
 
     explicit CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

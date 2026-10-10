@@ -71,18 +71,16 @@ by hand.
 
 ## The widget class
 
-The class needs these members; the sweeps use every one of them:
+The class needs only these; its type name and palette name live in the table:
 
 ```cpp
 class MyWidget : public QWidget
 {
   public:
-    static constexpr widget_type_t kWidgetType = widget_type_t::my_widget;
-    static constexpr std::string_view kFriendlyName = "My Widget";   // the palette entry
     using config_t = MyWidgetConfig_t;
 
     explicit MyWidget(const config_t& cfg, QWidget* parent = nullptr);
-    config_t getConfig() const;
+    const config_t& getConfig() const;
 };
 ```
 
@@ -98,11 +96,12 @@ conversion that throws out of the decoder and takes the whole layout with it.
 Use `uint16_t`.
 
 Data comes from the bus through `dashboard::ExpressionSubscription`
-(`libs/dashboard_widgets/include/dashboard/expression_subscription.h`): the
-config names an expression, the subscription evaluates it, and the widget gets
-the value on the GUI thread. Zenoh callbacks arrive on zenoh threads and must not
-touch Qt; the subscription already hops with a queued `invokeMethod`, so follow
-its shape rather than subscribing directly.
+(`libs/dashboard_widgets/include/dashboard/expression_subscription.h`), built
+from a `pub_sub::subscription_t` field (see [Bindings and loss of
+comm](#bindings-and-loss-of-comm)): the subscription evaluates the expression,
+and the widget gets the value on the GUI thread. Zenoh callbacks arrive on zenoh
+threads and must not touch Qt; the subscription already hands values over
+through the shared delivery tick, so use it rather than subscribing directly.
 
 Gauges that paint arcs, needles and tick marks share `gauge_painting.h`, and the
 layered paint cache in `qt_helpers` keeps a static background from being
@@ -113,10 +112,12 @@ resources under `libs/dashboard_widgets/resources/`, loaded with
 ## Registering it
 
 1. Add one line to `DASHBOARD_WIDGET_TABLE` in `widget_table.h`:
-   `X(my_widget, MyWidget)`. The first column is the YAML `type:` name and the
-   enumerator; the second is the class.
+   `X(my_widget, MyWidget, "My Widget")`. The first column is the YAML `type:`
+   name and the enumerator, the second is the class, the third is the name the
+   palette shows.
 2. Include the widget's public header in `widget_registry.h`, next to the
-   others.
+   others, and add a `case widget_type_t::my_widget:` to `validate_widget`'s
+   switch in `app_config.cpp` (the build names it if you forget).
 3. In the widget's `CMakeLists.txt`, declare it with the helper:
 
 ```cmake
@@ -125,8 +126,8 @@ add_dashboard_widget(my_widget
 )
 ```
 
-   and add its directory in `libs/dashboard_widgets/widgets/CMakeLists.txt`.
-   The helper (`cmake/DashboardWidget.cmake`) sets up AUTOMOC, the include
+   `libs/dashboard_widgets/widgets/CMakeLists.txt` adds every directory that
+   has a CMakeLists, so there is no list to extend. The helper (`cmake/DashboardWidget.cmake`) sets up AUTOMOC, the include
    paths, the common link set, and registers the target in the global list both
    apps link. A widget that needs more than the common set passes `PUBLIC_LIBS`
    or `PRIVATE_LIBS`; the map and carplay widgets are the two that write their

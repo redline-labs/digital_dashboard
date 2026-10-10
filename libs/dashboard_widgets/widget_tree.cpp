@@ -11,7 +11,7 @@ namespace dashboard
 
 QWidget* buildPageChild(const widget_config_t& cfg, const QString& object_name, QWidget* page)
 {
-    if (cfg.type == widget_type_t::page_stack)
+    if (cfg.type() == widget_type_t::page_stack)
     {
         SPDLOG_ERROR("'{}': a page_stack cannot be on another page_stack's page; not built.",
                      object_name.toStdString());
@@ -21,7 +21,7 @@ QWidget* buildPageChild(const widget_config_t& cfg, const QString& object_name, 
     QWidget* child = widget_factory::createWidgetFromConfig(cfg, page);
     if (child == nullptr)
     {
-        SPDLOG_ERROR("Failed to create widget of type '{}' ('{}') on a page.", reflection::enum_to_string(cfg.type),
+        SPDLOG_ERROR("Failed to create widget of type '{}' ('{}') on a page.", reflection::enum_to_string(cfg.type()),
                      object_name.toStdString());
         return nullptr;
     }

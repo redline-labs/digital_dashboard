@@ -33,10 +33,10 @@ std::optional<widget_type_t> widgetTypeOf(const QWidget* widget)
         return std::nullopt;
     }
 
-#define TYPE_OF_CASE(enum_name, widget_class)                                    \
+#define TYPE_OF_CASE(enum_name, widget_class, friendly_name)                                    \
     if (qobject_cast<const widget_class*>(widget) != nullptr)         \
     {                                                                 \
-        return widget_class::kWidgetType;                             \
+        return widget_type_t::enum_name;                             \
     }
 
     DASHBOARD_WIDGET_TABLE(TYPE_OF_CASE)
@@ -56,7 +56,7 @@ MethodResult configOf(QWidget* widget)
     json config;
     bool found = false;
 
-#define GET_CONFIG_CASE(enum_name, widget_class)                                             \
+#define GET_CONFIG_CASE(enum_name, widget_class, friendly_name)                                             \
     if (!found)                                                                   \
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
@@ -92,11 +92,11 @@ std::expected<widget_config_t, AgentError> patchedConfig(QWidget* widget, const 
     }
 
     widget_config_t out;
-    out.type = *type;
+    out.config = default_widget_config(*type);
     std::vector<std::string> errors;
     bool found = false;
 
-#define PATCH_CONFIG_CASE(enum_name, widget_class)                                           \
+#define PATCH_CONFIG_CASE(enum_name, widget_class, friendly_name)                                           \
     if (!found)                                                                   \
     {                                                                             \
         if (auto* typed = qobject_cast<widget_class*>(widget))                    \
@@ -242,10 +242,10 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
                 {
                     json data = json::object();
                     json known = json::array();
-#define KNOWN_TYPE_CASE(enum_name, widget_class) \
-    known.push_back(std::string(reflection::enum_to_string(widget_class::kWidgetType)));
-                    DASHBOARD_WIDGET_TABLE(KNOWN_TYPE_CASE)
-#undef KNOWN_TYPE_CASE
+                    for (const widget_descriptor_t& descriptor : kWidgetDescriptors)
+                    {
+                        known.push_back(std::string(descriptor.name));
+                    }
                     data["known_types"] = std::move(known);
                     return std::unexpected(AgentError{
                         ErrorCode::kBadParams,
@@ -270,11 +270,11 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
 
             json schema;
             bool found = false;
-#define DESCRIBE_CASE(enum_name, widget_class)                                                    \
-    if (!found && *type == widget_class::kWidgetType)                                  \
+#define DESCRIBE_CASE(enum_name, widget_class, friendly_name)                                                    \
+    if (!found && *type == widget_type_t::enum_name)                                  \
     {                                                                                  \
         schema = config_codec::describeType<widget_class::config_t>();                   \
-        schema["friendly_name"] = std::string(widget_class::kFriendlyName);             \
+        schema["friendly_name"] = std::string(std::string_view(friendly_name));             \
         found = true;                                                                   \
     }
             DASHBOARD_WIDGET_TABLE(DESCRIBE_CASE)
@@ -328,7 +328,7 @@ void registerWidgetMethods(AgentServer& server, ConfigApplier applier)
 
                 json out = json::object();
                 out["applied"] = params["config"];
-                out["type"] = std::string(reflection::enum_to_string(patched.value().type));
+                out["type"] = std::string(reflection::enum_to_string(patched.value().type()));
                 return out;
             },
             AgentServer::MethodKind::kMutating);

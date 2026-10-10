@@ -91,15 +91,11 @@ void PropertiesPanel::showHeading(SelectionFrame* frame)
         return;
     }
 
-    QString friendly = QString::fromStdString(std::string(reflection::enum_to_string(frame->type())));
-#define FRIENDLY_NAME_CASE(enum_name, widget_class)                  \
-    if (frame->type() == widget_class::kWidgetType)                  \
-    {                                                                \
-        friendly = QString::fromUtf8(widget_class::kFriendlyName.data(), \
-                                     static_cast<int>(widget_class::kFriendlyName.size())); \
-    }
-    DASHBOARD_WIDGET_TABLE(FRIENDLY_NAME_CASE)
-#undef FRIENDLY_NAME_CASE
+    const widget_descriptor_t* descriptor = widgetDescriptor(frame->type());
+    const std::string_view friendly_name =
+        descriptor != nullptr ? descriptor->friendly_name : reflection::enum_to_string(frame->type());
+    const QString friendly =
+        QString::fromUtf8(friendly_name.data(), static_cast<qsizetype>(friendly_name.size()));
 
     heading_->setText(friendly);
     QString where = frame->objectName();

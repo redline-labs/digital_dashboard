@@ -27,8 +27,6 @@ class CarPlayNavWidget : public QWidget
 
   public:
     using config_t = CarPlayNavConfig_t;
-    static constexpr std::string_view kFriendlyName = "CarPlay Navigation";
-    static constexpr widget_type_t kWidgetType = widget_type_t::carplay_nav;
 
     CarPlayNavWidget(CarPlayNavConfig_t cfg, QWidget* parent = nullptr);
     ~CarPlayNavWidget();

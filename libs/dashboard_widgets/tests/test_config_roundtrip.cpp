@@ -76,12 +76,12 @@ void testEveryWidgetTypeSurvives()
     app_config_t cfg;
     cfg.name = "sweep";
 
-#define ADD_WIDGET(enum_name, widget_class)                                    \
+#define ADD_WIDGET(enum_name, widget_class, friendly_name)                                    \
     {                                                               \
         widget_config_t wc;                                         \
-        wc.type = widget_class::kWidgetType;                        \
+        wc.config = default_widget_config(widget_type_t::enum_name);                        \
         wc.id = std::string("id_") +                                \
-                std::string(reflection::enum_to_string(widget_class::kWidgetType)); \
+                std::string(std::string_view(#enum_name)); \
         wc.x = 11;                                                  \
         wc.y = 22;                                                  \
         wc.width = 33;                                              \
@@ -103,9 +103,9 @@ void testEveryWidgetTypeSurvives()
     {
         const auto& before = cfg.widgets[i];
         const auto& after = back.widgets[i];
-        const std::string what = std::string(reflection::enum_to_string(before.type));
+        const std::string what = std::string(reflection::enum_to_string(before.type()));
 
-        check(after.type == before.type, what + ": type survives");
+        check(after.type() == before.type(), what + ": type survives");
 
         // An id is how the agent interface addresses a widget across a save and
         // reload; losing it silently breaks every selector.
@@ -124,7 +124,6 @@ void testEmptyIdIsOmitted()
 {
     app_config_t cfg;
     widget_config_t wc;
-    wc.type = StaticTextWidget::kWidgetType;
     wc.config = StaticTextWidget::config_t{};
     cfg.widgets.push_back(wc);
 
@@ -142,7 +141,7 @@ void testNumericListsStayNumeric()
 {
     app_config_t cfg;
     widget_config_t wc;
-    wc.type = Mercedes190ESpeedometer::kWidgetType;
+    wc.config = default_widget_config(widget_type_t::mercedes_190e_speedometer);
 
     Mercedes190ESpeedometerConfig_t speedo;
     speedo.shift_box_markers = {28, 54, 87};  // 0x1c, '6', 'W' as characters
@@ -170,7 +169,7 @@ void testAwkwardStringsSurvive()
     cfg.name = "has: a colon";
 
     widget_config_t wc;
-    wc.type = StaticTextWidget::kWidgetType;
+    wc.config = default_widget_config(widget_type_t::static_text);
     StaticTextConfig_t text_cfg;
     text_cfg.text = "100%  #not-a-comment  \"quoted\"";
     wc.config = text_cfg;
@@ -226,7 +225,7 @@ widgets:
 
     check(cfg.widgets.size() == 1, "the config-less widget is kept");
     const widget_config_t& wc = cfg.widgets.at(0);
-    check(wc.type == StaticTextWidget::kWidgetType, "its type is decoded from `type:`");
+    check(wc.type() == widget_type_t::static_text, "its type is decoded from `type:`");
     check(wc.x == 10 && wc.y == 20, "its placement keys are decoded");
     check(std::holds_alternative<StaticTextConfig_t>(wc.config),
           "its config variant holds the widget's own type, not monostate");
@@ -438,7 +437,7 @@ void testPagesSurviveARoundTrip()
     const auto cfg = YAML::Load(kStackYaml).as<app_config_t>();
     check(cfg.widgets.size() == 2, "the stack and the widget beside it both load");
     const widget_config_t& stack = cfg.widgets.at(0);
-    check(stack.type == widget_type_t::page_stack, "the stack loads as a page_stack");
+    check(stack.type() == widget_type_t::page_stack, "the stack loads as a page_stack");
     check(stack.pages.size() == 3, "all three pages load");
     check(stack.pages.at(1).name == "diagnostics" && !stack.pages.at(1).in_cycle,
           "in_cycle: false is read");
@@ -473,7 +472,6 @@ void testPagesAreOnlyWrittenWhereTheyMeanSomething()
     // A plain widget's written form is exactly what it was before pages existed.
     app_config_t plain;
     widget_config_t wc;
-    wc.type = StaticTextWidget::kWidgetType;
     wc.config = StaticTextWidget::config_t{};
     plain.widgets.push_back(wc);
     check(toYaml(plain).find("pages") == std::string::npos, "a config with no stack never mentions pages");

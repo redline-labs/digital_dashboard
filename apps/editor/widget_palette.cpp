@@ -10,17 +10,14 @@ WidgetPalette::WidgetPalette(QWidget* parent)
     : QListWidget(parent)
 {
 
-// Add each of the available widgets to the palette.
- #define WIDGET_INFO_ENTRY(enum_name, widget_class) \
-    { \
-        auto* entry = new QListWidgetItem(QString::fromUtf8(widget_class::kFriendlyName)); \
-        const std::string_view type_name = reflection::enum_to_string(widget_class::kWidgetType); \
-        entry->setData(Qt::UserRole, QString::fromUtf8(type_name.data(), static_cast<int>(type_name.size()))); \
-        addItem(entry); \
+    for (const widget_descriptor_t& descriptor : kWidgetDescriptors)
+    {
+        auto* entry = new QListWidgetItem(
+            QString::fromUtf8(descriptor.friendly_name.data(), static_cast<qsizetype>(descriptor.friendly_name.size())));
+        entry->setData(Qt::UserRole,
+                       QString::fromUtf8(descriptor.name.data(), static_cast<qsizetype>(descriptor.name.size())));
+        addItem(entry);
     }
-
-    DASHBOARD_WIDGET_TABLE(WIDGET_INFO_ENTRY)
-#undef WIDGET_INFO_ENTRY
 
     setSelectionMode(QAbstractItemView::SingleSelection);
     setDragEnabled(true);

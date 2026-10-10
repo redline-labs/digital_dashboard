@@ -26,8 +26,6 @@ class MotecCdl3Tachometer : public qt_helpers::CachedPaintWidget {
 
 public:
     using config_t = MotecCdl3TachometerConfig_t;
-    static constexpr std::string_view kFriendlyName = "MoTeC CDL3 Tachometer";
-    static constexpr widget_type_t kWidgetType = widget_type_t::motec_cdl3_tachometer;
 
     explicit MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

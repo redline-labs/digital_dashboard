@@ -59,7 +59,7 @@ void MainWindow::createWidgetsFromConfig()
             _widgets.emplace_back(LiveWidget{std::unique_ptr<QWidget>(widget), this_index});
 
             SPDLOG_INFO("Created widget '{}' (id '{}') at ({}, {}) with size {}x{} in window '{}'",
-                reflection::enum_to_string(widget_config.type),
+                reflection::enum_to_string(widget_config.type()),
                 widget->objectName().toStdString(),
                 widget_config.x,
                 widget_config.y,
@@ -70,7 +70,7 @@ void MainWindow::createWidgetsFromConfig()
         else
         {
             SPDLOG_ERROR("Failed to create widget of type '{}' in window '{}'", 
-                reflection::enum_to_string(widget_config.type),
+                reflection::enum_to_string(widget_config.type()),
                 _app_cfg.name);
         }
     }

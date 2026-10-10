@@ -3,22 +3,6 @@ cmake_minimum_required(VERSION 3.10)
 
 set(CARPLAY_WIDGET_LIB carplay_widget)
 
-# Multimedia is used for PCM playback/mic capture of the driver's audio stream.
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Multimedia Gui)
-
-add_library(${CARPLAY_WIDGET_LIB} STATIC
-    carplay_widget.cpp
-    audio_ring.cpp
-    include/carplay/carplay_widget.h
-    include/carplay/audio_ring.h
-    include/carplay/touch_slots.h
-)
-
-target_include_directories(${CARPLAY_WIDGET_LIB} PUBLIC
-    ${DASHBOARD_WIDGET_INCLUDE_DIR}
-    include
-)
-
 # libavcodec for software H.264/H.265 decode of the zenoh video stream, plus
 # libavutil for the AVFrame/AVPacket allocators the decode loop calls directly
 # and libswscale for the SIMD YUV420->BGRA conversion feeding QImage.
@@ -31,30 +15,21 @@ pkg_check_modules(CARPLAY_WIDGET_LIBAV REQUIRED IMPORTED_TARGET
     libswscale
 )
 
-target_link_libraries(${CARPLAY_WIDGET_LIB}
-    PUBLIC
+# Multimedia is used for PCM playback/mic capture of the driver's audio stream.
+add_dashboard_widget(${CARPLAY_WIDGET_LIB}
+    SOURCES
+        carplay_widget.cpp
+        audio_ring.cpp
+        include/carplay/carplay_widget.h
+        include/carplay/audio_ring.h
+        include/carplay/touch_slots.h
+    QT_COMPONENTS Core Gui Multimedia
+    PUBLIC_LIBS
         PkgConfig::CARPLAY_WIDGET_LIBAV
-        Qt6::Core
-        Qt6::Widgets
-        Qt6::Gui
-        Qt6::Multimedia
-        helpers
         helpers_ffmpeg
-        config_codec
-        reflection
         schemas
-        zenoh_pub_sub
         zenohcxx::zenohc
-    PRIVATE
-        spdlog::spdlog
 )
-
-# Registered by hand rather than through add_dashboard_widget(): this widget
-# needs ffmpeg via pkg-config and several extra Qt components, which is more
-# than the shared helper should learn to express for one caller.
-dashboard_widget_register(${CARPLAY_WIDGET_LIB})
-
-set_target_properties(${CARPLAY_WIDGET_LIB} PROPERTIES AUTOMOC ON)
 
 # When the return button shows: the whole truth table. Pure logic.
 add_executable(carplay_test_return_button_policy test_return_button_policy.cpp)

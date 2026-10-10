@@ -22,8 +22,6 @@ class ValueReadoutWidget : public QWidget
 
 public:
 	using config_t = ValueReadoutConfig_t;
-	static constexpr std::string_view kFriendlyName = "Value Readout";
-	static constexpr widget_type_t kWidgetType = widget_type_t::value_readout;
 
 	explicit ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget* parent = nullptr);
 	const config_t& getConfig() const { return _cfg; }

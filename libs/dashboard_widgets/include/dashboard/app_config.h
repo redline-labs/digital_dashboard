@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -26,35 +27,42 @@
 // Named rather than declared inline inside widget_config_t because the editor
 // stores one: a SelectionFrame holds the configuration it was given, so that
 // exporting a document does not have to read it back out of the live widget.
-#define WIDGET_CONFIG_ALT(enum_name, widget_class) widget_class::config_t,
+#define WIDGET_CONFIG_ALT(enum_name, widget_class, friendly_name) widget_class::config_t,
 using widget_config_variant_t =
     std::variant<DASHBOARD_WIDGET_TABLE(WIDGET_CONFIG_ALT) std::monostate>;
 #undef WIDGET_CONFIG_ALT
 
+// The index of each alternative must be its widget's enumerator, which is what
+// lets widget_config_t::type() be read off the variant. Both are generated from
+// DASHBOARD_WIDGET_TABLE in the same order; this pins it.
+#define WIDGET_CONFIG_INDEX_CHECK(enum_name, widget_class, friendly_name) \
+    static_assert(std::is_same_v<std::variant_alternative_t<static_cast<std::size_t>(widget_type_t::enum_name), \
+                                                            widget_config_variant_t>, \
+                                 widget_class::config_t>, \
+                  "widget_config_variant_t is out of step with widget_type_t for " #enum_name);
+DASHBOARD_WIDGET_TABLE(WIDGET_CONFIG_INDEX_CHECK)
+#undef WIDGET_CONFIG_INDEX_CHECK
+static_assert(std::is_same_v<std::variant_alternative_t<static_cast<std::size_t>(widget_type_t::unknown),
+                                                        widget_config_variant_t>,
+                             std::monostate>);
+
 // The variant holding a default-constructed config of the right kind for `type`,
 // or monostate if the type is unknown.
-//
-// Sits here rather than beside instantiateWidget() in widget_registry.h only
-// because widget_config_variant_t is declared here and app_config.h is the one
-// that includes the registry, not the other way round.
 inline widget_config_variant_t default_widget_config(widget_type_t type)
 {
-    widget_config_variant_t config{std::monostate{}};
     switch (type)
     {
-#define WIDGET_DEFAULT_CONFIG_CASE(enum_name, widget_class) \
-        case widget_class::kWidgetType: \
-            config = typename widget_class::config_t{}; \
-            break;
+#define WIDGET_DEFAULT_CONFIG_CASE(enum_name, widget_class, friendly_name) \
+        case widget_type_t::enum_name: \
+            return widget_class::config_t{};
 
         DASHBOARD_WIDGET_TABLE(WIDGET_DEFAULT_CONFIG_CASE)
 #undef WIDGET_DEFAULT_CONFIG_CASE
 
         case widget_type_t::unknown:
-        default:
             break;
     }
-    return config;
+    return std::monostate{};
 }
 
 struct widget_page_t;
@@ -64,7 +72,11 @@ struct widget_config_t {
     // is incomplete here, and a user-written constructor would instantiate the
     // vector's constructor before widget_page_t below completes it. The implicit
     // one is only generated where it is used, which is after.
-    widget_type_t type{widget_type_t::unknown};
+    // Which widget this is. Not stored: the variant's alternatives are in table
+    // order with monostate last, exactly as widget_type_t's enumerators are
+    // with `unknown` last, so the index IS the type. A separate field could
+    // disagree with the config it sits beside; this cannot.
+    widget_type_t type() const { return static_cast<widget_type_t>(config.index()); }
 
     // Optional stable handle for tooling (the agent control interface addresses
     // widgets as "#<id>"). Empty means "unnamed": the widget still gets an
@@ -143,7 +155,7 @@ inline bool operator==(const widget_page_t& lhs, const widget_page_t& rhs);
 
 inline bool operator==(const widget_config_t& lhs, const widget_config_t& rhs)
 {
-    return lhs.type == rhs.type && lhs.id == rhs.id && lhs.x == rhs.x && lhs.y == rhs.y &&
+    return lhs.type() == rhs.type() && lhs.id == rhs.id && lhs.x == rhs.x && lhs.y == rhs.y &&
            lhs.width == rhs.width && lhs.height == rhs.height && lhs.config == rhs.config &&
            lhs.pages == rhs.pages;
 }
@@ -178,7 +190,7 @@ struct convert<widget_config_t> {
         node["width"] = rhs.width;
         node["height"] = rhs.height;
 
-        node["type"] = reflection::enum_to_string(rhs.type);
+        node["type"] = reflection::enum_to_string(rhs.type());
 
         // Use std::visit to encode whichever config is active in the variant
         std::visit([&](const auto& cfg) {
@@ -189,7 +201,7 @@ struct convert<widget_config_t> {
         }, rhs.config);
 
         // Only where they mean something, so no other widget's entry changes.
-        if (rhs.type == widget_type_t::page_stack && !rhs.pages.empty())
+        if (rhs.type() == widget_type_t::page_stack && !rhs.pages.empty())
         {
             node["pages"] = rhs.pages;
         }
@@ -223,9 +235,8 @@ struct convert<widget_config_t> {
         // exactly one meaning downstream -- "unknown widget type, construct nothing"
         // (see widget_factory.h) -- so parking a known type on it would render the
         // widget in the editor and silently omit it from the dashboard.
-#define DECODE_CONFIG_IF(enum_name, widget_class) \
-        if (!matched && type == reflection::enum_to_string(widget_class::kWidgetType)) { \
-            rhs.type = widget_class::kWidgetType; \
+#define DECODE_CONFIG_IF(enum_name, widget_class, friendly_name) \
+        if (!matched && type == std::string_view(#enum_name)) { \
             rhs.config = node["config"] ? node["config"].as<widget_class::config_t>() \
                                         : widget_class::config_t{}; \
             matched = true; \
@@ -236,7 +247,7 @@ struct convert<widget_config_t> {
 
         if (!matched) {
             SPDLOG_WARN("Unknown widget type '{}', unable to parse config.", type);
-            rhs.type = widget_type_t::unknown;
+            rhs.config = std::monostate{};
         }
 
         if (node["pages"]) rhs.pages = node["pages"].as<std::vector<widget_page_t>>();

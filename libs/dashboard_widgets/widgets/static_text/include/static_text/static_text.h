@@ -14,8 +14,6 @@ class StaticTextWidget : public QWidget {
 
 public:
     using config_t = StaticTextConfig_t;
-    static constexpr std::string_view kFriendlyName = "Static Text";
-    static constexpr widget_type_t kWidgetType = widget_type_t::static_text;
 
     explicit StaticTextWidget(const StaticTextConfig_t& cfg, QWidget* parent = nullptr);
     const config_t& getConfig() const { return _cfg; }

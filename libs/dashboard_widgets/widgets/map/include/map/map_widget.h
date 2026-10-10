@@ -66,8 +66,6 @@ class MapWidget : public QWidget
 
   public:
     using config_t = MapConfig_t;
-    static constexpr widget_type_t kWidgetType = widget_type_t::map;
-    static constexpr std::string_view kFriendlyName = "Offline Map";
 
     explicit MapWidget(const config_t& config, QWidget* parent = nullptr);
     ~MapWidget() override;

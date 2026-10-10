@@ -283,12 +283,12 @@ void Canvas::loadWindow(const app_config_t& app_cfg)
     {
         const std::size_t this_index = config_index++;
 
-        if (wcfg.type == widget_type_t::unknown)
+        if (wcfg.type() == widget_type_t::unknown)
         {
             SPDLOG_WARN("Skipping widget with unknown type at ({}, {})", wcfg.x, wcfg.y);
             continue;
         }
-        SelectionFrame* frame = new SelectionFrame(wcfg.type, this);
+        SelectionFrame* frame = new SelectionFrame(wcfg.type(), this);
         if (!frame)
         {
             continue;
@@ -456,7 +456,7 @@ void Canvas::applyDocument(const Snapshot& state)
         const QString& name = state.names[i];
 
         SelectionFrame* frame = nullptr;
-        if (const auto it = live.find(name); it != live.end() && it->second->type() == wcfg.type)
+        if (const auto it = live.find(name); it != live.end() && it->second->type() == wcfg.type())
         {
             frame = it->second;
             live.erase(it);
@@ -472,7 +472,7 @@ void Canvas::applyDocument(const Snapshot& state)
         }
         else
         {
-            frame = new SelectionFrame(wcfg.type, this);
+            frame = new SelectionFrame(wcfg.type(), this);
             frame->setObjectName(name);
             frame->applyStoredConfig(wcfg.config);
             frame->show();
@@ -715,7 +715,7 @@ SelectionFrame* Canvas::addWidget(widget_type_t type, const QPoint& pos, const Q
     // one left the next addition reusing a live name -- and an agent selector
     // that matches two widgets is an AMBIGUOUS_SELECTOR error, not a coin toss.
     widget_config_t naming_cfg;
-    naming_cfg.type = type;
+    naming_cfg.config = default_widget_config(type);
     frame->setObjectName(dashboard::widgetObjectName(naming_cfg, nextNameIndex_++));
 
     // A page_stack does not load without an id -- it names the stack's topics --
@@ -1019,7 +1019,7 @@ widget_config_t* stackIn(EditorDocument::Snapshot& state, std::size_t window, st
         return nullptr;
     }
     widget_config_t& stack = state.doc.windows[window].widgets[index];
-    return stack.type == widget_type_t::page_stack ? &stack : nullptr;
+    return stack.type() == widget_type_t::page_stack ? &stack : nullptr;
 }
 
 bool pageNameTaken(const widget_config_t& stack, const std::string& name)
