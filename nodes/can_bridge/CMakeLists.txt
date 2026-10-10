@@ -40,7 +40,12 @@ target_link_libraries(can_bridge_test_config
         yaml-cpp::yaml-cpp
 )
 
-add_project_test(TARGET can_bridge_test_config LABELS can unit)
+add_project_test(TARGET can_bridge_test_config LABELS can_bridge unit)
+
+# The health check each channel's status turns into: every bus state named.
+add_executable(can_bridge_test_channel_health test_channel_health.cpp)
+target_link_libraries(can_bridge_test_channel_health PRIVATE node_health schemas capnp)
+add_project_test(TARGET can_bridge_test_channel_health LABELS can_bridge unit)
 
 # The recording tap. What is pinned here is that both directions land in the
 # file with the right direction and in the recorded order, that a full queue

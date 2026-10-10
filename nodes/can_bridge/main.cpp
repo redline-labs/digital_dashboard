@@ -23,6 +23,7 @@
 // vehicle should not both stop because one adapter was unplugged, and a bridge
 // that exits on the first problem is a bridge that has to be babysat.
 
+#include "channel_health.h"
 #include "node_config.h"
 #include "trc_recorder.h"
 
@@ -587,8 +588,13 @@ int main(int argc, char** argv)
     // Per channel, the drop counters as of the last status: see below.
     std::map<std::string, std::uint64_t> droppedSeen;
 
+    // The main loop and the bit-rate service (a zenoh thread) both publish a
+    // status, and the builder, droppedSeen and the health checks are shared.
+    std::mutex statusMutex;
+
     auto publishStatus = [&]
     {
+        const std::lock_guard<std::mutex> lock(statusMutex);
         auto& fields = statusPublisher.fields();
         auto list = fields.initChannels(
             static_cast<unsigned>(channels.size() + failed.size()));
@@ -611,8 +617,6 @@ int main(int argc, char** argv)
         }
 
         // Health from the same numbers, before put() re-roots the builder.
-        // Growth in the drop counters matters more than their value: a bridge
-        // that dropped frames an hour ago and none since is working now.
         for (const auto channel : fields.asReader().getChannels())
         {
             const std::string name = "channel:" + std::string(channel.getName());
@@ -621,31 +625,8 @@ int main(int argc, char** argv)
             const bool dropping = dropped > seen;
             seen = dropped;
 
-            if (!channel.getOpen() || !channel.getRunning())
-            {
-                health.setCheck(name, node_health::State::fault,
-                                channel.getError().size() != 0
-                                    ? std::string(channel.getError().cStr())
-                                    : std::string("not running"));
-            }
-            else if (channel.getState() == CanBusState::BUS_OFF ||
-                     channel.getState() == CanBusState::STOPPED)
-            {
-                health.setCheck(name, node_health::State::fault, "bus off");
-            }
-            else if (channel.getState() == CanBusState::ERROR_PASSIVE ||
-                     channel.getState() == CanBusState::ERROR_WARNING)
-            {
-                health.setCheck(name, node_health::State::degraded, "bus errors");
-            }
-            else if (dropping)
-            {
-                health.setCheck(name, node_health::State::degraded, "dropping frames");
-            }
-            else
-            {
-                health.setCheck(name, node_health::State::ok, "");
-            }
+            const can_bridge::ChannelHealth check = can_bridge::channelHealth(channel, dropping);
+            health.setCheck(name, check.state, check.reason);
         }
 
         statusPublisher.put();
